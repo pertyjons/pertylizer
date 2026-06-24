@@ -840,11 +840,14 @@ impl ParameterDescriptor {
     /// Whether this parameter may be used as a sequencer automation target.
     ///
     /// A parameter is automatable iff it is **continuous** and **real-time-safe**
-    /// to change per processing block. This reuses the [`modulatable`] flag (the
-    /// existing "continuous + RT-safe" signal — module authors set it `false` for
-    /// structural/sizing params such as unison voice count, pattern length, or
-    /// step counts) and additionally excludes `choice`/enum parameters, which are
-    /// discrete selections (e.g. `FilterMode`, `Waveform`) and cannot be ramped.
+    /// to change per processing block. This requires [`ParamKind::Continuous`] (a
+    /// ramp-able scalar) and the [`modulatable`] flag (the "RT-safe" signal — module
+    /// authors set it `false` for structural/sizing params such as unison voice
+    /// count, pattern length, or step counts). Integer/bool/enum/reference params
+    /// are excluded by kind: they are discrete selections or counts and cannot be
+    /// ramped. (Before the kind model this used `choices.is_none()`, which excluded
+    /// `enum` but not integer/bool — those were already kept out by `modulatable`,
+    /// so the tightening drops nothing; guarded by a regression test.)
     ///
     /// This is a *descriptor-level eligibility* check: it reports whether a param
     /// is the right *kind* to automate, not whether the owning module currently
@@ -856,7 +859,7 @@ impl ParameterDescriptor {
     /// [`modulatable`]: Self::modulatable
     #[must_use]
     pub fn is_automatable(&self) -> bool {
-        self.modulatable && self.choices.is_none()
+        self.modulatable && self.kind == ParamKind::Continuous
     }
 
     /// Map a normalized value (0-1) to the parameter range.
@@ -1678,6 +1681,15 @@ mod tests {
         let freq = Param::Oscillator(OscillatorParam::Frequency(crate::Hertz::new(440.0)));
         assert_eq!(freq.kind(), ParamKind::Continuous);
         assert_eq!(freq.unit(), ParameterUnit::Hertz);
+        // `default_curve()` is advisory (Phase 2b) — type-derived, not auto-applied.
+        assert_eq!(freq.default_curve(), ResponseCurve::Logarithmic);
+        assert_eq!(
+            Param::Envelope(crate::params::EnvelopeParam::Attack(crate::Seconds::new(
+                0.1
+            )))
+            .default_curve(),
+            ResponseCurve::Exponential
+        );
         assert_eq!(
             Param::Mseg(MsegParam::SegmentCount(4)).kind(),
             ParamKind::Integer

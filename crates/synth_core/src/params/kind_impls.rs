@@ -7,7 +7,7 @@
 //! structural). See `docs/param-kinds.md` for the authoritative mapping.
 
 use super::*;
-use crate::module_traits::{ParamKind, ParameterUnit, ScalarParam};
+use crate::module_traits::{ParamKind, ParameterUnit, ResponseCurve, ScalarParam};
 
 impl AdditiveParam {
     /// Value-kind of this parameter, dispatched on the bound value.
@@ -35,6 +35,20 @@ impl AdditiveParam {
             | Self::Level(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Tilt(v)
+            | Self::OddEven(v)
+            | Self::Brightness(v)
+            | Self::Stretch(v)
+            | Self::Randomize(v)
+            | Self::Level(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl AmFormantParam {
@@ -54,6 +68,17 @@ impl AmFormantParam {
         match self {
             Self::Vowel(v) | Self::CarrierRatio(v) | Self::Depth(v) | Self::Level(v) => {
                 v.scalar_unit()
+            }
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Vowel(v) | Self::CarrierRatio(v) | Self::Depth(v) | Self::Level(v) => {
+                v.scalar_curve()
             }
         }
     }
@@ -79,6 +104,17 @@ impl BeatDetectorParam {
             Self::HoldTime(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Sensitivity(v) => v.scalar_curve(),
+            Self::FilterFreq(v) => v.scalar_curve(),
+            Self::HoldTime(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl ChaoticOscParam {
@@ -99,6 +135,17 @@ impl ChaoticOscParam {
             Self::System(v) => v.scalar_unit(),
             Self::Rate(v) => v.scalar_unit(),
             Self::Chaos(v) | Self::Depth(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::System(v) => v.scalar_curve(),
+            Self::Rate(v) => v.scalar_curve(),
+            Self::Chaos(v) | Self::Depth(v) => v.scalar_curve(),
         }
     }
 }
@@ -125,6 +172,18 @@ impl ConvolverParam {
             Self::DecayTrim(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Ir(v) => v.scalar_curve(),
+            Self::Mix(v) | Self::Brightness(v) | Self::DynamicMode(v) => v.scalar_curve(),
+            Self::PreDelay(v) => v.scalar_curve(),
+            Self::DecayTrim(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl DriftGeneratorParam {
@@ -143,6 +202,16 @@ impl DriftGeneratorParam {
         match self {
             Self::Rate(v) => v.scalar_unit(),
             Self::Depth(v) | Self::Smoothness(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Rate(v) => v.scalar_curve(),
+            Self::Depth(v) | Self::Smoothness(v) => v.scalar_curve(),
         }
     }
 }
@@ -169,6 +238,19 @@ impl DelayParam {
             Self::Feedback(v) | Self::Mix(v) | Self::Damping(v) => v.scalar_unit(),
             Self::TempoSync(v) => v.scalar_unit(),
             Self::SyncDivision(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Mode(v) => v.scalar_curve(),
+            Self::Time(v) | Self::TimeLeft(v) | Self::TimeRight(v) => v.scalar_curve(),
+            Self::Feedback(v) | Self::Mix(v) | Self::Damping(v) => v.scalar_curve(),
+            Self::TempoSync(v) => v.scalar_curve(),
+            Self::SyncDivision(v) => v.scalar_curve(),
         }
     }
 }
@@ -203,6 +285,22 @@ impl ReverbParam {
             Self::LowCut(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::RoomSize(v)
+            | Self::Damping(v)
+            | Self::Width(v)
+            | Self::Mix(v)
+            | Self::Decay(v)
+            | Self::Diffusion(v) => v.scalar_curve(),
+            Self::PreDelay(v) => v.scalar_curve(),
+            Self::LowCut(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl DistortionParam {
@@ -223,6 +321,17 @@ impl DistortionParam {
             Self::Mode(v) => v.scalar_unit(),
             Self::Drive(v) | Self::Tone(v) | Self::Mix(v) => v.scalar_unit(),
             Self::BitDepth(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Mode(v) => v.scalar_curve(),
+            Self::Drive(v) | Self::Tone(v) | Self::Mix(v) => v.scalar_curve(),
+            Self::BitDepth(v) => v.scalar_curve(),
         }
     }
 }
@@ -249,6 +358,18 @@ impl ChorusParam {
             Self::Voices(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Rate(v) => v.scalar_curve(),
+            Self::Depth(v) | Self::Feedback(v) | Self::Mix(v) => v.scalar_curve(),
+            Self::Delay(v) => v.scalar_curve(),
+            Self::Voices(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl PhaserParam {
@@ -273,6 +394,18 @@ impl PhaserParam {
             Self::Stages(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Rate(v) | Self::CenterFreq(v) => v.scalar_curve(),
+            Self::Depth(v) | Self::Mix(v) => v.scalar_curve(),
+            Self::Feedback(v) => v.scalar_curve(),
+            Self::Stages(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl FlangerParam {
@@ -295,6 +428,18 @@ impl FlangerParam {
             Self::Depth(v) | Self::Mix(v) => v.scalar_unit(),
             Self::Feedback(v) => v.scalar_unit(),
             Self::Delay(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Rate(v) => v.scalar_curve(),
+            Self::Depth(v) | Self::Mix(v) => v.scalar_curve(),
+            Self::Feedback(v) => v.scalar_curve(),
+            Self::Delay(v) => v.scalar_curve(),
         }
     }
 }
@@ -325,6 +470,20 @@ impl CompressorParam {
             Self::SidechainFilter(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Threshold(v) | Self::Makeup(v) => v.scalar_curve(),
+            Self::Ratio(v) => v.scalar_curve(),
+            Self::Attack(v) | Self::Release(v) => v.scalar_curve(),
+            Self::Mix(v) => v.scalar_curve(),
+            Self::SidechainEnabled(v) => v.scalar_curve(),
+            Self::SidechainFilter(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl EqParam {
@@ -345,6 +504,17 @@ impl EqParam {
             Self::LowFreq(v) | Self::MidFreq(v) | Self::HighFreq(v) => v.scalar_unit(),
             Self::LowGain(v) | Self::MidGain(v) | Self::HighGain(v) => v.scalar_unit(),
             Self::MidQ(v) | Self::Mix(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::LowFreq(v) | Self::MidFreq(v) | Self::HighFreq(v) => v.scalar_curve(),
+            Self::LowGain(v) | Self::MidGain(v) | Self::HighGain(v) => v.scalar_curve(),
+            Self::MidQ(v) | Self::Mix(v) => v.scalar_curve(),
         }
     }
 }
@@ -375,6 +545,20 @@ impl BbdDelayParam {
             | Self::Mix(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Time(v) => v.scalar_curve(),
+            Self::Feedback(v)
+            | Self::Tone(v)
+            | Self::WowFlutter(v)
+            | Self::ClockNoise(v)
+            | Self::Mix(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl MidSideParam {
@@ -395,6 +579,17 @@ impl MidSideParam {
             Self::Width(v) | Self::Mix(v) => v.scalar_unit(),
             Self::MidGain(v) | Self::SideGain(v) => v.scalar_unit(),
             Self::Rotation(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Width(v) | Self::Mix(v) => v.scalar_curve(),
+            Self::MidGain(v) | Self::SideGain(v) => v.scalar_curve(),
+            Self::Rotation(v) => v.scalar_curve(),
         }
     }
 }
@@ -419,6 +614,17 @@ impl LimiterParam {
             Self::Mix(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Ceiling(v) => v.scalar_curve(),
+            Self::LookAhead(v) | Self::Release(v) => v.scalar_curve(),
+            Self::Mix(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl EnsembleChorusParam {
@@ -441,6 +647,20 @@ impl EnsembleChorusParam {
             Self::Depth(v) | Self::BaseDelay(v) => v.scalar_unit(),
             Self::Mix(v) | Self::Tone(v) | Self::Noise(v) | Self::StereoWidth(v) => v.scalar_unit(),
             Self::Voices(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Rate(v) => v.scalar_curve(),
+            Self::Depth(v) | Self::BaseDelay(v) => v.scalar_curve(),
+            Self::Mix(v) | Self::Tone(v) | Self::Noise(v) | Self::StereoWidth(v) => {
+                v.scalar_curve()
+            }
+            Self::Voices(v) => v.scalar_curve(),
         }
     }
 }
@@ -471,6 +691,21 @@ impl ShimmerReverbParam {
             | Self::Mix(v) => v.scalar_unit(),
             Self::PreDelay(v) => v.scalar_unit(),
             Self::PitchSemitones(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::RoomSize(v)
+            | Self::Decay(v)
+            | Self::Damping(v)
+            | Self::ShimmerMix(v)
+            | Self::Mix(v) => v.scalar_curve(),
+            Self::PreDelay(v) => v.scalar_curve(),
+            Self::PitchSemitones(v) => v.scalar_curve(),
         }
     }
 }
@@ -507,6 +742,23 @@ impl GranularFxParam {
             Self::Freeze(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::BufferTime(v) => v.scalar_curve(),
+            Self::GrainSize(v) => v.scalar_curve(),
+            Self::Density(v)
+            | Self::Position(v)
+            | Self::PositionSpread(v)
+            | Self::PitchSpread(v)
+            | Self::PanSpread(v)
+            | Self::Mix(v) => v.scalar_curve(),
+            Self::Freeze(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl SpectralBlurParam {
@@ -527,6 +779,17 @@ impl SpectralBlurParam {
             Self::FftSize(v) => v.scalar_unit(),
             Self::BlurTime(v) | Self::BlurFreq(v) | Self::Mix(v) => v.scalar_unit(),
             Self::Freeze(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::FftSize(v) => v.scalar_curve(),
+            Self::BlurTime(v) | Self::BlurFreq(v) | Self::Mix(v) => v.scalar_curve(),
+            Self::Freeze(v) => v.scalar_curve(),
         }
     }
 }
@@ -555,6 +818,19 @@ impl ModalResonatorParam {
             Self::Modes(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::BaseNote(v) => v.scalar_curve(),
+            Self::Spread(v) | Self::Decay(v) | Self::Brightness(v) | Self::Mix(v) => {
+                v.scalar_curve()
+            }
+            Self::Modes(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl ReverseGateReverbParam {
@@ -581,6 +857,19 @@ impl ReverseGateReverbParam {
             Self::Mix(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::WindowTime(v) | Self::GateTime(v) => v.scalar_curve(),
+            Self::Mode(v) => v.scalar_curve(),
+            Self::Trigger(v) => v.scalar_curve(),
+            Self::Threshold(v) => v.scalar_curve(),
+            Self::Mix(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl TiltEqParam {
@@ -603,6 +892,17 @@ impl TiltEqParam {
             Self::Mix(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Tilt(v) => v.scalar_curve(),
+            Self::CenterFreq(v) => v.scalar_curve(),
+            Self::Mix(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl UnivibeParam {
@@ -621,6 +921,16 @@ impl UnivibeParam {
         match self {
             Self::Rate(v) => v.scalar_unit(),
             Self::Depth(v) | Self::Feedback(v) | Self::Mix(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Rate(v) => v.scalar_curve(),
+            Self::Depth(v) | Self::Feedback(v) | Self::Mix(v) => v.scalar_curve(),
         }
     }
 }
@@ -643,6 +953,16 @@ impl CrossoverParam {
             Self::LowGain(v) | Self::HighGain(v) | Self::Mix(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Frequency(v) => v.scalar_curve(),
+            Self::LowGain(v) | Self::HighGain(v) | Self::Mix(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl VocoderParam {
@@ -661,6 +981,16 @@ impl VocoderParam {
         match self {
             Self::Order(v) | Self::Mix(v) => v.scalar_unit(),
             Self::WindowSize(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Order(v) | Self::Mix(v) => v.scalar_curve(),
+            Self::WindowSize(v) => v.scalar_curve(),
         }
     }
 }
@@ -683,6 +1013,16 @@ impl EnvelopeFollowerParam {
             Self::Sensitivity(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Attack(v) | Self::Release(v) => v.scalar_curve(),
+            Self::Sensitivity(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl EnvelopeParam {
@@ -703,6 +1043,17 @@ impl EnvelopeParam {
             Self::Attack(v) | Self::Decay(v) | Self::Release(v) => v.scalar_unit(),
             Self::Sustain(v) | Self::VelocitySensitivity(v) => v.scalar_unit(),
             Self::AttackCurve(v) | Self::DecayCurve(v) | Self::ReleaseCurve(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Attack(v) | Self::Decay(v) | Self::Release(v) => v.scalar_curve(),
+            Self::Sustain(v) | Self::VelocitySensitivity(v) => v.scalar_curve(),
+            Self::AttackCurve(v) | Self::DecayCurve(v) | Self::ReleaseCurve(v) => v.scalar_curve(),
         }
     }
 }
@@ -731,6 +1082,20 @@ impl FilterParam {
             Self::Drive(v) => v.scalar_unit(),
             Self::EnvAmount(v) | Self::CutoffMod(v) => v.scalar_unit(),
             Self::Model(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Mode(v) => v.scalar_curve(),
+            Self::Cutoff(v) => v.scalar_curve(),
+            Self::Resonance(v) | Self::KeyTracking(v) | Self::Morph(v) => v.scalar_curve(),
+            Self::Drive(v) => v.scalar_curve(),
+            Self::EnvAmount(v) | Self::CutoffMod(v) => v.scalar_curve(),
+            Self::Model(v) => v.scalar_curve(),
         }
     }
 }
@@ -769,6 +1134,24 @@ impl FofParam {
             Self::VibratoDepth(v) | Self::UnisonDetune(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Vowel(v)
+            | Self::FormantShift(v)
+            | Self::Skirt(v)
+            | Self::Bandwidth(v)
+            | Self::Breathiness(v)
+            | Self::UnisonVoices(v)
+            | Self::UnisonSpread(v)
+            | Self::Level(v) => v.scalar_curve(),
+            Self::VibratoRate(v) => v.scalar_curve(),
+            Self::VibratoDepth(v) | Self::UnisonDetune(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl FooglersParam {
@@ -795,6 +1178,19 @@ impl FooglersParam {
             | Self::Level(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Tap1(v)
+            | Self::Tap2(v)
+            | Self::Feedback(v)
+            | Self::Damping(v)
+            | Self::Level(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl FormantFilterParam {
@@ -813,6 +1209,16 @@ impl FormantFilterParam {
         match self {
             Self::Vowel(v) | Self::Resonance(v) | Self::Mix(v) => v.scalar_unit(),
             Self::Cutoff(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Vowel(v) | Self::Resonance(v) | Self::Mix(v) => v.scalar_curve(),
+            Self::Cutoff(v) => v.scalar_curve(),
         }
     }
 }
@@ -841,6 +1247,19 @@ impl FractalOscParam {
             | Self::Level(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Roughness(v)
+            | Self::FractalSpacing(v)
+            | Self::Dispersion(v)
+            | Self::Spread(v)
+            | Self::Level(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl FrequencyShifterParam {
@@ -861,6 +1280,16 @@ impl FrequencyShifterParam {
             Self::Mix(v) | Self::Mode(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Shift(v) => v.scalar_curve(),
+            Self::Mix(v) | Self::Mode(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl EuclideanParam {
@@ -879,6 +1308,16 @@ impl EuclideanParam {
         match self {
             Self::Steps(v) | Self::Pulses(v) | Self::Rotation(v) => v.scalar_unit(),
             Self::Swing(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Steps(v) | Self::Pulses(v) | Self::Rotation(v) => v.scalar_curve(),
+            Self::Swing(v) => v.scalar_curve(),
         }
     }
 }
@@ -903,6 +1342,17 @@ impl TuringMachineParam {
             Self::Length(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::MutationRate(v) | Self::Range(v) => v.scalar_curve(),
+            Self::Scale(v) => v.scalar_curve(),
+            Self::Length(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl RandomGatesParam {
@@ -921,6 +1371,16 @@ impl RandomGatesParam {
         match self {
             Self::Density(v) | Self::BurstProbability(v) | Self::GateLength(v) => v.scalar_unit(),
             Self::Seed(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Density(v) | Self::BurstProbability(v) | Self::GateLength(v) => v.scalar_curve(),
+            Self::Seed(v) => v.scalar_curve(),
         }
     }
 }
@@ -959,6 +1419,24 @@ impl GranularParam {
             Self::Level(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::GrainSize(v) => v.scalar_curve(),
+            Self::Density(v)
+            | Self::Position(v)
+            | Self::PositionSpread(v)
+            | Self::PitchSpread(v)
+            | Self::PanSpread(v) => v.scalar_curve(),
+            Self::Freeze(v) => v.scalar_curve(),
+            Self::Window(v) => v.scalar_curve(),
+            Self::Source(v) => v.scalar_curve(),
+            Self::Level(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl KineticParam {
@@ -987,6 +1465,20 @@ impl KineticParam {
             Self::OutputVel(v) | Self::OutputAcc(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Duration(v) => v.scalar_curve(),
+            Self::CurveType(v) => v.scalar_curve(),
+            Self::Overshoot(v) => v.scalar_curve(),
+            Self::Bipolar(v) | Self::Retrigger(v) => v.scalar_curve(),
+            Self::LoopMode(v) => v.scalar_curve(),
+            Self::OutputVel(v) | Self::OutputAcc(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl LaSynthParam {
@@ -1005,6 +1497,16 @@ impl LaSynthParam {
         match self {
             Self::AttackType(v) | Self::AttackLevel(v) | Self::Brightness(v) => v.scalar_unit(),
             Self::AttackTime(v) | Self::CrossfadeTime(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::AttackType(v) | Self::AttackLevel(v) | Self::Brightness(v) => v.scalar_curve(),
+            Self::AttackTime(v) | Self::CrossfadeTime(v) => v.scalar_curve(),
         }
     }
 }
@@ -1035,6 +1537,20 @@ impl LfoParam {
             Self::SyncDivision(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Waveform(v) => v.scalar_curve(),
+            Self::Rate(v) => v.scalar_curve(),
+            Self::Depth(v) => v.scalar_curve(),
+            Self::Phase(v) => v.scalar_curve(),
+            Self::TempoSync(v) | Self::Retrigger(v) => v.scalar_curve(),
+            Self::SyncDivision(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl ModMatrixParam {
@@ -1061,6 +1577,19 @@ impl ModMatrixParam {
             Self::SlotEnabled(_, v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::GridSize(v) => v.scalar_curve(),
+            Self::SlotSource(_, v) => v.scalar_curve(),
+            Self::SlotDestination(_, v) => v.scalar_curve(),
+            Self::SlotAmount(_, v) => v.scalar_curve(),
+            Self::SlotEnabled(_, v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl AmplifierParam {
@@ -1081,6 +1610,17 @@ impl AmplifierParam {
             Self::Level(v) => v.scalar_unit(),
             Self::Pan(v) => v.scalar_unit(),
             Self::CvBipolar(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Level(v) => v.scalar_curve(),
+            Self::Pan(v) => v.scalar_curve(),
+            Self::CvBipolar(v) => v.scalar_curve(),
         }
     }
 }
@@ -1119,6 +1659,24 @@ impl MixerParam {
             Self::Mute(v) | Self::Limit(v) | Self::Dither(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Input1(v)
+            | Self::Input2(v)
+            | Self::Input3(v)
+            | Self::Input4(v)
+            | Self::Input5(v)
+            | Self::Input6(v)
+            | Self::Input7(v)
+            | Self::Input8(v)
+            | Self::Master(v) => v.scalar_curve(),
+            Self::Mute(v) | Self::Limit(v) | Self::Dither(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl OscilloscopeParam {
@@ -1143,6 +1701,18 @@ impl OscilloscopeParam {
             Self::Frozen(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Time(v) => v.scalar_curve(),
+            Self::Gain(v) => v.scalar_curve(),
+            Self::Trigger(v) => v.scalar_curve(),
+            Self::Frozen(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl LevelMeterParam {
@@ -1163,6 +1733,17 @@ impl LevelMeterParam {
             Self::PeakHold(v) => v.scalar_unit(),
             Self::DecayRate(v) => v.scalar_unit(),
             Self::ShowRms(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::PeakHold(v) => v.scalar_curve(),
+            Self::DecayRate(v) => v.scalar_curve(),
+            Self::ShowRms(v) => v.scalar_curve(),
         }
     }
 }
@@ -1199,6 +1780,23 @@ impl MsegParam {
             Self::SegmentCurve(_, v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::SegmentCount(v)
+            | Self::SustainSegment(v)
+            | Self::LoopStart(v)
+            | Self::LoopEnd(v) => v.scalar_curve(),
+            Self::LoopEnabled(v) => v.scalar_curve(),
+            Self::TimeScale(v) => v.scalar_curve(),
+            Self::SegmentTime(_, v) => v.scalar_curve(),
+            Self::SegmentLevel(_, v) => v.scalar_curve(),
+            Self::SegmentCurve(_, v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl NoiseParam {
@@ -1217,6 +1815,16 @@ impl NoiseParam {
         match self {
             Self::Type(v) => v.scalar_unit(),
             Self::Level(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Type(v) => v.scalar_curve(),
+            Self::Level(v) => v.scalar_curve(),
         }
     }
 }
@@ -1263,6 +1871,28 @@ impl OscillatorParam {
             Self::AntiAlias(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Waveform(v) => v.scalar_curve(),
+            Self::Frequency(v) => v.scalar_curve(),
+            Self::Detune(v) | Self::UnisonDetune(v) => v.scalar_curve(),
+            Self::Octave(v) => v.scalar_curve(),
+            Self::PulseWidth(v) => v.scalar_curve(),
+            Self::Level(v) => v.scalar_curve(),
+            Self::Phase(v) => v.scalar_curve(),
+            Self::FmMode(v) => v.scalar_curve(),
+            Self::FmAmount(v) => v.scalar_curve(),
+            Self::UnisonVoices(v) => v.scalar_curve(),
+            Self::UnisonSpread(v) | Self::UnisonPhaseRandom(v) | Self::CrossModAmount(v) => {
+                v.scalar_curve()
+            }
+            Self::AntiAlias(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl MathOscillatorParam {
@@ -1285,6 +1915,18 @@ impl MathOscillatorParam {
             Self::Frequency(v) => v.scalar_unit(),
             Self::ParamA(v) | Self::ParamB(v) | Self::ParamC(v) => v.scalar_unit(),
             Self::Level(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Algorithm(v) => v.scalar_curve(),
+            Self::Frequency(v) => v.scalar_curve(),
+            Self::ParamA(v) | Self::ParamB(v) | Self::ParamC(v) => v.scalar_curve(),
+            Self::Level(v) => v.scalar_curve(),
         }
     }
 }
@@ -1311,6 +1953,18 @@ impl PadSynthParam {
             Self::BaseFreq(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Bandwidth(v) | Self::Tilt(v) | Self::Detune(v) | Self::Level(v) => {
+                v.scalar_curve()
+            }
+            Self::BaseFreq(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl PhaseVocoderParam {
@@ -1333,6 +1987,18 @@ impl PhaseVocoderParam {
             Self::Freeze(v) => v.scalar_unit(),
             Self::FftSize(v) => v.scalar_unit(),
             Self::Mix(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::PitchShift(v) => v.scalar_curve(),
+            Self::Freeze(v) => v.scalar_curve(),
+            Self::FftSize(v) => v.scalar_curve(),
+            Self::Mix(v) => v.scalar_curve(),
         }
     }
 }
@@ -1359,6 +2025,18 @@ impl KeyboardPannerParam {
             Self::Invert(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Spread(v) => v.scalar_curve(),
+            Self::CenterNote(v) => v.scalar_curve(),
+            Self::Curve(v) => v.scalar_curve(),
+            Self::Invert(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl BodyResonanceParam {
@@ -1380,6 +2058,18 @@ impl BodyResonanceParam {
             Self::Frequency(v) => v.scalar_unit(),
             Self::Resonance(v) | Self::Size(v) | Self::Brightness(v) | Self::Mix(v) => {
                 v.scalar_unit()
+            }
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Frequency(v) => v.scalar_curve(),
+            Self::Resonance(v) | Self::Size(v) | Self::Brightness(v) | Self::Mix(v) => {
+                v.scalar_curve()
             }
         }
     }
@@ -1409,6 +2099,19 @@ impl MechanicalNoiseParam {
             Self::Level(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::NoiseType(v) => v.scalar_curve(),
+            Self::Duration(v) => v.scalar_curve(),
+            Self::Cutoff(v) => v.scalar_curve(),
+            Self::VelocitySens(v) => v.scalar_curve(),
+            Self::Level(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl PitchTrackerParam {
@@ -1427,6 +2130,16 @@ impl PitchTrackerParam {
         match self {
             Self::Sensitivity(v) | Self::Smoothing(v) => v.scalar_unit(),
             Self::MinFreq(v) | Self::MaxFreq(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Sensitivity(v) | Self::Smoothing(v) => v.scalar_curve(),
+            Self::MinFreq(v) | Self::MaxFreq(v) => v.scalar_curve(),
         }
     }
 }
@@ -1449,6 +2162,17 @@ impl RingModParam {
             Self::CarrierFreq(v) => v.scalar_unit(),
             Self::CarrierWaveform(v) => v.scalar_unit(),
             Self::Mix(v) | Self::FreqRatio(v) | Self::TrackKeyboard(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::CarrierFreq(v) => v.scalar_curve(),
+            Self::CarrierWaveform(v) => v.scalar_curve(),
+            Self::Mix(v) | Self::FreqRatio(v) | Self::TrackKeyboard(v) => v.scalar_curve(),
         }
     }
 }
@@ -1481,6 +2205,21 @@ impl SamplerParam {
             Self::FineTune(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::SampleSelect(v) => v.scalar_curve(),
+            Self::PitchTracking(v) => v.scalar_curve(),
+            Self::Level(v) => v.scalar_curve(),
+            Self::PlayMode(v) => v.scalar_curve(),
+            Self::Direction(v) => v.scalar_curve(),
+            Self::VelocitySensitivity(v) | Self::StartOffset(v) => v.scalar_curve(),
+            Self::FineTune(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl SignalMonitorParam {
@@ -1505,6 +2244,18 @@ impl SignalMonitorParam {
             Self::Frozen(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Time(v) => v.scalar_curve(),
+            Self::Gain(v) => v.scalar_curve(),
+            Self::Trigger(v) => v.scalar_curve(),
+            Self::Frozen(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl SpectrumAnalyzerParam {
@@ -1521,6 +2272,15 @@ impl SpectrumAnalyzerParam {
     pub fn unit(&self) -> ParameterUnit {
         match self {
             Self::Gain(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Gain(v) => v.scalar_curve(),
         }
     }
 }
@@ -1545,6 +2305,17 @@ impl SubOscParam {
             Self::Level(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Waveform(v) => v.scalar_curve(),
+            Self::Octave(v) => v.scalar_curve(),
+            Self::Level(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl VectorMixerParam {
@@ -1561,6 +2332,15 @@ impl VectorMixerParam {
     pub fn unit(&self) -> ParameterUnit {
         match self {
             Self::X(v) | Self::Y(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::X(v) | Self::Y(v) => v.scalar_curve(),
         }
     }
 }
@@ -1591,6 +2371,21 @@ impl VocalTractParam {
             | Self::Nasality(v)
             | Self::Breathiness(v)
             | Self::Level(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Tongue(v)
+            | Self::Constriction(v)
+            | Self::Lips(v)
+            | Self::Length(v)
+            | Self::Nasality(v)
+            | Self::Breathiness(v)
+            | Self::Level(v) => v.scalar_curve(),
         }
     }
 }
@@ -1629,6 +2424,24 @@ impl VoiceSynthParam {
             Self::VibratoDepth(v) | Self::UnisonDetune(v) => v.scalar_unit(),
         }
     }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Vowel(v)
+            | Self::FormantShift(v)
+            | Self::Breathiness(v)
+            | Self::OpenQuotient(v)
+            | Self::Tilt(v)
+            | Self::UnisonVoices(v)
+            | Self::UnisonSpread(v)
+            | Self::Level(v) => v.scalar_curve(),
+            Self::VibratoRate(v) => v.scalar_curve(),
+            Self::VibratoDepth(v) | Self::UnisonDetune(v) => v.scalar_curve(),
+        }
+    }
 }
 
 impl WaveshaperParam {
@@ -1649,6 +2462,17 @@ impl WaveshaperParam {
             Self::Curve(v) => v.scalar_unit(),
             Self::Drive(v) | Self::Mix(v) => v.scalar_unit(),
             Self::Bias(v) | Self::Symmetry(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Curve(v) => v.scalar_curve(),
+            Self::Drive(v) | Self::Mix(v) => v.scalar_curve(),
+            Self::Bias(v) | Self::Symmetry(v) => v.scalar_curve(),
         }
     }
 }
@@ -1675,6 +2499,19 @@ impl WavetableParam {
             Self::Detune(v) => v.scalar_unit(),
             Self::Octave(v) => v.scalar_unit(),
             Self::Level(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Table(v) => v.scalar_curve(),
+            Self::Position(v) => v.scalar_curve(),
+            Self::Detune(v) => v.scalar_curve(),
+            Self::Octave(v) => v.scalar_curve(),
+            Self::Level(v) => v.scalar_curve(),
         }
     }
 }
@@ -1825,6 +2662,80 @@ impl Param {
             Self::VoiceSynth(p) => p.unit(),
             Self::VocalTract(p) => p.unit(),
             Self::Fof(p) => p.unit(),
+        }
+    }
+
+    /// Suggested response curve (advisory; delegates to the module enum).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Oscillator(p) => p.default_curve(),
+            Self::MathOscillator(p) => p.default_curve(),
+            Self::SubOsc(p) => p.default_curve(),
+            Self::Noise(p) => p.default_curve(),
+            Self::Filter(p) => p.default_curve(),
+            Self::Envelope(p) => p.default_curve(),
+            Self::Lfo(p) => p.default_curve(),
+            Self::Amplifier(p) => p.default_curve(),
+            Self::Mixer(p) => p.default_curve(),
+            Self::Delay(p) => p.default_curve(),
+            Self::Reverb(p) => p.default_curve(),
+            Self::Distortion(p) => p.default_curve(),
+            Self::Chorus(p) => p.default_curve(),
+            Self::Phaser(p) => p.default_curve(),
+            Self::Flanger(p) => p.default_curve(),
+            Self::Compressor(p) => p.default_curve(),
+            Self::Eq(p) => p.default_curve(),
+            Self::Waveshaper(p) => p.default_curve(),
+            Self::Oscilloscope(p) => p.default_curve(),
+            Self::LevelMeter(p) => p.default_curve(),
+            Self::SpectrumAnalyzer(p) => p.default_curve(),
+            Self::ModMatrix(p) => p.default_curve(),
+            Self::RingMod(p) => p.default_curve(),
+            Self::EnvelopeFollower(p) => p.default_curve(),
+            Self::WavetableOsc(p) => p.default_curve(),
+            Self::Mseg(p) => p.default_curve(),
+            Self::AdditiveOsc(p) => p.default_curve(),
+            Self::BbdDelay(p) => p.default_curve(),
+            Self::MidSide(p) => p.default_curve(),
+            Self::Limiter(p) => p.default_curve(),
+            Self::Euclidean(p) => p.default_curve(),
+            Self::TuringMachine(p) => p.default_curve(),
+            Self::RandomGates(p) => p.default_curve(),
+            Self::KeyboardPanner(p) => p.default_curve(),
+            Self::BodyResonance(p) => p.default_curve(),
+            Self::MechanicalNoise(p) => p.default_curve(),
+            Self::GranularOsc(p) => p.default_curve(),
+            Self::Convolver(p) => p.default_curve(),
+            Self::PhaseVocoder(p) => p.default_curve(),
+            Self::Kinetic(p) => p.default_curve(),
+            Self::SignalMonitor(p) => p.default_curve(),
+            Self::FrequencyShifter(p) => p.default_curve(),
+            Self::VectorMixer(p) => p.default_curve(),
+            Self::LaSynth(p) => p.default_curve(),
+            Self::PitchTracker(p) => p.default_curve(),
+            Self::EnsembleChorus(p) => p.default_curve(),
+            Self::ShimmerReverb(p) => p.default_curve(),
+            Self::GranularFx(p) => p.default_curve(),
+            Self::SpectralBlur(p) => p.default_curve(),
+            Self::ModalResonator(p) => p.default_curve(),
+            Self::ReverseGateReverb(p) => p.default_curve(),
+            Self::FractalOsc(p) => p.default_curve(),
+            Self::Sampler(p) => p.default_curve(),
+            Self::DriftGenerator(p) => p.default_curve(),
+            Self::ChaoticOsc(p) => p.default_curve(),
+            Self::FormantFilter(p) => p.default_curve(),
+            Self::Fooglers(p) => p.default_curve(),
+            Self::BeatDetector(p) => p.default_curve(),
+            Self::PadSynth(p) => p.default_curve(),
+            Self::AmFormant(p) => p.default_curve(),
+            Self::TiltEq(p) => p.default_curve(),
+            Self::Univibe(p) => p.default_curve(),
+            Self::Crossover(p) => p.default_curve(),
+            Self::Vocoder(p) => p.default_curve(),
+            Self::VoiceSynth(p) => p.default_curve(),
+            Self::VocalTract(p) => p.default_curve(),
+            Self::Fof(p) => p.default_curve(),
         }
     }
 }

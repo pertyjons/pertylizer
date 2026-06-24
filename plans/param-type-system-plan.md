@@ -47,12 +47,12 @@ parameter carries a
 value (continuous / integer / bool / enum / reference) is then *re-guessed*, badly
 and inconsistently, by every layer below:
 
-| Layer | How it guesses "kind" today | Failure mode |
-|-------|------------------------------|--------------|
-| Descriptor | `choices.is_some()` ⇒ enum; `step == Some(1.0)` ⇒ integer; `widget_hint == Toggle` ⇒ bool | three different proxies for one fact |
-| Serialization (`patch.rs`) | always `Float` except hand-special-cased `Choice`/`SampleId` | int/bool saved as `5.0`/`1.0`, files not self-describing |
-| Schema (`gen_schemas.rs`) | always `"type": "number"` | LLM/MCP client sends `4.0`, not `4`; no `integer`/`boolean` |
-| GUI (`knob.rs`, `param_grid.rs`) | `unit`/`step`/`widget_hint` | integer knobs show `"4.00"`; sliders ignore `step`; no scroll-step |
+| Layer                            | How it guesses "kind" today                                                               | Failure mode                                                       |
+|----------------------------------|-------------------------------------------------------------------------------------------|--------------------------------------------------------------------|
+| Descriptor                       | `choices.is_some()` ⇒ enum; `step == Some(1.0)` ⇒ integer; `widget_hint == Toggle` ⇒ bool | three different proxies for one fact                               |
+| Serialization (`patch.rs`)       | always `Float` except hand-special-cased `Choice`/`SampleId`                              | int/bool saved as `5.0`/`1.0`, files not self-describing           |
+| Schema (`gen_schemas.rs`)        | always `"type": "number"`                                                                 | LLM/MCP client sends `4.0`, not `4`; no `integer`/`boolean`        |
+| GUI (`knob.rs`, `param_grid.rs`) | `unit`/`step`/`widget_hint`                                                               | integer knobs show `"4.00"`; sliders ignore `step`; no scroll-step |
 
 Additionally, `unit`, `response_curve`, `widget_hint` and `range` are **four
 independent, hand-declared descriptor fields** that are *not* derived from the
@@ -173,9 +173,12 @@ pub trait ScalarParam {
     const DEFAULT_CURVE: ResponseCurve;
 
     // Provided methods — call these on a bound value for drift-proof dispatch.
-    #[inline] fn scalar_kind(&self)  -> ParamKind     { Self::KIND }
-    #[inline] fn scalar_unit(&self)  -> ParameterUnit { Self::UNIT }
-    #[inline] fn scalar_curve(&self) -> ResponseCurve { Self::DEFAULT_CURVE }
+    #[inline]
+    fn scalar_kind(&self) -> ParamKind { Self::KIND }
+    #[inline]
+    fn scalar_unit(&self) -> ParameterUnit { Self::UNIT }
+    #[inline]
+    fn scalar_curve(&self) -> ResponseCurve { Self::DEFAULT_CURVE }
 }
 
 impl ScalarParam for Hertz {
@@ -183,24 +186,28 @@ impl ScalarParam for Hertz {
     const UNIT: ParameterUnit = ParameterUnit::Hertz;
     const DEFAULT_CURVE: ResponseCurve = ResponseCurve::Logarithmic;
 }
-impl ScalarParam for Decibels  { /* Continuous, Decibels, Linear   */ }
-impl ScalarParam for Seconds   { /* Continuous, Seconds,  Exponential */ }
+impl ScalarParam for Decibels { /* Continuous, Decibels, Linear   */ }
+impl ScalarParam for Seconds { /* Continuous, Seconds,  Exponential */ }
 impl ScalarParam for Milliseconds { /* Continuous, Milliseconds, Exponential */ }
-impl ScalarParam for Gain      { /* Continuous, None,     Squared   */ }
-impl ScalarParam for Cents     { /* Continuous, Cents,    Linear    */ }
+impl ScalarParam for Gain { /* Continuous, None,     Squared   */ }
+impl ScalarParam for Cents { /* Continuous, Cents,    Linear    */ }
 impl ScalarParam for Semitones { /* Continuous, Semitones,Linear    */ }
 impl ScalarParam for NormalizedValue { /* Continuous, None, Linear  */ }
-impl ScalarParam for BipolarValue    { /* Continuous, None, Linear  */ }
-impl ScalarParam for Phase     { /* Continuous, None,     Linear    */ }
+impl ScalarParam for BipolarValue { /* Continuous, None, Linear  */ }
+impl ScalarParam for Phase { /* Continuous, None,     Linear    */ }
 // integer-backed primitives:
-impl ScalarParam for u8  { const KIND = Integer; const UNIT = None; const DEFAULT_CURVE = Linear; }
+impl ScalarParam for u8 {
+    const KIND = Integer;
+    const UNIT = None;
+    const DEFAULT_CURVE = Linear;
+}
 impl ScalarParam for i32 { /* Integer, None, Linear */ }
 impl ScalarParam for usize { /* Integer, None, Linear */ }
 // boolean:
 impl ScalarParam for bool { const KIND = Bool; /* ... */ }
 // references:
-impl ScalarParam for SampleId         { const KIND = Reference; /* ... */ }
-impl ScalarParam for Option<SrcAddr>  { const KIND = Reference; /* ... */ }
+impl ScalarParam for SampleId { const KIND = Reference; /* ... */ }
+impl ScalarParam for Option<SrcAddr> { const KIND = Reference; /* ... */ }
 impl ScalarParam for Option<DestAddr> { const KIND = Reference; /* ... */ }
 // each module-local choice enum (Waveform, FilterMode, ...):
 impl ScalarParam for Waveform { const KIND = Enum; /* ... */ }
@@ -208,19 +215,19 @@ impl ScalarParam for Waveform { const KIND = Enum; /* ... */ }
 
 > **Important — what is derived, and what is NOT.**
 > - **`unit` IS derived** (Phase 2a) — it is *type-specific and cosmetic*: `Hertz` is
->   always "Hz". Deriving it removes hand-typing and kills the display-unit drift
->   §4.2 worried about. Overridable via `.unit()` (e.g. a `NormalizedValue` shown as
->   `Percent`).
+    > always "Hz". Deriving it removes hand-typing and kills the display-unit drift
+    > §4.2 worried about. Overridable via `.unit()` (e.g. a `NormalizedValue` shown as
+    > `Percent`).
 > - **`curve` is NOT auto-derived** (see Phase 2b). A response curve is *behavioral*
->   (it reshapes `normalize`/`denormalize`, which knob feel, automation, and the
->   headless exporters all depend on) and is often *param-specific, not
->   type-specific* (two `Seconds` params — an envelope attack vs a delay time — may
->   legitimately want different curves). Auto-seeding `curve` from the type in
->   `float()` would **silently flip** every param that currently relies on the
->   `Linear` default to the type's curve — a behavioral change. `DEFAULT_CURVE` is
->   therefore advisory input to a Phase 2b audit, not an automatic override.
+    > (it reshapes `normalize`/`denormalize`, which knob feel, automation, and the
+    > headless exporters all depend on) and is often *param-specific, not
+    > type-specific* (two `Seconds` params — an envelope attack vs a delay time — may
+    > legitimately want different curves). Auto-seeding `curve` from the type in
+    > `float()` would **silently flip** every param that currently relies on the
+    > `Linear` default to the type's curve — a behavioral change. `DEFAULT_CURVE` is
+    > therefore advisory input to a Phase 2b audit, not an automatic override.
 > - **`range` is NEVER derived** (see §1.4) — it is context-specific (`Hertz` has four
->   range presets). Stays explicit.
+    > range presets). Stays explicit.
 
 ### 1.3 Per-enum and aggregate `kind()` and `unit()` (`default_curve()` in Phase 2b)
 
@@ -237,12 +244,12 @@ impl MsegParam {
             // type changes (e.g. u8 → i32, or Seconds → Milliseconds), the kind
             // follows automatically; a turbofished `u8::KIND` would silently lie.
             Self::SegmentCount(v) | Self::SustainSegment(v)
-            | Self::LoopStart(v)  | Self::LoopEnd(v)        => v.scalar_kind(), // u8 → Integer
-            Self::LoopEnabled(v)                            => v.scalar_kind(), // bool → Bool
-            Self::TimeScale(v)                              => v.scalar_kind(),
-            Self::SegmentTime(_, v)                         => v.scalar_kind(), // value field, not the index
-            Self::SegmentLevel(_, v)                        => v.scalar_kind(),
-            Self::SegmentCurve(_, v)                        => v.scalar_kind(),
+            | Self::LoopStart(v) | Self::LoopEnd(v) => v.scalar_kind(), // u8 → Integer
+            Self::LoopEnabled(v) => v.scalar_kind(), // bool → Bool
+            Self::TimeScale(v) => v.scalar_kind(),
+            Self::SegmentTime(_, v) => v.scalar_kind(), // value field, not the index
+            Self::SegmentLevel(_, v) => v.scalar_kind(),
+            Self::SegmentCurve(_, v) => v.scalar_kind(),
         }
     }
     // unit() follows the same shape via `v.scalar_unit()`. (No `default_curve()`
@@ -287,13 +294,13 @@ taxonomy is revised before Phase 1.
 `ParamKind` looks almost 1:1 with `ParamValue`
 (`crates/pertylizer/src/patch.rs:367`):
 
-| `ParamValue` variant | `ParamKind` |
-|----------------------|-------------|
-| `Bool(bool)`         | `Bool`      |
-| `Int(i32)`           | `Integer`   |
-| `Float(f32)`         | `Continuous`|
-| `Choice(String)`     | `Enum`      |
-| `SampleId { .. }`    | `Reference` |
+| `ParamValue` variant | `ParamKind`  |
+|----------------------|--------------|
+| `Bool(bool)`         | `Bool`       |
+| `Int(i32)`           | `Integer`    |
+| `Float(f32)`         | `Continuous` |
+| `Choice(String)`     | `Enum`       |
+| `SampleId { .. }`    | `Reference`  |
 
 `ParamKind` is essentially the **discriminant of `ParamValue` lifted into the
 engine crate and refined**. They are intentionally *not* merged into one type, for
@@ -339,12 +346,12 @@ to. The types fall into four groups.
 concept).** Every boundary re-invented its own; none carries kind, two are missing
 variants, and they disagree on serialization:
 
-| Enum | Location | Variants | Notes |
-|------|----------|----------|-------|
-| `ParamValue` | `pertylizer/patch.rs:367` | Bool, Int, Float, Choice, **SampleId{sample_id}** | serialization (read+write); SampleId is a *struct* variant → `{"sample_id":N}` |
-| `PatchParamValue` | `synth_mcp/types.rs:950` | Float, Int, Bool, Choice, **SampleId(u64)** | MCP patch-resource view (Serialize-only); SampleId is a *tuple* variant → bare `N`. **Serializes SampleId differently from `ParamValue`** — a latent inconsistency |
-| `BridgeParamValue` | `synth_mcp/bridge.rs:161` | Number, Choice, Bool | internal MCP apply — **no Int, no SampleId/Reference** |
-| `ParamValueInput` | `synth_mcp/server.rs:364` | Number, Bool, Choice | tagged MCP tool *input* — **no Int, no Reference** |
+| Enum               | Location                  | Variants                                          | Notes                                                                                                                                                              |
+|--------------------|---------------------------|---------------------------------------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `ParamValue`       | `pertylizer/patch.rs:367` | Bool, Int, Float, Choice, **SampleId{sample_id}** | serialization (read+write); SampleId is a *struct* variant → `{"sample_id":N}`                                                                                     |
+| `PatchParamValue`  | `synth_mcp/types.rs:950`  | Float, Int, Bool, Choice, **SampleId(u64)**       | MCP patch-resource view (Serialize-only); SampleId is a *tuple* variant → bare `N`. **Serializes SampleId differently from `ParamValue`** — a latent inconsistency |
+| `BridgeParamValue` | `synth_mcp/bridge.rs:161` | Number, Choice, Bool                              | internal MCP apply — **no Int, no SampleId/Reference**                                                                                                             |
+| `ParamValueInput`  | `synth_mcp/server.rs:364` | Number, Bool, Choice                              | tagged MCP tool *input* — **no Int, no Reference**                                                                                                                 |
 
 > **Reviewer takeaway:** these four are the strongest collision with `ParamKind` —
 > their variants *are* an ad-hoc kind enumeration, duplicated four times,
@@ -355,15 +362,15 @@ variants, and they disagree on serialization:
 **Group B — descriptor projections / DTOs (each should *carry* `kind`).** All mirror
 `min`/`max`/`default`/`unit`/`choices` as bare `f32`/`String`; the f32-flattening
 leaks all the way to the MCP wire:
-
-| Type | Location | Role |
-|------|----------|------|
-| `ParameterDescriptor` | `synth_core/module_traits.rs:596` | the spec — gains the authoritative `kind` (Phase 1) |
-| `ParameterInfo` | `synth_mcp/types.rs:143` | MCP: a param's current value (`get_parameter`); already carries `response_curve`/`is_automatable` |
-| `ParamTypeInfo` + `ChoiceInfo` | `synth_mcp/types.rs:382/404` | MCP: type spec (`get_module_type_info`); `ChoiceInfo.value:f32` re-exposes enum-as-index |
-| `ReturnEffectParamInfo` | `synth_mcp/types.rs:790` | MCP: return-bus effect param value |
-| `PatchParamInfo` | `synth_mcp/types.rs:940` | MCP: name+`PatchParamValue` pair in a patch resource |
-| `AutomationTargetInfo` | `synth_mcp/types.rs:829` | MCP: a valid automation target (has `unit`/`min`/`max`/`response_curve`) |
+ 
+| Type                           | Location                          | Role                                                                                              |
+|--------------------------------|-----------------------------------|---------------------------------------------------------------------------------------------------|
+| `ParameterDescriptor`          | `synth_core/module_traits.rs:596` | the spec — gains the authoritative `kind` (Phase 1)                                               |
+| `ParameterInfo`                | `synth_mcp/types.rs:143`          | MCP: a param's current value (`get_parameter`); already carries `response_curve`/`is_automatable` |
+| `ParamTypeInfo` + `ChoiceInfo` | `synth_mcp/types.rs:382/404`      | MCP: type spec (`get_module_type_info`); `ChoiceInfo.value:f32` re-exposes enum-as-index          |
+| `ReturnEffectParamInfo`        | `synth_mcp/types.rs:790`          | MCP: return-bus effect param value                                                                |
+| `PatchParamInfo`               | `synth_mcp/types.rs:940`          | MCP: name+`PatchParamValue` pair in a patch resource                                              |
+| `AutomationTargetInfo`         | `synth_mcp/types.rs:829`          | MCP: a valid automation target (has `unit`/`min`/`max`/`response_curve`)                          |
 
 > **Naming collision — `kind` is already taken on the wire.**
 > `AutomationTargetInfo.kind: String` (`types.rs:834`) already uses the word "kind"
@@ -415,18 +422,18 @@ Each phase is independently committable and must pass the full gate
 (`cargo fmt --check && cargo build && cargo clippy --all-targets && cargo test`,
 per `CLAUDE.md`). Dependency order:
 
-| Phase | Title | Layer | Risk | Depends on |
-|-------|-------|-------|------|-----------|
-| 0 | Audit & taxonomy table ✅ **done** (`docs/param-kinds.md`) | (doc) | none | — |
-| 1 | `ParamKind` + `ScalarParam` + `kind()` + descriptor field ✅ **done** | engine | low | 0 |
-| 2a | Derive `unit` from newtype; drift-assert test ✅ **done** | engine | low | 1 |
-| 2b | `curve` audit (no silent auto-flip; behavioral) | engine | medium | 1 |
-| 3 | Kind-aware display (decimal-free ints; bool) | core+GUI | low | 1 |
-| 4 | Serialization emits `Int`/`Bool`; consistent int rounding | serialization | low | 1 |
-| 5 | Schema `type`/`kind`; MCP validation by kind | schema/MCP | low | 1 |
-| 6 | GUI interaction polish (snap/scroll/text by kind) | GUI | medium | 3 |
-| 7 | `ModuleParam` shared trait (recommended) | engine | medium (churn) | 1 |
-| 8 | `#[derive(ParamReflect)]` proc-macro — **skipped** | — | — | — |
+| Phase | Title                                                                | Layer         | Risk           | Depends on |
+|-------|----------------------------------------------------------------------|---------------|----------------|------------|
+| 0     | Audit & taxonomy table ✅ **done** (`docs/param-kinds.md`)            | (doc)         | none           | —          |
+| 1     | `ParamKind` + `ScalarParam` + `kind()` + descriptor field ✅ **done** | engine        | low            | 0          |
+| 2a    | Derive `unit` from newtype; drift-assert test ✅ **done**             | engine        | low            | 1          |
+| 2b    | `curve` audit (no silent auto-flip; behavioral) ✅ **done**          | engine        | medium         | 1          |
+| 3     | Kind-aware display (decimal-free ints; bool)                         | core+GUI      | low            | 1          |
+| 4     | Serialization emits `Int`/`Bool`; consistent int rounding            | serialization | low            | 1          |
+| 5     | Schema `type`/`kind`; MCP validation by kind                         | schema/MCP    | low            | 1          |
+| 6     | GUI interaction polish (snap/scroll/text by kind)                    | GUI           | medium         | 3          |
+| 7     | `ModuleParam` shared trait (recommended)                             | engine        | medium (churn) | 1          |
+| 8     | `#[derive(ParamReflect)]` proc-macro — **skipped**                   | —             | —              | —          |
 
 Phases 2–6 can proceed in parallel after Phase 1 lands, except Phase 6 depends on 3.
 
@@ -441,6 +448,7 @@ assignment list that Phase 1 implements against.
 
 **Taxonomy confirmed complete:** every variant fits one of the five kinds; no sixth
 kind needed. Headline results that change downstream phases:
+
 - **Exact buckets:** Continuous 307 / Enum 31 / Bool 20 / Integer 17 / Reference 3.
   (`Enum` was over-counted ~107 in the provisional tally — it is **31**.)
 - **Integer-backed newtypes are `Integer`, not `Continuous`** — `VoiceCount`,
@@ -463,6 +471,7 @@ kind needed. Headline results that change downstream phases:
 observable behavior change. Nothing consumes `kind` yet.
 
 **Steps:**
+
 1. Add `ParamKind` enum (§1.1) to `module_traits.rs`.
 2. Add the `ScalarParam` trait (§1.2). **Recommendation:** define all three
    constants + the provided `scalar_*` methods now (one pass over the value types),
@@ -498,21 +507,21 @@ observable behavior change. Nothing consumes `kind` yet.
 4. Add `Param::kind()` / `Param::unit()` aggregate delegation matches
    (`params/mod.rs`).
 5. Add `kind: ParamKind` to `ParameterDescriptor`; seed it in **both** constructors:
-   - `float()` (`module_traits.rs:654`): `kind: id.kind()`.
-   - `choice()` (`module_traits.rs:675`): `kind: id.kind()` — note this yields
-     `Enum` for real enums *and* `Reference` for mod-matrix slot source/dest,
-     cleanly separating the two. `choices` stays the picker list.
+    - `float()` (`module_traits.rs:654`): `kind: id.kind()`.
+    - `choice()` (`module_traits.rs:675`): `kind: id.kind()` — note this yields
+      `Enum` for real enums *and* `Reference` for mod-matrix slot source/dest,
+      cleanly separating the two. `choices` stays the picker list.
 6. **Tests (Phase 1 acceptance) — precise kind/choices invariants:**
-   - `kind == Enum ⇒ choices.is_some()` (every enum carries its choice list).
-   - `kind ∈ {Continuous, Integer, Bool} ⇒ choices.is_none()`.
-   - `kind == Reference`: `choices` is *optional* — the mod-matrix address params
-     carry a picker list, the `SampleId` reference carries none. (So the earlier
-     "Enum ⇔ choices" biconditional is wrong: choices presence does **not** imply
-     `Enum`.)
-   - Assert every descriptor's `kind` equals its `id.kind()` (constructors wired).
-   - A `ScalarParam` coverage check: every value type used in a `Param` variant has
-     an impl. Enforced by compilation (a missing impl fails the `v.scalar_kind()`
-     arm); a doc-test pins the intent.
+    - `kind == Enum ⇒ choices.is_some()` (every enum carries its choice list).
+    - `kind ∈ {Continuous, Integer, Bool} ⇒ choices.is_none()`.
+    - `kind == Reference`: `choices` is *optional* — the mod-matrix address params
+      carry a picker list, the `SampleId` reference carries none. (So the earlier
+      "Enum ⇔ choices" biconditional is wrong: choices presence does **not** imply
+      `Enum`.)
+    - Assert every descriptor's `kind` equals its `id.kind()` (constructors wired).
+    - A `ScalarParam` coverage check: every value type used in a `Param` variant has
+      an impl. Enforced by compilation (a missing impl fails the `v.scalar_kind()`
+      arm); a doc-test pins the intent.
 
 **Behavior change:** none. `kind` is dead metadata until later phases.
 
@@ -566,6 +575,7 @@ automation lanes, and the headless exporters all depend on. That is an audible
 behavioral change, not a cleanup.
 
 **Approach — audit, don't auto-apply:**
+
 1. Add a test computing each param's *current effective curve* (explicit `.curve()`
    value, else `Linear`) and comparing it to `id.default_curve()` (the type's
    suggestion). Report every mismatch — **do not change behavior**.
@@ -597,6 +607,7 @@ set as a regression test.
 Fixes `plans/TODO.md` §3.6 display and part of §3.5.
 
 **Steps:**
+
 1. Add one centralized formatter in `synth_core` that takes kind into account:
    ```rust
    // module_traits.rs — single source of truth for value→string.
@@ -640,6 +651,7 @@ showing whole numbers and snapping; bool params reading On/Off in the tooltip.
 (`from_param`, `patch.rs:439`) never produces `Int`/`Bool`.
 
 **Steps:**
+
 1. In `from_param`, after the existing SampleId / mod-matrix / choice special-cases,
    branch on `desc.kind` (or `p.kind()`):
    ```rust
@@ -707,6 +719,7 @@ separate, deferred item (§16).
 kind. Fixes `plans/TODO.md` §3.6 layer-2.
 
 **Steps:**
+
 1. `gen_schemas::parameter_descriptor` (`bin/gen_schemas.rs:117`): for numeric
    params emit `"type"` from kind — `Integer → "integer"`, `Bool → "boolean"`,
    `Continuous → "number"` — and a `"kind"` string for completeness. Enum keeps
@@ -715,15 +728,15 @@ kind. Fixes `plans/TODO.md` §3.6 layer-2.
 2. `validate_f32` (`module_traits.rs:844`): make it kind-aware (rename or add a
    `validate(kind, value)` variant). **Resolved policy (external review, §14.1 +
    Risk 3) — two distinct axes, don't conflate them:**
-   - **Fractional → lenient:** for `Integer`, *round* to nearest (so `4.3`/`4.0001`
-     from an automation/LFO sweep is accepted, not rejected), and **echo the applied
-     rounded value** in the response so the client knows what took effect.
-   - **Out-of-range → reject:** after rounding, range-check and **reject** an
-     out-of-bounds value (e.g. `20` for `1..=16`) with a clean `OutOfRange` error at
-     the MCP boundary — *before* `with_f32`'s clamp is ever hit. The `with_f32` clamp
-     stays only as a defensive net, never the primary mechanism.
-   - `Bool`: accept any finite (maps `>0.5`). `Continuous`/`Enum`: unchanged
-     (range / choice-index check). Non-finite rejected as today.
+    - **Fractional → lenient:** for `Integer`, *round* to nearest (so `4.3`/`4.0001`
+      from an automation/LFO sweep is accepted, not rejected), and **echo the applied
+      rounded value** in the response so the client knows what took effect.
+    - **Out-of-range → reject:** after rounding, range-check and **reject** an
+      out-of-bounds value (e.g. `20` for `1..=16`) with a clean `OutOfRange` error at
+      the MCP boundary — *before* `with_f32`'s clamp is ever hit. The `with_f32` clamp
+      stays only as a defensive net, never the primary mechanism.
+    - `Bool`: accept any finite (maps `>0.5`). `Continuous`/`Enum`: unchanged
+      (range / choice-index check). Non-finite rejected as today.
 3. MCP input carriers (Group A): `BridgeParamValue` (`bridge.rs:161`) and the tagged
    `ParamValueInput` (`server.rs:364`) both **lack `Int` and any Reference variant**
    — clients can't send a typed integer. Route their conversion
@@ -732,15 +745,15 @@ kind. Fixes `plans/TODO.md` §3.6 layer-2.
 4. Extend **all** discovery DTOs (Group B, §1.6) to carry the kind. **Use a field
    name that does not collide with the existing `AutomationTargetInfo.kind: String`**
    (target class) — e.g. `value_kind`:
-   - `ParamTypeInfo` (`types.rs:382`), built at `mcp_bridge.rs:12501` for
-     `get_module_type_info` — add `value_kind`; consider dropping
-     `ChoiceInfo.value: f32` (`types.rs:406`) now Enum is explicit.
-   - `ParameterInfo` (`types.rs:143`) for `get_parameter` — add `value_kind` so a
-     client reading a value knows to send `4` not `4.0`.
-   - `ReturnEffectParamInfo` (`types.rs:790`) and `PatchParamInfo` (`types.rs:940`)
-     — same treatment for return-bus effects and patch resources.
-   Keep the f32 fields for compatibility but let `value_kind` be the authoritative
-   type signal alongside the new JSON `"type"` in `descriptors.json`.
+    - `ParamTypeInfo` (`types.rs:382`), built at `mcp_bridge.rs:12501` for
+      `get_module_type_info` — add `value_kind`; consider dropping
+      `ChoiceInfo.value: f32` (`types.rs:406`) now Enum is explicit.
+    - `ParameterInfo` (`types.rs:143`) for `get_parameter` — add `value_kind` so a
+      client reading a value knows to send `4` not `4.0`.
+    - `ReturnEffectParamInfo` (`types.rs:790`) and `PatchParamInfo` (`types.rs:940`)
+      — same treatment for return-bus effects and patch resources.
+      Keep the f32 fields for compatibility but let `value_kind` be the authoritative
+      type signal alongside the new JSON `"type"` in `descriptors.json`.
 5. **MCP feedback hook (per `CLAUDE.md`):** while wiring this, note any tool whose
    schema still can't express integer/bool cleanly and report it.
 
@@ -755,6 +768,7 @@ MCP `set_parameter` rejects/rounds a fractional integer per the chosen policy.
 correctly. Directly answers the request to improve `Knob` et al.
 
 **Steps (each small, in `crates/pertylizer/src/gui/widgets/`):**
+
 1. **Integer slider parity** (`param_grid.rs:196` slider branch): when
    `param.kind == Integer`, snap to integers and use `.min_decimals(0).max_decimals(0)`.
    Today only the `Knob` honors `step`; the `Slider` path ignores it entirely.
@@ -808,6 +822,7 @@ prelude is undesirable, the fallback is to keep thin inherent methods that deleg
 to the trait — but the prelude is cleaner.)
 
 **Cost/benefit (still worth stating):**
+
 - **Benefit:** uniformity, generic code over `impl ModuleParam`, one place to read
   the contract.
 - **Cost:** mechanical call-site churn, contained by the prelude.
@@ -832,6 +847,7 @@ its cost. Section kept for the record / future reconsideration only.
 from each enum's variant types, eliminating the mechanical per-variant matches.
 
 **Reality check (do an evaluation spike before committing):**
+
 - `name()` needs a display string per variant → `#[param(name = "Segments")]` attr.
 - `with_f32()` has per-variant clamps (`mseg.rs:80` `clamp(1, 16)`, `.min(15)`) and
   index-encoded two-field variants (`SegmentTime(u8, Seconds)`) → needs
@@ -909,27 +925,28 @@ Ordered task list distilled from external review pass 2. Each box is a commit-si
 unit; the full gate must be green before each commit.
 
 **Step 1 — Foundation (Phase 1):**
+
 - [x] Define `ParamKind` in `synth_core/src/module_traits.rs` (`Serialize` only). *(done)*
 - [x] Implement `ScalarParam` per the `KIND` assignment list in
-      [`docs/param-kinds.md`](../docs/param-kinds.md): f32-newtypes → Continuous;
-      primitives + **integer-backed newtypes** (`VoiceCount`, `MidiNote`, `Octaves`,
-      `StepCount`) → Integer; `bool` → Bool; references (`SampleId`,
-      `Option<SrcAddr>`, `Option<DestAddr>`) → Reference. **`BitDepth` verified
-      `pub f32` → Continuous.** Impls live in `params/scalar_impls.rs`; a coverage
-      check confirmed all 56 carried value-types have an impl. *(done)*
+  [`docs/param-kinds.md`](../docs/param-kinds.md): f32-newtypes → Continuous;
+  primitives + **integer-backed newtypes** (`VoiceCount`, `MidiNote`, `Octaves`,
+  `StepCount`) → Integer; `bool` → Bool; references (`SampleId`,
+  `Option<SrcAddr>`, `Option<DestAddr>`) → Reference. **`BitDepth` verified
+  `pub f32` → Continuous.** Impls live in `params/scalar_impls.rs`; a coverage
+  check confirmed all 56 carried value-types have an impl. *(done)*
 - [x] Add `impl_scalar_param_enum!` and apply it to the ~25 choice enums (NOT the
-      address/Reference types — see Phase 1). *(done — `scalar_enum!` over 29 enums)*
+  address/Reference types — see Phase 1). *(done — `scalar_enum!` over 29 enums)*
 - [x] Add `kind()` + `unit()` to the 67 module enums and aggregate `Param`,
-      dispatching via **bound values** (`v.scalar_kind()` / `v.scalar_unit()`).
-      *(done — generated `params/kind_impls.rs`, arms grouped by value-type; exhaustive
-      matches guarantee completeness; two-field variants bind the value field.)*
+  dispatching via **bound values** (`v.scalar_kind()` / `v.scalar_unit()`).
+  *(done — generated `params/kind_impls.rs`, arms grouped by value-type; exhaustive
+  matches guarantee completeness; two-field variants bind the value field.)*
 - [x] Add the `kind` field to `ParameterDescriptor`; populate in `float()` and
-      `choice()` from `id.kind()`. *(done — `ParamKind` also derives `Deserialize`
-      since `ParameterDescriptor` does; never read from disk.)*
+  `choice()` from `id.kind()`. *(done — `ParamKind` also derives `Deserialize`
+  since `ParameterDescriptor` does; never read from disk.)*
 - [x] Acceptance tests: the precise kind/choices invariants (§4 Phase 1 step 6).
-      *(done — synth_core sanity test + an all-descriptors sweep in
-      `module_factory.rs` over `ModuleType::all()`; `kind == id.kind()` enforced for
-      every param.)*
+  *(done — synth_core sanity test + an all-descriptors sweep in
+  `module_factory.rs` over `ModuleType::all()`; `kind == id.kind()` enforced for
+  every param.)*
 
 > **Phase 1 follow-up (deferred):** the sweep surfaced **two enum-typed params built
 > with `float()` instead of `choice()`** → `kind == Enum` but no choice list:
@@ -940,41 +957,56 @@ unit; the full gate must be green before each commit.
 > touching those modules' UI/serialization.
 
 **Step 2 — Unit derivation + curve audit (Phase 2a / 2b):**
+
 - [x] Seed `unit` in `float()` from `id.unit()`. *(done)*
 - [x] Unit-drift test (`descriptor_unit_matches_type_unless_allow_listed` in
-      `module_factory.rs`). Surfaced 30 mismatches; triaged: 27 are benign
-      `Percent`-over-unitless-`Continuous` presentation (one principled allow rule),
-      and **2 real fixes at the source** — `BeatDivision`'s type-unit set to `Beats`,
-      and `WavetableOsc/octave`'s stale `.unit(Semitones)` removed so it derives
-      `Octaves` (`st`→`oct`). Regenerated `schemas/*.json`. *(done)*
+  `module_factory.rs`). Surfaced 30 mismatches; triaged: 27 are benign
+  `Percent`-over-unitless-`Continuous` presentation (one principled allow rule),
+  and **2 real fixes at the source** — `BeatDivision`'s type-unit set to `Beats`,
+  and `WavetableOsc/octave`'s stale `.unit(Semitones)` removed so it derives
+  `Octaves` (`st`→`oct`). Regenerated `schemas/*.json`. *(done)*
 - [ ] *(Phase 2a cleanup — separate commit)* delete now-redundant `.unit()` calls
-      equal to the derived default (e.g. `sync_division`'s `.unit(Beats)`).
-- [ ] Curve **audit** test (explicit curve vs `id.default_curve()`); resolve each
-      mismatch by an explicit curve or an `intentional_*` allow-list entry. **Do NOT
-      auto-apply curve in `float()`** (§14.6) — keep `Linear` the fallback. *(Phase 2b)*
-- [ ] Tighten `is_automatable` to `modulatable && kind == Continuous`; ship the
-      before/after regression test. *(Phase 2b)*
+  equal to the derived default (e.g. `sync_division`'s `.unit(Beats)`).
+- [x] Curve **audit** (one-shot): `default_curve()` added to all 67 enums + `Param`
+  (advisory; **not** wired into `float()` per §14.6). Result: **397 match, 87 would
+  flip** (38 `Linear→Exponential` time, 24 `→Squared` gain, 15 `→Logarithmic` freq,
+  +10 explicit-vs-suggested) — concretely vindicates §14.6 (auto-deriving curve would
+  silently change 87 params' feel/automation). **No curve changed**; added a small
+  `default_curve()` correctness test. *(done)*
+- [x] Tighten `is_automatable` to `modulatable && kind == Continuous` + regression
+  test. **Correction to the "drops nothing" assumption:** it drops **10**
+  non-continuous params that were `modulatable(true)` with no choices —
+  `Chorus/voices`, `EnsembleChorus/voices`, `ModalResonator/{base_note,modes}`,
+  `KeyboardPanner/center` (Integer); `Compressor/sidechain`,
+  `{GranularFx,PhaseVocoder,SpectralBlur}/freeze` (Bool); `SpectralBlur/fft_size`
+  (Enum). They lose *sequencer-lane* eligibility but keep **mod-matrix** eligibility
+  (`modulatable` unchanged). An existing lane on one becomes a no-op at apply
+  (`instrument.rs:1159`); lane data persists. Acceptable per no-backward-compat;
+  relates to deferred §16 load diagnostics. *(done)*
 
 **Step 3 — Display + interaction (Phase 3 / 6):**
+
 - [ ] Centralized `format_value(kind, unit, value)`; route `Knob` and `Slider`
-      through it (`On`/`Off` for bool; decimal-free integers).
+  through it (`On`/`Off` for bool; decimal-free integers).
 - [ ] `Knob::from_descriptor`: default `step` to `1.0` when `kind == Integer` &&
-      `step.is_none()`; drop the four `.step(1.0)` in `mseg.rs`.
+  `step.is_none()`; drop the four `.step(1.0)` in `mseg.rs`.
 - [ ] `param_grid.rs` slider: integer kind → `min_decimals(0)`/`max_decimals(0)` +
-      snapping; scroll-wheel stepping on `Knob`; bool always a checkbox.
+  snapping; scroll-wheel stepping on `Knob`; bool always a checkbox.
 
 **Step 4 — Serialization + schema/MCP (Phase 4 / 5):**
+
 - [ ] `from_param`: emit `Int`/`Bool` by kind; alignment-invariant test.
 - [ ] Integer `with_f32`: `round()` instead of `as u8` truncation; reference values
-      stay off the `f32` path (u64 round-trip test).
+  stay off the `f32` path (u64 round-trip test).
 - [ ] Normalize `PatchParamValue::SampleId` to the struct shape `{"sample_id": N}`.
 - [ ] `gen_schemas`: emit `"type": integer|boolean|number` + `value_kind`. MCP
-      validation: round fractional integers + echo, reject out-of-range, before the
-      `with_f32` clamp. Extend the Group-B DTOs with `value_kind`.
+  validation: round fractional integers + echo, reject out-of-range, before the
+  `with_f32` clamp. Extend the Group-B DTOs with `value_kind`.
 
 **Step 5 — Trait (Phase 7):**
+
 - [ ] Introduce `ModuleParam`; move the 67 enums' methods onto it; export via a
-      `synth_core::prelude`. (Phase 8 proc-macro: skipped.)
+  `synth_core::prelude`. (Phase 8 proc-macro: skipped.)
 
 ---
 
@@ -993,6 +1025,7 @@ They are **not strictly type-safe on load**.
 
 **The future step.** Add a validation pass on project/instrument load that, for each
 `(type_id, ParamValue)` against its descriptor, checks:
+
 - the `ParamValue` variant matches `descriptor.kind` (the same alignment invariant
   the *write* side already enforces in test — applied to *incoming* data);
 - `Integer` values are integral and in range; `Continuous` in range; `Enum` resolves
@@ -1001,6 +1034,7 @@ They are **not strictly type-safe on load**.
 **Key design decision (reject vs warn) — must be made when this is built.** Strict
 *rejection* conflicts with the intentional backward-load leniency. So this is not a
 free tightening; pick a policy:
+
 - **Reject** — fail the load (or the offending param) on any mismatch. Safest, but
   breaks old/edited files and loses the graceful-degradation Pertylizer has today.
 - **Warn + coerce (recommended default)** — keep loading (coerce as now) but collect

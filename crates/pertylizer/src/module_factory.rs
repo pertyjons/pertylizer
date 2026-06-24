@@ -549,6 +549,50 @@ mod tests {
         );
     }
 
+    /// Phase 2b: tightening `is_automatable` from `modulatable && choices.is_none()`
+    /// to `modulatable && kind == Continuous` removes sequencer-automation
+    /// eligibility from exactly the params below — non-continuous targets
+    /// (`Integer` counts/notes, `Bool` toggles, the enum-as-float `fft_size`) that
+    /// the old `choices.is_none()` rule let through but that cannot be meaningfully
+    /// ramped by a normalized lane. They keep their **mod-matrix** eligibility
+    /// (which uses `modulatable` directly, unchanged). This guard pins the exact
+    /// set so any change — especially the real regression of dropping a *Continuous*
+    /// param — is surfaced for review.
+    #[test]
+    fn is_automatable_tightening_drops_only_non_continuous() {
+        let mut dropped: Vec<String> = Vec::new();
+        for mt in ALL_MODULE_TYPES.iter().copied() {
+            let Some(desc) = get_descriptor(mt) else {
+                continue;
+            };
+            for p in &desc.parameters {
+                let old = p.modulatable && p.choices.is_none();
+                if old && !p.is_automatable() {
+                    dropped.push(format!("{mt:?}/{}", p.type_id));
+                }
+            }
+        }
+        dropped.sort();
+        let mut expected = [
+            "Chorus/voices",
+            "Compressor/sidechain",
+            "EnsembleChorus/voices",
+            "GranularFx/freeze",
+            "KeyboardPanner/center",
+            "ModalResonator/base_note",
+            "ModalResonator/modes",
+            "PhaseVocoder/freeze",
+            "SpectralBlur/fft_size",
+            "SpectralBlur/freeze",
+        ];
+        expected.sort_unstable();
+        assert_eq!(
+            dropped, expected,
+            "set of params losing automation eligibility changed — review (a \
+             Continuous param here would be a real regression)"
+        );
+    }
+
     /// Resolve a module's descriptor *and* its `get_params()` snapshot, covering
     /// voice modules, effects, and visualizers (mirrors [`get_descriptor`]).
     fn descriptor_and_params(mt: ModuleType) -> Option<(ModuleDescriptor, Vec<synth_core::Param>)> {
