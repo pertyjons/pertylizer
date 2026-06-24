@@ -5622,8 +5622,8 @@ fn draw_visualizer_display(
         };
 
         // Use available width, with min/max constraints
-        let width = ui.available_width().clamp(120.0, 300.0);
-        let height = (width * 0.5).clamp(60.0, 120.0);
+        let width = ui.available_width().clamp(150.0, 340.0);
+        let height = (width * 0.5).clamp(80.0, 150.0);
 
         super::widgets::draw_oscilloscope(
             ui,
@@ -5657,8 +5657,8 @@ fn draw_visualizer_display(
         };
 
         // Use available width, with min/max constraints
-        let width = ui.available_width().clamp(120.0, 300.0);
-        let height = (width * 0.5).clamp(60.0, 120.0);
+        let width = ui.available_width().clamp(150.0, 340.0);
+        let height = (width * 0.5).clamp(80.0, 150.0);
 
         super::widgets::draw_spectrum_analyzer(
             ui,
@@ -5689,8 +5689,8 @@ fn draw_visualizer_display(
         };
 
         // Use available width for meter, with constraints
-        let width = ui.available_width().clamp(60.0, 120.0);
-        let height = (width * 1.5).clamp(80.0, 150.0);
+        let width = ui.available_width().clamp(72.0, 140.0);
+        let height = (width * 1.5).clamp(100.0, 170.0);
 
         super::widgets::draw_stereo_meter(ui, peak_l, peak_r, rms_l, rms_r, width, height);
 

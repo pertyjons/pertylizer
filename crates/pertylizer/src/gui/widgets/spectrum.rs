@@ -22,7 +22,12 @@ pub fn draw_spectrum_analyzer(
 ) {
     let (rect, _response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
     let t = theme();
-    let painter = ui.painter();
+    // Clip to the graph rect so stray/invalid points can never paint outside our
+    // bounds. Expand by the border width so the StrokeKind::Outside border below
+    // (which sits just outside `rect`) is not scissored away.
+    let painter = ui
+        .painter()
+        .with_clip_rect(rect.expand(t.style.border_width));
 
     // Background
     painter.rect_filled(rect, t.style.corner_radius, t.colors.bg_dark);
@@ -101,7 +106,12 @@ pub fn draw_spectrum_analyzer(
                 magnitudes[bin]
             };
 
-            let y = rect.bottom() - (mag * gain).clamp(0.0, 1.0) * (rect.height() - 4.0);
+            // Sanitize: clamp() does not turn NaN into a finite value, so guard explicitly
+            // before it reaches the painter and gets drawn as a stray line. Once finite and
+            // clamped to 0..1, `y` is necessarily within [rect.top()+4, rect.bottom()].
+            let scaled = mag * gain;
+            let scaled = if scaled.is_finite() { scaled } else { 0.0 };
+            let y = rect.bottom() - scaled.clamp(0.0, 1.0) * (rect.height() - 4.0);
             points.push(Pos2::new(rect.left() + px as f32, y));
         }
 

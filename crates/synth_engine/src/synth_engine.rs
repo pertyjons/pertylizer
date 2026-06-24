@@ -2376,11 +2376,19 @@ impl SynthEngine {
             Some(inst_id) => {
                 if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
                     instrument.effect_chain_mut().remove_visualizer(id);
+                    instrument.remove_module_description(id);
                 }
             }
             None => {
                 self.master_effects.remove_visualizer(id);
             }
+        }
+        self.update_shared_instruments();
+        // Drop the removed visualizer slot from shared_graph so offline tooling
+        // does not keep rendering with a stale snapshot.
+        self.update_shared_graph(instrument_id);
+        if instrument_id.is_none() {
+            self.update_shared_master_effects();
         }
     }
 

@@ -174,22 +174,54 @@ pub fn draw_stereo_meter(
     // Background
     painter.rect_filled(rect, t.style.corner_radius, t.colors.bg_dark);
 
-    let bar_width = (width - 10.0) / 2.0;
     let padding = 2.0;
+    // Left gutter reserved for the dB scale ruler.
+    let scale_w = 24.0;
+    // Bottom band reserved for the L/R channel labels (matches draw_meter_bar,
+    // which leaves 14px at the bottom of each bar).
+    let label_band = 14.0;
+
+    let bars_left = rect.left() + padding + scale_w;
+    let bars_right = rect.right() - padding;
+    let bars_w = (bars_right - bars_left).max(2.0);
+    let bar_gap = 6.0;
+    let bar_width = ((bars_w - bar_gap) / 2.0).max(1.0);
 
     // Left meter
     let left_rect = Rect::from_min_size(
-        Pos2::new(rect.left() + padding, rect.top() + padding),
+        Pos2::new(bars_left, rect.top() + padding),
         Vec2::new(bar_width, height - padding * 2.0),
     );
     draw_meter_bar(painter, left_rect, peak_l, rms_l, &t);
 
     // Right meter
     let right_rect = Rect::from_min_size(
-        Pos2::new(rect.left() + bar_width + 6.0, rect.top() + padding),
+        Pos2::new(bars_left + bar_width + bar_gap, rect.top() + padding),
         Vec2::new(bar_width, height - padding * 2.0),
     );
     draw_meter_bar(painter, right_rect, peak_r, rms_r, &t);
+
+    // dB scale ruler in the left gutter. Ticks align with the bars' segment area,
+    // which spans [rect.top()+padding, rect.bottom()-padding-label_band] (norm 1..0)
+    // — the same -60dB..0dB mapping draw_meter_bar uses for its segments.
+    let seg_top = rect.top() + padding;
+    let seg_bottom = rect.bottom() - padding - label_band;
+    let seg_h = (seg_bottom - seg_top).max(1.0);
+    for &db in &[0.0_f32, -6.0, -12.0, -24.0, -48.0] {
+        let norm = (db + 60.0) / 60.0;
+        let y = seg_bottom - norm * seg_h;
+        painter.line_segment(
+            [Pos2::new(bars_left - 4.0, y), Pos2::new(bars_left, y)],
+            Stroke::new(0.5, t.colors.border),
+        );
+        painter.text(
+            Pos2::new(bars_left - 6.0, y),
+            egui::Align2::RIGHT_CENTER,
+            format!("{}", db as i32),
+            t.fonts.small(),
+            t.colors.text_dim,
+        );
+    }
 
     // Labels
     let label_y = rect.bottom() - 12.0;
