@@ -1031,10 +1031,13 @@ unit; the full gate must be green before each commit.
   **kind-aware render group** (`param_render_group`): a `Bool` param that renders is
   always a checkbox regardless of widget hint, while a `Hidden` bool stays hidden.
   Unit test added. *(done — needs in-app eyeball, per the phase's verify step)*
-- [ ] *(Phase 6 — deferred, needs in-app tuning)* scroll-wheel stepping on `Knob`
-  (integer ±1 / continuous fine step) and integer drag-sensitivity: a new feature
-  with magic-number tuning + scroll-vs-panel-consumption that must be verified
-  visually, so not shipped blind in the autonomous loop.
+- [x] *(Phase 6)* **integer drag-sensitivity** — done (`54b7e82e`): stepped knobs
+  accumulate an unsnapped value in egui memory across the drag and move in value
+  space at a fixed `STEP_DRAG_PIXELS` (range-independent). Confirmed good in-app.
+- [ ] *(Phase 6 — deferred, blocked on input hardware)* scroll-wheel stepping on
+  `Knob` (integer ±1 / continuous fine step): needs in-app verification + handling
+  the scroll-vs-panel consumption. Parked until a mouse/trackpad is available to
+  test (a laptop trackpad's two-finger scroll also exercises it).
 
 **Step 4 — Serialization + schema/MCP (Phase 4 / 5):**
 
