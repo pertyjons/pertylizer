@@ -12,6 +12,14 @@ use synth_core::{ParamKind, ParameterDescriptor, ParameterUnit, ResponseCurve};
 /// drag distance regardless of how many steps the range spans.
 const STEP_DRAG_PIXELS: f32 = 8.0;
 
+/// Scroll units per discrete step on a stepped knob (≈ one mouse-wheel notch);
+/// a smooth trackpad swipe accumulates toward it. Tunable feel constant.
+const SCROLL_UNITS_PER_STEP: f32 = 50.0;
+
+/// Continuous-knob scroll sensitivity (normalized value per scroll unit), so a
+/// wheel notch nudges the value a couple of percent. Tunable feel constant.
+const SCROLL_CONT_SENSITIVITY: f32 = 0.0005;
+
 /// A rotary knob widget.
 pub struct Knob<'a> {
     value: &'a mut f32,
@@ -176,6 +184,38 @@ impl<'a> Knob<'a> {
                 let normalized = self.response_curve.normalize(*self.value, self.range);
                 let new_normalized = (normalized + delta * sensitivity).clamp(0.0, 1.0);
                 *self.value = self.response_curve.denormalize(new_normalized, self.range);
+            }
+        }
+
+        // Mouse-wheel / trackpad scroll over the knob adjusts its value.
+        if response.hovered() {
+            let scroll = ui.input(|i| i.smooth_scroll_delta.y);
+            if scroll != 0.0 {
+                if let Some(step) = self.step {
+                    // Accumulate scroll units and emit whole steps, keeping the
+                    // remainder so a smooth trackpad swipe ticks one step at a time
+                    // (and a mouse notch ≈ one step). Scroll up increases.
+                    let acc_id = response.id.with("knob_scroll_acc");
+                    let acc = ui.memory(|m| m.data.get_temp::<f32>(acc_id)).unwrap_or(0.0) + scroll;
+                    let steps = (acc / SCROLL_UNITS_PER_STEP).trunc();
+                    if steps != 0.0 {
+                        *self.value = self.snapped(
+                            (*self.value + steps * step).clamp(self.range.min, self.range.max),
+                        );
+                    }
+                    ui.memory_mut(|m| {
+                        m.data
+                            .insert_temp(acc_id, acc - steps * SCROLL_UNITS_PER_STEP)
+                    });
+                } else {
+                    let normalized = self.response_curve.normalize(*self.value, self.range);
+                    let new_normalized =
+                        (normalized + scroll * SCROLL_CONT_SENSITIVITY).clamp(0.0, 1.0);
+                    *self.value = self.response_curve.denormalize(new_normalized, self.range);
+                }
+                // Consume the vertical scroll so an enclosing ScrollArea (patch
+                // editor / mixer) doesn't also scroll while adjusting the knob.
+                ui.ctx().input_mut(|i| i.smooth_scroll_delta.y = 0.0);
             }
         }
 
