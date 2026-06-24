@@ -397,7 +397,7 @@ impl ChorusParam {
             Self::Delay(_) => Self::Delay(Milliseconds::new(value)),
             Self::Feedback(_) => Self::Feedback(NormalizedValue::new(value)),
             Self::Mix(_) => Self::Mix(NormalizedValue::new(value)),
-            Self::Voices(_) => Self::Voices(VoiceCount::new(value as u8)),
+            Self::Voices(_) => Self::Voices(VoiceCount::new(value.round() as u8)),
         }
     }
 }
@@ -453,7 +453,7 @@ impl PhaserParam {
             Self::Rate(_) => Self::Rate(Hertz::new(value)),
             Self::Depth(_) => Self::Depth(NormalizedValue::new(value)),
             Self::Feedback(_) => Self::Feedback(BipolarValue::new(value)),
-            Self::Stages(_) => Self::Stages(value as u8),
+            Self::Stages(_) => Self::Stages(value.round() as u8),
             Self::CenterFreq(_) => Self::CenterFreq(Hertz::new(value)),
             Self::Mix(_) => Self::Mix(NormalizedValue::new(value)),
         }
@@ -886,7 +886,7 @@ impl EnsembleChorusParam {
             Self::Tone(_) => Self::Tone(NormalizedValue::new(value)),
             Self::Noise(_) => Self::Noise(NormalizedValue::new(value)),
             Self::StereoWidth(_) => Self::StereoWidth(NormalizedValue::new(value)),
-            Self::Voices(_) => Self::Voices(VoiceCount::new(value as u8)),
+            Self::Voices(_) => Self::Voices(VoiceCount::new(value.round() as u8)),
         }
     }
 }
@@ -1140,9 +1140,9 @@ impl ModalResonatorParam {
 
     pub fn with_f32(&self, value: f32) -> Self {
         match self {
-            Self::BaseNote(_) => Self::BaseNote(MidiNote::new(value as u8)),
+            Self::BaseNote(_) => Self::BaseNote(MidiNote::new(value.round() as u8)),
             Self::Spread(_) => Self::Spread(NormalizedValue::new(value)),
-            Self::Modes(_) => Self::Modes(VoiceCount::new(value as u8)),
+            Self::Modes(_) => Self::Modes(VoiceCount::new(value.round() as u8)),
             Self::Decay(_) => Self::Decay(NormalizedValue::new(value)),
             Self::Brightness(_) => Self::Brightness(NormalizedValue::new(value)),
             Self::Mix(_) => Self::Mix(NormalizedValue::new(value)),

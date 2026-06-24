@@ -1346,7 +1346,9 @@ impl SynthBridge for AppSynthBridge {
                                         ParamValue::Float(f) => PatchParamValue::Float(*f),
                                         ParamValue::Int(i) => PatchParamValue::Int(*i),
                                         ParamValue::SampleId { sample_id } => {
-                                            PatchParamValue::SampleId(*sample_id)
+                                            PatchParamValue::SampleId {
+                                                sample_id: *sample_id,
+                                            }
                                         }
                                         ParamValue::Bool(b) => PatchParamValue::Bool(*b),
                                         ParamValue::Choice(s) => PatchParamValue::Choice(s.clone()),

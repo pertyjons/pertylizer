@@ -593,6 +593,46 @@ mod tests {
         );
     }
 
+    /// Phase 4: the `ParamValue` that `from_param` produces must have the variant
+    /// dictated by the descriptor's `kind` — the `ParamValue` ↔ `ParamKind` bridge
+    /// (plan §1.5). Swept across every real descriptor's default value.
+    #[test]
+    fn param_value_variant_matches_kind() {
+        use crate::patch::ParamValue;
+        use synth_core::ParamKind;
+        let mut bad: Vec<String> = Vec::new();
+        for mt in ALL_MODULE_TYPES.iter().copied() {
+            let Some(desc) = get_descriptor(mt) else {
+                continue;
+            };
+            for p in &desc.parameters {
+                let pv = ParamValue::from_param(&p.id, p);
+                let ok = match p.kind {
+                    ParamKind::Continuous => matches!(pv, ParamValue::Float(_)),
+                    ParamKind::Integer => matches!(pv, ParamValue::Int(_)),
+                    ParamKind::Bool => matches!(pv, ParamValue::Bool(_)),
+                    // Real enums map their index to a choice id; the two enum-as-float
+                    // params (no choice list — Phase 1 follow-up) fall to Float, which
+                    // still round-trips through `with_f32`.
+                    ParamKind::Enum if p.choices.is_some() => matches!(pv, ParamValue::Choice(_)),
+                    ParamKind::Enum => matches!(pv, ParamValue::Float(_)),
+                    // Sample id → struct SampleId; mod-matrix address → Choice string.
+                    ParamKind::Reference => {
+                        matches!(pv, ParamValue::Choice(_) | ParamValue::SampleId { .. })
+                    }
+                };
+                if !ok {
+                    bad.push(format!("{mt:?}/{}: kind={:?} -> {pv:?}", p.type_id, p.kind));
+                }
+            }
+        }
+        assert!(
+            bad.is_empty(),
+            "ParamValue variant disagrees with kind:\n{}",
+            bad.join("\n")
+        );
+    }
+
     /// Resolve a module's descriptor *and* its `get_params()` snapshot, covering
     /// voice modules, effects, and visualizers (mirrors [`get_descriptor`]).
     fn descriptor_and_params(mt: ModuleType) -> Option<(ModuleDescriptor, Vec<synth_core::Param>)> {

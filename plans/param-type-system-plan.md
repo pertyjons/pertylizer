@@ -429,7 +429,7 @@ per `CLAUDE.md`). Dependency order:
 | 2a    | Derive `unit` from newtype; drift-assert test ✅ **done**             | engine        | low            | 1          |
 | 2b    | `curve` audit (no silent auto-flip; behavioral) ✅ **done**          | engine        | medium         | 1          |
 | 3     | Kind-aware display (decimal-free ints; bool) ✅ **done**             | core+GUI      | low            | 1          |
-| 4     | Serialization emits `Int`/`Bool`; consistent int rounding            | serialization | low            | 1          |
+| 4     | Serialization emits `Int`/`Bool`; consistent int rounding ✅ **done** | serialization | low            | 1          |
 | 5     | Schema `type`/`kind`; MCP validation by kind                         | schema/MCP    | low            | 1          |
 | 6     | GUI interaction polish (snap/scroll/text by kind)                    | GUI           | medium         | 3          |
 | 7     | `ModuleParam` shared trait (recommended)                             | engine        | medium (churn) | 1          |
@@ -1002,11 +1002,18 @@ unit; the full gate must be green before each commit.
 
 **Step 4 — Serialization + schema/MCP (Phase 4 / 5):**
 
-- [ ] `from_param`: emit `Int`/`Bool` by kind; alignment-invariant test.
-- [ ] Integer `with_f32`: `round()` instead of `as u8` truncation; reference values
-  stay off the `f32` path (u64 round-trip test).
-- [ ] Normalize `PatchParamValue::SampleId` to the struct shape `{"sample_id": N}`.
-- [ ] `gen_schemas`: emit `"type": integer|boolean|number` + `value_kind`. MCP
+- [x] `from_param`: emits `Int`/`Bool` by kind (after the existing SampleId /
+  mod-matrix / choice special-cases). All-descriptors **alignment-invariant** sweep
+  (`param_value_variant_matches_kind`) confirms the `ParamValue` variant matches
+  `kind` for every param (enum-as-float → `Float` is encoded, see §1.5). *(done)*
+- [x] Integer `with_f32` **rounds** instead of truncating — 14 integer-kind sites
+  (`mseg`/`generative`/`effects`/`physical`); `UnisonVoices`/`Octaves`/`CenterNote`
+  already rounded. Enum `from_index` casts left truncating (Enum kind, integral
+  indices — a separate consistency follow-up, out of Phase 4 scope). `SampleId`
+  stays off the `f32` path; **u64 ≥ 2³³ round-trip test** added. *(done)*
+- [x] Normalized `PatchParamValue::SampleId` to the struct shape `{"sample_id": N}`
+  (matches `ParamValue`); updated its one construction site. *(done)*
+- [ ] *(Phase 5)* `gen_schemas`: emit `"type": integer|boolean|number` + `value_kind`. MCP
   validation: round fractional integers + echo, reject out-of-range, before the
   `with_f32` clamp. Extend the Group-B DTOs with `value_kind`.
 

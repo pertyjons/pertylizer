@@ -44,9 +44,9 @@ impl EuclideanParam {
 
     pub fn with_f32(&self, value: f32) -> Self {
         match self {
-            Self::Steps(_) => Self::Steps(StepCount::new((value as u8).clamp(1, 32))),
-            Self::Pulses(_) => Self::Pulses(StepCount::new((value as u8).min(32))),
-            Self::Rotation(_) => Self::Rotation(StepCount::new((value as u8).min(31))),
+            Self::Steps(_) => Self::Steps(StepCount::new((value.round() as u8).clamp(1, 32))),
+            Self::Pulses(_) => Self::Pulses(StepCount::new((value.round() as u8).min(32))),
+            Self::Rotation(_) => Self::Rotation(StepCount::new((value.round() as u8).min(31))),
             Self::Swing(_) => Self::Swing(NormalizedValue::new(value)),
         }
     }
@@ -216,7 +216,7 @@ impl RandomGatesParam {
     pub fn with_f32(&self, value: f32) -> Self {
         match self {
             Self::Density(_) => Self::Density(NormalizedValue::new(value)),
-            Self::Seed(_) => Self::Seed(value as u32),
+            Self::Seed(_) => Self::Seed(value.round() as u32),
             Self::BurstProbability(_) => Self::BurstProbability(NormalizedValue::new(value)),
             Self::GateLength(_) => Self::GateLength(NormalizedValue::new(value)),
         }
