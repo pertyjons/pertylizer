@@ -4,7 +4,7 @@ use eframe::egui::{self, Color32, Pos2, Response, Sense, Stroke, Ui, Vec2};
 
 use crate::gui::theme::theme;
 use synth_core::ValueRange;
-use synth_core::{ParameterDescriptor, ParameterUnit, ResponseCurve};
+use synth_core::{ParamKind, ParameterDescriptor, ParameterUnit, ResponseCurve};
 
 /// A rotary knob widget.
 pub struct Knob<'a> {
@@ -12,6 +12,9 @@ pub struct Knob<'a> {
     range: ValueRange,
     response_curve: ResponseCurve,
     unit: ParameterUnit,
+    /// Value-kind, driving display (decimal-free integers, `On`/`Off` bools) and
+    /// the default integer snapping step.
+    kind: ParamKind,
     label: String,
     size: f32,
     accent_color: Color32,
@@ -30,6 +33,7 @@ impl<'a> Knob<'a> {
             range: ValueRange::symmetric(min, max),
             response_curve: ResponseCurve::Linear,
             unit: ParameterUnit::None,
+            kind: ParamKind::Continuous,
             label: String::new(),
             size: 40.0, // Smaller default size
             accent_color: theme().colors.accent_orange,
@@ -44,10 +48,15 @@ impl<'a> Knob<'a> {
             range: descriptor.range,
             response_curve: descriptor.response_curve,
             unit: descriptor.unit,
+            kind: descriptor.kind,
             label: descriptor.name.clone(),
             size: 40.0, // Smaller default size
             accent_color: theme().colors.accent_orange,
-            step: descriptor.step,
+            // Integer params snap to whole numbers by default — the kind supplies
+            // the step so descriptors no longer need an explicit `.step(1.0)`.
+            step: descriptor
+                .step
+                .or_else(|| (descriptor.kind == ParamKind::Integer).then_some(1.0)),
             mod_marker: None,
         }
     }
@@ -84,9 +93,9 @@ impl<'a> Knob<'a> {
         self
     }
 
-    /// Format the value with the appropriate unit suffix
+    /// Format the value, kind-aware (decimal-free integers, `On`/`Off` bools).
     fn format_value(&self) -> String {
-        self.unit.format(*self.value)
+        self.kind.format(self.unit, *self.value)
     }
 
     #[must_use]

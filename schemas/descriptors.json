@@ -6345,7 +6345,6 @@
           "modulatable": false,
           "name": "Loop End",
           "response_curve": "linear",
-          "step": 1.0,
           "unit": "none"
         },
         "loop_start": {
@@ -6356,7 +6355,6 @@
           "modulatable": false,
           "name": "Loop Start",
           "response_curve": "linear",
-          "step": 1.0,
           "unit": "none"
         },
         "seg0_curve": {
@@ -6847,7 +6845,6 @@
           "modulatable": false,
           "name": "Segments",
           "response_curve": "linear",
-          "step": 1.0,
           "unit": "none"
         },
         "sustain_seg": {
@@ -6858,7 +6855,6 @@
           "modulatable": false,
           "name": "Sustain Seg",
           "response_curve": "linear",
-          "step": 1.0,
           "unit": "none"
         },
         "time_scale": {

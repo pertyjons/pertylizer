@@ -404,7 +404,6 @@ impl Describable for Mseg {
                 .description("Number of active segments (1-16)")
                 .range(1.0, 16.0)
                 .default(4.0)
-                .step(1.0)
                 .unit(ParameterUnit::None)
                 // Structural/sizing count: not a continuous modulation target.
                 .modulatable(false)
@@ -419,7 +418,6 @@ impl Describable for Mseg {
                 .description("Segment index where envelope holds until gate off (0-15)")
                 .range(0.0, 15.0)
                 .default(2.0)
-                .step(1.0)
                 .unit(ParameterUnit::None)
                 // Discrete segment index: not a continuous modulation target.
                 .modulatable(false)
@@ -448,7 +446,6 @@ impl Describable for Mseg {
                 .description("First segment of the loop (0-15)")
                 .range(0.0, 15.0)
                 .default(0.0)
-                .step(1.0)
                 .unit(ParameterUnit::None)
                 .modulatable(false)
                 .widget(WidgetHint::Knob),
@@ -462,7 +459,6 @@ impl Describable for Mseg {
                 .description("Last segment of the loop (0-15)")
                 .range(0.0, 15.0)
                 .default(1.0)
-                .step(1.0)
                 .unit(ParameterUnit::None)
                 .modulatable(false)
                 .widget(WidgetHint::Knob),

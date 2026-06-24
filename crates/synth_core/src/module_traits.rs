@@ -591,6 +591,30 @@ pub enum ParamKind {
     Reference,
 }
 
+impl ParamKind {
+    /// Format a value for display, kind-aware (Phase 3). The single source of
+    /// truth for `value → string`, shared by the descriptor and the GUI widgets:
+    /// `Integer` is decimal-free, `Bool` reads `On`/`Off`, everything else uses the
+    /// unit's own formatter.
+    #[must_use]
+    pub fn format(self, unit: ParameterUnit, value: f32) -> String {
+        match self {
+            Self::Integer => format!("{:.0}{}", value.round(), unit.suffix()),
+            Self::Bool => {
+                if value > 0.5 {
+                    "On".to_string()
+                } else {
+                    "Off".to_string()
+                }
+            }
+            // Continuous / Enum / Reference: defer to the unit's own formatter.
+            // (Enum/Reference values rarely reach here — descriptors map them to a
+            // choice name first — but a bare numeric fallback is harmless.)
+            Self::Continuous | Self::Enum | Self::Reference => unit.format(value),
+        }
+    }
+}
+
 /// Type-derived metadata for every value type a `Param` variant can carry.
 ///
 /// Implemented once per value type (newtypes, primitives, `bool`, references, and
@@ -880,7 +904,7 @@ impl ParameterDescriptor {
         if let Some(choice) = self.choice_for_value(value) {
             return choice.name.clone();
         }
-        self.unit.format(value)
+        self.kind.format(self.unit, value)
     }
 
     /// Look up the `ChoiceOption` corresponding to a numeric parameter
@@ -1711,6 +1735,25 @@ mod tests {
         let d = ParameterDescriptor::float("seg", Param::Mseg(MsegParam::SegmentCount(4)), "Seg");
         assert_eq!(d.kind, ParamKind::Integer);
         assert!(d.choices.is_none());
+    }
+
+    #[test]
+    fn param_kind_format_is_kind_aware() {
+        // Integer: decimal-free, rounds, keeps the unit suffix.
+        assert_eq!(ParamKind::Integer.format(ParameterUnit::None, 4.0), "4");
+        assert_eq!(ParamKind::Integer.format(ParameterUnit::None, 3.7), "4");
+        assert_eq!(
+            ParamKind::Integer.format(ParameterUnit::Octaves, 2.0),
+            "2 oct"
+        );
+        // Bool: On/Off.
+        assert_eq!(ParamKind::Bool.format(ParameterUnit::None, 1.0), "On");
+        assert_eq!(ParamKind::Bool.format(ParameterUnit::None, 0.0), "Off");
+        // Continuous: defers to the unit formatter.
+        assert_eq!(
+            ParamKind::Continuous.format(ParameterUnit::Hertz, 440.0),
+            "440.0 Hz"
+        );
     }
 
     #[test]

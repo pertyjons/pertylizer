@@ -428,7 +428,7 @@ per `CLAUDE.md`). Dependency order:
 | 1     | `ParamKind` + `ScalarParam` + `kind()` + descriptor field ✅ **done** | engine        | low            | 0          |
 | 2a    | Derive `unit` from newtype; drift-assert test ✅ **done**             | engine        | low            | 1          |
 | 2b    | `curve` audit (no silent auto-flip; behavioral) ✅ **done**          | engine        | medium         | 1          |
-| 3     | Kind-aware display (decimal-free ints; bool)                         | core+GUI      | low            | 1          |
+| 3     | Kind-aware display (decimal-free ints; bool) ✅ **done**             | core+GUI      | low            | 1          |
 | 4     | Serialization emits `Int`/`Bool`; consistent int rounding            | serialization | low            | 1          |
 | 5     | Schema `type`/`kind`; MCP validation by kind                         | schema/MCP    | low            | 1          |
 | 6     | GUI interaction polish (snap/scroll/text by kind)                    | GUI           | medium         | 3          |
@@ -986,12 +986,19 @@ unit; the full gate must be green before each commit.
 
 **Step 3 — Display + interaction (Phase 3 / 6):**
 
-- [ ] Centralized `format_value(kind, unit, value)`; route `Knob` and `Slider`
-  through it (`On`/`Off` for bool; decimal-free integers).
-- [ ] `Knob::from_descriptor`: default `step` to `1.0` when `kind == Integer` &&
-  `step.is_none()`; drop the four `.step(1.0)` in `mseg.rs`.
-- [ ] `param_grid.rs` slider: integer kind → `min_decimals(0)`/`max_decimals(0)` +
-  snapping; scroll-wheel stepping on `Knob`; bool always a checkbox.
+- [x] Centralized kind-aware formatter — `ParamKind::format(unit, value)`
+  (`On`/`Off` for bool; decimal-free rounded integers; else the unit formatter).
+  `ParameterDescriptor::format` and `Knob` both route through it. *(done; the
+  `Slider` is Phase 6)*
+- [x] `Knob::from_descriptor`: carries `kind`; defaults `step` to `1.0` when
+  `kind == Integer && step.is_none()`; dropped the four `.step(1.0)` in `mseg.rs`
+  (snapping now comes from kind; the Knob is the only GUI `descriptor.step`
+  consumer). Regenerated `schemas/descriptors.json` (step omitted — the proper
+  integer signal lands in Phase 5). Added a `ParamKind::format` acceptance test.
+  *(done)*
+- [ ] *(Phase 6)* `param_grid.rs` slider: integer kind → `min_decimals(0)`/
+  `max_decimals(0)` + snapping; scroll-wheel stepping on `Knob`; bool always a
+  checkbox.
 
 **Step 4 — Serialization + schema/MCP (Phase 4 / 5):**
 
