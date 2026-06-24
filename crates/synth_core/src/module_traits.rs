@@ -567,12 +567,14 @@ impl ParameterUnit {
 
 /// What kind of value a parameter holds — the single authoritative classifier,
 /// derived from the engine variant's backing type via [`ScalarParam`], never
-/// hand-declared. `Serialize` only: emitted into `descriptors.json` and onto the
-/// MCP wire, but never read back from a file (descriptors are code, not persisted).
+/// hand-declared. Emitted into `descriptors.json` and onto the MCP wire;
+/// `Deserialize` is derived only because [`ParameterDescriptor`] (which carries a
+/// `kind`) derives it — descriptors are code, not persisted, so it is never
+/// actually read back from a file.
 ///
 /// See `docs/param-kinds.md` for the per-variant audit and
 /// `plans/param-type-system-plan.md` for the design.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ParamKind {
     /// f32 within `range`, shaped by `response_curve`, displayed with `unit`.
     Continuous,
@@ -683,6 +685,10 @@ pub struct ParameterDescriptor {
     /// `step` offset from `range.min`, so discrete params (segment counts,
     /// indices) land on exact values and reach `max` cleanly. `None` = continuous.
     pub step: Option<f32>,
+    /// Value-kind classifier, seeded from `id.kind()` by the constructors so it
+    /// can never drift from the engine's backing type. Recomputed in code, never
+    /// read from persisted data.
+    pub kind: ParamKind,
 }
 
 /// Error returned when a value fails validation against a [`ParameterDescriptor`].
@@ -715,6 +721,7 @@ impl ParameterDescriptor {
     /// - `id`: The `Param` variant with its default value.
     /// - `name`: Display name shown in the UI (safe to rename freely).
     pub fn float(type_id: impl Into<String>, id: Param, name: impl Into<String>) -> Self {
+        let kind = id.kind();
         Self {
             type_id: type_id.into(),
             id,
@@ -727,6 +734,7 @@ impl ParameterDescriptor {
             choices: None,
             modulatable: true,
             step: None,
+            kind,
         }
     }
 
@@ -743,6 +751,7 @@ impl ParameterDescriptor {
     ) -> Self {
         let max = (choices.len().saturating_sub(1)) as f32;
         let default = id.as_f32();
+        let kind = id.kind();
         Self {
             type_id: type_id.into(),
             id,
@@ -755,6 +764,7 @@ impl ParameterDescriptor {
             choices: Some(choices),
             modulatable: false,
             step: None,
+            kind,
         }
     }
 
@@ -1655,6 +1665,35 @@ mod tests {
             "Test Param",
         )
         .value_range(ValueRange::new(min, max, default))
+    }
+
+    #[test]
+    fn param_kind_and_unit_dispatch() {
+        use crate::params::{ModMatrixParam, MsegParam, OscillatorParam, SampleId, SamplerParam};
+        let freq = Param::Oscillator(OscillatorParam::Frequency(crate::Hertz::new(440.0)));
+        assert_eq!(freq.kind(), ParamKind::Continuous);
+        assert_eq!(freq.unit(), ParameterUnit::Hertz);
+        assert_eq!(
+            Param::Mseg(MsegParam::SegmentCount(4)).kind(),
+            ParamKind::Integer
+        );
+        assert_eq!(
+            Param::Mseg(MsegParam::LoopEnabled(true)).kind(),
+            ParamKind::Bool
+        );
+        assert_eq!(
+            Param::Sampler(SamplerParam::SampleSelect(SampleId(0))).kind(),
+            ParamKind::Reference
+        );
+        assert_eq!(
+            Param::ModMatrix(ModMatrixParam::SlotSource(0, None)).kind(),
+            ParamKind::Reference
+        );
+
+        // Constructors seed `kind` from `id.kind()`.
+        let d = ParameterDescriptor::float("seg", Param::Mseg(MsegParam::SegmentCount(4)), "Seg");
+        assert_eq!(d.kind, ParamKind::Integer);
+        assert!(d.choices.is_none());
     }
 
     #[test]

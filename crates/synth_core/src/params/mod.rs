@@ -28,6 +28,7 @@ mod fractal_osc;
 mod frequency_shifter;
 mod generative;
 mod granular;
+mod kind_impls;
 mod kinetic;
 mod la_synth;
 mod lfo;

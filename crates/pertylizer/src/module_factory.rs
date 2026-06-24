@@ -428,6 +428,74 @@ mod tests {
         );
     }
 
+    /// Phase 1 acceptance: every parameter of every module descriptor must satisfy
+    /// the `ParamKind` invariants — the classifier matches `id.kind()`, and the
+    /// `kind`/`choices` relationship holds:
+    ///   - `Enum`                       ⇒ `choices.is_some()`
+    ///   - `{Continuous, Integer, Bool}` ⇒ `choices.is_none()`
+    ///   - `choices.is_some()`          ⇒ `kind ∈ {Enum, Reference}` (mod-matrix
+    ///     pickers are `Reference`; the `SampleId` reference carries no choices)
+    #[test]
+    fn param_kind_invariants_hold_for_every_descriptor() {
+        use synth_core::ParamKind;
+        // Known pre-existing exceptions: enum-typed params whose descriptors were
+        // hand-built with `float()` instead of `choice()`, so `kind == Enum` but
+        // they carry no choice list. They are genuine descriptor-modeling gaps
+        // (notably `SpectralBlur/fft_size`, which should mirror PhaseVocoder's
+        // `choice()` over `FftSizeOption::ALL`). Converting them to `choice()`
+        // changes widget + serialization behavior, so it is deferred out of the
+        // Phase 1 (engine-only, no-behavior-change) foundation — see
+        // `plans/param-type-system-plan.md` Phase 1 follow-up. The strict
+        // `kind == id.kind()` invariant below still holds for them.
+        let enum_as_float_todo: &[(ModuleType, &str)] = &[
+            (ModuleType::SpectralBlur, "fft_size"),
+            (ModuleType::KeyboardPanner, "invert"),
+        ];
+        let mut violations: Vec<String> = Vec::new();
+        for mt in ALL_MODULE_TYPES.iter().copied() {
+            let Some(desc) = get_descriptor(mt) else {
+                continue;
+            };
+            for p in &desc.parameters {
+                let kind = p.kind;
+                // Construction wiring must hold for EVERY parameter, no exceptions.
+                if kind != p.id.kind() {
+                    violations.push(format!(
+                        "{mt:?}/{}: descriptor.kind={kind:?} != id.kind()={:?}",
+                        p.type_id,
+                        p.id.kind()
+                    ));
+                }
+                if enum_as_float_todo.contains(&(mt, p.type_id.as_str())) {
+                    continue; // documented choices-relationship exception
+                }
+                let has_choices = p.choices.is_some();
+                let ok = match kind {
+                    ParamKind::Enum => has_choices,
+                    ParamKind::Continuous | ParamKind::Integer | ParamKind::Bool => !has_choices,
+                    ParamKind::Reference => true, // choices optional (picker vs id)
+                };
+                if !ok {
+                    violations.push(format!(
+                        "{mt:?}/{}: kind={kind:?} but choices.is_some()={has_choices}",
+                        p.type_id
+                    ));
+                }
+                if has_choices && !matches!(kind, ParamKind::Enum | ParamKind::Reference) {
+                    violations.push(format!(
+                        "{mt:?}/{}: has choices but kind={kind:?} (expected Enum or Reference)",
+                        p.type_id
+                    ));
+                }
+            }
+        }
+        assert!(
+            violations.is_empty(),
+            "ParamKind invariant violations:\n{}",
+            violations.join("\n")
+        );
+    }
+
     /// Resolve a module's descriptor *and* its `get_params()` snapshot, covering
     /// voice modules, effects, and visualizers (mirrors [`get_descriptor`]).
     fn descriptor_and_params(mt: ModuleType) -> Option<(ModuleDescriptor, Vec<synth_core::Param>)> {

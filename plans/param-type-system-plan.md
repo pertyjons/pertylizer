@@ -418,7 +418,7 @@ per `CLAUDE.md`). Dependency order:
 | Phase | Title | Layer | Risk | Depends on |
 |-------|-------|-------|------|-----------|
 | 0 | Audit & taxonomy table ✅ **done** (`docs/param-kinds.md`) | (doc) | none | — |
-| 1 | `ParamKind` + `ScalarParam` + `kind()` + descriptor field | engine | low | 0 |
+| 1 | `ParamKind` + `ScalarParam` + `kind()` + descriptor field ✅ **done** | engine | low | 0 |
 | 2a | Derive `unit` from newtype; drift-assert test | engine | low | 1 |
 | 2b | `curve` audit (no silent auto-flip; behavioral) | engine | medium | 1 |
 | 3 | Kind-aware display (decimal-free ints; bool) | core+GUI | low | 1 |
@@ -919,11 +919,25 @@ unit; the full gate must be green before each commit.
       check confirmed all 56 carried value-types have an impl. *(done)*
 - [x] Add `impl_scalar_param_enum!` and apply it to the ~25 choice enums (NOT the
       address/Reference types — see Phase 1). *(done — `scalar_enum!` over 29 enums)*
-- [ ] Add `kind()` + `unit()` to the 67 module enums and aggregate `Param`,
+- [x] Add `kind()` + `unit()` to the 67 module enums and aggregate `Param`,
       dispatching via **bound values** (`v.scalar_kind()` / `v.scalar_unit()`).
-- [ ] Add the `kind` field to `ParameterDescriptor`; populate in `float()` and
-      `choice()` from `id.kind()`.
-- [ ] Acceptance tests: the precise kind/choices invariants (§4 Phase 1 step 6).
+      *(done — generated `params/kind_impls.rs`, arms grouped by value-type; exhaustive
+      matches guarantee completeness; two-field variants bind the value field.)*
+- [x] Add the `kind` field to `ParameterDescriptor`; populate in `float()` and
+      `choice()` from `id.kind()`. *(done — `ParamKind` also derives `Deserialize`
+      since `ParameterDescriptor` does; never read from disk.)*
+- [x] Acceptance tests: the precise kind/choices invariants (§4 Phase 1 step 6).
+      *(done — synth_core sanity test + an all-descriptors sweep in
+      `module_factory.rs` over `ModuleType::all()`; `kind == id.kind()` enforced for
+      every param.)*
+
+> **Phase 1 follow-up (deferred):** the sweep surfaced **two enum-typed params built
+> with `float()` instead of `choice()`** → `kind == Enum` but no choice list:
+> `SpectralBlur/fft_size` (should mirror PhaseVocoder's `choice()` over
+> `FftSizeOption::ALL` — a copy-paste miss) and `KeyboardPanner/invert` (`Polarity`,
+> a 0/1 knob). Converting them changes widget + serialization behavior (Phase 3/4
+> territory), so they are **allow-listed** in the sweep test for now. Fix when
+> touching those modules' UI/serialization.
 
 **Step 2 — Unit derivation + curve audit (Phase 2a / 2b):**
 - [ ] Seed `unit` in `float()` from `id.unit()`.
