@@ -992,8 +992,12 @@ unit; the full gate must be green before each commit.
   and **2 real fixes at the source** — `BeatDivision`'s type-unit set to `Beats`,
   and `WavetableOsc/octave`'s stale `.unit(Semitones)` removed so it derives
   `Octaves` (`st`→`oct`). Regenerated `schemas/*.json`. *(done)*
-- [ ] *(Phase 2a cleanup — separate commit)* delete now-redundant `.unit()` calls
-  equal to the derived default (e.g. `sync_division`'s `.unit(Beats)`).
+- [x] *(Phase 2a cleanup — done, separate commit)* removed **98** redundant
+  `.unit()` calls equal to the derived unit (kept the 27 `Percent` overrides) +
+  the now-unused `ParameterUnit` imports in 31 files. `descriptors.json`
+  byte-identical, drift test still green. Also removed the now-unused
+  `ParameterDescriptor.step` field/builder (no module sets it; integer snap comes
+  from `kind`).
 - [x] Curve **audit** (one-shot): `default_curve()` added to all 67 enums + `Param`
   (advisory; **not** wired into `float()` per §14.6). Result: **397 match, 87 would
   flip** (38 `Linear→Exponential` time, 24 `→Squared` gain, 15 `→Logarithmic` freq,
