@@ -14,11 +14,11 @@ const STEP_DRAG_PIXELS: f32 = 8.0;
 
 /// Scroll units per discrete step on a stepped knob (≈ one mouse-wheel notch);
 /// a smooth trackpad swipe accumulates toward it. Tunable feel constant.
-const SCROLL_UNITS_PER_STEP: f32 = 50.0;
+const SCROLL_UNITS_PER_STEP: f32 = 40.0;
 
 /// Continuous-knob scroll sensitivity (normalized value per scroll unit), so a
 /// wheel notch nudges the value a couple of percent. Tunable feel constant.
-const SCROLL_CONT_SENSITIVITY: f32 = 0.0005;
+const SCROLL_CONT_SENSITIVITY: f32 = 0.000_625;
 
 /// A rotary knob widget.
 pub struct Knob<'a> {
