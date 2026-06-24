@@ -324,6 +324,43 @@ Three issues observed with the visualizer modules (`Oscilloscope`, `SpectrumAnal
   genuinely have a unique range), or it produces false positives. Belt-and-suspenders on top of the
   per-param asserts; low priority.
 
+### 4.3 `Reference`-kind params: make the schema honest
+
+`ParamKind::Reference` (the 3 params `Sampler/sample_select`, `ModMatrix/slot_source`,
+`ModMatrix/slot_destination`) is *represented* — every one emits `value_kind:
+"reference"` in `descriptors.json` (Phase 5a), and values serialize as a `Choice`
+string or a `{sample_id}` object — but the schema doesn't describe a *usable*
+reference. (Note JSON Schema's `$ref` is schema-reuse, **not** a data-level
+"points-at-another-instance" type; standard JSON Schema cannot validate dynamic
+cross-references, so these need a discovery signal + app/MCP-level validation, not a
+validator.) Three concrete gaps, all in `crates/pertylizer/src/bin/gen_schemas.rs`
+(`parameter_descriptor`) unless noted:
+
+- [ ] **1. `Sampler/sample_select` advertises a meaningless numeric range.** It emits
+  `min: 0.0, max: 1.0, default: 0.5, unit: "none"` for what is really a `u64` sample
+  id. Stop emitting `min`/`max`/`default`/`response_curve` for a `Reference` param;
+  instead mark it as a sample reference and point clients at a discovery tool (e.g.
+  `list_samples`), and constrain the JSON value to the `{ "sample_id": integer }`
+  shape rather than a number. An LLM/MCP client currently has no way to know it should
+  set a sample id (or where to find valid ones).
+- [ ] **2. `ModMatrix/slot_source` & `slot_destination` carry a stale static
+  `choices` list.** The emitted `choices` are the legacy enumerated targets
+  (`osc1_pitch`, `lfo1`, …) but real addressing is now **free-form** dynamic
+  (`flt-3.cutoff`, any `module.param`; macros like `velocity`/`mod_wheel`) parsed by
+  `SrcAddr`/`DestAddr`. So the schema *lies* about what is valid. Replace the static
+  enum with either a `pattern` for the address grammar (`^none$|^[a-z]+-\d+\.\w+$|
+  <macro>$`) or a `"see list_modulation_targets"` pointer field, so the schema doesn't
+  claim a false fixed set. (Relates to §3.4 — the dynamic mod-matrix surfacing.)
+- [ ] **3. Give `Reference` a named, documented shape.** Add a shared
+  `$defs/Reference` (or per-kind `$defs/SampleRef` + `$defs/ModAddress`) in
+  `patch.schema.json` / `project.schema.json` and `$ref` the reference-param values to
+  it, so a reference value has one documented form instead of being an anonymous arm
+  of the untagged `ParamValue` union. Belt-and-suspenders on top of 1 and 2.
+
+Surfaced reviewing the value-kind work (`plans/param-type-system-plan.md`): the
+`Reference` kind is a good **discovery signal** for MCP/AI clients ("don't guess a
+number — call a discovery tool"), but today the schema under-describes it.
+
 ---
 
 ## 5. DSP / Audio-Engine Hardening
