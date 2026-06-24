@@ -39,11 +39,11 @@ serde = { version = "1.0.228", features = ["derive", "rc"] }
 # re-serializing on every call.
 serde_json = { version = "1.0.150", features = ["raw_value"] }
 # TOML parsing for the runtime config file (pertylizer.toml).
-toml = "0.9.5"
+toml = "1.1.2"
 thiserror = "2.0.18"
 # Enum utilities — `EnumIter` makes `ModuleType` self-enumerating so the MCP /
 # GUI module catalogs can never drift from the enum.
-strum = { version = "0.27", features = ["derive"] }
+strum = { version = "0.28", features = ["derive"] }
 
 # Audio I/O.
 # `realtime` promotes cpal's audio callback threads to RT scheduling
@@ -83,10 +83,10 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 # Testing
 tempfile = "3.27.0"
-jsonschema = "0.46.5"
+jsonschema = "0.46.6"
 
 # Fixed-size heap-free collections
-arrayvec = "0.7.6"
+arrayvec = "0.7.7"
 
 # File system paths
 dirs = "6.0.0"
@@ -96,7 +96,7 @@ dirs = "6.0.0"
 futures-util = { version = "0.3.32", default-features = false, features = ["std"] }
 
 # MCP (Model Context Protocol)
-rmcp = { version = "1.7.0", features = ["server", "transport-io", "transport-streamable-http-server"] }
+rmcp = { version = "1.8.0", features = ["server", "transport-io", "transport-streamable-http-server"] }
 tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "io-std", "net"] }
 schemars = "1.2.1"
 axum = "0.8.9"
