@@ -687,6 +687,18 @@ showing whole numbers and snapping; bool params reading On/Off in the tooltip.
    `from_param`/`to_param` — keep that invariant and add a test asserting a `u64`
    sample id ≥ 2²⁴ survives a save/load round-trip bit-exact.
 
+**Scope boundary — what this phase does and does NOT make type-safe.** Phase 4 makes
+the **write** side type-consistent and self-describing (the saved JSON carries the
+right type per param, guaranteed by the alignment-invariant test, §1.5). It does
+**not** make the **read** side strictly type-safe: `ParamValue` is `#[serde(untagged)]`
+and `to_param`/`with_f32` *coerce* (`5.0`→int, out-of-range→clamp, fractional→round).
+A hand-edited or corrupt project file with a wrong-typed value is silently coerced,
+not rejected. This leniency is **intentional** here — it is what lets old projects
+that stored integers as `5.0` still load. Net: project/instrument JSON becomes
+*type-consistent and self-describing on save*, and *type-aware* via the schema, but
+*leniently coerced on load* — not strictly validated. Strict load validation is a
+separate, deferred item (§16).
+
 ---
 
 ## 8. Phase 5 — Schema & MCP validation by kind
@@ -941,3 +953,43 @@ unit; the full gate must be green before each commit.
 **Step 5 — Trait (Phase 7):**
 - [ ] Introduce `ModuleParam`; move the 67 enums' methods onto it; export via a
       `synth_core::prelude`. (Phase 8 proc-macro: skipped.)
+
+---
+
+## 16. Future work (deferred, not in this plan)
+
+### 16.1 Strict load-time validation of project/instrument JSON
+
+**Why deferred.** The plan deliberately leaves the **read** path lenient (§7 scope
+boundary): `ParamValue` is `#[serde(untagged)]` and `to_param`/`with_f32` coerce
+(`5.0`→int, out-of-range→clamp, fractional→round). That leniency is what lets old
+projects (integers stored as `5.0`, values that predate a tightened range) keep
+loading. So after the main plan, project/instrument files are *type-consistent and
+self-describing on save* and *type-aware* via the schema — but a hand-edited or
+corrupt file with a wrong-typed/out-of-range value is silently coerced, not rejected.
+They are **not strictly type-safe on load**.
+
+**The future step.** Add a validation pass on project/instrument load that, for each
+`(type_id, ParamValue)` against its descriptor, checks:
+- the `ParamValue` variant matches `descriptor.kind` (the same alignment invariant
+  the *write* side already enforces in test — applied to *incoming* data);
+- `Integer` values are integral and in range; `Continuous` in range; `Enum` resolves
+  to a real choice id; `Reference` parses to a valid address/id.
+
+**Key design decision (reject vs warn) — must be made when this is built.** Strict
+*rejection* conflicts with the intentional backward-load leniency. So this is not a
+free tightening; pick a policy:
+- **Reject** — fail the load (or the offending param) on any mismatch. Safest, but
+  breaks old/edited files and loses the graceful-degradation Pertylizer has today.
+- **Warn + coerce (recommended default)** — keep loading (coerce as now) but collect
+  a structured diagnostics report ("param X in module Y: value 5.5 rounded to 6";
+  "value 20 clamped to 16") surfaced to the user / MCP caller / a `get_load_warnings`
+  tool. Gets the visibility of strict validation without sacrificing recall.
+- **Strict mode opt-in** — warn+coerce by default, with a strict flag (per-load or a
+  setting) that promotes warnings to errors for tooling/CI that wants airtight files.
+
+**Scope/cost.** Touches the project load path (`project_apply.rs` / `project.rs`),
+reuses `descriptor.kind` + `validate` from Phases 1/5, and needs a diagnostics
+channel. Independent of the main plan — can land any time after Phase 5. Until then,
+the honest statement is: *engine and MCP boundary are validated/type-safe; JSON files
+are type-consistent on save and coerced (not rejected) on load.*
