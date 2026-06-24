@@ -209,30 +209,7 @@ port on `list_modules`, header arrow badge with tooltip). Remaining work:
        consider an array-style MCP tool (`set_mseg_segments`) so the shape can be set in one call instead of
        ~50 individual `set_parameter`s. Review the whole MSEG UX as part of this.
 
-### 3.6 Visualizer module bugs (reported in-app)
-
-Three issues observed with the visualizer modules (`Oscilloscope`, `SpectrumAnalyzer`, `LevelMeter`,
-`SignalMonitor`) in the patch editor. Not yet root-caused — pointers below are starting points.
-
-- [ ] **Visualizer modules can't be removed — the top-right close (✕) button does nothing.** Removing a
-  visualizer node via the header close button fails (other module types presumably remove fine). Likely a
-  gap in the delete/remove path for visualizer module types specifically. Start in
-  `crates/pertylizer/src/gui/patch_editor.rs` (the module header close-button handler / `remove`/delete
-  flow) and the `RemoveModule` command dispatch in `crates/synth_engine/src/synth_engine.rs` — check
-  whether visualizers (which are `AudioEffect`s in `synth_engine/src/visualizers/`, not voice-graph
-  `PolyModule`s, and are registered/created on a separate path — see `module_factory.rs` /
-  `patch_bridge.rs` visualizer special-cases) are handled by the remove path or silently skipped.
-- [ ] **Enlarge the visualizer graph area.** The scope/spectrum/meter render areas are a bit small; bump
-  the default graph size for more usable detail. See the widget renderers
-  `crates/pertylizer/src/gui/widgets/{scope,spectrum,meter}.rs` and wherever the visualizer node sizes
-  its draw rect.
-- [ ] **SpectrumAnalyzer sometimes draws stray horizontal lines outside the graph rect.** The spectrum
-  graph occasionally renders horizontal "glitch" lines outside its own bounds. Likely an unclipped
-  painter draw or an out-of-range bin/`y` value (NaN/Inf or a value not clamped to the plot rect) in
-  `crates/pertylizer/src/gui/widgets/spectrum.rs` — add rect clipping and/or clamp/sanitize the plotted
-  values, and confirm the painter is clipped to the graph rect.
-
-### 3.7 `ModuleParam` single-definition cleanup (MAYBE — aesthetics only, future)
+### 3.6 `ModuleParam` single-definition cleanup (MAYBE — aesthetics only, future)
 
 - [ ] **Collapse the inherent-vs-trait duplication for the param method set — purely for
   "one definition" tidiness, low priority.** Phase 7 of the param-type-system work
