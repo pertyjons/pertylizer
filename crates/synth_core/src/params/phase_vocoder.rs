@@ -71,6 +71,18 @@ impl FftSizeOption {
     pub fn index(self) -> usize {
         Self::ALL.iter().position(|f| *f == self).unwrap_or(1)
     }
+
+    /// Dropdown choices for descriptors (`choice()`), one per FFT size.
+    #[must_use]
+    pub fn to_choices() -> Vec<crate::module_traits::ChoiceOption> {
+        Self::ALL
+            .iter()
+            .map(|f| {
+                crate::module_traits::ChoiceOption::new(f.id(), f.name())
+                    .with_description(f.description())
+            })
+            .collect()
+    }
 }
 
 /// Phase vocoder parameter with typed value.

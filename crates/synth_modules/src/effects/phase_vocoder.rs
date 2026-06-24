@@ -9,7 +9,6 @@
 use synth_dsp::Complex;
 
 use synth_core::MAX_BLOCK_SIZE;
-use synth_core::module_traits::ChoiceOption;
 use synth_core::{
     AudioEffect, Describable, FftSizeOption, ModuleCategory, ModuleDescriptor, ModuleType,
     NormalizedValue, Param, ParameterDescriptor, ParameterUnit, PhaseVocoderParam, ProcessContext,
@@ -220,12 +219,7 @@ impl Describable for PhaseVocoder {
                     "fft_size",
                     Param::PhaseVocoder(PhaseVocoderParam::FftSize(FftSizeOption::Fft1024)),
                     "FFT Size",
-                    FftSizeOption::ALL
-                        .iter()
-                        .map(|f| {
-                            ChoiceOption::new(f.id(), f.name()).with_description(f.description())
-                        })
-                        .collect(),
+                    FftSizeOption::to_choices(),
                 )
                 .description("FFT window size (larger = better frequency resolution)"),
             )

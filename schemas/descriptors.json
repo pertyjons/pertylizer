@@ -2320,13 +2320,22 @@
           "value_kind": "continuous"
         },
         "invert": {
-          "default": 0.0,
+          "choices": [
+            {
+              "description": "Normal panning direction (low notes left)",
+              "id": "normal",
+              "name": "Normal"
+            },
+            {
+              "description": "Inverted panning direction (low notes right)",
+              "id": "inverted",
+              "name": "Inverted"
+            }
+          ],
+          "default": "normal",
           "description": "Invert panning direction",
-          "max": 1.0,
-          "min": 0.0,
           "modulatable": false,
           "name": "Invert",
-          "response_curve": "linear",
           "unit": "none",
           "value_kind": "enum"
         },
@@ -8776,13 +8785,32 @@
           "value_kind": "continuous"
         },
         "fft_size": {
-          "default": 1.0,
+          "choices": [
+            {
+              "description": "512-sample FFT — low latency and CPU, coarser frequency resolution.",
+              "id": "512",
+              "name": "512"
+            },
+            {
+              "description": "1024-sample FFT — a balance of latency and quality.",
+              "id": "1024",
+              "name": "1024"
+            },
+            {
+              "description": "2048-sample FFT — finer frequency resolution, higher latency.",
+              "id": "2048",
+              "name": "2048"
+            },
+            {
+              "description": "4096-sample FFT — the finest resolution, highest latency and CPU.",
+              "id": "4096",
+              "name": "4096"
+            }
+          ],
+          "default": "1024",
           "description": "FFT window size",
-          "max": 3.0,
-          "min": 0.0,
-          "modulatable": true,
+          "modulatable": false,
           "name": "FFT Size",
-          "response_curve": "linear",
           "unit": "none",
           "value_kind": "enum"
         },

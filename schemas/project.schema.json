@@ -5029,12 +5029,13 @@
                   "type": "number"
                 },
                 "invert": {
-                  "default": 0.0,
                   "description": "Invert panning direction",
-                  "maximum": 1.0,
-                  "minimum": 0.0,
+                  "enum": [
+                    "normal",
+                    "inverted"
+                  ],
                   "title": "Invert",
-                  "type": "number"
+                  "type": "string"
                 },
                 "spread": {
                   "default": 0.5,
@@ -6191,12 +6192,15 @@
                   "type": "number"
                 },
                 "fft_size": {
-                  "default": 1.0,
                   "description": "FFT window size",
-                  "maximum": 3.0,
-                  "minimum": 0.0,
+                  "enum": [
+                    "512",
+                    "1024",
+                    "2048",
+                    "4096"
+                  ],
                   "title": "FFT Size",
-                  "type": "number"
+                  "type": "string"
                 },
                 "freeze": {
                   "default": 0.0,

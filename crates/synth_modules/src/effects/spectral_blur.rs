@@ -132,15 +132,13 @@ impl Describable for SpectralBlur {
             .tag("effect")
             .tag("blur")
             .parameter(
-                ParameterDescriptor::float(
+                ParameterDescriptor::choice(
                     "fft_size",
                     Param::SpectralBlur(SpectralBlurParam::FftSize(FftSizeOption::Fft1024)),
                     "FFT Size",
+                    FftSizeOption::to_choices(),
                 )
-                .description("FFT window size")
-                .range(0.0, 3.0)
-                .default(1.0)
-                .widget(WidgetHint::Knob),
+                .description("FFT window size"),
             )
             .parameter(
                 ParameterDescriptor::float(

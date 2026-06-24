@@ -438,19 +438,9 @@ mod tests {
     #[test]
     fn param_kind_invariants_hold_for_every_descriptor() {
         use synth_core::ParamKind;
-        // Known pre-existing exceptions: enum-typed params whose descriptors were
-        // hand-built with `float()` instead of `choice()`, so `kind == Enum` but
-        // they carry no choice list. They are genuine descriptor-modeling gaps
-        // (notably `SpectralBlur/fft_size`, which should mirror PhaseVocoder's
-        // `choice()` over `FftSizeOption::ALL`). Converting them to `choice()`
-        // changes widget + serialization behavior, so it is deferred out of the
-        // Phase 1 (engine-only, no-behavior-change) foundation — see
-        // `plans/param-type-system-plan.md` Phase 1 follow-up. The strict
-        // `kind == id.kind()` invariant below still holds for them.
-        let enum_as_float_todo: &[(ModuleType, &str)] = &[
-            (ModuleType::SpectralBlur, "fft_size"),
-            (ModuleType::KeyboardPanner, "invert"),
-        ];
+        // Every `Enum`-kind param now carries a choice list (`SpectralBlur/fft_size`
+        // and `KeyboardPanner/invert` were converted from `float()` to `choice()`),
+        // so there are no enum-as-float exceptions left — the invariant holds for all.
         let mut violations: Vec<String> = Vec::new();
         for mt in ALL_MODULE_TYPES.iter().copied() {
             let Some(desc) = get_descriptor(mt) else {
@@ -465,9 +455,6 @@ mod tests {
                         p.type_id,
                         p.id.kind()
                     ));
-                }
-                if enum_as_float_todo.contains(&(mt, p.type_id.as_str())) {
-                    continue; // documented choices-relationship exception
                 }
                 let has_choices = p.choices.is_some();
                 let ok = match kind {
@@ -552,9 +539,9 @@ mod tests {
     /// Phase 2b: tightening `is_automatable` from `modulatable && choices.is_none()`
     /// to `modulatable && kind == Continuous` removes sequencer-automation
     /// eligibility from exactly the params below — non-continuous targets
-    /// (`Integer` counts/notes, `Bool` toggles, the enum-as-float `fft_size`) that
-    /// the old `choices.is_none()` rule let through but that cannot be meaningfully
-    /// ramped by a normalized lane. They keep their **mod-matrix** eligibility
+    /// (`Integer` counts/notes, `Bool` toggles) that the old `choices.is_none()`
+    /// rule let through but that cannot be meaningfully ramped by a normalized
+    /// lane. They keep their **mod-matrix** eligibility
     /// (which uses `modulatable` directly, unchanged). This guard pins the exact
     /// set so any change — especially the real regression of dropping a *Continuous*
     /// param — is surfaced for review.
@@ -582,7 +569,6 @@ mod tests {
             "ModalResonator/base_note",
             "ModalResonator/modes",
             "PhaseVocoder/freeze",
-            "SpectralBlur/fft_size",
             "SpectralBlur/freeze",
         ];
         expected.sort_unstable();
@@ -611,9 +597,8 @@ mod tests {
                     ParamKind::Continuous => matches!(pv, ParamValue::Float(_)),
                     ParamKind::Integer => matches!(pv, ParamValue::Int(_)),
                     ParamKind::Bool => matches!(pv, ParamValue::Bool(_)),
-                    // Real enums map their index to a choice id; the two enum-as-float
-                    // params (no choice list — Phase 1 follow-up) fall to Float, which
-                    // still round-trips through `with_f32`.
+                    // Enums map their index to a choice id. (No enum-as-float params
+                    // remain; the bare-`Enum` arm is a defensive fallback.)
                     ParamKind::Enum if p.choices.is_some() => matches!(pv, ParamValue::Choice(_)),
                     ParamKind::Enum => matches!(pv, ParamValue::Float(_)),
                     // Sample id → struct SampleId; mod-matrix address → Choice string.
