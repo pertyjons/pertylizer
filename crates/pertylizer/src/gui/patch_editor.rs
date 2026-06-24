@@ -2184,6 +2184,7 @@ impl PatchEditor {
 
                 // Draw tinted background zone behind effect modules
                 self.draw_effect_zone(ui, scroll_rect);
+                self.draw_monitors_zone(ui, scroll_rect);
                 self.draw_mod_matrix_zone(ui, scroll_rect, &analysis);
 
                 // Save scroll area layer + clip rect for cable drawing (behind modules)
@@ -3616,15 +3617,11 @@ impl PatchEditor {
         }
     }
 
-    /// Draw a tinted background zone behind effect (and visualizer) modules.
+    /// Draw a tinted background zone behind effect modules.
     fn draw_effect_zone(&self, ui: &mut Ui, scroll_rect: Rect) {
         let panels = self.panels.iter().filter_map(|(id, p)| {
             let category = self.descriptors.get(id).map(|d| d.category);
-            matches!(
-                category,
-                Some(ModuleCategory::Effect | ModuleCategory::Visualizer)
-            )
-            .then_some(p)
+            matches!(category, Some(ModuleCategory::Effect)).then_some(p)
         });
         draw_module_zone(
             ui,
@@ -3632,6 +3629,24 @@ impl PatchEditor {
             panels,
             category_color(ModuleCategory::Effect),
             &format!("{} Effect Chain", ri::FLASHLIGHT_FILL),
+        );
+    }
+
+    /// Draw a tinted background zone behind visualizer/monitor modules.
+    /// Visualizers are passive taps on the final signal — they are not part of
+    /// the effect chain (no ordering, no chain cables), so they get their own
+    /// zone instead of being grouped with effects.
+    fn draw_monitors_zone(&self, ui: &mut Ui, scroll_rect: Rect) {
+        let panels = self.panels.iter().filter_map(|(id, p)| {
+            let category = self.descriptors.get(id).map(|d| d.category);
+            matches!(category, Some(ModuleCategory::Visualizer)).then_some(p)
+        });
+        draw_module_zone(
+            ui,
+            scroll_rect,
+            panels,
+            category_color(ModuleCategory::Visualizer),
+            &format!("{} Monitors", ri::PULSE_FILL),
         );
     }
 

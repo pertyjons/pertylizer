@@ -2761,7 +2761,10 @@ impl SynthEngine {
                     muted: !inst.is_enabled(),
                     solo: inst.is_solo(),
                     module_count: inst.voice_graph().len(),
-                    effect_count: inst.effect_chain().slots().len(),
+                    // Effects only — visualizers are not part of the effect chain's
+                    // ordering (see EffectChain::slot_order), so they must not inflate
+                    // the effect count either.
+                    effect_count: inst.effect_chain().slot_order().len(),
                     effect_chain_order: inst.effect_chain().slot_order(),
                     key_range: inst.key_range(),
                     transpose: inst.transpose(),

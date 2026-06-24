@@ -274,10 +274,18 @@ impl EffectChain {
         &self.slots
     }
 
-    /// Get the ordered list of module IDs in the chain (processing order).
+    /// Get the ordered list of **effect** module IDs in the chain (processing
+    /// order). Visualizers are deliberately excluded: they are passive taps that
+    /// always observe the final post-chain signal regardless of their slot
+    /// position (see `process_visualizers`), so they are not part of the chain's
+    /// ordering discipline and must not be grouped with effects by the GUI.
     #[must_use]
     pub fn slot_order(&self) -> Vec<ModuleId> {
-        self.slots.iter().map(ChainSlot::module_id).collect()
+        self.slots
+            .iter()
+            .filter(|s| matches!(s, ChainSlot::Effect(_)))
+            .map(ChainSlot::module_id)
+            .collect()
     }
 
     /// Move a slot one step earlier in the chain (toward index 0).
