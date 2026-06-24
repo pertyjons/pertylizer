@@ -73,18 +73,13 @@ pub struct PatternEditState {
 struct PatternBrowserRow {
     id: PatternId,
     name: String,
-    /// Lowercased name, cached once for substring filtering and sort
-    /// comparison — keeps the per-frame collector allocation-free in the
-    /// sort comparator.
-    name_lower: String,
     placement_count: u32,
     length_beats: f32,
 }
 
-/// Build the flat, usage-sorted pattern list from the shared `Song`.
-///
-/// Patterns placed in the arrangement (`placement_count > 0`) sort first;
-/// orphans sink to the bottom and render dimmed. Returns `None` if the song is
+/// Build the flat pattern list from the shared `Song`, in natural (song) order —
+/// matching the Instruments and Samples lists. Unused patterns render dimmed in
+/// place rather than being sorted to the bottom. Returns `None` if the song is
 /// currently write-locked (caller should skip rendering this frame).
 fn collect_pattern_browser_data(
     song: &Arc<RwLock<Song>>,
@@ -101,25 +96,16 @@ fn collect_pattern_browser_data(
     let mut rows = Vec::new();
 
     for pattern in song.patterns() {
-        let name_lower = pattern.name.to_lowercase();
-        if !needle.is_empty() && !name_lower.contains(&needle) {
+        if !needle.is_empty() && !pattern.name.to_lowercase().contains(&needle) {
             continue;
         }
         rows.push(PatternBrowserRow {
             id: pattern.id,
             name: pattern.name.clone(),
-            name_lower,
             placement_count: counts.get(&pattern.id).copied().unwrap_or(0),
             length_beats: pattern.length.as_beats(),
         });
     }
-
-    // Used first, then alphabetical — orphans gather (dimmed) at the bottom.
-    rows.sort_by(|a, b| {
-        (b.placement_count > 0)
-            .cmp(&(a.placement_count > 0))
-            .then_with(|| a.name_lower.cmp(&b.name_lower))
-    });
 
     Some(rows)
 }
