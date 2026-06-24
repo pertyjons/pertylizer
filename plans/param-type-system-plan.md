@@ -909,14 +909,16 @@ Ordered task list distilled from external review pass 2. Each box is a commit-si
 unit; the full gate must be green before each commit.
 
 **Step 1 — Foundation (Phase 1):**
-- [ ] Define `ParamKind` in `synth_core/src/module_traits.rs` (`Serialize` only).
-- [ ] Implement `ScalarParam` per the `KIND` assignment list in
+- [x] Define `ParamKind` in `synth_core/src/module_traits.rs` (`Serialize` only). *(done)*
+- [x] Implement `ScalarParam` per the `KIND` assignment list in
       [`docs/param-kinds.md`](../docs/param-kinds.md): f32-newtypes → Continuous;
       primitives + **integer-backed newtypes** (`VoiceCount`, `MidiNote`, `Octaves`,
       `StepCount`) → Integer; `bool` → Bool; references (`SampleId`,
-      `Option<SrcAddr>`, `Option<DestAddr>`) → Reference. Verify `BitDepth`'s backing.
-- [ ] Add `impl_scalar_param_enum!` and apply it to the ~25 choice enums (NOT the
-      address/Reference types — see Phase 1).
+      `Option<SrcAddr>`, `Option<DestAddr>`) → Reference. **`BitDepth` verified
+      `pub f32` → Continuous.** Impls live in `params/scalar_impls.rs`; a coverage
+      check confirmed all 56 carried value-types have an impl. *(done)*
+- [x] Add `impl_scalar_param_enum!` and apply it to the ~25 choice enums (NOT the
+      address/Reference types — see Phase 1). *(done — `scalar_enum!` over 29 enums)*
 - [ ] Add `kind()` + `unit()` to the 67 module enums and aggregate `Param`,
       dispatching via **bound values** (`v.scalar_kind()` / `v.scalar_unit()`).
 - [ ] Add the `kind` field to `ParameterDescriptor`; populate in `float()` and

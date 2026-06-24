@@ -42,6 +42,7 @@ mod physical;
 mod pitch_tracker;
 mod ring_mod;
 mod sampler;
+mod scalar_impls;
 mod signal_monitor;
 mod spectrum_analyzer;
 mod sub_osc;

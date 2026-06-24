@@ -565,6 +565,69 @@ impl ParameterUnit {
     }
 }
 
+/// What kind of value a parameter holds — the single authoritative classifier,
+/// derived from the engine variant's backing type via [`ScalarParam`], never
+/// hand-declared. `Serialize` only: emitted into `descriptors.json` and onto the
+/// MCP wire, but never read back from a file (descriptors are code, not persisted).
+///
+/// See `docs/param-kinds.md` for the per-variant audit and
+/// `plans/param-type-system-plan.md` for the design.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub enum ParamKind {
+    /// f32 within `range`, shaped by `response_curve`, displayed with `unit`.
+    Continuous,
+    /// Discrete integer (count or index). `range` carries min/max; step is 1,
+    /// curve is linear, display is decimal-free.
+    Integer,
+    /// Two-state. Rendered as a toggle; serialized as a JSON bool.
+    Bool,
+    /// Finite named set; the value is an index into `choices`.
+    Enum,
+    /// Opaque id / address outside the numeric scale (sample id, mod-matrix
+    /// address). Deliberately coarse — serialization and the picker widget stay
+    /// variant-specific; `Reference` only flags "not a plain number".
+    Reference,
+}
+
+/// Type-derived metadata for every value type a `Param` variant can carry.
+///
+/// Implemented once per value type (newtypes, primitives, `bool`, references, and
+/// each choice enum). The provided methods (`scalar_kind`/`scalar_unit`/
+/// `scalar_curve`) are called on a **bound value** by the per-enum `kind()`/`unit()`
+/// methods, so the metadata follows the *actual field type* and can never drift:
+/// change a variant's field type and the resolved kind/unit changes with it.
+///
+/// `UNIT` is the natural display unit (overridable per descriptor). `DEFAULT_CURVE`
+/// is **advisory only** — it is *not* auto-applied by the descriptor constructors
+/// (a response curve is behavioral); it serves the Phase 2b curve audit.
+pub trait ScalarParam {
+    /// The value-kind this type maps to.
+    const KIND: ParamKind;
+    /// Natural display unit for this type.
+    const UNIT: ParameterUnit;
+    /// Suggested response curve (advisory; not auto-applied).
+    const DEFAULT_CURVE: ResponseCurve;
+
+    /// Kind of a bound value — drift-proof dispatch (resolves to `Self::KIND`).
+    #[inline]
+    #[must_use]
+    fn scalar_kind(&self) -> ParamKind {
+        Self::KIND
+    }
+    /// Unit of a bound value (resolves to `Self::UNIT`).
+    #[inline]
+    #[must_use]
+    fn scalar_unit(&self) -> ParameterUnit {
+        Self::UNIT
+    }
+    /// Suggested curve of a bound value (resolves to `Self::DEFAULT_CURVE`).
+    #[inline]
+    #[must_use]
+    fn scalar_curve(&self) -> ResponseCurve {
+        Self::DEFAULT_CURVE
+    }
+}
+
 /// A choice option for dropdown parameters.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChoiceOption {
