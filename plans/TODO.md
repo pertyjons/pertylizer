@@ -111,16 +111,6 @@
   filter sweeps. **S** task — build only when a tune genuinely needs a shared (not
   per-instrument) automated sweep; per-instrument sweeps are already covered by A2.
 
-**Iceboxed — the rest of Phase E (build on demand only).** The expensive,
-narrow-audience remainder of the old north-star phase. No plan doc; pick up only when a
-concrete need appears:
-
-- [ ] Per-note hand-drawn expression curves + the **piano-roll per-note curve editor**
-  (the real cost center that gated the whole phase).
-- [ ] Per-note **spatial via AWE** — primitive 1 with an AWE room param as the target
-  (per-note position in the simulated room). Genuine differentiator; no equivalent in
-  other synths — worth keeping on the list even though it is niche.
-
 ### 2.4 Polyphony settings
 
 - [ ] **Unison detune + spread controls — NOT IMPLEMENTED (config removed, only a fixed constant remains).**
@@ -212,53 +202,14 @@ port on `list_modules`, header arrow badge with tooltip). Remaining work:
     2. **The visible knobs are awkward.** `Segments`/`Sustain Seg`/`Loop Start`/`Loop End` are integer
        knobs (now `.step(1.0)`-snapped) and `Time Scale` is a multiplier — a grid of knobs is a poor fit
        for what is fundamentally a *curve*.
-  Fix direction: build a proper **graphical multi-segment envelope editor** (drag segment
-  nodes for time/level, drag handles for per-segment curve, visible sustain + loop-region markers),
-  rendered via a custom widget (`WidgetHint::EnvelopeEditor` already exists as a hint). The Hidden
-  segment params can stay as the persistence/MCP backing; the editor just reads/writes them. Also
-  consider an array-style MCP tool (`set_mseg_segments`) so the shape can be set in one call instead of
-  ~50 individual `set_parameter`s. Review the whole MSEG UX as part of this.
+       Fix direction: build a proper **graphical multi-segment envelope editor** (drag segment
+       nodes for time/level, drag handles for per-segment curve, visible sustain + loop-region markers),
+       rendered via a custom widget (`WidgetHint::EnvelopeEditor` already exists as a hint). The Hidden
+       segment params can stay as the persistence/MCP backing; the editor just reads/writes them. Also
+       consider an array-style MCP tool (`set_mseg_segments`) so the shape can be set in one call instead of
+       ~50 individual `set_parameter`s. Review the whole MSEG UX as part of this.
 
-### 3.6 Integer (value-kind) marker on parameters — replace the `step` proxy
-
-- [ ] **Add an explicit integer / value-kind marker to `ParameterDescriptor` and stop using
-  `.step(1.0)` as a proxy for "this is an integer".** Several params are genuinely integer-typed in the
-  engine but get flattened to `f32` at the descriptor boundary, which loses that fact for every generic
-  consumer (GUI, MCP, schema). As a stopgap the MSEG count/index knobs got `.step(1.0)` (knob snapping —
-  `crates/pertylizer/src/gui/widgets/knob.rs` `snapped()`, fed by `ParameterDescriptor.step`). That only
-  fixes drag-snapping; it does **not** fix value display or type metadata, and `step=1.0` is an indirect
-  way of saying "integer". A first-class marker (e.g. `value_kind: ValueKind { Float, Integer }`, or
-  `is_integer: bool`) is the deeper model and would drive snap **and** formatting **and** schema typing
-  from one place; `step` can then stay only as a *general* fractional-quantization mechanism (0.25, 0.5,
-  10.0 …) if we ever actually need it — decide whether to keep both or fold `step` into the value-kind.
-
-  **The marker also has to settle three layers that currently disagree — investigate each:**
-    1. **Engine (source of truth).** The values are already typed: `MsegParam::{SegmentCount,
-       SustainSegment, LoopStart, LoopEnd}` are `u8`; `with_f32` already does `value as u8`, so the
-       engine *always* receives integers regardless of the knob. Audit the full param set for the same
-       shape: integer-backed (`u8`/`i32`/`usize`) params exposed as float knobs (e.g. oscillator
-       `unison` voice count, any other count/index/“N” params), and **also boolean-backed toggles**
-       (`mute`/`limit`/`freeze`/`tempo_sync`/`retrigger` — `bool` rendered as float 0/1 with
-       `WidgetHint::Toggle`). The marker should probably cover Int *and* Bool, not just Int. Produce the
-       list of which `Param` variants are int/bool-backed vs genuinely continuous.
-    2. **MCP / `descriptors.json`** (`crates/pertylizer/src/bin/gen_schemas.rs` `parameter_descriptor`).
-       Integer params are currently advertised as `number`; with a marker, emit `"type": "integer"` (and
-       booleans as `"boolean"`) so an LLM/client sends `4`, not `4.0`. Today only `min`/`max`/`default`/
-       `response_curve` (+ the new `step`) are emitted. Also reconsider whether `validate_f32` at the MCP
-       boundary should round/reject non-integers for these.
-    3. **Project files / `ParamValue`** (`crates/pertylizer/src/patch.rs`). `ParamValue` *already* has
-       `Int(i32)` and `Bool(bool)` variants, but integer/bool params currently serialize as
-       `Float(as_f32())` (see `from_param` → `Self::Float(p.as_f32())`). Decide whether int/bool params
-       should round-trip as `Int`/`Bool` in saved `.json` (cleaner, self-describing files) and wire
-       `from_param`/`to_param` to consult the marker. Note any migration concern for existing projects
-       that stored these as floats.
-
-  **Display:** `ParameterUnit::None` formats `{:.2}` (`module_traits.rs` `format`), so integer knobs show
-  "4.00"/"16.00" in the tooltip. The marker should make integer display decimal-free ("4"). — Net: the
-  marker is the root-cause fix; `step` was the bandaid. Keep `step` only if a real fractional-quantization
-  need appears.
-
-### 3.7 Visualizer module bugs (reported in-app)
+### 3.6 Visualizer module bugs (reported in-app)
 
 Three issues observed with the visualizer modules (`Oscilloscope`, `SpectrumAnalyzer`, `LevelMeter`,
 `SignalMonitor`) in the patch editor. Not yet root-caused — pointers below are starting points.
@@ -281,7 +232,7 @@ Three issues observed with the visualizer modules (`Oscilloscope`, `SpectrumAnal
   `crates/pertylizer/src/gui/widgets/spectrum.rs` — add rect clipping and/or clamp/sanitize the plotted
   values, and confirm the painter is clipped to the graph rect.
 
-### 3.8 `ModuleParam` single-definition cleanup (MAYBE — aesthetics only, future)
+### 3.7 `ModuleParam` single-definition cleanup (MAYBE — aesthetics only, future)
 
 - [ ] **Collapse the inherent-vs-trait duplication for the param method set — purely for
   "one definition" tidiness, low priority.** Phase 7 of the param-type-system work
@@ -291,16 +242,16 @@ Three issues observed with the visualizer modules (`Oscilloscope`, `SpectrumAnal
   So the bodies live in the inherent impls and the trait is a thin forwarding layer — there
   is a small amount of duplication (the ~470 macro-generated one-liners). The "pure" form
   would make `ModuleParam` the **single** definition and delete the inherent methods.
-  - **Why it's only a maybe:** the literal version means the trait must be in scope at the
-    **~2489 call sites** of `.as_f32()`/`.with_f32()`/`.same_kind()` across the workspace
-    (via a `synth_core::prelude` glob in dozens of files). That is a large, sprawling,
-    purely-cosmetic diff with **zero functional/correctness gain** — the aggregate `Param`
-    match + the macro already force the full contract on every enum (a missing method is a
-    compile error today). YAGNI: nothing currently needs it.
-  - **If we ever do it:** **own branch + own session** (it touches most files in the
-    workspace). Mechanism: move each method body into `impl ModuleParam for X`, delete the
-    inherent method, and add `use synth_core::prelude::*` where the compiler flags missing
-    trait scope. Let the compiler drive the call-site fixes; gate per crate.
+    - **Why it's only a maybe:** the literal version means the trait must be in scope at the
+      **~2489 call sites** of `.as_f32()`/`.with_f32()`/`.same_kind()` across the workspace
+      (via a `synth_core::prelude` glob in dozens of files). That is a large, sprawling,
+      purely-cosmetic diff with **zero functional/correctness gain** — the aggregate `Param`
+      match + the macro already force the full contract on every enum (a missing method is a
+      compile error today). YAGNI: nothing currently needs it.
+    - **If we ever do it:** **own branch + own session** (it touches most files in the
+      workspace). Mechanism: move each method body into `impl ModuleParam for X`, delete the
+      inherent method, and add `use synth_core::prelude::*` where the compiler flags missing
+      trait scope. Let the compiler drive the call-site fixes; gate per crate.
 
 ---
 
@@ -310,121 +261,3 @@ Three issues observed with the visualizer modules (`Oscilloscope`, `SpectrumAnal
 
 - [ ] Tier 3: `compare_to_reference`, `compare_patterns`, `compare_patches`,
   `humanize_notes`, `generate_variation`, `analyze_track`, `get_mix_meters`.
-
-### 4.2 Technical follow-ups from the MCP music tools plan
-
-- [ ] **Nice-to-have: global drift-lint over preset-backed descriptors (was §3.5 of the deleted
-  newtype-bounds plan).** The per-preset drift-guard tests that shipped with `f90125f` only cover the
-  params they were hand-written for, so a future dev could still hardcode `.range(-100.0, 100.0)` on a
-  *new* `Cents`/`Hertz`/`Gain` param instead of reusing the preset, and nothing would catch the
-  re-introduced drift. Add one test that walks **every** registered module's descriptors and, for each
-  param whose unit is a preset-backed newtype, asserts its `.range` is one of the approved presets
-  (`Cents::DETUNE_RANGE`, `Hertz::OSC_RANGE`, …) rather than a raw literal. Requires a curated
-  **allow-list of legitimate one-offs** (not every `Hertz`/`Cents` param maps to a shared preset — some
-  genuinely have a unique range), or it produces false positives. Belt-and-suspenders on top of the
-  per-param asserts; low priority.
-
-### 4.3 `Reference`-kind params: make the schema honest
-
-`ParamKind::Reference` (the 3 params `Sampler/sample_select`, `ModMatrix/slot_source`,
-`ModMatrix/slot_destination`) is *represented* — every one emits `value_kind:
-"reference"` in `descriptors.json` (Phase 5a), and values serialize as a `Choice`
-string or a `{sample_id}` object — but the schema doesn't describe a *usable*
-reference. (Note JSON Schema's `$ref` is schema-reuse, **not** a data-level
-"points-at-another-instance" type; standard JSON Schema cannot validate dynamic
-cross-references, so these need a discovery signal + app/MCP-level validation, not a
-validator.) Three concrete gaps, all in `crates/pertylizer/src/bin/gen_schemas.rs`
-(`parameter_descriptor`) unless noted:
-
-- [ ] **1. `Sampler/sample_select` advertises a meaningless numeric range.** It emits
-  `min: 0.0, max: 1.0, default: 0.5, unit: "none"` for what is really a `u64` sample
-  id. Stop emitting `min`/`max`/`default`/`response_curve` for a `Reference` param;
-  instead mark it as a sample reference and point clients at a discovery tool (e.g.
-  `list_samples`), and constrain the JSON value to the `{ "sample_id": integer }`
-  shape rather than a number. An LLM/MCP client currently has no way to know it should
-  set a sample id (or where to find valid ones).
-- [ ] **2. `ModMatrix/slot_source` & `slot_destination` carry a stale static
-  `choices` list.** The emitted `choices` are the legacy enumerated targets
-  (`osc1_pitch`, `lfo1`, …) but real addressing is now **free-form** dynamic
-  (`flt-3.cutoff`, any `module.param`; macros like `velocity`/`mod_wheel`) parsed by
-  `SrcAddr`/`DestAddr`. So the schema *lies* about what is valid. Replace the static
-  enum with either a `pattern` for the address grammar (`^none$|^[a-z]+-\d+\.\w+$|
-  <macro>$`) or a `"see list_modulation_targets"` pointer field, so the schema doesn't
-  claim a false fixed set. (Relates to §3.4 — the dynamic mod-matrix surfacing.)
-- [ ] **3. Give `Reference` a named, documented shape.** Add a shared
-  `$defs/Reference` (or per-kind `$defs/SampleRef` + `$defs/ModAddress`) in
-  `patch.schema.json` / `project.schema.json` and `$ref` the reference-param values to
-  it, so a reference value has one documented form instead of being an anonymous arm
-  of the untagged `ParamValue` union. Belt-and-suspenders on top of 1 and 2.
-
-Surfaced reviewing the value-kind work (`plans/param-type-system-plan.md`): the
-`Reference` kind is a good **discovery signal** for MCP/AI clients ("don't guess a
-number — call a discovery tool"), but today the schema under-describes it.
-
----
-
-## 5. DSP / Audio-Engine Hardening
-
-Follow-ups deferred from the **module critical-review fix pass** (see
-`plans/module-review-plan.md`). The genuine bugs were fixed inline; these are the
-deeper/cross-crate items that a one-line fix could not properly address.
-
-### 5.1 Sanitize CV at the input-read boundary (deeper NaN fix)
-
-- [x] **Move NaN/Inf coercion to the CV-buffer read boundary instead of per-call-site.** (Done —
-  `InputReader::get(i)` is the sanitizing accessor; all 16 reader-based CV reads migrated. The
-  `inputs.get()→&AudioBuffer` osc reads + non-CV scalar reads keep explicit `sanitize_cv`. See
-  `plans/dsp-hardening-plan.md` §5.1.) The fix
-  pass added `crate::math::sanitize_cv` (non-finite → 0.0) and wrapped the direct CV-input reads
-  in the filters and oscillators (`cutoff_cv`, `freq_cv`, `fm`, `pm`, `pwm`, `sync`, vowel/breath/
-  pitch CV, …). This works but is **per-call-site and easy to forget** — the review already caught
-  three reads (`pwm`/`sync`/`pm` in `oscillator.rs`) that the first pass missed. A NaN can only enter
-  DSP through a direct CV-input buffer (mod-matrix params are already clamped by
-  `ParamModOffsets::effective()`), so the uniform fix is to sanitize **once at the accessor**: have
-  the input reader return finite-or-zero (e.g. a sanitizing `InputReader::get(i) -> f32`, or coerce
-  when the buffer is filled), then drop the scattered `sanitize_cv` wraps. Closes the bug class
-  instead of playing whack-a-mole. Note `InputReader::Index` currently returns `&f32`, so this needs
-  a value-returning accessor variant.
-
-### 5.2 Promote engine block-size & max-sample-rate to shared `pub const`s
-
-- [x] **`compressor.rs` and `limiter.rs` hand-copy private engine constants.** `compressor.rs` sizes
-  its sidechain buffer from a local `MAX_SIDECHAIN_SAMPLES = 4096*2` that duplicates the engine's
-  **private** `MAX_BUFFER_SIZE` (4096 frames, itself duplicated in `effect_chain.rs:21`,
-  `voice.rs:49`, `instrument.rs:343`). `limiter.rs` sizes its look-ahead ring from a local
-  `MAX_SAMPLE_RATE = 192_000.0` literal that no other code agrees with (`synth_core` only exposes
-  `SampleRate::{CD,DVD,STUDIO}_QUALITY`, max 96 kHz). If the engine ever raises the max block size or
-  supported sample rate, these copies silently desync → the sidechain buffer truncates a block (wrong
-  gain reduction) or the limiter under-allocates look-ahead (stops honoring 5 ms near peaks). Fix:
-  promote `MAX_BUFFER_SIZE` to a single `pub const` in `synth_core` and add a
-  `SampleRate::MAX_SUPPORTED`, then have the engine *and* these modules reference them.
-
-### 5.3 Convolver: build the IR off the audio thread
-
-- [x] **`Convolver::rebuild_ir` runs heavy FFT work (and a bounded first-growth allocation) on the
-  audio thread.** (Done — per-instance worker thread builds the IR spectra off-thread and the audio
-  thread swaps them in lock-free; pools pre-reserved so swaps never allocate. See
-  `plans/dsp-hardening-plan.md` §5.3. Not yet ear-verified in-app.) The fix pass made `rebuild_ir` allocation-free in steady state (reuses scratch
-  buffers + FFT planners via `PartitionedConvolver::update_ir`), but it is still invoked from
-  `set_param` — which drains on the audio thread — and re-runs up to `MAX_IR_SAMPLES/PARTITION_SIZE`
-  forward FFTs across six convolvers whenever `Ir` type or `DecayTrim` (>0.01 delta) changes. Rapid
-  `DecayTrim` automation therefore re-partitions all six IRs on every move: a sustained CPU spike.
-  The proper fix is the architectural one deliberately skipped: build the new IR on a worker thread
-  and hand it to the audio thread via a lock-free pointer swap (double-buffer). Also note the residual
-  first-growth allocation in `ensure_partition_buffers` is only safe because `new()` seeds the
-  longest default IR (Plate) — a future change constructing with a shorter default would reintroduce
-  an audio-thread allocation.
-
-### 5.4 PadSynth: mark the wavetable dirty on sample-rate change (low priority)
-
-- [x] **`PadSynth` rebuilds its wavetable lazily in `note_on`, keyed on `self.sample_rate`, but has no
-  `set_sample_rate` override.** (Done — see `plans/dsp-hardening-plan.md` §5.4. The substantive bug was
-  actually the **`phase_increment`** staleness, not just the wavetable: fixed by deferring the
-  `pitch / sample_rate` division to `process()`. `process()` setting `self.sample_rate` from the context
-  also makes the wavetable rebuild guard see the current rate for any note after the first block.) The engine propagates the sample rate to voice-graph modules only via
-  `ProcessContext` inside `process()` (established by the `granular_osc` fix in the same pass), so if a
-  `note_on` arrives before the first `process()` at a newly-changed rate, the table is built with the
-  stale rate's harmonic-bin placement for that one note (corrected on the next note). This is
-  **pre-existing** (the old unconditional rebuild had the same staleness) and audibly tiny — one note
-  at a rate-change boundary — so it is low priority. Clean fix: rebuild in `process()` when the
-  context sample rate differs, or add a `set_sample_rate` hook that marks the table dirty.
