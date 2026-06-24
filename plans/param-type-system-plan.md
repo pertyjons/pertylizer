@@ -4,11 +4,11 @@
 > `feat/param-kind-system`, ~10 commits, each gated + `/code-review`'d). The
 > value-kind model is live end-to-end: engine `ParamKind`/`ScalarParam` → descriptor
 > `kind`/derived `unit` → kind-aware display → typed serialization → schema `type`/
-> `value_kind` + kind-aware MCP validation → kind-aware GUI dispatch. **Remaining:**
-> Phase 7 (`ModuleParam` trait) deferred as an ergonomics-only, ~2489-call-site
-> refactor (§10); Phase 8 (proc-macro) skipped (§14.4); plus two small in-app-eyeball
-> follow-ups (knob scroll-wheel §9; the 2 enum-as-float descriptors → `choice()`).
-> Originally: review-complete after 3 review passes (all 6 decisions resolved, §14).
+> `value_kind` + kind-aware MCP validation → kind-aware GUI dispatch → `ModuleParam`
+> trait (Phase 7, delegation macro, zero churn). **Remaining:** Phase 8 (proc-macro)
+> skipped (§14.4); two small in-app-eyeball follow-ups (knob scroll-wheel §9; the 2
+> enum-as-float descriptors → `choice()`); strict load-validation deferred (§16).
+> Review-complete after 3 review passes (all 6 decisions resolved, §14).
 > **Scope:** Maximal — a first-class value-kind model threaded through every layer
 > (engine → descriptor → serialization → schema/MCP → GUI), plus newtype-derived
 > *unit* (curve stays explicit — §14.6) to kill descriptor drift, and a shared
@@ -439,7 +439,7 @@ per `CLAUDE.md`). Dependency order:
 | 4     | Serialization emits `Int`/`Bool`; consistent int rounding ✅ **done** | serialization | low            | 1          |
 | 5     | Schema `type`/`kind`; MCP validation by kind ✅ **done** (5a+5b)      | schema/MCP    | low            | 1          |
 | 6     | GUI interaction polish — bool/int dispatch ✅; scroll deferred        | GUI           | medium         | 3          |
-| 7     | `ModuleParam` shared trait — **deferred** (ergonomics-only, big churn) | engine        | medium (churn) | 1          |
+| 7     | `ModuleParam` shared trait ✅ **done** (delegation macro, zero churn)  | engine        | low            | 1          |
 | 8     | `#[derive(ParamReflect)]` proc-macro — **skipped**                   | —             | —              | —          |
 
 Phases 2–6 can proceed in parallel after Phase 1 lands, except Phase 6 depends on 3.
@@ -799,18 +799,27 @@ an integer knob by 1; a bool always a checkbox.
 
 ---
 
-## 10. Phase 7 — `ModuleParam` shared trait (DEFERRED — human-review refactor)
+## 10. Phase 7 — `ModuleParam` shared trait ✅ DONE (delegation macro, zero churn)
 
-**Status:** deferred out of the autonomous implementation loop. Phase 7 is
-**ergonomics-only** (this section's own cost/benefit and §14.3 note that the
-aggregate `Param::kind()`/`as_f32()` delegation matches *already* force every enum
-to implement the contract — the trait adds no correctness). Moving the inherent
-methods off the 67 enums to a trait would require `ModuleParam` in scope at the
-**~2489 call sites** of `.as_f32()`/`.with_f32()`/`.same_kind()` across the
-workspace — a large, sprawling diff with no current consumer (YAGNI). That is a
-focused, reviewable refactor, not loop work; pick it up deliberately if/when
-generic-over-`ModuleParam` code is actually needed. The functional value-kind
-system (Phases 0–6) is complete without it.
+**Shipped** without the feared ~2489-call-site churn, by choosing a better
+mechanism than "move the methods": the inherent methods **stay** as the single
+definition, and a declarative macro (`params/module_param.rs`) generates
+`impl ModuleParam for <all 67 enums + Param>` where each method *delegates* to the
+inherent one (`fn as_f32(&self) -> f32 { Self::as_f32(self) }`). Inherent methods
+win Rust name resolution, so the delegation never recurses and every existing call
+site is untouched (verified: clean whole-workspace build + 600 tests + a generic
+`round_trip<P: ModuleParam>` test that would hang on recursion). The macro **forces
+the full contract** on every listed type — a `*Param` enum missing a method is a
+compile error. The trait is re-exported via a new `synth_core::prelude`.
+
+This delivers all of Phase 7's goals (provable uniform contract, generics over
+`T: ModuleParam`, one place to read the contract) at low risk; the literal
+"delete inherent + fix every call site" variant was correctly avoided as pure churn
+with no added benefit.
+
+**Original framing (superseded):** Phase 7 is ergonomics-only — the aggregate
+`Param` delegation matches already force the contract (§14.3); the value-kind system
+(Phases 0–6) was complete without it.
 
 **Decision (external review):** land it. A uniform trait is valuable for generic
 code, test harnesses, and serialization helpers; the churn is mechanical and
@@ -1055,11 +1064,12 @@ unit; the full gate must be green before each commit.
   round-trip via `Number(f64)` → resolve → kind-aware `validate` (rounds). Add only
   if a client needs to send a *typed* integer.
 
-**Step 5 — Trait (Phase 7): DEFERRED** (ergonomics-only; ~2489 call sites; no
-current consumer — see §10). A focused human-reviewed refactor, not loop work.
+**Step 5 — Trait (Phase 7): ✅ DONE** (delegation macro, zero call-site churn — §10).
 
-- [ ] *(deferred)* Introduce `ModuleParam`; move the 67 enums' methods onto it;
-  export via a `synth_core::prelude`. (Phase 8 proc-macro: skipped.)
+- [x] Introduced `ModuleParam`; `impl` for all 67 enums + `Param` via a delegation
+  macro to the existing inherent methods (no method move, no call-site churn);
+  exported via `synth_core::prelude`; generic-over-`ModuleParam` test. (Phase 8
+  proc-macro: skipped.)
 
 ---
 

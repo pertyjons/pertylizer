@@ -655,6 +655,34 @@ pub trait ScalarParam {
     }
 }
 
+/// The uniform contract every module parameter enum (and the aggregate [`Param`])
+/// provides: f32 round-tripping for the GUI, same-kind comparison, a display name,
+/// and the value-kind metadata (`kind`/`unit`/`default_curve`).
+///
+/// Phase 7: this formalizes the method set that already exists as inherent methods
+/// on each `*Param` enum, so generic code can be written over `T: ModuleParam`
+/// (test harnesses, serialization helpers) and a new enum that forgets a method is
+/// a compile error. The blanket impls (in `params::module_param`) *delegate* to the
+/// inherent methods — those remain the single definition, so the ~2500 existing
+/// `param.as_f32()` call sites are untouched (inherent methods win name resolution).
+pub trait ModuleParam: Copy {
+    /// Current value as an f32 (for GUI sliders / serialization).
+    fn as_f32(&self) -> f32;
+    /// This parameter with `value` applied (clamped/rounded to its type).
+    #[must_use]
+    fn with_f32(&self, value: f32) -> Self;
+    /// Whether two params are the same kind (ignoring their values).
+    fn same_kind(&self, other: &Self) -> bool;
+    /// Human-readable parameter name.
+    fn name(&self) -> &'static str;
+    /// Value-kind classifier.
+    fn kind(&self) -> ParamKind;
+    /// Display unit.
+    fn unit(&self) -> ParameterUnit;
+    /// Suggested response curve (advisory).
+    fn default_curve(&self) -> ResponseCurve;
+}
+
 /// A choice option for dropdown parameters.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ChoiceOption {

@@ -33,6 +33,7 @@ mod kinetic;
 mod la_synth;
 mod lfo;
 mod mod_matrix;
+mod module_param;
 mod modules;
 mod mseg;
 mod noise;
