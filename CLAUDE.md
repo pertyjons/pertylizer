@@ -28,6 +28,23 @@ git add --all
 git commit -m "<short description of changes>"
 ```
 
+### Merging a branch to `main`
+
+When work was done on a branch, **always squash-merge** it into `main` so each
+feature lands as a single clean commit (the branch's incremental commits are not
+kept in `main`'s history):
+
+```bash
+git checkout main
+git merge --squash <branch>
+git commit -m "<summary of the whole branch>"
+git branch -D <branch>
+```
+
+Never fold a working branch into `main` with a plain/ff merge — squash by
+default. (`git merge` without `--squash` does a ff/merge-commit, so `--squash`
+must be explicit.)
+
 ### `new version`
 
 1. **HARD REQUIREMENT — document every change since the last version.**

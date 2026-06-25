@@ -332,10 +332,7 @@ fn draw_browser_row(
         &name_text,
         list_panel::row_text_color(is_selected, used),
         |ui| {
-            if ui
-                .button(format!("{} Rename / edit…", ri::EDIT_LINE))
-                .clicked()
-            {
+            if ui.button((ri::EDIT_LINE, "Rename / edit…")).clicked() {
                 edit = true;
                 ui.close();
             }

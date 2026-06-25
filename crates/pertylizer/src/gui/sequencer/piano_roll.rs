@@ -2842,14 +2842,14 @@ fn draw_piano_roll_toolbar(
             });
 
         // ── Default velocity ──
-        ui.label(RichText::new("Vel:").color(t.colors.text_dim).size(10.0));
         let mut vel_pct = (view_state.default_velocity.as_f32() * 100.0).round();
         if ui
             .add(
                 egui::DragValue::new(&mut vel_pct)
                     .range(1.0..=100.0)
                     .speed(1.0)
-                    .suffix(" %"),
+                    .suffix(" %")
+                    .prefix("Vel:"),
             )
             .changed()
         {
@@ -2910,14 +2910,14 @@ fn draw_piano_roll_toolbar(
         ui.separator();
 
         // ── Swing control ──
-        ui.label(RichText::new("Sw:").color(t.colors.text_dim).size(10.0));
         let mut sw_pct = (view_state.swing_amount.as_f32() * 100.0).round();
         if ui
             .add(
                 egui::DragValue::new(&mut sw_pct)
                     .range(0.0..=100.0)
                     .speed(1.0)
-                    .suffix(" %"),
+                    .suffix(" %")
+                    .prefix("Sw:"),
             )
             .on_hover_text("Swing amount (offset even subdivisions)")
             .changed()

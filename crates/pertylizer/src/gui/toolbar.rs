@@ -48,9 +48,18 @@ pub fn secondary_row<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::
 
 /// Shared horizontal layout used by both bar kinds: a single `ui.horizontal`
 /// row with the canonical item spacing applied.
+///
+/// We also pin a uniform height and button padding for every framed widget in
+/// the row (`DragValue`, `ComboBox`, `Button`). egui centers each widget's
+/// bounding box vertically, but the three widget kinds ship different internal
+/// padding, so their *text baselines* would otherwise land on different y and
+/// the bar reads as ragged. Forcing one `interact_size.y` + `button_padding`
+/// here lines all the bars up at once.
 fn row<R>(ui: &mut egui::Ui, add_contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = item_spacing();
+        ui.spacing_mut().interact_size.y = 20.0;
+        ui.spacing_mut().button_padding = egui::vec2(6.0, 2.0);
         add_contents(ui)
     })
     .inner

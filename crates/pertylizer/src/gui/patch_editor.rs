@@ -2641,7 +2641,7 @@ impl PatchEditor {
                             )
                             .ui(ui, |ui| {
                                 if ui
-                                    .button(format!("{}  Edit description…", ri::EDIT_LINE))
+                                    .button((ri::EDIT_LINE, "Edit description…"))
                                     .clicked()
                                 {
                                     open_desc_editor = true;
@@ -4365,7 +4365,7 @@ impl PatchEditor {
             if ui
                 .add_enabled(
                     has_selection,
-                    egui::Button::new(format!("{} Copy", ri::FILE_COPY_LINE)),
+                    egui::Button::new((ri::FILE_COPY_LINE, "Copy")),
                 )
                 .clicked()
             {
@@ -4375,14 +4375,14 @@ impl PatchEditor {
             if ui
                 .add_enabled(
                     has_selection,
-                    egui::Button::new(format!("{} Cut", ri::SCISSORS_CUT_LINE)),
+                    egui::Button::new((ri::SCISSORS_CUT_LINE, "Cut")),
                 )
                 .clicked()
             {
                 result.request_cut = true;
                 ui.close();
             }
-            if ui.button(format!("{} Paste", ri::CLIPBOARD_LINE)).clicked() {
+            if ui.button((ri::CLIPBOARD_LINE, "Paste")).clicked() {
                 result.request_paste = true;
                 ui.close();
             }
@@ -4398,7 +4398,7 @@ impl PatchEditor {
             }
 
             if ui
-                .button(format!("{} Insert Group Template", ri::FOLDER_ADD_LINE))
+                .button((ri::FOLDER_ADD_LINE, "Insert Group Template"))
                 .clicked()
             {
                 result.group_template_action = Some(GroupTemplateAction::OpenBrowser {

@@ -81,6 +81,29 @@ fn draw_mod_marker(ui: &mut Ui, role: ModRole) {
     .on_hover_text(role.tooltip());
 }
 
+/// Draw a parameter's name label with its optional Mod Matrix marker folded into
+/// the *same* widget as a trailing atom. A free-standing `ui.label` + marker
+/// (the old pattern) leaves egui to vertically centre two separate widgets whose
+/// text sizes differ, so the marker's baseline could drift from the name; as one
+/// `AtomLayout` they share a baseline and a single `icon_spacing` gap. The role
+/// tooltip is applied to the whole cell when a marker is present.
+fn labeled_param(ui: &mut Ui, param: &ParameterDescriptor, role: Option<ModRole>) {
+    let name = egui::RichText::new(&param.name)
+        .size(theme().fonts.size_normal)
+        .color(theme().colors.text_secondary);
+    let Some(role) = role else {
+        ui.label(name);
+        return;
+    };
+    let marker = egui::RichText::new(role.glyph())
+        .size(theme().fonts.size_small)
+        .color(theme().colors.accent_purple);
+    egui::AtomLayout::new((name, marker))
+        .show(ui)
+        .response
+        .on_hover_text(role.tooltip());
+}
+
 /// Which widget group the auto-renderer draws a parameter in.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RenderGroup {
@@ -178,16 +201,7 @@ pub fn draw_parameter_grid<'d>(
             continue;
         }
         let mut selected = (get(param).round() as usize).min(waveforms.len() - 1);
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(&param.name)
-                    .size(theme().fonts.size_normal)
-                    .color(theme().colors.text_secondary),
-            );
-            if let Some(role) = mod_role(param) {
-                draw_mod_marker(ui, role);
-            }
-        });
+        labeled_param(ui, param, mod_role(param));
         if WaveformSelector::new(&mut selected)
             .waveforms(waveforms)
             .accent_color(accent)
@@ -208,14 +222,7 @@ pub fn draw_parameter_grid<'d>(
     for param in &slider_params {
         let mut value = get(param);
         ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(&param.name)
-                    .size(theme().fonts.size_normal)
-                    .color(theme().colors.text_secondary),
-            );
-            if let Some(role) = mod_role(param) {
-                draw_mod_marker(ui, role);
-            }
+            labeled_param(ui, param, mod_role(param));
             ui.add_space(theme().spacing.xs);
             let is_time = matches!(param.widget_hint, WidgetHint::TimeSlider);
             let slider = if param.kind == ParamKind::Integer {
@@ -249,14 +256,7 @@ pub fn draw_parameter_grid<'d>(
         let current = get(param);
         let mut selected = current.round() as usize;
         ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new(&param.name)
-                    .size(theme().fonts.size_normal)
-                    .color(theme().colors.text_secondary),
-            );
-            if let Some(role) = mod_role(param) {
-                draw_mod_marker(ui, role);
-            }
+            labeled_param(ui, param, mod_role(param));
             let text = choices
                 .get(selected)
                 .map(|c| c.name.clone())

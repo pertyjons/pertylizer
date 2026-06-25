@@ -371,10 +371,10 @@ pub(super) fn draw_arrangement(
             );
             ui.add_space(t.spacing.md);
             if ui
-                .button(
-                    RichText::new(format!("{} Add Track", ri::ADD_LINE))
-                        .color(t.colors.accent_green),
-                )
+                .button((
+                    RichText::new(ri::ADD_LINE).color(t.colors.accent_green),
+                    RichText::new("Add Track").color(t.colors.accent_green),
+                ))
                 .clicked()
             {
                 let _ = song.write().create_track("Track 1");
@@ -1466,10 +1466,7 @@ fn draw_arrangement_context_menu(
             );
             ui.separator();
 
-            if ui
-                .button(format!("{} New Pattern Here", ri::ADD_LINE))
-                .clicked()
-            {
+            if ui.button((ri::ADD_LINE, "New Pattern Here")).clicked() {
                 {
                     let mut song_w = song.write();
                     let new_pat_id = song_w.create_pattern(SeqDuration::WHOLE * 4);
@@ -1958,11 +1955,14 @@ fn draw_arrangement_track_headers(
                     // "+" button to add track
                     ui.add_space(t.spacing.xs);
                     if ui
-                        .button(
-                            RichText::new(format!("{} Add Track", ri::ADD_LINE))
+                        .button((
+                            RichText::new(ri::ADD_LINE)
                                 .size(11.0)
                                 .color(t.colors.accent_green),
-                        )
+                            RichText::new("Add Track")
+                                .size(11.0)
+                                .color(t.colors.accent_green),
+                        ))
                         .clicked()
                     {
                         let mut song_w = song.write();

@@ -134,19 +134,26 @@ fn button_row_indent(ui: &egui::Ui) -> f32 {
 }
 
 fn primary_button(ui: &mut egui::Ui, t: &Theme, icon: &str, label: &str, accent: Color32) -> bool {
-    let text = RichText::new(format!("{icon}  {label}"))
+    let icon = RichText::new(icon)
         .size(t.fonts.size_normal)
         .color(accent)
         .strong();
-    ui.add_sized([180.0, 36.0], egui::Button::new(text))
+    let label = RichText::new(label)
+        .size(t.fonts.size_normal)
+        .color(accent)
+        .strong();
+    ui.add_sized([180.0, 36.0], egui::Button::new((icon, label)))
         .clicked()
 }
 
 fn secondary_button(ui: &mut egui::Ui, t: &Theme, icon: &str, label: &str) -> bool {
-    let text = RichText::new(format!("{icon}  {label}"))
+    let icon = RichText::new(icon)
         .size(t.fonts.size_normal)
         .color(t.colors.text_primary);
-    ui.add_sized([180.0, 30.0], egui::Button::new(text))
+    let label = RichText::new(label)
+        .size(t.fonts.size_normal)
+        .color(t.colors.text_primary);
+    ui.add_sized([180.0, 30.0], egui::Button::new((icon, label)))
         .clicked()
 }
 
@@ -155,10 +162,13 @@ fn recent_button(ui: &mut egui::Ui, t: &Theme, path: &Path) -> bool {
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("(unnamed)");
-    let text = RichText::new(format!("{}  {name}", ri::HISTORY_LINE))
+    let icon = RichText::new(ri::HISTORY_LINE)
         .size(t.fonts.size_normal)
         .color(t.colors.accent_cyan);
-    ui.add_sized([280.0, 26.0], egui::Button::new(text))
+    let label = RichText::new(name)
+        .size(t.fonts.size_normal)
+        .color(t.colors.accent_cyan);
+    ui.add_sized([280.0, 26.0], egui::Button::new((icon, label)))
         .on_hover_text(path.display().to_string())
         .clicked()
 }

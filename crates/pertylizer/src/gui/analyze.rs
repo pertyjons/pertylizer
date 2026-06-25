@@ -454,10 +454,13 @@ impl AnalyzeWindow {
         save_wav: &mut bool,
     ) {
         ui.horizontal(|ui| {
-            ui.label("Note");
             let mut note_u8 = self.params.note.as_u8();
             if ui
-                .add(egui::DragValue::new(&mut note_u8).range(0..=127))
+                .add(
+                    egui::DragValue::new(&mut note_u8)
+                        .range(0..=127)
+                        .prefix("Note "),
+                )
                 .on_hover_text(self.params.note.name())
                 .changed()
             {
@@ -466,21 +469,30 @@ impl AnalyzeWindow {
             ui.label(self.params.note.name());
 
             ui.separator();
-            ui.label("Vel");
             let mut vel_midi = i32::from(self.params.velocity.to_midi());
             if ui
-                .add(egui::DragValue::new(&mut vel_midi).range(1..=127))
+                .add(
+                    egui::DragValue::new(&mut vel_midi)
+                        .range(1..=127)
+                        .prefix("Vel "),
+                )
                 .changed()
             {
                 self.params.velocity = Velocity::from_midi(vel_midi.clamp(1, 127) as u8);
             }
 
             ui.separator();
-            ui.label("Dur (ms)");
-            ui.add(egui::DragValue::new(&mut self.params.duration_ms).range(50..=10_000));
+            ui.add(
+                egui::DragValue::new(&mut self.params.duration_ms)
+                    .range(50..=10_000)
+                    .prefix("Dur (ms) "),
+            );
 
-            ui.label("Tail (ms)");
-            ui.add(egui::DragValue::new(&mut self.params.tail_ms).range(0..=10_000));
+            ui.add(
+                egui::DragValue::new(&mut self.params.tail_ms)
+                    .range(0..=10_000)
+                    .prefix("Tail (ms) "),
+            );
 
             ui.separator();
             ui.label("Expected");
@@ -513,7 +525,7 @@ impl AnalyzeWindow {
                     if ui
                         .add_enabled(
                             has_result,
-                            egui::Button::new(format!("{} Copy as JSON", ri::CLIPBOARD_LINE)),
+                            egui::Button::new((ri::CLIPBOARD_LINE, "Copy as JSON")),
                         )
                         .clicked()
                     {
@@ -523,7 +535,7 @@ impl AnalyzeWindow {
                     if ui
                         .add_enabled(
                             has_result,
-                            egui::Button::new(format!("{} Save WAV…", ri::DOWNLOAD_LINE)),
+                            egui::Button::new((ri::DOWNLOAD_LINE, "Save WAV…")),
                         )
                         .clicked()
                     {
@@ -535,9 +547,9 @@ impl AnalyzeWindow {
                 let busy = self.pending.is_some();
                 let can_run = !busy && self.target.is_some();
                 let label = if busy {
-                    format!("{} Rendering…", ri::REFRESH_LINE)
+                    (ri::REFRESH_LINE, "Rendering…")
                 } else {
-                    format!("{} Re-analyze", ri::PLAY_LINE)
+                    (ri::PLAY_LINE, "Re-analyze")
                 };
                 if ui
                     .add_enabled(can_run, egui::Button::new(label))
@@ -548,9 +560,9 @@ impl AnalyzeWindow {
                 }
 
                 let pin_label = if self.pinned.is_some() {
-                    format!("{} Repin", ri::PUSHPIN_FILL)
+                    (ri::PUSHPIN_FILL, "Repin")
                 } else {
-                    format!("{} Pin", ri::PUSHPIN_LINE)
+                    (ri::PUSHPIN_LINE, "Pin")
                 };
                 if ui
                     .add_enabled(self.current.is_some(), egui::Button::new(pin_label))
@@ -562,7 +574,7 @@ impl AnalyzeWindow {
 
                 if self.pinned.is_some()
                     && ui
-                        .button(format!("{} Unpin", ri::UNPIN_LINE))
+                        .button((ri::UNPIN_LINE, "Unpin"))
                         .on_hover_text("Clear the A reference")
                         .clicked()
                 {

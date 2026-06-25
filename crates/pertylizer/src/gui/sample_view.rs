@@ -242,10 +242,7 @@ pub fn draw_sample_view(
                             &row.name,
                             list_panel::row_text_color(is_selected, used),
                             |ui| {
-                                if ui
-                                    .button(format!("{} Rename / edit…", ri::EDIT_LINE))
-                                    .clicked()
-                                {
+                                if ui.button((ri::EDIT_LINE, "Rename / edit…")).clicked() {
                                     rename = true;
                                     ui.close();
                                 }
@@ -464,18 +461,21 @@ pub fn draw_sample_view(
             // Monitor toggle
             let input_state = audio_input.state();
             let is_monitoring = input_state != InputState::Idle;
-            let monitor_label = if is_monitoring {
-                format!("{} Monitor: ON", ri::MIC_FILL)
-            } else {
-                format!("{} Monitor", ri::MIC_LINE)
-            };
             let monitor_color = if is_monitoring {
                 t.colors.meter_green
             } else {
                 t.colors.text_dim
             };
+            let (monitor_icon, monitor_text) = if is_monitoring {
+                (ri::MIC_FILL, "Monitor: ON")
+            } else {
+                (ri::MIC_LINE, "Monitor")
+            };
             if ui
-                .button(egui::RichText::new(monitor_label).color(monitor_color))
+                .button((
+                    egui::RichText::new(monitor_icon).color(monitor_color),
+                    egui::RichText::new(monitor_text).color(monitor_color),
+                ))
                 .clicked()
             {
                 if is_monitoring {
@@ -489,11 +489,6 @@ pub fn draw_sample_view(
 
             // Record button
             let is_recording = input_state == InputState::Recording;
-            let rec_label = if is_recording {
-                format!("{} Stop", ri::STOP_FILL)
-            } else {
-                format!("{} Rec", ri::RECORD_CIRCLE_FILL)
-            };
             let rec_color = if is_recording {
                 t.colors.meter_red
             } else if is_monitoring {
@@ -501,10 +496,18 @@ pub fn draw_sample_view(
             } else {
                 t.colors.text_dim
             };
+            let (rec_icon, rec_text) = if is_recording {
+                (ri::STOP_FILL, "Stop")
+            } else {
+                (ri::RECORD_CIRCLE_FILL, "Rec")
+            };
             if ui
                 .add_enabled(
                     is_monitoring,
-                    egui::Button::new(egui::RichText::new(rec_label).color(rec_color)),
+                    egui::Button::new((
+                        egui::RichText::new(rec_icon).color(rec_color),
+                        egui::RichText::new(rec_text).color(rec_color),
+                    )),
                 )
                 .clicked()
             {

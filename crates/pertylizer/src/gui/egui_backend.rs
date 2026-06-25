@@ -665,10 +665,10 @@ impl eframe::App for SynthApp {
 
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui
-                        .add(egui::Button::new(
-                            RichText::new(format!("{} PANIC", ri::ALARM_WARNING_FILL))
-                                .color(theme().colors.accent_red),
-                        ))
+                        .add(egui::Button::new((
+                            RichText::new(ri::ALARM_WARNING_FILL).color(theme().colors.accent_red),
+                            RichText::new("PANIC").color(theme().colors.accent_red),
+                        )))
                         .clicked()
                     {
                         // True panic = hard kill, not just release. AllNotesOff
@@ -1642,10 +1642,7 @@ impl SynthApp {
         use egui_remixicon::icons as ri;
         ui.menu_button("File", |ui| {
             // --- Project ---
-            if ui
-                .button(format!("{} New Project", ri::FILE_ADD_LINE))
-                .clicked()
-            {
+            if ui.button((ri::FILE_ADD_LINE, "New Project")).clicked() {
                 if self.dirty {
                     self.unsaved_dialog.pending_action = Some(PendingAction::NewProject);
                     self.unsaved_dialog.open = true;
@@ -1658,7 +1655,7 @@ impl SynthApp {
                 ui.close();
             }
             if ui
-                .button(format!("{} Open Project...", ri::FOLDER_OPEN_LINE))
+                .button((ri::FOLDER_OPEN_LINE, "Open Project..."))
                 .clicked()
             {
                 if self.dirty {
@@ -1671,17 +1668,11 @@ impl SynthApp {
                 }
                 ui.close();
             }
-            if ui
-                .button(format!("{} Save Project", ri::SAVE_LINE))
-                .clicked()
-            {
+            if ui.button((ri::SAVE_LINE, "Save Project")).clicked() {
                 self.save_current_project();
                 ui.close();
             }
-            if ui
-                .button(format!("{} Save Project As...", ri::SAVE_LINE))
-                .clicked()
-            {
+            if ui.button((ri::SAVE_LINE, "Save Project As...")).clicked() {
                 let has_samples = self.sample_library.read().is_ok_and(|lib| !lib.is_empty());
                 let fallback =
                     format!("project.{}", crate::project::project_extension(has_samples));
@@ -1697,7 +1688,7 @@ impl SynthApp {
                 ui.close();
             }
             // --- Recent Projects ---
-            ui.menu_button(format!("{} Recent Projects", ri::HISTORY_LINE), |ui| {
+            ui.menu_button((ri::HISTORY_LINE, "Recent Projects"), |ui| {
                 let projects = self.settings.recent_projects.clone();
                 if projects.is_empty() {
                     ui.label("(none)");
@@ -1727,35 +1718,26 @@ impl SynthApp {
             ui.separator();
 
             // --- Patch ---
-            if ui
-                .button(format!("{} New Patch", ri::FILE_ADD_LINE))
-                .clicked()
-            {
+            if ui.button((ri::FILE_ADD_LINE, "New Patch")).clicked() {
                 self.reset_to_new_patch();
                 self.dialog_state
                     .set_status("New patch created".to_string());
                 ui.close();
             }
-            if ui
-                .button(format!("{} Open Patch...", ri::FOLDER_OPEN_LINE))
-                .clicked()
-            {
+            if ui.button((ri::FOLDER_OPEN_LINE, "Open Patch...")).clicked() {
                 let initial_dir = self.resolve_open_dir();
                 self.dialog_state
                     .open_open_patch_dialog(initial_dir.as_deref());
                 ui.close();
             }
             if ui
-                .button(format!("{} Load Built-in...", ri::FOLDER_OPEN_LINE))
+                .button((ri::FOLDER_OPEN_LINE, "Load Built-in..."))
                 .clicked()
             {
                 self.dialog_state.show_load_patch = true;
                 ui.close();
             }
-            if ui
-                .button(format!("{} Save Patch...", ri::SAVE_LINE))
-                .clicked()
-            {
+            if ui.button((ri::SAVE_LINE, "Save Patch...")).clicked() {
                 let default_name = format!(
                     "{}.json",
                     self.current_patch_name.to_lowercase().replace(' ', "_")
@@ -1766,7 +1748,7 @@ impl SynthApp {
                 ui.close();
             }
             ui.separator();
-            ui.menu_button(format!("{} Example Patches", ri::FILE_LIST_LINE), |ui| {
+            ui.menu_button((ri::FILE_LIST_LINE, "Example Patches"), |ui| {
                 for (category, patches) in categorized_patches() {
                     ui.menu_button(category, |ui| {
                         for patch in patches {
@@ -1782,10 +1764,7 @@ impl SynthApp {
                 }
             });
             ui.separator();
-            if ui
-                .button(format!("{} Export WAV...", ri::DOWNLOAD_LINE))
-                .clicked()
-            {
+            if ui.button((ri::DOWNLOAD_LINE, "Export WAV...")).clicked() {
                 // Pre-fill duration from song length
                 let song_secs = self.song.read().length_seconds();
                 self.dialog_state
@@ -1799,10 +1778,7 @@ impl SynthApp {
                 ui.close();
             }
             ui.separator();
-            if ui
-                .button(format!("{} Settings...", ri::SETTINGS_LINE))
-                .clicked()
-            {
+            if ui.button((ri::SETTINGS_LINE, "Settings...")).clicked() {
                 // Reload settings from disk to pick up changes
                 // made outside the dialog (e.g. last_open_dir)
                 self.settings = AppSettings::load();
@@ -1810,7 +1786,7 @@ impl SynthApp {
                 ui.close();
             }
             ui.separator();
-            if ui.button(format!("{} Quit", ri::SHUT_DOWN_LINE)).clicked() {
+            if ui.button((ri::SHUT_DOWN_LINE, "Quit")).clicked() {
                 if self.dirty {
                     self.unsaved_dialog.pending_action = Some(PendingAction::Quit);
                     self.unsaved_dialog.open = true;
@@ -1826,12 +1802,10 @@ impl SynthApp {
     fn menu_edit(&mut self, ui: &mut egui::Ui) {
         use egui_remixicon::icons as ri;
         ui.menu_button("Edit", |ui| {
-            let undo_label = format!("{} Undo", ri::ARROW_GO_BACK_LINE);
-            let redo_label = format!("{} Redo", ri::ARROW_GO_FORWARD_LINE);
             if ui
                 .add_enabled(
                     self.undo_manager.can_undo(),
-                    egui::Button::new(&undo_label).shortcut_text("Ctrl+Z"),
+                    egui::Button::new((ri::ARROW_GO_BACK_LINE, "Undo")).shortcut_text("Ctrl+Z"),
                 )
                 .clicked()
             {
@@ -1841,7 +1815,8 @@ impl SynthApp {
             if ui
                 .add_enabled(
                     self.undo_manager.can_redo(),
-                    egui::Button::new(&redo_label).shortcut_text("Ctrl+Shift+Z"),
+                    egui::Button::new((ri::ARROW_GO_FORWARD_LINE, "Redo"))
+                        .shortcut_text("Ctrl+Shift+Z"),
                 )
                 .clicked()
             {
@@ -1852,7 +1827,10 @@ impl SynthApp {
             // Copy / Paste / Cut live in the rack's right-click menu (and the
             // Ctrl+C/V/X shortcuts); Analyze Patch lives on the patch context bar.
             if ui
-                .button(format!("{} Optimize Project", ri::DELETE_BIN_LINE))
+                .button((
+                    RichText::new(ri::DELETE_BIN_LINE).color(theme().colors.accent_red),
+                    "Optimize Project",
+                ))
                 .on_hover_text("Remove unused patterns, tracks, and instruments")
                 .clicked()
             {
@@ -2194,14 +2172,14 @@ impl SynthApp {
                 .on_hover_text("MIDI input channel (Omni = respond to all channels)");
 
             // Volume
-            ui.label(RichText::new("Vol").color(theme().colors.text_dim));
             let mut vol = inst.volume.as_f32();
             if ui
                 .add(
                     egui::DragValue::new(&mut vol)
                         .range(0.0..=1.0)
                         .speed(0.005)
-                        .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
+                        .prefix(RichText::new("Vol ").color(theme().colors.text_dim))
+                        .custom_formatter(|v, _| format!("{:>3.0}%", v * 100.0)),
                 )
                 .on_hover_text("Instrument volume")
                 .changed()
@@ -2212,20 +2190,20 @@ impl SynthApp {
             }
 
             // Pan
-            ui.label(RichText::new("Pan").color(theme().colors.text_dim));
             let mut pan = inst.pan.as_f32();
             if ui
                 .add(
                     egui::DragValue::new(&mut pan)
                         .range(-1.0..=1.0)
                         .speed(0.01)
+                        .prefix(RichText::new("Pan ").color(theme().colors.text_dim))
                         .custom_formatter(|v, _| {
                             if v.abs() < 0.01 {
                                 "C".to_string()
                             } else if v < 0.0 {
-                                format!("L{:.0}", -v * 100.0)
+                                format!("L{:>3.0}", -v * 100.0)
                             } else {
-                                format!("R{:.0}", v * 100.0)
+                                format!("R{:>3.0}", v * 100.0)
                             }
                         }),
                 )
@@ -2288,13 +2266,14 @@ impl SynthApp {
             ui.separator();
 
             // Transpose
-            ui.label(RichText::new("Tr").color(theme().colors.text_dim));
             let mut transpose = inst.transpose.as_f32().round() as i32;
             if ui
                 .add(
                     egui::DragValue::new(&mut transpose)
                         .range(-24..=24)
                         .speed(0.1)
+                        .prefix(RichText::new("Tr ").color(theme().colors.text_dim))
+                        .custom_formatter(|v, _| format!("{v:>3.0}"))
                         .suffix(" st"),
                 )
                 .on_hover_text("Transpose in semitones (-24 to +24)")
@@ -2325,10 +2304,15 @@ impl SynthApp {
                 .on_hover_text("Oversampling factor (reduces aliasing)");
 
             // Max voices
-            ui.label(RichText::new("Voices").color(theme().colors.text_dim));
             let mut voices = inst.max_voices.0 as i32;
             if ui
-                .add(egui::DragValue::new(&mut voices).range(1..=128).speed(0.2))
+                .add(
+                    egui::DragValue::new(&mut voices)
+                        .range(1..=128)
+                        .speed(0.2)
+                        .prefix(RichText::new("Voices ").color(theme().colors.text_dim))
+                        .custom_formatter(|v, _| format!("{v:>3.0}")),
+                )
                 .on_hover_text("Maximum polyphony (1–128). Takes effect on project reload.")
                 .changed()
             {
@@ -2339,17 +2323,18 @@ impl SynthApp {
             ui.separator();
 
             // Velocity → amp
-            ui.label(
-                RichText::new(format!("Vel{}A", ri::ARROW_RIGHT_S_LINE))
-                    .color(theme().colors.text_dim),
-            );
             let mut va = inst.velocity_amp_sensitivity.as_f32();
             if ui
                 .add(
                     egui::DragValue::new(&mut va)
                         .range(0.0..=1.0)
                         .speed(0.005)
-                        .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
+                        .prefix((
+                            RichText::new("Vel").color(theme().colors.text_dim),
+                            RichText::new(ri::ARROW_RIGHT_S_LINE).color(theme().colors.text_dim),
+                            RichText::new("A ").color(theme().colors.text_dim),
+                        ))
+                        .custom_formatter(|v, _| format!("{:>3.0}%", v * 100.0)),
                 )
                 .on_hover_text("Velocity to amplitude sensitivity (0 = flat, 1 = full)")
                 .changed()
@@ -2359,17 +2344,18 @@ impl SynthApp {
             }
 
             // Velocity → filter
-            ui.label(
-                RichText::new(format!("Vel{}F", ri::ARROW_RIGHT_S_LINE))
-                    .color(theme().colors.text_dim),
-            );
             let mut vf = inst.velocity_filter_sensitivity.as_f32();
             if ui
                 .add(
                     egui::DragValue::new(&mut vf)
                         .range(0.0..=1.0)
                         .speed(0.005)
-                        .custom_formatter(|v, _| format!("{:.0}%", v * 100.0)),
+                        .prefix((
+                            RichText::new("Vel").color(theme().colors.text_dim),
+                            RichText::new(ri::ARROW_RIGHT_S_LINE).color(theme().colors.text_dim),
+                            RichText::new("F ").color(theme().colors.text_dim),
+                        ))
+                        .custom_formatter(|v, _| format!("{:>3.0}%", v * 100.0)),
                 )
                 .on_hover_text("Velocity to filter cutoff sensitivity (0 = none, 1 = full)")
                 .changed()
@@ -2422,30 +2408,30 @@ impl SynthApp {
             // Right-aligned actions: Auto Layout · Analyze · Edit…
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .button(
-                        RichText::new(format!("{} Edit…", ri::EDIT_LINE))
-                            .color(theme().colors.text_secondary),
-                    )
+                    .button((
+                        RichText::new(ri::EDIT_LINE).color(theme().colors.text_secondary),
+                        RichText::new("Edit…").color(theme().colors.text_secondary),
+                    ))
                     .on_hover_text("Edit all instrument properties")
                     .clicked()
                 {
                     open_edit = true;
                 }
                 if ui
-                    .button(
-                        RichText::new(format!("{} Analyze", ri::FILE_SEARCH_LINE))
-                            .color(theme().colors.text_secondary),
-                    )
+                    .button((
+                        RichText::new(ri::FILE_SEARCH_LINE).color(theme().colors.text_secondary),
+                        RichText::new("Analyze").color(theme().colors.text_secondary),
+                    ))
                     .on_hover_text("Open the offline analyze view for this patch")
                     .clicked()
                 {
                     open_analyze = true;
                 }
                 if ui
-                    .button(
-                        RichText::new(format!("{} Auto Layout", ri::LAYOUT_GRID_FILL))
-                            .color(theme().colors.text_secondary),
-                    )
+                    .button((
+                        RichText::new(ri::LAYOUT_GRID_FILL).color(theme().colors.text_secondary),
+                        RichText::new("Auto Layout").color(theme().colors.text_secondary),
+                    ))
                     .on_hover_text("Tidy the module layout")
                     .clicked()
                 {
@@ -3084,10 +3070,7 @@ impl SynthApp {
                                 &inst.name,
                                 list_panel::row_text_color(is_active, used),
                                 |ui| {
-                                    if ui
-                                        .button(format!("{} Rename / edit…", ri::EDIT_LINE))
-                                        .clicked()
-                                    {
+                                    if ui.button((ri::EDIT_LINE, "Rename / edit…")).clicked() {
                                         edit_requested = Some(inst.id);
                                         ui.close();
                                     }
@@ -3298,10 +3281,10 @@ impl SynthApp {
         .color(theme().colors.accent_cyan);
         ui.menu_button(menu_label, |ui| {
             if ui
-                .button(
-                    RichText::new(format!("{} New Instrument", ri::ADD_LINE))
-                        .color(theme().colors.accent_green),
-                )
+                .button((
+                    RichText::new(ri::ADD_LINE).color(theme().colors.accent_green),
+                    RichText::new("New Instrument").color(theme().colors.accent_green),
+                ))
                 .clicked()
             {
                 self.add_new_instrument();
@@ -3342,19 +3325,17 @@ impl SynthApp {
                         ui.menu_button(
                             RichText::new(ri::MORE_FILL).color(theme().colors.text_dim),
                             |ui| {
-                                if ui
-                                    .button(format!("{} Rename / edit…", ri::EDIT_LINE))
-                                    .clicked()
-                                {
+                                if ui.button((ri::EDIT_LINE, "Rename / edit…")).clicked() {
                                     self.instrument_edit_target = Some(id);
                                     ui.close();
                                 }
                                 ui.separator();
                                 if ui
-                                    .button(
-                                        RichText::new(format!("{} Delete…", ri::DELETE_BIN_LINE))
+                                    .button((
+                                        RichText::new(ri::DELETE_BIN_LINE)
                                             .color(theme().colors.accent_red),
-                                    )
+                                        "Delete…",
+                                    ))
                                     .clicked()
                                 {
                                     self.pending_instrument_delete = Some(id);

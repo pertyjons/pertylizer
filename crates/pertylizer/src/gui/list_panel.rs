@@ -27,11 +27,16 @@ pub fn header(ui: &mut egui::Ui, icon: &str, title: &str, add_tooltip: &str) -> 
     ui.horizontal(|ui| {
         // Normal (body) size + a little weight — matches the list rows so the
         // header doesn't tower over them; this also keeps the icon at row size.
-        ui.label(
-            egui::RichText::new(format!("{icon} {title}"))
+        // Icon and title are separate atoms so the icon can take the accent
+        // colour while the title stays in the primary text colour, sharing one
+        // baseline and gap instead of being one pre-formatted string.
+        egui::AtomLayout::new((
+            egui::RichText::new(icon).color(t.colors.accent_primary),
+            egui::RichText::new(title)
                 .color(t.colors.text_primary)
                 .strong(),
-        );
+        ))
+        .show(ui);
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             add_clicked = ui
                 .button(
