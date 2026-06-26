@@ -1,22 +1,23 @@
 //! Auto-layout algorithm for organizing modules based on signal flow analysis.
 //!
-//! This module provides automatic positioning of synth modules using a 5-phase algorithm:
+//! This module positions synth modules with a layered (Sugiyama-style) algorithm:
 //! 1. **Classify** modules into SignalChain, Modulation, EffectChain, Global, or
-//!    Disconnected groups
-//! 2. **Topological depth** assignment via cycle-broken Kahn → columns (left-to-right)
-//! 3. **Vertical ordering** within columns using multi-sweep median heuristic (reduces crossings)
-//! 4. **Modulation placement** one column left of their primary targets (when possible),
-//!    sorted deterministically by `(column, target_row, module_sort_key)`
-//! 5. **Pixel positions** computed from each module's actual rendered size, snapped up
-//!    to whole grid cells, anchored at logical `(GRID, GRID)`. Positions are in the
-//!    canvas's logical coordinate system; the surrounding `ScrollArea` grows around
-//!    them via `content_size()`, so no screen-space rect is needed here.
+//!    Disconnected groups. The first two form the unified "voice graph".
+//! 2. **Layer assignment** over the voice graph (signal + modulation as one DAG) by
+//!    longest-path-to-sink: `column = max_dist − dist_to_sink`, so each module sits
+//!    one column left of its nearest consumer and a modulation chain feeding the
+//!    signal path gets its own successive columns. The column count is dynamic.
+//! 3. **Vertical ordering** within columns using a multi-sweep median heuristic
+//!    (reduces edge crossings); signal and modulation modules are ordered together.
+//! 4. **Pixel positions** computed from each module's actual rendered size, snapped up
+//!    to whole grid cells, anchored at logical `(GRID, GRID)`. Each column's x-advance
+//!    is its widest module + GAP. Positions are in the canvas's logical coordinate
+//!    system; the surrounding `ScrollArea` grows around them via `content_size()`.
 //!
-//! Layout zones (left→right): Signal columns | Effect-chain column | Global column |
-//! Mod Matrix column | Disconnected column. Within a signal column (top→bottom):
-//! signal-chain rows, then modulation rows anchored to their target row. The Mod
-//! Matrix column is separated from its neighbours by `ZONE_PADDING` so the Mod
-//! Matrix and Effect zone background rectangles don't overlap.
+//! Layout zones (left→right): Voice columns | Effect-chain column | Global column |
+//! Mod Matrix column | Disconnected column. The Mod Matrix column is separated from
+//! its neighbours by `ZONE_PADDING` so the Mod Matrix and Effect zone background
+//! rectangles don't overlap.
 
 use std::collections::{HashMap, HashSet};
 
@@ -310,53 +311,41 @@ fn topological_sort_kahn(
 
 // ── Depth assignment (longest path) ────────────────────────────────────────
 
-fn assign_signal_depths(
-    signal_ids: &[ModuleId],
+/// Assign each voice module to a column (layer) by **longest path to a sink**.
+///
+/// `dist_to_sink(v)` is the length of the longest directed path from `v` to any
+/// sink (a node with no outgoing voice edge); the column is `max_dist −
+/// dist_to_sink(v)`, so sinks (e.g. the Output) land in the rightmost column and
+/// every node sits exactly one column left of its nearest consumer. This is the
+/// standard layered-graph-drawing "longest-path" ranking (Sugiyama framework),
+/// ranked toward the sink so sources hug what they feed.
+///
+/// Computed over the reverse topological order so every successor is resolved
+/// before the node; nodes left out of the topo order by a cycle keep `dist = 0`.
+fn assign_layers(
+    voice_ids: &[ModuleId],
     outgoing: &HashMap<ModuleId, Vec<ModuleId>>,
     incoming: &HashMap<ModuleId, Vec<ModuleId>>,
-    categories: &HashMap<ModuleId, ModuleCategory>,
 ) -> HashMap<ModuleId, usize> {
-    let id_set: HashSet<ModuleId> = signal_ids.iter().copied().collect();
-    let topo_order = topological_sort_kahn(signal_ids, outgoing, incoming);
-    let order_index: HashMap<ModuleId, usize> = topo_order
-        .iter()
-        .enumerate()
-        .map(|(idx, &id)| (id, idx))
-        .collect();
+    let id_set: HashSet<ModuleId> = voice_ids.iter().copied().collect();
+    let topo_order = topological_sort_kahn(voice_ids, outgoing, incoming);
 
-    // Longest-path forward pass
-    let mut depth: HashMap<ModuleId, usize> = HashMap::new();
-    for &id in signal_ids {
-        depth.insert(id, 0);
-    }
-
-    for &node in &topo_order {
-        let current_depth = depth.get(&node).copied().unwrap_or(0);
+    let mut dist: HashMap<ModuleId, usize> = voice_ids.iter().map(|&id| (id, 0)).collect();
+    for &node in topo_order.iter().rev() {
+        let mut d = 0;
         if let Some(neighbors) = outgoing.get(&node) {
             for &neighbor in neighbors {
                 if id_set.contains(&neighbor) {
-                    let order_ok = order_index
-                        .get(&neighbor)
-                        .and_then(|&n_idx| order_index.get(&node).map(|&c_idx| n_idx > c_idx))
-                        .unwrap_or(false);
-                    if !order_ok {
-                        continue;
-                    }
-                    let entry = depth.entry(neighbor).or_insert(0);
-                    *entry = (*entry).max(current_depth + 1);
+                    d = d.max(dist.get(&neighbor).copied().unwrap_or(0) + 1);
                 }
             }
         }
+        dist.insert(node, d);
     }
 
-    // Force Output modules to the maximum depth
-    let max_depth = depth.values().copied().max().unwrap_or(0);
-    for (&id, d) in &mut depth {
-        if categories.get(&id) == Some(&ModuleCategory::Output) {
-            *d = max_depth;
-        }
-    }
-
+    let max_dist = dist.values().copied().max().unwrap_or(0);
+    let mut depth: HashMap<ModuleId, usize> =
+        dist.into_iter().map(|(id, d)| (id, max_dist - d)).collect();
     compact_depths(&mut depth);
     depth
 }
@@ -612,91 +601,16 @@ fn crossings_between_columns(
     crossings
 }
 
-// ── Modulation placement ───────────────────────────────────────────────────
-
-/// Final placement decision for a single modulation module.
-///
-/// Iteration order of a `Vec<ModPlacement>` is the deterministic ordering of
-/// modulators within the final layout. Sort key is `(column, target_row.unwrap_or(MAX),
-/// module_sort_key)` so that modulators with a real target row stack
-/// top-to-bottom in target-row order, with `module_sort_key` breaking ties.
-#[derive(Debug, Clone, Copy)]
-struct ModPlacement {
-    module_id: ModuleId,
-    column: usize,
-    target_row: Option<usize>,
-}
-
-/// Place modulation modules one column left of their primary target when possible.
-///
-/// Returns a vector sorted by `(column, target_row, module_sort_key)`. Iterating
-/// in order yields a deterministic top-to-bottom stack within each column.
-fn place_modulation(
-    mod_modules: &[ModuleId],
-    outgoing: &HashMap<ModuleId, Vec<ModuleId>>,
-    signal_depth: &HashMap<ModuleId, usize>,
-    signal_columns: &HashMap<usize, Vec<ModuleId>>,
-) -> Vec<ModPlacement> {
-    let mut placements: Vec<ModPlacement> = Vec::with_capacity(mod_modules.len());
-
-    for &mod_id in mod_modules {
-        let target_col = outgoing
-            .get(&mod_id)
-            .and_then(|targets| {
-                targets
-                    .iter()
-                    .filter_map(|t| signal_depth.get(t).copied())
-                    .min()
-            })
-            .unwrap_or(0);
-        let mod_col = target_col.saturating_sub(1);
-
-        // Find the target's row position for sorting. `None` if the module has
-        // no signal-chain target — those land after all row-anchored modulators.
-        let target_row = outgoing.get(&mod_id).and_then(|targets| {
-            targets.iter().find_map(|t| {
-                let col = signal_depth.get(t).copied()?;
-                if col == target_col {
-                    let modules_in_col = signal_columns.get(&col)?;
-                    modules_in_col.iter().position(|&id| id == *t)
-                } else {
-                    None
-                }
-            })
-        });
-
-        placements.push(ModPlacement {
-            module_id: mod_id,
-            column: mod_col,
-            target_row,
-        });
-    }
-
-    placements.sort_by(|a, b| {
-        a.column.cmp(&b.column).then_with(|| {
-            // Anchored modulators (Some) sort above unanchored (None).
-            match (a.target_row, b.target_row) {
-                (Some(ar), Some(br)) => ar.cmp(&br),
-                (Some(_), None) => std::cmp::Ordering::Less,
-                (None, Some(_)) => std::cmp::Ordering::Greater,
-                (None, None) => std::cmp::Ordering::Equal,
-            }
-            .then_with(|| module_sort_key(&a.module_id).cmp(&module_sort_key(&b.module_id)))
-        })
-    });
-
-    placements
-}
-
 // ── Main layout function ───────────────────────────────────────────────────
 
 /// Calculate automatic layout for modules based on signal flow analysis.
 ///
 /// Layout rules, left → right:
-/// 1. **Signal-chain** modules: one column per topological depth, in cumulative
-///    x-order. Modulation modules attached to a column stack underneath that
-///    column's signal modules (one column left of their primary target when
-///    possible).
+/// 1. **Voice-graph** modules (signal-chain + modulation): laid out together as
+///    one DAG by longest-path-to-sink layering (Sugiyama), one column per layer
+///    in cumulative x-order. Each module sits one column left of its nearest
+///    consumer, so a modulation chain feeding the signal path gets its own
+///    successive columns and the column count is dynamic.
 /// 2. **Effect-chain** modules: a single vertical column right of the signal
 ///    zone, ordered top→bottom by `effect_chain_order` (engine processing
 ///    order). Effects with no voice-graph cables live here, not in the
@@ -738,7 +652,6 @@ pub fn calculate_layout_with_chain_order(
     let mut mod_matrix_ids: Vec<ModuleId> = Vec::new();
     let mut disconnected_ids: Vec<ModuleId> = Vec::new();
 
-    let mut categories: HashMap<ModuleId, ModuleCategory> = HashMap::new();
     let mut has_incoming: HashMap<ModuleId, bool> = HashMap::new();
     let mut has_outgoing: HashMap<ModuleId, bool> = HashMap::new();
 
@@ -752,7 +665,6 @@ pub fn calculate_layout_with_chain_order(
     }
 
     for module in modules {
-        categories.insert(module.id, module.category);
         let incoming = *has_incoming.get(&module.id).unwrap_or(&false);
         let outgoing = *has_outgoing.get(&module.id).unwrap_or(&false);
         match classify_module(module.id, module.category, incoming, outgoing) {
@@ -765,74 +677,55 @@ pub fn calculate_layout_with_chain_order(
         }
     }
 
-    // ── Build adjacency lists (excluding modulation edges for depth) ───
+    // ── Build the voice-graph adjacency ────────────────────────────────
+    //
+    // Signal-chain and modulation modules are laid out together as one DAG
+    // (Phase 2), so a modulation chain feeding the signal path gets its own
+    // successive columns instead of collapsing into one. Effect-chain, global,
+    // mod-matrix and disconnected modules live in their own zones to the right
+    // and are excluded from this graph.
+    let voice_ids: Vec<ModuleId> = signal_ids.iter().chain(mod_ids.iter()).copied().collect();
+    let voice_set: HashSet<ModuleId> = voice_ids.iter().copied().collect();
 
-    let mod_id_set: HashSet<ModuleId> = mod_ids.iter().copied().collect();
-
-    // Full adjacency (all connections)
-    let mut outgoing_full: HashMap<ModuleId, Vec<ModuleId>> = HashMap::new();
-    let mut incoming_full: HashMap<ModuleId, Vec<ModuleId>> = HashMap::new();
-
-    // Signal-only adjacency (excluding modulation sources)
-    let mut outgoing_signal: HashMap<ModuleId, Vec<ModuleId>> = HashMap::new();
-    let mut incoming_signal: HashMap<ModuleId, Vec<ModuleId>> = HashMap::new();
-
-    for module in modules {
-        outgoing_full.entry(module.id).or_default();
-        incoming_full.entry(module.id).or_default();
-        outgoing_signal.entry(module.id).or_default();
-        incoming_signal.entry(module.id).or_default();
+    let mut outgoing_voice: HashMap<ModuleId, Vec<ModuleId>> = HashMap::new();
+    let mut incoming_voice: HashMap<ModuleId, Vec<ModuleId>> = HashMap::new();
+    for &id in &voice_ids {
+        outgoing_voice.entry(id).or_default();
+        incoming_voice.entry(id).or_default();
     }
-
     for conn in connections {
-        outgoing_full
-            .entry(conn.from_module)
-            .or_default()
-            .push(conn.to_module);
-        incoming_full
-            .entry(conn.to_module)
-            .or_default()
-            .push(conn.from_module);
-
-        // Signal-only: skip edges where source is modulation
-        if !mod_id_set.contains(&conn.from_module) {
-            outgoing_signal
+        if voice_set.contains(&conn.from_module) && voice_set.contains(&conn.to_module) {
+            outgoing_voice
                 .entry(conn.from_module)
                 .or_default()
                 .push(conn.to_module);
-            incoming_signal
+            incoming_voice
                 .entry(conn.to_module)
                 .or_default()
                 .push(conn.from_module);
         }
     }
 
-    // ── Phase 2: Topological depth assignment ──────────────────────────
+    // ── Phase 2: Layer assignment (longest path to sink) ───────────────
+    //
+    // Each node lands one column left of its nearest consumer, so audio sources
+    // hug what they feed and modulation chains extend leftward column by column.
+    // Output (a sink) ends up in the rightmost column. The number of columns is
+    // therefore dynamic — as deep as the longest signal-or-modulation chain.
+    let depth = assign_layers(&voice_ids, &outgoing_voice, &incoming_voice);
 
-    let signal_depth =
-        assign_signal_depths(&signal_ids, &outgoing_signal, &incoming_signal, &categories);
+    let mut columns = build_columns(&depth, &voice_ids);
 
-    let mut columns = build_columns(&signal_depth, &signal_ids);
+    // ── Phase 3: Vertical ordering (crossing minimization) ─────────────
 
-    // ── Phase 3: Vertical ordering ─────────────────────────────────────
+    order_within_columns(&mut columns, &outgoing_voice, &incoming_voice, &depth);
 
-    order_within_columns(
-        &mut columns,
-        &outgoing_signal,
-        &incoming_signal,
-        &signal_depth,
-    );
+    // ── Phase 4: Size-aware pixel positions ────────────────────────────
 
-    // ── Phase 4: Place modulation modules ──────────────────────────────
-
-    let mod_placements = place_modulation(&mod_ids, &outgoing_full, &signal_depth, &columns);
-
-    // ── Phase 5: Size-aware pixel positions ────────────────────────────
-
-    // Build size lookup from input modules
+    // Build size lookup from input modules.
     let sizes: HashMap<ModuleId, Vec2> = modules.iter().map(|m| (m.id, m.size)).collect();
 
-    let num_signal_columns = columns.keys().copied().max().map_or(0, |m| m + 1);
+    let num_columns = columns.keys().copied().max().map_or(0, |m| m + 1);
 
     // Module positions are in logical canvas coordinates. Always start at
     // (GRID, GRID); the surrounding `ScrollArea` grows around the resulting
@@ -840,8 +733,9 @@ pub fn calculate_layout_with_chain_order(
     let start_x = GRID;
     let start_y = GRID;
 
-    // Compute column widths = max snapped width of modules in that column + GAP
-    let mut col_widths: Vec<f32> = vec![0.0; num_signal_columns];
+    // Column width = widest snapped module in the column (signal OR modulation,
+    // since both share these columns now) + GAP. Cumulative x per column.
+    let mut col_widths: Vec<f32> = vec![0.0; num_columns];
     for (&col, module_ids) in &columns {
         let max_w = module_ids
             .iter()
@@ -851,16 +745,13 @@ pub fn calculate_layout_with_chain_order(
             *w = max_w + GAP;
         }
     }
-
-    // Cumulative column x-positions
-    let mut col_x: Vec<f32> = vec![start_x; num_signal_columns];
-    for c in 1..num_signal_columns {
+    let mut col_x: Vec<f32> = vec![start_x; num_columns];
+    for c in 1..num_columns {
         col_x[c] = col_x[c - 1] + col_widths[c - 1];
     }
 
-    // Place signal-chain modules with cumulative y per column
-    let mut col_bottom: Vec<f32> = vec![start_y; num_signal_columns];
-    for col in 0..num_signal_columns {
+    // Place every module at its column's x, stacked vertically in row order.
+    for col in 0..num_columns {
         if let Some(module_ids) = columns.get(&col) {
             let mut y = start_y;
             for &module_id in module_ids {
@@ -869,36 +760,17 @@ pub fn calculate_layout_with_chain_order(
                 result.positions.insert(module_id, Pos2::new(col_x[col], y));
                 y += snapped.y + GAP;
             }
-            col_bottom[col] = y;
-        }
-    }
-
-    // Place modulation modules directly below their assigned column's signal modules.
-    for placement in &mod_placements {
-        let x = col_x.get(placement.column).copied().unwrap_or(start_x);
-        let y = col_bottom.get(placement.column).copied().unwrap_or(start_y);
-        let snapped = snap_size_to_grid(
-            sizes
-                .get(&placement.module_id)
-                .copied()
-                .unwrap_or(DEFAULT_SIZE),
-        );
-        result
-            .positions
-            .insert(placement.module_id, Pos2::new(x, y));
-        if let Some(bottom) = col_bottom.get_mut(placement.column) {
-            *bottom = y + snapped.y + GAP;
         }
     }
 
     // Extra zones, left→right: effect-chain | global | disconnected.
-    let signal_end_x = if num_signal_columns > 0 {
-        col_x[num_signal_columns - 1] + col_widths[num_signal_columns - 1]
+    let voice_end_x = if num_columns > 0 {
+        col_x[num_columns - 1] + col_widths[num_columns - 1]
     } else {
         start_x
     };
 
-    let mut current_x = signal_end_x;
+    let mut current_x = voice_end_x;
     current_x += place_vertical_column(
         &mut effect_chain_ids,
         effect_chain_order,
@@ -1759,6 +1631,151 @@ mod tests {
             a.y,
             b.y
         );
+    }
+
+    /// A modulation CHAIN feeding the signal path gets its own successive
+    /// columns (left → right), instead of collapsing into one column. Mirrors a
+    /// real patch: `env_clock → tur → env_cut → flt`, with `nse → flt` as the
+    /// audio source. Each modulator must sit strictly left of what it feeds.
+    #[test]
+    fn test_modulation_chain_gets_successive_columns() {
+        let nse = make_id(ModuleType::Noise, 1);
+        let flt = make_id(ModuleType::Filter, 1);
+        let amp = make_id(ModuleType::Amplifier, 1);
+        let out = make_id(ModuleType::StereoOutput, 1);
+        let env_cut = make_id(ModuleType::Envelope, 1); // modulates the filter
+        let tur = make_id(ModuleType::TuringMachine, 1); // clocks env_cut
+        let env_clock = make_id(ModuleType::Envelope, 2); // clocks the turing machine
+
+        let modules = vec![
+            make_module(nse, ModuleCategory::Oscillator),
+            make_module(flt, ModuleCategory::Filter),
+            make_module(amp, ModuleCategory::Amplifier),
+            make_module(out, ModuleCategory::Output),
+            make_module(env_cut, ModuleCategory::Envelope),
+            make_module(tur, ModuleCategory::Sequencer),
+            make_module(env_clock, ModuleCategory::Envelope),
+        ];
+        let edge = |from, to| LayoutConnection {
+            from_module: from,
+            to_module: to,
+        };
+        let connections = vec![
+            edge(nse, flt),
+            edge(flt, amp),
+            edge(amp, out),
+            edge(env_cut, flt),
+            edge(tur, env_cut),
+            edge(env_clock, tur),
+        ];
+
+        let result = calculate_layout(&modules, &connections);
+        let col = |id| result.positions.get(&id).map(|p| p.x).unwrap();
+
+        // The modulation chain flows strictly left → right into the filter.
+        assert!(
+            col(env_clock) < col(tur),
+            "env_clock (col {}) must be left of tur (col {})",
+            col(env_clock),
+            col(tur)
+        );
+        assert!(
+            col(tur) < col(env_cut),
+            "tur (col {}) must be left of env_cut (col {})",
+            col(tur),
+            col(env_cut)
+        );
+        assert!(
+            col(env_cut) < col(flt),
+            "env_cut (col {}) must be left of the filter it modulates (col {})",
+            col(env_cut),
+            col(flt)
+        );
+        // …and they occupy three DISTINCT columns (not all collapsed into one).
+        assert!(
+            col(env_clock) != col(tur) && col(tur) != col(env_cut),
+            "modulation chain must span distinct columns: {} {} {}",
+            col(env_clock),
+            col(tur),
+            col(env_cut)
+        );
+        // The audio source hugs the filter (one column left), not the far left.
+        assert!(col(nse) < col(flt), "nse must be left of flt");
+    }
+
+    /// Regression: a modulation module (envelope/LFO) wider than the signal
+    /// modules in its column must widen that column so it does not overflow into
+    /// — and overlap — the next column. Previously `col_widths` was computed from
+    /// the signal `columns` only, so a wide envelope stacked under a narrow signal
+    /// column overlapped the column to its right.
+    #[test]
+    fn test_wide_modulation_module_widens_its_column() {
+        // Signal chain spanning three columns: osc(0) → flt(1) → amp(2).
+        let osc = make_id(ModuleType::Oscillator, 1);
+        let flt = make_id(ModuleType::Filter, 1);
+        let amp = make_id(ModuleType::Amplifier, 1);
+        // One modulation module under each of the first two columns (each lands one
+        // column left of its target → env_wide in col 0, env_next in col 1), so
+        // they share the same vertical "modulation band". env_wide is far wider
+        // than col 0's signal module, so before the fix it overlapped env_next.
+        let env_wide = make_id(ModuleType::Envelope, 1);
+        let env_next = make_id(ModuleType::Envelope, 2);
+
+        let modules = vec![
+            make_module(osc, ModuleCategory::Oscillator),
+            make_module(flt, ModuleCategory::Filter),
+            make_module(amp, ModuleCategory::Amplifier),
+            ModuleInfo {
+                id: env_wide,
+                category: ModuleCategory::Envelope,
+                size: Vec2::new(500.0, 200.0),
+            },
+            make_module(env_next, ModuleCategory::Envelope),
+        ];
+        let connections = vec![
+            LayoutConnection {
+                from_module: osc,
+                to_module: flt,
+            },
+            LayoutConnection {
+                from_module: flt,
+                to_module: amp,
+            },
+            // env_wide modulates flt (col 1) → placed in col 0.
+            LayoutConnection {
+                from_module: env_wide,
+                to_module: flt,
+            },
+            // env_next modulates amp (col 2) → placed in col 1.
+            LayoutConnection {
+                from_module: env_next,
+                to_module: amp,
+            },
+        ];
+
+        let result = calculate_layout(&modules, &connections);
+
+        // No pair of modules overlaps (snapped rects) — including the wide env.
+        let sizes: HashMap<ModuleId, Vec2> = modules.iter().map(|m| (m.id, m.size)).collect();
+        let rects: Vec<(ModuleId, Rect)> = result
+            .positions
+            .iter()
+            .map(|(&id, &pos)| (id, Rect::from_min_size(pos, snap_size_to_grid(sizes[&id]))))
+            .collect();
+        for i in 0..rects.len() {
+            for j in (i + 1)..rects.len() {
+                let (id_a, rect_a) = rects[i];
+                let (id_b, rect_b) = rects[j];
+                assert!(
+                    !rect_a.intersects(rect_b),
+                    "Modules {:?} ({:?}) and {:?} ({:?}) overlap!",
+                    id_a,
+                    rect_a,
+                    id_b,
+                    rect_b
+                );
+            }
+        }
     }
 
     /// Effect-chain modules with cables plus disconnected modules: no overlap,
