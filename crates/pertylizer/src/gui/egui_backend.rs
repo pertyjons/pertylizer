@@ -1609,8 +1609,17 @@ impl SynthApp {
                 );
             }
 
-            // Vertical stereo level meter
-            draw_stereo_meter(ui, peak_l, peak_r, rms_l, rms_r, meter_width, keys_height);
+            // Vertical stereo level meter (no dB scale / L/R labels in the
+            // cramped keyboard corner — bars fill the full width).
+            draw_stereo_meter(
+                ui,
+                peak_l,
+                peak_r,
+                rms_l,
+                rms_r,
+                egui::vec2(meter_width, keys_height),
+                false,
+            );
         });
 
         // Return buffers to self so their capacity is reused next frame

@@ -158,28 +158,33 @@ pub fn draw_level_meter(
 }
 
 /// Draw a stereo level meter (two vertical bars side by side).
+///
+/// When `show_scale` is true the meter draws the dB scale ruler (left gutter)
+/// and the L/R channel labels (bottom band); when false those are omitted and
+/// the bars fill the full rect — useful for compact / unannotated placements.
 pub fn draw_stereo_meter(
     ui: &mut Ui,
     peak_l: f32,
     peak_r: f32,
     rms_l: f32,
     rms_r: f32,
-    width: f32,
-    height: f32,
+    size: Vec2,
+    show_scale: bool,
 ) {
     let t = theme();
-    let (rect, _response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    let height = size.y;
+    let (rect, _response) = ui.allocate_exact_size(size, Sense::hover());
     let painter = ui.painter();
 
     // Background
     painter.rect_filled(rect, t.style.corner_radius, t.colors.bg_dark);
 
     let padding = 2.0;
-    // Left gutter reserved for the dB scale ruler.
-    let scale_w = 24.0;
+    // Left gutter reserved for the dB scale ruler (only when the scale is shown).
+    let scale_w = if show_scale { 24.0 } else { 0.0 };
     // Bottom band reserved for the L/R channel labels (matches draw_meter_bar,
-    // which leaves 14px at the bottom of each bar).
-    let label_band = 14.0;
+    // which leaves this much at the bottom of each bar). Zero when hidden.
+    let label_band = if show_scale { 14.0 } else { 0.0 };
 
     let bars_left = rect.left() + padding + scale_w;
     let bars_right = rect.right() - padding;
@@ -192,53 +197,55 @@ pub fn draw_stereo_meter(
         Pos2::new(bars_left, rect.top() + padding),
         Vec2::new(bar_width, height - padding * 2.0),
     );
-    draw_meter_bar(painter, left_rect, peak_l, rms_l, &t);
+    draw_meter_bar(painter, left_rect, peak_l, rms_l, label_band, &t);
 
     // Right meter
     let right_rect = Rect::from_min_size(
         Pos2::new(bars_left + bar_width + bar_gap, rect.top() + padding),
         Vec2::new(bar_width, height - padding * 2.0),
     );
-    draw_meter_bar(painter, right_rect, peak_r, rms_r, &t);
+    draw_meter_bar(painter, right_rect, peak_r, rms_r, label_band, &t);
 
-    // dB scale ruler in the left gutter. Ticks align with the bars' segment area,
-    // which spans [rect.top()+padding, rect.bottom()-padding-label_band] (norm 1..0)
-    // — the same -60dB..0dB mapping draw_meter_bar uses for its segments.
-    let seg_top = rect.top() + padding;
-    let seg_bottom = rect.bottom() - padding - label_band;
-    let seg_h = (seg_bottom - seg_top).max(1.0);
-    for &db in &[0.0_f32, -6.0, -12.0, -24.0, -48.0] {
-        let norm = (db + 60.0) / 60.0;
-        let y = seg_bottom - norm * seg_h;
-        painter.line_segment(
-            [Pos2::new(bars_left - 4.0, y), Pos2::new(bars_left, y)],
-            Stroke::new(0.5, t.colors.border),
+    if show_scale {
+        // dB scale ruler in the left gutter. Ticks align with the bars' segment
+        // area, which spans [rect.top()+padding, rect.bottom()-padding-label_band]
+        // (norm 1..0) — the same -60dB..0dB mapping draw_meter_bar uses.
+        let seg_top = rect.top() + padding;
+        let seg_bottom = rect.bottom() - padding - label_band;
+        let seg_h = (seg_bottom - seg_top).max(1.0);
+        for &db in &[0.0_f32, -6.0, -12.0, -24.0, -48.0] {
+            let norm = (db + 60.0) / 60.0;
+            let y = seg_bottom - norm * seg_h;
+            painter.line_segment(
+                [Pos2::new(bars_left - 4.0, y), Pos2::new(bars_left, y)],
+                Stroke::new(0.5, t.colors.border),
+            );
+            painter.text(
+                Pos2::new(bars_left - 6.0, y),
+                egui::Align2::RIGHT_CENTER,
+                format!("{}", db as i32),
+                t.fonts.small(),
+                t.colors.text_dim,
+            );
+        }
+
+        // L/R channel labels in the bottom band.
+        let label_y = rect.bottom() - 12.0;
+        painter.text(
+            Pos2::new(left_rect.center().x, label_y),
+            egui::Align2::CENTER_CENTER,
+            "L",
+            t.fonts.small(),
+            t.colors.text_dim,
         );
         painter.text(
-            Pos2::new(bars_left - 6.0, y),
-            egui::Align2::RIGHT_CENTER,
-            format!("{}", db as i32),
+            Pos2::new(right_rect.center().x, label_y),
+            egui::Align2::CENTER_CENTER,
+            "R",
             t.fonts.small(),
             t.colors.text_dim,
         );
     }
-
-    // Labels
-    let label_y = rect.bottom() - 12.0;
-    painter.text(
-        Pos2::new(left_rect.center().x, label_y),
-        egui::Align2::CENTER_CENTER,
-        "L",
-        t.fonts.small(),
-        t.colors.text_dim,
-    );
-    painter.text(
-        Pos2::new(right_rect.center().x, label_y),
-        egui::Align2::CENTER_CENTER,
-        "R",
-        t.fonts.small(),
-        t.colors.text_dim,
-    );
 
     // Border
     painter.rect_stroke(
@@ -255,6 +262,7 @@ fn draw_meter_bar(
     rect: Rect,
     peak: f32,
     rms: f32,
+    bottom_band: f32,
     t: &crate::gui::theme::Theme,
 ) {
     // Calculate levels over -60dB to 0dB
@@ -264,14 +272,15 @@ fn draw_meter_bar(
     // Background
     painter.rect_filled(rect, t.style.border_width, t.colors.bg_dark);
 
-    // Draw segments
+    // Draw segments. `bottom_band` reserves room at the bottom for the L/R
+    // channel labels (0 when the scale/labels are hidden, so bars fill the rect).
     let num_segments = t.style.meter_segments;
-    let segment_height = (rect.height() - 14.0) / num_segments as f32;
+    let segment_height = (rect.height() - bottom_band) / num_segments as f32;
     let gap = t.style.meter_segment_gap;
 
     for i in 0..num_segments {
         let level = (i + 1) as f32 / num_segments as f32;
-        let y = rect.bottom() - 14.0 - (i + 1) as f32 * segment_height;
+        let y = rect.bottom() - bottom_band - (i + 1) as f32 * segment_height;
 
         let segment_rect = Rect::from_min_size(
             Pos2::new(rect.left() + t.style.border_width, y + gap),
@@ -293,8 +302,8 @@ fn draw_meter_bar(
 
     // Peak indicator
     if peak_norm > 0.01 {
-        let segment_area_height = rect.height() - 14.0;
-        let peak_y = rect.bottom() - 14.0 - segment_area_height * peak_norm;
+        let segment_area_height = rect.height() - bottom_band;
+        let peak_y = rect.bottom() - bottom_band - segment_area_height * peak_norm;
         painter.rect_filled(
             Rect::from_min_size(
                 Pos2::new(rect.left() + t.style.border_width, peak_y),

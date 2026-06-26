@@ -3305,7 +3305,15 @@ fn draw_visualizer_display(
         let width = ui.available_width().clamp(72.0, 140.0);
         let height = (width * 1.5).clamp(100.0, 170.0);
 
-        super::widgets::draw_stereo_meter(ui, peak_l, peak_r, rms_l, rms_r, width, height);
+        super::widgets::draw_stereo_meter(
+            ui,
+            peak_l,
+            peak_r,
+            rms_l,
+            rms_r,
+            egui::vec2(width, height),
+            true,
+        );
 
         if vis_buffer.is_none() {
             ui.label(
