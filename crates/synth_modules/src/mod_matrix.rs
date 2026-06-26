@@ -73,6 +73,7 @@ impl Describable for ModMatrix {
     #[allow(clippy::too_many_lines)]
     fn descriptor(&self) -> ModuleDescriptor {
         let mut desc = ModuleDescriptor::new("mod_matrix", "Mod Matrix")
+            .width(synth_core::ModuleWidth::Large)
             .description("Modulation matrix — a list of source → destination routings")
             .category(ModuleCategory::Utility)
             .tag("modulation")

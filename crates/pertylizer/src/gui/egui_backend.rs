@@ -216,6 +216,17 @@ pub fn setup_custom_style(ctx: &egui::Context) {
     style.spacing.slider_rail_height = t.style.slider_rail_height;
     style.spacing.interact_size.y = 18.0; // Taller click area for sliders
 
+    // Disable egui's debug-only "a rect changed its widget id" heuristic
+    // (`warn_if_rect_changes_id`, on by default in debug builds). It paints a red
+    // overlay when a screen rect is occupied by a different widget id than the
+    // previous frame. The patch editor canvas legitimately triggers this: each
+    // module card's id includes the instrument id, so switching instruments (or
+    // dragging a card onto where another card sat) leaves the *same* world rect
+    // holding a *different*, still-correct id — a false positive. The ids are
+    // genuinely stable per instrument; this only silences the misfiring dev
+    // overlay (no effect in release, where the check is compiled out).
+    style.debug.warn_if_rect_changes_id = false;
+
     ctx.set_global_style(style);
 }
 
@@ -652,7 +663,7 @@ impl eframe::App for SynthApp {
         ctx.request_repaint();
 
         // Top menu bar
-        egui::Panel::top("menu_bar").show_inside(ui, |ui| {
+        egui::Panel::top("menu_bar").show(ui, |ui| {
             egui::MenuBar::new().ui(ui, |ui| {
                 self.menu_file(ui, ctx);
 
@@ -785,7 +796,7 @@ impl eframe::App for SynthApp {
                     let Some(active_id) = self.active_instrument_id else {
                         let recent = self.settings.recent_projects.clone();
                         let mut welcome_action = None;
-                        egui::CentralPanel::default().show_inside(ui, |ui| {
+                        egui::CentralPanel::default().show(ui, |ui| {
                             let t = theme();
                             welcome_action = crate::gui::welcome_view::show(ui, &t, &recent);
                         });
@@ -2565,7 +2576,7 @@ impl SynthApp {
         let mut do_copy = false;
         let mut do_cut = false;
         let mut do_paste = false;
-        egui::CentralPanel::default().show_inside(ui, |ui| {
+        egui::CentralPanel::default().show(ui, |ui| {
             // Context bar docked over the rack editor; returns whether its Auto
             // Layout button was clicked this frame.
             let toolbar_auto_layout = self.render_patch_toolbar(ui, active_id);
@@ -3012,10 +3023,10 @@ impl SynthApp {
         egui::Panel::left("instruments_panel")
             .default_size(list_panel::DEFAULT_WIDTH)
             .min_size(list_panel::MIN_WIDTH)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 // Header + search pinned to the top.
                 let mut add_clicked = false;
-                egui::Panel::top("instruments_head").show_inside(ui, |ui| {
+                egui::Panel::top("instruments_head").show(ui, |ui| {
                     add_clicked =
                         list_panel::header(ui, ri::MUSIC_2_FILL, "Instruments", "New instrument");
                     list_panel::search_box(ui, &mut self.instrument_search);
@@ -3573,7 +3584,7 @@ impl SynthApp {
     fn render_keyboard_panel(&mut self, ui: &mut egui::Ui) {
         egui::Panel::bottom("keyboard_panel")
             .min_size(100.0)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 let layer_id =
                     egui::LayerId::new(egui::Order::Middle, egui::Id::new("keyboard_layer"));
                 ui.scope_builder(egui::UiBuilder::new().layer_id(layer_id), |ui| {
@@ -3587,7 +3598,7 @@ impl SynthApp {
     fn render_status_bar(&mut self, ui: &mut egui::Ui) {
         egui::Panel::bottom("status_bar")
             .min_size(22.0)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 ui.horizontal(|ui| {
                     let t = theme();
 
@@ -3632,6 +3643,8 @@ impl SynthApp {
                     // ── Right side: CPU / Voices / Latency ──
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                         let cpu = self.handle.cpu_usage();
+                        // Copy snapshot so the hover closure captures no borrow of `self`.
+                        let bd = self.handle.cpu_breakdown();
                         let cpu_color = if cpu > 0.8 {
                             t.colors.meter_red
                         } else if cpu > 0.5 {
@@ -3641,7 +3654,41 @@ impl SynthApp {
                         };
                         ui.label(
                             RichText::new(format!("CPU: {:>3.0}%", cpu * 100.0)).color(cpu_color),
-                        );
+                        )
+                        .on_hover_ui(|ui| {
+                            ui.strong("CPU breakdown (audio thread)");
+                            ui.add_space(2.0);
+                            egui::Grid::new("cpu_breakdown_grid")
+                                .num_columns(2)
+                                .spacing([14.0, 2.0])
+                                .show(ui, |ui| {
+                                    let pct = |v: f32| format!("{:>5.1} %", v * 100.0);
+                                    let other = (bd.total
+                                        - bd.voices
+                                        - bd.module_graph
+                                        - bd.master_fx
+                                        - bd.awe)
+                                        .max(0.0);
+                                    for (label, value) in [
+                                        ("Voices", bd.voices),
+                                        ("Module graph", bd.module_graph),
+                                        ("Master FX", bd.master_fx),
+                                        ("AWE (room)", bd.awe),
+                                        ("Other", other),
+                                    ] {
+                                        ui.label(label);
+                                        ui.monospace(pct(value));
+                                        ui.end_row();
+                                    }
+                                    ui.separator();
+                                    ui.end_row();
+                                    ui.strong("Total");
+                                    ui.monospace(pct(bd.total));
+                                    ui.end_row();
+                                });
+                            ui.add_space(2.0);
+                            ui.weak("Share of the per-buffer real-time budget.");
+                        });
                         ui.separator();
                         ui.label(
                             RichText::new(format!("Voices: {:>3}", self.handle.voice_count()))

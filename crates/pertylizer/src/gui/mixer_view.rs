@@ -277,7 +277,7 @@ pub fn draw_mixer_view(
     // straight into the frame's central area, which is otherwise unfilled.
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE.fill(t.colors.bg_panel))
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             // ── Toolbar ──
             super::toolbar::top(ui, "mixer_toolbar", |ui| {
                 ui.label(RichText::new("Mixer").color(t.colors.text_primary).strong());

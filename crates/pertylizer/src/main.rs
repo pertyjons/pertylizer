@@ -262,6 +262,10 @@ fn run_headless_mcp() -> Result<(), Box<dyn std::error::Error>> {
 /// crates and silences chatty dependencies; override with `RUST_LOG`.
 fn init_tracing() {
     use tracing_subscriber::EnvFilter;
+    // Forward the `log` crate (used by egui/eframe) into tracing so their
+    // diagnostics — notably egui's id-clash warnings — reach our stderr output
+    // instead of being silently dropped. Best-effort: ignore if already set.
+    let _ = tracing_log::LogTracer::init();
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
         EnvFilter::new("warn,pertylizer=info,synth_mcp=info,synth_engine=info")
     });

@@ -416,6 +416,7 @@ impl Default for Fof {
 impl Describable for Fof {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("fof", "FOF")
+            .width(synth_core::ModuleWidth::Large)
             .description(
                 "CHANT-style granular formant voice / choir (FOF / formant wave functions)",
             )

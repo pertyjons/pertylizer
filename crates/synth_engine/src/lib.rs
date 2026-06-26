@@ -76,7 +76,7 @@ pub use shared_state::{
     SharedTransportState,
 };
 pub use state::*;
-pub use synth_engine::{CommandSender, EngineHandle, SynthEngine};
+pub use synth_engine::{CommandSender, CpuStageBreakdown, EngineHandle, SynthEngine};
 pub use transactions::{
     BatchBuilder, BatchResult, CommandBatch, TransactionId, TransactionalCommand,
 };

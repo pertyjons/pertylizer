@@ -63,6 +63,7 @@ impl Default for BeatDetector {
 impl Describable for BeatDetector {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("beat_detector", "Beat Detector")
+            .width(synth_core::ModuleWidth::Small)
             .description("Envelope-based beat/transient detector with gate output")
             .category(ModuleCategory::Utility)
             .tag("beat")

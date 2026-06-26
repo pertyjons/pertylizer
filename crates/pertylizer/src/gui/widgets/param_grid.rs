@@ -224,14 +224,16 @@ pub fn draw_parameter_grid<'d>(
         ui.horizontal(|ui| {
             labeled_param(ui, param, mod_role(param));
             ui.add_space(theme().spacing.xs);
-            let is_time = matches!(param.widget_hint, WidgetHint::TimeSlider);
-            let slider = if param.kind == ParamKind::Integer {
+            let is_integer = param.kind == ParamKind::Integer;
+            let is_time =
+                matches!(param.widget_hint, WidgetHint::TimeSlider) && param.range.min > 0.0;
+            let slider = if is_integer {
                 // Integer kind: snap to whole numbers, no decimals (Phase 6).
                 egui::Slider::new(&mut value, param.range.min..=param.range.max)
                     .step_by(1.0)
                     .min_decimals(0)
                     .max_decimals(0)
-            } else if is_time && param.range.min > 0.0 {
+            } else if is_time {
                 egui::Slider::new(&mut value, param.range.min..=param.range.max)
                     .logarithmic(true)
                     .suffix("s")
@@ -242,6 +244,34 @@ pub fn draw_parameter_grid<'d>(
                     .min_decimals(2)
                     .max_decimals(2)
             };
+            // Make the rail fill the remaining row width instead of egui's fixed
+            // `slider_width` (~100 px), which otherwise bursts the narrow buckets.
+            // egui draws the value as a `DragValue` to the right, so reserve exactly
+            // its width — measured from the widest range endpoint formatted as the
+            // slider shows it, rather than a fixed guess (time values like "0.258s"
+            // are wider than plain decimals and were overflowing the bucket).
+            let fmt = |v: f32| {
+                if is_integer {
+                    format!("{v:.0}")
+                } else if is_time {
+                    format!("{v:.3}s")
+                } else {
+                    format!("{v:.2}")
+                }
+            };
+            let font = egui::TextStyle::Body.resolve(ui.style());
+            let value_w = [param.range.min, param.range.max]
+                .into_iter()
+                .map(|v| {
+                    ui.painter()
+                        .layout_no_wrap(fmt(v), font.clone(), egui::Color32::PLACEHOLDER)
+                        .size()
+                        .x
+                })
+                .fold(0.0_f32, f32::max);
+            // value text + DragValue padding + the slider→value item spacing.
+            let reserve = value_w + 28.0;
+            ui.spacing_mut().slider_width = (ui.available_width() - reserve).max(40.0);
             if ui.add(slider).changed() {
                 changes.push((*param, value));
             }

@@ -1197,7 +1197,7 @@ pub(crate) fn draw_sequencer_view(
                 .resizable(true)
                 .min_size(190.0)
                 .default_size(290.0)
-                .show_inside(ui, |ui| {
+                .show(ui, |ui| {
                     note_fx::draw_note_fx_panel(ui, song, view_state, undo_manager, pattern_id);
                 });
         }
@@ -1211,7 +1211,7 @@ pub(crate) fn draw_sequencer_view(
             .default_size(default_height)
             .min_size(150.0)
             .max_size(available_height - 100.0)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 if let Some(data) = &piano_roll_data {
                     if !draw_piano_roll(
                         ui,
@@ -1251,7 +1251,7 @@ pub(crate) fn draw_sequencer_view(
     }
 
     // Main content: arrangement view
-    egui::CentralPanel::default().show_inside(ui, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         if let Some(data) = &arrangement_data {
             if let Some(pattern_id) = draw_arrangement(
                 ui,

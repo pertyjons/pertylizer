@@ -451,6 +451,15 @@ pub struct EngineState {
     pub voice_count: AtomicU32,
     /// CPU usage (0.0 - 1.0).
     pub cpu_usage: AtomicF32,
+    /// Per-stage CPU usage breakdown (each a fraction of the buffer budget, same
+    /// units as `cpu_usage`), published every ~100 callbacks for the status-bar
+    /// tooltip. `cpu_voices` covers all instrument/voice processing including the
+    /// channel- and return-bus stages; `cpu_module_graph` the user-added modular
+    /// graph; `cpu_master_fx` the master effect chain; `cpu_awe` room simulation.
+    pub cpu_voices: AtomicF32,
+    pub cpu_module_graph: AtomicF32,
+    pub cpu_master_fx: AtomicF32,
+    pub cpu_awe: AtomicF32,
     /// Sample rate.
     pub sample_rate: AtomicU32,
     /// Focused instrument for keyboard input (stores `InstrumentId` as u64).
@@ -489,6 +498,10 @@ impl EngineState {
             master_volume: AtomicF32::new(1.0),
             voice_count: AtomicU32::new(0),
             cpu_usage: AtomicF32::new(0.0),
+            cpu_voices: AtomicF32::new(0.0),
+            cpu_module_graph: AtomicF32::new(0.0),
+            cpu_master_fx: AtomicF32::new(0.0),
+            cpu_awe: AtomicF32::new(0.0),
             sample_rate: AtomicU32::new(48000),
             focused_instrument: AtomicU64::new(NO_FOCUSED_INSTRUMENT),
             master_scope: VisualizationBuffer::new(4096),
@@ -554,6 +567,10 @@ impl Default for EngineState {
             master_volume: AtomicF32::new(1.0),
             voice_count: AtomicU32::new(0),
             cpu_usage: AtomicF32::new(0.0),
+            cpu_voices: AtomicF32::new(0.0),
+            cpu_module_graph: AtomicF32::new(0.0),
+            cpu_master_fx: AtomicF32::new(0.0),
+            cpu_awe: AtomicF32::new(0.0),
             sample_rate: AtomicU32::new(48000),
             focused_instrument: AtomicU64::new(NO_FOCUSED_INSTRUMENT),
             master_scope: VisualizationBuffer::new(4096),

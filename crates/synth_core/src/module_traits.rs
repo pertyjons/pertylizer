@@ -1130,6 +1130,59 @@ pub enum ModuleCategory {
     PhysicalModeling,
 }
 
+/// Fixed display-width bucket for a module's panel in the patch editor (and the
+/// mixer's return-bus inserts). A module declares one of these instead of letting
+/// its widest body row size it, so widths are deliberate, uniform, and known
+/// before the body renders.
+///
+/// The pixel values are exact multiples of the editor's 32 px grid, so a module's
+/// rendered width equals the grid cell it snaps to (no sub-grid gap) and the
+/// auto-layout columns stay grid-aligned.
+///
+/// This is a pure GUI-layout concern: it is never serialized (the field on
+/// [`ModuleDescriptor`] is `#[serde(skip)]`), and descriptors are always rebuilt
+/// from code, so it needs no serde support.
+/// Each bucket's content width (total minus the ~88 px of chrome a normal patch
+/// module spends on its two 28 px port columns, item spacing, and inner margins)
+/// is roughly `total − 88`, which works out to 1 / 2 / 3 / 4 / 5 knobs per row for
+/// XS → XL. The scale is grid-aligned and chosen so even the smallest bucket holds
+/// a usable control.
+/// The variants are ordered smallest-to-largest, so the derived `Ord` compares
+/// buckets by width (`ModuleWidth::Small < ModuleWidth::Large`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Default)]
+pub enum ModuleWidth {
+    /// 160 px (5 grid cells, ~72 px content) — a single control: level meter,
+    /// the inline signal monitor, one-knob utilities.
+    ExtraSmall,
+    /// 192 px (6 grid cells, ~104 px content) — 2 knobs/row: simple ≤3-param
+    /// modules (amplifier, sub oscillator, basic utilities).
+    Small,
+    /// 256 px (8 grid cells, ~168 px content) — 3 knobs/row, the common case
+    /// (most oscillators, filters, LFOs, mid-size effects).
+    #[default]
+    Medium,
+    /// 352 px (11 grid cells, ~264 px content) — 4 knobs/row plus the bespoke
+    /// editor bodies (envelope, oscilloscope, spectrum, mod matrix, sampler).
+    Large,
+    /// 448 px (14 grid cells, ~360 px content) — 5 knobs/row, the widest content
+    /// (MSEG, large displays/editors).
+    ExtraLarge,
+}
+
+impl ModuleWidth {
+    /// Total module panel width in pixels (a multiple of the 32 px editor grid).
+    #[must_use]
+    pub const fn module_px(self) -> f32 {
+        match self {
+            Self::ExtraSmall => 160.0,
+            Self::Small => 192.0,
+            Self::Medium => 256.0,
+            Self::Large => 352.0,
+            Self::ExtraLarge => 448.0,
+        }
+    }
+}
+
 /// Complete description of a module for UI generation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ModuleDescriptor {
@@ -1147,6 +1200,10 @@ pub struct ModuleDescriptor {
     pub ports: Vec<PortDescriptor>,
     /// Tags for search.
     pub tags: Vec<String>,
+    /// Fixed display-width bucket for the module's panel. Not serialized — it is a
+    /// code-declared GUI layout property, always rebuilt from the descriptor.
+    #[serde(skip)]
+    pub width: ModuleWidth,
 }
 
 impl ModuleDescriptor {
@@ -1159,6 +1216,7 @@ impl ModuleDescriptor {
             parameters: Vec::new(),
             ports: Vec::new(),
             tags: Vec::new(),
+            width: ModuleWidth::default(),
         }
     }
 
@@ -1169,6 +1227,14 @@ impl ModuleDescriptor {
 
     pub fn category(mut self, cat: ModuleCategory) -> Self {
         self.category = cat;
+        self
+    }
+
+    /// Set the module's fixed display-width bucket (defaults to
+    /// [`ModuleWidth::Medium`]).
+    #[must_use]
+    pub fn width(mut self, width: ModuleWidth) -> Self {
+        self.width = width;
         self
     }
 

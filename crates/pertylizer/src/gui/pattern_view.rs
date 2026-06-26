@@ -138,14 +138,14 @@ pub(crate) fn draw_pattern_view(
             .resizable(true)
             .min_size(190.0)
             .default_size(290.0)
-            .show_inside(ui, |ui| {
+            .show(ui, |ui| {
                 draw_note_fx_panel(ui, song, seq_view_state, undo_manager, pattern_id);
             });
     }
 
     egui::CentralPanel::default()
         .frame(egui::Frame::NONE.fill(theme().colors.bg_panel))
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             let Some(pattern_id) = seq_view_state.opened_pattern else {
                 ui.centered_and_justified(|ui| {
                     ui.label(
@@ -267,10 +267,10 @@ fn draw_pattern_browser(
     egui::Panel::left("pattern_browser")
         .default_size(list_panel::DEFAULT_WIDTH)
         .min_size(list_panel::MIN_WIDTH)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             // Header + search pinned to the top.
             let mut add_clicked = false;
-            egui::Panel::top("pattern_browser_head").show_inside(ui, |ui| {
+            egui::Panel::top("pattern_browser_head").show(ui, |ui| {
                 add_clicked = list_panel::header(ui, ri::PIANO_FILL, "Patterns", "New pattern");
                 list_panel::search_box(ui, &mut pattern_view_state.search_query);
             });

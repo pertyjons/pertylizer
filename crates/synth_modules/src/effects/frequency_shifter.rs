@@ -89,6 +89,7 @@ impl Default for FrequencyShifter {
 impl Describable for FrequencyShifter {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("frequency_shifter", "Freq Shifter")
+            .width(synth_core::ModuleWidth::Small)
             .description("Bode frequency shifter — shifts all frequencies by a fixed Hz amount")
             .category(ModuleCategory::Effect)
             .tag("frequency_shifter")

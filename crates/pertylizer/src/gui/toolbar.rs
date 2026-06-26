@@ -34,7 +34,7 @@ pub fn top<R>(
 ) -> R {
     egui::Panel::top(id)
         .frame(bar_frame())
-        .show_inside(ui, |ui| row(ui, add_contents))
+        .show(ui, |ui| row(ui, add_contents))
         .inner
 }
 

@@ -269,6 +269,23 @@ efficiency/altitude items deliberately left out of that change.
   gracefully (silent → no sound vs. panic), and consider warning on / blocking
   deletion of an in-use sample, or resetting referencing modules to "no sample".
 
+### 3.8 Drop the vendored egui-0.35 forks once upstream ships 0.35
+
+- [ ] **Replace the two vendored `third_party/` crates with the real crates.io versions
+  once they publish egui-0.35-compatible releases.** The egui 0.34→0.35 upgrade was blocked
+  because neither `egui-remixicon` nor `egui-file-dialog` had a 0.35 release at the time
+  (egui 0.35 landed 2026-06-25). To unblock, both were vendored under `third_party/` with
+  their `egui` dep bumped to 0.35 and wired in via `[patch.crates-io]` in the root
+  `Cargo.toml`:
+    - `third_party/egui-remixicon/` — font-only, API unchanged (just `add_to_fonts` + the
+      `icons` consts). ~4.3MB, mostly the generated `icons.rs` + the `.ttf`.
+    - `third_party/egui-file-dialog/` — needed exactly **7** `show_inside`→`show` renames to
+      compile against 0.35; otherwise unchanged from 0.13.0.
+  When upstream releases 0.35 versions: bump `egui-remixicon` / `egui-file-dialog` to the new
+  crates.io versions, **remove the `[patch.crates-io]` block** and the whole `third_party/`
+  directory, and re-run the gate. Watch:
+  https://github.com/get200/egui-remixicon and https://github.com/fluxxcode/egui-file-dialog
+
 ---
 
 ## 4. AI & Automation

@@ -106,6 +106,7 @@ impl Clone for Oscilloscope {
 impl Describable for Oscilloscope {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("oscilloscope", "Scope")
+            .width(synth_core::ModuleWidth::Large)
             .description("Oscilloscope waveform display")
             .category(ModuleCategory::Visualizer)
             .tag("visualizer")

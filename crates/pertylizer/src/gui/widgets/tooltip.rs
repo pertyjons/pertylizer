@@ -1,5 +1,6 @@
 //! Custom tooltip widget that renders on top of other widgets.
 
+use eframe::egui::emath::TSTransform;
 use eframe::egui::{self, Color32, LayerId, Order, Pos2, Stroke, Ui, Vec2};
 
 use crate::gui::theme::theme;
@@ -11,11 +12,13 @@ use crate::gui::theme::theme;
 ///
 /// # Arguments
 /// * `ui` - The UI context
-/// * `pos` - Position for the tooltip (top-left corner)
+/// * `pos` - Position for the tooltip (top-left corner), in the caller's layer
+///   (world) coordinates
 /// * `text` - Text to display
 /// * `accent_color` - Color for the border accent
 pub fn draw_value_tooltip(ui: &Ui, pos: Pos2, text: &str, accent_color: Color32) {
-    render_tooltip(ui, pos, text, accent_color);
+    // `pos` is a bare position in the caller's coordinates — project it to screen.
+    render_tooltip_at_screen(ui, layer_transform(ui) * pos, text, accent_color);
 }
 
 /// Draw a tooltip to the right of a center point (useful for knobs).
@@ -26,8 +29,14 @@ pub fn draw_tooltip_right_of(
     text: &str,
     accent_color: Color32,
 ) {
-    let pos = Pos2::new(center.x + radius + 6.0, center.y - 10.0);
-    draw_value_tooltip(ui, pos, text, accent_color);
+    // Project the knob centre to screen, then offset in SCREEN space. `radius` is
+    // a world length, so it scales with the Scene zoom; the 6/10 px gaps are fixed
+    // screen pixels. Computing the offset in world space (and letting the tooltip
+    // layer scale it) would misplace the tooltip at any zoom != 1.
+    let tr = layer_transform(ui);
+    let anchor = tr * center;
+    let pos = anchor + Vec2::new(radius * tr.scaling + 6.0, -10.0);
+    render_tooltip_at_screen(ui, pos, text, accent_color);
 }
 
 /// Draw a tooltip above a point (useful for envelope control points).
@@ -41,13 +50,25 @@ pub fn draw_tooltip_above(ui: &Ui, point: Pos2, text: &str, accent_color: Color3
     let padding = Vec2::new(6.0, 3.0);
     let size = galley.size() + padding * 2.0;
 
-    // Position above and slightly to the right
-    let pos = Pos2::new(point.x + 8.0, point.y - size.y - 4.0);
-    render_tooltip(ui, pos, text, accent_color);
+    // Project the anchor point to screen, then apply the screen-pixel offsets
+    // (the box itself is drawn at fixed screen size, so the gap must be too).
+    let anchor = layer_transform(ui) * point;
+    let pos = Pos2::new(anchor.x + 8.0, anchor.y - size.y - 4.0);
+    render_tooltip_at_screen(ui, pos, text, accent_color);
 }
 
-/// Shared tooltip rendering logic: background, border, and text on the tooltip layer.
-fn render_tooltip(ui: &Ui, pos: Pos2, text: &str, accent_color: Color32) {
+/// The caller's layer→global (world→screen) transform. Inside an `egui::Scene`
+/// (the patch editor) this carries the pan/zoom; outside a Scene the layer has no
+/// transform, so this is the identity (the mixer knobs keep working unchanged).
+fn layer_transform(ui: &Ui) -> TSTransform {
+    ui.ctx()
+        .layer_transform_to_global(ui.layer_id())
+        .unwrap_or(TSTransform::IDENTITY)
+}
+
+/// Shared tooltip rendering on the screen-space tooltip layer. `pos` is already in
+/// screen coordinates (callers project their anchor first).
+fn render_tooltip_at_screen(ui: &Ui, pos: Pos2, text: &str, accent_color: Color32) {
     let t = theme();
     let painter = ui
         .ctx()

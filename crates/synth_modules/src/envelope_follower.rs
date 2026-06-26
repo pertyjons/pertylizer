@@ -60,6 +60,7 @@ impl Default for EnvelopeFollower {
 impl Describable for EnvelopeFollower {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("envelope_follower", "Env Follower")
+            .width(synth_core::ModuleWidth::Small)
             .description("Envelope follower — tracks input amplitude as a control signal")
             .category(ModuleCategory::Utility)
             .tag("envelope")

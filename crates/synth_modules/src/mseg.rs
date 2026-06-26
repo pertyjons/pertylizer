@@ -390,6 +390,7 @@ impl Default for Mseg {
 impl Describable for Mseg {
     fn descriptor(&self) -> ModuleDescriptor {
         let mut desc = ModuleDescriptor::new("mseg", "MSEG")
+            .width(synth_core::ModuleWidth::ExtraLarge)
             .description("Multi-Stage Envelope Generator with up to 16 segments")
             .category(ModuleCategory::Envelope)
             .tag("envelope")

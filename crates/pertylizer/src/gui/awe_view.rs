@@ -761,7 +761,7 @@ pub fn draw_awe_view(
     egui::Panel::right("awe_controls")
         .min_size(220.0)
         .default_size(260.0)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             egui::ScrollArea::vertical()
                 .content_margin(egui::Margin::same(6))
                 .show(ui, |ui| {
@@ -770,7 +770,7 @@ pub fn draw_awe_view(
         });
 
     // Central panel — 2D floor plan
-    egui::CentralPanel::default().show_inside(ui, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         draw_floor_plan(ui, handle, ui_state);
     });
 

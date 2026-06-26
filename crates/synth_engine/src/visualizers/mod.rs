@@ -414,3 +414,24 @@ impl synth_core::VisualizationSink for VisualizationBuffer {
         }
     }
 }
+
+#[cfg(test)]
+mod width_bucket_guards {
+    use super::{LevelMeter, Oscilloscope, SpectrumAnalyzer};
+    use synth_core::{Describable, ModuleWidth};
+
+    /// Scope and spectrum carry a wide display body; the level meter is a thin
+    /// vertical bar. Guards the Phase 1 visualizer width classification.
+    #[test]
+    fn visualizer_widths() {
+        assert_eq!(Oscilloscope::new().descriptor().width, ModuleWidth::Large);
+        assert_eq!(
+            SpectrumAnalyzer::new().descriptor().width,
+            ModuleWidth::Large
+        );
+        assert_eq!(
+            LevelMeter::new().descriptor().width,
+            ModuleWidth::ExtraSmall
+        );
+    }
+}

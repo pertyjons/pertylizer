@@ -160,6 +160,7 @@ impl Default for GranularFx {
 impl Describable for GranularFx {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("granular_fx", "Granular FX")
+            .width(synth_core::ModuleWidth::Large)
             .description("Input-driven granular cloud processor")
             .category(ModuleCategory::Effect)
             .tag("granular")

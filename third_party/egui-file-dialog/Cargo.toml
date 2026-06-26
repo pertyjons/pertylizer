@@ -1,0 +1,31 @@
+# Vendored fork of egui-file-dialog 0.13.0 (https://github.com/fluxxcode/egui-file-dialog),
+# bumped to egui 0.35 because upstream has not yet released a 0.35-compatible
+# version. SPIKE: measuring 0.35 breakage. Remove this fork and go back to the
+# crates.io dependency once upstream publishes 0.35.
+[package]
+name = "egui-file-dialog"
+version = "0.13.0"
+edition = "2021"
+description = "easy-to-use and customizable file dialog for egui (vendored, egui 0.35)"
+license = "MIT"
+repository = "https://github.com/fluxxcode/egui-file-dialog"
+
+[lib]
+name = "egui_file_dialog"
+path = "src/lib.rs"
+
+[features]
+default = ["serde", "default_fonts"]
+default_fonts = ["egui/default_fonts"]
+information_view = ["dep:chrono", "image-meta", "indexmap"]
+serde = ["dep:serde"]
+
+[dependencies]
+egui = { version = "0.35.0", default-features = false }
+directories = "6.0"
+dunce = "1.0.5"
+sysinfo = { version = "0.38", default-features = false, features = ["disk"] }
+chrono = { version = "0.4.39", optional = true }
+image-meta = { version = "0.1.2", optional = true }
+indexmap = { version = "2.7.0", features = ["serde"], optional = true }
+serde = { version = "1", features = ["derive"], optional = true }

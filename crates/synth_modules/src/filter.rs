@@ -224,6 +224,7 @@ impl Default for Filter {
 impl Describable for Filter {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("filter", "Filter")
+            .width(synth_core::ModuleWidth::Large)
             .description("State Variable Filter with multiple modes")
             .category(ModuleCategory::Filter)
             .tag("filter")
@@ -649,6 +650,7 @@ impl Default for LadderFilter {
 impl Describable for LadderFilter {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("ladder_filter", "Ladder Filter")
+            .width(synth_core::ModuleWidth::Small)
             .description("24dB/oct Moog-style ladder filter")
             .category(ModuleCategory::Filter)
             .tag("filter")

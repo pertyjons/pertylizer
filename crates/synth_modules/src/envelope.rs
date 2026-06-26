@@ -330,6 +330,7 @@ impl Default for Envelope {
 impl Describable for Envelope {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("envelope", "ADSR")
+            .width(synth_core::ModuleWidth::Large)
             .description("ADSR envelope generator")
             .category(ModuleCategory::Envelope)
             .tag("envelope")

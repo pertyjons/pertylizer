@@ -1,0 +1,18 @@
+# Vendored fork of egui-remixicon 0.34.0 (https://github.com/get200/egui-remixicon),
+# bumped to egui 0.35 because upstream has not yet released a 0.35-compatible
+# version. Only `add_to_fonts` + the `icons` consts are used. Remove this fork and
+# go back to the crates.io dependency once upstream publishes 0.35.
+[package]
+name = "egui-remixicon"
+version = "0.34.0"
+edition = "2021"
+description = "Remix Icon for egui (vendored, egui 0.35)"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/get200/egui-remixicon"
+
+[dependencies]
+egui = { version = "0.35", default-features = true, optional = true }
+
+[features]
+default = ["egui"]
+egui = ["dep:egui"]

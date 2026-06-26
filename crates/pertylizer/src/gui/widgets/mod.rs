@@ -25,8 +25,8 @@ pub use cable::{
     draw_cable_highlighted, draw_flow_particles, point_near_cable,
 };
 pub use controls::{
-    DialogButton, dialog_button_row, icon_button, modal_window, section_header, toggle_button,
-    toggle_button_colored,
+    DialogButton, dialog_button_row, icon_button, icon_button_sized, modal_window, section_header,
+    toggle_button, toggle_button_colored,
 };
 pub use envelope::{EnvelopeChanges, EnvelopeEditor, draw_adsr_curve};
 pub use frame::{ModuleFrame, blend_rgb, draw_module_header};

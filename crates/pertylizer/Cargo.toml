@@ -16,6 +16,11 @@ default = ["gui-egui", "mcp", "osc"]
 gui-egui = ["dep:eframe", "dep:egui", "dep:egui_extras", "dep:egui-file-dialog", "dep:egui-remixicon", "dep:image"]
 mcp = ["dep:synth_mcp", "dep:tokio"]
 osc = ["dep:synth_osc"]
+# Opt-in (NOT in default): pulls eframe's `inspection` feature, which links
+# `egui_inspection` + `accesskit` so an external `egui-mcp` server can drive the
+# live UI over AccessKit. Dormant unless `EGUI_INSPECTION=1` is set at runtime.
+# Kept out of default so release/CI builds don't link accesskit unnecessarily.
+egui-inspection = ["eframe/inspection"]
 # A native PipeWire host (Linux) is intentionally NOT wired up yet: cpal 0.18.1
 # declares its optional dependency as `pipewire = "^0.10"`, but pipewire-rs is
 # only published up to 0.8.0 on crates.io, so even a `cpal/pipewire` passthrough
@@ -84,6 +89,7 @@ tokio = { workspace = true, optional = true }
 # `tracing` macros which compile to no-ops when no subscriber is set).
 tracing = { workspace = true }
 tracing-subscriber = { workspace = true }
+tracing-log = { workspace = true }
 
 # OSC telemetry (optional)
 synth_osc = { path = "../synth_osc", optional = true }
@@ -103,4 +109,3 @@ hound = { workspace = true }
 [[bin]]
 name = "pertylizer"
 path = "src/main.rs"
-

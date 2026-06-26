@@ -160,11 +160,15 @@ Use `batch_execute` to run multiple operations in a single request for better pe
 
 ### MCP feedback (ALWAYS)
 
-We are actively hardening Pertylizer's MCP, so **every time you use an MCP tool, watch
-for gaps and report them.** Whenever a call errors, returns something unexpected, is
-awkward to use, lacks a tool you needed, or has a confusing/incomplete schema or
-description — **stop and report it to the user**, then investigate what could be
-better:
+**Scope: this applies ONLY to the `synth` MCP server (Pertylizer's own server,
+`http://127.0.0.1:9850/mcp`).** Do not apply it to any other MCP server (e.g. the
+`egui` inspection MCP or any unrelated tools) — gaps there are not ours to harden.
+
+We are actively hardening Pertylizer's MCP, so **every time you use a `synth` MCP tool,
+watch for gaps and report them.** Whenever a `synth` call errors, returns something
+unexpected, is awkward to use, lacks a tool you needed, or has a confusing/incomplete
+schema or description — **stop and report it to the user**, then investigate what could
+be better:
 
 - What failed or was missing (the exact tool, args, and error/response).
 - Why it got in the way (workaround you had to use, or task you couldn't finish).

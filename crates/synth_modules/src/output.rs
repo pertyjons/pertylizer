@@ -137,6 +137,7 @@ impl Default for StereoOutput {
 impl Describable for StereoOutput {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("stereo_output", "Stereo Output")
+            .width(synth_core::ModuleWidth::Large)
             .description("Master stereo output with volume, pan, and limiting")
             .category(ModuleCategory::Output)
             // Inputs - accepts both mono and stereo
@@ -147,6 +148,13 @@ impl Describable for StereoOutput {
             .port(PortDescriptor::audio_input("in_l", "In L").description("Left channel input"))
             .port(PortDescriptor::audio_input("in_r", "In R").description("Right channel input"))
             // Output ports for Voice to read processed audio
+            // Canonical audio-port order: mono `out` first, then the stereo pair
+            // (matches `in, in_l, in_r` and osc/vox/fof). Names are by-value so the
+            // order is purely the visual column order.
+            .port(
+                PortDescriptor::audio_output("out", "Out")
+                    .description("Mono mix output (for graph compatibility)"),
+            )
             .port(
                 PortDescriptor::audio_output("left", "Left Out")
                     .description("Processed left channel output"),
@@ -154,10 +162,6 @@ impl Describable for StereoOutput {
             .port(
                 PortDescriptor::audio_output("right", "Right Out")
                     .description("Processed right channel output"),
-            )
-            .port(
-                PortDescriptor::audio_output("out", "Out")
-                    .description("Mono mix output (for graph compatibility)"),
             )
             // Parameters
             .parameter(

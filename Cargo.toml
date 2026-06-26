@@ -20,6 +20,12 @@ exclude = ["visualizer"]
 # Default to run the main application
 default-members = ["crates/pertylizer"]
 
+# Vendored forks bumped to egui 0.35 (upstream has no 0.35 release yet).
+# Remove once egui-remixicon / egui-file-dialog publish 0.35-compatible versions.
+[patch.crates-io]
+egui-remixicon = { path = "third_party/egui-remixicon" }
+egui-file-dialog = { path = "third_party/egui-file-dialog" }
+
 [workspace.package]
 edition = "2024"
 rust-version = "1.96"
@@ -105,17 +111,20 @@ tokio-util = { version = "0.7.18", features = ["rt"] }
 # Structured logging (used by MCP server to trace session lifecycle / errors)
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "env-filter", "ansi"] }
+# Bridges the `log` crate (used by egui/eframe) into tracing so their warnings
+# (e.g. egui id-clash) reach our stderr output.
+tracing-log = "0.2"
 
 # GUI - egui
-eframe = { version = "0.34.3", default-features = false, features = [
+eframe = { version = "0.35.0", default-features = false, features = [
     "default_fonts",
     "glow",
     "persistence",
     "wayland",
     "x11",
 ] }
-egui = { version = "0.34.3" }
-egui_extras = { version = "0.34.3", features = ["image"] }
+egui = { version = "0.35.0" }
+egui_extras = { version = "0.35.0", features = ["image"] }
 image = { version = "0.25.10", default-features = false, features = ["png"] }
 egui-file-dialog = { version = "0.13.0" }
 egui-remixicon = { version = "0.34.0" }

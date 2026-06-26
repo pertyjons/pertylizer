@@ -10,17 +10,11 @@ use eframe::egui::{self, Color32, Pos2, Response, Sense, Stroke, Ui, Vec2};
 
 use crate::gui::theme::theme;
 
-// --- Port palette ---
-/// Backdrop behind the floating port label.
-const PORT_LABEL_BACKDROP: Color32 = Color32::from_black_alpha(200);
-
 /// A port widget for connections.
 pub struct PortWidget {
     port_type: WidgetPortType,
-    direction: WidgetPortDirection,
     connected: bool,
     highlighted: bool,
-    label: String,
 }
 
 /// Port type for widget rendering.
@@ -66,13 +60,11 @@ pub enum WidgetPortDirection {
 }
 
 impl PortWidget {
-    pub fn new(port_type: WidgetPortType, direction: WidgetPortDirection) -> Self {
+    pub fn new(port_type: WidgetPortType) -> Self {
         Self {
             port_type,
-            direction,
             connected: false,
             highlighted: false,
-            label: String::new(),
         }
     }
 
@@ -87,11 +79,6 @@ impl PortWidget {
         self
     }
 
-    pub fn label(mut self, label: impl Into<String>) -> Self {
-        self.label = label.into();
-        self
-    }
-
     pub fn color(&self) -> Color32 {
         let colors = &theme().colors;
         match self.port_type {
@@ -99,16 +86,6 @@ impl PortWidget {
             WidgetPortType::Control => colors.port_control,
             WidgetPortType::Gate => colors.port_gate,
             WidgetPortType::Midi => colors.port_midi,
-        }
-    }
-
-    /// Short type label shown on hover.
-    fn type_label(&self) -> &'static str {
-        match self.port_type {
-            WidgetPortType::Audio => "audio",
-            WidgetPortType::Control => "cv",
-            WidgetPortType::Gate => "gate",
-            WidgetPortType::Midi => "midi",
         }
     }
 
@@ -147,7 +124,10 @@ impl PortWidget {
         };
         self.draw_shape(painter, center, radius - 3.0, fill, None);
 
-        // Hover: brighter glow ring + port label
+        // Hover: brighter glow ring. The port name/type is shown via the
+        // caller's egui `on_hover_text` tooltip (correctly positioned inside the
+        // Scene transform) rather than a manually-painted Tooltip-layer label,
+        // which used the world-space `center` and so landed off-screen.
         if response.hovered() {
             let hover_glow = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 60);
             self.draw_shape(painter, center, radius + 4.0, hover_glow, None);
@@ -158,33 +138,6 @@ impl PortWidget {
                 Color32::TRANSPARENT,
                 Some(Stroke::new(1.5, color.gamma_multiply(0.7))),
             );
-
-            // Draw port label on the tooltip layer so it renders on top of everything
-            if !self.label.is_empty() {
-                let label_text = format!("{} ({})", self.label, self.type_label());
-                let label_pos = match self.direction {
-                    WidgetPortDirection::Input => Pos2::new(center.x + radius + 8.0, center.y),
-                    WidgetPortDirection::Output => Pos2::new(center.x - radius - 8.0, center.y),
-                };
-                let anchor = match self.direction {
-                    WidgetPortDirection::Input => egui::Align2::LEFT_CENTER,
-                    WidgetPortDirection::Output => egui::Align2::RIGHT_CENTER,
-                };
-
-                // Paint on tooltip layer to render above all modules
-                let top_painter = ui.ctx().layer_painter(egui::LayerId::new(
-                    egui::Order::Tooltip,
-                    egui::Id::new("port_label"),
-                ));
-
-                let font = theme().fonts.small();
-                let galley = top_painter.layout_no_wrap(label_text.clone(), font.clone(), color);
-                let text_rect = anchor.anchor_size(label_pos, galley.size());
-                let bg_rect = text_rect.expand(3.0);
-                top_painter.rect_filled(bg_rect, 3.0, PORT_LABEL_BACKDROP);
-
-                top_painter.text(label_pos, anchor, label_text, font, color);
-            }
         }
 
         (response, center)

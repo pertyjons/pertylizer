@@ -82,6 +82,7 @@ impl Default for Amplifier {
 impl Describable for Amplifier {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("amplifier", "VCA")
+            .width(synth_core::ModuleWidth::Small)
             .description("Voltage Controlled Amplifier")
             .category(ModuleCategory::Amplifier)
             .tag("amplifier")
@@ -141,9 +142,10 @@ impl Describable for Amplifier {
                 PortDescriptor::control_input("pan_cv", "Pan CV")
                     .description("Controls panning. Connect: LFO for auto-pan, Envelope"),
             )
+            // Canonical audio-port order: mono `out` first, then the stereo pair.
+            .port(PortDescriptor::audio_output("out", "Out").description("Mono output (L+R)"))
             .port(PortDescriptor::audio_output("left", "L").description("Left output"))
             .port(PortDescriptor::audio_output("right", "R").description("Right output"))
-            .port(PortDescriptor::audio_output("out", "Out").description("Mono output (L+R)"))
     }
 }
 
@@ -367,6 +369,7 @@ impl Default for Mixer {
 impl Describable for Mixer {
     fn descriptor(&self) -> ModuleDescriptor {
         let mut desc = ModuleDescriptor::new("mixer", "Mixer")
+            .width(synth_core::ModuleWidth::Large)
             .description("8-channel mixer")
             .category(ModuleCategory::Mixer)
             .tag("mixer");

@@ -47,6 +47,7 @@ impl Default for AudioInput {
 impl Describable for AudioInput {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("audio_input", "Audio Input")
+            .width(synth_core::ModuleWidth::Small)
             .description("Live audio input from microphone or line-in")
             .category(ModuleCategory::Sampler)
             .tag("input")

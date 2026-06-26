@@ -362,8 +362,19 @@ impl<'a> EnvelopeEditor<'a> {
             ),
         ];
 
+        // Inside an `egui::Scene` the raw `ui.input` pointer is global/screen,
+        // but our manual hit-tests below compare against the curve's world-space
+        // `rect`/control points — egui only transforms the pointer for real
+        // widget interactions (the knobs), not these lookups. Map screen → local
+        // so hover/drag work at any Scene pan/zoom (identity outside a Scene).
+        let to_local = ui
+            .ctx()
+            .layer_transform_to_global(ui.layer_id())
+            .map(|t| t.inverse());
+        let to_local_pos = |p: Pos2| to_local.map_or(p, |t| t * p);
+
         // Detect hover
-        let hover_pos = ui.input(|i| i.pointer.hover_pos());
+        let hover_pos = ui.input(|i| i.pointer.hover_pos()).map(to_local_pos);
         let mut hovered_point: Option<DragPoint> = None;
 
         if let Some(pos) = hover_pos
@@ -443,7 +454,7 @@ impl<'a> EnvelopeEditor<'a> {
 
         // Handle dragging - each point moves freely within its range
         if let Some(drag_point) = dragging
-            && let Some(pos) = ui.input(|i| i.pointer.interact_pos())
+            && let Some(pos) = ui.input(|i| i.pointer.interact_pos()).map(to_local_pos)
         {
             match drag_point {
                 DragPoint::Attack => {

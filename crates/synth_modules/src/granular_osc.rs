@@ -297,6 +297,7 @@ impl Default for GranularOsc {
 impl Describable for GranularOsc {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("granular_osc", "Granular")
+            .width(synth_core::ModuleWidth::Large)
             .description("Granular synthesis with 32 concurrent grains")
             .category(ModuleCategory::Oscillator)
             .tag("granular")

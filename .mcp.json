@@ -3,6 +3,9 @@
     "synth": {
       "type": "http",
       "url": "http://127.0.0.1:9850/mcp"
+    },
+    "egui": {
+      "command": "egui-mcp"
     }
   }
 }

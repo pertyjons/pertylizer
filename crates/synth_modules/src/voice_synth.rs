@@ -326,6 +326,7 @@ impl Default for VoiceSynth {
 impl Describable for VoiceSynth {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("voice_synth", "Voice Synth")
+            .width(synth_core::ModuleWidth::Large)
             .description("Physically-inspired singing voice / choir (glottal source → formants)")
             .category(ModuleCategory::Oscillator)
             .tag("voice")

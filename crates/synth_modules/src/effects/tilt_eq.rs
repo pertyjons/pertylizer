@@ -45,6 +45,7 @@ impl Default for TiltEq {
 impl Describable for TiltEq {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("tilt_eq", "Tilt EQ")
+            .width(synth_core::ModuleWidth::Small)
             .description("Single-knob spectral tilt equalizer")
             .category(ModuleCategory::Effect)
             .tag("eq")

@@ -1431,7 +1431,9 @@ pub(crate) fn draw_piano_roll(
         .max_height(scroll_max_height)
         .scroll_source(egui::scroll_area::ScrollSource {
             scroll_bar: true,
-            drag: false, // Don't steal drag events — we handle them for note editing
+            // egui 0.35: `drag` is now `DragScroll`; `Never` == old `false`.
+            // Don't steal drag events — we handle them for note editing.
+            drag: egui::scroll_area::DragScroll::Never,
             mouse_wheel: true,
         })
         .show(ui, |ui| {

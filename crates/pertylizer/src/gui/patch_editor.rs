@@ -6,7 +6,7 @@
 //! Modules are rendered as draggable, resizable windows with z-order support.
 //! Cables are rendered behind modules; hovered cables pop to the foreground.
 
-use eframe::egui::{self, Color32, Id, LayerId, Order, Pos2, Rect, Sense, Ui, Vec2};
+use eframe::egui::{self, Color32, Order, Pos2, Rect, Sense, Ui, Vec2};
 use egui_remixicon::icons as ri;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
@@ -27,10 +27,24 @@ use crate::patch::{
 use super::module_panel::{ModulePanelState, PortPosition, category_color};
 use super::theme::theme;
 use super::widgets::{
-    CABLE_SPREAD, ModRole, ModuleFrame, WidgetPortDirection, WidgetPortType, cable_color,
-    closest_point_on_cable, draw_cable, draw_cable_dragging, draw_cable_highlighted,
-    draw_flow_particles, draw_module_header, point_near_cable,
+    ModRole, ModuleFrame, WidgetPortDirection, WidgetPortType, cable_color, draw_cable_dragging,
+    draw_module_header,
 };
+
+mod canvas;
+
+mod groups;
+use groups::collapsed_group_size;
+
+mod popups;
+use popups::draw_slot_expression_editor;
+
+mod wiring;
+
+mod header;
+mod node;
+mod ports;
+mod selection;
 
 /// Grid cell size in pixels. Used for grid drawing and snap-to-grid.
 pub(crate) const GRID_SIZE: f32 = 32.0;
@@ -85,26 +99,16 @@ fn snap_to_grid(pos: Pos2) -> Pos2 {
     )
 }
 
-fn collapsed_group_size(group: &ModuleGroup) -> Vec2 {
-    let port_rows = group
-        .exposed_inputs
-        .len()
-        .max(group.exposed_outputs.len())
-        .max(1);
-    let t = theme();
-    let height = GROUP_HEADER_HEIGHT
-        + GROUP_PORT_MARGIN * 2.0
-        + port_rows as f32 * t.sizes.port_vertical_spacing;
-    let height = height.max(t.sizes.module_min_height);
-    // Collapsed groups only show "N modules" text — use a smaller content width
-    let collapsed_content_width = 40.0;
-    let ports_width = t.sizes.port_column_width * 2.0 + collapsed_content_width;
-    let title_chars = group.name.chars().count() as f32;
-    let title_width = 14.0 + title_chars * 7.0; // accent + approximate glyph width
-    let header_actions = 2.0 * 20.0 + 8.0; // expand + delete buttons + spacing
-    let header_width = title_width + header_actions;
-    let width = ports_width.max(header_width);
-    Vec2::new(width, height)
+/// Convert a screen-space position to scene/world coordinates. Inside the
+/// `egui::Scene` closure the raw `ui.input` pointer is global/screen, but the
+/// manual cable / port / group / background hit-tests compare against world
+/// coordinates — egui only transforms the pointer for real widget interactions
+/// (knobs, buttons), not for these lookups. Returns `screen` unchanged when the
+/// layer has no transform (e.g. before the first Scene frame).
+fn screen_to_world(ui: &Ui, screen: Pos2) -> Pos2 {
+    ui.ctx()
+        .layer_transform_to_global(ui.layer_id())
+        .map_or(screen, |t| t.inverse() * screen)
 }
 
 pub(crate) fn parse_hex_color(hex: &str) -> Option<Color32> {
@@ -122,26 +126,11 @@ pub(crate) fn color32_to_hex(color: Color32) -> HexColor {
     )
 }
 
-fn group_toggle_icon_rect(rect: Rect) -> Rect {
-    let size = Vec2::splat(16.0);
-    Rect::from_min_size(Pos2::new(rect.max.x - size.x - 6.0, rect.min.y + 4.0), size)
-}
-
-fn group_menu_icon_rect(rect: Rect) -> Rect {
-    let size = Vec2::splat(16.0);
-    let toggle = group_toggle_icon_rect(rect);
-    Rect::from_min_size(
-        Pos2::new(toggle.min.x - size.x - 4.0, rect.min.y + 4.0),
-        size,
-    )
-}
-
 /// Paint a tinted, framed, labelled background zone around a set of panels.
 /// Returns silently when no panels are supplied so callers can pass a
 /// filtered iterator without an outer empty-check.
 fn draw_module_zone<'a>(
     ui: &mut Ui,
-    scroll_rect: Rect,
     panels: impl IntoIterator<Item = &'a ModulePanelState>,
     color: Color32,
     label: &str,
@@ -164,16 +153,18 @@ fn draw_module_zone<'a>(
         return;
     }
 
+    // Panel positions are already world-space; the scene layer applies the
+    // pan/zoom transform at paint time. (Pre-Scene this added the scroll
+    // viewport origin, which now double-offsets the zone off into the camera.)
     let padding = GRID_SIZE;
-    let origin = scroll_rect.min.to_vec2();
     let zone_rect = Rect::from_min_max(
         Pos2::new(
-            ((min_x - padding) / GRID_SIZE).floor() * GRID_SIZE + origin.x,
-            ((min_y - padding) / GRID_SIZE).floor() * GRID_SIZE + origin.y,
+            ((min_x - padding) / GRID_SIZE).floor() * GRID_SIZE,
+            ((min_y - padding) / GRID_SIZE).floor() * GRID_SIZE,
         ),
         Pos2::new(
-            ((max_x + padding) / GRID_SIZE).ceil() * GRID_SIZE + origin.x,
-            ((max_y + padding) / GRID_SIZE).ceil() * GRID_SIZE + origin.y,
+            ((max_x + padding) / GRID_SIZE).ceil() * GRID_SIZE,
+            ((max_y + padding) / GRID_SIZE).ceil() * GRID_SIZE,
         ),
     );
 
@@ -912,7 +903,6 @@ pub enum GroupTemplateAction {
 
 struct GroupLayout {
     rects_world: HashMap<GroupId, Rect>,
-    rects_screen: HashMap<GroupId, Rect>,
     hidden_modules: HashSet<ModuleId>,
 }
 
@@ -939,6 +929,31 @@ struct BgContextMenuState {
     cable: Option<Connection>,
 }
 
+/// Explicit canvas interaction state — one mutually-exclusive mode at a time.
+///
+/// This is the patch-editor interaction FSM: marquee selection, multi-node drag,
+/// and cable drag are now all variants here instead of being spread across a
+/// `pending_connection: Option<…>` field plus ad-hoc booleans, so "two modes at
+/// once" states are unrepresentable.
+#[derive(Debug, Clone, Default)]
+enum CanvasInteraction {
+    #[default]
+    Idle,
+    /// Left-drag marquee selection. Both points are in **world** coords so the
+    /// rectangle survives a mid-drag pan/zoom.
+    RubberBand { start: Pos2, current: Pos2 },
+    /// Dragging one or more module cards together. The set is captured at
+    /// drag-start (so changing the selection mid-drag can't affect it); every
+    /// card moves by the same per-frame `drag_delta`, which preserves their
+    /// relative layout without tracking per-card grab offsets.
+    DraggingNodes { ids: Vec<ModuleId> },
+    /// Dragging a cable out from a port. Holds the in-progress connection
+    /// (source port + live cursor pos). Mutually exclusive with the other
+    /// interactions by construction — that is the point of folding the old
+    /// `pending_connection` field into this state machine.
+    DraggingWire(PendingConnection),
+}
+
 /// The main rack view state.
 #[derive(Clone)]
 pub struct PatchEditor {
@@ -954,12 +969,12 @@ pub struct PatchEditor {
     selected_module: Option<ModuleId>,
     /// Multi-selection for grouping.
     selected_modules: HashSet<ModuleId>,
+    /// Current canvas interaction (rubber-band marquee; `Idle` otherwise).
+    canvas_interaction: CanvasInteraction,
     /// Currently selected group.
     selected_group: Option<GroupId>,
     /// In-progress rename buffer for group context menu.
     group_name_edit: Option<(GroupId, String)>,
-    /// Connection being drawn.
-    pending_connection: Option<PendingConnection>,
     /// Module descriptors (cached).
     descriptors: HashMap<ModuleId, ModuleDescriptor>,
     /// Next position for new modules.
@@ -989,6 +1004,11 @@ pub struct PatchEditor {
     group_context_menu: Option<GroupContextMenuState>,
     /// Minimum canvas size hint (restored from saved patch).
     min_canvas_size: Option<Vec2>,
+    /// The visible world bounds of the patch canvas — the `egui::Scene` camera.
+    /// `Scene::show` mutates this on pan/zoom; `None` until the first frame, which
+    /// frames the existing modules. Replaces the old `ScrollArea` scroll offset +
+    /// `area_origin` bookkeeping (positions are now world coordinates directly).
+    scene_rect: Option<Rect>,
     /// Cached list of available samples (id, name) for sampler module dropdowns.
     sample_list: Vec<(u64, String)>,
     /// Cached effect chain order from previous frame (for change detection).
@@ -1006,10 +1026,6 @@ pub struct PatchEditor {
     /// script — only a slot whose text changed is re-extracted. See
     /// `build_script_graph`.
     script_ref_cache: ScriptRefCache,
-    /// When true, skip reading positions back from egui Area state.
-    /// Set after loading a patch/project so saved positions aren't overwritten
-    /// by stale egui Area rects during the same frame.
-    suppress_position_readback: bool,
     /// Modules that the in-progress cable drag must NOT connect to because the
     /// edge would form a cycle. Recomputed once per frame from a single graph
     /// traversal (see `recompute_drag_cycle_blocked`); empty when not dragging.
@@ -1023,6 +1039,11 @@ pub struct PatchEditor {
     /// render loop so the description / info popups can be positioned next to
     /// (not over) their module.
     module_rects: HashMap<ModuleId, egui::Rect>,
+    /// Measured world size of each collapsed group box, read back from the
+    /// rendered child `Ui` and reused (one-frame lag) as the drag/select
+    /// interact rect next frame — the same trick the module cards use, so the
+    /// whole visible box is grabbable even when the static size estimate is off.
+    collapsed_group_sizes: HashMap<GroupId, Vec2>,
 }
 
 /// Transient state for the open "Edit description" popup. `draft` is the
@@ -1031,6 +1052,36 @@ pub struct PatchEditor {
 struct DescriptionEditorState {
     module_id: ModuleId,
     draft: String,
+}
+
+/// The per-module inputs a header's action row needs: which module, its
+/// descriptor, and the status flags it renders as badges. Bundled to keep
+/// [`PatchEditor::draw_module_header_actions`]'s signature small.
+struct ModuleHeaderCtx<'a> {
+    module_id: ModuleId,
+    descriptor: &'a ModuleDescriptor,
+    is_source: bool,
+    is_sink: bool,
+    is_automated: bool,
+    is_bypassed: bool,
+    is_global_module: bool,
+    connectivity: ModuleConnectivity,
+}
+
+/// The per-module inputs a module body needs to draw its ports and parameter
+/// panel. Frame-level inputs (analysis, catalog, script graph, …) are the same
+/// for every module in the loop; bundling them keeps
+/// [`PatchEditor::draw_module_body`]'s signature small.
+struct ModuleBodyCtx<'a> {
+    module_id: ModuleId,
+    descriptor: &'a ModuleDescriptor,
+    accent_color: Color32,
+    connected_ports: &'a [PortName],
+    analysis: &'a PatchAnalysis,
+    mod_catalog: &'a ModAddrCatalog,
+    script_graph: Option<&'a ScriptDepGraph>,
+    effect_chain_order: &'a [ModuleId],
+    audio_input_snapshot: &'a AudioInputSnapshot,
 }
 
 impl PatchEditor {
@@ -1042,9 +1093,9 @@ impl PatchEditor {
             group_port_positions: HashMap::new(),
             selected_module: None,
             selected_modules: HashSet::new(),
+            canvas_interaction: CanvasInteraction::Idle,
             selected_group: None,
             group_name_edit: None,
-            pending_connection: None,
             descriptors: HashMap::new(),
             next_module_pos: Pos2::new(50.0, 50.0),
             z_order: Vec::new(),
@@ -1059,8 +1110,8 @@ impl PatchEditor {
             bg_context_menu: None,
             group_context_menu: None,
             min_canvas_size: None,
+            scene_rect: None,
             sample_list: Vec::new(),
-            suppress_position_readback: false,
             prev_effect_chain_order: Vec::new(),
             prev_mod_matrix_attachments: Vec::new(),
             connected_ports_cache: HashMap::new(),
@@ -1069,6 +1120,7 @@ impl PatchEditor {
             description_editor: None,
             info_popup: None,
             module_rects: HashMap::new(),
+            collapsed_group_sizes: HashMap::new(),
         }
     }
 
@@ -1131,9 +1183,9 @@ impl PatchEditor {
         self.bypassed.clear();
         self.selected_module = None;
         self.selected_modules.clear();
+        self.canvas_interaction = CanvasInteraction::Idle; // also cancels any wire drag
         self.selected_group = None;
         self.group_name_edit = None;
-        self.pending_connection = None;
         self.next_module_pos = Pos2::new(50.0, 50.0);
         self.groups.clear();
         self.module_to_group.clear();
@@ -1141,10 +1193,59 @@ impl PatchEditor {
         self.group_context_menu = None;
         self.needs_reposition.clear();
         self.connected_ports_cache.clear();
-        self.suppress_position_readback = true;
         self.description_editor = None;
         self.info_popup = None;
         self.module_rects.clear();
+        self.collapsed_group_sizes.clear();
+        // Reframe the camera on the next show() — otherwise the previous patch's
+        // pan/zoom would persist across project/instrument loads (the modules of
+        // the newly loaded patch can sit in a different world region entirely).
+        self.scene_rect = None;
+    }
+
+    /// The in-progress cable drag, if the canvas is currently dragging a wire.
+    /// (Wire drag lives in the `CanvasInteraction` FSM; these accessors keep the
+    /// call sites reading the way the old `pending_connection` field did.)
+    fn pending_connection(&self) -> Option<&PendingConnection> {
+        match &self.canvas_interaction {
+            CanvasInteraction::DraggingWire(p) => Some(p),
+            _ => None,
+        }
+    }
+
+    /// Mutable view of the in-progress cable drag (e.g. to update the live cursor).
+    fn pending_connection_mut(&mut self) -> Option<&mut PendingConnection> {
+        match &mut self.canvas_interaction {
+            CanvasInteraction::DraggingWire(p) => Some(p),
+            _ => None,
+        }
+    }
+
+    /// Begin (or replace) a cable drag.
+    fn start_wire_drag(&mut self, pending: PendingConnection) {
+        self.canvas_interaction = CanvasInteraction::DraggingWire(pending);
+    }
+
+    /// Cancel a cable drag, leaving other interaction states untouched.
+    fn cancel_wire_drag(&mut self) {
+        if matches!(self.canvas_interaction, CanvasInteraction::DraggingWire(_)) {
+            self.canvas_interaction = CanvasInteraction::Idle;
+        }
+    }
+
+    /// Frame the existing modules (padded) for the first `Scene` frame, honoring
+    /// the `scene_rect` doc contract ("frames the existing modules"). Falls back
+    /// to the viewport at the world origin when there are no modules yet.
+    fn initial_scene_rect(&self, visible_rect: Rect) -> Rect {
+        let mut bounds: Option<Rect> = None;
+        for panel in self.panels.values() {
+            let r = Rect::from_min_size(panel.position, panel.size);
+            bounds = Some(bounds.map_or(r, |b| b.union(r)));
+        }
+        bounds.map_or_else(
+            || Rect::from_min_size(Pos2::ZERO, visible_rect.size()),
+            |b| b.expand(80.0),
+        )
     }
 
     /// Get module data for saving.
@@ -1205,13 +1306,12 @@ impl PatchEditor {
         if self.selected_module == Some(id) {
             self.selected_module = None;
         }
-        // Cancel pending connection if it involves this module
+        // Cancel a cable drag if it started from this module
         if self
-            .pending_connection
-            .as_ref()
+            .pending_connection()
             .is_some_and(|p| p.from_module == id)
         {
-            self.pending_connection = None;
+            self.cancel_wire_drag();
         }
         // Remove from any group
         if let Some(group_id) = self.module_to_group.remove(&id)
@@ -1474,30 +1574,6 @@ impl PatchEditor {
         id
     }
 
-    fn remove_from_group(&mut self, module_id: ModuleId) {
-        if let Some(group_id) = self.module_to_group.remove(&module_id)
-            && let Some(group) = self.groups.get_mut(&group_id)
-        {
-            group.members.retain(|mid| *mid != module_id);
-            group.exposed_inputs.retain(|p| p.module_id != module_id);
-            group.exposed_outputs.retain(|p| p.module_id != module_id);
-            if group.members.is_empty() {
-                self.groups.remove(&group_id);
-                if self.selected_group == Some(group_id) {
-                    self.selected_group = None;
-                }
-                if self
-                    .group_context_menu
-                    .as_ref()
-                    .is_some_and(|m| m.group_id == group_id)
-                {
-                    self.group_context_menu = None;
-                }
-            }
-        }
-        self.refresh_exposed_for_module(module_id);
-    }
-
     fn add_module_to_group(&mut self, group_id: GroupId, module_id: ModuleId) {
         if let Some(group) = self.groups.get_mut(&group_id)
             && !group.members.contains(&module_id)
@@ -1520,42 +1596,6 @@ impl PatchEditor {
         }
     }
 
-    fn create_group_from_selection(&mut self) -> Option<GroupId> {
-        if self.selected_modules.is_empty() {
-            return None;
-        }
-        let id = self.allocate_group_id();
-        let mut members: Vec<ModuleId> = self.selected_modules.iter().copied().collect();
-        members.sort_by_key(|m| m.to_string());
-
-        for mid in &members {
-            self.remove_from_group(*mid);
-        }
-        for mid in &members {
-            self.module_to_group.insert(*mid, id);
-        }
-
-        let position = self.compute_group_default_position(&members);
-        let members_for_refresh = members.clone();
-
-        let group = ModuleGroup {
-            id,
-            name: format!("Group {}", id.0),
-            color: None,
-            members,
-            collapsed: false,
-            position,
-            exposed_inputs: Vec::new(),
-            exposed_outputs: Vec::new(),
-        };
-        self.groups.insert(id, group);
-        for mid in &members_for_refresh {
-            self.refresh_exposed_for_module(*mid);
-        }
-        self.selected_group = Some(id);
-        Some(id)
-    }
-
     fn compute_group_default_position(&self, members: &[ModuleId]) -> Pos2 {
         let mut min = Pos2::new(f32::MAX, f32::MAX);
         let mut any = false;
@@ -1570,22 +1610,6 @@ impl PatchEditor {
         if any { min } else { self.next_module_pos }
     }
 
-    fn group_bounds_world(&self, group: &ModuleGroup) -> Option<Rect> {
-        let mut rect: Option<Rect> = None;
-        for mid in &group.members {
-            if let Some(panel) = self.panels.get(mid) {
-                let r = Rect::from_min_size(panel.position, panel.size);
-                rect = Some(rect.map_or(r, |acc| acc.union(r)));
-            }
-        }
-        let mut rect = rect?;
-        rect.min.x -= GROUP_PADDING;
-        rect.max.x += GROUP_PADDING;
-        rect.min.y -= GROUP_PADDING + GROUP_HEADER_HEIGHT;
-        rect.max.y += GROUP_PADDING;
-        Some(rect)
-    }
-
     fn port_widget_type(&self, module_id: ModuleId, port_name: PortName) -> WidgetPortType {
         if let Some(descriptor) = self.descriptors.get(&module_id)
             && let Some(port) = descriptor.ports.iter().find(|p| p.name == port_name)
@@ -1598,99 +1622,6 @@ impl PatchEditor {
             };
         }
         WidgetPortType::Audio
-    }
-
-    fn compute_group_layout(&self, area_origin: Vec2, scroll_offset: Vec2) -> GroupLayout {
-        let mut rects_world = HashMap::new();
-        let mut rects_screen = HashMap::new();
-        let mut hidden_modules: HashSet<ModuleId> = HashSet::new();
-
-        let screen_offset = area_origin - scroll_offset;
-
-        for group in self.groups.values() {
-            let world_rect = if group.collapsed {
-                Rect::from_min_size(group.position, collapsed_group_size(group))
-            } else {
-                match self.group_bounds_world(group) {
-                    Some(r) => r,
-                    None => continue,
-                }
-            };
-            rects_world.insert(group.id, world_rect);
-            let rect_screen = world_rect.translate(screen_offset);
-            rects_screen.insert(group.id, rect_screen);
-
-            if group.collapsed {
-                hidden_modules.extend(group.members.iter().copied());
-            }
-        }
-
-        GroupLayout {
-            rects_world,
-            rects_screen,
-            hidden_modules,
-        }
-    }
-
-    /// Move a collapsed group's box to `new_position` and shift every member
-    /// panel by the same delta so the group's internal relative layout is
-    /// preserved when the user expands it again.
-    fn move_collapsed_group(&mut self, group_id: GroupId, new_position: Pos2) {
-        let Some(group) = self.groups.get_mut(&group_id) else {
-            return;
-        };
-        let delta = new_position - group.position;
-        if delta == Vec2::ZERO {
-            return;
-        }
-        group.position = new_position;
-        let members = group.members.clone();
-        for mid in members {
-            if let Some(panel) = self.panels.get_mut(&mid) {
-                panel.position += delta;
-                self.needs_reposition.insert(mid);
-            }
-        }
-    }
-
-    fn delete_group(&mut self, group_id: GroupId, result: &mut PatchEditorResult) {
-        let Some(group) = self.groups.get(&group_id).cloned() else {
-            return;
-        };
-        for mid in group.members {
-            result.modules_to_remove.push(mid);
-            self.remove_module(mid);
-        }
-        self.groups.remove(&group_id);
-        if self.selected_group == Some(group_id) {
-            self.selected_group = None;
-        }
-        if self
-            .group_context_menu
-            .as_ref()
-            .is_some_and(|m| m.group_id == group_id)
-        {
-            self.group_context_menu = None;
-        }
-    }
-
-    fn ungroup(&mut self, group_id: GroupId) {
-        let Some(group) = self.groups.remove(&group_id) else {
-            return;
-        };
-        for mid in group.members {
-            self.module_to_group.remove(&mid);
-        }
-        if self.selected_group == Some(group_id) {
-            self.selected_group = None;
-        }
-        if self
-            .group_context_menu
-            .as_ref()
-            .is_some_and(|m| m.group_id == group_id)
-        {
-            self.group_context_menu = None;
-        }
     }
 
     fn is_port_exposed(
@@ -1814,51 +1745,6 @@ impl PatchEditor {
             .map(|p| p.label.clone())
     }
 
-    fn group_color(&self, group: &ModuleGroup) -> Color32 {
-        group
-            .color
-            .as_ref()
-            .and_then(|c| parse_hex_color(c))
-            .unwrap_or_else(|| theme().colors.accent_cyan)
-    }
-
-    fn is_hidden_internal_connection(&self, connection: &Connection) -> bool {
-        let from_group = self.group_of(connection.from_module);
-        let to_group = self.group_of(connection.to_module);
-        if let Some(gid) = from_group
-            && from_group == to_group
-            && let Some(group) = self.groups.get(&gid)
-        {
-            return group.collapsed;
-        }
-        false
-    }
-
-    fn resolve_connection_endpoint(
-        &self,
-        module_id: ModuleId,
-        port_name: PortName,
-        other_module: ModuleId,
-        direction: WidgetPortDirection,
-    ) -> Option<PortPosition> {
-        if let Some(group_id) = self.group_of(module_id)
-            && self.group_of(other_module) != Some(group_id)
-            && let Some(group) = self.groups.get(&group_id)
-            && group.collapsed
-        {
-            let key = GroupPortKey {
-                group_id,
-                module_id,
-                port_name,
-                direction,
-            };
-            if let Some(pos) = self.group_port_positions.get(&key) {
-                return Some(pos.clone());
-            }
-        }
-        self.port_positions.get(&(module_id, port_name)).cloned()
-    }
-
     /// Delete a module and bypass its signal chain connections.
     ///
     /// If the module has exactly one audio input and one audio output port,
@@ -1932,12 +1818,6 @@ impl PatchEditor {
 
         result.modules_to_remove.push(module_id);
         self.calculate_connectivity();
-    }
-
-    /// Bring a module to front.
-    pub fn bring_to_front(&mut self, id: ModuleId) {
-        self.z_order.retain(|&mid| mid != id);
-        self.z_order.push(id);
     }
 
     /// Send a module to back.
@@ -2159,896 +2039,426 @@ impl PatchEditor {
             None
         };
 
-        let content_size = self.content_size();
-
-        // Save the visible rect for toolbar positioning (before ScrollArea consumes it)
+        // Save the visible rect for toolbar / popup positioning (before the Scene).
         let visible_rect = ui.available_rect_before_wrap();
 
-        // Phase 1: ScrollArea for scrollbars and grid background.
-        // We also capture the scroll area's layer_id — painting on that layer
-        // later will render BEHIND module Areas (same Order::Background, but
-        // the scroll layer is allocated first).
-        let mut canvas_response = None;
-        let mut scroll_layer_id = None;
-        let mut scroll_clip_rect = None;
-        let scroll_output = egui::ScrollArea::both()
-            .auto_shrink([false, false])
-            .show(ui, |ui| {
-                // Allocate space for all content so ScrollArea shows scrollbars
-                let scroll_rect =
-                    Rect::from_min_size(ui.max_rect().min, content_size.max(ui.available_size()));
-                canvas_response = Some(ui.allocate_rect(scroll_rect, Sense::click_and_drag()));
+        // egui::Scene — a pannable/zoomable WORLD-space canvas. Module positions
+        // ARE world coordinates; the Scene owns the pan/zoom transform, and the
+        // scene layer id makes group/cable painting land behind the nodes.
+        let mut scene_rect = match self.scene_rect {
+            Some(r) => r,
+            None => self.initial_scene_rect(visible_rect),
+        };
 
-                // Draw grid
-                self.draw_grid(ui, scroll_rect);
+        let _scene_output = egui::Scene::new()
+            .zoom_range(egui::Rangef::new(0.2, 2.0))
+            // Plan 4c: only RIGHT-drag pans the canvas, freeing LEFT-drag on the
+            // empty grid for rubber-band selection. Pan is still also available via
+            // scroll / trackpad, so no pan path is lost. Right-CLICK (no movement)
+            // still opens the rack/cable context menu — egui distinguishes a
+            // secondary click from a secondary drag.
+            .drag_pan_buttons(egui::containers::DragPanButtons::SECONDARY)
+            .show(ui, &mut scene_rect, |ui| {
+                // Everything below draws in WORLD coordinates on the scene layer.
+                let world_rect = ui.clip_rect();
+                // Background response for deselect + the right-click rack menu.
+                // CLICK-only on purpose: a drag-sensing widget here would capture
+                // the pointer and starve the Scene's own pan response. Rubber-band
+                // (left-drag) is instead read from the Scene's background response
+                // (`ui.response()`) in `handle_canvas_background_input`.
+                let canvas_response =
+                    Some(ui.interact(world_rect, ui.id().with("canvas_bg"), Sense::click()));
 
-                // Draw tinted background zone behind effect modules
-                self.draw_effect_zone(ui, scroll_rect);
-                self.draw_monitors_zone(ui, scroll_rect);
-                self.draw_mod_matrix_zone(ui, scroll_rect, &analysis);
+                // Draw grid + tinted background zones.
+                self.draw_grid(ui, world_rect);
+                self.draw_effect_zone(ui);
+                self.draw_monitors_zone(ui);
+                self.draw_mod_matrix_zone(ui, &analysis);
 
-                // Save scroll area layer + clip rect for cable drawing (behind modules)
-                scroll_layer_id = Some(ui.layer_id());
-                scroll_clip_rect = Some(ui.clip_rect());
+                // The scene layer carries the pan/zoom transform; painting cables and
+                // group frames on it puts them behind the nodes (drawn later).
+                let scene_layer_id = ui.layer_id();
+                let scene_clip_rect = ui.clip_rect();
 
-                scroll_rect
-            });
+                // Compute group layout (bounds + hidden modules) before drawing cables
+                let group_layout = self.compute_group_layout();
+                let mut new_group_port_positions: HashMap<GroupPortKey, PortPosition> =
+                    HashMap::new();
 
-        let scroll_offset = scroll_output.state.offset;
-        let area_origin = visible_rect.min.to_vec2();
+                // Module world rects, straight from each panel's stored position + size
+                // (no more reading egui Area memory back).
+                let module_rects: Vec<Rect> = self
+                    .panels
+                    .values()
+                    .filter_map(|p| {
+                        if group_layout.hidden_modules.contains(&p.id) {
+                            return None;
+                        }
+                        Some(Rect::from_min_size(p.position, p.size))
+                    })
+                    .collect();
 
-        // Compute group layout (bounds + hidden modules) before drawing cables
-        let group_layout = self.compute_group_layout(area_origin, scroll_offset);
-        let mut new_group_port_positions: HashMap<GroupPortKey, PortPosition> = HashMap::new();
+                // Draw group frames on the scene layer BEFORE cables.
+                self.draw_group_frames(ui, &group_layout, scene_layer_id, scene_clip_rect);
 
-        // Collect module screen rects from egui memory (persisted from previous frame)
-        let module_rects: Vec<Rect> = self
-            .panels
-            .keys()
-            .filter_map(|mid| {
-                if group_layout.hidden_modules.contains(mid) {
-                    return None;
-                }
-                let wid = Id::new((instrument_id, "module_window", mid.to_string()));
-                ui.memory(|mem| mem.area_rect(wid))
-            })
-            .collect();
+                // Handle interactions for expanded group frames.
+                self.handle_group_interactions(ui, &group_layout, &module_rects);
 
-        // Draw group frames on the scroll area's layer BEFORE cables.
-        if let Some(layer_id) = scroll_layer_id {
-            let clip = scroll_clip_rect.unwrap_or(visible_rect);
-            self.draw_group_frames(ui, &group_layout, layer_id, clip);
-        }
+                // Draw cables on the scene layer BEFORE the nodes. This uses the
+                // previous frame's port_positions — one frame delay is imperceptible.
+                let time = ui.input(|i| i.time);
+                self.draw_connections(ui, time, scene_layer_id, scene_clip_rect, &module_rects);
+                // Draw effect chain cables (signal flow between effects)
+                self.draw_effect_chain_cables(
+                    ui,
+                    scene_layer_id,
+                    scene_clip_rect,
+                    effect_chain_order,
+                );
 
-        // Handle interactions for expanded group frames.
-        self.handle_group_interactions(ui, &group_layout, &module_rects);
+                // Draw collapsed group boxes (movable) after cables so they sit above.
+                self.draw_collapsed_groups(
+                    ui,
+                    instrument_id,
+                    &mut result,
+                    &mut new_group_port_positions,
+                );
+                self.group_port_positions = new_group_port_positions;
 
-        // Draw cables on the scroll area's layer BEFORE module Areas are created.
-        // This uses the previous frame's port_positions — one frame delay is
-        // imperceptible in an immediate-mode GUI.
-        let time = ui.input(|i| i.time);
-        if let Some(layer_id) = scroll_layer_id {
-            let clip = scroll_clip_rect.unwrap_or(visible_rect);
-            self.draw_connections(ui, time, layer_id, clip, &module_rects);
-            // Draw effect chain cables (signal flow between effects)
-            self.draw_effect_chain_cables(
-                ui,
-                layer_id,
-                clip,
-                effect_chain_order,
-                area_origin,
-                scroll_offset,
-            );
-        }
-
-        // Draw collapsed group boxes (movable) after cables so they sit above.
-        self.draw_collapsed_groups(
-            ui,
-            &group_layout,
-            instrument_id,
-            visible_rect,
-            area_origin,
-            scroll_offset,
-            &mut result,
-            &mut new_group_port_positions,
-        );
-        self.group_port_positions = new_group_port_positions;
-
-        // Draw context menus (Foreground) — must happen after hover detection above
-        self.draw_port_context_menu(ui, &mut result);
-        self.draw_group_context_menu(ui, &mut result);
-        if let Some(ref response) = canvas_response {
-            self.draw_bg_context_menu(response, &mut result);
-        }
-
-        // Now clear port positions so modules can repopulate them for next frame
-        self.port_positions.clear();
-
-        // Collect data before mutable iteration
-        let module_ids: Vec<_> = self.z_order.clone();
-
-        // Track which module to bring to front
-        let mut bring_to_front: Option<ModuleId> = None;
-
-        // Temporarily take descriptors out of self to allow immutable access
-        // while self is mutably borrowed in the loop body.
-        let descriptors = std::mem::take(&mut self.descriptors);
-
-        // Draw modules as windows (in z-order)
-        for module_id in &module_ids {
-            let module_id = *module_id;
-            if group_layout.hidden_modules.contains(&module_id) {
-                continue;
-            }
-            let connected_ports = self
-                .connected_ports_cache
-                .get(&module_id)
-                .cloned()
-                .unwrap_or_default();
-
-            let descriptor = match descriptors.get(&module_id) {
-                Some(d) => d,
-                None => continue,
-            };
-
-            // Get panel position before mutable borrow
-            let panel_position = match self.panels.get(&module_id) {
-                Some(s) => s.position,
-                None => continue,
-            };
-
-            let accent_color = category_color(descriptor.category);
-            let is_selected = self.selected_modules.contains(&module_id);
-            let connectivity_status = self.get_connectivity(module_id);
-            let is_bypassed = self.bypassed.get(&module_id).copied().unwrap_or(false);
-
-            // Global modules (effects, visualizers) and internal routing modules (Utility
-            // like Mod Matrix) are always "connected" — they work automatically without cables.
-            let is_global_module = matches!(
-                descriptor.category,
-                ModuleCategory::Effect | ModuleCategory::Visualizer | ModuleCategory::Utility
-            );
-
-            // Dim modules that aren't connected to output, or are bypassed.
-            // Matrix-referenced modules count as connected (routed via slot
-            // instead of cable).
-            let opacity = if is_bypassed {
-                0.4
-            } else if is_global_module
-                || analysis.is_mod_matrix_source(module_id)
-                || analysis.is_mod_matrix_destination(module_id)
-            {
-                1.0
-            } else {
-                match connectivity_status {
-                    ModuleConnectivity::Connected => 1.0,
-                    ModuleConnectivity::Orphaned => 0.6,
-                    ModuleConnectivity::Disconnected => 0.4,
-                }
-            };
-
-            let dimmed_accent = accent_color.gamma_multiply(opacity);
-
-            let mut open = true;
-            // Include instrument_id in the hash to prevent ID collisions across instruments
-            let window_id = egui::Id::new((instrument_id, "module_window", module_id.to_string()));
-            // Create frame with dimming for disconnected modules
-            let frame = ModuleFrame::new(dimmed_accent)
-                .selected(is_selected)
-                .opacity(opacity)
-                .build(&ui.global_style());
-
-            // Check if this module needs repositioning (after auto-layout)
-            let needs_reposition = self.needs_reposition.contains(&module_id);
-
-            let title = analysis.display_name(module_id, &descriptor.name);
-
-            // Position in screen coordinates based on logical position and scroll offset
-            let screen_pos = panel_position + area_origin - scroll_offset;
-
-            // Use Area + Frame instead of Window so modules render at Order::Background
-            // (same layer as panels). The keyboard panel renders at Order::Middle
-            // to ensure it always has input priority over module Areas.
-            // `constrain_to(visible_rect)` also clips the Area's interact_rect
-            // (`state.rect().intersect(constrain_rect)` in egui's Area::begin) so
-            // modules drawn under surrounding panels don't steal hover/clicks
-            // from them. `constrain(false)` keeps positions unclamped so
-            // logical-x=0 modules still scroll under the panel visually.
-            let area = egui::Area::new(window_id)
-                .order(Order::Background)
-                .movable(true)
-                // A movable Area defaults to Sense::DRAG only; add click sense so
-                // the body registers secondary clicks for its right-click menu
-                // (drag still moves it, selection still works via drag_started).
-                .sense(egui::Sense::click_and_drag())
-                .constrain_to(visible_rect)
-                .constrain(false)
-                .current_pos(screen_pos);
-
-            // Get processing info for this module
-            let is_source = self.is_source(module_id);
-            let is_sink = self.is_sink(module_id);
-            let is_automated = automated_modules.contains(&module_id);
-
-            let is_inline_monitor = descriptor.type_id.0 == "inline_signal_monitor";
-
-            let area_response = area.show(ui.ctx(), |ui| {
-                // Inline Signal Monitor: compact 100×50px with just oscilloscope + close button
-                if is_inline_monitor {
-                    self.draw_inline_monitor(
-                        ui,
-                        module_id,
-                        descriptor,
-                        dimmed_accent,
-                        handle,
-                        &mut result,
-                    );
-                    return;
+                // Draw context menus (Foreground) — must happen after hover detection above
+                self.draw_port_context_menu(ui, &mut result);
+                self.draw_group_context_menu(ui, &mut result);
+                if let Some(ref response) = canvas_response {
+                    self.draw_bg_context_menu(response, &mut result);
                 }
 
-                frame.show(ui, |ui| {
-                    // Title bar: name + status icons + close button (single row)
-                    draw_module_header(
-                        ui,
-                        dimmed_accent,
-                        &title,
-                        Some(format!("ID: {module_id}")),
-                        |ui| {
-                            let t = theme();
-                            let button_min_size = Vec2::new(20.0, 20.0);
+                // Now clear port positions so modules can repopulate them for next frame
+                self.port_positions.clear();
 
-                            // Source indicator (no inputs)
-                            if is_source {
-                                ui.add(
-                                    egui::Button::new(
-                                        egui::RichText::new(ri::UPLOAD_2_FILL)
-                                            .color(STATUS_OK_GREEN)
-                                            .size(10.0),
-                                    )
-                                    .frame(false)
-                                    .min_size(Vec2::new(14.0, 20.0)),
-                                )
-                                .on_hover_text("Source Module\nGenerates signal (no incoming connections).");
-                            }
+                // Collect data before mutable iteration
+                let module_ids: Vec<_> = self.z_order.clone();
 
-                            // Sink indicator (no outputs)
-                            if is_sink {
-                                ui.add(
-                                    egui::Button::new(
-                                        egui::RichText::new(ri::DOWNLOAD_2_FILL)
-                                            .color(STATUS_SINK_RED)
-                                            .size(10.0),
-                                    )
-                                    .frame(false)
-                                    .min_size(Vec2::new(14.0, 20.0)),
-                                )
-                                .on_hover_text("Sink Module\nConsumes signal (no outgoing connections).");
-                            }
+                // Track which module to bring to front
+                let mut bring_to_front: Option<ModuleId> = None;
 
-                            // Automation indicator (referenced by a sequencer
-                            // automation lane).
-                            if is_automated {
-                                ui.add(
-                                    egui::Button::new(
-                                        egui::RichText::new(ri::PULSE_FILL)
-                                            .color(STATUS_AUTOMATED_AMBER)
-                                            .size(10.0),
-                                    )
-                                    .frame(false)
-                                    .min_size(Vec2::new(14.0, 20.0)),
-                                )
-                                .on_hover_text("Automated\nA sequencer automation lane targets this module.");
-                            }
+                // Temporarily take descriptors out of self to allow immutable access
+                // while self is mutably borrowed in the loop body.
+                let descriptors = std::mem::take(&mut self.descriptors);
 
-                            // Connectivity status indicator
-                            let (conn_icon, conn_color, conn_tooltip): (_, _, &str) = if is_global_module {
-                                if descriptor.category == ModuleCategory::Utility {
-                                    (ri::FLASHLIGHT_FILL, STATUS_ROUTING_BLUE, "Internal Routing\nRoutes modulation internally — no cables needed.")
-                                } else {
-                                    (ri::FLASHLIGHT_FILL, STATUS_ROUTING_BLUE, "Global Module\nProcessed automatically via effect chain.")
-                                }
-                            } else {
-                                match connectivity_status {
-                                    ModuleConnectivity::Connected => (
-                                        ri::LINK,
-                                        STATUS_OK_GREEN,
-                                        "Routed to Output\nAudio from this module reaches the output.",
-                                    ),
-                                    ModuleConnectivity::Orphaned => (
-                                        ri::ERROR_WARNING_LINE,
-                                        STATUS_ORPHANED_YELLOW,
-                                        "Orphaned\nHas connections but signal doesn't reach output.\nConnect to a module that leads to Output.",
-                                    ),
-                                    ModuleConnectivity::Disconnected => (
-                                        ri::LINK_UNLINK,
-                                        STATUS_DISCONNECTED_GRAY,
-                                        "Disconnected\nNo cables connected.\nDrag from ports to create connections.",
-                                    ),
-                                }
-                            };
-                            ui.add(
-                                egui::Button::new(
-                                    egui::RichText::new(conn_icon)
-                                        .color(conn_color)
-                                        .size(12.0),
-                                )
-                                .frame(false)
-                                .min_size(button_min_size),
-                            )
-                            .on_hover_text(conn_tooltip);
+                // Draw modules as windows (in z-order)
+                for module_id in &module_ids {
+                    let module_id = *module_id;
+                    if group_layout.hidden_modules.contains(&module_id) {
+                        continue;
+                    }
+                    let connected_ports = self
+                        .connected_ports_cache
+                        .get(&module_id)
+                        .cloned()
+                        .unwrap_or_default();
 
-                            let is_matrix_source = analysis.is_mod_matrix_source(module_id);
-                            let is_matrix_destination =
-                                analysis.is_mod_matrix_destination(module_id);
-                            if let Some(badge_role) =
-                                ModRole::from_flags(is_matrix_source, is_matrix_destination)
-                            {
-                                let badge_color = t.colors.accent_purple;
-                                // Share the icon mapping with the per-knob marker so
-                                // the module roll-up and its parameters never show
-                                // conflicting arrows; the tooltips stay module-level.
-                                let badge_icon = badge_role.glyph();
-                                let badge_tip = match (is_matrix_source, is_matrix_destination) {
-                                    (true, true) => "Mod Matrix\nRouted as both source and destination via the Mod Matrix.",
-                                    (true, false) => "Mod Matrix Source\nThis module drives one or more Mod Matrix slots.\nLook in the Mod Matrix module for slot details.",
-                                    (false, true) => "Mod Matrix Destination\nA Mod Matrix slot modulates a parameter on this module.\nLook in the Mod Matrix module for slot details.",
-                                    _ => "",
-                                };
-                                ui.add(
-                                    egui::Button::new(
-                                        egui::RichText::new(badge_icon)
-                                            .color(badge_color)
-                                            .size(12.0),
-                                    )
-                                    .frame(false)
-                                    .min_size(button_min_size),
-                                )
-                                .on_hover_text(badge_tip);
-                            }
+                    let descriptor = match descriptors.get(&module_id) {
+                        Some(d) => d,
+                        None => continue,
+                    };
 
-                            // Divider: everything to the left is a status
-                            // indicator (not clickable); everything to the right
-                            // (power, chain reorder, info, menu, close) is an
-                            // interactive control.
-                            ui.separator();
+                    // Get panel position before mutable borrow
+                    let (panel_position, panel_size) = match self.panels.get(&module_id) {
+                        Some(s) => (s.position, s.size),
+                        None => continue,
+                    };
 
-                            // Power/bypass button
-                            let (power_icon, power_color) = if is_bypassed {
-                                (ri::VOLUME_MUTE_FILL, t.colors.text_dim)
-                            } else {
-                                (ri::VOLUME_UP_FILL, t.colors.accent_green)
-                            };
-                            let power_tooltip = if is_bypassed {
-                                "Bypassed\nModule output is muted.\nClick to activate."
-                            } else {
-                                "Active\nModule is processing audio.\nClick to bypass."
-                            };
-                            if ui
-                                .add(
-                                    egui::Button::new(
-                                        egui::RichText::new(power_icon)
-                                            .color(power_color)
-                                            .size(14.0),
-                                    )
-                                    .frame(false)
-                                    .min_size(button_min_size),
-                                )
-                                .on_hover_text(power_tooltip)
-                                .clicked()
-                            {
-                                let new_bypass_state = !is_bypassed;
-                                self.bypassed.insert(module_id, new_bypass_state);
-                                result.bypass_toggles.push((module_id, new_bypass_state));
-                            }
+                    let accent_color = category_color(descriptor.category);
+                    let is_selected = self.selected_modules.contains(&module_id);
+                    let connectivity_status = self.get_connectivity(module_id);
+                    let is_bypassed = self.bypassed.get(&module_id).copied().unwrap_or(false);
 
-                            // Effect chain reorder buttons (up/down arrows)
-                            if let Some(chain_pos) =
-                                effect_chain_order.iter().position(|id| *id == module_id)
-                            {
-                                let chain_btn_size = Vec2::new(18.0, 20.0);
-                                let can_move_up = chain_pos > 0;
-                                let can_move_down =
-                                    chain_pos + 1 < effect_chain_order.len();
-                                let chain_color = EFFECT_CHAIN_AMBER;
-
-                                // Up arrow
-                                let up_color = if can_move_up {
-                                    chain_color
-                                } else {
-                                    chain_color.gamma_multiply(0.3)
-                                };
-                                let up_resp = ui
-                                    .add(
-                                        egui::Button::new(
-                                            egui::RichText::new(ri::ARROW_UP_S_LINE)
-                                                .color(up_color)
-                                                .size(12.0),
-                                        )
-                                        .frame(false)
-                                        .min_size(chain_btn_size),
-                                    )
-                                    .on_hover_text("Move up in chain (process earlier)");
-                                if up_resp.clicked() && can_move_up {
-                                    result.reorder_effects.push((
-                                        module_id,
-                                        synth_engine::ReorderDirection::Up,
-                                    ));
-                                }
-
-                                // Down arrow
-                                let down_color = if can_move_down {
-                                    chain_color
-                                } else {
-                                    chain_color.gamma_multiply(0.3)
-                                };
-                                let down_resp = ui
-                                    .add(
-                                        egui::Button::new(
-                                            egui::RichText::new(ri::ARROW_DOWN_S_LINE)
-                                                .color(down_color)
-                                                .size(12.0),
-                                        )
-                                        .frame(false)
-                                        .min_size(chain_btn_size),
-                                    )
-                                    .on_hover_text("Move down in chain (process later)");
-                                if down_resp.clicked() && can_move_down {
-                                    result.reorder_effects.push((
-                                        module_id,
-                                        synth_engine::ReorderDirection::Down,
-                                    ));
-                                }
-                            }
-
-                            // Info (ⓘ) — toggles a read-only popup with the
-                            // module's type documentation + this instance's note.
-                            let info_open = self.info_popup == Some(module_id);
-                            if ui
-                                .add(
-                                    egui::Button::new(
-                                        egui::RichText::new(ri::INFORMATION_LINE)
-                                            .color(if info_open {
-                                                t.colors.text_secondary
-                                            } else {
-                                                t.colors.text_dim
-                                            })
-                                            .size(13.0),
-                                    )
-                                    .frame(false)
-                                    .min_size(button_min_size),
-                                )
-                                .on_hover_text(
-                                    "Module info\nType documentation + this instance's note.",
-                                )
-                                .clicked()
-                            {
-                                self.info_popup = if info_open { None } else { Some(module_id) };
-                            }
-
-                            // Overflow menu (⋯) — per-module actions. Currently
-                            // just "Edit description"; built to grow. Uses a
-                            // frameless custom button so it matches the other
-                            // header icons (the default `menu_button` is boxed).
-                            let mut open_desc_editor = false;
-                            egui::containers::menu::MenuButton::from_button(
-                                egui::Button::new(
-                                    egui::RichText::new(ri::MORE_FILL)
-                                        .color(t.colors.text_dim)
-                                        .size(14.0),
-                                )
-                                .frame(false)
-                                .min_size(button_min_size),
-                            )
-                            .ui(ui, |ui| {
-                                if ui
-                                    .button((ri::EDIT_LINE, "Edit description…"))
-                                    .clicked()
-                                {
-                                    open_desc_editor = true;
-                                    ui.close();
-                                }
-                            });
-                            if open_desc_editor {
-                                let draft = self
-                                    .panels
-                                    .get(&module_id)
-                                    .map(|p| p.description.clone())
-                                    .unwrap_or_default();
-                                self.description_editor =
-                                    Some(DescriptionEditorState { module_id, draft });
-                            }
-
-                            // Close/delete button (always visible). Grouped with
-                            // the other interactive controls under the single
-                            // divider above — no separate divider here.
-                            if ui
-                                .add(
-                                    egui::Button::new(
-                                        egui::RichText::new(ri::CLOSE_LINE)
-                                            .color(t.colors.text_dim)
-                                            .size(12.0),
-                                    )
-                                    .frame(false)
-                                    .min_size(button_min_size),
-                                )
-                                .on_hover_text("Delete module")
-                                .clicked()
-                            {
-                                open = false;
-                            }
-                        },
-                    );
-
-                    // Width the header row established. Used to stretch the
-                    // three-column body so the OUT port column reaches the
-                    // panel's right edge instead of floating mid-panel when the
-                    // body content is narrower than the header (e.g. the Script
-                    // module's compact slot list under a wide title bar).
-                    let header_width = ui.min_rect().width();
-
-                    // Check if this is a global module (no ports to show in columns)
-                    let is_global = matches!(
+                    // Global modules (effects, visualizers) and internal routing modules (Utility
+                    // like Mod Matrix) are always "connected" — they work automatically without cables.
+                    let is_global_module = matches!(
                         descriptor.category,
-                        ModuleCategory::Effect | ModuleCategory::Visualizer
+                        ModuleCategory::Effect
+                            | ModuleCategory::Visualizer
+                            | ModuleCategory::Utility
                     );
 
-                    if is_global {
-                        // Global modules: full-width content, no port columns
-                        let is_effect = descriptor.category == ModuleCategory::Effect;
-                        if is_effect {
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    egui::RichText::new(format!(
-                                        "{} Effect Chain",
-                                        ri::FLASHLIGHT_FILL
-                                    ))
-                                    .size(11.0)
-                                    .color(theme().colors.text_dim),
-                                );
+                    // Dim modules that aren't connected to output, or are bypassed.
+                    // Matrix-referenced modules count as connected (routed via slot
+                    // instead of cable).
+                    let opacity = if is_bypassed {
+                        0.4
+                    } else if is_global_module
+                        || analysis.is_mod_matrix_source(module_id)
+                        || analysis.is_mod_matrix_destination(module_id)
+                    {
+                        1.0
+                    } else {
+                        match connectivity_status {
+                            ModuleConnectivity::Connected => 1.0,
+                            ModuleConnectivity::Orphaned => 0.6,
+                            ModuleConnectivity::Disconnected => 0.4,
+                        }
+                    };
 
-                                // Chain position badge
-                                if let Some(chain_pos) =
-                                    effect_chain_order.iter().position(|id| *id == module_id)
-                                {
-                                    let chain_label = format!("#{}", chain_pos + 1);
-                                    ui.label(
-                                        egui::RichText::new(chain_label)
-                                            .size(10.0)
-                                            .color(EFFECT_CHAIN_AMBER),
-                                    );
+                    let dimmed_accent = accent_color.gamma_multiply(opacity);
+
+                    let mut open = true;
+                    // Include instrument_id in the hash to prevent ID collisions across instruments
+                    let window_id =
+                        egui::Id::new((instrument_id, "module_window", module_id.to_string()));
+                    // Create frame with dimming for disconnected modules
+                    let frame = ModuleFrame::new(dimmed_accent)
+                        .selected(is_selected)
+                        .opacity(opacity)
+                        .build(&ui.global_style());
+
+                    // Check if this module needs repositioning (after auto-layout)
+                    let needs_reposition = self.needs_reposition.contains(&module_id);
+
+                    let title = analysis.display_name(module_id, &descriptor.name);
+
+                    // Get processing info for this module
+                    let is_source = self.is_source(module_id);
+                    let is_sink = self.is_sink(module_id);
+                    let is_automated = automated_modules.contains(&module_id);
+                    let is_inline_monitor = descriptor.type_id.0 == "inline_signal_monitor";
+
+                    // Place the module at its WORLD position — no egui::Area (an Area
+                    // inside a Scene would not inherit the layer transform). Own the drag
+                    // with a click_and_drag interact over the card, registered BEFORE the
+                    // body so the body's buttons/knobs (drawn on top) keep their own
+                    // clicks/drags. `drag_delta()` is already world-space inside a Scene.
+                    let node_rect = Rect::from_min_size(panel_position, panel_size);
+                    // Distinct id from the child Ui's id-space (which is seeded with
+                    // window_id below) so the card drag handle never collides with a
+                    // body widget.
+                    let node_response =
+                        ui.interact(node_rect, window_id.with("card"), Sense::click_and_drag());
+                    // Capture the drag set at drag-start: the whole selection if
+                    // this card is part of it, otherwise just this card. Stored in
+                    // the interaction FSM so a mid-drag selection change can't
+                    // affect it.
+                    if node_response.drag_started() {
+                        let ids = if self.selected_modules.contains(&module_id) {
+                            self.selected_modules.iter().copied().collect()
+                        } else {
+                            vec![module_id]
+                        };
+                        self.canvas_interaction = CanvasInteraction::DraggingNodes { ids };
+                    }
+                    if node_response.dragged() {
+                        let delta = node_response.drag_delta();
+                        // Move every card in the drag set by the same delta
+                        // (preserves relative layout). Falls back to this card if
+                        // the FSM state was lost for any reason.
+                        let ids: Vec<ModuleId> = match &self.canvas_interaction {
+                            CanvasInteraction::DraggingNodes { ids } => ids.clone(),
+                            _ => vec![module_id],
+                        };
+                        for id in ids {
+                            if let Some(p) = self.panels.get_mut(&id) {
+                                p.position += delta;
+                            }
+                        }
+                    }
+                    if node_response.drag_stopped() {
+                        // Snap the grabbed card to the grid, then shift the rest of
+                        // the set by the same correction so the layout stays intact.
+                        let ids: Vec<ModuleId> = match &self.canvas_interaction {
+                            CanvasInteraction::DraggingNodes { ids } => ids.clone(),
+                            _ => vec![module_id],
+                        };
+                        if let Some(before) = self.panels.get(&module_id).map(|p| p.position) {
+                            let correction = snap_to_grid(before) - before;
+                            for id in ids {
+                                if let Some(p) = self.panels.get_mut(&id) {
+                                    p.position += correction;
                                 }
-                            });
-                            ui.label(
-                                egui::RichText::new("Applied automatically after voice mixing")
-                                    .size(9.0)
-                                    .color(theme().colors.text_dim.gamma_multiply(0.7)),
+                            }
+                        }
+                        self.canvas_interaction = CanvasInteraction::Idle;
+                    }
+                    // Cursor affordance: a grab hand over a draggable card when
+                    // idle. `hovered()` is false over inner widgets (knobs/buttons,
+                    // drawn on top), so they keep their own cursors; the active-drag
+                    // cursors (Grabbing/Crosshair) are set later from the FSM state.
+                    if node_response.hovered()
+                        && matches!(self.canvas_interaction, CanvasInteraction::Idle)
+                    {
+                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                    }
+                    let node_pos = self
+                        .panels
+                        .get(&module_id)
+                        .map_or(panel_position, |p| p.position);
+
+                    // Card content in a child Ui sized to the module's fixed-width
+                    // bucket (`ModuleWidth::module_px`); the frame body is pinned to
+                    // the bucket below. `min_rect()` is read back as the actual size.
+                    let module_w = descriptor.width.module_px();
+                    let mut child = ui.new_child(
+                        egui::UiBuilder::new()
+                            // Seed the child Ui's id with the module's window_id as a
+                            // GLOBAL scope so the id is `Id::new(window_id)` — stable per
+                            // module and INDEPENDENT of draw order. A plain `id_salt`
+                            // (non-global) folds in the parent's `next_auto_id_salt` (a
+                            // draw-order counter), so every module's inner widget ids
+                            // shift whenever the z-order changes (bring-to-front), which
+                            // is what triggered the red egui id-clash overlay. The old
+                            // egui::Area's window_id was effectively a stable global id
+                            // too. egui 0.35: `.id(id)` is the shortcut for the old
+                            // `.id_salt(id).global_scope(true)`.
+                            .id(window_id)
+                            .max_rect(Rect::from_min_size(node_pos, Vec2::new(module_w, 600.0)))
+                            .layout(egui::Layout::top_down(egui::Align::Min)),
+                    );
+                    {
+                        let ui = &mut child;
+                        if is_inline_monitor {
+                            self.draw_inline_monitor(
+                                ui,
+                                module_id,
+                                descriptor,
+                                dimmed_accent,
+                                handle,
+                                &mut result,
                             );
                         } else {
-                            ui.horizontal(|ui| {
-                                ui.label(
-                                    egui::RichText::new(format!(
-                                        "{} Visualizer",
-                                        egui_remixicon::icons::SPECTRUM_FILL
-                                    ))
-                                    .size(11.0)
-                                    .color(theme().colors.text_dim),
-                                );
-                            });
-                            ui.label(
-                                egui::RichText::new("Displays final output signal")
-                                    .size(9.0)
-                                    .color(theme().colors.text_dim.gamma_multiply(0.7)),
-                            );
-                        }
-                        ui.separator();
+                            frame.show(ui, |ui| {
+                                // Pin the body to the fixed width bucket up front, so
+                                // the header and 3-column body lay out at a deliberate,
+                                // grid-aligned width instead of stretching to their
+                                // widest row. (8 px = ModuleFrame's inner margin/side.)
+                                ui.set_width(module_w - 16.0);
 
-                        if let Some(panel_state) = self.panels.get_mut(&module_id) {
-                            let vis_buffer = handle.get_visualization_buffer(module_id);
-                            let panel_result = draw_module_panel_params(
-                                ui,
-                                panel_state,
-                                descriptor,
-                                accent_color,
-                                vis_buffer,
-                                &analysis,
-                                &mod_catalog,
-                                script_graph.as_ref(),
-                                &self.sample_list,
-                                audio_input_snapshot,
-                            );
-                            for param in panel_result.param_changes {
-                                result.param_changes.push((module_id, param));
-                            }
-                            if panel_result.audio_input_action.is_some() {
-                                result.audio_input_action = panel_result.audio_input_action;
-                            }
-                            for (slot, src) in panel_result.mod_script_actions {
-                                result.mod_script_actions.push((module_id, slot, src));
-                            }
-                        }
-                    } else {
-                        // Normal modules: three-column layout (IN ports | content | OUT ports)
-                        let col_w = theme().sizes.port_column_width;
-
-                        // Stretch the content column so IN + content + OUT span
-                        // the header width, anchoring the OUT column to the right
-                        // edge. When the content is naturally wider than this
-                        // (the common case), `set_min_width` is a no-op and the
-                        // layout is unchanged.
-                        let spacing_x = ui.spacing().item_spacing.x;
-                        let content_min_w =
-                            (header_width - 2.0 * col_w - 2.0 * spacing_x).max(0.0);
-
-                        ui.horizontal(|ui| {
-                            // Left port column (IN) - fixed width
-                            ui.vertical(|ui| {
-                                ui.set_width(col_w);
-                                self.draw_port_column(
+                                // Title bar: name + status icons + close button (single row)
+                                draw_module_header(
                                     ui,
-                                    module_id,
-                                    descriptor,
-                                    WidgetPortDirection::Input,
-                                    &connected_ports,
+                                    dimmed_accent,
+                                    &title,
+                                    Some(format!("ID: {module_id}")),
+                                    |ui| {
+                                        self.draw_module_header_actions(
+                                            ui,
+                                            ModuleHeaderCtx {
+                                                module_id,
+                                                descriptor,
+                                                is_source,
+                                                is_sink,
+                                                is_automated,
+                                                is_bypassed,
+                                                is_global_module,
+                                                connectivity: connectivity_status,
+                                            },
+                                            &analysis,
+                                            effect_chain_order,
+                                            &mut result,
+                                            &mut open,
+                                        );
+                                    },
                                 );
-                            });
 
-                            // Content column - stretched to anchor OUT at the edge
-                            ui.vertical(|ui| {
-                                ui.set_min_width(content_min_w);
-                                if let Some(panel_state) = self.panels.get_mut(&module_id) {
-                                    let vis_buffer =
-                                        handle.get_visualization_buffer(module_id);
-                                    let panel_result = draw_module_panel_params(
-                                        ui,
-                                        panel_state,
+                                self.draw_module_body(
+                                    ui,
+                                    ModuleBodyCtx {
+                                        module_id,
                                         descriptor,
                                         accent_color,
-                                        vis_buffer,
-                                        &analysis,
-                                        &mod_catalog,
-                                        script_graph.as_ref(),
-                                        &self.sample_list,
+                                        connected_ports: &connected_ports,
+                                        analysis: &analysis,
+                                        mod_catalog: &mod_catalog,
+                                        script_graph: script_graph.as_ref(),
+                                        effect_chain_order,
                                         audio_input_snapshot,
-                                    );
-                                    for param in panel_result.param_changes {
-                                        result.param_changes.push((module_id, param));
-                                    }
-                                    if panel_result.audio_input_action.is_some() {
-                                        result.audio_input_action =
-                                            panel_result.audio_input_action;
-                                    }
-                                    for (slot, src) in panel_result.mod_script_actions {
-                                        result
-                                            .mod_script_actions
-                                            .push((module_id, slot, src));
-                                    }
-                                }
-                            });
-
-                            // Right port column (OUT) - fixed width
-                            ui.vertical(|ui| {
-                                ui.set_width(col_w);
-                                self.draw_port_column(
-                                    ui,
-                                    module_id,
-                                    descriptor,
-                                    WidgetPortDirection::Output,
-                                    &connected_ports,
+                                    },
+                                    handle,
+                                    &mut result,
                                 );
                             });
-                        });
+                        }
                     }
-                });
-            });
 
-            // Remember the module's on-screen rect so the description / info
-            // popups can be anchored beside it (not over it).
-            if let Some(area_rect) = ui.memory(|mem| mem.area_rect(window_id)) {
-                self.module_rects.insert(module_id, area_rect);
-            }
+                    // Read the frame's actual (world) size back.
+                    let actual_rect = child.min_rect();
+                    if let Some(p) = self.panels.get_mut(&module_id) {
+                        p.size = actual_rect.size();
+                    }
+                    // Store the SCREEN rect (world → screen) so the screen-space
+                    // info / description popups, drawn after the Scene, anchor
+                    // beside the module instead of at the raw world position.
+                    let screen_rect = ui
+                        .ctx()
+                        .layer_transform_to_global(ui.layer_id())
+                        .map_or(actual_rect, |t| t * actual_rect);
+                    self.module_rects.insert(module_id, screen_rect);
 
-            // Handle area interaction — Area always returns InnerResponse (no Option)
-            // Update logical position and size from screen rect, snapped to grid.
-            // Skip during the frame a patch/project was just loaded — egui's Area rects
-            // are stale and would overwrite the freshly loaded saved positions.
-            if !self.suppress_position_readback
-                && let Some(area_rect) = ui.memory(|mem| mem.area_rect(window_id))
-                && let Some(panel_state) = self.panels.get_mut(&module_id)
-            {
-                let logical_pos = area_rect.min - area_origin + scroll_offset;
-                panel_state.position = snap_to_grid(logical_pos);
-                panel_state.size = area_rect.size();
-            }
+                    self.handle_module_interaction(
+                        ui,
+                        &node_response,
+                        module_id,
+                        &group_layout,
+                        &mut bring_to_front,
+                    );
 
-            self.handle_module_interaction(
-                ui,
-                &area_response.response,
-                module_id,
-                &group_layout,
-                &mut bring_to_front,
-            );
+                    // Right-click on a module's empty body opens the rack context menu.
+                    node_response.context_menu(|ui| {
+                        let (selected, _) =
+                            self.bg_context_menu_contents(ui, &mut result, panel_position, None);
+                        if let Some(sel) = selected {
+                            result.context_add = Some((sel, panel_position, None));
+                        }
+                    });
 
-            // Right-click on a module's empty body opens the same rack context
-            // menu as the canvas background (Copy/Cut/Paste, groups, add module).
-            // A new module drops near this module's logical position.
-            area_response.response.context_menu(|ui| {
-                let (selected, _) =
-                    self.bg_context_menu_contents(ui, &mut result, panel_position, None);
-                if let Some(sel) = selected {
-                    result.context_add = Some((sel, panel_position, None));
+                    // Handle close (delete module) — triggered by close button.
+                    // If the module is in a signal chain, bypass it (reconnect around it).
+                    if !open {
+                        self.bypass_and_remove(module_id, &mut result);
+                    }
+
+                    // Clear reposition flag after this module has been drawn
+                    if needs_reposition {
+                        self.needs_reposition.remove(&module_id);
+                    }
                 }
+
+                // Restore descriptors after the render loop
+                self.descriptors = descriptors;
+
+                // Apply z-order change
+                if let Some(id) = bring_to_front {
+                    self.bring_to_front(id);
+                }
+
+                // Handle port interactions for connections
+                self.handle_port_interactions(ui, &mut result);
+
+                // Draw the in-progress cable on the scene layer so it tracks the
+                // world-space ports under pan/zoom.
+                if let Some(pending) = self.pending_connection() {
+                    let color = cable_color(pending.from_type, 180);
+                    draw_cable_dragging(
+                        ui.painter(),
+                        pending.from_position,
+                        pending.current_pos,
+                        color,
+                    );
+                }
+
+                self.handle_canvas_background_input(ui, &canvas_response);
             });
+        self.scene_rect = Some(scene_rect);
 
-            // Handle close (delete module) — triggered by close button.
-            // If the module is in a signal chain, bypass it (reconnect around it).
-            if !open {
-                self.bypass_and_remove(module_id, &mut result);
-            }
-
-            // Clear reposition flag after this module has been drawn
-            if needs_reposition {
-                self.needs_reposition.remove(&module_id);
-            }
-        }
-
-        // Restore descriptors after the render loop
-        self.descriptors = descriptors;
-
-        // Apply z-order change
-        if let Some(id) = bring_to_front {
-            self.bring_to_front(id);
-        }
-
-        // Handle port interactions for connections
-        self.handle_port_interactions(ui, &mut result);
-
-        // Draw pending connection in foreground (less sag for responsive feel)
-        if let Some(ref pending) = self.pending_connection {
-            let color = cable_color(pending.from_type, 180);
-            let painter = eframe::egui::Painter::new(
-                ui.ctx().clone(),
-                LayerId::new(Order::Background, egui::Id::new("cables_active")),
-                visible_rect,
-            );
-            draw_cable_dragging(&painter, pending.from_position, pending.current_pos, color);
-        }
-
-        self.handle_canvas_background_input(ui, &canvas_response, area_origin, scroll_offset);
-
-        // Macro-source rail (S1.5b): a fixed strip of macro chips above the
-        // scrolling canvas. Only meaningful when a Mod Matrix can read them.
+        // Macro-source rail (S1.5b): a fixed SCREEN-space strip — drawn OUTSIDE the
+        // Scene so it never pans/zooms with the canvas.
         if analysis.count(ModuleType::ModMatrix) > 0 {
             self.draw_macro_source_rail(ui, instrument_id, visible_rect, &analysis);
         }
 
-        // Module description / info popups (drawn last so they float above the
-        // canvas; descriptors are already restored above so type docs resolve).
+        // Module description / info popups — also screen-space, drawn after the
+        // Scene so they float above the canvas at a readable size.
         self.draw_module_popups(ui, &mut result);
 
-        // Clear suppress flag — next frame will resume normal position tracking
-        self.suppress_position_readback = false;
-
         result
-    }
-
-    /// Draw the read-only info popup (ⓘ) and the "Edit description" editor when
-    /// open. Both are floating windows anchored beside their module (via the
-    /// per-frame `module_rects`); the editor pushes its result through
-    /// `module_description_actions` on OK, the info popup is read-only.
-    fn draw_module_popups(&mut self, ui: &mut Ui, result: &mut PatchEditorResult) {
-        let ctx = ui.ctx().clone();
-        let t = theme();
-
-        // Read-only info popup: module id, type name + type documentation, and
-        // this instance's note.
-        if let Some(mid) = self.info_popup {
-            let anchor = self
-                .module_rects
-                .get(&mid)
-                .map(|r| r.right_top() + egui::vec2(12.0, 0.0));
-            let (type_name, type_desc) = self
-                .descriptors
-                .get(&mid)
-                .map(|d| (d.name.to_string(), d.description.to_string()))
-                .unwrap_or_default();
-            let instance_desc = self
-                .panels
-                .get(&mid)
-                .map(|p| p.description.clone())
-                .unwrap_or_default();
-            let mut keep_open = true;
-            let mut win = egui::Window::new(format!("{}  {mid}", ri::INFORMATION_LINE))
-                .id(egui::Id::new(("module_info_popup", mid)))
-                .collapsible(false)
-                .resizable(false)
-                .open(&mut keep_open);
-            if let Some(pos) = anchor {
-                win = win.default_pos(pos);
-            }
-            win.show(&ctx, |ui| {
-                ui.label(
-                    egui::RichText::new(format!("Type: {type_name}"))
-                        .strong()
-                        .color(t.colors.text_secondary),
-                );
-                ui.separator();
-                ui.label(
-                    egui::RichText::new("Type documentation")
-                        .size(t.fonts.size_small)
-                        .color(t.colors.text_dim),
-                );
-                ui.label(if type_desc.is_empty() {
-                    "(none)".to_string()
-                } else {
-                    type_desc
-                });
-                ui.separator();
-                ui.label(
-                    egui::RichText::new("Instance note")
-                        .size(t.fonts.size_small)
-                        .color(t.colors.text_dim),
-                );
-                ui.label(if instance_desc.is_empty() {
-                    "(no description set)".to_string()
-                } else {
-                    instance_desc
-                });
-            });
-            if !keep_open {
-                self.info_popup = None;
-            }
-        }
-
-        // "Edit description" editor: a small popup near the module with OK /
-        // Cancel, styled like the expression editor.
-        if let Some(mut editor) = self.description_editor.take() {
-            let mid = editor.module_id;
-            let anchor = self
-                .module_rects
-                .get(&mid)
-                .map(|r| r.right_top() + egui::vec2(12.0, 0.0));
-            let mut keep_open = true;
-            let mut closed = false;
-            let mut win = egui::Window::new(format!("{}  Edit description - {mid}", ri::EDIT_LINE))
-                .id(egui::Id::new(("module_desc_editor", mid)))
-                .collapsible(false)
-                .resizable(true)
-                .default_size(egui::vec2(360.0, 160.0))
-                .min_width(260.0)
-                .min_height(120.0)
-                .open(&mut keep_open);
-            if let Some(pos) = anchor {
-                win = win.default_pos(pos);
-            }
-            win.show(&ctx, |ui| {
-                ui.label(
-                    egui::RichText::new("Per-instance note — what this specific module is for.")
-                        .size(t.fonts.size_small)
-                        .color(t.colors.text_secondary),
-                );
-                let reserved = 40.0;
-                let editor_height = (ui.available_height() - reserved).max(60.0);
-                ui.add_sized(
-                    egui::vec2(ui.available_width(), editor_height),
-                    egui::TextEdit::multiline(&mut editor.draft).desired_rows(3),
-                );
-                ui.horizontal(|ui| {
-                    if ui.button("OK").clicked() {
-                        result
-                            .module_description_actions
-                            .push((mid, editor.draft.clone()));
-                        closed = true;
-                    }
-                    if ui.button("Cancel").clicked() {
-                        closed = true;
-                    }
-                });
-            });
-            // Persist the in-progress draft across frames unless dismissed.
-            if keep_open && !closed {
-                self.description_editor = Some(editor);
-            }
-        }
     }
 
     /// Draw the macro-source rail (S1.5b): a fixed strip of the six per-voice
@@ -3122,1736 +2532,12 @@ impl PatchEditor {
             });
     }
 
-    /// Draw a vertical column of ports (input or output side).
-    /// Handle a module Area's interaction: click/drag selects it (shift/ctrl
-    /// toggles multi-select) and brings it to front; drag-stop re-parents it to
-    /// the group under its center.
-    fn handle_module_interaction(
-        &mut self,
-        ui: &mut Ui,
-        response: &egui::Response,
-        module_id: ModuleId,
-        group_layout: &GroupLayout,
-        bring_to_front: &mut Option<ModuleId>,
-    ) {
-        // Bring to front on click
-        if response.clicked() || response.drag_started() {
-            let modifiers = ui.input(|i| i.modifiers);
-            if modifiers.shift || modifiers.ctrl {
-                if self.selected_modules.contains(&module_id) {
-                    self.selected_modules.remove(&module_id);
-                } else {
-                    self.selected_modules.insert(module_id);
-                }
-            } else {
-                self.selected_modules.clear();
-                self.selected_modules.insert(module_id);
-            }
-            self.selected_module = Some(module_id);
-            self.selected_group = None;
-            *bring_to_front = Some(module_id);
-        }
-
-        if response.drag_stopped()
-            && let Some(panel_state) = self.panels.get(&module_id)
-        {
-            let center = panel_state.position + panel_state.size / 2.0;
-            let mut target_group: Option<GroupId> = None;
-            for (gid, rect) in &group_layout.rects_world {
-                if rect.contains(center) {
-                    target_group = Some(*gid);
-                    break;
-                }
-            }
-            match target_group {
-                Some(gid) => {
-                    if self.group_of(module_id) != Some(gid) {
-                        self.remove_from_group(module_id);
-                        self.add_module_to_group(gid, module_id);
-                    }
-                }
-                None => {
-                    if self.group_of(module_id).is_some() {
-                        self.remove_from_group(module_id);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Handle clicks on empty canvas: left-click deselects, right-click opens
-    /// the background/cable context menu, and Escape cancels a pending
-    /// connection and closes any open context menus.
-    fn handle_canvas_background_input(
-        &mut self,
-        ui: &mut Ui,
-        canvas_response: &Option<egui::Response>,
-        area_origin: Vec2,
-        scroll_offset: Vec2,
-    ) {
-        // Handle click on empty space to deselect
-        if let Some(response) = canvas_response
-            && response.clicked()
-        {
-            self.selected_module = None;
-            self.selected_modules.clear();
-            self.selected_group = None;
-        }
-
-        // Right-click on background (or cable) → capture state for context menu
-        if let Some(response) = canvas_response
-            && response.secondary_clicked()
-            && self.port_context_menu.is_none()
-            && let Some(screen_pos) = ui.input(|i| i.pointer.interact_pos())
-        {
-            // Convert screen position to world/logical position
-            let world_pos = Pos2::new(
-                screen_pos.x - area_origin.x + scroll_offset.x,
-                screen_pos.y - area_origin.y + scroll_offset.y,
-            );
-            self.bg_context_menu = Some(BgContextMenuState {
-                world_pos,
-                cable: self.hovered_cable,
-            });
-        }
-
-        // Cancel pending connection / close context menus with escape
-        if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
-            self.pending_connection = None;
-            self.port_context_menu = None;
-            self.bg_context_menu = None;
-        }
-    }
-
-    /// Render an inline signal-monitor module: a compact 100×50 oscilloscope
-    /// with tiny IN/OUT ports and a close button. Registers port positions for
-    /// cables and starts pending connections on port drag.
-    fn draw_inline_monitor(
-        &mut self,
-        ui: &mut Ui,
-        module_id: ModuleId,
-        descriptor: &ModuleDescriptor,
-        dimmed_accent: Color32,
-        handle: &EngineHandle,
-        result: &mut PatchEditorResult,
-    ) {
-        let inline_frame = egui::Frame::new()
-            .fill(theme().colors.bg_dark)
-            .stroke(egui::Stroke::new(1.0, dimmed_accent.gamma_multiply(0.5)))
-            .corner_radius(4.0);
-        inline_frame.show(ui, |ui| {
-            let panel_width = 100.0;
-            let panel_height = 50.0;
-            ui.set_min_size(Vec2::new(panel_width, panel_height));
-            ui.set_max_size(Vec2::new(panel_width, panel_height));
-
-            // Draw ports at left/right edges
-            let port_col_w = 8.0;
-            ui.horizontal(|ui| {
-                // Left port (IN) — tiny dot
-                ui.vertical(|ui| {
-                    ui.set_width(port_col_w);
-                    ui.set_height(panel_height);
-                    let center = ui.available_rect_before_wrap().center();
-                    for port in &descriptor.ports {
-                        if port.direction == synth_core::PortDirection::Input {
-                            let port_rect = egui::Rect::from_center_size(center, Vec2::splat(8.0));
-                            let port_resp = ui.allocate_rect(port_rect, Sense::click_and_drag());
-                            let port_color = if port_resp.hovered() {
-                                theme().colors.accent_cyan
-                            } else {
-                                theme().colors.accent_cyan.gamma_multiply(0.6)
-                            };
-                            ui.painter().circle_filled(center, 3.0, port_color);
-
-                            // Register port position for cables
-                            let screen_pos = center;
-                            let in_port_type = if port.port_type == synth_core::PortType::Audio {
-                                WidgetPortType::Audio
-                            } else {
-                                WidgetPortType::Control
-                            };
-                            self.port_positions.insert(
-                                (module_id, port.name),
-                                PortPosition {
-                                    module_id,
-                                    port_name: port.name,
-                                    position: screen_pos,
-                                    direction: WidgetPortDirection::Input,
-                                    port_type: in_port_type,
-                                },
-                            );
-
-                            // Handle port interaction for cable dragging
-                            if port_resp.drag_started() {
-                                self.pending_connection = Some(PendingConnection {
-                                    from_module: module_id,
-                                    from_port: port.name,
-                                    from_direction: WidgetPortDirection::Input,
-                                    from_type: in_port_type,
-                                    from_position: screen_pos,
-                                    current_pos: screen_pos,
-                                });
-                            }
-                        }
-                    }
-                });
-
-                // Oscilloscope content area
-                let scope_width = panel_width - port_col_w * 2.0;
-                let scope_height = panel_height;
-                ui.vertical(|ui| {
-                    ui.set_width(scope_width);
-                    let vis_buffer = handle.get_visualization_buffer(module_id);
-                    let samples = if let Some(buffer) = vis_buffer {
-                        buffer.read_sweep().unwrap_or_default()
-                    } else {
-                        (0..128)
-                            .map(|i| {
-                                let t = i as f32 / 128.0;
-                                (t * std::f32::consts::TAU * 3.0).sin() * 0.5
-                            })
-                            .collect()
-                    };
-                    let samples = trim_sweep_to_complete_cycles(&samples, 0.0);
-
-                    super::widgets::draw_oscilloscope(
-                        ui,
-                        samples,
-                        scope_width,
-                        scope_height,
-                        1.0,
-                        theme().colors.accent_cyan,
-                    );
-                });
-
-                // Right port (OUT) — tiny dot
-                ui.vertical(|ui| {
-                    ui.set_width(port_col_w);
-                    ui.set_height(panel_height);
-                    let center = ui.available_rect_before_wrap().center();
-                    for port in &descriptor.ports {
-                        if port.direction == synth_core::PortDirection::Output {
-                            let port_rect = egui::Rect::from_center_size(center, Vec2::splat(8.0));
-                            let port_resp = ui.allocate_rect(port_rect, Sense::click_and_drag());
-                            let port_color = if port_resp.hovered() {
-                                theme().colors.accent_green
-                            } else {
-                                theme().colors.accent_green.gamma_multiply(0.6)
-                            };
-                            ui.painter().circle_filled(center, 3.0, port_color);
-
-                            let screen_pos = center;
-                            let out_port_type = if port.port_type == synth_core::PortType::Audio {
-                                WidgetPortType::Audio
-                            } else {
-                                WidgetPortType::Control
-                            };
-                            self.port_positions.insert(
-                                (module_id, port.name),
-                                PortPosition {
-                                    module_id,
-                                    port_name: port.name,
-                                    position: screen_pos,
-                                    direction: WidgetPortDirection::Output,
-                                    port_type: out_port_type,
-                                },
-                            );
-
-                            if port_resp.drag_started() {
-                                self.pending_connection = Some(PendingConnection {
-                                    from_module: module_id,
-                                    from_port: port.name,
-                                    from_direction: WidgetPortDirection::Output,
-                                    from_type: out_port_type,
-                                    from_position: screen_pos,
-                                    current_pos: screen_pos,
-                                });
-                            }
-                        }
-                    }
-                });
-            });
-
-            // Close button overlay (×) in top-right corner
-            let panel_rect = ui.min_rect();
-            let close_size = Vec2::new(14.0, 14.0);
-            let close_pos = Pos2::new(
-                panel_rect.right() - close_size.x - 1.0,
-                panel_rect.top() + 1.0,
-            );
-            let close_rect = Rect::from_min_size(close_pos, close_size);
-            let close_resp = ui.allocate_rect(close_rect, Sense::click());
-            let close_color = if close_resp.hovered() {
-                CLOSE_BUTTON_HOVER_RED
-            } else {
-                CLOSE_BUTTON_IDLE
-            };
-            ui.painter().text(
-                close_rect.center(),
-                egui::Align2::CENTER_CENTER,
-                ri::CLOSE_LINE,
-                egui::FontId::proportional(10.0),
-                close_color,
-            );
-
-            if close_resp.clicked() {
-                self.bypass_and_remove(module_id, result);
-            }
-        });
-
-        // Request continuous repaint so the waveform updates
-        ui.request_repaint();
-    }
-
-    fn draw_port_column_with<F>(
-        ui: &mut Ui,
-        direction: WidgetPortDirection,
-        ports: &[PortRenderInfo],
-        pending_info: Option<(ModuleId, WidgetPortType, WidgetPortDirection)>,
-        cycle_blocked: &HashSet<ModuleId>,
-        mut store_position: F,
-    ) where
-        F: FnMut(&PortRenderInfo, Pos2),
-    {
-        let t = theme();
-        let col_width = t.sizes.port_column_width;
-        let spacing = t.sizes.port_vertical_spacing;
-
-        ui.vertical(|ui| {
-            let label = match direction {
-                WidgetPortDirection::Input => "IN",
-                WidgetPortDirection::Output => "OUT",
-            };
-            if !ports.is_empty() {
-                ui.vertical_centered(|ui| {
-                    ui.label(
-                        egui::RichText::new(label)
-                            .size(8.0)
-                            .color(t.colors.text_dim),
-                    );
-                });
-
-                let rail_x = ui.cursor().min.x + col_width * 0.5;
-                let rail_top = ui.cursor().min.y + 3.0;
-                let rail_bottom = rail_top + ports.len() as f32 * spacing - 6.0;
-                ui.painter().line_segment(
-                    [Pos2::new(rail_x, rail_top), Pos2::new(rail_x, rail_bottom)],
-                    egui::Stroke::new(1.0, t.colors.border.gamma_multiply(0.55)),
-                );
-            }
-
-            for port in ports {
-                let is_highlighted = pending_info
-                    .map(|(from_module, from_type, from_dir)| {
-                        // Signal always flows output → input; pick whichever side
-                        // is the output so directional compatibility is correct.
-                        let (out_type, in_type) = if from_dir == WidgetPortDirection::Output {
-                            (from_type, port.port_type)
-                        } else {
-                            (port.port_type, from_type)
-                        };
-                        from_module != port.module_id
-                            && from_dir != direction
-                            && out_type.can_drive(in_type)
-                            && !cycle_blocked.contains(&port.module_id)
-                    })
-                    .unwrap_or(false);
-
-                ui.vertical_centered(|ui| {
-                    ui.allocate_ui(Vec2::new(col_width, spacing), |ui| {
-                        ui.centered_and_justified(|ui| {
-                            let (response, center) =
-                                super::widgets::PortWidget::new(port.port_type, direction)
-                                    .connected(port.is_connected)
-                                    .highlighted(is_highlighted)
-                                    .label(&port.label)
-                                    .show(ui);
-
-                            store_position(port, center);
-
-                            if !port.description.is_empty() {
-                                response.on_hover_text(&port.description);
-                            }
-                        });
-                    });
-                });
-            }
-        });
-    }
-
-    fn draw_port_column(
-        &mut self,
-        ui: &mut Ui,
-        module_id: ModuleId,
-        descriptor: &ModuleDescriptor,
-        direction: WidgetPortDirection,
-        connected_ports: &[PortName],
-    ) {
-        use synth_core::PortDirection as CorePortDirection;
-
-        let core_dir = match direction {
-            WidgetPortDirection::Input => CorePortDirection::Input,
-            WidgetPortDirection::Output => CorePortDirection::Output,
-        };
-
-        let ports: Vec<PortRenderInfo> = descriptor
-            .ports
-            .iter()
-            .filter(|p| p.direction == core_dir)
-            .map(|p| PortRenderInfo {
-                module_id,
-                port_name: p.name,
-                label: p.label.clone(),
-                description: p.description.clone(),
-                port_type: convert_port_type(p.port_type),
-                is_connected: connected_ports.contains(&p.name),
-            })
-            .collect();
-
-        let pending_info = self
-            .pending_connection
-            .as_ref()
-            .map(|p| (p.from_module, p.from_type, p.from_direction));
-        // Cycle-blocked targets were computed once for this frame; the highlight
-        // just looks each module up.
-        let cycle_blocked = &self.drag_cycle_blocked;
-        let port_positions = &mut self.port_positions;
-        Self::draw_port_column_with(
-            ui,
-            direction,
-            &ports,
-            pending_info,
-            cycle_blocked,
-            |port, center| {
-                port_positions.insert(
-                    (module_id, port.port_name),
-                    PortPosition {
-                        module_id,
-                        port_name: port.port_name,
-                        position: center,
-                        port_type: port.port_type,
-                        direction,
-                    },
-                );
-            },
-        );
-    }
-
-    fn draw_group_port_column(
-        &mut self,
-        ui: &mut Ui,
-        group: &ModuleGroup,
-        direction: WidgetPortDirection,
-        new_positions: &mut HashMap<GroupPortKey, PortPosition>,
-    ) {
-        let ports = match direction {
-            WidgetPortDirection::Input => &group.exposed_inputs,
-            WidgetPortDirection::Output => &group.exposed_outputs,
-        };
-
-        let ports: Vec<PortRenderInfo> = ports
-            .iter()
-            .map(|p| PortRenderInfo {
-                module_id: p.module_id,
-                port_name: p.port_name,
-                label: p.label.clone(),
-                description: String::new(),
-                port_type: self.port_widget_type(p.module_id, p.port_name),
-                is_connected: self.has_external_connection_for_port(
-                    group.id,
-                    p.module_id,
-                    p.port_name,
-                    direction,
-                ),
-            })
-            .collect();
-
-        let pending_info = self
-            .pending_connection
-            .as_ref()
-            .map(|p| (p.from_module, p.from_type, p.from_direction));
-        // Group columns expose ports from several member modules; the shared
-        // per-frame set already covers them all.
-        let cycle_blocked = &self.drag_cycle_blocked;
-        Self::draw_port_column_with(
-            ui,
-            direction,
-            &ports,
-            pending_info,
-            cycle_blocked,
-            |port, center| {
-                new_positions.insert(
-                    GroupPortKey {
-                        group_id: group.id,
-                        module_id: port.module_id,
-                        port_name: port.port_name,
-                        direction,
-                    },
-                    PortPosition {
-                        module_id: port.module_id,
-                        port_name: port.port_name,
-                        position: center,
-                        port_type: port.port_type,
-                        direction,
-                    },
-                );
-            },
-        );
-    }
-
-    fn draw_grid(&self, ui: &mut Ui, rect: Rect) {
-        let painter = ui.painter();
-
-        // Background
-        painter.rect_filled(rect, 0.0, theme().colors.bg_dark);
-
-        // Grid lines
-        let grid_size = GRID_SIZE;
-
-        let grid_color = GRID_LINE_COLOR;
-
-        // Vertical lines
-        let mut x = rect.left();
-        while x < rect.right() {
-            painter.line_segment(
-                [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],
-                egui::Stroke::new(1.0, grid_color),
-            );
-            x += grid_size;
-        }
-
-        // Horizontal lines
-        let mut y = rect.top();
-        while y < rect.bottom() {
-            painter.line_segment(
-                [Pos2::new(rect.left(), y), Pos2::new(rect.right(), y)],
-                egui::Stroke::new(1.0, grid_color),
-            );
-            y += grid_size;
-        }
-    }
-
-    /// Draw a tinted background zone behind effect modules.
-    fn draw_effect_zone(&self, ui: &mut Ui, scroll_rect: Rect) {
-        let panels = self.panels.iter().filter_map(|(id, p)| {
-            let category = self.descriptors.get(id).map(|d| d.category);
-            matches!(category, Some(ModuleCategory::Effect)).then_some(p)
-        });
-        draw_module_zone(
-            ui,
-            scroll_rect,
-            panels,
-            category_color(ModuleCategory::Effect),
-            &format!("{} Effect Chain", ri::FLASHLIGHT_FILL),
-        );
-    }
-
-    /// Draw a tinted background zone behind visualizer/monitor modules.
-    /// Visualizers are passive taps on the final signal — they are not part of
-    /// the effect chain (no ordering, no chain cables), so they get their own
-    /// zone instead of being grouped with effects.
-    fn draw_monitors_zone(&self, ui: &mut Ui, scroll_rect: Rect) {
-        let panels = self.panels.iter().filter_map(|(id, p)| {
-            let category = self.descriptors.get(id).map(|d| d.category);
-            matches!(category, Some(ModuleCategory::Visualizer)).then_some(p)
-        });
-        draw_module_zone(
-            ui,
-            scroll_rect,
-            panels,
-            category_color(ModuleCategory::Visualizer),
-            &format!("{} Monitors", ri::PULSE_FILL),
-        );
-    }
-
-    /// Draw a tinted framed zone behind any Mod Matrix modules. The bounding
-    /// box expands to include cable-less matrix attachments (modules wired
-    /// only through a matrix slot, auto-stacked beneath the matrix by
-    /// `align_mod_matrix_attachments`) so they sit visibly inside the same
-    /// frame. Modules that *also* have cables stay in the voice-graph flow
-    /// and the frame does not engulf them.
-    fn draw_mod_matrix_zone(&self, ui: &mut Ui, scroll_rect: Rect, analysis: &PatchAnalysis) {
-        if analysis.count(ModuleType::ModMatrix) == 0 {
-            return;
-        }
-        // `prev_mod_matrix_attachments` was refreshed earlier this frame by
-        // `realign_mod_matrix_attachments_if_changed`, so it matches the
-        // current attachment set without a second walk over all panels.
-        let matrix_panels = self
-            .panels
-            .iter()
-            .filter(|(id, _)| id.module_type == ModuleType::ModMatrix)
-            .map(|(_, p)| p);
-        let attachment_panels = self
-            .prev_mod_matrix_attachments
-            .iter()
-            .filter_map(|id| self.panels.get(id));
-        draw_module_zone(
-            ui,
-            scroll_rect,
-            matrix_panels.chain(attachment_panels),
-            theme().colors.accent_purple,
-            &format!("{} Mod Matrix", ri::PULSE_FILL),
-        );
-    }
-
-    /// Draw effect chain cables showing signal flow between effects.
-    ///
-    /// These are drawn as vertical cables (top-to-bottom) between consecutive
-    /// effects in chain order, with arrowheads showing direction.
-    fn draw_effect_chain_cables(
-        &self,
-        ui: &Ui,
-        bg_layer: LayerId,
-        clip_rect: Rect,
-        effect_chain_order: &[ModuleId],
-        area_origin: Vec2,
-        scroll_offset: Vec2,
-    ) {
-        if effect_chain_order.len() < 2 {
-            return;
-        }
-
-        let painter = eframe::egui::Painter::new(ui.ctx().clone(), bg_layer, clip_rect);
-
-        // Warm amber color for chain cables
-        let chain_color = EFFECT_CHAIN_AMBER;
-        let chain_stroke = egui::Stroke::new(2.5, chain_color.gamma_multiply(0.7));
-        let arrow_color = chain_color.gamma_multiply(0.85);
-
-        // Draw cables between consecutive effects
-        for pair in effect_chain_order.windows(2) {
-            let from_id = pair[0];
-            let to_id = pair[1];
-
-            // Get module panel positions
-            let (Some(from_panel), Some(to_panel)) =
-                (self.panels.get(&from_id), self.panels.get(&to_id))
-            else {
-                continue;
-            };
-
-            // Calculate screen positions: bottom-center of source, top-center of destination
-            let from_screen = Pos2::new(
-                from_panel.position.x + from_panel.size.x * 0.5 + area_origin.x - scroll_offset.x,
-                from_panel.position.y + from_panel.size.y + area_origin.y - scroll_offset.y,
-            );
-            let to_screen = Pos2::new(
-                to_panel.position.x + to_panel.size.x * 0.5 + area_origin.x - scroll_offset.x,
-                to_panel.position.y + area_origin.y - scroll_offset.y,
-            );
-
-            // Draw vertical cable segments
-            let mid_y = (from_screen.y + to_screen.y) * 0.5;
-            if (from_screen.x - to_screen.x).abs() < 2.0 {
-                // Straight vertical line
-                painter.line_segment([from_screen, to_screen], chain_stroke);
-            } else {
-                // Orthogonal: down, across, down
-                painter.line_segment([from_screen, Pos2::new(from_screen.x, mid_y)], chain_stroke);
-                painter.line_segment(
-                    [
-                        Pos2::new(from_screen.x, mid_y),
-                        Pos2::new(to_screen.x, mid_y),
-                    ],
-                    chain_stroke,
-                );
-                painter.line_segment([Pos2::new(to_screen.x, mid_y), to_screen], chain_stroke);
-            }
-
-            // Draw arrowhead at destination
-            let arrow_size = 6.0;
-            let arrow_tip = to_screen;
-            let arrow_left = Pos2::new(arrow_tip.x - arrow_size, arrow_tip.y - arrow_size * 1.5);
-            let arrow_right = Pos2::new(arrow_tip.x + arrow_size, arrow_tip.y - arrow_size * 1.5);
-            painter.add(egui::Shape::convex_polygon(
-                vec![arrow_tip, arrow_left, arrow_right],
-                arrow_color,
-                egui::Stroke::NONE,
-            ));
-        }
-
-        // Draw "IN" label/arrow above the first effect
-        if let Some(first_panel) = self.panels.get(&effect_chain_order[0]) {
-            let pos = Pos2::new(
-                first_panel.position.x + first_panel.size.x * 0.5 + area_origin.x - scroll_offset.x,
-                first_panel.position.y + area_origin.y - scroll_offset.y - 4.0,
-            );
-            let arrow_top = Pos2::new(pos.x, pos.y - 14.0);
-            painter.line_segment([arrow_top, pos], chain_stroke);
-            // Small arrowhead
-            let s = 4.0;
-            painter.add(egui::Shape::convex_polygon(
-                vec![
-                    pos,
-                    Pos2::new(pos.x - s, pos.y - s * 1.5),
-                    Pos2::new(pos.x + s, pos.y - s * 1.5),
-                ],
-                arrow_color,
-                egui::Stroke::NONE,
-            ));
-            painter.text(
-                Pos2::new(pos.x, arrow_top.y - 2.0),
-                egui::Align2::CENTER_BOTTOM,
-                "IN",
-                egui::FontId::proportional(9.0),
-                chain_color.gamma_multiply(0.6),
-            );
-        }
-
-        // Draw "OUT" label/arrow below the last effect
-        if let Some(last_panel) = self
-            .panels
-            .get(effect_chain_order.last().unwrap_or(&effect_chain_order[0]))
-        {
-            let pos = Pos2::new(
-                last_panel.position.x + last_panel.size.x * 0.5 + area_origin.x - scroll_offset.x,
-                last_panel.position.y + last_panel.size.y + area_origin.y - scroll_offset.y + 4.0,
-            );
-            let arrow_bottom = Pos2::new(pos.x, pos.y + 14.0);
-            painter.line_segment([pos, arrow_bottom], chain_stroke);
-            let s = 4.0;
-            painter.add(egui::Shape::convex_polygon(
-                vec![
-                    arrow_bottom,
-                    Pos2::new(arrow_bottom.x - s, arrow_bottom.y - s * 1.5),
-                    Pos2::new(arrow_bottom.x + s, arrow_bottom.y - s * 1.5),
-                ],
-                arrow_color,
-                egui::Stroke::NONE,
-            ));
-            painter.text(
-                Pos2::new(pos.x, arrow_bottom.y + 2.0),
-                egui::Align2::CENTER_TOP,
-                "OUT",
-                egui::FontId::proportional(9.0),
-                chain_color.gamma_multiply(0.6),
-            );
-        }
-    }
-
-    /// Draw cables behind modules (on the scroll area's layer). Hovered cables
-    /// are drawn in the foreground layer so they appear above modules with glow.
-    fn draw_connections(
-        &mut self,
-        ui: &Ui,
-        time: f64,
-        bg_layer: LayerId,
-        clip_rect: Rect,
-        module_rects: &[Rect],
-    ) {
-        let bg_painter = eframe::egui::Painter::new(ui.ctx().clone(), bg_layer, clip_rect);
-        let fg_painter = eframe::egui::Painter::new(
-            ui.ctx().clone(),
-            LayerId::new(Order::Background, egui::Id::new("cables_active_fg")),
-            clip_rect,
-        );
-
-        let pointer_pos = ui.input(|i| i.pointer.hover_pos());
-
-        // Track which cable the context menu targets so we highlight it
-        let menu_target = self
-            .bg_context_menu
-            .as_ref()
-            .and_then(|s| s.cable.as_ref())
-            .cloned();
-
-        // Compute spread offsets: group cables by destination module,
-        // then spread cables within each group so they don't overlap.
-        let mut dest_count: HashMap<ModuleId, usize> = HashMap::new();
-        for c in &self.connections {
-            if self.is_hidden_internal_connection(c) {
-                continue;
-            }
-            *dest_count.entry(c.to_module).or_default() += 1;
-        }
-        let mut dest_index: HashMap<ModuleId, usize> = HashMap::new();
-
-        // Pre-compute cable spreads and positions for nearest-cable detection
-        struct CableInfo {
-            index: usize,
-            spread: f32,
-            from_pos: Pos2,
-            to_pos: Pos2,
-            port_type: WidgetPortType,
-        }
-        let mut cable_infos: Vec<CableInfo> = Vec::new();
-
-        for (i, connection) in self.connections.iter().enumerate() {
-            if self.is_hidden_internal_connection(connection) {
-                continue;
-            }
-            let idx = dest_index.entry(connection.to_module).or_default();
-            let n = dest_count.get(&connection.to_module).copied().unwrap_or(1);
-            let spread = (*idx as f32 - (n as f32 - 1.0) / 2.0) * CABLE_SPREAD;
-            *dest_index.get_mut(&connection.to_module).unwrap_or(&mut 0) += 1;
-
-            let from_pos = self.resolve_connection_endpoint(
-                connection.from_module,
-                connection.from_port,
-                connection.to_module,
-                WidgetPortDirection::Output,
-            );
-            let to_pos = self.resolve_connection_endpoint(
-                connection.to_module,
-                connection.to_port,
-                connection.from_module,
-                WidgetPortDirection::Input,
-            );
-
-            if let (Some(from_pos), Some(to_pos)) = (from_pos, to_pos) {
-                cable_infos.push(CableInfo {
-                    index: i,
-                    spread,
-                    from_pos: from_pos.position,
-                    to_pos: to_pos.position,
-                    port_type: from_pos.port_type,
-                });
-            }
-        }
-
-        // Find the single nearest cable to the pointer (exclusive hover)
-        let nearest_cable_idx: Option<usize> = pointer_pos.and_then(|p| {
-            let over_module = module_rects.iter().any(|r| r.contains(p));
-
-            let mut best_idx: Option<usize> = None;
-            let mut best_dist = f32::MAX;
-
-            for info in &cable_infos {
-                let near_port = {
-                    let to_from = (p - info.from_pos).length();
-                    let to_to = (p - info.to_pos).length();
-                    to_from < 15.0 || to_to < 15.0
-                };
-
-                if !near_port && over_module {
-                    continue;
-                }
-
-                if point_near_cable(p, info.from_pos, info.to_pos, 20.0, info.spread) {
-                    let snap = closest_point_on_cable(p, info.from_pos, info.to_pos, info.spread);
-                    let dist = (p - snap).length();
-                    if dist < best_dist {
-                        best_dist = dist;
-                        best_idx = Some(info.index);
-                    }
-                }
-            }
-
-            best_idx
-        });
-
-        // Update hovered_cable state for right-click handling
-        self.hovered_cable = nearest_cable_idx.map(|i| self.connections[i]);
-
-        // Draw all cables
-        for info in &cable_infos {
-            let connection = &self.connections[info.index];
-            let color = cable_color(info.port_type, 180);
-
-            let is_nearest = nearest_cable_idx == Some(info.index);
-            let show_highlight = is_nearest || menu_target.as_ref() == Some(connection);
-
-            if show_highlight {
-                // Highlighted cable in foreground (above modules)
-                draw_cable_highlighted(&fg_painter, info.from_pos, info.to_pos, color, info.spread);
-            } else {
-                // Normal cable behind modules
-                draw_cable(&bg_painter, info.from_pos, info.to_pos, color, info.spread);
-            }
-
-            // Animated flow particles behind modules
-            draw_flow_particles(
-                &bg_painter,
-                info.from_pos,
-                info.to_pos,
-                color,
-                info.port_type,
-                time,
-                info.spread,
-            );
-        }
-    }
-
-    fn draw_group_frames(&self, ui: &Ui, layout: &GroupLayout, layer_id: LayerId, clip_rect: Rect) {
-        let painter = eframe::egui::Painter::new(ui.ctx().clone(), layer_id, clip_rect);
-        for group in self.groups.values() {
-            if group.collapsed {
-                continue;
-            }
-            let Some(rect) = layout.rects_screen.get(&group.id) else {
-                continue;
-            };
-            let base_color = self.group_color(group);
-            let stroke_width = if self.selected_group == Some(group.id) {
-                2.0
-            } else {
-                1.0
-            };
-            let stroke = egui::Stroke::new(stroke_width, base_color.gamma_multiply(0.6));
-            painter.rect(
-                *rect,
-                6.0,
-                Color32::TRANSPARENT,
-                stroke,
-                egui::StrokeKind::Inside,
-            );
-
-            // Header strip
-            let header_rect =
-                Rect::from_min_size(rect.min, Vec2::new(rect.width(), GROUP_HEADER_HEIGHT));
-            painter.rect_filled(header_rect, 6.0, base_color.gamma_multiply(0.15));
-            painter.text(
-                header_rect.min + Vec2::new(8.0, 4.0),
-                egui::Align2::LEFT_TOP,
-                &group.name,
-                egui::FontId::proportional(12.0),
-                base_color.gamma_multiply(0.9),
-            );
-
-            // Menu icon (⋯)
-            let menu_rect = group_menu_icon_rect(*rect);
-            painter.rect_stroke(
-                menu_rect,
-                3.0,
-                egui::Stroke::new(1.0, base_color.gamma_multiply(0.5)),
-                egui::StrokeKind::Inside,
-            );
-            painter.text(
-                menu_rect.center(),
-                egui::Align2::CENTER_CENTER,
-                ri::MORE_LINE,
-                egui::FontId::proportional(12.0),
-                base_color.gamma_multiply(0.9),
-            );
-
-            // Collapse icon
-            let icon_rect = group_toggle_icon_rect(*rect);
-            painter.rect_stroke(
-                icon_rect,
-                3.0,
-                egui::Stroke::new(1.0, base_color.gamma_multiply(0.5)),
-                egui::StrokeKind::Inside,
-            );
-            painter.text(
-                icon_rect.center(),
-                egui::Align2::CENTER_CENTER,
-                ri::SUBTRACT_LINE,
-                egui::FontId::proportional(12.0),
-                base_color.gamma_multiply(0.9),
-            );
-        }
-    }
-
-    #[allow(clippy::too_many_arguments)]
-    fn draw_collapsed_groups(
-        &mut self,
-        ui: &Ui,
-        layout: &GroupLayout,
-        instrument_id: u64,
-        visible_rect: Rect,
-        area_origin: Vec2,
-        scroll_offset: Vec2,
-        result: &mut PatchEditorResult,
-        new_positions: &mut HashMap<GroupPortKey, PortPosition>,
-    ) {
-        let group_ids: Vec<GroupId> = self.groups.keys().copied().collect();
-        for group_id in group_ids {
-            let Some(group) = self.groups.get(&group_id).cloned() else {
-                continue;
-            };
-            if !group.collapsed {
-                continue;
-            }
-
-            let rect_screen = layout
-                .rects_screen
-                .get(&group_id)
-                .copied()
-                .unwrap_or_else(|| {
-                    let size = collapsed_group_size(&group);
-                    Rect::from_min_size(group.position + area_origin - scroll_offset, size)
-                });
-
-            let area_id = Id::new((instrument_id, "group_box", group_id.0));
-            // Same input-routing guard as module Areas: clipping the
-            // interact_rect to visible_rect via constrain_to (with
-            // constrain(false) so positions aren't clamped) keeps the group
-            // box from stealing hover/clicks from surrounding panels when
-            // it's drawn outside the patch editor.
-            let area = egui::Area::new(area_id)
-                .order(Order::Background)
-                .movable(true)
-                .constrain_to(visible_rect)
-                .constrain(false)
-                .current_pos(rect_screen.min);
-
-            let mut toggle_clicked = false;
-            let mut delete_clicked = false;
-            let mut menu_clicked = false;
-            let mut menu_pos = Pos2::ZERO;
-            let response = area.show(ui.ctx(), |ui| {
-                let base_color = self.group_color(&group);
-                let stroke_width = if self.selected_group == Some(group_id) {
-                    2.0
-                } else {
-                    1.0
-                };
-                let frame = egui::Frame::window(&ui.global_style())
-                    .fill(ui.global_style().visuals.window_fill())
-                    .stroke(egui::Stroke::new(
-                        stroke_width,
-                        base_color.gamma_multiply(0.6),
-                    ))
-                    .corner_radius(6.0);
-                frame.show(ui, |ui| {
-                    let button_min_size = Vec2::new(20.0, 20.0);
-                    let t = theme();
-                    draw_module_header(
-                        ui,
-                        base_color.gamma_multiply(0.9),
-                        &group.name,
-                        Some(format!("Group ID: {}", group_id.0)),
-                        |ui| {
-                            ui.separator();
-                            let menu_resp = ui
-                                .add(
-                                    egui::Button::new(
-                                        egui::RichText::new(ri::MORE_LINE)
-                                            .color(t.colors.text_dim)
-                                            .size(12.0),
-                                    )
-                                    .frame(false)
-                                    .min_size(button_min_size),
-                                )
-                                .on_hover_text("Group menu");
-                            if menu_resp.clicked() {
-                                menu_clicked = true;
-                                menu_pos = menu_resp.rect.left_bottom();
-                            }
-
-                            if ui
-                                .add(
-                                    egui::Button::new(
-                                        egui::RichText::new(ri::ADD_LINE)
-                                            .color(t.colors.text_dim)
-                                            .size(12.0),
-                                    )
-                                    .frame(false)
-                                    .min_size(button_min_size),
-                                )
-                                .on_hover_text("Expand group")
-                                .clicked()
-                            {
-                                toggle_clicked = true;
-                            }
-
-                            if ui
-                                .add(
-                                    egui::Button::new(
-                                        egui::RichText::new(ri::CLOSE_LINE)
-                                            .color(t.colors.text_dim)
-                                            .size(12.0),
-                                    )
-                                    .frame(false)
-                                    .min_size(button_min_size),
-                                )
-                                .on_hover_text("Delete group")
-                                .clicked()
-                            {
-                                delete_clicked = true;
-                            }
-                        },
-                    );
-
-                    ui.horizontal(|ui| {
-                        // Left port column (IN)
-                        ui.vertical(|ui| {
-                            ui.set_width(t.sizes.port_column_width);
-                            self.draw_group_port_column(
-                                ui,
-                                &group,
-                                WidgetPortDirection::Input,
-                                new_positions,
-                            );
-                        });
-
-                        // Content column
-                        ui.vertical(|ui| {
-                            ui.set_min_width(40.0);
-                            ui.label(
-                                egui::RichText::new(format!("{} modules", group.members.len()))
-                                    .size(10.0)
-                                    .color(t.colors.text_dim),
-                            );
-                            if group.exposed_inputs.is_empty() && group.exposed_outputs.is_empty() {
-                                ui.label(
-                                    egui::RichText::new("No exposed ports")
-                                        .size(9.0)
-                                        .color(t.colors.text_dim.gamma_multiply(0.7)),
-                                );
-                            }
-                        });
-
-                        // Right port column (OUT)
-                        ui.vertical(|ui| {
-                            ui.set_width(t.sizes.port_column_width);
-                            self.draw_group_port_column(
-                                ui,
-                                &group,
-                                WidgetPortDirection::Output,
-                                new_positions,
-                            );
-                        });
-                    });
-                });
-            });
-
-            if delete_clicked {
-                self.delete_group(group_id, result);
-                continue;
-            }
-
-            if !self.suppress_position_readback
-                && let Some(area_rect) = ui.memory(|mem| mem.area_rect(area_id))
-            {
-                let logical_pos = area_rect.min - area_origin + scroll_offset;
-                self.move_collapsed_group(group_id, snap_to_grid(logical_pos));
-            }
-
-            if toggle_clicked && let Some(group_mut) = self.groups.get_mut(&group_id) {
-                group_mut.collapsed = false;
-                continue;
-            }
-
-            if menu_clicked {
-                self.group_context_menu = Some(GroupContextMenuState { group_id, menu_pos });
-            }
-
-            if response.response.clicked() {
-                self.selected_group = Some(group_id);
-                self.selected_modules.clear();
-                self.selected_module = None;
-            }
-            if response.response.double_clicked()
-                && let Some(group_mut) = self.groups.get_mut(&group_id)
-            {
-                group_mut.collapsed = false;
-            }
-        }
-    }
-
-    fn handle_group_interactions(&mut self, ui: &Ui, layout: &GroupLayout, module_rects: &[Rect]) {
-        let pointer_pos = ui.input(|i| i.pointer.interact_pos());
-        let Some(pos) = pointer_pos else {
-            return;
-        };
-        let over_module = module_rects.iter().any(|r| r.contains(pos));
-        if over_module {
-            return;
-        }
-
-        let mut target_group: Option<GroupId> = None;
-        for (gid, rect) in &layout.rects_screen {
-            if rect.contains(pos)
-                && let Some(group) = self.groups.get(gid)
-                && !group.collapsed
-            {
-                target_group = Some(*gid);
-                break;
-            }
-        }
-
-        let Some(group_id) = target_group else {
-            return;
-        };
-
-        if let Some(rect) = layout.rects_screen.get(&group_id) {
-            let primary_clicked =
-                ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary));
-
-            // Menu icon (⋯) click
-            let menu_rect = group_menu_icon_rect(*rect);
-            if menu_rect.contains(pos) && primary_clicked {
-                self.group_context_menu = Some(GroupContextMenuState {
-                    group_id,
-                    menu_pos: Pos2::new(menu_rect.left(), menu_rect.bottom()),
-                });
-                return;
-            }
-
-            // Collapse icon click
-            let icon_rect = group_toggle_icon_rect(*rect);
-            if icon_rect.contains(pos) && primary_clicked {
-                if let Some(group) = self.groups.get_mut(&group_id) {
-                    group.collapsed = true;
-                    if let Some(rect_world) = layout.rects_world.get(&group_id) {
-                        group.position = rect_world.min;
-                    }
-                }
-                return;
-            }
-        }
-
-        if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary)) {
-            self.selected_group = Some(group_id);
-            self.selected_modules.clear();
-            self.selected_module = None;
-        }
-        if ui.input(|i| {
-            i.pointer
-                .button_double_clicked(egui::PointerButton::Primary)
-        }) && let Some(group) = self.groups.get_mut(&group_id)
-        {
-            group.collapsed = true;
-            if let Some(rect) = layout.rects_world.get(&group_id) {
-                group.position = rect.min;
-            }
-        }
-    }
-
-    /// Draw the background right-click context menu for adding modules.
-    fn draw_bg_context_menu(&mut self, response: &egui::Response, result: &mut PatchEditorResult) {
-        let menu_state = self.bg_context_menu;
-        let world_pos = menu_state.map(|s| s.world_pos).unwrap_or_default();
-        let menu_cable = menu_state.and_then(|s| s.cable);
-        let mut selected: Option<PaletteSelection> = None;
-        let mut cable_action_taken = false;
-
-        response.context_menu(|ui| {
-            let (s, c) = self.bg_context_menu_contents(ui, result, world_pos, menu_cable);
-            selected = s;
-            cable_action_taken = c;
-        });
-
-        if cable_action_taken {
-            self.bg_context_menu = None;
-            return;
-        }
-
-        if let Some(sel) = selected {
-            result.context_add = Some((sel, world_pos, menu_cable));
-            self.bg_context_menu = None;
-        }
-
-        // Clear stored state when context menu closes
-        if !response.context_menu_opened() {
-            self.bg_context_menu = None;
-        }
-    }
-
-    /// The shared body of the rack context menu (Clipboard, groups, Insert
-    /// Template, cable actions, and the Add-module submenus). Shown from both the
-    /// canvas background and a module's empty body. Returns the picked palette
-    /// selection (which the caller turns into `context_add` at `world_pos`) and
-    /// whether a cable action was taken.
-    #[allow(clippy::too_many_lines)]
-    fn bg_context_menu_contents(
-        &mut self,
-        ui: &mut egui::Ui,
-        result: &mut PatchEditorResult,
-        world_pos: Pos2,
-        menu_cable: Option<Connection>,
-    ) -> (Option<PaletteSelection>, bool) {
-        use egui_remixicon::icons as ri;
-        let mut selected: Option<PaletteSelection> = None;
-        let mut cable_action_taken = false;
-
-        {
-            // --- Clipboard --- (the backend owns the clipboard; copy/cut act on
-            // the current selection, paste is validated against clipboard state.)
-            let has_selection = !self.effective_selection().is_empty();
-            if ui
-                .add_enabled(
-                    has_selection,
-                    egui::Button::new((ri::FILE_COPY_LINE, "Copy")),
-                )
-                .clicked()
-            {
-                result.request_copy = true;
-                ui.close();
-            }
-            if ui
-                .add_enabled(
-                    has_selection,
-                    egui::Button::new((ri::SCISSORS_CUT_LINE, "Cut")),
-                )
-                .clicked()
-            {
-                result.request_cut = true;
-                ui.close();
-            }
-            if ui.button((ri::CLIPBOARD_LINE, "Paste")).clicked() {
-                result.request_paste = true;
-                ui.close();
-            }
-
-            ui.separator();
-
-            if !self.selected_modules.is_empty() {
-                if ui.button("Create group from selection").clicked() {
-                    self.create_group_from_selection();
-                    ui.close();
-                }
-                ui.separator();
-            }
-
-            if ui
-                .button((ri::FOLDER_ADD_LINE, "Insert Group Template"))
-                .clicked()
-            {
-                result.group_template_action = Some(GroupTemplateAction::OpenBrowser {
-                    drop_pos: world_pos,
-                });
-                ui.close();
-            }
-
-            ui.separator();
-
-            // Cable actions (shown when right-clicking on a hovered cable)
-            if let Some(connection) = menu_cable {
-                if ui.button("Delete cable").clicked() {
-                    self.connections.retain(|c| c != &connection);
-                    result.connections_to_remove.push(connection);
-                    self.calculate_connectivity();
-                    cable_action_taken = true;
-                    ui.close();
-                }
-
-                if ui.button("Insert Signal Monitor").clicked() {
-                    self.connections.retain(|c| c != &connection);
-                    result.connections_to_remove.push(connection);
-                    result.insert_signal_monitor_at.push(connection);
-                    self.calculate_connectivity();
-                    cable_action_taken = true;
-                    ui.close();
-                }
-
-                ui.separator();
-
-                ui.label(
-                    egui::RichText::new("Insert module...")
-                        .color(theme().colors.text_secondary)
-                        .size(11.0),
-                );
-            } else {
-                ui.label(
-                    egui::RichText::new("Add module")
-                        .color(theme().colors.text_secondary)
-                        .size(11.0),
-                );
-            }
-            ui.separator();
-
-            // Data-driven "Add module" menu: one submenu per category, populated
-            // from the module catalog (which is built from `ALL_MODULE_TYPES`).
-            // Adding a `ModuleType` variant and listing it in `ALL_MODULE_TYPES`
-            // makes it appear here automatically — there is no hand-maintained
-            // palette to drift out of sync with the enum. Every `ModuleCategory`
-            // is listed below, so no category can be silently dropped either.
-            const CATEGORY_ORDER: &[(ModuleCategory, &str)] = &[
-                (ModuleCategory::Oscillator, "Oscillator"),
-                (ModuleCategory::Filter, "Filter"),
-                (ModuleCategory::Envelope, "Envelope"),
-                (ModuleCategory::LFO, "LFO"),
-                (ModuleCategory::Amplifier, "Amplifier"),
-                (ModuleCategory::Mixer, "Mixer"),
-                (ModuleCategory::Effect, "Effect"),
-                (ModuleCategory::Sampler, "Sampler"),
-                (ModuleCategory::Utility, "Modulation / Utility"),
-                (ModuleCategory::Sequencer, "Generative"),
-                (ModuleCategory::PhysicalModeling, "Physical"),
-                (ModuleCategory::Visualizer, "Visualizer"),
-                (ModuleCategory::Output, "Output"),
-            ];
-            for &(category, title) in CATEGORY_ORDER {
-                // Skip a category with no modules rather than show an empty
-                // submenu. (The closure below only runs when the submenu opens,
-                // so presence must be checked up front.)
-                if !module_catalog().iter().any(|(_, cat, _)| *cat == category) {
-                    continue;
-                }
-                ui.menu_button(
-                    egui::RichText::new(format!("{} {title}", category_icon(category)))
-                        .color(category_color(category)),
-                    |ui| {
-                        for &(mt, cat, _) in module_catalog() {
-                            if cat == category {
-                                Self::bg_menu_item(ui, PaletteSelection::Module(mt), &mut selected);
-                            }
-                        }
-                    },
-                );
-            }
-        }
-
-        (selected, cable_action_taken)
-    }
-
     /// Helper for background context menu items — uses shared palette_label for icon + color.
     fn bg_menu_item(ui: &mut Ui, selection: PaletteSelection, out: &mut Option<PaletteSelection>) {
         let (label, color) = palette_label(selection);
         if ui.button(egui::RichText::new(label).color(color)).clicked() {
             *out = Some(selection);
             ui.close();
-        }
-    }
-
-    /// Draw the port right-click context menu for quick-adding connected modules.
-    #[allow(clippy::too_many_lines)]
-    fn draw_port_context_menu(&mut self, ui: &Ui, result: &mut PatchEditorResult) {
-        let Some(ref state) = self.port_context_menu else {
-            return;
-        };
-
-        let menu_id = egui::Id::new("port_context_menu");
-        let mut close_menu = false;
-
-        // Clone what we need before mutable borrow
-        let target_module = state.module_id;
-        let target_port = state.port_name;
-        let target_direction = state.direction;
-        let port_type = state.port_type;
-        let menu_pos = state.menu_pos;
-
-        // Position: new module to the left of input ports, right of output ports
-        let offset_x = match target_direction {
-            WidgetPortDirection::Input => -220.0,
-            WidgetPortDirection::Output => 220.0,
-        };
-        let new_module_pos = Pos2::new(menu_pos.x + offset_x, menu_pos.y - 50.0);
-
-        let mut open = true;
-        egui::Popup::new(
-            menu_id,
-            ui.ctx().clone(),
-            egui::PopupAnchor::Position(menu_pos),
-            ui.layer_id(),
-        )
-        .kind(egui::PopupKind::Menu)
-        .layout(egui::Layout::top_down_justified(egui::Align::Min))
-        .style(egui::containers::menu::menu_style)
-        .gap(0.0)
-        .open_bool(&mut open)
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .show(|ui| {
-            let header = match target_direction {
-                WidgetPortDirection::Input => "Add source",
-                WidgetPortDirection::Output => "Add target",
-            };
-            ui.label(
-                egui::RichText::new(header)
-                    .color(theme().colors.text_secondary)
-                    .size(11.0),
-            );
-            ui.separator();
-
-            // Group exposure controls (if the module belongs to a group)
-            if let Some(group_id) = self.group_of(target_module) {
-                let is_exposed =
-                    self.is_port_exposed(group_id, target_module, target_port, target_direction);
-                if is_exposed {
-                    let can_hide = !self.has_external_connection_for_port(
-                        group_id,
-                        target_module,
-                        target_port,
-                        target_direction,
-                    );
-                    let resp = ui.add_enabled(can_hide, egui::Button::new("Hide group port"));
-                    if resp.clicked() {
-                        let _ =
-                            self.hide_port(group_id, target_module, target_port, target_direction);
-                        close_menu = true;
-                    } else if !can_hide {
-                        resp.on_hover_text("Port has external connections");
-                    }
-                } else if ui.button("Expose as group port").clicked() {
-                    let _ =
-                        self.expose_port(group_id, target_module, target_port, target_direction);
-                    close_menu = true;
-                }
-                ui.separator();
-            }
-
-            // Build menu items based on port type + direction
-            match target_direction {
-                WidgetPortDirection::Input => {
-                    // Input port: show source modules
-                    match port_type {
-                        WidgetPortType::Audio => {
-                            self.port_menu_items(
-                                ui,
-                                result,
-                                &mut close_menu,
-                                target_module,
-                                target_port,
-                                target_direction,
-                                new_module_pos,
-                                &[
-                                    PaletteSelection::Category(ModuleCategory::Oscillator),
-                                    PaletteSelection::SubOscillator,
-                                    PaletteSelection::WavetableOsc,
-                                    PaletteSelection::MathOscillator,
-                                    PaletteSelection::AdditiveOsc,
-                                    PaletteSelection::GranularOsc,
-                                    PaletteSelection::FractalOsc,
-                                    PaletteSelection::Sampler,
-                                    PaletteSelection::AudioInput,
-                                    PaletteSelection::Noise,
-                                    PaletteSelection::RingMod,
-                                ],
-                            );
-                        }
-                        WidgetPortType::Control => {
-                            self.port_menu_items(
-                                ui,
-                                result,
-                                &mut close_menu,
-                                target_module,
-                                target_port,
-                                target_direction,
-                                new_module_pos,
-                                &[
-                                    PaletteSelection::Category(ModuleCategory::LFO),
-                                    PaletteSelection::Category(ModuleCategory::Envelope),
-                                    PaletteSelection::Mseg,
-                                    PaletteSelection::KineticModulator,
-                                    PaletteSelection::EnvelopeFollower,
-                                ],
-                            );
-                        }
-                        WidgetPortType::Gate => {
-                            self.port_menu_items(
-                                ui,
-                                result,
-                                &mut close_menu,
-                                target_module,
-                                target_port,
-                                target_direction,
-                                new_module_pos,
-                                &[
-                                    PaletteSelection::Euclidean,
-                                    PaletteSelection::TuringMachine,
-                                    PaletteSelection::RandomGates,
-                                ],
-                            );
-                        }
-                        WidgetPortType::Midi => {}
-                    }
-                }
-                WidgetPortDirection::Output => {
-                    // Output port: show destination modules
-                    match port_type {
-                        WidgetPortType::Audio => {
-                            self.port_menu_items(
-                                ui,
-                                result,
-                                &mut close_menu,
-                                target_module,
-                                target_port,
-                                target_direction,
-                                new_module_pos,
-                                &[
-                                    PaletteSelection::Category(ModuleCategory::Filter),
-                                    PaletteSelection::Category(ModuleCategory::Amplifier),
-                                    PaletteSelection::Category(ModuleCategory::Mixer),
-                                    PaletteSelection::SignalMonitor,
-                                ],
-                            );
-                            ui.separator();
-                            self.port_menu_items(
-                                ui,
-                                result,
-                                &mut close_menu,
-                                target_module,
-                                target_port,
-                                target_direction,
-                                new_module_pos,
-                                &[
-                                    PaletteSelection::Effect(EffectType::Delay),
-                                    PaletteSelection::Effect(EffectType::Reverb),
-                                    PaletteSelection::Effect(EffectType::Distortion),
-                                    PaletteSelection::Effect(EffectType::Chorus),
-                                    PaletteSelection::Effect(EffectType::Flanger),
-                                    PaletteSelection::Effect(EffectType::Phaser),
-                                    PaletteSelection::Effect(EffectType::Compressor),
-                                    PaletteSelection::Effect(EffectType::Eq),
-                                    PaletteSelection::Effect(EffectType::Waveshaper),
-                                ],
-                            );
-                        }
-                        WidgetPortType::Control => {
-                            self.port_menu_items(
-                                ui,
-                                result,
-                                &mut close_menu,
-                                target_module,
-                                target_port,
-                                target_direction,
-                                new_module_pos,
-                                &[
-                                    PaletteSelection::Category(ModuleCategory::Amplifier),
-                                    PaletteSelection::Category(ModuleCategory::Filter),
-                                    PaletteSelection::Category(ModuleCategory::Oscillator),
-                                ],
-                            );
-                        }
-                        WidgetPortType::Gate => {
-                            self.port_menu_items(
-                                ui,
-                                result,
-                                &mut close_menu,
-                                target_module,
-                                target_port,
-                                target_direction,
-                                new_module_pos,
-                                &[
-                                    PaletteSelection::Category(ModuleCategory::Envelope),
-                                    PaletteSelection::Category(ModuleCategory::Amplifier),
-                                ],
-                            );
-                        }
-                        WidgetPortType::Midi => {}
-                    }
-                }
-            }
-        });
-
-        if close_menu || !open {
-            self.port_context_menu = None;
-        }
-    }
-
-    fn draw_group_context_menu(&mut self, ui: &Ui, result: &mut PatchEditorResult) {
-        let Some(state) = self.group_context_menu.clone() else {
-            return;
-        };
-        let Some(group) = self.groups.get(&state.group_id).cloned() else {
-            self.group_context_menu = None;
-            return;
-        };
-
-        let menu_id = egui::Id::new("group_context_menu");
-        let mut open = true;
-        let mut close_menu = false;
-        let mut commit_name: Option<String> = None;
-        let mut color_update: Option<Option<HexColor>> = None;
-        let mut do_save_template = false;
-        let mut do_ungroup = false;
-        let mut do_delete = false;
-
-        let mut name_buf = self
-            .group_name_edit
-            .take()
-            .and_then(|(gid, name)| {
-                if gid == state.group_id {
-                    Some(name)
-                } else {
-                    None
-                }
-            })
-            .unwrap_or_else(|| group.name.clone());
-
-        egui::Popup::new(
-            menu_id,
-            ui.ctx().clone(),
-            egui::PopupAnchor::Position(state.menu_pos),
-            ui.layer_id(),
-        )
-        .kind(egui::PopupKind::Menu)
-        .layout(egui::Layout::top_down_justified(egui::Align::Min))
-        .style(egui::containers::menu::menu_style)
-        .gap(0.0)
-        .open_bool(&mut open)
-        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-        .show(|ui| {
-            ui.label(
-                egui::RichText::new(&group.name)
-                    .color(theme().colors.text_secondary)
-                    .size(11.0),
-            );
-            ui.separator();
-
-            ui.horizontal(|ui| {
-                ui.label("Name");
-                let resp = ui.text_edit_singleline(&mut name_buf);
-                if (resp.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)))
-                    && !name_buf.trim().is_empty()
-                {
-                    commit_name = Some(name_buf.trim().to_string());
-                }
-            });
-
-            ui.horizontal(|ui| {
-                ui.label("Color");
-                let mut color = self.group_color(&group);
-                let changed = egui::color_picker::color_edit_button_srgba(
-                    ui,
-                    &mut color,
-                    egui::color_picker::Alpha::BlendOrAdditive,
-                )
-                .changed();
-                if changed {
-                    color_update = Some(Some(color32_to_hex(color)));
-                }
-                if ui.button("Clear").clicked() {
-                    color_update = Some(None);
-                }
-            });
-
-            ui.separator();
-
-            if ui.button("Save group as template").clicked() {
-                do_save_template = true;
-                close_menu = true;
-            }
-
-            if ui.button("Ungroup").clicked() {
-                do_ungroup = true;
-                close_menu = true;
-            }
-
-            if ui.button("Delete group").clicked() {
-                do_delete = true;
-                close_menu = true;
-            }
-        });
-
-        if let Some(new_name) = commit_name
-            && let Some(g) = self.groups.get_mut(&state.group_id)
-        {
-            g.name = new_name;
-        }
-
-        if let Some(color_opt) = color_update
-            && let Some(g) = self.groups.get_mut(&state.group_id)
-        {
-            g.color = color_opt;
-        }
-
-        if do_save_template {
-            result.group_template_action = Some(GroupTemplateAction::SaveGroup {
-                group_id: state.group_id,
-            });
-        }
-
-        if do_ungroup {
-            self.ungroup(state.group_id);
-        }
-
-        if do_delete {
-            self.delete_group(state.group_id, result);
-        }
-
-        if !close_menu && open {
-            self.group_name_edit = Some((state.group_id, name_buf));
-        } else {
-            self.group_name_edit = None;
-        }
-
-        if close_menu || !open {
-            self.group_context_menu = None;
         }
     }
 
@@ -4881,127 +2567,6 @@ impl PatchEditor {
                 });
                 *close_menu = true;
             }
-        }
-    }
-
-    fn handle_port_interactions(&mut self, ui: &mut Ui, result: &mut PatchEditorResult) {
-        let pointer_pos = ui.input(|i| i.pointer.interact_pos());
-
-        // Check for port clicks
-        for ((module_id, port_name), port_pos) in &self.port_positions {
-            let port_rect = Rect::from_center_size(port_pos.position, Vec2::splat(20.0));
-
-            if let Some(pos) = pointer_pos
-                && port_rect.contains(pos)
-            {
-                // Check for click
-                if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary)) {
-                    if let Some(ref pending) = self.pending_connection {
-                        // Complete connection
-                        if self.can_connect(pending, port_pos) {
-                            let connection =
-                                if pending.from_direction == WidgetPortDirection::Output {
-                                    Connection::new(
-                                        pending.from_module,
-                                        pending.from_port,
-                                        *module_id,
-                                        *port_name,
-                                    )
-                                } else {
-                                    Connection::new(
-                                        *module_id,
-                                        *port_name,
-                                        pending.from_module,
-                                        pending.from_port,
-                                    )
-                                };
-                            result.connections_to_add.push(connection);
-                        }
-                        self.pending_connection = None;
-                    } else {
-                        // Start new connection
-                        self.pending_connection = Some(PendingConnection {
-                            from_module: *module_id,
-                            from_port: *port_name,
-                            from_position: port_pos.position,
-                            from_type: port_pos.port_type,
-                            from_direction: port_pos.direction,
-                            current_pos: pos,
-                        });
-                    }
-                }
-
-                // Right-click opens port context menu
-                if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary)) {
-                    self.port_context_menu = Some(PortContextMenuState {
-                        module_id: *module_id,
-                        port_name: *port_name,
-                        port_type: port_pos.port_type,
-                        direction: port_pos.direction,
-                        menu_pos: pos,
-                    });
-                }
-            }
-        }
-
-        // Check for group port clicks
-        for port_pos in self.group_port_positions.values() {
-            let port_rect = Rect::from_center_size(port_pos.position, Vec2::splat(20.0));
-
-            if let Some(pos) = pointer_pos
-                && port_rect.contains(pos)
-            {
-                if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary)) {
-                    if let Some(ref pending) = self.pending_connection {
-                        if self.can_connect(pending, port_pos) {
-                            let connection =
-                                if pending.from_direction == WidgetPortDirection::Output {
-                                    Connection::new(
-                                        pending.from_module,
-                                        pending.from_port,
-                                        port_pos.module_id,
-                                        port_pos.port_name,
-                                    )
-                                } else {
-                                    Connection::new(
-                                        port_pos.module_id,
-                                        port_pos.port_name,
-                                        pending.from_module,
-                                        pending.from_port,
-                                    )
-                                };
-                            result.connections_to_add.push(connection);
-                        }
-                        self.pending_connection = None;
-                    } else {
-                        self.pending_connection = Some(PendingConnection {
-                            from_module: port_pos.module_id,
-                            from_port: port_pos.port_name,
-                            from_position: port_pos.position,
-                            from_type: port_pos.port_type,
-                            from_direction: port_pos.direction,
-                            current_pos: pos,
-                        });
-                    }
-                }
-
-                if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary)) {
-                    self.port_context_menu = Some(PortContextMenuState {
-                        module_id: port_pos.module_id,
-                        port_name: port_pos.port_name,
-                        port_type: port_pos.port_type,
-                        direction: port_pos.direction,
-                        menu_pos: pos,
-                    });
-                }
-            }
-        }
-
-        // Update pending connection position
-        if let Some(ref mut pending) = self.pending_connection
-            && let Some(pos) = pointer_pos
-        {
-            pending.current_pos = pos;
         }
     }
 
@@ -5069,42 +2634,6 @@ impl PatchEditor {
         false
     }
 
-    /// Recompute the set of modules the in-progress drag must not connect to
-    /// because the edge would close a cycle. One graph traversal per frame
-    /// (reachability from the drag's source) replaces the previous per-port,
-    /// per-frame `would_create_cycle` DFS. Empty when no drag is active.
-    ///
-    /// Dragging from an *output* of `S` would add `S → m`, so any `m` that can
-    /// already reach `S` (an ancestor of `S`) is blocked — walk edges backward.
-    /// Dragging from an *input* of `S` would add `m → S`, so any `m` reachable
-    /// from `S` (a descendant) is blocked — walk edges forward. `S` itself is
-    /// always blocked (self-loop).
-    fn recompute_drag_cycle_blocked(&mut self) {
-        self.drag_cycle_blocked.clear();
-        let Some(pending) = self.pending_connection.as_ref() else {
-            return;
-        };
-        let source = pending.from_module;
-        let walk_forward = pending.from_direction == WidgetPortDirection::Input;
-
-        self.drag_cycle_blocked.insert(source);
-        let mut stack = vec![source];
-        while let Some(current) = stack.pop() {
-            for conn in &self.connections {
-                let neighbor = if walk_forward {
-                    (conn.from_module == current).then_some(conn.to_module)
-                } else {
-                    (conn.to_module == current).then_some(conn.from_module)
-                };
-                if let Some(next) = neighbor
-                    && self.drag_cycle_blocked.insert(next)
-                {
-                    stack.push(next);
-                }
-            }
-        }
-    }
-
     /// Get selected module ID.
     #[allow(dead_code)]
     pub fn selected_module(&self) -> Option<ModuleId> {
@@ -5162,12 +2691,6 @@ impl PatchEditor {
             .filter(|c| ids.contains(&c.from_module) && ids.contains(&c.to_module))
             .map(ConnectionState::from)
             .collect()
-    }
-
-    /// Select a set of modules (replaces current multi-selection).
-    pub fn select_modules(&mut self, ids: &HashSet<ModuleId>) {
-        self.selected_modules = ids.clone();
-        self.selected_module = ids.iter().next().copied();
     }
 
     /// Treat `order` as the current baseline so the next
@@ -5778,348 +3301,6 @@ fn draw_visualizer_display(
     }
 }
 
-/// Draw only the parameters section of a module panel.
-#[allow(clippy::too_many_arguments)]
-fn draw_module_panel_params(
-    ui: &mut Ui,
-    state: &mut ModulePanelState,
-    descriptor: &ModuleDescriptor,
-    accent_color: Color32,
-    vis_buffer: Option<&synth_engine::visualizers::VisualizationBuffer>,
-    analysis: &PatchAnalysis,
-    mod_catalog: &ModAddrCatalog,
-    script_graph: Option<&ScriptDepGraph>,
-    sample_list: &[(u64, String)],
-    audio_input_snapshot: &AudioInputSnapshot,
-) -> PanelParamsResult {
-    use super::widgets::EnvelopeEditor;
-    use synth_core::WidgetHint;
-
-    let mut param_changes = Vec::new();
-    let mut audio_input_action = None;
-    // Per-knob Mod Matrix marker (S1.5a/b): a parameter is marked when a routing
-    // targets this module's matching `type_id` (destination) or reads it as a
-    // source param — the three-state direction comes from `mod_role_for_param`.
-    let module_id = state.id;
-    let mod_role =
-        |p: &synth_core::ParameterDescriptor| analysis.mod_role_for_param(module_id, &p.type_id);
-
-    // For Visualizer modules, draw visualization FIRST (before parameters)
-    if descriptor.category == ModuleCategory::Visualizer {
-        draw_visualizer_display(ui, state, descriptor, vis_buffer, &mut param_changes);
-        // Skip regular parameter drawing for visualizers - the display is the main UI
-        return PanelParamsResult {
-            param_changes,
-            audio_input_action: None,
-            mod_script_actions: Vec::new(),
-        };
-    }
-
-    // Special handling for Envelope modules - use interactive EnvelopeEditor
-    if descriptor.category == ModuleCategory::Envelope {
-        // Get current ADSR values
-        let mut attack = state.param_values.get("Attack").copied().unwrap_or(0.01);
-        let mut decay = state.param_values.get("Decay").copied().unwrap_or(0.1);
-        let mut sustain = state.param_values.get("Sustain").copied().unwrap_or(0.7);
-        let mut release = state.param_values.get("Release").copied().unwrap_or(0.3);
-
-        // Get envelope playback position (lock-free)
-        let envelope_pos = state.envelope_position.as_ref().map(|buf| buf.get());
-
-        // Draw the interactive envelope editor
-        ui.add_space(theme().spacing.xs);
-        let width = ui.available_width().clamp(150.0, 250.0);
-        let height = (width * 0.5).clamp(80.0, 120.0);
-
-        let mut editor = EnvelopeEditor::new(&mut attack, &mut decay, &mut sustain, &mut release)
-            .accent_color(accent_color)
-            .size(width, height)
-            .max_time(10.0);
-
-        // Add playback position if available
-        if let Some((stage, level)) = envelope_pos {
-            editor = editor.playback_position(stage, level);
-        }
-
-        if let Some(changes) = editor.show(ui) {
-            // Find parameter descriptors and push changes
-            for param in &descriptor.parameters {
-                if param.name == "Attack" && changes.attack.is_some() {
-                    state.param_values.insert("Attack".to_string(), attack);
-                    param_changes.push(param.id.with_f32(attack));
-                }
-                if param.name == "Decay" && changes.decay.is_some() {
-                    state.param_values.insert("Decay".to_string(), decay);
-                    param_changes.push(param.id.with_f32(decay));
-                }
-                if param.name == "Sustain" && changes.sustain.is_some() {
-                    state.param_values.insert("Sustain".to_string(), sustain);
-                    param_changes.push(param.id.with_f32(sustain));
-                }
-                if param.name == "Release" && changes.release.is_some() {
-                    state.param_values.insert("Release".to_string(), release);
-                    param_changes.push(param.id.with_f32(release));
-                }
-            }
-        }
-
-        ui.add_space(theme().spacing.xs);
-
-        // Only show knob parameters for Envelope (Vel Sens, curves etc)
-        let knob_params: Vec<_> = descriptor
-            .parameters
-            .iter()
-            .filter(|p| matches!(p.widget_hint, WidgetHint::Knob))
-            .collect();
-
-        if !knob_params.is_empty() {
-            let changes = super::widgets::draw_knobs(
-                ui,
-                &knob_params,
-                accent_color,
-                |p| {
-                    state
-                        .param_values
-                        .get(&p.name)
-                        .copied()
-                        .unwrap_or(p.range.default)
-                },
-                mod_role,
-            );
-            for (param, value) in changes {
-                state.param_values.insert(param.name.clone(), value);
-                param_changes.push(param.id.with_f32(value));
-            }
-        }
-
-        return PanelParamsResult {
-            param_changes,
-            audio_input_action: None,
-            mod_script_actions: Vec::new(),
-        };
-    }
-
-    // Special handling for Audio Input — monitoring and recording controls
-    if descriptor.type_id.0 == "audio_input" {
-        let t = theme();
-        let input_state = audio_input_snapshot.state;
-        let is_monitoring = input_state != InputState::Idle;
-        let is_recording = input_state == InputState::Recording;
-
-        // Monitor toggle button
-        ui.add_space(t.spacing.xs);
-        let monitor_icon = if is_monitoring {
-            ri::MIC_FILL
-        } else {
-            ri::MIC_LINE
-        };
-        let monitor_color = if is_monitoring {
-            t.colors.meter_green
-        } else {
-            t.colors.text_dim
-        };
-        if ui
-            .button(
-                egui::RichText::new(format!("{monitor_icon} Monitor"))
-                    .color(monitor_color)
-                    .size(11.0),
-            )
-            .clicked()
-        {
-            audio_input_action = Some(if is_monitoring {
-                AudioInputAction::StopMonitoring
-            } else {
-                AudioInputAction::StartMonitoring
-            });
-        }
-
-        // Record button (only enabled when monitoring)
-        let rec_icon = if is_recording {
-            ri::STOP_FILL
-        } else {
-            ri::RECORD_CIRCLE_FILL
-        };
-        let rec_color = if is_recording {
-            t.colors.meter_red
-        } else if is_monitoring {
-            t.colors.text_primary
-        } else {
-            t.colors.text_dim
-        };
-        if ui
-            .add_enabled(
-                is_monitoring,
-                egui::Button::new(
-                    egui::RichText::new(format!("{rec_icon} Rec"))
-                        .color(rec_color)
-                        .size(11.0),
-                ),
-            )
-            .clicked()
-        {
-            audio_input_action = Some(if is_recording {
-                AudioInputAction::StopRecording
-            } else {
-                AudioInputAction::StartRecording
-            });
-        }
-
-        // Peak level meter
-        if is_monitoring {
-            let peak = audio_input_snapshot.peak_level;
-            let bar_width = ui.available_width().min(120.0);
-            let (rect, _) = ui.allocate_exact_size(Vec2::new(bar_width, 6.0), egui::Sense::hover());
-            let painter = ui.painter();
-            painter.rect_filled(rect, 2.0, t.colors.bg_dark);
-            let fill_w = rect.width() * peak.clamp(0.0, 1.0);
-            let fill_color = if peak > 0.9 {
-                t.colors.meter_red
-            } else if peak > 0.6 {
-                t.colors.meter_yellow
-            } else {
-                t.colors.meter_green
-            };
-            painter.rect_filled(
-                Rect::from_min_size(rect.min, Vec2::new(fill_w, rect.height())),
-                2.0,
-                fill_color,
-            );
-            ui.request_repaint();
-        }
-
-        // Recording timer
-        if is_recording {
-            let secs = audio_input_snapshot.recorded_seconds;
-            let mins = (secs / 60.0) as u32;
-            let remaining = secs - f64::from(mins) * 60.0;
-            ui.label(
-                egui::RichText::new(format!("{mins}:{remaining:04.1}"))
-                    .color(t.colors.meter_red)
-                    .monospace()
-                    .size(10.0),
-            );
-        }
-
-        ui.add_space(t.spacing.xs);
-    }
-
-    // Special handling for Sampler — sample selector dropdown
-    if descriptor.type_id.0 == "sampler" && !sample_list.is_empty() {
-        let current_id = state.param_values.get("Sample").copied().unwrap_or(0.0) as u64;
-        let current_name = sample_list
-            .iter()
-            .find(|(id, _)| *id == current_id)
-            .map(|(_, name)| name.as_str())
-            .unwrap_or("(none)");
-
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Sample:").color(accent_color).small());
-            egui::ComboBox::from_id_salt(format!("sampler_sample_select_{:?}", state.id))
-                .selected_text(current_name)
-                .width(120.0)
-                .show_ui(ui, |ui| {
-                    for &(id, ref name) in sample_list {
-                        if ui.selectable_label(id == current_id, name).clicked() {
-                            state.param_values.insert("Sample".to_string(), id as f32);
-                            param_changes.push(synth_core::Param::sample_select(id));
-                        }
-                    }
-                });
-        });
-        ui.add_space(theme().spacing.xs);
-    }
-
-    // Special handling for Mod Matrix — custom grid rendering
-    if descriptor.type_id.0 == "mod_matrix" {
-        return draw_mod_matrix_grid(
-            ui,
-            state,
-            descriptor,
-            accent_color,
-            mod_catalog,
-            script_graph,
-        );
-    }
-
-    // Special handling for the Script module — a list of YAMS slots (one per
-    // output port), each opening the shared expression editor.
-    if descriptor.type_id.0 == "script" {
-        return draw_script_module_grid(ui, state, accent_color, script_graph, mod_catalog);
-    }
-
-    // Signal Monitor — draw oscilloscope display above parameters
-    if descriptor.type_id.0 == "signal_monitor" {
-        let gain = state.param_values.get("Gain").copied().unwrap_or(1.0);
-        let trigger_level = state.param_values.get("Trig").copied().unwrap_or(0.5);
-
-        let samples = if let Some(buffer) = vis_buffer {
-            buffer.read_sweep().unwrap_or_default()
-        } else {
-            (0..256)
-                .map(|i| {
-                    let t = i as f32 / 256.0;
-                    (t * std::f32::consts::TAU * 3.0).sin() * 0.5
-                })
-                .collect()
-        };
-        let threshold = trigger_level * 2.0 - 1.0;
-        let samples = trim_sweep_to_complete_cycles(&samples, threshold);
-
-        let width = ui.available_width().clamp(120.0, 300.0);
-        let height = (width * 0.5).clamp(60.0, 120.0);
-
-        super::widgets::draw_oscilloscope_with_trigger(
-            ui,
-            samples,
-            width,
-            height,
-            gain,
-            theme().colors.accent_cyan,
-            Some(trigger_level),
-        );
-
-        if vis_buffer.is_none() {
-            ui.label(
-                egui::RichText::new("No signal")
-                    .small()
-                    .color(theme().colors.text_dim),
-            );
-        }
-    }
-
-    // Generic descriptor-driven parameter widgets, shared with the mixer's
-    // return-bus inserts (see `widgets::draw_parameter_grid`). The patch editor
-    // caches values per module and hides mod-matrix targets that aren't wired
-    // up; those two concerns are the getter and choice filter, and the shared
-    // renderer draws the rest.
-    let changes = super::widgets::draw_parameter_grid(
-        ui,
-        descriptor,
-        accent_color,
-        |p| {
-            state
-                .param_values
-                .get(&p.name)
-                .copied()
-                .unwrap_or(p.range.default)
-        },
-        // The Mod Matrix has its own picker path (early return above); every other
-        // module's choices are always shown.
-        |_p, _choice| true,
-        mod_role,
-    );
-    for (param, value) in changes {
-        state.param_values.insert(param.name.clone(), value);
-        param_changes.push(param.id.with_f32(value));
-    }
-
-    PanelParamsResult {
-        param_changes,
-        audio_input_action,
-        mod_script_actions: Vec::new(),
-    }
-}
-
 /// Draw mod matrix as a grid with size selector.
 #[allow(clippy::too_many_lines)]
 fn draw_mod_matrix_grid(
@@ -6690,357 +3871,6 @@ fn draw_select_input_menu(ui: &mut Ui, catalog: &ModAddrCatalog) -> Option<Picke
             });
     });
     picked
-}
-
-/// Draw the shared per-slot YAMS expression-editor popup, reused by the Mod
-/// Matrix and the Script module. Compiles live for the status line (off the
-/// audio thread) and pushes `(slot, Some(src))` / `(slot, None)` actions the
-/// caller routes to `session.set_mod_script` / `clear_mod_script`. No-op when no
-/// slot's editor is open. The window is keyed by `state.id`, so each module's
-/// editor is independent.
-fn draw_slot_expression_editor(
-    ui: &Ui,
-    state: &mut ModulePanelState,
-    script_graph: Option<&ScriptDepGraph>,
-    catalog: &ModAddrCatalog,
-    mod_script_actions: &mut Vec<(u8, Option<String>)>,
-) {
-    let Some(mut editor) = state.script_editor.take() else {
-        return;
-    };
-    let module_id = state.id;
-    let ctx = ui.ctx().clone();
-    let mut keep_open = true;
-    let mut closed_by_action = false;
-    egui::Window::new(format!("Slot {} - Expression", editor.slot + 1))
-        .id(egui::Id::new(("mm_expr_editor", state.id, editor.slot)))
-        .collapsible(false)
-        .resizable(true)
-        .default_width(520.0)
-        .min_width(320.0)
-        .open(&mut keep_open)
-        .show(&ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new(
-                        "YAMS expression - assign `out`, e.g. `out = lfo-1.out * velocity`",
-                    )
-                    .size(theme().fonts.size_small)
-                    .color(theme().colors.text_secondary),
-                );
-                // Help toggle: opens the YAMS reference panel beside the editor.
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let help = ui
-                        .selectable_label(
-                            editor.show_help,
-                            egui::RichText::new(format!("{}  Help", ri::QUESTION_LINE))
-                                .size(theme().fonts.size_small),
-                        )
-                        .on_hover_text("YAMS reference: how it runs, sources, functions");
-                    if help.clicked() {
-                        editor.show_help = !editor.show_help;
-                    }
-                });
-            });
-            // Fixed ~16-row editor: sizing it from `available_height` would feed
-            // back into egui's auto-growing window (which never shrinks), so the
-            // window crept taller whenever the warning line toggled. A constant
-            // height breaks that loop; `add_sized` clamps it so long scripts scroll
-            // inside the editor instead of growing the window. The stable id lets
-            // the "Select input" picker move the caret, read back below.
-            const EDITOR_ROWS: usize = 16;
-            let row_h = ui.text_style_height(&egui::TextStyle::Monospace);
-            let te_id = egui::Id::new(("mm_expr_text", module_id, editor.slot));
-            ui.add_sized(
-                egui::vec2(ui.available_width(), EDITOR_ROWS as f32 * row_h),
-                egui::TextEdit::multiline(&mut editor.draft)
-                    .id(te_id)
-                    .code_editor()
-                    .desired_rows(EDITOR_ROWS),
-            );
-            // Read the selection from the text edit's stored state: its live
-            // `cursor_range` is only populated while focused, but opening the
-            // "Select input" menu moves focus to the popup — so without this the
-            // picker would append at the end instead of at the user's caret. A
-            // non-empty range is replaced (like typing over a selection).
-            let selection = egui::text_edit::TextEditState::load(ui.ctx(), te_id)
-                .and_then(|st| st.cursor.char_range())
-                .map(|r| {
-                    let (a, b) = (r.primary.index, r.secondary.index);
-                    (a.min(b), a.max(b))
-                });
-
-            // Live compile → status line (mirrors `session.set_mod_script`). The
-            // same compile feeds the feedback-loop check below, so the draft is
-            // compiled once per frame, not twice.
-            let trimmed = editor.draft.trim();
-            let (status, draft_refs): (Result<(), String>, HashSet<(ModuleId, u8)>) = if trimmed
-                .is_empty()
-            {
-                (
-                    Err("empty - Apply will clear the slot".to_string()),
-                    HashSet::new(),
-                )
-            } else {
-                let (program, diags) =
-                    synth_script::compile(&editor.draft, &synth_script::CompileOptions::default());
-                match program {
-                    Some(p) => {
-                        let refs = script_refs_from_inputs(&p.into_bound(String::new()).inputs);
-                        (Ok(()), refs)
-                    }
-                    None => {
-                        let msg = diags
-                            .iter()
-                            .filter(|d| d.is_error())
-                            .map(|d| d.message.clone())
-                            .collect::<Vec<_>>()
-                            .join("; ");
-                        (
-                            Err(if msg.is_empty() {
-                                "compile error".to_string()
-                            } else {
-                                msg
-                            }),
-                            HashSet::new(),
-                        )
-                    }
-                }
-            };
-            match &status {
-                Ok(()) => {
-                    ui.label(
-                        egui::RichText::new(format!("{}  compiled", ri::CHECKBOX_CIRCLE_LINE))
-                            .size(theme().fonts.size_small)
-                            .color(theme().colors.accent_green),
-                    );
-                }
-                Err(e) => {
-                    ui.label(
-                        egui::RichText::new(format!("{}  {e}", ri::ERROR_WARNING_LINE))
-                            .size(theme().fonts.size_small)
-                            .color(theme().colors.accent_orange),
-                    );
-                }
-            }
-
-            // Feedback-loop notice (§3.5): a script reading its own or a
-            // downstream script's output forms a one-block-delayed loop the cable
-            // cycle-detection can't see. Purely informational — delayed feedback
-            // (e.g. a leaky integrator) is sometimes intentional, so we warn
-            // rather than block. Only Script-module slots can close such a loop.
-            if let Some(warning) =
-                script_graph.and_then(|g| g.cycle_warning(module_id, editor.slot, &draft_refs))
-            {
-                ui.label(
-                    egui::RichText::new(format!("{}  {warning}", ri::ALERT_LINE))
-                        .size(theme().fonts.size_small)
-                        .color(theme().colors.accent_yellow),
-                );
-            }
-
-            ui.horizontal(|ui| {
-                // "Select input" inserts a source reference at the caret: a bare
-                // identifier for a macro/context var, or a `src <var> = <addr>`
-                // binding + variable for a module output port.
-                if let Some(pick) = draw_select_input_menu(ui, catalog) {
-                    let new_caret = match pick {
-                        PickedInput::Bare(name) => {
-                            insert_at_cursor(&mut editor.draft, selection, &name)
-                        }
-                        PickedInput::ModuleSource(addr) => {
-                            insert_module_source(&mut editor.draft, selection, &addr)
-                        }
-                    };
-                    set_text_caret(&ctx, te_id, new_caret);
-                }
-                // Format runs the canonical yamsfmt formatter and replaces the
-                // draft with its output. Enabled only when the script is valid
-                // (the formatter parses first; a broken script can't be formatted).
-                if ui
-                    .add_enabled(status.is_ok(), egui::Button::new("Format"))
-                    .on_hover_text("Reformat the expression (yamsfmt)")
-                    .clicked()
-                    && let Ok(formatted) = synth_script::format(&editor.draft)
-                {
-                    editor.draft = formatted;
-                }
-                if ui
-                    .add_enabled(status.is_ok(), egui::Button::new("Apply"))
-                    .on_hover_text("Install this expression on the slot (keeps editing)")
-                    .clicked()
-                {
-                    // Install but leave the popup open so the user can keep
-                    // iterating (Close / ✕ dismisses it).
-                    mod_script_actions.push((editor.slot, Some(editor.draft.clone())));
-                }
-                if ui
-                    .button("Clear")
-                    .on_hover_text("Remove the expression from this slot")
-                    .clicked()
-                {
-                    mod_script_actions.push((editor.slot, None));
-                    closed_by_action = true;
-                }
-                if ui.button("Close").clicked() {
-                    closed_by_action = true;
-                }
-            });
-        });
-
-    // YAMS reference panel, toggled by the Help button. A sibling window so it
-    // can be read side-by-side with the editor; its ✕ mirrors back to the toggle.
-    if editor.show_help {
-        let mut help_open = true;
-        draw_yams_help_window(&ctx, state.id, editor.slot, &mut help_open);
-        if !help_open {
-            editor.show_help = false;
-        }
-    }
-
-    // Persist the editor (with its in-progress draft) across frames unless the
-    // window was closed via its ✕ or an action button.
-    if keep_open && !closed_by_action {
-        state.script_editor = Some(editor);
-    }
-}
-
-/// The YAMS reference panel: a scrollable, read-only cheat-sheet covering the
-/// execution model (control-rate, one read per block — the key expectation),
-/// source syntax, the predefined identifiers, and the function catalog. Mirrors
-/// `docs/yams.md` so the in-app help stays close to the canonical reference.
-fn draw_yams_help_window(ctx: &egui::Context, module: ModuleId, slot: u8, open: &mut bool) {
-    let t = theme();
-    // Section heading.
-    let head = |ui: &mut Ui, text: &str| {
-        ui.add_space(6.0);
-        ui.label(
-            egui::RichText::new(text)
-                .strong()
-                .color(t.colors.accent_cyan),
-        );
-    };
-    // Body paragraph.
-    let body = |ui: &mut Ui, text: &str| {
-        ui.label(egui::RichText::new(text).size(t.fonts.size_small));
-    };
-    // Monospace example line.
-    let code = |ui: &mut Ui, text: &str| {
-        ui.label(
-            egui::RichText::new(text)
-                .monospace()
-                .size(t.fonts.size_small)
-                .color(t.colors.text_secondary),
-        );
-    };
-
-    egui::Window::new("YAMS - reference")
-        .id(egui::Id::new(("yams_help", module, slot)))
-        .collapsible(true)
-        .resizable(true)
-        .default_size(egui::vec2(420.0, 460.0))
-        .min_width(300.0)
-        .open(open)
-        .show(ctx, |ui| {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                head(ui, "What it is");
-                body(
-                    ui,
-                    "YAMS is a small control-rate expression language. Each slot \
-                     computes one value per voice, assigned to `out`. That value \
-                     becomes a normalized modulation offset (output ports are ±1; a \
-                     parameter maps to 0..1, or -1..1 if bipolar).",
-                );
-
-                head(ui, "How it runs (the key expectation)");
-                body(
-                    ui,
-                    "The script runs once per CONTROL BLOCK (~187-750 Hz), not per \
-                     audio sample. Every source you reference is SAMPLED once per \
-                     block - you read a value, you do not process the waveform. So \
-                     `osc-1.out` gives one sampled point of that oscillator per \
-                     block (great for a sub-audio osc used as an LFO; aliased for an \
-                     audio-rate one), never the audible waveform. Per-sample audio \
-                     processing is a separate audio-rate module (planned), not this.",
-                );
-                body(
-                    ui,
-                    "Sources resolve with a one-block latency, so a script reading \
-                     its own or a downstream script's output is a delayed feedback \
-                     path - allowed, but flagged below the editor.",
-                );
-                body(
-                    ui,
-                    "Evaluation is eager: every node runs every block. `?:`, `&&`, \
-                     `||` only SELECT an already-computed value - stateful functions \
-                     (lag, phasor, ...) keep ticking even on the untaken branch. \
-                     Math is NaN-free (x/0 = 0, safe log/sqrt).",
-                );
-
-                head(ui, "Syntax");
-                code(ui, "src lfo = lfo-1.out   # bind a source by address");
-                code(ui, "let depth = mod_wheel * 0.5");
-                code(ui, "out = lfo * depth     # exactly one `out`");
-                body(
-                    ui,
-                    "All `src` bindings first, then `let`s, then one `out`. \
-                     Numbers need a leading zero (0.5, not .5). Durations: 50ms, \
-                     1.5s. Comments: # to end of line. Use the \"Select input\" \
-                     button to insert a source without typing the address.",
-                );
-
-                head(ui, "Sources you can reference");
-                body(
-                    ui,
-                    "- Any module output port by address: lfo-1.out, env-2.out, \
-                     scr-1.out1 (bound with `src`).",
-                );
-                body(
-                    ui,
-                    "- Macros (bare names, 0..1 unless noted): velocity, mod_wheel, \
-                     aftertouch, pitch_bend (-1..1), note, poly_at.",
-                );
-                body(
-                    ui,
-                    "- Context: gate, gate_on, age (s), sr, beat, bar_phase (0..1), \
-                     tempo (BPM), playing. The transport vars are shared by all \
-                     voices - tempo-synced: out = sin(beat * tau).",
-                );
-                body(ui, "- Constants: pi, tau (2*pi), e.");
-
-                head(ui, "Functions - stateless");
-                code(ui, "abs sign min max clamp");
-                code(ui, "floor ceil round trunc quantize(x,step)");
-                code(ui, "pow sqrt exp log");
-                code(ui, "sin cos tan atan atan2");
-                code(ui, "lerp/mix(a,b,t) smoothstep(a,b,x) sigmoid gauss");
-                code(ui, "semis(x)->ratio  mtof(x)->Hz");
-
-                head(ui, "Functions - stateful (per-voice, reset on note-on)");
-                code(ui, "lag(x,t)         one-pole smoothing");
-                code(ui, "slew(x,up,down)  separate rise/fall rates");
-                code(ui, "sah(x,trig)      sample & hold on rising trig");
-                code(ui, "accum(x)         running sum   delta(x) change/block");
-                code(ui, "phasor(rate)     own 0->1 ramp at rate Hz");
-                code(ui, "edge(x) counter(trig)");
-                code(ui, "rand([lo,hi])    white()   (decorrelated per voice)");
-                body(
-                    ui,
-                    "A literal time arg (lag(x, 50ms)) precomputes its coefficient; \
-                     an expression arg costs a per-block recompute.",
-                );
-
-                head(ui, "Operators (low -> high precedence)");
-                code(ui, "?:   ||   &&   == !=   < > <= >=   + -   * / %");
-                code(ui, "unary - !    ^ (power)    f(...)  ( )");
-                body(
-                    ui,
-                    "Comparisons can't chain: a < b < c is a syntax error - \
-                     parenthesize. Truthiness: any non-zero is true; comparisons \
-                     yield 1 or 0.",
-                );
-            });
-        });
 }
 
 /// A one-line, truncated preview of a slot's YAMS source for the panel row.
@@ -7744,7 +4574,7 @@ mod patch_analysis_tests {
         };
 
         // Dragging from `out`'s OUTPUT blocks its ancestors (amp, osc) + itself.
-        editor.pending_connection = Some(pending(out, WidgetPortDirection::Output));
+        editor.start_wire_drag(pending(out, WidgetPortDirection::Output));
         editor.recompute_drag_cycle_blocked();
         assert_eq!(
             editor.drag_cycle_blocked,
@@ -7753,7 +4583,7 @@ mod patch_analysis_tests {
         );
 
         // Dragging from `osc`'s INPUT blocks its descendants (amp, out) + itself.
-        editor.pending_connection = Some(pending(osc, WidgetPortDirection::Input));
+        editor.start_wire_drag(pending(osc, WidgetPortDirection::Input));
         editor.recompute_drag_cycle_blocked();
         assert_eq!(
             editor.drag_cycle_blocked,
@@ -7762,12 +4592,12 @@ mod patch_analysis_tests {
         );
 
         // Dragging from `osc`'s OUTPUT has no ancestors — only the self-loop.
-        editor.pending_connection = Some(pending(osc, WidgetPortDirection::Output));
+        editor.start_wire_drag(pending(osc, WidgetPortDirection::Output));
         editor.recompute_drag_cycle_blocked();
         assert_eq!(editor.drag_cycle_blocked, HashSet::from([osc]));
 
         // No drag → empty.
-        editor.pending_connection = None;
+        editor.canvas_interaction = CanvasInteraction::Idle;
         editor.recompute_drag_cycle_blocked();
         assert!(editor.drag_cycle_blocked.is_empty());
     }

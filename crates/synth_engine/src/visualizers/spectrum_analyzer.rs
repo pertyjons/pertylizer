@@ -79,6 +79,7 @@ impl Clone for SpectrumAnalyzer {
 impl Describable for SpectrumAnalyzer {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("spectrum_analyzer", "Spectrum")
+            .width(synth_core::ModuleWidth::Large)
             .description("FFT spectrum analyzer display")
             .category(ModuleCategory::Visualizer)
             .tag("visualizer")

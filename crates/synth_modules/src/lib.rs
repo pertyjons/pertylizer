@@ -126,3 +126,38 @@ pub use effects::{
 
 // Re-export param types from synth_core for convenience
 pub use synth_core::{NoiseType, SubOscOctave, SubOscWaveform};
+
+#[cfg(test)]
+mod width_bucket_guards {
+    use crate::{Amplifier, Envelope, Mixer, ModMatrix, Mseg, Sampler, SubOscillator};
+    use synth_core::{Describable, ModuleWidth};
+
+    /// Modules with a bespoke wide body (an interactive editor or a fixed-width
+    /// grid) must sit at `Large` or wider, or their content overflows the bucket.
+    /// This guards the Phase 1 classification against a regression to a narrow
+    /// default.
+    #[test]
+    fn bespoke_wide_modules_are_at_least_large() {
+        for width in [
+            Envelope::new().descriptor().width,  // ADSR editor (min 150 px)
+            ModMatrix::new().descriptor().width, // fixed 220 px slot grid
+            Sampler::new().descriptor().width,
+            Mixer::new().descriptor().width,
+        ] {
+            assert!(
+                width >= ModuleWidth::Large,
+                "expected >= Large, got {width:?}"
+            );
+        }
+        // The MSEG editor is the widest body of all.
+        assert_eq!(Mseg::new().descriptor().width, ModuleWidth::ExtraLarge);
+    }
+
+    /// Simple low-control modules keep the compact buckets — a regression guard
+    /// the other direction.
+    #[test]
+    fn simple_modules_are_compact() {
+        assert_eq!(Amplifier::new().descriptor().width, ModuleWidth::Small);
+        assert_eq!(SubOscillator::new().descriptor().width, ModuleWidth::Small);
+    }
+}

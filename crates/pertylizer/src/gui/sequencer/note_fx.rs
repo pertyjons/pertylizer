@@ -569,7 +569,7 @@ fn knob_normalized(
 /// A `ComboBox` over a fixed `(variant, label)` table for a `Copy` enum.
 fn enum_combo<T: PartialEq + Copy>(
     ui: &mut egui::Ui,
-    id: impl std::hash::Hash,
+    id: impl std::hash::Hash + std::fmt::Debug, // egui 0.35: AsIdSalt requires Debug
     current: &mut T,
     options: &[(T, &'static str)],
 ) {

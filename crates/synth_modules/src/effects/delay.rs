@@ -103,6 +103,7 @@ impl Default for Delay {
 impl Describable for Delay {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("delay", "Delay")
+            .width(synth_core::ModuleWidth::Large)
             .description("Stereo delay with ping-pong mode")
             .category(ModuleCategory::Effect)
             .tag("delay")

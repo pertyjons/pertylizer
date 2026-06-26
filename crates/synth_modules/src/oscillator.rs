@@ -326,6 +326,7 @@ impl Default for Oscillator {
 impl Describable for Oscillator {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("oscillator", "Oscillator")
+            .width(synth_core::ModuleWidth::Large)
             .description("Band-limited oscillator with multiple waveforms and unison")
             .category(ModuleCategory::Oscillator)
             .tag("oscillator")

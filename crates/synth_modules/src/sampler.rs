@@ -147,6 +147,7 @@ impl Default for Sampler {
 impl Describable for Sampler {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("sampler", "Sampler")
+            .width(synth_core::ModuleWidth::Large)
             .description("Sample playback module — plays WAV samples as instruments")
             .category(ModuleCategory::Sampler)
             .tag("sampler")

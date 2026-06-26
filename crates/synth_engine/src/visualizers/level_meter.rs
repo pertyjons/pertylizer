@@ -75,6 +75,7 @@ impl Clone for LevelMeter {
 impl Describable for LevelMeter {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("level_meter", "Meter")
+            .width(synth_core::ModuleWidth::ExtraSmall)
             .description("Audio level meter with peak hold")
             .category(ModuleCategory::Visualizer)
             .tag("visualizer")

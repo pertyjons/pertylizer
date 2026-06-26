@@ -182,9 +182,9 @@ pub fn draw_sample_view(
     egui::Panel::left("sample_list_panel")
         .default_size(list_panel::DEFAULT_WIDTH)
         .min_size(list_panel::MIN_WIDTH)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             // Header + search pinned to the top.
-            egui::Panel::top("sample_list_head").show_inside(ui, |ui| {
+            egui::Panel::top("sample_list_head").show(ui, |ui| {
                 if list_panel::header(ui, ri::MUSIC_FILL, "Samples", "Import sample") {
                     action = SampleViewAction::ImportWav;
                 }
@@ -320,7 +320,7 @@ pub fn draw_sample_view(
     audio_input.drain_gui_buffer();
 
     // ---- Central panel: waveform-editing toolbar + waveform + properties ----
-    egui::CentralPanel::default().show_inside(ui, |ui| {
+    egui::CentralPanel::default().show(ui, |ui| {
         // Waveform-editing toolbar, docked over the editor — the left list stays
         // full-height to its left, matching the Pattern view. Import / Export /
         // Delete live in the list header and per-row kebab menu.

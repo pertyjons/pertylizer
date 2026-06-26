@@ -131,6 +131,7 @@ impl Default for Vocoder {
 impl Describable for Vocoder {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("vocoder", "LPC Vocoder")
+            .width(synth_core::ModuleWidth::Small)
             .description("LPC spectral envelope vocoder effect")
             .category(ModuleCategory::Effect)
             .tag("vocoder")

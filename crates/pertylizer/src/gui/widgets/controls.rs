@@ -34,14 +34,35 @@ pub fn toggle_button_colored(
     ui.button(RichText::new(label.into()).strong().color(color))
 }
 
-/// A frameless icon button with a consistent hit target.
+/// A frameless icon button with a square, consistent hit target.
 ///
 /// Returns the [`Response`] so callers can chain `.on_hover_text(..)`.
 pub fn icon_button(ui: &mut Ui, icon: &str, color: Color32, icon_size: f32) -> Response {
+    icon_button_sized(
+        ui,
+        icon,
+        color,
+        icon_size,
+        Vec2::splat(ICON_BUTTON_MIN_SIZE),
+    )
+}
+
+/// A frameless icon button with a caller-chosen minimum hit target. Use this for
+/// tightly-packed rows (e.g. narrow status badges) where the default square
+/// target is too wide; otherwise prefer [`icon_button`].
+///
+/// Returns the [`Response`] so callers can chain `.on_hover_text(..)`.
+pub fn icon_button_sized(
+    ui: &mut Ui,
+    icon: &str,
+    color: Color32,
+    icon_size: f32,
+    min_size: Vec2,
+) -> Response {
     ui.add(
         Button::new(RichText::new(icon).color(color).size(icon_size))
             .frame(false)
-            .min_size(Vec2::splat(ICON_BUTTON_MIN_SIZE)),
+            .min_size(min_size),
     )
 }
 

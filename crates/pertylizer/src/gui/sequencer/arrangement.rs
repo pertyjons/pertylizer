@@ -1513,7 +1513,7 @@ fn draw_arrangement_track_headers(
     egui::Panel::left("seq_track_headers")
         .exact_size(TRACK_HEADER_WIDTH)
         .resizable(false)
-        .show_inside(ui, |ui| {
+        .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
 
             // Ruler corner placeholder (pinned, outside the scroll area)

@@ -134,6 +134,24 @@ impl CommandSender {
     }
 }
 
+/// Per-stage CPU usage snapshot for the status-bar breakdown tooltip. Each
+/// field is a fraction of the per-buffer real-time budget (e.g. `0.09` = 9 %),
+/// matching the units of the overall `total`.
+#[derive(Debug, Clone, Copy, Default)]
+#[must_use]
+pub struct CpuStageBreakdown {
+    /// All instrument/voice processing, including the channel- and return-bus stages.
+    pub voices: f32,
+    /// The user-added modular graph.
+    pub module_graph: f32,
+    /// The master effect chain.
+    pub master_fx: f32,
+    /// AWE room simulation.
+    pub awe: f32,
+    /// Overall audio-callback load (the status-bar number).
+    pub total: f32,
+}
+
 /// Handle for the UI to communicate with the engine.
 pub struct EngineHandle {
     /// Send commands to the engine (clonable for sharing with MIDI, etc.).
@@ -323,6 +341,18 @@ impl EngineHandle {
         self.state.cpu_usage.load()
     }
 
+    /// Get the per-stage CPU breakdown (each a fraction of the buffer budget,
+    /// same units as [`Self::cpu_usage`]) for the status-bar tooltip.
+    pub fn cpu_breakdown(&self) -> CpuStageBreakdown {
+        CpuStageBreakdown {
+            voices: self.state.cpu_voices.load(),
+            module_graph: self.state.cpu_module_graph.load(),
+            master_fx: self.state.cpu_master_fx.load(),
+            awe: self.state.cpu_awe.load(),
+            total: self.state.cpu_usage.load(),
+        }
+    }
+
     /// Get the master volume.
     pub fn master_volume(&self) -> f32 {
         self.state.master_volume.load()
@@ -500,6 +530,13 @@ pub struct SynthEngine {
     // === Performance monitoring ===
     callback_duration_sum: f32,
     callback_count: u32,
+    /// Per-stage processing-time accumulators (seconds), summed over the current
+    /// measurement window and flushed alongside `callback_duration_sum` into the
+    /// per-stage CPU atoms for the status-bar breakdown tooltip.
+    stage_voices_sum: f32,
+    stage_module_graph_sum: f32,
+    stage_master_fx_sum: f32,
+    stage_awe_sum: f32,
 }
 
 impl SynthEngine {
@@ -588,6 +625,10 @@ impl SynthEngine {
             audio_input_buffer: vec![0.0; synth_core::MAX_BLOCK_SIZE * 2],
             callback_duration_sum: 0.0,
             callback_count: 0,
+            stage_voices_sum: 0.0,
+            stage_module_graph_sum: 0.0,
+            stage_master_fx_sum: 0.0,
+            stage_awe_sum: 0.0,
         };
 
         // Hand the sequencer the producer end of the automation-trash channel so
@@ -3721,15 +3762,25 @@ impl AudioProcessor for SynthEngine {
         // stage (inside process_voices) consumes it.
         self.resolve_return_routing();
 
+        // Per-stage CPU timing for the status-bar breakdown tooltip. Each
+        // `Instant::now()` is a cheap vDSO clock read (no alloc, no lock); the
+        // sums are flushed into the per-stage atoms in the window below.
+        let t_stage = Instant::now();
         self.process_voices(&process_context);
+        self.stage_voices_sum += t_stage.elapsed().as_secs_f32();
 
         // Process modular graph (user-added modules)
+        let t_stage = Instant::now();
         self.process_module_graph(&process_context);
+        self.stage_module_graph_sum += t_stage.elapsed().as_secs_f32();
 
         // Process master effects (master bus: reverb, limiter, EQ, etc.)
+        let t_stage = Instant::now();
         self.process_master_effects(&process_context);
+        self.stage_master_fx_sum += t_stage.elapsed().as_secs_f32();
 
         // Process AWE (room simulation) after master effects
+        let t_stage = Instant::now();
         if self.awe_engine.enabled() {
             let sr = SampleRate::new(self.sample_rate);
             if self.awe_engine.spatial_enabled() && self.spatial_voice_bank.active_count() > 0 {
@@ -3742,6 +3793,7 @@ impl AudioProcessor for SynthEngine {
                 self.awe_engine.process(self.mix_buffer.as_mut_slice(), sr);
             }
         }
+        self.stage_awe_sum += t_stage.elapsed().as_secs_f32();
 
         // Mix metronome click into output
         self.click_generator
@@ -3793,11 +3845,30 @@ impl AudioProcessor for SynthEngine {
         self.callback_count += 1;
 
         if self.callback_count >= 100 {
-            let avg_duration = self.callback_duration_sum / self.callback_count as f32;
-            let cpu_usage = avg_duration / buffer_duration;
+            let n = self.callback_count as f32;
+            let cpu_usage = (self.callback_duration_sum / n) / buffer_duration;
             self.state.cpu_usage.store(cpu_usage);
+            // Per-stage fractions, same units as `cpu_usage` (avg stage time per
+            // callback / buffer budget). They sum to roughly `cpu_usage` minus the
+            // un-timed remainder (sequencer routing, metering, click, output mix).
+            self.state
+                .cpu_voices
+                .store((self.stage_voices_sum / n) / buffer_duration);
+            self.state
+                .cpu_module_graph
+                .store((self.stage_module_graph_sum / n) / buffer_duration);
+            self.state
+                .cpu_master_fx
+                .store((self.stage_master_fx_sum / n) / buffer_duration);
+            self.state
+                .cpu_awe
+                .store((self.stage_awe_sum / n) / buffer_duration);
             self.callback_duration_sum = 0.0;
             self.callback_count = 0;
+            self.stage_voices_sum = 0.0;
+            self.stage_module_graph_sum = 0.0;
+            self.stage_master_fx_sum = 0.0;
+            self.stage_awe_sum = 0.0;
         }
     }
 
