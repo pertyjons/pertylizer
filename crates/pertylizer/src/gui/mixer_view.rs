@@ -576,7 +576,7 @@ fn draw_channel_strip(
                 // Channel name in the accent-tinted module header, with the
                 // mute/solo toggles living in the header bar the same way the
                 // patch-module "Active" toggle does.
-                draw_module_header(ui, ch.color, &ch.name, None, |ui| {
+                draw_module_header(ui, ch.color, &ch.name, None, false, |ui| {
                     if header_mute_button(ui, ch.mute)
                         && let Some(tr) = song.write().track_mut(ch.id)
                     {
@@ -949,6 +949,7 @@ fn draw_return_strip(
                                 rb.color,
                                 &format!("⮌ {}", rb.name),
                                 Some("Click to rename".to_owned()),
+                                true,
                                 |ui| {
                                     if header_mute_button(ui, rb.mute)
                                         && let Some(bus) = song.write().return_bus_mut(rb.id)
@@ -1084,7 +1085,7 @@ fn draw_effect_module(
         ui.push_id((target.id_seed(), fx.module_id), |ui| {
             ui.vertical(|ui| {
                 ui.set_width(INSERT_WIDTH - 12.0);
-                draw_module_header(ui, accent, fx.module_type.name(), None, |ui| {
+                draw_module_header(ui, accent, fx.module_type.name(), None, false, |ui| {
                     let mut enabled = !fx.bypassed;
                     if ui
                         .checkbox(&mut enabled, "")
@@ -1172,7 +1173,7 @@ fn draw_master_strip(ui: &mut egui::Ui, handle: &mut EngineHandle, effects: &[Ef
             ui.set_width(STRIP_WIDTH);
             strip_frame(ui, t.colors.accent_primary, t.colors.bg_widget).show(ui, |ui| {
                 ui.vertical(|ui| {
-                    draw_module_header(ui, t.colors.accent_primary, "Master", None, |_| {});
+                    draw_module_header(ui, t.colors.accent_primary, "Master", None, false, |_| {});
                     ui.add_space(t.spacing.xs);
 
                     ui.horizontal(|ui| {
@@ -1266,6 +1267,7 @@ mod layout_tests {
                                         super::CLIP_WARN_ORANGE,
                                         "V1 pulse",
                                         None,
+                                        false,
                                         |_| {},
                                     );
                                     avail = ui.available_width();

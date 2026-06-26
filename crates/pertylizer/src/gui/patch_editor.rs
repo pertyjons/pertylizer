@@ -2215,7 +2215,22 @@ impl PatchEditor {
                     // Check if this module needs repositioning (after auto-layout)
                     let needs_reposition = self.needs_reposition.contains(&module_id);
 
-                    let title = analysis.display_name(module_id, &descriptor.name);
+                    // Header shows the stable module id (e.g. "nse-1"); the
+                    // human name + category live in the hover tooltip below.
+                    let title = module_id.to_string();
+                    let tooltip = {
+                        let mut t = analysis.display_name(module_id, &descriptor.name);
+                        t.push_str(&format!(
+                            "\n{} · {}",
+                            module_id,
+                            category_label(descriptor.category)
+                        ));
+                        if !descriptor.description.is_empty() {
+                            t.push_str("\n\n");
+                            t.push_str(&descriptor.description);
+                        }
+                        t
+                    };
 
                     // Get processing info for this module
                     let is_source = self.is_source(module_id);
@@ -2336,7 +2351,8 @@ impl PatchEditor {
                                     ui,
                                     dimmed_accent,
                                     &title,
-                                    Some(format!("ID: {module_id}")),
+                                    Some(tooltip),
+                                    false,
                                     |ui| {
                                         self.draw_module_header_actions(
                                             ui,
@@ -4039,6 +4055,25 @@ fn module_catalog() -> &'static [(ModuleType, ModuleCategory, String)] {
 }
 
 /// Remix-icon glyph for a module category, used as the submenu header icon.
+/// Human-readable label for a module category (used in module hover tooltips).
+fn category_label(category: ModuleCategory) -> &'static str {
+    match category {
+        ModuleCategory::Oscillator => "Oscillator",
+        ModuleCategory::Filter => "Filter",
+        ModuleCategory::Envelope => "Envelope",
+        ModuleCategory::LFO => "LFO",
+        ModuleCategory::Amplifier => "Amplifier",
+        ModuleCategory::Effect => "Effect",
+        ModuleCategory::Utility => "Utility",
+        ModuleCategory::Sampler => "Sampler",
+        ModuleCategory::Sequencer => "Sequencer",
+        ModuleCategory::Mixer => "Mixer",
+        ModuleCategory::Output => "Output",
+        ModuleCategory::Visualizer => "Visualizer",
+        ModuleCategory::PhysicalModeling => "Physical Modeling",
+    }
+}
+
 fn category_icon(category: ModuleCategory) -> &'static str {
     use egui_remixicon::icons as ri;
     match category {

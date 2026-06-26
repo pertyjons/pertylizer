@@ -454,6 +454,7 @@ impl PatchEditor {
                         base_color.gamma_multiply(0.9),
                         &group.name,
                         Some(format!("Group ID: {}", group_id.0)),
+                        false,
                         |ui| {
                             ui.separator();
                             let menu_resp = icon_button(ui, ri::MORE_LINE, t.colors.text_dim, 12.0)

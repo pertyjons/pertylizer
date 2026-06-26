@@ -137,7 +137,7 @@ pub(crate) fn draw_note_fx_panel(
                 ui.push_id(index, |ui| {
                     ui.vertical(|ui| {
                         ui.set_width(ui.available_width());
-                        draw_module_header(ui, accent, processor_name(proc), None, |ui| {
+                        draw_module_header(ui, accent, processor_name(proc), None, false, |ui| {
                             if ui
                                 .add(
                                     egui::Button::new("✖")

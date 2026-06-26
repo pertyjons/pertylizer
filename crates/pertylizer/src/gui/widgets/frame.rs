@@ -108,13 +108,15 @@ impl ModuleFrame {
 /// Must be called as the first content inside the frame (it reaches up by the
 /// window margin to paint the gradient flush with the frame's top edge).
 ///
-/// Returns the title label's [`egui::Response`] so callers can react to clicks
-/// (e.g. click-to-rename); callers that don't need it can ignore it.
+/// When `title_clickable` is set the title senses clicks and the returned
+/// [`egui::Response`] lets callers drive click-to-rename; otherwise the title
+/// is a static, non-selectable label and the response can be ignored.
 pub fn draw_module_header<F>(
     ui: &mut Ui,
     accent_color: Color32,
     title: &str,
     hover_text: Option<String>,
+    title_clickable: bool,
     actions: F,
 ) -> egui::Response
 where
@@ -148,16 +150,21 @@ where
             let (rect, _) = ui.allocate_exact_size(Vec2::new(4.0, 16.0), Sense::hover());
             ui.painter().rect_filled(rect, 2.0, accent_color);
 
-            // Title — click-sensing so callers can drive click-to-rename.
-            let mut response = ui.add(
-                egui::Label::new(
-                    egui::RichText::new(title)
-                        .strong()
-                        .size(13.0)
-                        .color(accent_color),
-                )
-                .sense(Sense::click()),
+            // Title. When `title_clickable` it senses clicks so callers can
+            // drive click-to-rename; otherwise it's a static, non-selectable
+            // label (no hover/selection affordance).
+            let label = egui::Label::new(
+                egui::RichText::new(title)
+                    .strong()
+                    .size(13.0)
+                    .color(accent_color),
             );
+            let label = if title_clickable {
+                label.sense(Sense::click())
+            } else {
+                label.selectable(false)
+            };
+            let mut response = ui.add(label);
             if let Some(hover) = hover_text {
                 response = response.on_hover_text(hover);
             }
