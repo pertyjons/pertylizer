@@ -192,8 +192,8 @@ TRY: Play chords! This patch shines with slow, sustained harmonies.
     patch.add_connection("lfo-1", "out", "osc-1", "fm"); // Vibrato to Saw
 
     // Voice output: amp -> stereo output (effects handled via effect chain)
-    patch.add_connection("amp-1", "left", "out-1", "in_l");
-    patch.add_connection("amp-1", "right", "out-1", "in_r");
+    patch.add_connection("amp-1", "out_l", "out-1", "in_l");
+    patch.add_connection("amp-1", "out_r", "out-1", "in_r");
 
     // Groups
     patch.add_group(

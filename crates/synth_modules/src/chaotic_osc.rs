@@ -12,8 +12,8 @@ use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
     ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
 };
+use synth_core::{BipolarValue, Hertz, MidiNote, NormalizedValue, PortName, SampleRate, Velocity};
 use synth_core::{ChaoticOscParam, ChaoticSystem, ModuleType, Param};
-use synth_core::{Hertz, MidiNote, NormalizedValue, PortName, SampleRate, Velocity};
 
 /// Chaotic Oscillator — Rössler and Lorenz systems.
 #[derive(Clone)]
@@ -34,6 +34,10 @@ pub struct ChaoticOsc {
     /// Cached interned name for the custom "out_y" port. Interned once in the
     /// constructor so `process()` never calls `PortName::intern` (which locks).
     out_y_name: PortName,
+    /// Cached interned name for the "reset" gate input (interned once; see above).
+    reset_port: PortName,
+    /// Previous Reset-gate level for rising-edge detection (persists across blocks).
+    prev_reset: f32,
 }
 
 impl ChaoticOsc {
@@ -51,6 +55,8 @@ impl ChaoticOsc {
             output_buffer: AudioBuffer::new(1024),
             output_buffer_y: AudioBuffer::new(1024),
             out_y_name: PortName::intern("out_y"),
+            reset_port: PortName::intern("reset"),
+            prev_reset: 0.0,
         }
     }
 
@@ -157,6 +163,14 @@ impl Describable for ChaoticOsc {
                 .widget(WidgetHint::Knob),
             )
             .port(
+                PortDescriptor::gate_input("reset", "Reset")
+                    .description("Rising edge re-seeds the attractor. Connect: Gate, Clock, LFO"),
+            )
+            .port(
+                PortDescriptor::control_input("rate_cv", "Rate CV")
+                    .description("Modulate iteration speed (exp FM). Connect: LFO, Envelope"),
+            )
+            .port(
                 PortDescriptor::audio_output("out", "Out").description(
                     "X-axis output (±depth). Connect to: Filter Cutoff CV, Oscillator FM",
                 ),
@@ -171,11 +185,12 @@ impl Describable for ChaoticOsc {
 impl PolyModule for ChaoticOsc {
     fn process(
         &mut self,
-        _inputs: InputPorts<'_>,
+        inputs: InputPorts<'_>,
         outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
+        let sr = self.sample_rate.as_f32();
         let num_samples = context.samples.as_usize();
         self.output_buffer.resize(num_samples);
         self.output_buffer_y.resize(num_samples);
@@ -184,16 +199,39 @@ impl PolyModule for ChaoticOsc {
         // the per-system step functions, so apply its effective value to the
         // field for the block and restore after — the single loop has no early
         // return. rate/depth are read here and wrapped inline.
-        let base_dt =
-            self.mod_offsets.effective("rate", self.rate.as_f32()) / self.sample_rate.as_f32();
+        let base_rate_hz = self.mod_offsets.effective("rate", self.rate.as_f32());
+        let base_dt = base_rate_hz / sr;
         let depth = self.mod_offsets.effective("depth", self.depth.as_f32());
         let saved_chaos = self.chaos;
         self.chaos = NormalizedValue::new(self.mod_offsets.effective("chaos", self.chaos.as_f32()));
 
+        // CV/gate inputs (unconnected readers return 0.0 → no change): Rate CV
+        // exp-FMs the iteration speed per sample; a Reset rising edge re-seeds
+        // the attractor.
+        let rate_cv = inputs.reader(PortName::RATE_CV, 0.0);
+        let reset_gate = inputs.reader(self.reset_port, 0.0);
+
         for i in 0..num_samples {
+            // Reset on a rising edge of the gate input — re-seed the attractor.
+            let g = reset_gate.get(i);
+            if reset_gate.is_connected() && crate::math::rising_edge(g, self.prev_reset) {
+                self.x = 0.1;
+                self.y = 0.0;
+                self.z = 0.0;
+            }
+            self.prev_reset = g;
+
+            let dt = if rate_cv.is_connected() {
+                Hertz::new(base_rate_hz)
+                    .apply_fm(BipolarValue::new(rate_cv.get(i)))
+                    .as_f32()
+                    / sr
+            } else {
+                base_dt
+            };
             match self.system {
-                ChaoticSystem::Rossler => self.rossler_step(base_dt),
-                ChaoticSystem::Lorenz => self.lorenz_step(base_dt),
+                ChaoticSystem::Rossler => self.rossler_step(dt),
+                ChaoticSystem::Lorenz => self.lorenz_step(dt),
             }
 
             // Normalize X and Y outputs to approximately ±1 range per sample
@@ -263,6 +301,7 @@ impl PolyModule for ChaoticOsc {
         self.x = 0.1;
         self.y = 0.0;
         self.z = 0.0;
+        self.prev_reset = 0.0;
     }
 
     fn note_on(&mut self, _note: MidiNote, _velocity: Velocity) {}

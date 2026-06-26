@@ -4,7 +4,7 @@
 //! It collects audio from connected modules and provides the final stereo
 //! output with master volume, pan, and optional limiting.
 //!
-//! The processed audio is available via the "left" and "right" output ports
+//! The processed audio is available via the "out_l" and "out_r" output ports
 //! for the Voice to read, as well as via the `get_output()` method.
 
 use std::collections::HashMap;
@@ -156,11 +156,11 @@ impl Describable for StereoOutput {
                     .description("Mono mix output (for graph compatibility)"),
             )
             .port(
-                PortDescriptor::audio_output("left", "Left Out")
+                PortDescriptor::audio_output("out_l", "Out L")
                     .description("Processed left channel output"),
             )
             .port(
-                PortDescriptor::audio_output("right", "Right Out")
+                PortDescriptor::audio_output("out_r", "Out R")
                     .description("Processed right channel output"),
             )
             // Parameters
@@ -317,13 +317,13 @@ impl PolyModule for StereoOutput {
         self.peak_r = Amplitude::new(self.peak_r.as_f32().max(peak_r.as_f32()));
 
         // Write to stereo output ports for Voice to read
-        if let Some(left_out) = outputs.get_mut(&PortName::LEFT) {
+        if let Some(left_out) = outputs.get_mut(&PortName::OUT_L) {
             for i in 0..context.samples.as_usize().min(left_out.len()) {
                 left_out[i] = self.output_buffer[i * 2];
             }
         }
 
-        if let Some(right_out) = outputs.get_mut(&PortName::RIGHT) {
+        if let Some(right_out) = outputs.get_mut(&PortName::OUT_R) {
             for i in 0..context.samples.as_usize().min(right_out.len()) {
                 right_out[i] = self.output_buffer.get(i * 2 + 1).copied().unwrap_or(0.0);
             }

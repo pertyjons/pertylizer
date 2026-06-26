@@ -47,6 +47,12 @@ pub struct KineticModulator {
     output_acc: f32,
     /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
     mod_offsets: ParamModOffsets,
+    /// Cached interned name for the "duration_cv" control input (interning locks
+    /// an internal table, so it must not run on the audio thread — see
+    /// [`PortName::intern`]). The Trigger gate uses the `TRIGGER` constant.
+    duration_cv_port: PortName,
+    /// Previous Trigger-gate level for rising-edge detection (persists across blocks).
+    prev_trigger: f32,
     /// Output buffer for audio graph compatibility.
     output_buffer: AudioBuffer,
 }
@@ -68,6 +74,8 @@ impl KineticModulator {
             output_vel: 0.0,
             output_acc: 0.0,
             mod_offsets: ParamModOffsets::new(),
+            duration_cv_port: PortName::intern("duration_cv"),
+            prev_trigger: 0.0,
             output_buffer: AudioBuffer::new(1024),
         }
     }
@@ -155,6 +163,14 @@ impl Describable for KineticModulator {
                 .widget(WidgetHint::Toggle),
             )
             .port(
+                PortDescriptor::gate_input("trigger", "Trigger")
+                    .description("Rising edge restarts the sweep. Connect: Gate, Clock, LFO"),
+            )
+            .port(
+                PortDescriptor::control_input("duration_cv", "Dur CV")
+                    .description("Modulate sweep duration (exp). Connect: LFO, Envelope"),
+            )
+            .port(
                 PortDescriptor::audio_output("out", "Out")
                     .description("Modulation signal. Connect to: Oscillator FM, Filter Cutoff CV"),
             )
@@ -164,24 +180,52 @@ impl Describable for KineticModulator {
 impl PolyModule for KineticModulator {
     fn process(
         &mut self,
-        _inputs: InputPorts<'_>,
+        inputs: InputPorts<'_>,
         outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
+        let sr = self.sample_rate.as_f32();
         self.output_buffer.resize(context.samples.as_usize());
 
-        // Generic mod offsets — per-block constants.
+        // Generic mod offsets — per-block constants. `duration` is additionally a
+        // per-sample CV destination (Dur CV) below.
         let dur_secs = self
             .mod_offsets
             .effective("duration", self.duration.as_f32())
             .max(0.001);
-        let phase_inc = 1.0 / (dur_secs * self.sample_rate.as_f32());
+        let base_phase_inc = 1.0 / (dur_secs * sr);
         let overshoot_val = self
             .mod_offsets
             .effective("overshoot", self.overshoot.as_f32());
 
+        // Gate/CV inputs (unconnected readers return 0.0 → no change): a Trigger
+        // rising edge restarts the sweep (like note-on), Dur CV exp-scales the
+        // sweep duration.
+        let trigger = inputs.reader(PortName::TRIGGER, 0.0);
+        let dur_cv = inputs.reader(self.duration_cv_port, 0.0);
+
         for i in 0..context.samples.as_usize() {
+            // Restart on a rising edge of the Trigger gate, mirroring note_on
+            // (honouring the Retrigger toggle).
+            let g = trigger.get(i);
+            if trigger.is_connected() && crate::math::rising_edge(g, self.prev_trigger) {
+                if self.retrigger || !self.active {
+                    self.phase = 0.0;
+                    self.direction = 1;
+                }
+                self.active = true;
+            }
+            self.prev_trigger = g;
+
+            // Dur CV exp-scales the per-sample phase advance (cv=+1 → 4× longer).
+            let phase_inc = if dur_cv.is_connected() {
+                let eff_dur = (dur_secs * (dur_cv.get(i) * 2.0).exp2()).max(0.001);
+                1.0 / (eff_dur * sr)
+            } else {
+                base_phase_inc
+            };
+
             if self.active {
                 // Advance phase
                 if self.direction >= 0 {
@@ -315,6 +359,7 @@ impl PolyModule for KineticModulator {
         self.output_pos = 0.0;
         self.output_vel = 0.0;
         self.output_acc = 0.0;
+        self.prev_trigger = 0.0;
     }
 
     fn note_on(&mut self, _note: MidiNote, _velocity: Velocity) {

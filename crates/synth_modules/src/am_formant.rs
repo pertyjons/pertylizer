@@ -15,7 +15,9 @@ use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
     ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
 };
-use synth_core::{Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate, Velocity};
+use synth_core::{
+    BipolarValue, Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate, Velocity,
+};
 
 use crate::formant_tables::{FORMANT_FREQ, FORMANT_GAIN, NUM_VOWELS};
 
@@ -48,6 +50,10 @@ pub struct AmFormant {
     inv_sample_rate: f32,
     /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
     mod_offsets: ParamModOffsets,
+    /// Cached interned port name for the Vowel CV input (interning locks an
+    /// internal table, so it must not happen on the audio thread — see
+    /// [`PortName::intern`]). Pitch CV uses the `PITCH_CV` compile-time constant.
+    vowel_cv_port: PortName,
 
     // Pre-allocated output buffer
     output_buffer: AudioBuffer,
@@ -69,6 +75,7 @@ impl AmFormant {
             sample_rate: SampleRate::DVD_QUALITY,
             inv_sample_rate: 1.0 / SampleRate::DVD_QUALITY.as_f32(),
             mod_offsets: ParamModOffsets::new(),
+            vowel_cv_port: PortName::intern("vowel_cv"),
 
             output_buffer: AudioBuffer::new(1024),
         }
@@ -155,6 +162,16 @@ impl Describable for AmFormant {
                 .default(0.8)
                 .widget(WidgetHint::Knob),
             )
+            .port(
+                PortDescriptor::control_input("pitch_cv", "Pitch CV").description(
+                    "1V/oct pitch offset (octaves) on the AM modulator. Connect: LFO, Pitch",
+                ),
+            )
+            .port(
+                PortDescriptor::control_input("vowel_cv", "Vowel CV").description(
+                    "Modulate vowel position (added to the Vowel knob). Connect: LFO, Envelope",
+                ),
+            )
             .port(PortDescriptor::audio_output("out", "Out").description("AM formant output"))
     }
 }
@@ -162,7 +179,7 @@ impl Describable for AmFormant {
 impl PolyModule for AmFormant {
     fn process(
         &mut self,
-        _inputs: InputPorts<'_>,
+        inputs: InputPorts<'_>,
         outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext,
     ) {
@@ -182,10 +199,24 @@ impl PolyModule for AmFormant {
             return;
         }
 
+        // CV inputs. Vowel CV is control-rate: the formant tables are
+        // interpolated once per block, so the CV is sampled at block start
+        // (sample 0) and folded into the vowel position. Pitch CV (below) is
+        // per-sample. Unconnected readers return 0.0 → no change.
+        let vowel_cv = inputs.reader(self.vowel_cv_port, 0.0);
+        let pitch_cv = inputs.reader(PortName::PITCH_CV, 0.0);
+        let vowel_cv0 = if num_samples > 0 {
+            vowel_cv.get(0)
+        } else {
+            0.0
+        };
+
         // `vowel` is read inside interpolated_formants; apply its generic mod
-        // offset just for that call, then restore.
+        // offset and the Vowel CV just for that call, then restore.
         let saved_vowel = self.vowel;
-        self.vowel = NormalizedValue::new(self.mod_offsets.effective("vowel", self.vowel.as_f32()));
+        self.vowel = NormalizedValue::new(
+            (self.mod_offsets.effective("vowel", self.vowel.as_f32()) + vowel_cv0).clamp(0.0, 1.0),
+        );
         let (formant_freqs, formant_gains) = self.interpolated_formants();
         self.vowel = saved_vowel;
 
@@ -232,8 +263,18 @@ impl PolyModule for AmFormant {
             // Normalize and apply level
             self.output_buffer[i] = sample * norm * level;
 
-            // Advance modulator phase
-            let new_mod = self.modulator_phase.as_f32() + mod_inc;
+            // Advance modulator phase. Pitch CV bends the AM modulator 1V/oct
+            // per sample (the formant carriers are unaffected — they track the
+            // vowel, not the note pitch).
+            let inc = if pitch_cv.is_connected() {
+                Hertz::new(mod_freq)
+                    .apply_cv(BipolarValue::new(pitch_cv.get(i)))
+                    .as_f32()
+                    * inv_sr
+            } else {
+                mod_inc
+            };
+            let new_mod = self.modulator_phase.as_f32() + inc;
             self.modulator_phase = Phase::new_unchecked(new_mod.fract());
         }
 

@@ -4508,7 +4508,7 @@ mod patch_analysis_tests {
             .push(Connection::new(osc, "out", amp, "in"));
         editor
             .connections
-            .push(Connection::new(amp, "left", out, "in_l"));
+            .push(Connection::new(amp, "out_l", out, "in_l"));
 
         // Closing the loop back to an upstream module is a cycle.
         assert!(editor.would_create_cycle(out, osc));
@@ -4597,7 +4597,7 @@ mod patch_analysis_tests {
             .push(Connection::new(osc, "out", amp, "in"));
         editor
             .connections
-            .push(Connection::new(amp, "left", out, "in_l"));
+            .push(Connection::new(amp, "out_l", out, "in_l"));
 
         let pending = |module, direction| PendingConnection {
             from_module: module,

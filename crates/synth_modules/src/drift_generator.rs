@@ -12,8 +12,10 @@ use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
     ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
 };
+use synth_core::{
+    BipolarValue, Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate, Velocity,
+};
 use synth_core::{DriftGeneratorParam, ModuleType, Param};
-use synth_core::{Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate, Velocity};
 
 /// Drift Generator — smooth bounded random modulation source.
 #[derive(Clone)]
@@ -110,6 +112,10 @@ impl Describable for DriftGenerator {
                 .widget(WidgetHint::Knob),
             )
             .port(
+                PortDescriptor::control_input("rate_cv", "Rate CV")
+                    .description("Modulate wander speed (exp FM). Connect: LFO, Envelope"),
+            )
+            .port(
                 PortDescriptor::audio_output("out", "Out").description(
                     "Drift signal (±depth). Connect to: Oscillator FM, Filter Cutoff CV",
                 ),
@@ -120,28 +126,39 @@ impl Describable for DriftGenerator {
 impl PolyModule for DriftGenerator {
     fn process(
         &mut self,
-        _inputs: InputPorts<'_>,
+        inputs: InputPorts<'_>,
         outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
         self.output_buffer.resize(context.samples.as_usize());
 
-        // Generic mod offsets — all per-block constants, resolved once here.
+        // Generic mod offsets — per-block constants. `rate` is additionally a
+        // per-sample CV destination (Rate CV) below; depth/smoothness stay block.
         let eff_rate = Hertz::new(self.mod_offsets.effective("rate", self.rate.as_f32()));
         let smoothness = self
             .mod_offsets
             .effective("smoothness", self.smoothness.as_f32());
         let depth = self.mod_offsets.effective("depth", self.depth.as_f32());
 
-        let phase_inc = eff_rate.phase_increment(self.sample_rate);
-        // Smoothness controls the slew rate (0.0 = instant, 1.0 = very slow)
+        // Smoothness controls the slew rate (0.0 = instant, 1.0 = very slow). The
+        // phase increment and the one-pole coefficient both derive from the rate,
+        // so the Rate CV recomputes them per sample; unconnected → block constants.
         let slew = 1.0 - smoothness * 0.999;
-        // One-pole coefficient: lower = smoother
-        let coeff = slew * eff_rate.as_f32() / self.sample_rate.as_f32() * 100.0;
-        let coeff = coeff.clamp(0.0001, 1.0);
+        let sr = self.sample_rate.as_f32();
+        let coeff_of = |rate: Hertz| (slew * rate.as_f32() / sr * 100.0).clamp(0.0001, 1.0);
+        let base_phase_inc = eff_rate.phase_increment(self.sample_rate);
+        let base_coeff = coeff_of(eff_rate);
+        let rate_cv = inputs.reader(PortName::RATE_CV, 0.0);
 
         for i in 0..context.samples.as_usize() {
+            let (phase_inc, coeff) = if rate_cv.is_connected() {
+                let r = eff_rate.apply_fm(BipolarValue::new(rate_cv.get(i)));
+                (r.phase_increment(self.sample_rate), coeff_of(r))
+            } else {
+                (base_phase_inc, base_coeff)
+            };
+
             let old_phase = self.phase.as_f32();
             self.phase = self.phase.advance(phase_inc);
 

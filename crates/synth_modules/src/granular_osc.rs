@@ -136,6 +136,11 @@ pub struct GranularOsc {
     rng: Xorshift32,
     /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
     mod_offsets: ParamModOffsets,
+    /// Cached interned port name for the Density CV input (interning locks an
+    /// internal table, so it must not happen on the audio thread — see
+    /// [`PortName::intern`]). Pitch/Position CV use the `PITCH_CV`/`POS_CV`
+    /// compile-time constants instead.
+    density_cv_port: PortName,
 
     // Output buffer
     output_buffer: AudioBuffer,
@@ -167,6 +172,7 @@ impl GranularOsc {
             samples_until_next_grain: 0.0,
             rng: Xorshift32::new(42),
             mod_offsets: ParamModOffsets::new(),
+            density_cv_port: PortName::intern("density_cv"),
 
             output_buffer: AudioBuffer::new(1024),
         };
@@ -423,6 +429,20 @@ impl Describable for GranularOsc {
                 .widget(WidgetHint::Knob),
             )
             .port(
+                PortDescriptor::control_input("pitch_cv", "Pitch CV")
+                    .description("1V/oct pitch offset (octaves). Connect: LFO, Envelope, Pitch"),
+            )
+            .port(
+                PortDescriptor::control_input("pos_cv", "Pos CV").description(
+                    "Modulate read position (added to the Position knob). Connect: LFO, Envelope",
+                ),
+            )
+            .port(
+                PortDescriptor::control_input("density_cv", "Density CV").description(
+                    "Modulate grain density (added to the Density knob). Connect: LFO, Envelope",
+                ),
+            )
+            .port(
                 PortDescriptor::audio_output("out", "Out")
                     .description("Granular output. Connect to: Amplifier In, Filter In"),
             )
@@ -433,7 +453,7 @@ impl PolyModule for GranularOsc {
     #[allow(clippy::too_many_lines)]
     fn process(
         &mut self,
-        _inputs: InputPorts<'_>,
+        inputs: InputPorts<'_>,
         outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext,
     ) {
@@ -461,10 +481,16 @@ impl PolyModule for GranularOsc {
         let sr = self.sample_rate.as_f32();
         let level = self.mod_offsets.effective("level", self.level.as_f32());
 
-        // Density: grains per second (1-100 range mapped from 0-1)
-        let grains_per_second =
-            1.0 + self.mod_offsets.effective("density", self.density.as_f32()) * 99.0;
-        let samples_between_grains = sr / grains_per_second;
+        // CV inputs (unconnected readers return 0.0 → no change): Pitch is 1V/oct
+        // on the playback rate, Position is added to the Position knob at grain
+        // spawn, Density is added to the Density knob and re-evaluated per sample.
+        let pitch_cv = inputs.reader(PortName::PITCH_CV, 0.0);
+        let pos_cv = inputs.reader(PortName::POS_CV, 0.0);
+        let density_cv = inputs.reader(self.density_cv_port, 0.0);
+
+        // Base density (knob + mod-matrix offset). Grains/sec maps 0..1 → 1..100;
+        // the per-sample Density CV is folded in at each grain spawn below.
+        let base_density = self.mod_offsets.effective("density", self.density.as_f32());
 
         // The remaining mod destinations (grain_size, position, pos_spread,
         // pitch_spread, pan_spread) are read inside spawn_grain, called from the
@@ -501,13 +527,33 @@ impl PolyModule for GranularOsc {
         // Base playback rate (note pitch relative to the buffer's native pitch). The
         // shared playhead advances at this rate; per-grain Pitch Spread detunes around it.
         let base_rate = self.note_freq.as_f32() / SOURCE_BASE_FREQ;
+        // Effective Position for the block (knob + mod offset), captured before the
+        // loop overwrites `self.position` per grain with the Position CV offset.
+        let base_position = self.position.as_f32();
         let source_len_f = self.source_len as f32;
 
         for i in 0..samples {
+            // Pitch CV bends the playback rate 1V/oct per sample (smooth, like
+            // set_voice_pitch); falls back to the static base rate when unpatched.
+            let eff_rate = if pitch_cv.is_connected() {
+                self.note_freq
+                    .apply_cv(BipolarValue::new(pitch_cv.get(i)))
+                    .as_f32()
+                    / SOURCE_BASE_FREQ
+            } else {
+                base_rate
+            };
+
             // Trigger new grains
             self.samples_until_next_grain -= 1.0;
             if self.samples_until_next_grain <= 0.0 {
+                // Position CV shifts this grain's spawn read position only.
+                self.position =
+                    NormalizedValue::new((base_position + pos_cv.get(i)).clamp(0.0, 1.0));
                 self.spawn_grain();
+                // Density CV re-evaluates the grain spacing for this trigger.
+                let density = (base_density + density_cv.get(i)).clamp(0.0, 1.0);
+                let samples_between_grains = sr / (1.0 + density * 99.0);
                 self.samples_until_next_grain += samples_between_grains;
                 if self.samples_until_next_grain < 1.0 {
                     self.samples_until_next_grain = 1.0;
@@ -551,16 +597,16 @@ impl PolyModule for GranularOsc {
 
                 mix += sample * env;
                 // Accumulate the read position at the *current* rate so a mid-grain
-                // pitch change bends smoothly (no jump). `base_rate` already tracks
-                // the modulated note pitch this block.
-                grain.read_pos += base_rate * grain.pitch_ratio;
+                // pitch change bends smoothly (no jump). `eff_rate` tracks the
+                // modulated note pitch (and Pitch CV) this sample.
+                grain.read_pos += eff_rate * grain.pitch_ratio;
                 grain.pos += 1.0;
             }
 
             self.output_buffer[i] = mix * level;
 
             // Advance the shared playhead, wrapping at the buffer end.
-            self.playhead += base_rate;
+            self.playhead += eff_rate;
             while self.playhead >= source_len_f {
                 self.playhead -= source_len_f;
             }

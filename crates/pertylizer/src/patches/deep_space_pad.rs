@@ -187,8 +187,8 @@ TRY: Play sustained chords in the low-to-mid range. Layer with arpeggios.
     patch.add_connection("lfo-1", "out", "flt-1", "cutoff_cv");
     patch.add_connection("lfo-2", "out", "osc-2", "fm");
     // Voice output: amp -> stereo output (effects handled via effect chain)
-    patch.add_connection("amp-1", "left", "out-1", "in_l");
-    patch.add_connection("amp-1", "right", "out-1", "in_r");
+    patch.add_connection("amp-1", "out_l", "out-1", "in_l");
+    patch.add_connection("amp-1", "out_r", "out-1", "in_r");
     patch.settings.octave_offset = -1;
 
     // Groups

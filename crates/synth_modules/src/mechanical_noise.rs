@@ -39,6 +39,8 @@ pub struct MechanicalNoise {
     sample_rate: SampleRate,
     /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
     mod_offsets: ParamModOffsets,
+    /// Previous Trigger-gate level for rising-edge detection (persists across blocks).
+    prev_trigger: f32,
 
     // Output buffer
     output_buffer: AudioBuffer,
@@ -61,6 +63,7 @@ impl MechanicalNoise {
 
             sample_rate: SampleRate::DVD_QUALITY,
             mod_offsets: ParamModOffsets::new(),
+            prev_trigger: 0.0,
             output_buffer: AudioBuffer::new(1024),
         }
     }
@@ -221,6 +224,16 @@ impl Describable for MechanicalNoise {
                 .unit(ParameterUnit::Percent)
                 .widget(WidgetHint::Knob),
             )
+            .port(
+                PortDescriptor::gate_input("trigger", "Trigger").description(
+                    "Rising edge fires a burst (gate level = velocity). Connect: Gate, Clock",
+                ),
+            )
+            .port(
+                PortDescriptor::control_input("level_cv", "Level CV").description(
+                    "Modulate output level (added to the Level knob). Connect: LFO, Envelope",
+                ),
+            )
             .port(PortDescriptor::audio_output("out", "Out").description("Noise output"))
     }
 }
@@ -228,7 +241,7 @@ impl Describable for MechanicalNoise {
 impl PolyModule for MechanicalNoise {
     fn process(
         &mut self,
-        _inputs: InputPorts<'_>,
+        inputs: InputPorts<'_>,
         outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext,
     ) {
@@ -237,12 +250,27 @@ impl PolyModule for MechanicalNoise {
 
         // cutoff + level are read per-sample inside generate_noise; apply their
         // effective values to the fields for the block and restore after (single
-        // loop, no early return).
+        // loop, no early return). `level` is additionally a per-sample CV
+        // destination (Level CV), folded into `self.level` before each sample.
         let saved = (self.cutoff, self.level);
         self.cutoff = Hertz::new(self.mod_offsets.effective("cutoff", self.cutoff.as_f32()));
         self.level = Gain::new(self.mod_offsets.effective("level", self.level.as_f32()));
+        let base_level = self.level.as_f32();
+
+        // Gate/CV inputs (unconnected readers return 0.0 → no change): a Trigger
+        // rising edge fires a burst (gate level used as velocity), Level CV is
+        // added to the per-sample output level.
+        let trigger = inputs.reader(PortName::TRIGGER, 0.0);
+        let level_cv = inputs.reader(PortName::LEVEL_CV, 0.0);
 
         for i in 0..context.samples.as_usize() {
+            let g = trigger.get(i);
+            if trigger.is_connected() && crate::math::rising_edge(g, self.prev_trigger) {
+                self.trigger(Velocity::new(g.clamp(0.0, 1.0)));
+            }
+            self.prev_trigger = g;
+
+            self.level = Gain::new((base_level + level_cv.get(i)).clamp(0.0, 1.0));
             self.output_buffer[i] = self.generate_noise();
         }
 
@@ -300,6 +328,7 @@ impl PolyModule for MechanicalNoise {
     fn reset(&mut self) {
         self.current_sample = self.envelope_samples;
         self.filter_state = FilterState::ZERO;
+        self.prev_trigger = 0.0;
     }
 
     fn note_on(&mut self, _note: MidiNote, velocity: Velocity) {

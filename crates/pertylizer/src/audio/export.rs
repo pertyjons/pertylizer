@@ -547,7 +547,12 @@ fn load_patch_modules(
 
             handle.send_blocking(EngineCommand::Connect {
                 instrument_id: Some(instrument_id),
-                from: PortId::new(from_id, &*conn.from.1),
+                // Migrate legacy stereo-out port names ("left"/"right") the same
+                // way apply_patch does, so pre-rename projects export correctly.
+                from: PortId::new(
+                    from_id,
+                    crate::session::migrate_stereo_out_port(from_id.module_type, &conn.from.1),
+                ),
                 to: PortId::new(to_id, &*conn.to.1),
             });
         }

@@ -138,8 +138,8 @@ more "chime-like", lower notes more "gong-like".
     // Carrier -> output amp -> stereo output (effects handled via effect chain)
     patch.add_connection("osc-1", "out", "amp-2", "in");
     patch.add_connection("env-2", "out", "amp-2", "cv");
-    patch.add_connection("amp-2", "left", "out-1", "in_l");
-    patch.add_connection("amp-2", "right", "out-1", "in_r");
+    patch.add_connection("amp-2", "out_l", "out-1", "in_l");
+    patch.add_connection("amp-2", "out_r", "out-1", "in_r");
 
     // Groups
     patch.add_group(

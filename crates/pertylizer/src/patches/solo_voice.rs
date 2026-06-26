@@ -94,7 +94,7 @@ tone; lower Open Quotient for a pressed, belted character.
     // Connections — mono voice through the VCA, reverb in the effect chain.
     patch.add_connection("vox-1", "out", "amp-1", "in");
     patch.add_connection("env-1", "out", "amp-1", "cv");
-    patch.add_connection("amp-1", "left", "out-1", "in_l");
-    patch.add_connection("amp-1", "right", "out-1", "in_r");
+    patch.add_connection("amp-1", "out_l", "out-1", "in_l");
+    patch.add_connection("amp-1", "out_r", "out-1", "in_r");
     patch
 }

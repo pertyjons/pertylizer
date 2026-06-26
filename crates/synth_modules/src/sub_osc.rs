@@ -17,7 +17,9 @@ use synth_core::{
     ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortName, ProcessContext,
     WidgetHint,
 };
-use synth_core::{Gain, Hertz, MidiNote, NormalizedValue, Phase, SampleRate, Velocity};
+use synth_core::{
+    BipolarValue, Gain, Hertz, MidiNote, NormalizedValue, Phase, SampleRate, Velocity,
+};
 use synth_core::{ModuleType, Param, SubOscOctave, SubOscParam, SubOscWaveform};
 
 /// Sub-oscillator for bass reinforcement.
@@ -55,8 +57,7 @@ impl SubOscillator {
 
     /// Generate a single sample.
     #[inline]
-    fn generate_sample(&mut self) -> f32 {
-        let freq = Hertz::new(self.base_frequency.as_f32() / self.octave.divisor());
+    fn generate_sample(&mut self, freq: Hertz) -> f32 {
         let phase = self.phase.as_f32();
 
         let sample = match self.waveform {
@@ -149,6 +150,15 @@ impl Describable for SubOscillator {
                 .widget(WidgetHint::Knob),
             )
             .port(
+                PortDescriptor::control_input("pitch_cv", "Pitch CV")
+                    .description("1V/oct pitch offset (octaves). Connect: LFO, Envelope, Pitch"),
+            )
+            .port(
+                PortDescriptor::control_input("level_cv", "Level CV").description(
+                    "Modulate output level (added to the Level knob). Connect: LFO, Envelope",
+                ),
+            )
+            .port(
                 PortDescriptor::audio_output("out", "Out").description(
                     "Sub-oscillator output. Connect to: Amplifier In, Filter In, Mixer",
                 ),
@@ -159,17 +169,28 @@ impl Describable for SubOscillator {
 impl PolyModule for SubOscillator {
     fn process(
         &mut self,
-        _inputs: InputPorts<'_>,
+        inputs: InputPorts<'_>,
         outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext,
     ) {
         self.sample_rate = context.sample_rate;
         self.output_buffer.resize(context.samples.as_usize());
 
-        // Effective level = base + normalized mod offset, once per block.
-        let level = self.mod_offsets.effective("level", self.level.as_f32());
+        // Base sub frequency (note pitch / octave divisor), constant per block;
+        // the Pitch CV input shifts it 1V/oct per sample. Base level = knob +
+        // mod-matrix offset, with the Level CV added per sample on top.
+        let base_freq = Hertz::new(self.base_frequency.as_f32() / self.octave.divisor());
+        let base_level = self.mod_offsets.effective("level", self.level.as_f32());
+        let pitch_cv = inputs.reader(PortName::PITCH_CV, 0.0);
+        let level_cv = inputs.reader(PortName::LEVEL_CV, 0.0);
         for i in 0..context.samples.as_usize() {
-            self.output_buffer[i] = self.generate_sample() * level;
+            let freq = if pitch_cv.is_connected() {
+                base_freq.apply_cv(BipolarValue::new(pitch_cv.get(i)))
+            } else {
+                base_freq
+            };
+            let level = (base_level + level_cv.get(i)).clamp(0.0, 1.0);
+            self.output_buffer[i] = self.generate_sample(freq) * level;
         }
 
         if let Some(out) = outputs.get_mut(&PortName::OUT) {

@@ -144,8 +144,8 @@ impl Describable for Amplifier {
             )
             // Canonical audio-port order: mono `out` first, then the stereo pair.
             .port(PortDescriptor::audio_output("out", "Out").description("Mono output (L+R)"))
-            .port(PortDescriptor::audio_output("left", "L").description("Left output"))
-            .port(PortDescriptor::audio_output("right", "R").description("Right output"))
+            .port(PortDescriptor::audio_output("out_l", "Out L").description("Left output"))
+            .port(PortDescriptor::audio_output("out_r", "Out R").description("Right output"))
     }
 }
 
@@ -222,10 +222,10 @@ impl PolyModule for Amplifier {
         // carry it as the start of the next block for boundary continuity.
         self.level_prev = level_target;
 
-        if let Some(left) = outputs.get_mut(&PortName::LEFT) {
+        if let Some(left) = outputs.get_mut(&PortName::OUT_L) {
             left.copy_from(&self.output_left);
         }
-        if let Some(right) = outputs.get_mut(&PortName::RIGHT) {
+        if let Some(right) = outputs.get_mut(&PortName::OUT_R) {
             right.copy_from(&self.output_right);
         }
         if let Some(out) = outputs.get_mut(&PortName::OUT) {

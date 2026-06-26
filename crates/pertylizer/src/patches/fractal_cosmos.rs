@@ -182,8 +182,8 @@ Spacing knobs — small changes create dramatically different timbres.
     // Filter → Amp → Output
     patch.add_connection("flt-1", "out", "amp-1", "in");
     patch.add_connection("env-1", "out", "amp-1", "cv");
-    patch.add_connection("amp-1", "left", "out-1", "in_l");
-    patch.add_connection("amp-1", "right", "out-1", "in_r");
+    patch.add_connection("amp-1", "out_l", "out-1", "in_l");
+    patch.add_connection("amp-1", "out_r", "out-1", "in_r");
     // Modulation
     patch.add_connection("lfo-1", "out", "flt-1", "cutoff_cv");
     patch.add_connection("lfo-2", "out", "frc-1", "freq_cv");

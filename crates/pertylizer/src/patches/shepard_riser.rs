@@ -122,7 +122,7 @@ to control speed, or set it negative for a falling effect.
     // LFO sweeps the Shepard window center → continuous rising spectrum.
     patch.add_connection("lfo-1", "out", "mth-1", "param_a");
     // Voice output: amp -> stereo output
-    patch.add_connection("amp-1", "left", "out-1", "in_l");
-    patch.add_connection("amp-1", "right", "out-1", "in_r");
+    patch.add_connection("amp-1", "out_l", "out-1", "in_l");
+    patch.add_connection("amp-1", "out_r", "out-1", "in_r");
     patch
 }

@@ -73,6 +73,7 @@ const ID_POS_CV: u32 = 44;
 const ID_PARAM_A: u32 = 45;
 const ID_PARAM_B: u32 = 46;
 const ID_PHASE: u32 = 47;
+const ID_LEVEL_CV: u32 = 48;
 
 /// Global intern pool for port names.
 static INTERN_POOL: LazyLock<RwLock<InternPool>> = LazyLock::new(|| RwLock::new(InternPool::new()));
@@ -142,6 +143,7 @@ impl InternPool {
         pool.intern("param_a"); // 45
         pool.intern("param_b"); // 46
         pool.intern("phase"); // 47
+        pool.intern("level_cv"); // 48
         pool
     }
 
@@ -210,6 +212,8 @@ impl PortName {
     pub const SYNC: Self = Self(ID_SYNC);
     /// Level port "level".
     pub const LEVEL: Self = Self(ID_LEVEL);
+    /// Level CV port "level_cv".
+    pub const LEVEL_CV: Self = Self(ID_LEVEL_CV);
     /// Pan port "pan".
     pub const PAN: Self = Self(ID_PAN);
     /// Rate CV port "rate_cv".

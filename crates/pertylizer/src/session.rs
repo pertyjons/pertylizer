@@ -1060,7 +1060,8 @@ impl SynthSession {
             }
         }
 
-        // Add connections
+        // Add connections (source port migrated for legacy stereo-out names —
+        // see `migrate_stereo_out_port`).
         for conn in &patch.connections {
             let from_id: ModuleId = match conn.from.0.parse() {
                 Ok(id) => id,
@@ -1084,7 +1085,7 @@ impl SynthSession {
             match self.connect(
                 instrument_id,
                 from_id,
-                conn.from.1.clone(),
+                migrate_stereo_out_port(from_id.module_type, &conn.from.1),
                 to_id,
                 conn.to.1.clone(),
             ) {
@@ -1194,10 +1195,61 @@ pub struct ApplyPatchResult {
     pub errors: Vec<String>,
 }
 
+/// Migrate a connection's source port name when loading a patch.
+///
+/// The Amplifier and Stereo Output modules renamed their stereo outputs
+/// `"left"`/`"right"` → `"out_l"`/`"out_r"` for consistency with every other
+/// stereo module. Projects/instruments saved before that change still reference
+/// the old names; this remaps them on load so their connections survive. The
+/// remap is scoped to those two module types so no other port named "left"/
+/// "right" (e.g. effect-chain modules) is affected, and canonical names pass
+/// through unchanged.
+pub(crate) fn migrate_stereo_out_port(module_type: ModuleType, port: &str) -> PortName {
+    match (module_type, port) {
+        (ModuleType::Amplifier | ModuleType::StereoOutput, "left") => PortName::OUT_L,
+        (ModuleType::Amplifier | ModuleType::StereoOutput, "right") => PortName::OUT_R,
+        _ => PortName::intern(port),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use synth_engine::SynthEngine;
+
+    /// Legacy "left"/"right" stereo-output port names are remapped to
+    /// "out_l"/"out_r" on load — but only for Amplifier / Stereo Output, and
+    /// canonical / unrelated names pass through untouched.
+    #[test]
+    fn migrates_legacy_stereo_out_ports() {
+        assert_eq!(
+            migrate_stereo_out_port(ModuleType::Amplifier, "left"),
+            PortName::OUT_L
+        );
+        assert_eq!(
+            migrate_stereo_out_port(ModuleType::Amplifier, "right"),
+            PortName::OUT_R
+        );
+        assert_eq!(
+            migrate_stereo_out_port(ModuleType::StereoOutput, "left"),
+            PortName::OUT_L
+        );
+        // Canonical names are unchanged.
+        assert_eq!(
+            migrate_stereo_out_port(ModuleType::Amplifier, "out_l"),
+            PortName::OUT_L
+        );
+        // "left" on any other module type is NOT a stereo-out alias — left as-is.
+        assert_eq!(
+            migrate_stereo_out_port(ModuleType::Reverb, "left"),
+            PortName::intern("left")
+        );
+        // An unrelated port passes through.
+        assert_eq!(
+            migrate_stereo_out_port(ModuleType::Amplifier, "out"),
+            PortName::OUT
+        );
+    }
 
     /// A session wired to a live (but undriven) engine — enough to exercise the
     /// command-sending API. The engine is kept alive so the command ring buffer

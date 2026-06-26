@@ -129,7 +129,7 @@ tone; lower Bandwidth for a sharper, more vocal-formant ring.
     patch.add_connection("fof-1", "out_r", "amp-1", "in_r");
     patch.add_connection("env-1", "out", "amp-1", "cv");
     patch.add_connection("lfo-1", "out", "fof-1", "vowel_cv");
-    patch.add_connection("amp-1", "left", "out-1", "in_l");
-    patch.add_connection("amp-1", "right", "out-1", "in_r");
+    patch.add_connection("amp-1", "out_l", "out-1", "in_l");
+    patch.add_connection("amp-1", "out_r", "out-1", "in_r");
     patch
 }

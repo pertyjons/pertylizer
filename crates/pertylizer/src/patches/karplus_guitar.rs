@@ -112,7 +112,7 @@ guitar, higher notes like acoustic guitar or harp.
     patch.add_connection("mth-1", "out", "amp-1", "in");
     patch.add_connection("env-1", "out", "amp-1", "cv");
     // Voice output: amp -> stereo output (effects handled via effect chain)
-    patch.add_connection("amp-1", "left", "out-1", "in_l");
-    patch.add_connection("amp-1", "right", "out-1", "in_r");
+    patch.add_connection("amp-1", "out_l", "out-1", "in_l");
+    patch.add_connection("amp-1", "out_r", "out-1", "in_r");
     patch
 }

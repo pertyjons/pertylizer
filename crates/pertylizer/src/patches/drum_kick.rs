@@ -120,8 +120,8 @@ kick characters. Works well in the lowest octave.
     patch.add_connection("env-1", "out", "osc-1", "fm");
     patch.add_connection("env-2", "out", "amp-1", "cv");
     // Voice output: amp -> stereo output (effects handled via effect chain)
-    patch.add_connection("amp-1", "left", "out-1", "in_l");
-    patch.add_connection("amp-1", "right", "out-1", "in_r");
+    patch.add_connection("amp-1", "out_l", "out-1", "in_l");
+    patch.add_connection("amp-1", "out_r", "out-1", "in_r");
     patch.settings.octave_offset = -2;
     patch
 }

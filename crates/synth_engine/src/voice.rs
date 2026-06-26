@@ -982,19 +982,20 @@ impl Voice {
         // Extract stereo output from the output module if available
         if let Some(out_id) = self.output_module_id {
             // Try different port naming conventions:
-            // 1. "left"/"right" (StereoOutput, Amplifier)
-            // 2. "out_l"/"out_r" (some effects)
+            // 1. "out_l"/"out_r" (StereoOutput, Amplifier, stereo effects/osc)
+            // 2. "left"/"right" (legacy in-memory graphs; saved files are migrated
+            //    on load — see apply_patch's stereo-out port normalization)
             // 3. "out" (Mixer, mono modules) - duplicate to stereo
             let left = self
                 .graph
-                .get_module_output(out_id, PortName::LEFT)
-                .or_else(|| self.graph.get_module_output(out_id, PortName::OUT_L))
+                .get_module_output(out_id, PortName::OUT_L)
+                .or_else(|| self.graph.get_module_output(out_id, PortName::LEFT))
                 .or_else(|| self.graph.get_module_output(out_id, PortName::OUT));
 
             let right = self
                 .graph
-                .get_module_output(out_id, PortName::RIGHT)
-                .or_else(|| self.graph.get_module_output(out_id, PortName::OUT_R))
+                .get_module_output(out_id, PortName::OUT_R)
+                .or_else(|| self.graph.get_module_output(out_id, PortName::RIGHT))
                 .or_else(|| self.graph.get_module_output(out_id, PortName::OUT));
 
             if let Some(l) = left {

@@ -268,6 +268,11 @@ impl Describable for NoiseGenerator {
                 .widget(WidgetHint::Knob),
             )
             .port(
+                PortDescriptor::control_input("level_cv", "Level CV").description(
+                    "Modulate output level (added to the Level knob). Connect: LFO, Envelope",
+                ),
+            )
+            .port(
                 PortDescriptor::audio_output("out", "Out")
                     .description("Noise output. Connect to: Filter In, Amplifier In, Mixer"),
             )
@@ -277,7 +282,7 @@ impl Describable for NoiseGenerator {
 impl PolyModule for NoiseGenerator {
     fn process(
         &mut self,
-        _inputs: InputPorts<'_>,
+        inputs: InputPorts<'_>,
         outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext,
     ) {
@@ -287,9 +292,12 @@ impl PolyModule for NoiseGenerator {
         }
         self.output_buffer.resize(context.samples.as_usize());
 
-        // Effective level = base + normalized mod offset, once per block.
-        let level = self.mod_offsets.effective("level", self.level.as_f32());
+        // Base level = knob + normalized mod-matrix offset (per block). The
+        // Level CV input is added per sample on top, clamped to the 0..1 domain.
+        let base_level = self.mod_offsets.effective("level", self.level.as_f32());
+        let level_cv = inputs.reader(PortName::LEVEL_CV, 0.0);
         for i in 0..context.samples.as_usize() {
+            let level = (base_level + level_cv.get(i)).clamp(0.0, 1.0);
             self.output_buffer[i] = self.generate_sample() * level;
         }
 

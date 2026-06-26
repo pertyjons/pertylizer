@@ -18,7 +18,7 @@ use synth_core::{
     ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
     WidgetHint,
 };
-use synth_core::{Hertz, MidiNote, NormalizedValue, PortName, SampleRate, Velocity};
+use synth_core::{BipolarValue, Hertz, MidiNote, NormalizedValue, PortName, SampleRate, Velocity};
 use synth_core::{ModuleType, PadSynthParam, Param};
 
 /// Wavetable size (must be a power of two for the FFT).
@@ -316,6 +316,10 @@ impl Describable for PadSynth {
                 .widget(WidgetHint::Knob),
             )
             .port(
+                PortDescriptor::control_input("pitch_cv", "Pitch CV")
+                    .description("1V/oct pitch offset (octaves). Connect: LFO, Envelope, Pitch"),
+            )
+            .port(
                 PortDescriptor::audio_output("out", "Out")
                     .description("PADsynth output. Connect to: Amplifier In, Filter In"),
             )
@@ -325,7 +329,7 @@ impl Describable for PadSynth {
 impl PolyModule for PadSynth {
     fn process(
         &mut self,
-        _inputs: InputPorts<'_>,
+        inputs: InputPorts<'_>,
         outputs: &mut HashMap<PortName, AudioBuffer>,
         context: &ProcessContext,
     ) {
@@ -351,11 +355,25 @@ impl PolyModule for PadSynth {
         // the shared `Hertz::OSC_RANGE` preset, the same idiom every other voice-pitch
         // module uses.
         let sr = self.sample_rate.as_f32() as f64;
-        let pitch = Hertz::new(Hertz::OSC_RANGE.clamp(self.current_pitch.as_f32()));
-        self.phase_increment = f64::from(pitch.as_f32()) / sr;
-        let inc = self.phase_increment;
+        let base_pitch = Hertz::new(Hertz::OSC_RANGE.clamp(self.current_pitch.as_f32()));
+        // Record the unmodulated increment (phase_increment is observed by tests
+        // and mirrors the base pitch); the Pitch CV shifts it 1V/oct per sample.
+        self.phase_increment = f64::from(base_pitch.as_f32()) / sr;
+        let pitch_cv = inputs.reader(PortName::PITCH_CV, 0.0);
 
         for i in 0..num_samples {
+            let inc = if pitch_cv.is_connected() {
+                let pitch = Hertz::new(
+                    Hertz::OSC_RANGE.clamp(
+                        base_pitch
+                            .apply_cv(BipolarValue::new(pitch_cv.get(i)))
+                            .as_f32(),
+                    ),
+                );
+                f64::from(pitch.as_f32()) / sr
+            } else {
+                self.phase_increment
+            };
             let sample = self.read_wavetable(self.phase);
             self.output_buffer[i] = sample * level;
             self.phase += inc;
