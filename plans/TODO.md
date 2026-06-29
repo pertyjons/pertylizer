@@ -102,10 +102,13 @@
 
 ### 2.4 Polyphony settings
 
-- [ ] **Unison detune + spread controls — NOT IMPLEMENTED (config removed, only a fixed constant remains).**
-  The global `AllocationMode::Unison` *mode* works (selectable in the Mode dropdown; `allocate_unison`
-  plays the held note on every voice with an evenly-spread pitch detune), but the **detune amount is a
-  fixed 10-cent constant inlined in `allocate_unison`** (`voice_allocator.rs`). The old
+- [ ] **Unison detune + spread controls.** **Detune SHIPPED** (`268441f9`,
+  configurable end-to-end — see the progress block below). **Spread is the
+  remaining work** — full plan in
+  [`plans/unison-spread-plan.md`](unison-spread-plan.md). _History (why the
+  original config was removed before detune re-added it properly):_ the global
+  `AllocationMode::Unison` *mode* always worked, but the detune amount used to be a
+  **fixed 10-cent constant inlined in `allocate_unison`** (`voice_allocator.rs`). The old
   `AllocatorConfig.unison_detune: Cents` field was a first-commit (v0.12) design stub that never got a
   setter, `InstrumentParam`, snapshot field, persistence, or GUI — so it was a misleading "config" knob
   that could never actually change. **It was removed** and replaced by the inline constant, so nothing in
@@ -188,12 +191,13 @@
       separate "surface the whole allocator config (mode/stealing/max_voices/
       detune) via MCP" task. Green.
 
-  **DETUNE VERTICAL COMPLETE** (steps 1–6, branch `feat/unison-detune`): unison
-  detune is now configurable end-to-end (allocator → command → snapshot →
-  persistence w/ 10 ct backward-compat → GUI slider greyed outside Unison mode →
-  tests). **Still open / deferred:** (a) **spread** — the real feature; needs new
-  per-voice stereo DSP (per-voice pan), design separately; (b) **MCP** allocator-
-  config surface (see step 6 triage).
+  **DETUNE VERTICAL COMPLETE** (steps 1–6, merged to `main` as
+  `268441f9`): unison detune is configurable end-to-end (allocator → command →
+  snapshot → persistence w/ 10 ct backward-compat → GUI slider greyed outside
+  Unison mode → tests). **Still open:** (a) **spread** — full implementation plan
+  in [`plans/unison-spread-plan.md`](unison-spread-plan.md) (per-voice stereo
+  width; recommended defaults locked, ready to build); (b) **MCP** allocator-config
+  surface (see step 6 triage).
 
 ---
 
