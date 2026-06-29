@@ -14,7 +14,7 @@ use synth_sequencer::{
 };
 
 use super::SequencerViewState;
-use crate::gui::widgets::Knob;
+use crate::gui::widgets::{Knob, enum_combo, labeled_row};
 use crate::undo::{UndoAction, UndoManager};
 
 /// An in-progress ornament edit: which note, the pre-edit baseline (for one
@@ -51,8 +51,7 @@ pub(crate) fn draw_ornament_editor(ui: &mut egui::Ui, orn: &mut Option<Ornament>
 
     if let Some(o) = orn.as_mut() {
         ui.separator();
-        ui.horizontal(|ui| {
-            ui.label("Hits");
+        labeled_row(ui, "Hits", |ui| {
             // Min 2: a count of 1 is a documented no-op (use "None" to clear).
             ui.add(egui::DragValue::new(&mut o.count).range(2..=MAX_ORNAMENT_HITS));
             ui.label("Spacing");
@@ -64,47 +63,41 @@ pub(crate) fn draw_ornament_editor(ui: &mut egui::Ui, orn: &mut Option<Ornament>
             );
             o.spacing = SeqDuration(spacing);
         });
-        ui.horizontal(|ui| {
-            ui.label("Curve");
-            egui::ComboBox::from_id_salt("orn_curve")
-                .selected_text(spacing_name(o.spacing_curve))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut o.spacing_curve, OrnamentSpacing::Even, "Even");
-                    ui.selectable_value(
-                        &mut o.spacing_curve,
-                        OrnamentSpacing::Accelerate,
-                        "Accelerate",
-                    );
-                    ui.selectable_value(
-                        &mut o.spacing_curve,
-                        OrnamentSpacing::Decelerate,
-                        "Decelerate",
-                    );
-                });
+        labeled_row(ui, "Curve", |ui| {
+            enum_combo(
+                ui,
+                "orn_curve",
+                &mut o.spacing_curve,
+                &[
+                    (OrnamentSpacing::Even, "Even"),
+                    (OrnamentSpacing::Accelerate, "Accelerate"),
+                    (OrnamentSpacing::Decelerate, "Decelerate"),
+                ],
+            );
             ui.label("Dynamics");
-            egui::ComboBox::from_id_salt("orn_dyn")
-                .selected_text(dynamics_name(o.dynamics))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut o.dynamics, OrnamentDynamics::Flat, "Flat");
-                    ui.selectable_value(&mut o.dynamics, OrnamentDynamics::Crescendo, "Crescendo");
-                    ui.selectable_value(
-                        &mut o.dynamics,
-                        OrnamentDynamics::Decrescendo,
-                        "Decrescendo",
-                    );
-                });
+            enum_combo(
+                ui,
+                "orn_dyn",
+                &mut o.dynamics,
+                &[
+                    (OrnamentDynamics::Flat, "Flat"),
+                    (OrnamentDynamics::Crescendo, "Crescendo"),
+                    (OrnamentDynamics::Decrescendo, "Decrescendo"),
+                ],
+            );
         });
-        ui.horizontal(|ui| {
-            ui.label("Placement");
-            egui::ComboBox::from_id_salt("orn_place")
-                .selected_text(placement_name(o.placement))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut o.placement, OrnamentPlacement::LeadIn, "Lead-in");
-                    ui.selectable_value(&mut o.placement, OrnamentPlacement::OnBeat, "On beat");
-                });
+        labeled_row(ui, "Placement", |ui| {
+            enum_combo(
+                ui,
+                "orn_place",
+                &mut o.placement,
+                &[
+                    (OrnamentPlacement::LeadIn, "Lead-in"),
+                    (OrnamentPlacement::OnBeat, "On beat"),
+                ],
+            );
         });
-        ui.horizontal(|ui| {
-            ui.label("Pitch offset");
+        labeled_row(ui, "Pitch offset", |ui| {
             let mut po = o.pitch_offset.as_f32();
             ui.add(
                 egui::DragValue::new(&mut po)
@@ -206,6 +199,29 @@ pub(crate) fn ornament_tag(o: Ornament) -> String {
     }
 }
 
+fn spacing_name(s: OrnamentSpacing) -> &'static str {
+    match s {
+        OrnamentSpacing::Even => "Even",
+        OrnamentSpacing::Accelerate => "Accelerate",
+        OrnamentSpacing::Decelerate => "Decelerate",
+    }
+}
+
+fn dynamics_name(d: OrnamentDynamics) -> &'static str {
+    match d {
+        OrnamentDynamics::Flat => "Flat",
+        OrnamentDynamics::Crescendo => "Crescendo",
+        OrnamentDynamics::Decrescendo => "Decrescendo",
+    }
+}
+
+fn placement_name(p: OrnamentPlacement) -> &'static str {
+    match p {
+        OrnamentPlacement::LeadIn => "Lead-in",
+        OrnamentPlacement::OnBeat => "On beat",
+    }
+}
+
 /// A multi-line description of an ornament's full config, for a hover tooltip.
 pub(crate) fn ornament_detail(o: Ornament) -> String {
     format!(
@@ -286,28 +302,5 @@ fn preset_grace() -> Ornament {
         count: 2,
         pitch_offset: Semitones::new(2.0),
         ..Ornament::default()
-    }
-}
-
-fn spacing_name(s: OrnamentSpacing) -> &'static str {
-    match s {
-        OrnamentSpacing::Even => "Even",
-        OrnamentSpacing::Accelerate => "Accelerate",
-        OrnamentSpacing::Decelerate => "Decelerate",
-    }
-}
-
-fn dynamics_name(d: OrnamentDynamics) -> &'static str {
-    match d {
-        OrnamentDynamics::Flat => "Flat",
-        OrnamentDynamics::Crescendo => "Crescendo",
-        OrnamentDynamics::Decrescendo => "Decrescendo",
-    }
-}
-
-fn placement_name(p: OrnamentPlacement) -> &'static str {
-    match p {
-        OrnamentPlacement::LeadIn => "Lead-in",
-        OrnamentPlacement::OnBeat => "On beat",
     }
 }

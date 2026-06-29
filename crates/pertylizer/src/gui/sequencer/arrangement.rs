@@ -797,11 +797,7 @@ fn draw_arrangement_timeline(
             let tip_beats = pl.length_beats;
             let tip_notes = pl.note_count;
             response.clone().on_hover_ui(|ui: &mut egui::Ui| {
-                ui.label(
-                    RichText::new(&tip_name)
-                        .strong()
-                        .color(t.colors.text_primary),
-                );
+                strong_label(ui, &tip_name, Some(t.colors.text_primary));
                 ui.label(format!("{tip_beats:.1} beats"));
                 ui.label(format!("{tip_notes} notes"));
                 ui.label(format!("Instrument: {instr_name}"));
@@ -1351,12 +1347,7 @@ fn draw_arrangement_context_menu(
                 .map_or(ticks_per_bar, |p| p.length_ticks);
             let mut bars = (current_len / ticks_per_bar).max(1) as i32;
             ui.horizontal(|ui| {
-                ui.add(
-                    egui::DragValue::new(&mut bars)
-                        .range(1..=64)
-                        .speed(0.1)
-                        .suffix(" bars"),
-                );
+                unit_drag_value(ui, &mut bars, 1..=64, 0.1, " bars");
                 if ui.button("Apply").clicked() {
                     let new_len = SeqDuration(bars.max(1) as u32 * ticks_per_bar);
                     apply_pattern_length(song, undo_manager, pat_id, new_len);
@@ -1602,13 +1593,11 @@ fn draw_arrangement_track_headers(
                                             }
                                         }
                                     } else {
-                                        let name_resp = ui.add(
-                                            egui::Label::new(
-                                                RichText::new(&track.name)
-                                                    .size(12.0)
-                                                    .color(t.colors.text_primary),
-                                            )
-                                            .sense(Sense::click()),
+                                        let name_resp = clickable_label(
+                                            ui,
+                                            RichText::new(&track.name)
+                                                .size(12.0)
+                                                .color(t.colors.text_primary),
                                         );
                                         if name_resp.clicked() {
                                             view_state.selected_track = Some(track.id);
@@ -1774,56 +1763,57 @@ fn draw_arrangement_track_headers(
                                         egui::Popup::from_toggle_button_response(&prop_btn).show(
                                             |ui| {
                                                 ui.set_min_width(220.0);
-                                                ui.label(
-                                                    RichText::new("Track properties").strong(),
-                                                );
+                                                strong_label(ui, "Track properties", None);
                                                 ui.add_space(t.spacing.xs);
 
                                                 // Volume
                                                 let mut vol = track.volume.as_f32();
-                                                ui.horizontal(|ui| {
-                                                    ui.label(
-                                                        RichText::new("Vol")
-                                                            .color(t.colors.text_dim),
-                                                    );
-                                                    if ui
-                                                        .add(
-                                                            egui::Slider::new(&mut vol, 0.0..=1.0)
+                                                labeled_row(
+                                                    ui,
+                                                    RichText::new("Vol").color(t.colors.text_dim),
+                                                    |ui| {
+                                                        if ui
+                                                            .add(
+                                                                egui::Slider::new(
+                                                                    &mut vol,
+                                                                    0.0..=1.0,
+                                                                )
                                                                 .show_value(true)
                                                                 .fixed_decimals(2),
-                                                        )
-                                                        .changed()
-                                                        && let mut song_w = song.write()
-                                                        && let Some(trk) =
-                                                            song_w.track_mut(track.id)
-                                                    {
-                                                        trk.volume = NormalizedValue::new(vol);
-                                                    }
-                                                });
+                                                            )
+                                                            .changed()
+                                                            && let mut song_w = song.write()
+                                                            && let Some(trk) =
+                                                                song_w.track_mut(track.id)
+                                                        {
+                                                            trk.volume = NormalizedValue::new(vol);
+                                                        }
+                                                    },
+                                                );
 
                                                 let mut pan_bi = track.pan.as_f32();
-                                                ui.horizontal(|ui| {
-                                                    ui.label(
-                                                        RichText::new("Pan")
-                                                            .color(t.colors.text_dim),
-                                                    );
-                                                    if ui
-                                                        .add(
-                                                            egui::Slider::new(
-                                                                &mut pan_bi,
-                                                                -1.0..=1.0,
+                                                labeled_row(
+                                                    ui,
+                                                    RichText::new("Pan").color(t.colors.text_dim),
+                                                    |ui| {
+                                                        if ui
+                                                            .add(
+                                                                egui::Slider::new(
+                                                                    &mut pan_bi,
+                                                                    -1.0..=1.0,
+                                                                )
+                                                                .show_value(true)
+                                                                .fixed_decimals(2),
                                                             )
-                                                            .show_value(true)
-                                                            .fixed_decimals(2),
-                                                        )
-                                                        .changed()
-                                                        && let mut song_w = song.write()
-                                                        && let Some(trk) =
-                                                            song_w.track_mut(track.id)
-                                                    {
-                                                        trk.pan = BipolarValue::new(pan_bi);
-                                                    }
-                                                });
+                                                            .changed()
+                                                            && let mut song_w = song.write()
+                                                            && let Some(trk) =
+                                                                song_w.track_mut(track.id)
+                                                        {
+                                                            trk.pan = BipolarValue::new(pan_bi);
+                                                        }
+                                                    },
+                                                );
 
                                                 // Description (utility metadata, no undo).
                                                 // Buffered so edits survive the per-frame
@@ -1879,13 +1869,7 @@ fn draw_arrangement_track_headers(
                                                         RichText::new(&track.description)
                                                             .color(t.colors.text_secondary)
                                                     };
-                                                    if ui
-                                                        .add(
-                                                            egui::Label::new(desc_text)
-                                                                .sense(Sense::click()),
-                                                        )
-                                                        .clicked()
-                                                    {
+                                                    if clickable_label(ui, desc_text).clicked() {
                                                         view_state.editing_track_description = Some(
                                                             (track.id, track.description.clone()),
                                                         );

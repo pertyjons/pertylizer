@@ -33,7 +33,9 @@ use crate::gui::theme::theme;
 /// Clip-warning header tint (used by the layout-measurement tests).
 #[cfg(test)]
 const CLIP_WARN_ORANGE: Color32 = Color32::from_rgb(200, 120, 40);
-use crate::gui::widgets::{CaptionTone, ModuleFrame, caption, draw_module_header, level_color};
+use crate::gui::widgets::{
+    CaptionTone, ModuleFrame, caption, draw_module_header, level_color, strong_label,
+};
 
 /// Width of a single channel strip, in points.
 const STRIP_WIDTH: f32 = 108.0;
@@ -280,7 +282,7 @@ pub fn draw_mixer_view(
         .show(ui, |ui| {
             // ── Toolbar ──
             super::toolbar::top(ui, "mixer_toolbar", |ui| {
-                ui.label(RichText::new("Mixer").color(t.colors.text_primary).strong());
+                strong_label(ui, "Mixer", Some(t.colors.text_primary));
                 ui.add_space(t.spacing.lg);
                 if ui
                     .button(RichText::new("+ Return Bus").color(t.colors.accent_green))

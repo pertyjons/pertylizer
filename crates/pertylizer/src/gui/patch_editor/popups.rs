@@ -14,7 +14,7 @@ use synth_engine::ModuleId;
 
 use crate::gui::module_panel::ModulePanelState;
 use crate::gui::theme::theme;
-use crate::gui::widgets::{CaptionTone, caption};
+use crate::gui::widgets::{CaptionTone, caption, strong_label};
 
 use super::{
     ModAddrCatalog, PatchEditor, PatchEditorResult, PickedInput, ScriptDepGraph,
@@ -58,10 +58,10 @@ impl PatchEditor {
                 win = win.default_pos(pos);
             }
             win.show(&ctx, |ui| {
-                ui.label(
-                    egui::RichText::new(format!("Type: {type_name}"))
-                        .strong()
-                        .color(t.colors.text_secondary),
+                strong_label(
+                    ui,
+                    format!("Type: {type_name}"),
+                    Some(t.colors.text_secondary),
                 );
                 ui.separator();
                 caption(ui, "Type documentation", CaptionTone::Dim);
@@ -363,11 +363,7 @@ pub(super) fn draw_yams_help_window(
     // Section heading.
     let head = |ui: &mut Ui, text: &str| {
         ui.add_space(6.0);
-        ui.label(
-            egui::RichText::new(text)
-                .strong()
-                .color(t.colors.accent_cyan),
-        );
+        strong_label(ui, text, Some(t.colors.accent_cyan));
     };
     // Body paragraph.
     let body = |ui: &mut Ui, text: &str| {

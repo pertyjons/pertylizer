@@ -25,9 +25,10 @@ pub use cable::{
     draw_cable_highlighted, draw_flow_particles, point_near_cable,
 };
 pub use controls::{
-    CaptionTone, DialogButton, caption, danger_button, dialog_button_row, dim_label, enum_combo,
-    icon_button, icon_button_sized, log_suffix_slider, modal_window, section_header, suffix_slider,
-    time_drag_value, toggle_button, toggle_button_colored,
+    CaptionTone, DialogButton, caption, clickable_label, danger_button, dialog_button_row,
+    dim_label, empty_state, enum_combo, icon_button, icon_button_sized, labeled_row,
+    log_suffix_slider, modal_window, section_header, strong_label, suffix_slider, time_drag_value,
+    toggle_button, toggle_button_colored, unit_drag_value,
 };
 pub use envelope::{EnvelopeChanges, EnvelopeEditor, draw_adsr_curve};
 pub use frame::{ModuleFrame, blend_rgb, draw_module_header};

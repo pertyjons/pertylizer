@@ -34,6 +34,7 @@ use super::{
 use crate::gui::input::KEY_MAP;
 use crate::gui::instrument_rack::InstrumentUiState;
 use crate::gui::theme::theme;
+use crate::gui::widgets::{CaptionTone, caption, strong_label};
 use crate::undo::{UndoAction, UndoManager};
 
 /// Row height in pixels at zoom 1.0. Taller than a piano-roll semitone row because
@@ -1281,7 +1282,7 @@ pub(crate) fn draw_tracker(
             ui.separator();
             ui.menu_button("?", |ui| {
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
-                ui.label(RichText::new("Tracker — keys & mouse").strong());
+                strong_label(ui, "Tracker — keys & mouse", None);
                 ui.separator();
                 ui.label("Navigate: arrows move the cursor; PageUp/Down jump; Home/End to ends.");
                 ui.label("Notes: a piano key (A W S E D F …) inserts a note at the cursor; Delete removes it.");
@@ -1518,7 +1519,7 @@ pub(crate) fn draw_tracker(
                 } else {
                     colors.header_fg
                 };
-                ui.label(RichText::new(text).strong().color(fg))
+                strong_label(ui, text, Some(fg))
             };
             header.col(|ui| {
                 header_label(ui, "Row".to_string(), false)
@@ -1642,11 +1643,7 @@ pub(crate) fn draw_tracker(
                             Some(idx) => {
                                 draw_note_cell(ui, &data.notes[idx], tpr, &colors);
                                 if extra > 0 {
-                                    ui.label(
-                                        RichText::new(format!("+{extra}"))
-                                            .color(colors.off_grid)
-                                            .small(),
-                                    )
+                                    caption(ui, format!("+{extra}"), CaptionTone::Color(colors.off_grid))
                                     .on_hover_text(format!(
                                         "{extra} more note(s) share this voice lane on this row"
                                     ));
@@ -2067,20 +2064,14 @@ fn draw_note_cell(ui: &mut egui::Ui, note: &PianoRollNote, tpr: u32, colors: &Tr
                 .monospace(),
         );
         if note.legato {
-            ui.label(RichText::new(LEGATO_MARK).color(colors.legato).small())
-                .on_hover_text("Legato");
+            caption(ui, LEGATO_MARK, CaptionTone::Color(colors.legato)).on_hover_text("Legato");
         }
         if note.glide.is_some() {
-            ui.label(RichText::new(GLIDE_MARK).color(colors.glide).small())
-                .on_hover_text("Glide");
+            caption(ui, GLIDE_MARK, CaptionTone::Color(colors.glide)).on_hover_text("Glide");
         }
         if note.expression.is_some() {
-            ui.label(
-                RichText::new(EXPRESSION_MARK)
-                    .color(colors.expression)
-                    .small(),
-            )
-            .on_hover_text("Expression");
+            caption(ui, EXPRESSION_MARK, CaptionTone::Color(colors.expression))
+                .on_hover_text("Expression");
         }
     });
 }

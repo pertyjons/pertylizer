@@ -10,7 +10,9 @@ use egui_file_dialog::{FileDialog, Filter};
 
 use super::egui_backend::setup_custom_style;
 use super::theme::{ThemePreset, theme};
-use super::widgets::{DialogButton, dialog_button_row, modal_window};
+use super::widgets::{
+    CaptionTone, DialogButton, caption, dialog_button_row, labeled_row, modal_window, strong_label,
+};
 use crate::io::settings::{AppSettings, settings_path};
 use crate::io::{GroupTemplateInfo, GroupTemplateManager, GroupTemplateSource, PatchManager};
 use crate::patch::{GroupCategory, GroupId, Patch, categorized_patches};
@@ -532,7 +534,7 @@ pub fn show_settings_dialog(
                         } else {
                             format!("{} (default)", display_path.display())
                         };
-                        ui.label(RichText::new(label).small().color(theme().colors.text_dim));
+                        caption(ui, label, CaptionTone::Dim);
                         if is_custom && ui.small_button("Reset").clicked() {
                             settings.directories.patches_dir = None;
                             changed = true;
@@ -555,7 +557,7 @@ pub fn show_settings_dialog(
                         } else {
                             format!("{} (default)", display_path.display())
                         };
-                        ui.label(RichText::new(label).small().color(theme().colors.text_dim));
+                        caption(ui, label, CaptionTone::Dim);
                         if is_custom && ui.small_button("Reset").clicked() {
                             settings.directories.projects_dir = None;
                             changed = true;
@@ -570,7 +572,7 @@ pub fn show_settings_dialog(
                             .ok()
                             .unwrap_or_default();
                         let label = format!("{} (default)", default_dir.display());
-                        ui.label(RichText::new(label).small().color(theme().colors.text_dim));
+                        caption(ui, label, CaptionTone::Dim);
                     });
                     ui.end_row();
 
@@ -578,11 +580,7 @@ pub fn show_settings_dialog(
                     ui.label("Settings file:");
                     let settings_display = settings_path()
                         .map_or_else(|_| "(unknown)".to_string(), |p| p.display().to_string());
-                    ui.label(
-                        RichText::new(settings_display)
-                            .small()
-                            .color(theme().colors.text_dim),
-                    );
+                    caption(ui, settings_display, CaptionTone::Dim);
                     ui.end_row();
                 });
 
@@ -631,7 +629,7 @@ pub fn show_about_dialog(ctx: &egui::Context, open: &mut bool) {
             ui.add_space(theme().spacing.md);
 
             ui.separator();
-            ui.label(RichText::new("Keyboard Controls").strong());
+            strong_label(ui, "Keyboard Controls", None);
             ui.label("  Z-M: Lower octave (C3-B3)");
             ui.label("  Q-I: Upper octave (C4-C5)");
             ui.label("  -/+: Change octave");
@@ -639,7 +637,7 @@ pub fn show_about_dialog(ctx: &egui::Context, open: &mut bool) {
 
             ui.add_space(theme().spacing.md);
             ui.separator();
-            ui.label(RichText::new("Features").strong());
+            strong_label(ui, "Features", None);
             ui.label("• Modular synthesis with patch cables");
             ui.label("• Multiple waveforms and filters");
             ui.label("• Effects: Delay, Reverb, Chorus, etc.");
@@ -674,8 +672,7 @@ pub fn show_load_patch_dialog(
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .show(ctx, |ui| {
             // Search field
-            ui.horizontal(|ui| {
-                ui.label(egui_remixicon::icons::SEARCH_LINE);
+            labeled_row(ui, egui_remixicon::icons::SEARCH_LINE, |ui| {
                 let response = ui.add(
                     egui::TextEdit::singleline(search)
                         .hint_text("Search name, description, tags...")
@@ -727,7 +724,7 @@ pub fn show_load_patch_dialog(
                         any_match = true;
 
                         ui.add_space(theme().spacing.xs);
-                        ui.label(RichText::new(category).strong());
+                        strong_label(ui, category, None);
                         ui.separator();
 
                         for patch in matching {
@@ -738,7 +735,7 @@ pub fn show_load_patch_dialog(
                                     search.clear();
                                 }
                                 if let Some(ref desc) = patch.description {
-                                    ui.label(RichText::new(desc).small().color(dim));
+                                    caption(ui, desc, CaptionTone::Dim);
                                 }
                             });
                         }
@@ -781,8 +778,7 @@ pub fn show_group_template_browser(
         .min_width(420.0)
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .show(ctx, |ui| {
-            ui.horizontal(|ui| {
-                ui.label("Search");
+            labeled_row(ui, "Search", |ui| {
                 ui.text_edit_singleline(search);
                 if ui.button("Clear").clicked() {
                     search.clear();
@@ -821,7 +817,7 @@ pub fn show_group_template_browser(
                         }
 
                         ui.add_space(theme().spacing.xs);
-                        ui.label(RichText::new(category.label()).strong());
+                        strong_label(ui, category.label(), None);
                         ui.add_space(theme().spacing.xxs);
 
                         for template in &category_templates {
@@ -833,16 +829,14 @@ pub fn show_group_template_browser(
                                     *selected = Some(template.source.clone());
                                 }
                                 if matches!(template.source, GroupTemplateSource::BuiltIn(_)) {
-                                    ui.label(
-                                        RichText::new("Built-in")
-                                            .small()
-                                            .color(theme().colors.accent_green),
+                                    caption(
+                                        ui,
+                                        "Built-in",
+                                        CaptionTone::Color(theme().colors.accent_green),
                                     );
                                 }
                                 if let Some(ref desc) = template.description {
-                                    ui.label(
-                                        RichText::new(desc).small().color(theme().colors.text_dim),
-                                    );
+                                    caption(ui, desc, CaptionTone::Dim);
                                 }
                             });
                         }
@@ -868,7 +862,7 @@ pub fn show_group_template_browser(
 
                     if !uncategorized.is_empty() {
                         ui.add_space(theme().spacing.xs);
-                        ui.label(RichText::new("Other").strong());
+                        strong_label(ui, "Other", None);
                         ui.add_space(theme().spacing.xxs);
 
                         for template in &uncategorized {
@@ -880,9 +874,7 @@ pub fn show_group_template_browser(
                                     *selected = Some(template.source.clone());
                                 }
                                 if let Some(ref desc) = template.description {
-                                    ui.label(
-                                        RichText::new(desc).small().color(theme().colors.text_dim),
-                                    );
+                                    caption(ui, desc, CaptionTone::Dim);
                                 }
                             });
                         }
@@ -890,11 +882,7 @@ pub fn show_group_template_browser(
                 });
 
             if shown == 0 {
-                ui.label(
-                    RichText::new("No templates found")
-                        .small()
-                        .color(theme().colors.text_dim),
-                );
+                caption(ui, "No templates found", CaptionTone::Dim);
             }
 
             ui.add_space(theme().spacing.lg);
@@ -1010,11 +998,7 @@ pub fn show_save_awe_preset_dialog(
 
         ui.add_space(theme().spacing.sm);
         ui.separator();
-        ui.label(
-            RichText::new("Author")
-                .color(theme().colors.text_dim)
-                .small(),
-        );
+        caption(ui, "Author", CaptionTone::Dim);
         if !author.name.is_empty() {
             ui.label(format!("Name: {}", author.name));
         }
@@ -1022,11 +1006,7 @@ pub fn show_save_awe_preset_dialog(
             ui.label(format!("License: {}", author.license));
         }
         if author.name.is_empty() && author.license.is_empty() {
-            ui.label(
-                RichText::new("(set in Settings)")
-                    .color(theme().colors.text_dim)
-                    .small(),
-            );
+            caption(ui, "(set in Settings)", CaptionTone::Dim);
         }
 
         ui.add_space(theme().spacing.lg);

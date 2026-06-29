@@ -562,11 +562,93 @@ accent colors — get an in-app eyeball).
 
 ### Phase 2 implementation progress
 
-Autonomous rule: only **provably no-visual-change** migrations are applied; any
-site whose look would shift (e.g. `.small()` ≈ 9px vs `caption` 10px, accent-tone
-consolidation, heading-vs-`.strong()`) is SKIPPED and flagged for an in-app
-eyeball. Helpers are added only alongside real migratable sites (no speculative
-dead API — see Step 7).
+Autonomous rule (P2-1…P2-4): only **provably no-visual-change** migrations were
+applied; visual-shift sites were skipped.
+
+**Directive change (P2-5 onward):** the user asked to **route EVERYTHING through
+helpers now** even where the look shifts slightly (e.g. `.small()` 9px→10px),
+and to review all of it themselves afterward (corrections come later). So from
+P2-5 the rule is **route-everything**; visual deltas are accepted and recorded
+as eyeball-priority for the user's final pass. Each step still: helper → migrate
+→ `/code-review --fix` (focused per step; user's final review is the
+comprehensive backstop) → plan → commit.
+
+- [x] **P2-11 — ornament `enum_combo`.** Migrated `ornament.rs`'s 3 combos
+  (Curve/Dynamics/Placement) to `enum_combo` with static `(variant,&str)` tables
+  that match the `spacing_name`/`dynamics_name`/`placement_name` outputs exactly
+  (verified inline). The `_name` fns are KEPT — they're also used by
+  `ornament_detail`'s tooltip (not just the combos). `note_fx` was already fully
+  converted (P2-7 review). The remaining ~30 `from_id_salt` combos stay bespoke
+  (`.width()` / `selectable_label().clicked()` side-effects / `from_label` /
+  deferred index-diff — see P2-3).
+- [x] **P2-10 — `empty_state` + `clickable_label`.** Added `empty_state(ui,
+  text)` (centered dim placeholder) and migrated the 3 main-area placeholders
+  (`sample_view`, `pattern_view`, `egui_backend` "No active instrument" — gains
+  dim, accepted); `list_panel::empty` stays its own inline-italic sidebar
+  variant. Added `clickable_label(ui, text)` (= `Label::new(text).sense(click)`)
+  and migrated the 3 `Label::sense(click())` titles (arrangement track-name +
+  desc, piano_roll pattern-name) — styled content preserved. Review `[]`.
+  - **`action_button` NOT done (not needed):** `ui.button((icon, text))` is
+    already egui 0.35's idiomatic tuple button (16 plain sites, 0 coloured);
+    wrapping it in `action_button(ui, icon, text, None)` would be *longer* and
+    add nothing. The `Button::new((icon, text))` inside `.add_enabled().
+    shortcut_text()` belong to the (deferred) `gated_button` idiom.
+    `bypass_checkbox` (`ui.checkbox(&mut b, "")`) is likewise already concise.
+  - **`status_pill` deferred:** `analyze.rs`'s local `chip()` is coupled to a
+    pane-local `PaneTheme` palette (`pt.chip_good/warn/bad/fg`), not the global
+    `theme()`, and the transport badges are structurally different — a single
+    theme-based `status_pill` would change analyze's colours and not fit
+    transport. Needs a per-context decision.
+- [x] **P2-9 — `unit_drag_value` (non-seconds DragValue).** Added
+  `unit_drag_value(ui, value, range, speed, suffix)` (the non-seconds counterpart
+  of `time_drag_value`) and migrated the **15** strict-form
+  `ui.add(DragValue::new(v).range(r).speed(s).suffix(suf))` sites (`piano_roll`
+  ×8, `sample_view` ×5, `arrangement`/`note_fx` ×1). Review `[]` (no dropped
+  `.fixed_decimals/.custom_formatter/.prefix`; complex ranges intact). LEFT:
+  DragValues with a styled `.prefix(RichText…)` (the patch-bar Vol/Pan atoms),
+  `.fixed_decimals`, `.custom_formatter`, or a `%↔0..1` conversion — they don't
+  fit the thin signature; a richer drag helper or per-site handling later.
+  - **Toggle routing DEFERRED:** the inline colored toggles are too varied to
+    route through `toggle_button_colored` — some are `selectable_label` (a
+    different widget with selection highlight), some are sized (`.size(10.0)` M/S
+    badges), some use precomputed colours. Forcing them through a bold colored-
+    text-button helper would change the widget/size, not consolidate. Needs a
+    flexible-toggle decision (or `selectable_label` is left as idiomatic). Left.
+- [x] **P2-8 — `labeled_row` (re-added).** Added
+  `labeled_row(ui, label, |ui| {…})` = `ui.horizontal(|ui| { ui.label(label);
+  widget(ui) })` (plain default-colour label, to stay faithful to the existing
+  `ui.label("X:")` rows) and transformed the **49** `ui.horizontal(|ui| {
+  ui.label(LABEL); BODY })` blocks (`awe_view` ×33, `note_fx` ×6, `ornament` ×4,
+  `dialogs`/`groups`/`arrangement` ×2) — script rewrote only the opening + label
+  line, BODY untouched. Caught + fixed a trailing-comma bug in 2 multiline-label
+  sites (arrangement Vol/Pan). Review `[]` (counts balance 49/49/49; multi-label
+  bodies promote only the first label, rest stay in BODY).
+- [x] **P2-7 — `strong_label`.** Added `strong_label(ui, text, Option<Color32>)`
+  (= `ui.label(text.strong()[.color(c)])`) and routed the **19** inline bold
+  titles through it (`dialogs` ×5 category/section titles, `transport` ×3
+  REC/COUNT-IN/Time-sig, `popups`/`arrangement`/`piano_roll`/`tracker` ×2 each,
+  `analyze`/`mixer_view`/`note_fx` "NOTE FX" ×1). The script correctly EXCLUDED
+  `.strong()` labels that also carry `.size()`/`.small()` (e.g. the analyze
+  `.color().strong().small()` chip — left for a sized/caption-family helper).
+  Review `[]`.
+- [x] **P2-6 — `section_header` + icon.** Added a 5th `icon: Option<&str>` param
+  (prepends `"{icon}  {title}"`) and migrated the **6** styled inline headings:
+  `awe_view` Room/Material/Spatial/Mix/Effects (the AWE "Mix"/"Effects" sub-lines
+  folded into the `description` arg; trailing `add_space(xs)` removed since the
+  helper adds its own), and `sample_view` "Properties" (icon `SETTINGS_3_FILL`).
+  Visual deltas accepted (heading→`.strong()`, `xs`→`widget_spacing`, Properties
+  18px→16px). Removed now-unused `caption`/`CaptionTone` imports from awe_view.
+  Review `[]`. NOT migrated: plain `ui.heading("Theme"/"Author"/…)` in
+  dialogs/export — those are default egui headings with no colour/size, so
+  routing them through `section_header` (which requires a colour + forces
+  size_heading) would be a deeper restyle; left as idiomatic default headings.
+- [x] **P2-5 — `.small()` captions → `caption`.** Migrated the **24**
+  `ui.label(RichText::new(x).small().color(C))` sites (`dialogs` ×11,
+  `patch_editor` ×5, `tracker` ×4, `node` ×2, `analyze`/`egui_backend` ×1) to
+  `caption(.., CaptionTone::{Dim|Color(C)})`. **Visual delta:** `.small()` (~9px)
+  → `size_small` (10px) — accepted, eyeball later (esp. the 4 tracker grid marks,
+  though review confirmed they stay smaller than the row's monospace glyph so
+  cell metrics are unchanged). Review fix applied: dialogs:737 `Color(dim)`→`Dim`.
 
 - [x] **P2-4 — `danger_button` (Tier B).** Added
   `danger_button(ui, label) = ui.button(label.color(accent_red))` and migrated
@@ -720,3 +802,63 @@ not started.
 labels (88), plain text menu/context buttons (58), monospace tracker-grid cells
 (16), nested `menu_button` trees (15), labeled checkboxes (9, the repetition is
 batch-undo logic not the widget), hand-styled `Frame` containers (6).
+
+---
+
+## Phase 2 — completion summary & residual (stopping point)
+
+The **route-everything** pass (P2-5…P2-11) consolidated every idiom that fits a
+**thin, faithful helper**. Branch `feat/widget-helpers-phase2`, each step
+reviewed (`[]`) + green:
+
+| Step | Helper | Sites |
+|---|---|---|
+| P2-5 | `.small()` → `caption` | 24 |
+| P2-6 | `section_header` + icon | 6 |
+| P2-7 | `strong_label` | 19 |
+| P2-8 | `labeled_row` (re-add) | 49 |
+| P2-9 | `unit_drag_value` | 15 |
+| P2-10 | `empty_state` + `clickable_label` | 6 |
+| P2-11 | `enum_combo` (ornament) | 3 |
+
+Together with the colour-only/caption/slider/combo helpers from the earlier
+branch, **~250 call sites now flow through `controls.rs` helpers.**
+
+### Residual — needs a user decision or an in-app eyeball (NOT thin-helper-able)
+
+Each was assessed and deliberately left; routing it would either change the
+widget, be the wrong abstraction altitude, or risk behaviour:
+
+1. **Already idiomatic — no helper wanted.** `ui.button((icon, text))` is egui
+   0.35's tuple button (16 sites); `ui.checkbox(&mut b, "")` (bypass); plain
+   `ui.heading("X")` dialog headings. Wrapping these is *longer* and adds nothing.
+2. **Wrong altitude (review-confirmed).** `framed_icon_button` / a generic
+   `colored_button` — the transport/toolbar glyph buttons are just
+   `ui.button(RichText::new(icon).color(c))`, structurally identical to any other
+   coloured button. The high-effort review judged a colour-parameterized
+   catch-all the wrong abstraction (invites scattering raw colours). If wanted,
+   add **role-named** siblings to `danger_button` (e.g. `add_button`), not a
+   generic one.
+3. **Bespoke — varied per site.** `gated_button` (~21 `add_enabled(cond,
+   Button::new(content))` — content is tuple/RichText/plain and some add
+   `shortcut_text`, which must be set *before* `add_enabled`); `status_pill`
+   (analyze's `chip()` is `PaneTheme`-coupled, transport badges differ); the
+   ~30 remaining `from_id_salt` combos (`.width()` / `selectable_label().clicked()`
+   side-effects / `from_label` / deferred index-diff); the small idioms
+   (`stepper`, `segmented_selector`, `property_row`, `checked_menu_item`,
+   `status_label`, `menu_section_header`, `fx_button`, `color_swatch`,
+   `palette_menu_button` — 2–14 sites each, content/colour/id all per-site); and
+   the containers (`dialog_window`, `floating_window`, `position_menu_popup`,
+   `list_scroll`, `toast` — each a distinct Window/Popup/ScrollArea config).
+4. **Behaviour-sensitive — needs an in-app eyeball.** `inline_editable_text`
+   (the request_focus / commit-on-`lost_focus`|Enter handshake across the 4 name/
+   description editors — genuinely worth a helper to stop drift, but each editor
+   commits differently and a subtle mistake breaks renaming, so it must be tested
+   live); the inline colored **toggle** routing (selectable_label vs sized vs
+   precomputed-colour — needs a flexible-toggle decision).
+
+**Recommendation:** the thin-helper consolidation is complete. The residual is a
+**design + eyeball** effort best done interactively — pick a flexible-toggle
+shape, decide `status_pill`'s colour source, and wire `inline_editable_text`
+with the app running. The added helpers (`controls.rs`) are the canonical homes
+for all new GUI code going forward.

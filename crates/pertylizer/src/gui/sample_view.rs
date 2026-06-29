@@ -13,7 +13,7 @@ use egui_remixicon::icons as ri;
 use crate::audio::input::{AudioInputManager, InputState};
 use crate::gui::list_panel;
 use crate::gui::theme::theme;
-use crate::gui::widgets::danger_button;
+use crate::gui::widgets::{danger_button, empty_state, section_header, unit_drag_value};
 use synth_core::SampleCount;
 use synth_sampler::{CropRegion, FrameIndex, LoopRegion, SampleId, SampleLibrary};
 
@@ -551,12 +551,7 @@ pub fn draw_sample_view(
                 }
             }
         } else {
-            ui.centered_and_justified(|ui| {
-                ui.label(
-                    egui::RichText::new("Select or import a sample to begin editing")
-                        .color(t.colors.text_dim),
-                );
-            });
+            empty_state(ui, "Select or import a sample to begin editing");
         }
     });
 
@@ -849,9 +844,12 @@ fn draw_properties(
 ) {
     let t = theme();
 
-    ui.heading(
-        egui::RichText::new(format!("{} Properties", ri::SETTINGS_3_FILL))
-            .color(t.colors.text_primary),
+    section_header(
+        ui,
+        "Properties",
+        None,
+        t.colors.text_primary,
+        Some(ri::SETTINGS_3_FILL),
     );
 
     egui::Grid::new("sample_properties")
@@ -976,15 +974,7 @@ fn draw_properties(
                 {
                     let mut val = loop_region.start.0 as f32;
                     let max = loop_region.end.0.saturating_sub(1) as f32;
-                    if ui
-                        .add(
-                            egui::DragValue::new(&mut val)
-                                .range(0.0..=max)
-                                .speed(100.0)
-                                .suffix(" frames"),
-                        )
-                        .changed()
-                    {
+                    if unit_drag_value(ui, &mut val, 0.0..=max, 100.0, " frames").changed() {
                         if let Ok(mut lib) = library.write() {
                             let mut region = loop_region;
                             region.start = FrameIndex::new(val as usize);
@@ -999,14 +989,14 @@ fn draw_properties(
                 {
                     let mut val = loop_region.end.0 as f32;
                     let max = meta.frame_count.as_usize() as f32;
-                    if ui
-                        .add(
-                            egui::DragValue::new(&mut val)
-                                .range((loop_region.start.0 + 1) as f32..=max)
-                                .speed(100.0)
-                                .suffix(" frames"),
-                        )
-                        .changed()
+                    if unit_drag_value(
+                        ui,
+                        &mut val,
+                        (loop_region.start.0 + 1) as f32..=max,
+                        100.0,
+                        " frames",
+                    )
+                    .changed()
                     {
                         if let Ok(mut lib) = library.write() {
                             let mut region = loop_region;
@@ -1021,14 +1011,7 @@ fn draw_properties(
                 ui.label(egui::RichText::new("Crossfade:").color(t.colors.text_secondary));
                 {
                     let mut val = loop_region.crossfade.as_usize() as f32;
-                    if ui
-                        .add(
-                            egui::DragValue::new(&mut val)
-                                .range(0.0..=4096.0)
-                                .speed(10.0)
-                                .suffix(" frames"),
-                        )
-                        .changed()
+                    if unit_drag_value(ui, &mut val, 0.0..=4096.0, 10.0, " frames").changed()
                         && let Ok(mut lib) = library.write()
                     {
                         let mut region = loop_region;
@@ -1067,15 +1050,7 @@ fn draw_properties(
                 {
                     let mut val = crop.start.0 as f32;
                     let max = crop.end.0.saturating_sub(1) as f32;
-                    if ui
-                        .add(
-                            egui::DragValue::new(&mut val)
-                                .range(0.0..=max)
-                                .speed(100.0)
-                                .suffix(" frames"),
-                        )
-                        .changed()
-                    {
+                    if unit_drag_value(ui, &mut val, 0.0..=max, 100.0, " frames").changed() {
                         if let Ok(mut lib) = library.write() {
                             lib.update_crop(
                                 id,
@@ -1094,14 +1069,14 @@ fn draw_properties(
                 {
                     let mut val = crop.end.0 as f32;
                     let max = meta.frame_count.as_usize() as f32;
-                    if ui
-                        .add(
-                            egui::DragValue::new(&mut val)
-                                .range((crop.start.0 + 1) as f32..=max)
-                                .speed(100.0)
-                                .suffix(" frames"),
-                        )
-                        .changed()
+                    if unit_drag_value(
+                        ui,
+                        &mut val,
+                        (crop.start.0 + 1) as f32..=max,
+                        100.0,
+                        " frames",
+                    )
+                    .changed()
                     {
                         if let Ok(mut lib) = library.write() {
                             lib.update_crop(

@@ -3240,11 +3240,7 @@ fn draw_visualizer_display(
         );
 
         if vis_buffer.is_none() {
-            ui.label(
-                egui::RichText::new("No signal")
-                    .small()
-                    .color(theme().colors.text_dim),
-            );
+            caption(ui, "No signal", CaptionTone::Dim);
         }
     } else if descriptor.type_id.0 == "spectrum_analyzer" {
         // Get gain from params by name
@@ -3276,11 +3272,7 @@ fn draw_visualizer_display(
         );
 
         if vis_buffer.is_none() {
-            ui.label(
-                egui::RichText::new("No signal")
-                    .small()
-                    .color(theme().colors.text_dim),
-            );
+            caption(ui, "No signal", CaptionTone::Dim);
         }
     } else if descriptor.type_id.0 == "level_meter" {
         // Get levels from visualization buffer if available
@@ -3308,11 +3300,7 @@ fn draw_visualizer_display(
         );
 
         if vis_buffer.is_none() {
-            ui.label(
-                egui::RichText::new("No signal")
-                    .small()
-                    .color(theme().colors.text_dim),
-            );
+            caption(ui, "No signal", CaptionTone::Dim);
         }
     }
 }
@@ -3921,17 +3909,17 @@ fn draw_script_module_grid(
             // Pin the row to the port pitch (24px) and centre its contents, so
             // the rows neither drift from nor sit off-centre to the nipples.
             ui.set_min_height(row_height);
-            ui.label(
-                egui::RichText::new(format!("out{}", slot + 1))
-                    .color(accent_color)
-                    .small(),
+            caption(
+                ui,
+                format!("out{}", slot + 1),
+                CaptionTone::Color(accent_color),
             );
             let installed = state.slot_scripts.get(&slot);
             let (preview, color) = match installed {
                 Some(src) => (script_preview(src), t.colors.text_secondary),
                 None => ("— empty —".to_string(), t.colors.text_dim),
             };
-            ui.label(egui::RichText::new(preview).color(color).small());
+            caption(ui, preview, CaptionTone::Color(color));
 
             let fx_color = if installed.is_some() {
                 t.colors.accent_green

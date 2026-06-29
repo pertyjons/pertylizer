@@ -361,7 +361,7 @@ pub(super) fn draw_transport_bar(
             .on_hover_text("Click to change time signature");
         egui::Popup::from_toggle_button_response(&ts_btn).show(|ui| {
             ui.set_min_width(180.0);
-            ui.label(RichText::new("Time signature").strong());
+            strong_label(ui, "Time signature", None);
             ui.add_space(t.spacing.xs);
             let mut num = time_sig.numerator as i32;
             let mut den = time_sig.denominator as i32;
@@ -450,14 +450,10 @@ pub(super) fn draw_transport_bar(
         // Status indicator
         match rec_state {
             RecordingState::Capturing => {
-                ui.label(RichText::new("REC").color(t.colors.accent_red).strong());
+                strong_label(ui, "REC", Some(t.colors.accent_red));
             }
             RecordingState::CountIn => {
-                ui.label(
-                    RichText::new("COUNT-IN")
-                        .color(t.colors.accent_red)
-                        .strong(),
-                );
+                strong_label(ui, "COUNT-IN", Some(t.colors.accent_red));
             }
             RecordingState::Armed => {
                 ui.label(RichText::new("ARM").color(ARM_RED));

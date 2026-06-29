@@ -26,7 +26,7 @@ use crate::gui::sequencer::{
     draw_note_fx_panel, draw_piano_roll, draw_tracker,
 };
 use crate::gui::theme::theme;
-use crate::gui::widgets::danger_button;
+use crate::gui::widgets::{danger_button, empty_state};
 use crate::undo::UndoManager;
 
 // ============================================================================
@@ -148,14 +148,10 @@ pub(crate) fn draw_pattern_view(
         .frame(egui::Frame::NONE.fill(theme().colors.bg_panel))
         .show(ui, |ui| {
             let Some(pattern_id) = seq_view_state.opened_pattern else {
-                ui.centered_and_justified(|ui| {
-                    ui.label(
-                        egui::RichText::new(
-                            "Select a pattern on the left, or click + to create one.",
-                        )
-                        .color(theme().colors.text_dim),
-                    );
-                });
+                empty_state(
+                    ui,
+                    "Select a pattern on the left, or click + to create one.",
+                );
                 return;
             };
 

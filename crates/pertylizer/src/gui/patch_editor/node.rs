@@ -14,7 +14,7 @@ use synth_engine::{EngineHandle, ModuleId};
 use crate::audio::input::InputState;
 use crate::gui::module_panel::{ModulePanelState, PortPosition};
 use crate::gui::theme::theme;
-use crate::gui::widgets::WidgetPortDirection;
+use crate::gui::widgets::{CaptionTone, WidgetPortDirection, caption};
 
 use super::{
     AudioInputAction, AudioInputSnapshot, EFFECT_CHAIN_AMBER, ModAddrCatalog, ModuleBodyCtx,
@@ -491,7 +491,7 @@ pub(super) fn draw_module_panel_params(
             .unwrap_or("(none)");
 
         ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Sample:").color(accent_color).small());
+            caption(ui, "Sample:", CaptionTone::Color(accent_color));
             egui::ComboBox::from_id_salt(format!("sampler_sample_select_{:?}", state.id))
                 .selected_text(current_name)
                 .width(120.0)
@@ -557,11 +557,7 @@ pub(super) fn draw_module_panel_params(
         );
 
         if vis_buffer.is_none() {
-            ui.label(
-                egui::RichText::new("No signal")
-                    .small()
-                    .color(theme().colors.text_dim),
-            );
+            caption(ui, "No signal", CaptionTone::Dim);
         }
     }
 

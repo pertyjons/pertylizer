@@ -28,7 +28,10 @@ use synth_sequencer::{
 };
 
 use crate::gui::theme::theme;
-use crate::gui::widgets::{Knob, ModuleFrame, dim_label, draw_module_header, enum_combo};
+use crate::gui::widgets::{
+    Knob, ModuleFrame, dim_label, draw_module_header, enum_combo, labeled_row, strong_label,
+    unit_drag_value,
+};
 use crate::undo::UndoAction;
 
 use super::SequencerViewState;
@@ -62,11 +65,7 @@ pub(crate) fn draw_note_fx_panel(
 
     // Header row: title + close.
     ui.horizontal(|ui| {
-        ui.label(
-            RichText::new("NOTE FX")
-                .strong()
-                .color(t.colors.accent_purple),
-        );
+        strong_label(ui, "NOTE FX", Some(t.colors.accent_purple));
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
                 .small_button("✖")
@@ -295,8 +294,7 @@ pub(crate) fn draw_note_fx_panel(
 // ============================================================================
 
 fn edit_scale_quantize(ui: &mut egui::Ui, index: usize, q: &mut ScaleQuantize) {
-    ui.horizontal(|ui| {
-        ui.label("Root");
+    labeled_row(ui, "Root", |ui| {
         let cur = q.root.as_u8();
         egui::ComboBox::from_id_salt((index, "root"))
             .selected_text(NoteName::from_midi(cur).to_string())
@@ -342,8 +340,7 @@ fn edit_scale_quantize(ui: &mut egui::Ui, index: usize, q: &mut ScaleQuantize) {
 }
 
 fn edit_chord(ui: &mut egui::Ui, index: usize, c: &mut Chord, any_dragged: &mut bool) {
-    ui.horizontal(|ui| {
-        ui.label("Type");
+    labeled_row(ui, "Type", |ui| {
         egui::ComboBox::from_id_salt((index, "chordtype"))
             .selected_text(chord_preset_name(c))
             .show_ui(ui, |ui| {
@@ -416,14 +413,12 @@ fn edit_chord(ui: &mut egui::Ui, index: usize, c: &mut Chord, any_dragged: &mut 
 }
 
 fn edit_arpeggiator(ui: &mut egui::Ui, index: usize, a: &mut Arpeggiator, any_dragged: &mut bool) {
-    ui.horizontal(|ui| {
-        ui.label("Mode");
+    labeled_row(ui, "Mode", |ui| {
         enum_combo(ui, (index, "mode"), &mut a.mode, &ARP_MODES);
         ui.label("Rate");
         arp_rate_widget(ui, index, a, any_dragged);
     });
-    ui.horizontal(|ui| {
-        ui.label("Octaves");
+    labeled_row(ui, "Octaves", |ui| {
         let resp = ui.add(egui::DragValue::new(&mut a.octaves).range(1..=4));
         *any_dragged |= resp.dragged();
         ui.label("Vel");
@@ -486,12 +481,7 @@ fn arp_rate_widget(ui: &mut egui::Ui, index: usize, a: &mut Arpeggiator, any_dra
         ArpRate::MilliHz(m) => {
             // Authored in Hz; stored as integer millihertz.
             let mut hz = *m as f32 / 1000.0;
-            let resp = ui.add(
-                egui::DragValue::new(&mut hz)
-                    .range(0.1..=240.0)
-                    .speed(0.1)
-                    .suffix(" Hz"),
-            );
+            let resp = unit_drag_value(ui, &mut hz, 0.1..=240.0, 0.1, " Hz");
             if resp.changed() {
                 *m = (hz * 1000.0).round().max(1.0) as u32;
             }
@@ -508,8 +498,7 @@ fn edit_arp_offsets(
     custom: &mut synth_sequencer::ArpOffsets,
     any_dragged: &mut bool,
 ) {
-    ui.horizontal(|ui| {
-        ui.label("Offsets");
+    labeled_row(ui, "Offsets", |ui| {
         let len = custom.len();
         for i in 0..len {
             let resp = ui.add(
@@ -538,8 +527,7 @@ fn edit_humanize(ui: &mut egui::Ui, h: &mut Humanize, any_dragged: &mut bool) {
         knob_normalized(ui, "Vel ±", &mut h.velocity, any_dragged);
         knob_normalized(ui, "Gate ±", &mut h.gate, any_dragged);
     });
-    ui.horizontal(|ui| {
-        ui.label("Seed");
+    labeled_row(ui, "Seed", |ui| {
         let resp = ui.add(egui::DragValue::new(&mut h.seed).speed(1.0));
         *any_dragged |= resp.dragged();
         if ui.button("🎲").on_hover_text("Reroll seed").clicked() {

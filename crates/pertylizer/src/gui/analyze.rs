@@ -23,6 +23,7 @@ use crate::audio::preview::{
     RenderedNote, SharedSampleLibrary, encode_buffer_as_wav, render_note_to_buffer,
 };
 use crate::gui::theme::theme;
+use crate::gui::widgets::{CaptionTone, caption, strong_label};
 use crate::mcp_bridge::analyze_rendered_buffer;
 use crate::session::SynthSession;
 
@@ -1353,7 +1354,7 @@ fn metric(
     ui.label(format!("{label} {value}"));
     if let Some((curr, pin, kind)) = delta {
         let txt = format_delta(curr, pin, kind);
-        ui.label(RichText::new(txt).small().color(pt.delta_label));
+        caption(ui, txt, CaptionTone::Color(pt.delta_label));
     }
 }
 
@@ -1853,7 +1854,7 @@ to both sides, lower = true stereo.";
 /// toggles a popup with `description`. Caller adds any further chrome
 /// (mode toggles, badges, legends) after this in the same `ui.horizontal`.
 fn pane_title_with_info(ui: &mut egui::Ui, title: &str, description: &str) {
-    ui.label(RichText::new(title).strong());
+    strong_label(ui, title, None);
     let info_btn = ui.add(egui::Button::new(ri::INFORMATION_LINE).small());
     egui::Popup::from_toggle_button_response(&info_btn).show(|ui| {
         ui.set_max_width(360.0);

@@ -14,7 +14,7 @@ use std::path::PathBuf;
 use eframe::egui;
 
 use crate::gui::theme::theme;
-use crate::gui::widgets::{CaptionTone, caption, log_suffix_slider, suffix_slider};
+use crate::gui::widgets::{labeled_row, log_suffix_slider, section_header, suffix_slider};
 use crate::patch::AwePresetFile;
 use synth_awe::params::{AweLfoState, AweLfoTarget};
 use synth_awe::presets::awe_presets;
@@ -2127,12 +2127,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
     ui.add_space(t.spacing.md);
 
     // --- Room Shape & Dimensions ---
-    ui.heading(
-        egui::RichText::new("Room")
-            .color(t.colors.accent_cyan)
-            .size(16.0),
-    );
-    ui.add_space(t.spacing.xs);
+    section_header(ui, "Room", None, t.colors.accent_cyan, None);
 
     // Shape selector
     let prev_shape = state.shape_kind;
@@ -2169,96 +2164,82 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
     // Dimension sliders adapted to shape type
     match state.shape_kind {
         RoomShapeKind::Box => {
-            ui.horizontal(|ui| {
-                ui.label("Length:");
+            labeled_row(ui, "Length:", |ui| {
                 if suffix_slider(ui, &mut state.room_length, 2.0..=100.0, "m").changed() {
                     room_changed = true;
                 }
             });
-            ui.horizontal(|ui| {
-                ui.label("Width:");
+            labeled_row(ui, "Width:", |ui| {
                 if suffix_slider(ui, &mut state.room_width, 2.0..=100.0, "m").changed() {
                     room_changed = true;
                 }
             });
-            ui.horizontal(|ui| {
-                ui.label("Height:");
+            labeled_row(ui, "Height:", |ui| {
                 if suffix_slider(ui, &mut state.room_height, 2.0..=20.0, "m").changed() {
                     room_changed = true;
                 }
             });
         }
         RoomShapeKind::Cylinder => {
-            ui.horizontal(|ui| {
-                ui.label("Radius:");
+            labeled_row(ui, "Radius:", |ui| {
                 if suffix_slider(ui, &mut state.cyl_radius, 0.5..=10.0, "m").changed() {
                     room_changed = true;
                 }
             });
-            ui.horizontal(|ui| {
-                ui.label("Length:");
+            labeled_row(ui, "Length:", |ui| {
                 if suffix_slider(ui, &mut state.cyl_length, 2.0..=200.0, "m").changed() {
                     room_changed = true;
                 }
             });
         }
         RoomShapeKind::LShape => {
-            ui.horizontal(|ui| {
-                ui.label("Len A:");
+            labeled_row(ui, "Len A:", |ui| {
                 if suffix_slider(ui, &mut state.l_length_a, 2.0..=30.0, "m").changed() {
                     room_changed = true;
                 }
             });
-            ui.horizontal(|ui| {
-                ui.label("Wid A:");
+            labeled_row(ui, "Wid A:", |ui| {
                 if suffix_slider(ui, &mut state.l_width_a, 2.0..=20.0, "m").changed() {
                     room_changed = true;
                 }
             });
-            ui.horizontal(|ui| {
-                ui.label("Len B:");
+            labeled_row(ui, "Len B:", |ui| {
                 if suffix_slider(ui, &mut state.l_length_b, 2.0..=30.0, "m").changed() {
                     room_changed = true;
                 }
             });
-            ui.horizontal(|ui| {
-                ui.label("Wid B:");
+            labeled_row(ui, "Wid B:", |ui| {
                 if suffix_slider(ui, &mut state.l_width_b, 2.0..=20.0, "m").changed() {
                     room_changed = true;
                 }
             });
-            ui.horizontal(|ui| {
-                ui.label("Height:");
+            labeled_row(ui, "Height:", |ui| {
                 if suffix_slider(ui, &mut state.l_height, 2.0..=10.0, "m").changed() {
                     room_changed = true;
                 }
             });
         }
         RoomShapeKind::Sphere => {
-            ui.horizontal(|ui| {
-                ui.label("Radius:");
+            labeled_row(ui, "Radius:", |ui| {
                 if suffix_slider(ui, &mut state.sphere_radius, 1.0..=20.0, "m").changed() {
                     room_changed = true;
                 }
             });
         }
         RoomShapeKind::Dome => {
-            ui.horizontal(|ui| {
-                ui.label("Radius:");
+            labeled_row(ui, "Radius:", |ui| {
                 if suffix_slider(ui, &mut state.dome_radius, 1.0..=20.0, "m").changed() {
                     room_changed = true;
                 }
             });
         }
         RoomShapeKind::Tube => {
-            ui.horizontal(|ui| {
-                ui.label("Radius:");
+            labeled_row(ui, "Radius:", |ui| {
                 if suffix_slider(ui, &mut state.tube_radius, 0.5..=10.0, "m").changed() {
                     room_changed = true;
                 }
             });
-            ui.horizontal(|ui| {
-                ui.label("Length:");
+            labeled_row(ui, "Length:", |ui| {
                 if suffix_slider(ui, &mut state.tube_length, 2.0..=200.0, "m").changed() {
                     room_changed = true;
                 }
@@ -2284,12 +2265,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
     ui.separator();
 
     // --- Material ---
-    ui.heading(
-        egui::RichText::new("Material")
-            .color(t.colors.accent_cyan)
-            .size(16.0),
-    );
-    ui.add_space(t.spacing.xs);
+    section_header(ui, "Material", None, t.colors.accent_cyan, None);
 
     let prev_material = state.material_idx;
     let prev_diffusion = state.material_diffusion;
@@ -2310,8 +2286,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         });
     }
 
-    ui.horizontal(|ui| {
-        ui.label("Diffusion:");
+    labeled_row(ui, "Diffusion:", |ui| {
         if ui
             .add(egui::Slider::new(&mut state.material_diffusion, 0.0..=1.0))
             .on_hover_text("How much the walls scatter sound (smooth vs rough surface)")
@@ -2331,16 +2306,15 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
     ui.separator();
 
     // --- Mix Parameters ---
-    ui.heading(
-        egui::RichText::new("Mix")
-            .color(t.colors.accent_cyan)
-            .size(16.0),
+    section_header(
+        ui,
+        "Mix",
+        Some("Dry/wet signal balance"),
+        t.colors.accent_cyan,
+        None,
     );
-    caption(ui, "Dry/wet signal balance", CaptionTone::Dim);
-    ui.add_space(t.spacing.xs);
 
-    ui.horizontal(|ui| {
-        ui.label("Dry/Wet:");
+    labeled_row(ui, "Dry/Wet:", |ui| {
         if ui
             .add(egui::Slider::new(&mut state.dry_wet, 0.0..=1.0))
             .on_hover_text("Balance between original signal (dry) and room effect (wet)")
@@ -2352,8 +2326,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         }
     });
 
-    ui.horizontal(|ui| {
-        ui.label("Early/Late:");
+    labeled_row(ui, "Early/Late:", |ui| {
         if ui
             .add(egui::Slider::new(&mut state.early_late, 0.0..=1.0))
             .on_hover_text("Balance between early reflections and reverb tail")
@@ -2365,8 +2338,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         }
     });
 
-    ui.horizontal(|ui| {
-        ui.label("Modes:");
+    labeled_row(ui, "Modes:", |ui| {
         if ui
             .add(egui::Slider::new(&mut state.modes_amount, 0.0..=1.0))
             .on_hover_text("Standing waves in the room \u{2014} room resonances")
@@ -2378,8 +2350,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         }
     });
 
-    ui.horizontal(|ui| {
-        ui.label("Tail:");
+    labeled_row(ui, "Tail:", |ui| {
         if suffix_slider(ui, &mut state.tail_stretch, 0.5..=4.0, "x")
             .on_hover_text("Extend or shorten the reverb tail")
             .changed()
@@ -2393,16 +2364,15 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
     ui.separator();
 
     // --- Effects (formerly "Impossible") ---
-    ui.heading(
-        egui::RichText::new("Effects")
-            .color(t.colors.accent_orange)
-            .size(16.0),
+    section_header(
+        ui,
+        "Effects",
+        Some("Effects beyond physics"),
+        t.colors.accent_orange,
+        None,
     );
-    caption(ui, "Effects beyond physics", CaptionTone::Dim);
-    ui.add_space(t.spacing.xs);
 
-    ui.horizontal(|ui| {
-        ui.label("Freq Warp:");
+    labeled_row(ui, "Freq Warp:", |ui| {
         if ui
             .add(egui::Slider::new(&mut state.freq_warp, -1.0..=1.0))
             .on_hover_text("Shift room resonance frequencies (not physically realistic)")
@@ -2414,8 +2384,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         }
     });
 
-    ui.horizontal(|ui| {
-        ui.label("Resonance:");
+    labeled_row(ui, "Resonance:", |ui| {
         if ui
             .add(egui::Slider::new(&mut state.resonance_boost, 0.0..=1.0))
             .on_hover_text("Boost room resonance intensity")
@@ -2427,8 +2396,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         }
     });
 
-    ui.horizontal(|ui| {
-        ui.label("Portal:");
+    labeled_row(ui, "Portal:", |ui| {
         if ui
             .add(egui::Slider::new(&mut state.portal_amount, 0.0..=1.0))
             .on_hover_text("Simulates sound leaking in from adjacent rooms")
@@ -2440,8 +2408,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         }
     });
 
-    ui.horizontal(|ui| {
-        ui.label("Pre-delay:");
+    labeled_row(ui, "Pre-delay:", |ui| {
         if suffix_slider(ui, &mut state.pre_delay, 0.0..=200.0, " ms")
             .on_hover_text("Delay before first reflection — separates dry signal from reverb")
             .changed()
@@ -2452,8 +2419,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         }
     });
 
-    ui.horizontal(|ui| {
-        ui.label("Mod Depth:");
+    labeled_row(ui, "Mod Depth:", |ui| {
         if ui
             .add(egui::Slider::new(&mut state.modulation_depth, 0.0..=1.0))
             .on_hover_text("FDN chorus depth \u{2014} breaks metallic reverb artifacts")
@@ -2465,8 +2431,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         }
     });
 
-    ui.horizontal(|ui| {
-        ui.label("Mod Rate:");
+    labeled_row(ui, "Mod Rate:", |ui| {
         if suffix_slider(ui, &mut state.modulation_rate, 0.1..=10.0, " Hz")
             .on_hover_text("FDN chorus rate")
             .changed()
@@ -2477,8 +2442,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         }
     });
 
-    ui.horizontal(|ui| {
-        ui.label("Air Absorb:");
+    labeled_row(ui, "Air Absorb:", |ui| {
         if ui
             .add(egui::Slider::new(&mut state.air_absorption, 0.0..=1.0))
             .on_hover_text("Distance-proportional high-frequency damping")
@@ -2490,8 +2454,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         }
     });
 
-    ui.horizontal(|ui| {
-        ui.label("Width:");
+    labeled_row(ui, "Width:", |ui| {
         if ui
             .add(egui::Slider::new(&mut state.width, 0.0..=1.0))
             .on_hover_text("Stereo width (0 = mono, 1 = full stereo)")
@@ -2503,8 +2466,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         }
     });
 
-    ui.horizontal(|ui| {
-        ui.label("High Cut:");
+    labeled_row(ui, "High Cut:", |ui| {
         if log_suffix_slider(ui, &mut state.high_cut, 200.0..=20000.0, " Hz")
             .on_hover_text("Low-pass filter on wet signal")
             .changed()
@@ -2515,8 +2477,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         }
     });
 
-    ui.horizontal(|ui| {
-        ui.label("Low Cut:");
+    labeled_row(ui, "Low Cut:", |ui| {
         if log_suffix_slider(ui, &mut state.low_cut, 20.0..=2000.0, " Hz")
             .on_hover_text("High-pass filter on wet signal")
             .changed()
@@ -2527,8 +2488,7 @@ fn draw_controls(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUi
         }
     });
 
-    ui.horizontal(|ui| {
-        ui.label("Temperature:");
+    labeled_row(ui, "Temperature:", |ui| {
         if suffix_slider(ui, &mut state.temperature, -40.0..=60.0, " \u{00b0}C")
             .on_hover_text("Room temperature \u{2014} affects speed of sound")
             .changed()
@@ -2577,17 +2537,11 @@ pub fn mapping_to_index(mapping: NotePositionMapping) -> usize {
 /// Draw the per-voice spatial section.
 fn draw_spatial_section(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUiState) {
     let t = theme();
-    ui.heading(
-        egui::RichText::new("Spatial")
-            .color(t.colors.accent_purple)
-            .size(16.0),
-    );
-    ui.add_space(t.spacing.xs);
+    section_header(ui, "Spatial", None, t.colors.accent_purple, None);
 
     // Toggle
     let prev_enabled = state.spatial_enabled;
-    ui.horizontal(|ui| {
-        ui.label("Per-voice:");
+    labeled_row(ui, "Per-voice:", |ui| {
         let label = if state.spatial_enabled { "ON" } else { "OFF" };
         let color = if state.spatial_enabled {
             t.colors.meter_green
@@ -2641,8 +2595,7 @@ fn draw_lfo_section(
     .show(ui, |ui| {
         ui.add_space(t.spacing.xxs);
 
-        ui.horizontal(|ui| {
-            ui.label("Rate:");
+        labeled_row(ui, "Rate:", |ui| {
             let mut rate_f = lfo_state.rate.as_f32();
             if log_suffix_slider(ui, &mut rate_f, 0.01..=20.0, " Hz").changed() {
                 lfo_state.rate = Hertz::new(rate_f);
@@ -2656,8 +2609,7 @@ fn draw_lfo_section(
             }
         });
 
-        ui.horizontal(|ui| {
-            ui.label("Amount:");
+        labeled_row(ui, "Amount:", |ui| {
             let mut amount_f = lfo_state.amount.as_f32();
             if ui
                 .add(egui::Slider::new(&mut amount_f, 0.0..=1.0))

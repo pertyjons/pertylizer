@@ -8,7 +8,8 @@
 use std::ops::RangeInclusive;
 
 use eframe::egui::{
-    self, Button, Color32, DragValue, Response, RichText, Slider, Ui, Vec2, WidgetText,
+    self, Button, Color32, DragValue, InnerResponse, Response, RichText, Slider, Ui, Vec2,
+    WidgetText,
 };
 
 use crate::gui::theme::theme;
@@ -72,19 +73,25 @@ pub fn icon_button_sized(
 }
 
 /// A section heading: a strong, accent-colored label at the theme heading size,
-/// an optional small dimmed description line below it, then a small vertical gap.
+/// an optional leading icon, an optional small dimmed description line below it,
+/// then a small vertical gap.
 ///
-/// Pass `None` for `description` for a bare heading. Returns the title label's
+/// Pass `None` for `icon`/`description` to omit them. Returns the title label's
 /// [`Response`] so callers can chain `.on_hover_text(..)`.
 pub fn section_header(
     ui: &mut Ui,
     title: &str,
     description: Option<&str>,
     color: Color32,
+    icon: Option<&str>,
 ) -> Response {
     let t = theme();
+    let text = match icon {
+        Some(ic) => format!("{ic}  {title}"),
+        None => title.to_string(),
+    };
     let res = ui.label(
-        RichText::new(title)
+        RichText::new(text)
             .color(color)
             .size(t.fonts.size_heading)
             .strong(),
@@ -187,6 +194,25 @@ pub fn time_drag_value(
     ui.add(DragValue::new(secs).speed(speed).range(range).suffix(" s"))
 }
 
+/// A `DragValue` carrying a unit suffix (e.g. `" %"`, `" st"`, `" ms"`) — the
+/// non-seconds counterpart of [`time_drag_value`]. Generic over any numeric type.
+/// Pass `""` for no suffix. For a styled prefix or custom formatter, use the raw
+/// `egui::DragValue`.
+pub fn unit_drag_value<T: egui::emath::Numeric>(
+    ui: &mut Ui,
+    value: &mut T,
+    range: RangeInclusive<T>,
+    speed: f64,
+    suffix: &str,
+) -> Response {
+    ui.add(
+        DragValue::new(value)
+            .range(range)
+            .speed(speed)
+            .suffix(suffix),
+    )
+}
+
 /// A `Slider` carrying a unit suffix (e.g. `" Hz"`, `"m"`). Generic over any
 /// numeric type so it also covers `i32`/`usize` state. Pass `""` for no suffix.
 pub fn suffix_slider<T: egui::emath::Numeric>(
@@ -242,4 +268,49 @@ pub fn enum_combo<T: PartialEq + Copy>(
 /// idiom so the destructive colour lives in one place.
 pub fn danger_button(ui: &mut Ui, label: impl Into<WidgetText>) -> Response {
     ui.button(label.into().color(theme().colors.accent_red))
+}
+
+/// A bold (`.strong()`) inline label, optionally tinted — for lightweight
+/// section/category titles that are NOT full [`section_header`]s (no
+/// heading size, no trailing gap). Folds `ui.label(RichText::new(x).strong()
+/// [.color(c)])`.
+pub fn strong_label(ui: &mut Ui, text: impl Into<WidgetText>, color: Option<Color32>) -> Response {
+    let text = text.into().strong();
+    let text = match color {
+        Some(c) => text.color(c),
+        None => text,
+    };
+    ui.label(text)
+}
+
+/// A centered, dimmed empty-state placeholder filling the available area — the
+/// "nothing selected / nothing here yet" message for a main panel. (For an inline
+/// sidebar-list empty note, `list_panel::empty` stays its own italic variant.)
+pub fn empty_state(ui: &mut Ui, text: &str) {
+    ui.centered_and_justified(|ui| {
+        ui.label(RichText::new(text).color(theme().colors.text_dim));
+    });
+}
+
+/// A label that responds to clicks (`Sense::click()`) — for inline-editable /
+/// selectable titles. Caller supplies the (optionally styled) text; the helper
+/// adds the click sense. Returns the [`Response`] so callers read `.clicked()` /
+/// `.double_clicked()`.
+pub fn clickable_label(ui: &mut Ui, text: impl Into<WidgetText>) -> Response {
+    ui.add(egui::Label::new(text).sense(egui::Sense::click()))
+}
+
+/// A horizontal `label + widget` form row: a plain label, then the caller's
+/// widget(s). Folds `ui.horizontal(|ui| { ui.label(label); … })` so label
+/// styling/column behaviour lives in one place. Returns the closure's
+/// [`InnerResponse`] (the row), so a caller can read `.inner` if needed.
+pub fn labeled_row<R>(
+    ui: &mut Ui,
+    label: impl Into<WidgetText>,
+    widget: impl FnOnce(&mut Ui) -> R,
+) -> InnerResponse<R> {
+    ui.horizontal(|ui| {
+        ui.label(label);
+        widget(ui)
+    })
 }

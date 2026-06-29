@@ -30,7 +30,10 @@ use crate::gui::patch_editor::{
     QuickAddRequest,
 };
 use crate::gui::theme::theme;
-use crate::gui::widgets::{danger_button, dim_label, draw_oscilloscope, draw_stereo_meter};
+use crate::gui::widgets::{
+    CaptionTone, caption, danger_button, dim_label, draw_oscilloscope, draw_stereo_meter,
+    empty_state,
+};
 use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
 use crate::io::settings::AppSettings;
 use crate::io::{GroupTemplateManager, MidiHandler, PatchManager};
@@ -2598,9 +2601,7 @@ impl SynthApp {
                 .map(|i| &mut i.patch_editor)
             else {
                 // No active instrument - show error message
-                ui.centered_and_justified(|ui| {
-                    ui.label("No active instrument selected");
-                });
+                empty_state(ui, "No active instrument selected");
                 return;
             };
 
@@ -3620,7 +3621,7 @@ impl SynthApp {
                     }
                     ui.separator();
 
-                    ui.label(RichText::new("Glide:").color(t.colors.text_dim).small());
+                    caption(ui, "Glide:", CaptionTone::Dim);
                     let mut glide_val = self.glide_time.as_f32();
                     let glide_response = ui
                         .add(

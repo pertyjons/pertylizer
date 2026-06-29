@@ -14,7 +14,7 @@ use synth_engine::ModuleId;
 
 use crate::gui::module_panel::PortPosition;
 use crate::gui::theme::theme;
-use crate::gui::widgets::{WidgetPortDirection, draw_module_header, icon_button};
+use crate::gui::widgets::{WidgetPortDirection, draw_module_header, icon_button, labeled_row};
 use crate::patch::{GroupId, HexColor};
 
 use super::{
@@ -680,8 +680,7 @@ impl PatchEditor {
             );
             ui.separator();
 
-            ui.horizontal(|ui| {
-                ui.label("Name");
+            labeled_row(ui, "Name", |ui| {
                 let resp = ui.text_edit_singleline(&mut name_buf);
                 if (resp.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)))
                     && !name_buf.trim().is_empty()
@@ -690,8 +689,7 @@ impl PatchEditor {
                 }
             });
 
-            ui.horizontal(|ui| {
-                ui.label("Color");
+            labeled_row(ui, "Color", |ui| {
                 let mut color = self.group_color(&group);
                 let changed = egui::color_picker::color_edit_button_srgba(
                     ui,

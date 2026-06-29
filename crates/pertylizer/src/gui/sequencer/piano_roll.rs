@@ -337,13 +337,7 @@ fn draw_piano_roll_selection_inspector(
                 } else {
                     50.0
                 };
-                let vel_resp = ui
-                    .add(
-                        egui::DragValue::new(&mut vel_pct)
-                            .range(1.0..=100.0)
-                            .speed(1.0)
-                            .suffix(" %"),
-                    )
+                let vel_resp = unit_drag_value(ui, &mut vel_pct, 1.0..=100.0, 1.0, " %")
                     .on_hover_text(if velocities_equal {
                         "Velocity of selected notes"
                     } else {
@@ -466,23 +460,11 @@ fn draw_piano_roll_selection_inspector(
                     let mut stepped = matches!(cur.interp, GlideInterp::Stepped);
 
                     caption(ui, "From", CaptionTone::Dim);
-                    let from_resp = ui
-                        .add(
-                            egui::DragValue::new(&mut from_semis)
-                                .range(-24.0..=24.0)
-                                .speed(0.5)
-                                .suffix(" st"),
-                        )
+                    let from_resp = unit_drag_value(ui, &mut from_semis, -24.0..=24.0, 0.5, " st")
                         .on_hover_text("Glide source, semitones relative to this note");
 
                     caption(ui, "Time", CaptionTone::Dim);
-                    let time_resp = ui
-                        .add(
-                            egui::DragValue::new(&mut time_ms)
-                                .range(0.0..=2000.0)
-                                .speed(2.0)
-                                .suffix(" ms"),
-                        )
+                    let time_resp = unit_drag_value(ui, &mut time_ms, 0.0..=2000.0, 2.0, " ms")
                         .on_hover_text("Glide time");
 
                     let make = |from_semis: f32, time_ms: f32, stepped: bool| Glide {
@@ -620,13 +602,7 @@ fn draw_piano_roll_selection_inspector(
                 // Gate (% of duration, staccato/tenuto).
                 caption(ui, "Gate", CaptionTone::Dim);
                 let mut gate_pct = cur.gate.map_or(100.0, |g| g.as_f32() * 100.0);
-                let r = ui
-                    .add(
-                        egui::DragValue::new(&mut gate_pct)
-                            .range(1.0..=100.0)
-                            .speed(1.0)
-                            .suffix(" %"),
-                    )
+                let r = unit_drag_value(ui, &mut gate_pct, 1.0..=100.0, 1.0, " %")
                     .on_hover_text("Note length as a % of its duration (staccato)");
                 if r.drag_started() || r.gained_focus() {
                     view_state.inspector_expr_drag_start = Some((
@@ -650,13 +626,7 @@ fn draw_piano_roll_selection_inspector(
                 // Probability (% chance to play).
                 caption(ui, "Prob", CaptionTone::Dim);
                 let mut prob_pct = cur.probability.map_or(100.0, |p| p.as_f32() * 100.0);
-                let r = ui
-                    .add(
-                        egui::DragValue::new(&mut prob_pct)
-                            .range(0.0..=100.0)
-                            .speed(1.0)
-                            .suffix(" %"),
-                    )
+                let r = unit_drag_value(ui, &mut prob_pct, 0.0..=100.0, 1.0, " %")
                     .on_hover_text("Chance this note plays (resolved at playback)");
                 if r.drag_started() || r.gained_focus() {
                     view_state.inspector_expr_drag_start = Some((
@@ -703,23 +673,11 @@ fn draw_piano_roll_selection_inspector(
                 if let Some(v) = cur.vibrato {
                     caption(ui, "Depth", CaptionTone::Dim);
                     let mut depth = v.depth.as_f32();
-                    let rd = ui
-                        .add(
-                            egui::DragValue::new(&mut depth)
-                                .range(0.0..=2.0)
-                                .speed(0.01)
-                                .suffix(" st"),
-                        )
+                    let rd = unit_drag_value(ui, &mut depth, 0.0..=2.0, 0.01, " st")
                         .on_hover_text("Vibrato depth (semitones)");
                     caption(ui, "Rate", CaptionTone::Dim);
                     let mut rate = v.rate.as_f32();
-                    let rr = ui
-                        .add(
-                            egui::DragValue::new(&mut rate)
-                                .range(0.1..=20.0)
-                                .speed(0.1)
-                                .suffix(" Hz"),
-                        )
+                    let rr = unit_drag_value(ui, &mut rate, 0.1..=20.0, 0.1, " Hz")
                         .on_hover_text("Vibrato rate");
                     if rd.drag_started()
                         || rd.gained_focus()
@@ -1307,11 +1265,7 @@ pub(crate) fn draw_piano_roll(
             .corner_radius(2)
             .show(ui, |ui| {
                 ui.horizontal(|ui| {
-                    ui.label(
-                        RichText::new("STEP ENTRY")
-                            .strong()
-                            .color(STEP_ENTRY_TEXT),
-                    );
+                    strong_label(ui, "STEP ENTRY", Some(STEP_ENTRY_TEXT));
                     ui.label(
                         RichText::new(
                             "Press keys to insert notes  (A·W·S·E·D·F·T·G·Y·H·U·J = C·C#·D·D#·E·F·F#·G·G#·A·A#·B)",
@@ -2567,13 +2521,11 @@ fn draw_piano_roll_toolbar(
                 }
             }
         } else {
-            let name_resp = ui.add(
-                egui::Label::new(
-                    RichText::new(&data.pattern_name)
-                        .size(14.0)
-                        .color(t.colors.accent_cyan),
-                )
-                .sense(Sense::click()),
+            let name_resp = clickable_label(
+                ui,
+                RichText::new(&data.pattern_name)
+                    .size(14.0)
+                    .color(t.colors.accent_cyan),
             );
             if name_resp.double_clicked() {
                 view_state.editing_pattern_name =
@@ -2634,13 +2586,7 @@ fn draw_piano_roll_toolbar(
         {
             let ticks_per_bar = data.time_sig.ticks_per_bar().max(1);
             let mut bars = (data.length_ticks.0 / ticks_per_bar).max(1) as i32;
-            let bars_resp = ui
-                .add(
-                    egui::DragValue::new(&mut bars)
-                        .range(1..=64)
-                        .speed(0.1)
-                        .suffix(" bars"),
-                )
+            let bars_resp = unit_drag_value(ui, &mut bars, 1..=64, 0.1, " bars")
                 .on_hover_text("Pattern length in bars");
             if bars_resp.drag_started() || bars_resp.gained_focus() {
                 view_state.pattern_length_drag_start = Some((data.pattern_id, data.length_ticks));
@@ -2728,7 +2674,7 @@ fn draw_piano_roll_toolbar(
                 .on_hover_text("Keyboard shortcuts");
             egui::Popup::from_toggle_button_response(&help_btn).show(|ui| {
                 ui.set_min_width(320.0);
-                ui.label(RichText::new("Piano-roll keyboard shortcuts").strong());
+                strong_label(ui, "Piano-roll keyboard shortcuts", None);
                 ui.add_space(t.spacing.xs);
                 egui::Grid::new("pr_shortcuts_grid")
                     .num_columns(2)
