@@ -15,6 +15,13 @@ field). Spread needs **new per-voice DSP** — voices today carry only a pitch
 detune (`set_oscillator_detune`), no stereo position. The research below found
 the hook points already exist, so it is bounded, not open-ended.
 
+> **External DSP/Rust review incorporated.** An expert pass validated the math
+> (incl. a headroom proof) and added: a hot-path **bypass** when gains are unity
+> (Step 0.4), the **oversampled-loop AWE asymmetry** (Step 0.4), and confirmation
+> that `#[serde(default)]` alone suffices (Step 4). One suggestion — a dedicated
+> `UnisonSpread` newtype — was **declined** (decision 6: it would break parity with
+> the per-module `UnisonSpread(NormalizedValue)` param and the detune sibling).
+
 ---
 
 ## Design decisions (LOCKED — the recommended defaults)
@@ -33,8 +40,16 @@ the hook points already exist, so it is bounded, not open-ended.
    later refinement, not a blocker.
 5. **Pan law = the canonical `Gain::from_pan` / `math::equal_power_pan`**
    (constant-power sin/cos), **not** the AWE `sqrt((1±pan)/2)` curve.
-6. **Newtype = `UnisonSpread(NormalizedValue)`** (0..1), matching the per-module
-   `OscillatorParam::UnisonSpread`. No new `StereoWidth` newtype.
+6. **Type = `NormalizedValue` directly** (0..1) — the `InstrumentParam` variant is
+   named `UnisonSpread` but wraps `NormalizedValue`, exactly like the per-module
+   `OscillatorParam::UnisonSpread(NormalizedValue)` and the
+   `InstrumentParam::VelocityAmpSensitivity(NormalizedValue)` siblings, and
+   matching how the detune sibling used `Cents` directly. **Do NOT add a dedicated
+   `UnisonSpread` newtype struct** — `NormalizedValue` is already a newtype (the
+   no-raw-primitive rule is satisfied), and a wrapper would make this param
+   inconsistent with all three of its direct precedents. No `StereoWidth` newtype
+   either. (`NormalizedValue::default()` is `MIN` = 0.0, so persistence needs only a
+   plain `#[serde(default)]` — see plumbing step 4.)
 
 ---
 
@@ -92,14 +107,37 @@ the hook points already exist, so it is bounded, not open-ended.
    ```
    Call it in the `allocate_unison` loop alongside `unison_voice_detune` and push
    via `set_unison_pan_gains`.
+   - *Headroom property (validated):* since `equal_power_pan` returns gains in
+     `[0, 1]`, the term `(g_pan − 1)` is ≤ 0, so the blended gain
+     `1 + spread·(g_pan − 1)` stays in `[0, 1]` — it can never exceed unity, so a
+     spread sweep cannot introduce clipping.
 3. **Reset on non-Unison allocation.** Poly/Mono/Legato reuse the same `Voice`
    objects, so reset `unison_pan_gains` to `(1.0, 1.0)` on those paths (cleanest:
    in `note_on_expr`, so any non-unison trigger clears a stale spread after a mode
    switch).
-4. **Apply at the mix-down** — `temp_left[i] *= gl; temp_right[i] *= gr;` beside
-   the AWE block, in **both** the normal (`instrument.rs:~1503`) and oversampled
-   (`~1360`) loops. Read the gains once per block from `voice.unison_pan_gains()`.
-   When AWE spatial is active the two pans compose (multiply) — decision 4.
+4. **Apply at the mix-down** in **both** voice loops. Read the gains once per block
+   and **bypass the per-sample multiply when they're unity** (the default
+   `spread = 0` case — most patches), so the hot path is untouched unless spread is
+   actually on:
+   ```rust
+   let (uni_l, uni_r) = voice.unison_pan_gains();
+   if uni_l != 1.0 || uni_r != 1.0 {
+       for i in 0..sample_count {
+           temp_left[i] *= uni_l;
+           temp_right[i] *= uni_r;
+       }
+   }
+   ```
+   (Exact `!= 1.0` compares are safe — the unity path sets *exactly* `1.0`.)
+   - **Normal 1× loop** (`instrument.rs:~1497-1507`): apply just before the
+     `self.voice_left[i] += temp_left[i]` sum, right after the AWE spatial-pan block.
+     When AWE spatial is also active the two pans compose (multiply) — decision 4.
+   - **Oversampled loop** (`instrument.rs:~1247-1365`): **note** — verified that
+     this loop does the spatial `write_voice` *capture* but does **not** apply the
+     AWE dry-pan multiply (only the 1× loop does). So spread is **not** "mirrored
+     beside an AWE block" here; apply it independently, right before the
+     `self.os_voice_left[i] += temp_left[i]` sum. (Pre-existing AWE asymmetry between
+     the two loops is out of scope — just don't replicate the *absence* of spread.)
 5. **Gate behind the config** (`AllocatorConfig.unison_spread`, plumbing step 1) so
    this commit is inert (default 0 → `(1,1)`) until plumbed.
 
@@ -115,9 +153,12 @@ the hook points already exist, so it is bounded, not open-ended.
 3. **Snapshot** (`shared_state.rs`): `unison_spread` on `InstrumentSnapshot`,
    populated from `allocator_cfg` (`synth_engine.rs:~2822`); update the
    `tests/instrument_profile.rs` constructor.
-4. **Persistence** (`patch.rs`): serde field with `#[serde(default)]` (→ 0.0, so
-   pre-field projects get no spread) on the real struct **and the manual-Deserialize
-   `Raw` mirror** + the mapping; load into `AllocatorConfig` in `install_instrument`
+4. **Persistence** (`patch.rs`): serde field with a **plain `#[serde(default)]`**
+   (→ 0.0, so pre-field projects get no spread) on the real struct **and the
+   manual-Deserialize `Raw` mirror** + the mapping. Unlike detune (which needed an
+   explicit `default_unison_detune` → 10.0), `NormalizedValue::default()` is already
+   `MIN` = 0, so no default fn is required. Load into `AllocatorConfig` in
+   `install_instrument`
    (explicitly, before `..Default`) + push `InstrumentParam::UnisonSpread`; set in
    `snapshot_to_instrument_state` + `default_instrument_state`; regenerate
    `schemas/project.schema.json` + the golden fixtures (all show 0.0).
