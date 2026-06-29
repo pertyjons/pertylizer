@@ -318,3 +318,77 @@ All confirmed against `synth_awe`; folded into the §3 `SpatialPanner` spec and 
   Decision: **profile per-voice ER in Phase 1** (AWE already proves the per-voice path in
   `SpatialVoicePool`); if it exceeds budget at target polyphony, promote the bus-level variant to a
   committed Phase-1/2 deliverable rather than leaving it deferred.
+
+---
+
+## 8. Pedagogical AWE GUI Proposal & Design Review
+
+### 8.1. Core Architectural Layout & Navigation
+The new AWE interface is structured into three main visual zones inside the central panel and sidebar, visually mapping to the physical propagation stages of sound:
+
+```
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│  Top Toolbar: Preset Manager & Room Macro (Size, Material, Temp)                       │
+├───────────────────────────────────────┬────────────────────────────────────────────────┤
+│                                       │  Interactive Control Panel                     │
+│  Acoustic Signal Flow & Navigation    │  (Dynamic based on selected signal stage)      │
+│  ┌──────────┐   ┌─────────┐   ┌─────┐ │                                                │
+│  │Panner/ER │──►│Resonator│──►│ FDN │ │  [Sliders / Knobs]                             │
+│  └──────────┘   └─────────┘   └─────┘ │  - Material Absorption Coefficients            │
+│                                       │  - ITD / ILD Head-Shadow Coeffs                │
+├───────────────────────────────────────┤  - Pre-delay & Feedback Matrices               │
+│                                       │                                                │
+│  Layered 3D Acoustic Visualizer       ├────────────────────────────────────────────────┤
+│                                       │  Modulation & Automation                       │
+│  [Direct Path] [ISM Rays] [Modes] [FDN]│  - LFOs / Macro Mod Matrix                     │
+│                                       │  - Target mappings for active stage            │
+└───────────────────────────────────────┴────────────────────────────────────────────────┘
+```
+
+The top **Acoustic Signal Flow** diagram serves as the primary navigation bar. Clicking on a stage highlights that block, updates the 3D visualizer to focus on that phenomenon, and updates the sidebar to show parameters for that specific DSP module.
+
+### 8.2. Layered 3D Acoustic Visualizer
+The visualizer represents the room in an isometric 3D cutaway. Rather than displaying everything at once, users toggle different **Visualization Layers** to isolate and study specific acoustic concepts:
+
+1. **Direct Path (Spatializer):**
+   * **ITD (Interaural Time Difference):** Visualizes the wavefront expanding from the source and hitting the left/right ears at slightly different times.
+   * **ILD (Interaural Level Difference) & Head Shadow:** Draws a shaded "acoustic shadow" region behind the listener's head. When the source is in the shadow, high frequencies are visibly damped.
+   * **Distance Attenuation:** Shows the signal fading as it travels from source to listener.
+2. **Early Reflections (Image Source Method):**
+   * **Mirror Sources:** Draws the 6 virtual mirror sources outside the room boundaries.
+   * **Rays:** Renders dotted lines showing reflection paths from the source, bouncing off walls, and reaching the listener. Ray colors change to indicate material absorption.
+3. **Room Modes (Modal Resonator):**
+   * **Pressure Grid Heatmap:** Displays a 2D or 3D pressure grid representing the wave patterns of selected room modes.
+   * **Mode Frequency Explorer:** Displays a spectrum graph of axial modes. Users select individual mode frequencies (e.g., the (1, 0, 0) fundamental) to overlay its standing wave nodes/antinodes on the floor.
+4. **Late Reverb (FDN Tail):**
+   * **Particle Cloud:** A particle emitter shoots out particles that bounce around walls, losing kinetic energy based on RT60 decay.
+   * **Chorus Modulation:** Particles sway/pulsate gently, mapped to the modulation rate and depth.
+
+### 8.3. Multi-Source "Orchestra / Stage" View
+To support positioning multiple instruments in a single shared virtual room (simulating a band or orchestra on stage):
+1. **Instrument/Track Mapping:** The UI scans the project's instrument list for any instrument containing a `SpatialPanner` in its patch editor graph.
+2. **Visual Representation:** renders labeled, color-coded source markers for each active instrument (e.g., `"Violin 1"`, `"Cello"`). Active notes trigger a brief visual glow/pulsing around the marker, mapped to voice amplitude.
+3. **Interactive Mixing:** Dragging any instrument's marker updates its specific `SpatialPanner` spatial coordinates (`x` and `y`) in real-time.
+4. **Focus Mode:** Isolates reflection rays and wave animations for the currently selected track, keeping other instruments as faint, non-intrusive background indicators.
+
+### 8.4. Custom Acoustic Patch View (AWE Room Graph)
+To maximize code reuse and utilize the existing node-based patch editor system, we can implement the **AWE Room Graph** as a specialized canvas mode of the [PatchEditor](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/patch_editor/canvas.rs):
+1. **Reusing Modules:** Standard panners, resonators, and reverb modules automatically inherit rendering from `node.rs`.
+2. **Reusing Cables:** Users connect panners and room effect nodes using the standard cable rendering logic.
+3. **The Voice-to-Bus Boundary Constraint:**
+   * **The Reality:** You **cannot** connect a voice-level output port directly to a master-level input port using a patch cable because they execute at different granularities and thread scopes in [SynthEngine::process()](file:///home/per/github/pertylizer/crates/synth_engine/src/lib.rs).
+   * **Solution:** Represent the **Voice Mix summing point** as a visual separator in the room graph rather than drawing physical cables across it:
+     ```
+     VOICE GRAPH LAYER (Polyphonic)              MIX BUS LAYER (Stereo Sum)
+     ┌─────────────────────────────────┐        ┌─────────────────────────┐
+     │ ┌─────────────────┐             │        │ ┌───────────┐   ┌─────┐ │
+     │ │  SpatialPanner  │──► [L/R] ───┼─┐    ┌─┼─► ModalRes  │──►│Reverb │
+     │ └─────────────────┘             │ │    │ │ └───────────┘   └─────┘ │
+     └─────────────────────────────────┘ │    │ └─────────────────────────┘
+                                         ▼    │
+                              ┌─────────────────┐
+                              │ Voice Mix / Sum │
+                              └─────────────────┘
+     ```
+4. **Locked Nodes & Inserts:** Keep the core routing (SpatialPanner -> Resonator -> Reverb -> Out) locked to prevent accidental deletion, but allow advanced users to insert creative effects directly into the paths.
+
