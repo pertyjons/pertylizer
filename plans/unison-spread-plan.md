@@ -174,7 +174,10 @@ the hook points already exist, so it is bounded, not open-ended.
    - symmetric: voice 0 left-biased (`gl > gr`), voice `n-1` right-biased, and the
      pair mirrors (`gains(0) == swap(gains(n-1))`);
    - `n ≤ 1 → (1, 1)`;
-   - centre voice of an odd count → `gl == gr`.
+   - centre voice of an odd count → `gl == gr`, reaching `≈ 0.7071` (−3 dB,
+     constant-power centre) at `spread = 1.0`;
+   - `spread = 1.0` edges (`index 0` / `n-1`) → approach `equal_power_pan(∓1)`
+     ≈ `(1, 0)` / `(0, 1)`.
    Add `unison_spread_cents`/`unison_spread` to the `project_load_snapshot` golden
    summary if useful (optional, mirrors the detune addition).
 
