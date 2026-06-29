@@ -208,3 +208,52 @@ simplifies `allocate_unison`; two small, separately-tested fns are also fine.
 Step 0 (DSP) ≈ one focused commit; the 6 plumbing layers ≈ one commit each — same
 cadence and cost as the shipped detune vertical. Because spread defaults to 0
 (inert), every step is safe to land incrementally on `main` behind that default.
+
+---
+
+## Progress (branch `feat/unison-spread`)
+
+- [x] **S1 — DSP core.** `AllocatorConfig.unison_spread: NormalizedValue`
+  (default `MIN` = 0) + `set_unison_spread()`; pure `unison_spread_gains(index,
+  num_voices, spread)` (blend-from-unity, `Gain::from_pan`, guards `n≤1`/`spread≤0`)
+  + edge-case unit test; `Voice.unison_pan_gains: (f32,f32)` (all 3 constructors,
+  reset to `(1,1)` in `note_on_expr`); `allocate_unison` sets per-voice gains;
+  applied (bypassed-when-unity) in **both** the normal and oversampled mix loops.
+  Inert until plumbed (default 0). Agent review `[]` (buffer lengths, stale-spread
+  chokepoint, RT-safety, math, AWE composition all verified). Green.
+- [x] **S2 — Command + dispatch.** `InstrumentParam::UnisonSpread(NormalizedValue)`
+  + the engine dispatch arm (`synth_engine.rs:~1781`) → `set_unison_spread`
+  (mirrors `UnisonDetune`; exhaustive match requires the arm). Green.
+- [x] **S3 — Snapshot.** `unison_spread: NormalizedValue` on `InstrumentSnapshot`
+  (shared_state.rs), populated from `allocator_cfg.unison_spread`
+  (synth_engine.rs:~2826) + the `instrument_profile.rs` test constructor. Green.
+- [x] **S4 — Persistence.** `InstrumentState` (patch.rs) gains `unison_spread:
+  NormalizedValue` with a plain `#[serde(default)]` (→ 0.0; `NormalizedValue::
+  default()` = MIN, so no default fn) on BOTH the real struct and the
+  manual-`Deserialize` `Raw` mirror + the `raw.unison_spread` mapping. Loaded into
+  `AllocatorConfig` in `install_instrument` (explicitly, before `..Default`) +
+  pushed via `InstrumentParam::UnisonSpread`; set in `snapshot_to_instrument_state`
+  + `default_instrument_state`. Added `unison_spread` to the
+  `project_load_snapshot` golden summary; regenerated `schemas/project.schema.json`
+  + the 14 fixtures (all 0.0). Agent review `[]` (backward-compat default on the
+  `Raw` struct + drop-trap both verified). Green.
+- [x] **S5 — GUI.** `InstrumentUiState.unison_spread: NormalizedValue` (struct +
+  Default + `new()`, default 0). A **second** `DragValue` in the patch bar beside
+  detune — `0..=100 %` mapping the 0..1 `NormalizedValue` (`*100` display, `/100`
+  write-back), reusing the detune control's `is_unison` for `add_enabled` greying;
+  sends `InstrumentParam::UnisonSpread` via a `send_unison_spread` dirty flag +
+  apply arm; synced from `inst_state`. Agent review `[]` (percent mapping drift-free,
+  wiring/greying/sync verified). Green.
+- [x] **S6 — Tests.** Two `patch.rs` serde tests mirroring detune: round-trip
+  (set 0.6 → save → load → 0.6) and backward-compat (strip the field → loads as 0).
+  (The pure `unison_spread_gains` edge-case test landed in S1; the golden-summary
+  round-trip coverage in S4.) Green.
+
+**SPREAD VERTICAL COMPLETE** (S1–S6, branch `feat/unison-spread`): unison stereo
+spread is configurable end-to-end — DSP (per-voice pan at the mix-down, both
+loops, blend-from-unity, RT-safe) → command → snapshot → persistence (0-default
+backward-compat) → GUI slider greyed outside Unison → tests. Defaults to 0, so it
+is inert for every existing project until dialled up. Each step agent- or
+inline-reviewed. **§2.4 Polyphony settings is now fully done** (detune + spread);
+only the separate "expose the whole allocator config via MCP" task remains (TODO
+§2.4 step-6 triage).

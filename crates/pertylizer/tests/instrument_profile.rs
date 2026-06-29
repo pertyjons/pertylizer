@@ -69,6 +69,7 @@ fn instrument_snapshot(seq: u16, name: &str, category: InstrumentCategory) -> In
         allocation_mode: synth_engine::voice_allocator::AllocationMode::default(),
         stealing_strategy: synth_engine::voice_allocator::StealingStrategy::default(),
         unison_detune: synth_core::Cents::new(10.0),
+        unison_spread: synth_core::NormalizedValue::MIN,
         max_voices: synth_core::VoiceCount::OCTO,
         velocity_amp_sensitivity: NormalizedValue::MAX,
         velocity_filter_sensitivity: NormalizedValue::CENTER,

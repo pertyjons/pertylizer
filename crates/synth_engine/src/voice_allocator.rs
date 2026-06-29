@@ -8,7 +8,10 @@
 use serde::{Deserialize, Serialize};
 
 use crate::voice::{NoteTrigger, Voice, VoiceId, VoiceState};
-use synth_core::{Cents, MidiNote, SampleCount, SamplePosition, Seconds, Velocity, VoiceCount};
+use synth_core::{
+    BipolarValue, Cents, Gain, MidiNote, NormalizedValue, SampleCount, SamplePosition, Seconds,
+    Velocity, VoiceCount,
+};
 
 /// Voice allocation mode.
 #[derive(
@@ -71,6 +74,9 @@ pub struct AllocatorConfig {
     /// Total unison detune spread across all `AllocationMode::Unison` voices, in
     /// cents. Voices are detuned evenly around the centre pitch.
     pub unison_detune: Cents,
+    /// Stereo spread (0..1) for `AllocationMode::Unison` voices: pans them across
+    /// the stereo field (0 = no spread / centred, 1 = full L↔R). Default 0.
+    pub unison_spread: NormalizedValue,
 }
 
 impl Default for AllocatorConfig {
@@ -82,6 +88,7 @@ impl Default for AllocatorConfig {
             priority: NotePriority::Last,
             glide_time: Seconds::ZERO,
             unison_detune: Cents::new(10.0),
+            unison_spread: NormalizedValue::MIN,
         }
     }
 }
@@ -199,6 +206,11 @@ impl VoiceAllocator {
     /// Set the unison detune spread (total cents across all `Unison`-mode voices).
     pub fn set_unison_detune(&mut self, detune: Cents) {
         self.config.unison_detune = detune;
+    }
+
+    /// Set the unison stereo spread (0..1) for `Unison`-mode voices.
+    pub fn set_unison_spread(&mut self, spread: NormalizedValue) {
+        self.config.unison_spread = spread;
     }
 
     /// Get number of active voices.
@@ -490,10 +502,13 @@ impl VoiceAllocator {
         trigger: NoteTrigger,
     ) -> Option<VoiceId> {
         let num_voices = self.voices.len();
+        let spread = self.config.unison_spread.as_f32();
         for i in 0..num_voices {
             let detune = unison_voice_detune(i, num_voices, self.config.unison_detune);
+            // note_on_expr resets the spread gains, so set them after it.
             self.voices[i].note_on_expr(note, velocity, self.time, trigger);
             self.voices[i].set_oscillator_detune(detune);
+            self.voices[i].unison_pan_gains = unison_spread_gains(i, num_voices, spread);
         }
 
         self.last_note = Some(note);
@@ -591,6 +606,23 @@ fn unison_voice_detune(index: usize, num_voices: usize, spread: Cents) -> Cents 
     per_voice * (index as f32 - (num_voices as f32 - 1.0) / 2.0)
 }
 
+/// Per-voice `(left, right)` gains for unison voice `index` of `num_voices`, given
+/// a 0..1 `spread`. Blends from unity (`spread = 0` → `(1, 1)`) toward the
+/// constant-power pan at full spread, so existing detune-only Unison patches stay
+/// loudness-identical until spread is dialled up; a single voice stays centred
+/// (unity). Uses the canonical `Gain::from_pan` law (matches instrument/track/
+/// return pan). Because `Gain::from_pan` returns gains in `[0, 1]`, the blended
+/// value never exceeds 1.0 — a spread sweep cannot clip.
+fn unison_spread_gains(index: usize, num_voices: usize, spread: f32) -> (f32, f32) {
+    if num_voices <= 1 || spread <= 0.0 {
+        return (1.0, 1.0);
+    }
+    let t = index as f32 / (num_voices as f32 - 1.0) * 2.0 - 1.0; // [-1, 1]
+    let (gl, gr) = Gain::from_pan(BipolarValue::new(t * spread));
+    let (gl, gr) = (gl.as_f32(), gr.as_f32());
+    (1.0 + spread * (gl - 1.0), 1.0 + spread * (gr - 1.0))
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -613,6 +645,39 @@ mod tests {
         }
         // A single voice gets no detune (no division by zero).
         assert!(unison_voice_detune(0, 1, spread).0.abs() < 1e-6);
+    }
+
+    #[test]
+    fn unison_spread_gains_edge_cases() {
+        let close = |a: f32, b: f32| (a - b).abs() < 1e-4;
+
+        // spread = 0 → unity for every voice (preserves detune-only Unison loudness).
+        for n in [1_usize, 2, 3, 8] {
+            for i in 0..n {
+                let (l, r) = unison_spread_gains(i, n, 0.0);
+                assert!(close(l, 1.0) && close(r, 1.0), "spread 0 must be unity");
+            }
+        }
+        // n <= 1 → unity regardless of spread (no division by zero).
+        let (l, r) = unison_spread_gains(0, 1, 1.0);
+        assert!(close(l, 1.0) && close(r, 1.0), "single voice must be unity");
+
+        // Full spread, 4 voices: edges biased outward and the pair mirrors.
+        let (l0, r0) = unison_spread_gains(0, 4, 1.0);
+        let (ln, rn) = unison_spread_gains(3, 4, 1.0);
+        assert!(l0 > r0 && rn > ln, "edge voices biased outward");
+        assert!(close(l0, rn) && close(r0, ln), "edge pair must mirror");
+        assert!(
+            close(l0, 1.0) && close(r0, 0.0),
+            "voice 0 ≈ (1,0) at full spread"
+        );
+
+        // Odd-count centre voice → equal L/R ≈ 0.7071 (−3 dB) at full spread.
+        let (lc, rc) = unison_spread_gains(1, 3, 1.0);
+        assert!(
+            close(lc, rc) && close(lc, std::f32::consts::FRAC_1_SQRT_2),
+            "centre voice ≈ 0.7071 at full spread"
+        );
     }
 
     #[test]

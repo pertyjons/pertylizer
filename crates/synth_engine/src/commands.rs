@@ -870,6 +870,8 @@ pub enum InstrumentParam {
     StealingStrategy(super::voice_allocator::StealingStrategy),
     /// Unison detune spread (total cents across all `Unison`-mode voices).
     UnisonDetune(Cents),
+    /// Unison stereo spread (0..1) for `Unison`-mode voices.
+    UnisonSpread(NormalizedValue),
     /// Maximum polyphony for this instrument.
     MaxVoices(usize),
     /// Velocity to amplitude sensitivity (0 = constant, 1 = full dynamic).

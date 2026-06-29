@@ -433,6 +433,12 @@ pub struct Voice {
     /// Per-note polyphonic aftertouch (0.0 to 1.0, type-safe).
     pub poly_aftertouch: NormalizedValue,
 
+    /// Per-voice unison stereo-spread gains `(left, right)`, applied at the
+    /// instrument mix-down. Set at allocation in `AllocationMode::Unison`;
+    /// reset to `(1.0, 1.0)` (no spread) on every note-on, so all other modes and
+    /// `spread = 0` are inert.
+    pub unison_pan_gains: (f32, f32),
+
     /// Expression settings (pitch bend range, velocity sensitivity, etc.).
     pub expression: ExpressionSettings,
 
@@ -506,6 +512,7 @@ impl Voice {
             mod_wheel: NormalizedValue::MIN,
             aftertouch: NormalizedValue::MIN,
             poly_aftertouch: NormalizedValue::MIN,
+            unison_pan_gains: (1.0, 1.0),
             expression: ExpressionSettings::default(),
             graph: ModuleGraph::new(),
             steal_fade_samples: SampleCount::new(128),
@@ -546,6 +553,7 @@ impl Voice {
             mod_wheel: NormalizedValue::MIN,
             aftertouch: NormalizedValue::MIN,
             poly_aftertouch: NormalizedValue::MIN,
+            unison_pan_gains: (1.0, 1.0),
             expression: ExpressionSettings::default(),
             graph,
             steal_fade_samples: SampleCount::new(128),
@@ -704,6 +712,9 @@ impl Voice {
             start_time: time,
         };
         self.age = SampleCount::ZERO;
+        // Clear any unison spread from a previous allocation; `allocate_unison`
+        // re-sets it after this call when the instrument is in Unison mode.
+        self.unison_pan_gains = (1.0, 1.0);
 
         // Flag the first block so `gate_on` reads 1.0 (Step 2). Per-slot script
         // state is zeroed and re-seeded by each script-hosting module's `note_on`,
@@ -1329,6 +1340,7 @@ impl Voice {
             mod_wheel: NormalizedValue::MIN,
             aftertouch: NormalizedValue::MIN,
             poly_aftertouch: NormalizedValue::MIN,
+            unison_pan_gains: (1.0, 1.0),
             expression: self.expression,
             graph: cloned_graph,
             steal_fade_samples: self.steal_fade_samples,

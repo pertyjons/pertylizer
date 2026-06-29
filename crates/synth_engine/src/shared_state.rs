@@ -397,6 +397,8 @@ pub struct InstrumentSnapshot {
     pub stealing_strategy: crate::voice_allocator::StealingStrategy,
     /// Total unison detune spread (cents), used in `Unison` allocation mode.
     pub unison_detune: synth_core::Cents,
+    /// Unison stereo spread (0..1), used in `Unison` allocation mode.
+    pub unison_spread: synth_core::NormalizedValue,
     /// Maximum polyphony for this instrument.
     pub max_voices: synth_core::VoiceCount,
     /// Velocity → amplitude sensitivity (0 = constant, 1 = full dynamic).

@@ -1379,6 +1379,12 @@
           "format": "float",
           "type": "number"
         },
+        "unison_spread": {
+          "default": 0.0,
+          "description": "Unison stereo spread (0..1), used in `Unison` allocation mode. Defaults to\n0 (no spread) for projects saved before this field existed.",
+          "format": "float",
+          "type": "number"
+        },
         "velocity_amp_sensitivity": {
           "default": 1.0,
           "description": "Velocity → amplitude sensitivity (0 = constant volume, 1 = full dynamic).",

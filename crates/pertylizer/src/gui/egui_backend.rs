@@ -2097,6 +2097,7 @@ impl SynthApp {
         let mut send_mode = false;
         let mut send_stealing = false;
         let mut send_unison_detune = false;
+        let mut send_unison_spread = false;
         let mut send_vel_amp = false;
         let mut send_vel_filter = false;
         let mut send_sidechain: Option<Option<InstrumentId>> = None;
@@ -2305,6 +2306,24 @@ impl SynthApp {
             {
                 inst.unison_detune = synth_core::Cents::new(detune_ct);
                 send_unison_detune = true;
+            }
+
+            // Unison stereo spread (0..1 shown as 0..100 %), greyed out outside
+            // Unison mode like the detune control above.
+            let mut spread_pct = inst.unison_spread.as_f32() * 100.0;
+            if ui
+                .add_enabled(
+                    is_unison,
+                    egui::DragValue::new(&mut spread_pct)
+                        .range(0.0..=100.0)
+                        .speed(0.5)
+                        .suffix(" %"),
+                )
+                .on_hover_text("Unison stereo spread (0 = centred, 100% = full L↔R width)")
+                .changed()
+            {
+                inst.unison_spread = synth_core::NormalizedValue::new(spread_pct / 100.0);
+                send_unison_spread = true;
             }
 
             ui.separator();
@@ -2545,6 +2564,13 @@ impl SynthApp {
             self.handle.send(EngineCommand::SetInstrumentParameter {
                 instrument_id: active_id,
                 param: synth_engine::InstrumentParam::UnisonDetune(detune),
+            });
+        }
+        if send_unison_spread {
+            let spread = self.instruments[idx].unison_spread;
+            self.handle.send(EngineCommand::SetInstrumentParameter {
+                instrument_id: active_id,
+                param: synth_engine::InstrumentParam::UnisonSpread(spread),
             });
         }
         if send_vel_amp {
@@ -6009,6 +6035,7 @@ impl SynthApp {
             ui_inst.allocation_mode = inst_state.allocation_mode;
             ui_inst.stealing_strategy = inst_state.stealing_strategy;
             ui_inst.unison_detune = inst_state.unison_detune;
+            ui_inst.unison_spread = inst_state.unison_spread;
             ui_inst.max_voices = inst_state.max_voices;
             ui_inst.velocity_amp_sensitivity = inst_state.velocity_amp_sensitivity;
             ui_inst.velocity_filter_sensitivity = inst_state.velocity_filter_sensitivity;

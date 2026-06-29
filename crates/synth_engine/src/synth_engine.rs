@@ -1778,6 +1778,9 @@ impl SynthEngine {
             InstrumentParam::UnisonDetune(detune) => {
                 instrument.allocator_mut().set_unison_detune(detune)
             }
+            InstrumentParam::UnisonSpread(spread) => {
+                instrument.allocator_mut().set_unison_spread(spread)
+            }
             InstrumentParam::MaxVoices(_) => {
                 // Cannot change max voices at runtime without reallocating
             }
@@ -2820,6 +2823,7 @@ impl SynthEngine {
                     allocation_mode: allocator_cfg.mode,
                     stealing_strategy: allocator_cfg.stealing,
                     unison_detune: allocator_cfg.unison_detune,
+                    unison_spread: allocator_cfg.unison_spread,
                     max_voices: allocator_cfg.max_voices,
                     velocity_amp_sensitivity: inst.velocity_amp_sensitivity(),
                     velocity_filter_sensitivity: inst.velocity_filter_sensitivity(),

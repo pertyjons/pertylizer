@@ -802,6 +802,11 @@ pub struct InstrumentState {
     #[serde(default = "default_unison_detune")]
     #[schemars(with = "f32")]
     pub unison_detune: synth_core::Cents,
+    /// Unison stereo spread (0..1), used in `Unison` allocation mode. Defaults to
+    /// 0 (no spread) for projects saved before this field existed.
+    #[serde(default)]
+    #[schemars(with = "f32")]
+    pub unison_spread: synth_core::NormalizedValue,
     /// Maximum polyphony for this instrument (1–128, default 8).
     #[serde(default = "default_max_voices")]
     #[schemars(with = "u8")]
@@ -855,6 +860,8 @@ impl<'de> Deserialize<'de> for InstrumentState {
             stealing_strategy: synth_engine::voice_allocator::StealingStrategy,
             #[serde(default = "default_unison_detune")]
             unison_detune: synth_core::Cents,
+            #[serde(default)]
+            unison_spread: synth_core::NormalizedValue,
             #[serde(default = "default_max_voices")]
             max_voices: synth_core::VoiceCount,
             #[serde(default = "default_vel_amp_sens")]
@@ -884,6 +891,7 @@ impl<'de> Deserialize<'de> for InstrumentState {
             allocation_mode: raw.allocation_mode,
             stealing_strategy: raw.stealing_strategy,
             unison_detune: raw.unison_detune,
+            unison_spread: raw.unison_spread,
             max_voices: raw.max_voices,
             velocity_amp_sensitivity: raw.velocity_amp_sensitivity,
             velocity_filter_sensitivity: raw.velocity_filter_sensitivity,
@@ -1498,6 +1506,29 @@ mod tests {
         let legacy = serde_json::to_string(&value).expect("reserialize");
         let parsed: InstrumentState = serde_json::from_str(&legacy).expect("deserialize legacy");
         assert!((parsed.unison_detune.0 - 10.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_instrument_state_unison_spread_round_trip() {
+        let mut inst = crate::project::default_instrument_state();
+        inst.unison_spread = synth_core::NormalizedValue::new(0.6);
+        let json = serde_json::to_string(&inst).expect("serialize");
+        let parsed: InstrumentState = serde_json::from_str(&json).expect("deserialize");
+        assert!((parsed.unison_spread.as_f32() - 0.6).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_instrument_state_unison_spread_legacy_defaults_to_zero() {
+        // A project saved before this field existed must load as 0 (no spread).
+        let inst = crate::project::default_instrument_state();
+        let json = serde_json::to_string(&inst).expect("serialize");
+        let mut value: serde_json::Value = serde_json::from_str(&json).expect("parse");
+        if let Some(obj) = value.as_object_mut() {
+            obj.remove("unison_spread");
+        }
+        let legacy = serde_json::to_string(&value).expect("reserialize");
+        let parsed: InstrumentState = serde_json::from_str(&legacy).expect("deserialize legacy");
+        assert!(parsed.unison_spread.as_f32().abs() < f32::EPSILON);
     }
 
     #[test]

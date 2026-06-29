@@ -496,6 +496,26 @@ pub struct Instrument {
     os_voice_right: AudioBuffer,
 }
 
+/// Apply a per-voice unison stereo-spread gain pair `(left, right)` to a stereo
+/// block, bypassed when unity (the default `spread = 0` case). Kept in one place so
+/// the normal and oversampled mix loops can't diverge. RT-safe: a plain in-place
+/// multiply over the block, no allocation.
+#[inline]
+fn apply_unison_spread(left: &mut [f32], right: &mut [f32], gains: (f32, f32)) {
+    let (gain_l, gain_r) = gains;
+    if gain_l != 1.0 || gain_r != 1.0 {
+        let n = left.len().min(right.len());
+        // Re-slice both to `n` up front so the optimizer can prove every `[i]` is
+        // in bounds, eliding the bounds checks and letting it auto-vectorize (SIMD).
+        let left = &mut left[..n];
+        let right = &mut right[..n];
+        for i in 0..n {
+            left[i] *= gain_l;
+            right[i] *= gain_r;
+        }
+    }
+}
+
 impl Instrument {
     /// Create a new instrument with the given ID and name.
     ///
@@ -1357,6 +1377,15 @@ impl Instrument {
                     );
                 }
 
+                // Per-voice unison stereo spread. (The oversampled loop applies no
+                // AWE dry-pan — see plans/unison-spread-plan.md — so spread is applied
+                // independently here.)
+                apply_unison_spread(
+                    &mut temp_left.as_mut_slice()[..os_count],
+                    &mut temp_right.as_mut_slice()[..os_count],
+                    voice.unison_pan_gains,
+                );
+
                 // Sum into oversampled instrument buffers
                 for i in 0..os_count {
                     self.os_voice_left[i] += temp_left[i];
@@ -1499,6 +1528,13 @@ impl Instrument {
                         temp_right[i] *= gain_r;
                     }
                 }
+
+                // Per-voice unison stereo spread (composes with the AWE pan above).
+                apply_unison_spread(
+                    &mut temp_left.as_mut_slice()[..sample_count],
+                    &mut temp_right.as_mut_slice()[..sample_count],
+                    voice.unison_pan_gains,
+                );
 
                 // Sum into instrument buffers
                 for i in 0..sample_count {
