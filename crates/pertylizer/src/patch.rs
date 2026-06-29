@@ -797,6 +797,11 @@ pub struct InstrumentState {
     /// Strategy for stealing voices when all are busy.
     #[serde(default)]
     pub stealing_strategy: synth_engine::voice_allocator::StealingStrategy,
+    /// Total unison detune spread (cents), used in `Unison` allocation mode.
+    /// Defaults to 10 cents for projects saved before this field existed.
+    #[serde(default = "default_unison_detune")]
+    #[schemars(with = "f32")]
+    pub unison_detune: synth_core::Cents,
     /// Maximum polyphony for this instrument (1–128, default 8).
     #[serde(default = "default_max_voices")]
     #[schemars(with = "u8")]
@@ -848,6 +853,8 @@ impl<'de> Deserialize<'de> for InstrumentState {
             allocation_mode: synth_engine::voice_allocator::AllocationMode,
             #[serde(default)]
             stealing_strategy: synth_engine::voice_allocator::StealingStrategy,
+            #[serde(default = "default_unison_detune")]
+            unison_detune: synth_core::Cents,
             #[serde(default = "default_max_voices")]
             max_voices: synth_core::VoiceCount,
             #[serde(default = "default_vel_amp_sens")]
@@ -876,6 +883,7 @@ impl<'de> Deserialize<'de> for InstrumentState {
             color: raw.color,
             allocation_mode: raw.allocation_mode,
             stealing_strategy: raw.stealing_strategy,
+            unison_detune: raw.unison_detune,
             max_voices: raw.max_voices,
             velocity_amp_sensitivity: raw.velocity_amp_sensitivity,
             velocity_filter_sensitivity: raw.velocity_filter_sensitivity,
@@ -895,6 +903,10 @@ fn default_oversampling() -> u8 {
 
 fn default_max_voices() -> synth_core::VoiceCount {
     synth_core::VoiceCount::OCTO
+}
+
+fn default_unison_detune() -> synth_core::Cents {
+    synth_core::Cents::new(10.0)
 }
 
 fn default_vel_amp_sens() -> synth_core::NormalizedValue {
@@ -1462,6 +1474,30 @@ mod tests {
 
         let parsed: Patch = serde_json::from_str(&json).expect("deserialize");
         assert!(parsed.settings.effect_chain_order.is_empty());
+    }
+
+    #[test]
+    fn test_instrument_state_unison_detune_round_trip() {
+        let mut inst = crate::project::default_instrument_state();
+        inst.unison_detune = synth_core::Cents::new(25.0);
+        let json = serde_json::to_string(&inst).expect("serialize");
+        let parsed: InstrumentState = serde_json::from_str(&json).expect("deserialize");
+        assert!((parsed.unison_detune.0 - 25.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn test_instrument_state_unison_detune_legacy_defaults_to_10() {
+        // A project saved before this field existed must load as 10 cents (the
+        // historical hardcoded constant), not 0.
+        let inst = crate::project::default_instrument_state();
+        let json = serde_json::to_string(&inst).expect("serialize");
+        let mut value: serde_json::Value = serde_json::from_str(&json).expect("parse");
+        if let Some(obj) = value.as_object_mut() {
+            obj.remove("unison_detune");
+        }
+        let legacy = serde_json::to_string(&value).expect("reserialize");
+        let parsed: InstrumentState = serde_json::from_str(&legacy).expect("deserialize legacy");
+        assert!((parsed.unison_detune.0 - 10.0).abs() < f32::EPSILON);
     }
 
     #[test]

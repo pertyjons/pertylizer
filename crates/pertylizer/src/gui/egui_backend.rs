@@ -2096,6 +2096,7 @@ impl SynthApp {
         let mut send_max_voices = false;
         let mut send_mode = false;
         let mut send_stealing = false;
+        let mut send_unison_detune = false;
         let mut send_vel_amp = false;
         let mut send_vel_filter = false;
         let mut send_sidechain: Option<Option<InstrumentId>> = None;
@@ -2285,6 +2286,26 @@ impl SynthApp {
                 })
                 .response
                 .on_hover_text("Which voice is reused when all are busy");
+
+            // Unison detune spread — only meaningful in Unison mode, so greyed out
+            // otherwise.
+            let is_unison =
+                inst.allocation_mode == synth_engine::voice_allocator::AllocationMode::Unison;
+            let mut detune_ct = inst.unison_detune.0;
+            if ui
+                .add_enabled(
+                    is_unison,
+                    egui::DragValue::new(&mut detune_ct)
+                        .range(0.0..=100.0)
+                        .speed(0.5)
+                        .suffix(" ct"),
+                )
+                .on_hover_text("Unison detune spread (total cents across all voices)")
+                .changed()
+            {
+                inst.unison_detune = synth_core::Cents::new(detune_ct);
+                send_unison_detune = true;
+            }
 
             ui.separator();
 
@@ -2517,6 +2538,13 @@ impl SynthApp {
             self.handle.send(EngineCommand::SetInstrumentParameter {
                 instrument_id: active_id,
                 param: synth_engine::InstrumentParam::StealingStrategy(strategy),
+            });
+        }
+        if send_unison_detune {
+            let detune = self.instruments[idx].unison_detune;
+            self.handle.send(EngineCommand::SetInstrumentParameter {
+                instrument_id: active_id,
+                param: synth_engine::InstrumentParam::UnisonDetune(detune),
             });
         }
         if send_vel_amp {
@@ -5980,6 +6008,7 @@ impl SynthApp {
             ui_inst.color = inst_state.color.clone();
             ui_inst.allocation_mode = inst_state.allocation_mode;
             ui_inst.stealing_strategy = inst_state.stealing_strategy;
+            ui_inst.unison_detune = inst_state.unison_detune;
             ui_inst.max_voices = inst_state.max_voices;
             ui_inst.velocity_amp_sensitivity = inst_state.velocity_amp_sensitivity;
             ui_inst.velocity_filter_sensitivity = inst_state.velocity_filter_sensitivity;

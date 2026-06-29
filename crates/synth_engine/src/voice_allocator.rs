@@ -68,6 +68,9 @@ pub struct AllocatorConfig {
     pub priority: NotePriority,
     /// Glide time in seconds.
     pub glide_time: Seconds,
+    /// Total unison detune spread across all `AllocationMode::Unison` voices, in
+    /// cents. Voices are detuned evenly around the centre pitch.
+    pub unison_detune: Cents,
 }
 
 impl Default for AllocatorConfig {
@@ -78,6 +81,7 @@ impl Default for AllocatorConfig {
             stealing: StealingStrategy::Oldest,
             priority: NotePriority::Last,
             glide_time: Seconds::ZERO,
+            unison_detune: Cents::new(10.0),
         }
     }
 }
@@ -190,6 +194,11 @@ impl VoiceAllocator {
     /// Set glide time.
     pub fn set_glide_time(&mut self, time: Seconds) {
         self.config.glide_time = time;
+    }
+
+    /// Set the unison detune spread (total cents across all `Unison`-mode voices).
+    pub fn set_unison_detune(&mut self, detune: Cents) {
+        self.config.unison_detune = detune;
     }
 
     /// Get number of active voices.
@@ -481,19 +490,9 @@ impl VoiceAllocator {
         trigger: NoteTrigger,
     ) -> Option<VoiceId> {
         let num_voices = self.voices.len();
-        // Total detune spread across all unison voices, in cents. Fixed for now —
-        // not yet user-configurable (see plans/TODO.md §3.5 "Unison detune/spread").
-        let unison_detune = Cents::new(10.0);
-        let detune_per_voice = unison_detune / num_voices as f32;
-
         for i in 0..num_voices {
-            // Apply detune spread: voices spread evenly around center pitch
-            // e.g. with 4 voices and 10 cents total: -7.5, -2.5, +2.5, +7.5
-            let detune = detune_per_voice * (i as f32 - (num_voices as f32 - 1.0) / 2.0);
-
+            let detune = unison_voice_detune(i, num_voices, self.config.unison_detune);
             self.voices[i].note_on_expr(note, velocity, self.time, trigger);
-
-            // Apply detune to oscillators
             self.voices[i].set_oscillator_detune(detune);
         }
 
@@ -580,10 +579,41 @@ impl VoiceAllocator {
     }
 }
 
+/// Detune (in cents) for unison voice `index` of `num_voices`, given the total
+/// peak-to-peak `spread`. Voices are placed symmetrically around the centre pitch
+/// so the lowest and highest differ by exactly `spread`, independent of the voice
+/// count; a single voice gets no detune.
+fn unison_voice_detune(index: usize, num_voices: usize, spread: Cents) -> Cents {
+    if num_voices <= 1 {
+        return Cents::new(0.0);
+    }
+    let per_voice = spread / (num_voices as f32 - 1.0);
+    per_voice * (index as f32 - (num_voices as f32 - 1.0) / 2.0)
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unison_detune_spread_equals_total_for_any_count() {
+        let spread = Cents::new(10.0);
+        for n in [2_usize, 4, 8] {
+            let lo = unison_voice_detune(0, n, spread).0;
+            let hi = unison_voice_detune(n - 1, n, spread).0;
+            // Lowest..highest spans exactly the configured spread, symmetric
+            // around the centre — independent of the voice count.
+            assert!(
+                (hi - lo - 10.0).abs() < 1e-4,
+                "n={n}: span {} != 10",
+                hi - lo
+            );
+            assert!((lo + hi).abs() < 1e-4, "n={n}: not symmetric ({lo}, {hi})");
+        }
+        // A single voice gets no detune (no division by zero).
+        assert!(unison_voice_detune(0, 1, spread).0.abs() < 1e-6);
+    }
 
     #[test]
     fn test_allocator_creation() {

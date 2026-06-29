@@ -28,17 +28,6 @@
 
 - [ ] Verse, chorus, bridge labels in the arrangement
 
-### 1.3 Macro controllers
-
-- [ ] Map multiple parameters to a single macro knob for live performance
-
-### 1.4 Track reorder via drag-handle
-
-- [ ] Replace (or complement) the current ↑/↓ arrow buttons in the track header with a drag-handle
-  (e.g. `ri::DRAG_MOVE_2_LINE`) on the left edge of each row. Drag should snap the row vertically to the
-  nearest neighbour while dragging, then commit on release via `Song::reorder_track`. The arrow buttons
-  shipped because they are simpler and robust, but drag-handle reorder is the DAW convention.
-
 ### 1.5 Pattern looping within placement length (future)
 
 - [ ] **Switch placement-resize from clip to loop-within semantics.** Today
@@ -148,6 +137,63 @@
 
   Detune alone (steps 1–7 minus spread) is mostly plumbing and could ship as a small first vertical;
   **spread is the real feature** because it needs new per-voice stereo DSP. Design separately.
+
+  **Progress — detune vertical (branch `feat/unison-detune`):**
+    - [x] **Step 1 — Allocator/DSP.** Re-added `unison_detune: Cents` to
+      `AllocatorConfig` (default `10.0` = the old inline constant, so behaviour is
+      preserved) + `set_unison_detune()` setter (mirrors `set_stealing`);
+      `allocate_unison` now reads `self.config.unison_detune` instead of the
+      hardcoded `Cents::new(10.0)`. Green (synth_engine tests pass). **Spread is
+      NOT part of this vertical** — it needs new per-voice stereo DSP; deferred.
+    - [x] **Step 2 — Command + dispatch.** Added `InstrumentParam::UnisonDetune(Cents)`
+      + the engine dispatch arm (`synth_engine.rs` ~1777) calling
+      `allocator_mut().set_unison_detune(d)` (mirrors `StealingStrategy`). The
+      `InstrumentParam` dispatch match is exhaustive, so the arm is required. Green.
+    - [x] **Step 3 — Snapshot.** Added `unison_detune: synth_core::Cents` to
+      `InstrumentSnapshot` (shared_state.rs) + populated it from
+      `allocator_cfg.unison_detune` in the snapshot build (synth_engine.rs ~2822,
+      beside `allocation_mode`/`stealing_strategy`). Updated the
+      `tests/instrument_profile.rs` constructor. Green (`--all-targets`).
+    - [x] **Step 4 — Persistence.** `InstrumentState` (patch.rs) gains
+      `unison_detune: Cents` with `#[serde(default = "default_unison_detune")]`
+      (→ `10.0`, so projects saved before the field keep the historical sound) —
+      added to BOTH the real struct and the manual-`Deserialize` `Raw` mirror +
+      the `raw.unison_detune` mapping + a `default_unison_detune()` fn. Load wires
+      it into the `AllocatorConfig` in `install_instrument` (explicitly, *before*
+      `..Default::default()`, so the loaded value isn't dropped) AND pushes
+      `InstrumentParam::UnisonDetune` (mirrors `allocation_mode`); also set in
+      `snapshot_to_instrument_state` + `default_instrument_state`. Regenerated
+      `schemas/project.schema.json`. Agent review `[]` (backward-compat default +
+      drop-trap both verified). Green.
+    - [x] **Step 5 — GUI.** `InstrumentUiState` gains `unison_detune: Cents`
+      (struct + Default + `new()`, default 10.0). Added a `DragValue`
+      (0..=100 ct, suffix " ct") in the patch bar after the stealing combo,
+      `add_enabled(is_unison, …)` so it greys out unless the instrument is in
+      Unison mode; on change sends `InstrumentParam::UnisonDetune` via a
+      `send_unison_detune` dirty flag + apply block; synced from `inst_state` on
+      load (beside allocation_mode/stealing). Agent review `[]` (wiring/greying/
+      sync all mirror the allocation_mode pattern; note: allocator-config fields
+      are intentionally not reconciled from the live snapshot — shared by all
+      siblings, and no MCP path mutates them **yet** → step 6). Green.
+    - [x] **Step 6 — Tests (+ MCP triage).** Added two focused serde tests in
+      `patch.rs`: a round-trip (set 25 ct → save → load → 25 ct) and a
+      backward-compat one (strip the field from the JSON → loads as 10 ct, not 0).
+      Added `unison_detune_cents` to the `project_load_snapshot` golden summary +
+      regenerated all 10 example-project fixtures (each correctly shows `10.0`,
+      proving pre-field projects still load the historical value). **MCP NOT
+      added (deliberate triage):** `synth_mcp` exposes *no* allocator-config param
+      — `allocation_mode`/`stealing_strategy`/`max_voices` have neither a getter on
+      `get_instrument_info` nor a setter. Adding a lone `unison_detune` MCP path
+      would be inconsistent piecemeal scope-creep; MCP exposure belongs to a
+      separate "surface the whole allocator config (mode/stealing/max_voices/
+      detune) via MCP" task. Green.
+
+  **DETUNE VERTICAL COMPLETE** (steps 1–6, branch `feat/unison-detune`): unison
+  detune is now configurable end-to-end (allocator → command → snapshot →
+  persistence w/ 10 ct backward-compat → GUI slider greyed outside Unison mode →
+  tests). **Still open / deferred:** (a) **spread** — the real feature; needs new
+  per-voice stereo DSP (per-voice pan), design separately; (b) **MCP** allocator-
+  config surface (see step 6 triage).
 
 ---
 
@@ -281,10 +327,10 @@ efficiency/altitude items deliberately left out of that change.
       `icons` consts). ~4.3MB, mostly the generated `icons.rs` + the `.ttf`.
     - `third_party/egui-file-dialog/` — needed exactly **7** `show_inside`→`show` renames to
       compile against 0.35; otherwise unchanged from 0.13.0.
-  When upstream releases 0.35 versions: bump `egui-remixicon` / `egui-file-dialog` to the new
-  crates.io versions, **remove the `[patch.crates-io]` block** and the whole `third_party/`
-  directory, and re-run the gate. Watch:
-  https://github.com/get200/egui-remixicon and https://github.com/fluxxcode/egui-file-dialog
+      When upstream releases 0.35 versions: bump `egui-remixicon` / `egui-file-dialog` to the new
+      crates.io versions, **remove the `[patch.crates-io]` block** and the whole `third_party/`
+      directory, and re-run the gate. Watch:
+      https://github.com/get200/egui-remixicon and https://github.com/fluxxcode/egui-file-dialog
 
 ---
 

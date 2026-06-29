@@ -14,8 +14,8 @@ use super::instrument::{
     Instrument, InstrumentCategory, InstrumentId, KeyRange, LearnState, MidiChannel,
 };
 use synth_core::{
-    Amplitude, BipolarValue, Bpm, CcNumber, CpuUsage, Gain, MidiNote, NormalizedValue, PortName,
-    Seconds, Semitones, Velocity,
+    Amplitude, BipolarValue, Bpm, CcNumber, Cents, CpuUsage, Gain, MidiNote, NormalizedValue,
+    PortName, Seconds, Semitones, Velocity,
 };
 use synth_core::{ModuleType, Param};
 use synth_sequencer::{PatternId, ReturnBusId, SeqInstrumentId, Tick, TrackId};
@@ -868,6 +868,8 @@ pub enum InstrumentParam {
     AllocationMode(super::voice_allocator::AllocationMode),
     /// Voice stealing strategy.
     StealingStrategy(super::voice_allocator::StealingStrategy),
+    /// Unison detune spread (total cents across all `Unison`-mode voices).
+    UnisonDetune(Cents),
     /// Maximum polyphony for this instrument.
     MaxVoices(usize),
     /// Velocity to amplitude sensitivity (0 = constant, 1 = full dynamic).

@@ -1373,6 +1373,12 @@
           "format": "float",
           "type": "number"
         },
+        "unison_detune": {
+          "default": 10.0,
+          "description": "Total unison detune spread (cents), used in `Unison` allocation mode.\nDefaults to 10 cents for projects saved before this field existed.",
+          "format": "float",
+          "type": "number"
+        },
         "velocity_amp_sensitivity": {
           "default": 1.0,
           "description": "Velocity → amplitude sensitivity (0 = constant volume, 1 = full dynamic).",

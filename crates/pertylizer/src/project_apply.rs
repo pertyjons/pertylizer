@@ -369,6 +369,7 @@ fn snapshot_to_instrument_state(snap: &InstrumentSnapshot, mut patch: Patch) -> 
         color: snap.color.clone(),
         allocation_mode: snap.allocation_mode,
         stealing_strategy: snap.stealing_strategy,
+        unison_detune: snap.unison_detune,
         max_voices: snap.max_voices,
         velocity_amp_sensitivity: snap.velocity_amp_sensitivity,
         velocity_filter_sensitivity: snap.velocity_filter_sensitivity,
@@ -540,6 +541,7 @@ fn install_instrument(
         max_voices: inst_state.max_voices,
         mode: inst_state.allocation_mode,
         stealing: inst_state.stealing_strategy,
+        unison_detune: inst_state.unison_detune,
         ..Default::default()
     };
     if let Err(e) = session.add_instrument_with_id_and_config(inst_id, &inst_state.name, Some(cfg))
@@ -686,6 +688,7 @@ fn push_instrument_params(
         InstrumentParam::Transpose(inst_state.transpose),
         InstrumentParam::AllocationMode(inst_state.allocation_mode),
         InstrumentParam::StealingStrategy(inst_state.stealing_strategy),
+        InstrumentParam::UnisonDetune(inst_state.unison_detune),
         InstrumentParam::VelocityAmpSensitivity(inst_state.velocity_amp_sensitivity),
         InstrumentParam::VelocityFilterSensitivity(inst_state.velocity_filter_sensitivity),
     ] {

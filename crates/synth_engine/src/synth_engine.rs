@@ -1775,6 +1775,9 @@ impl SynthEngine {
             InstrumentParam::StealingStrategy(strategy) => {
                 instrument.allocator_mut().set_stealing(strategy)
             }
+            InstrumentParam::UnisonDetune(detune) => {
+                instrument.allocator_mut().set_unison_detune(detune)
+            }
             InstrumentParam::MaxVoices(_) => {
                 // Cannot change max voices at runtime without reallocating
             }
@@ -2816,6 +2819,7 @@ impl SynthEngine {
                     oversampling: inst.oversampling(),
                     allocation_mode: allocator_cfg.mode,
                     stealing_strategy: allocator_cfg.stealing,
+                    unison_detune: allocator_cfg.unison_detune,
                     max_voices: allocator_cfg.max_voices,
                     velocity_amp_sensitivity: inst.velocity_amp_sensitivity(),
                     velocity_filter_sensitivity: inst.velocity_filter_sensitivity(),
