@@ -33,7 +33,7 @@ use crate::gui::theme::theme;
 /// Clip-warning header tint (used by the layout-measurement tests).
 #[cfg(test)]
 const CLIP_WARN_ORANGE: Color32 = Color32::from_rgb(200, 120, 40);
-use crate::gui::widgets::{ModuleFrame, draw_module_header, level_color};
+use crate::gui::widgets::{CaptionTone, ModuleFrame, caption, draw_module_header, level_color};
 
 /// Width of a single channel strip, in points.
 const STRIP_WIDTH: f32 = 108.0;
@@ -610,11 +610,7 @@ fn draw_channel_strip(
 
                 // Sends to each return bus.
                 if !return_ids.is_empty() {
-                    ui.label(
-                        RichText::new("Sends")
-                            .size(t.fonts.size_small)
-                            .color(t.colors.text_secondary),
-                    );
+                    caption(ui, "Sends", CaptionTone::Secondary);
                     for (rid, rname) in return_ids {
                         let (_, level, pre, enabled) = ch
                             .sends
@@ -657,11 +653,7 @@ fn draw_channel_strip(
                         tr.volume = NormalizedValue::new(vol);
                     }
                 });
-                ui.label(
-                    RichText::new(format!("{:.2}", ch.volume))
-                        .size(t.fonts.size_small)
-                        .color(t.colors.text_secondary),
-                );
+                caption(ui, format!("{:.2}", ch.volume), CaptionTone::Secondary);
             });
         });
     });
@@ -702,12 +694,7 @@ fn draw_send_row(
         } else {
             t.colors.text_dim
         };
-        ui.label(
-            RichText::new(short)
-                .size(t.fonts.size_small)
-                .color(label_color),
-        )
-        .on_hover_text(name);
+        caption(ui, short, CaptionTone::Color(label_color)).on_hover_text(name);
         let mut lvl = level;
         if ui
             .add(
@@ -770,11 +757,7 @@ fn draw_return_sends(
     if candidates.is_empty() {
         return;
     }
-    ui.label(
-        RichText::new("Bus sends")
-            .size(t.fonts.size_small)
-            .color(t.colors.text_secondary),
-    );
+    caption(ui, "Bus sends", CaptionTone::Secondary);
     for (target, tname) in &candidates {
         let (level, enabled) = rb
             .sends
@@ -797,8 +780,7 @@ fn draw_return_sends(
             } else {
                 t.colors.text_dim
             };
-            ui.label(RichText::new(short).size(t.fonts.size_small).color(color))
-                .on_hover_text(tname);
+            caption(ui, short, CaptionTone::Color(color)).on_hover_text(tname);
             let mut lvl = level;
             if ui
                 .add(
@@ -1023,11 +1005,7 @@ fn draw_return_strip(
                                 bus.volume = NormalizedValue::new(vol);
                             }
                         });
-                        ui.label(
-                            RichText::new(format!("{:.2}", rb.volume))
-                                .size(t.fonts.size_small)
-                                .color(t.colors.text_secondary),
-                        );
+                        caption(ui, format!("{:.2}", rb.volume), CaptionTone::Secondary);
                     });
                 });
             });
@@ -1184,11 +1162,7 @@ fn draw_master_strip(ui: &mut egui::Ui, handle: &mut EngineHandle, effects: &[Ef
                             handle.send(EngineCommand::SetMasterVolume(Gain::new(vol)));
                         }
                     });
-                    ui.label(
-                        RichText::new(format!("{master:.2}"))
-                            .size(t.fonts.size_small)
-                            .color(t.colors.text_secondary),
-                    );
+                    caption(ui, format!("{master:.2}"), CaptionTone::Secondary);
                 });
             });
         });

@@ -138,7 +138,7 @@ fn draw_arrangement_toolbar(
     // Secondary controls row under the transport bar (shared toolbar styling).
     crate::gui::toolbar::secondary_row(ui, |ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        ui.label(RichText::new("Zoom").color(t.colors.text_dim).size(10.0));
+        caption(ui, "Zoom", CaptionTone::Dim);
         if ui.small_button("-").on_hover_text("Zoom out").clicked() {
             view_state.zoom_level = (view_state.zoom_level * 0.8).clamp(MIN_ZOOM, MAX_ZOOM);
         }
@@ -163,7 +163,7 @@ fn draw_arrangement_toolbar(
         }
 
         ui.separator();
-        ui.label(RichText::new("Snap").color(t.colors.text_dim).size(10.0));
+        caption(ui, "Snap", CaptionTone::Dim);
         let snap_options = [
             ("Off", 0_u32),
             ("1/2 beat", synth_sequencer::TICKS_PER_QUARTER / 2),
@@ -1245,9 +1245,7 @@ fn draw_arrangement_context_menu(
             ui.close();
         }
         if (view_state.loop_start_tick.is_some() || view_state.loop_end_tick.is_some())
-            && ui
-                .button(RichText::new("Clear loop").color(t.colors.accent_red))
-                .clicked()
+            && danger_button(ui, "Clear loop").clicked()
         {
             view_state.loop_start_tick = None;
             view_state.loop_end_tick = None;
@@ -1300,10 +1298,7 @@ fn draw_arrangement_context_menu(
             });
             if let Some(existing) = existing_bpm {
                 ui.separator();
-                if ui
-                    .button(RichText::new("Remove tempo change here").color(t.colors.accent_red))
-                    .clicked()
-                {
+                if danger_button(ui, "Remove tempo change here").clicked() {
                     if song.write().remove_tempo_change(Tick(snapped)) {
                         undo_manager.push(crate::undo::UndoAction::SetTempo {
                             tick: Tick(snapped),
@@ -1416,10 +1411,7 @@ fn draw_arrangement_context_menu(
             }
             ui.close();
         }
-        if ui
-            .button(RichText::new("Delete Pattern").color(t.colors.accent_red))
-            .clicked()
-        {
+        if danger_button(ui, "Delete Pattern").clicked() {
             let mut captured: Option<(
                 synth_sequencer::Pattern,
                 Vec<synth_sequencer::PatternPlacement>,
@@ -1633,13 +1625,7 @@ fn draw_arrangement_track_headers(
                                                     Some((track.id, track.name.clone()));
                                                 ui.close();
                                             }
-                                            if ui
-                                                .button(
-                                                    RichText::new("Delete Track")
-                                                        .color(t.colors.accent_red),
-                                                )
-                                                .clicked()
-                                            {
+                                            if danger_button(ui, "Delete Track").clicked() {
                                                 let mut captured: Option<(
                                                     synth_sequencer::SequencerTrack,
                                                     usize,

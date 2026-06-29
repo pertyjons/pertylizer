@@ -21,7 +21,7 @@ use synth_sequencer::{
 
 use crate::gui::input::KEY_MAP;
 use crate::gui::theme::theme;
-use crate::gui::widgets::toggle_button;
+use crate::gui::widgets::{CaptionTone, caption, danger_button, dim_label, toggle_button};
 
 mod arrangement;
 mod automation;
@@ -1241,7 +1241,7 @@ pub(crate) fn draw_sequencer_view(
                         .try_read()
                         .is_some_and(|s| s.pattern(pattern_id).is_none());
                     if truly_gone {
-                        ui.label(RichText::new("Pattern not found").color(theme().colors.text_dim));
+                        dim_label(ui, "Pattern not found");
                         view_state.close_piano_roll();
                         handle.send(EngineCommand::SetSoloPattern(None));
                         handle.send(EngineCommand::SetPreviewPattern(None));
@@ -1272,7 +1272,7 @@ pub(crate) fn draw_sequencer_view(
                 view_state.opened_pattern = Some(pattern_id);
             }
         } else {
-            ui.label(RichText::new("Song locked...").color(theme().colors.text_dim));
+            dim_label(ui, "Song locked...");
         }
     });
 }

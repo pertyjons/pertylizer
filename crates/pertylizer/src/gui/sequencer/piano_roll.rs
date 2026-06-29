@@ -294,7 +294,7 @@ fn draw_piano_roll_selection_inspector(
                 ui.separator();
 
                 // Pitch
-                ui.label(RichText::new("Pitch").color(t.colors.text_dim).size(10.0));
+                caption(ui, "Pitch", CaptionTone::Dim);
                 let pitch_text = if pitches_equal {
                     let midi = first.pitch.as_midi();
                     let name = NoteName::from_midi(midi % 12);
@@ -306,7 +306,7 @@ fn draw_piano_roll_selection_inspector(
                 ui.label(RichText::new(pitch_text).color(t.colors.text_primary));
 
                 // Start
-                ui.label(RichText::new("Start").color(t.colors.text_dim).size(10.0));
+                caption(ui, "Start", CaptionTone::Dim);
                 let start_text = if starts_equal {
                     let beats =
                         first.start_tick.0 as f32 / synth_sequencer::TICKS_PER_QUARTER as f32;
@@ -317,7 +317,7 @@ fn draw_piano_roll_selection_inspector(
                 ui.label(RichText::new(start_text).color(t.colors.text_primary));
 
                 // Length
-                ui.label(RichText::new("Len").color(t.colors.text_dim).size(10.0));
+                caption(ui, "Len", CaptionTone::Dim);
                 let length_text = if lengths_equal {
                     match durations[0] {
                         Some(d) => {
@@ -331,7 +331,7 @@ fn draw_piano_roll_selection_inspector(
                 };
                 ui.label(RichText::new(length_text).color(t.colors.text_primary));
 
-                ui.label(RichText::new("Vel").color(t.colors.text_dim).size(10.0));
+                caption(ui, "Vel", CaptionTone::Dim);
                 let mut vel_pct = if velocities_equal {
                     (first.velocity.as_f32() * 100.0).round()
                 } else {
@@ -465,7 +465,7 @@ fn draw_piano_roll_selection_inspector(
                     let mut time_ms = cur.time.as_f32();
                     let mut stepped = matches!(cur.interp, GlideInterp::Stepped);
 
-                    ui.label(RichText::new("From").color(t.colors.text_dim).size(10.0));
+                    caption(ui, "From", CaptionTone::Dim);
                     let from_resp = ui
                         .add(
                             egui::DragValue::new(&mut from_semis)
@@ -475,7 +475,7 @@ fn draw_piano_roll_selection_inspector(
                         )
                         .on_hover_text("Glide source, semitones relative to this note");
 
-                    ui.label(RichText::new("Time").color(t.colors.text_dim).size(10.0));
+                    caption(ui, "Time", CaptionTone::Dim);
                     let time_resp = ui
                         .add(
                             egui::DragValue::new(&mut time_ms)
@@ -588,7 +588,7 @@ fn draw_piano_roll_selection_inspector(
                 ui.spacing_mut().item_spacing.x = 8.0;
 
                 // Accent (velocity ×). DragValue → live edit + one undo on release.
-                ui.label(RichText::new("Accent").color(t.colors.text_dim).size(10.0));
+                caption(ui, "Accent", CaptionTone::Dim);
                 let mut accent = cur.accent.unwrap_or(1.0);
                 let r = ui
                     .add(
@@ -618,7 +618,7 @@ fn draw_piano_roll_selection_inspector(
                 }
 
                 // Gate (% of duration, staccato/tenuto).
-                ui.label(RichText::new("Gate").color(t.colors.text_dim).size(10.0));
+                caption(ui, "Gate", CaptionTone::Dim);
                 let mut gate_pct = cur.gate.map_or(100.0, |g| g.as_f32() * 100.0);
                 let r = ui
                     .add(
@@ -648,7 +648,7 @@ fn draw_piano_roll_selection_inspector(
                 }
 
                 // Probability (% chance to play).
-                ui.label(RichText::new("Prob").color(t.colors.text_dim).size(10.0));
+                caption(ui, "Prob", CaptionTone::Dim);
                 let mut prob_pct = cur.probability.map_or(100.0, |p| p.as_f32() * 100.0);
                 let r = ui
                     .add(
@@ -701,7 +701,7 @@ fn draw_piano_roll_selection_inspector(
                     apply_expression_edit(song, undo_manager, pid, &selected, |e| e.vibrato = v);
                 }
                 if let Some(v) = cur.vibrato {
-                    ui.label(RichText::new("Depth").color(t.colors.text_dim).size(10.0));
+                    caption(ui, "Depth", CaptionTone::Dim);
                     let mut depth = v.depth.as_f32();
                     let rd = ui
                         .add(
@@ -711,7 +711,7 @@ fn draw_piano_roll_selection_inspector(
                                 .suffix(" st"),
                         )
                         .on_hover_text("Vibrato depth (semitones)");
-                    ui.label(RichText::new("Rate").color(t.colors.text_dim).size(10.0));
+                    caption(ui, "Rate", CaptionTone::Dim);
                     let mut rate = v.rate.as_f32();
                     let rr = ui
                         .add(
@@ -775,11 +775,7 @@ fn draw_piano_roll_selection_inspector(
                 });
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
-                    ui.label(
-                        RichText::new("Ornament")
-                            .color(t.colors.text_dim)
-                            .size(10.0),
-                    );
+                    caption(ui, "Ornament", CaptionTone::Dim);
                     ui.label(
                         RichText::new(ornament_summary(read.flatten()))
                             .color(t.colors.text_secondary),
@@ -814,7 +810,7 @@ pub(crate) fn draw_automation_target_selector(
     data: &PianoRollData,
     instruments: &[crate::gui::instrument_rack::InstrumentUiState],
 ) {
-    ui.label(RichText::new("Auto:").color(theme().colors.text_dim));
+    dim_label(ui, "Auto:");
     // Build label for ComboBox
     let auto_label = view_state
         .selected_automation
@@ -2718,8 +2714,7 @@ fn draw_piano_roll_toolbar(
         }
 
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            if ui
-                .button(RichText::new(egui_remixicon::icons::CLOSE_LINE).color(t.colors.accent_red))
+            if danger_button(ui, egui_remixicon::icons::CLOSE_LINE)
                 .on_hover_text("Close piano roll")
                 .clicked()
             {
@@ -3022,7 +3017,7 @@ fn draw_piano_roll_toolbar(
                 view_state.pr_zoom_x = (view_state.pr_zoom_x * 0.8).max(0.25);
                 view_state.pr_zoom_y = (view_state.pr_zoom_y * 0.8).max(0.5);
             }
-            ui.label(RichText::new("Zoom").color(t.colors.text_dim).size(10.0));
+            caption(ui, "Zoom", CaptionTone::Dim);
         });
     });
 

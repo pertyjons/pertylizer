@@ -75,10 +75,15 @@ pub struct DialogState {
     pub status_message: Option<(String, std::time::Instant)>,
     /// Currently selected theme preset.
     pub current_theme: ThemePreset,
-    /// File dialog instance.
+    /// File dialog instance. Persistent across opens so its retained directory
+    /// and highlighted entry survive; rebuilt only when the dialog kind changes.
     file_dialog: FileDialog,
-    /// Current file dialog mode.
+    /// Current in-flight file dialog mode (for routing the picked result).
     file_dialog_mode: Option<FileDialogMode>,
+    /// Which mode `file_dialog`'s filters are currently configured for. Stays set
+    /// across opens (unlike `file_dialog_mode`) so reopening the same kind reuses
+    /// the instance and keeps `retain_selected_entry`'s state.
+    file_dialog_kind: Option<FileDialogMode>,
     /// Show WAV export dialog.
     pub show_export_wav: bool,
     /// Export dialog state.
@@ -114,6 +119,7 @@ impl Default for DialogState {
             current_theme: ThemePreset::default(),
             file_dialog: FileDialog::new(),
             file_dialog_mode: None,
+            file_dialog_kind: None,
             show_export_wav: false,
             export_state: crate::gui::export_dialog::ExportDialogState::default(),
             show_save_awe_preset: false,
@@ -128,6 +134,45 @@ impl DialogState {
     /// Create a new dialog state.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Build a fresh file dialog with project-wide defaults.
+    ///
+    /// `as_modal` is disabled on purpose. Under egui 0.35 `move_to_top` no longer
+    /// means "last call wins" — it sets a `wants_to_be_on_top` flag resolved by a
+    /// stable sort, so the dialog's dim backdrop overlay and its window tie and the
+    /// overlay can end up on top, swallowing every click and freezing the dialog.
+    /// A plain top-level window has no overlay and stays fully interactive.
+    fn new_file_dialog() -> FileDialog {
+        // `retain_selected_entry` keeps the highlighted entry, and the default
+        // `OpeningMode::LastPickedDir` reopens at the last directory — but BOTH
+        // live inside the FileDialog instance, so they only persist if we reuse
+        // it (see `ensure_dialog`) instead of rebuilding on every open.
+        FileDialog::new()
+            .as_modal(false)
+            .retain_selected_entry(true)
+    }
+
+    /// Configure `self.file_dialog` for `kind`, rebuilding its filters only when
+    /// the kind changes. Reopening the same kind reuses the existing instance so
+    /// its retained directory + highlighted entry survive; switching kind builds
+    /// a fresh dialog with that kind's filters. Always records the in-flight
+    /// `file_dialog_mode` for result routing.
+    fn ensure_dialog(
+        &mut self,
+        kind: FileDialogMode,
+        initial_dir: Option<&Path>,
+        build: impl FnOnce(FileDialog) -> FileDialog,
+    ) {
+        if self.file_dialog_kind != Some(kind) {
+            let mut dialog = build(Self::new_file_dialog());
+            if let Some(dir) = initial_dir {
+                dialog = dialog.initial_directory(dir.to_path_buf());
+            }
+            self.file_dialog = dialog;
+            self.file_dialog_kind = Some(kind);
+        }
+        self.file_dialog_mode = Some(kind);
     }
 
     /// Set a status message that will auto-dismiss.
@@ -146,161 +191,121 @@ impl DialogState {
 
     /// Open the file dialog for opening a patch.
     pub fn open_open_patch_dialog(&mut self, initial_dir: Option<&Path>) {
-        self.file_dialog_mode = Some(FileDialogMode::OpenPatch);
-        let mut dialog = FileDialog::new()
-            .add_file_filter(
+        self.ensure_dialog(FileDialogMode::OpenPatch, initial_dir, |d| {
+            d.add_file_filter(
                 "Patch files",
                 Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "json")),
             )
-            .add_file_filter("All files", Filter::new(|_: &Path| true));
-        if let Some(dir) = initial_dir {
-            dialog = dialog.initial_directory(dir.to_path_buf());
-        }
-        self.file_dialog = dialog;
+            .add_file_filter("All files", Filter::new(|_: &Path| true))
+        });
         self.file_dialog.pick_file();
     }
 
     /// Open the file dialog for saving a patch.
     pub fn open_save_patch_dialog(&mut self, default_name: &str, initial_dir: Option<&Path>) {
-        self.file_dialog_mode = Some(FileDialogMode::SavePatch);
-        let mut dialog = FileDialog::new()
-            .add_file_filter(
+        self.ensure_dialog(FileDialogMode::SavePatch, initial_dir, |d| {
+            d.add_file_filter(
                 "Patch files",
                 Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "json")),
             )
-            .default_file_name(default_name);
-        if let Some(dir) = initial_dir {
-            dialog = dialog.initial_directory(dir.to_path_buf());
-        }
-        self.file_dialog = dialog;
+        });
+        self.file_dialog.config_mut().default_file_name = default_name.to_string();
         self.file_dialog.save_file();
     }
 
     /// Open the file dialog for opening a project.
     pub fn open_open_project_dialog(&mut self, initial_dir: Option<&Path>) {
-        self.file_dialog_mode = Some(FileDialogMode::OpenProject);
-        let mut dialog = FileDialog::new()
-            .add_file_filter(
+        self.ensure_dialog(FileDialogMode::OpenProject, initial_dir, |d| {
+            d.add_file_filter(
                 "Project files",
                 Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "json" || e == "zip")),
             )
-            .add_file_filter("All files", Filter::new(|_: &Path| true));
-        if let Some(dir) = initial_dir {
-            dialog = dialog.initial_directory(dir.to_path_buf());
-        }
-        self.file_dialog = dialog;
+            .add_file_filter("All files", Filter::new(|_: &Path| true))
+        });
         self.file_dialog.pick_file();
     }
 
     /// Open the file dialog for saving a project.
     pub fn open_save_project_dialog(&mut self, default_name: &str, initial_dir: Option<&Path>) {
-        self.file_dialog_mode = Some(FileDialogMode::SaveProject);
-        let mut dialog = FileDialog::new()
-            .add_file_filter(
+        self.ensure_dialog(FileDialogMode::SaveProject, initial_dir, |d| {
+            d.add_file_filter(
                 "Project files",
                 Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "json" || e == "zip")),
             )
-            .default_file_name(default_name);
-        if let Some(dir) = initial_dir {
-            dialog = dialog.initial_directory(dir.to_path_buf());
-        }
-        self.file_dialog = dialog;
+        });
+        self.file_dialog.config_mut().default_file_name = default_name.to_string();
         self.file_dialog.save_file();
     }
 
     /// Open the file dialog for choosing a WAV export path.
     pub fn open_export_wav_dialog(&mut self, default_name: &str, initial_dir: Option<&Path>) {
-        self.file_dialog_mode = Some(FileDialogMode::ExportWav);
-        let mut dialog = FileDialog::new()
-            .add_file_filter(
+        self.ensure_dialog(FileDialogMode::ExportWav, initial_dir, |d| {
+            d.add_file_filter(
                 "WAV files",
                 Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "wav")),
             )
-            .default_file_name(default_name);
-        if let Some(dir) = initial_dir {
-            dialog = dialog.initial_directory(dir.to_path_buf());
-        }
-        self.file_dialog = dialog;
+        });
+        self.file_dialog.config_mut().default_file_name = default_name.to_string();
         self.file_dialog.save_file();
     }
 
     /// Open the file dialog for opening an AWE preset.
     pub fn open_open_awe_preset_dialog(&mut self, initial_dir: Option<&Path>) {
-        self.file_dialog_mode = Some(FileDialogMode::OpenAwePreset);
-        let mut dialog = FileDialog::new()
-            .add_file_filter(
+        self.ensure_dialog(FileDialogMode::OpenAwePreset, initial_dir, |d| {
+            d.add_file_filter(
                 "AWE presets",
                 Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "json")),
             )
-            .add_file_filter("All files", Filter::new(|_: &Path| true));
-        if let Some(dir) = initial_dir {
-            dialog = dialog.initial_directory(dir.to_path_buf());
-        }
-        self.file_dialog = dialog;
+            .add_file_filter("All files", Filter::new(|_: &Path| true))
+        });
         self.file_dialog.pick_file();
     }
 
     /// Open the file dialog for saving an AWE preset.
     pub fn open_save_awe_preset_dialog(&mut self, default_name: &str, initial_dir: Option<&Path>) {
-        self.file_dialog_mode = Some(FileDialogMode::SaveAwePreset);
-        let mut dialog = FileDialog::new()
-            .add_file_filter(
+        self.ensure_dialog(FileDialogMode::SaveAwePreset, initial_dir, |d| {
+            d.add_file_filter(
                 "AWE presets",
                 Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "json")),
             )
-            .default_file_name(default_name);
-        if let Some(dir) = initial_dir {
-            dialog = dialog.initial_directory(dir.to_path_buf());
-        }
-        self.file_dialog = dialog;
+        });
+        self.file_dialog.config_mut().default_file_name = default_name.to_string();
         self.file_dialog.save_file();
     }
 
     /// Open the file dialog for importing a WAV sample.
     pub fn open_import_sample_dialog(&mut self, initial_dir: Option<&Path>) {
-        self.file_dialog_mode = Some(FileDialogMode::ImportSample);
-        let mut dialog = FileDialog::new()
-            .add_file_filter(
+        self.ensure_dialog(FileDialogMode::ImportSample, initial_dir, |d| {
+            d.add_file_filter(
                 "WAV files",
                 Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "wav")),
             )
-            .add_file_filter("All files", Filter::new(|_: &Path| true));
-        if let Some(dir) = initial_dir {
-            dialog = dialog.initial_directory(dir.to_path_buf());
-        }
-        self.file_dialog = dialog;
+            .add_file_filter("All files", Filter::new(|_: &Path| true))
+        });
         self.file_dialog.pick_file();
     }
 
     /// Open the file dialog for exporting a sample as WAV.
     pub fn open_export_sample_dialog(&mut self, default_name: &str, initial_dir: Option<&Path>) {
-        self.file_dialog_mode = Some(FileDialogMode::ExportSample);
-        let mut dialog = FileDialog::new()
-            .add_file_filter(
+        self.ensure_dialog(FileDialogMode::ExportSample, initial_dir, |d| {
+            d.add_file_filter(
                 "WAV files",
                 Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "wav")),
             )
-            .default_file_name(default_name);
-        if let Some(dir) = initial_dir {
-            dialog = dialog.initial_directory(dir.to_path_buf());
-        }
-        self.file_dialog = dialog;
+        });
+        self.file_dialog.config_mut().default_file_name = default_name.to_string();
         self.file_dialog.save_file();
     }
 
     /// Open the file dialog for opening a group template.
     pub fn open_open_group_template_dialog(&mut self, initial_dir: Option<&Path>) {
-        self.file_dialog_mode = Some(FileDialogMode::OpenGroupTemplate);
-        let mut dialog = FileDialog::new()
-            .add_file_filter(
+        self.ensure_dialog(FileDialogMode::OpenGroupTemplate, initial_dir, |d| {
+            d.add_file_filter(
                 "Group templates",
                 Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "json")),
             )
-            .add_file_filter("All files", Filter::new(|_: &Path| true));
-        if let Some(dir) = initial_dir {
-            dialog = dialog.initial_directory(dir.to_path_buf());
-        }
-        self.file_dialog = dialog;
+            .add_file_filter("All files", Filter::new(|_: &Path| true))
+        });
         self.file_dialog.pick_file();
     }
 

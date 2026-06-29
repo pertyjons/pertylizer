@@ -13,6 +13,7 @@ use egui_remixicon::icons as ri;
 use crate::audio::input::{AudioInputManager, InputState};
 use crate::gui::list_panel;
 use crate::gui::theme::theme;
+use crate::gui::widgets::danger_button;
 use synth_core::SampleCount;
 use synth_sampler::{CropRegion, FrameIndex, LoopRegion, SampleId, SampleLibrary};
 
@@ -251,12 +252,7 @@ pub fn draw_sample_view(
                                     ui.close();
                                 }
                                 ui.separator();
-                                if ui
-                                    .button(
-                                        egui::RichText::new("Delete").color(t.colors.accent_red),
-                                    )
-                                    .clicked()
-                                {
+                                if danger_button(ui, "Delete").clicked() {
                                     delete = true;
                                     ui.close();
                                 }

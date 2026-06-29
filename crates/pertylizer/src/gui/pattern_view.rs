@@ -26,6 +26,7 @@ use crate::gui::sequencer::{
     draw_note_fx_panel, draw_piano_roll, draw_tracker,
 };
 use crate::gui::theme::theme;
+use crate::gui::widgets::danger_button;
 use crate::undo::UndoManager;
 
 // ============================================================================
@@ -341,10 +342,7 @@ fn draw_browser_row(
                 ui.close();
             }
             ui.separator();
-            if ui
-                .button(egui::RichText::new("Delete").color(theme().colors.accent_red))
-                .clicked()
-            {
+            if danger_button(ui, "Delete").clicked() {
                 delete = true;
                 ui.close();
             }

@@ -468,7 +468,7 @@ pub(super) fn draw_transport_bar(
                 } else if current_ticks > 0 {
                     ui.label(RichText::new("PAUSED").color(t.colors.accent_yellow));
                 } else {
-                    ui.label(RichText::new("STOPPED").color(t.colors.text_dim));
+                    dim_label(ui, "STOPPED");
                 }
             }
         }

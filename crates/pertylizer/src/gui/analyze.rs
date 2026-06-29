@@ -203,10 +203,13 @@ impl AnalyzeWindow {
             last_error: None,
             last_status: None,
             waveform_mode: WaveformMode::Stereo,
-            wav_dialog: FileDialog::new().add_file_filter(
-                "WAV files",
-                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "wav")),
-            ),
+            wav_dialog: FileDialog::new()
+                .as_modal(false)
+                .retain_selected_entry(true)
+                .add_file_filter(
+                    "WAV files",
+                    Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "wav")),
+                ),
             pending_wav_bytes: None,
             last_window_height: 640.0,
         }
@@ -273,13 +276,10 @@ impl AnalyzeWindow {
                 return;
             }
         };
-        let default_name = wav_default_name(&self.target_name, snap.result.note_played);
-        self.wav_dialog = FileDialog::new()
-            .add_file_filter(
-                "WAV files",
-                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "wav")),
-            )
-            .default_file_name(&default_name);
+        // Reuse the persistent wav_dialog (built in `new`) instead of rebuilding,
+        // so its retained directory + highlighted entry survive across saves.
+        self.wav_dialog.config_mut().default_file_name =
+            wav_default_name(&self.target_name, snap.result.note_played);
         self.wav_dialog.save_file();
         self.pending_wav_bytes = Some(bytes);
     }

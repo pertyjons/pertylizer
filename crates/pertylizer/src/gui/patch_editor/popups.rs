@@ -14,6 +14,7 @@ use synth_engine::ModuleId;
 
 use crate::gui::module_panel::ModulePanelState;
 use crate::gui::theme::theme;
+use crate::gui::widgets::{CaptionTone, caption};
 
 use super::{
     ModAddrCatalog, PatchEditor, PatchEditorResult, PickedInput, ScriptDepGraph,
@@ -63,22 +64,14 @@ impl PatchEditor {
                         .color(t.colors.text_secondary),
                 );
                 ui.separator();
-                ui.label(
-                    egui::RichText::new("Type documentation")
-                        .size(t.fonts.size_small)
-                        .color(t.colors.text_dim),
-                );
+                caption(ui, "Type documentation", CaptionTone::Dim);
                 ui.label(if type_desc.is_empty() {
                     "(none)".to_string()
                 } else {
                     type_desc
                 });
                 ui.separator();
-                ui.label(
-                    egui::RichText::new("Instance note")
-                        .size(t.fonts.size_small)
-                        .color(t.colors.text_dim),
-                );
+                caption(ui, "Instance note", CaptionTone::Dim);
                 ui.label(if instance_desc.is_empty() {
                     "(no description set)".to_string()
                 } else {
@@ -112,10 +105,10 @@ impl PatchEditor {
                 win = win.default_pos(pos);
             }
             win.show(&ctx, |ui| {
-                ui.label(
-                    egui::RichText::new("Per-instance note — what this specific module is for.")
-                        .size(t.fonts.size_small)
-                        .color(t.colors.text_secondary),
+                caption(
+                    ui,
+                    "Per-instance note — what this specific module is for.",
+                    CaptionTone::Secondary,
                 );
                 let reserved = 40.0;
                 let editor_height = (ui.available_height() - reserved).max(60.0);
@@ -172,12 +165,10 @@ pub(super) fn draw_slot_expression_editor(
         .open(&mut keep_open)
         .show(&ctx, |ui| {
             ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new(
-                        "YAMS expression - assign `out`, e.g. `out = lfo-1.out * velocity`",
-                    )
-                    .size(theme().fonts.size_small)
-                    .color(theme().colors.text_secondary),
+                caption(
+                    ui,
+                    "YAMS expression - assign `out`, e.g. `out = lfo-1.out * velocity`",
+                    CaptionTone::Secondary,
                 );
                 // Help toggle: opens the YAMS reference panel beside the editor.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {

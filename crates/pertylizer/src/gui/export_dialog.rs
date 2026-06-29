@@ -9,6 +9,7 @@ use egui::{Align, Layout, ProgressBar, RichText};
 
 use crate::audio::export::{BitDepth, ExportConfig, ExportProgress, start_export};
 use crate::gui::theme::theme;
+use crate::gui::widgets::time_drag_value;
 use crate::project::ProjectFile;
 
 /// Persistent state for the export dialog.
@@ -167,24 +168,14 @@ pub fn show_export_dialog(
                     ui.label("Duration:");
                     ui.horizontal(|ui| {
                         let mut secs = state.duration_seconds as f32;
-                        ui.add(
-                            egui::DragValue::new(&mut secs)
-                                .range(0.1..=3600.0)
-                                .speed(0.5)
-                                .suffix(" s"),
-                        );
+                        time_drag_value(ui, &mut secs, 0.1..=3600.0, 0.5);
                         state.duration_seconds = f64::from(secs);
                     });
                     ui.end_row();
 
                     // Tail
                     ui.label("Tail:");
-                    ui.add(
-                        egui::DragValue::new(&mut state.tail_seconds)
-                            .range(0.0..=30.0)
-                            .speed(0.1)
-                            .suffix(" s"),
-                    );
+                    time_drag_value(ui, &mut state.tail_seconds, 0.0..=30.0, 0.1);
                     ui.end_row();
                 });
 

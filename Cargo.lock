@@ -1240,7 +1240,9 @@ dependencies = [
 
 [[package]]
 name = "egui-file-dialog"
-version = "0.13.0"
+version = "0.14.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "cb46afd5a1050d0bce86a28e030f9d0a9632e14f88bb5b655bd51bebff9ba50e"
 dependencies = [
  "directories",
  "dunce",
@@ -4781,9 +4783,9 @@ dependencies = [
 
 [[package]]
 name = "sysinfo"
-version = "0.38.4"
+version = "0.39.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "92ab6a2f8bfe508deb3c6406578252e491d299cbbf3bc0529ecc3313aee4a52f"
+checksum = "2c8bd2130a9b60bee2581bf82cfe89ee836424d1f37dcfa4ce21509611684673"
 dependencies = [
  "libc",
  "objc2-core-foundation",

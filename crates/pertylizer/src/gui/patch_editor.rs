@@ -27,8 +27,8 @@ use crate::patch::{
 use super::module_panel::{ModulePanelState, PortPosition, category_color};
 use super::theme::theme;
 use super::widgets::{
-    ModRole, ModuleFrame, WidgetPortDirection, WidgetPortType, cable_color, draw_cable_dragging,
-    draw_module_header,
+    CaptionTone, ModRole, ModuleFrame, WidgetPortDirection, WidgetPortType, cable_color, caption,
+    draw_cable_dragging, draw_module_header,
 };
 
 mod canvas;
@@ -2503,11 +2503,7 @@ impl PatchEditor {
                     .inner_margin(t.spacing.widget_spacing)
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.label(
-                                egui::RichText::new("Macros")
-                                    .size(t.fonts.size_small)
-                                    .color(t.colors.text_dim),
-                            );
+                            caption(ui, "Macros", CaptionTone::Dim);
                             for m in MacroSource::ALL {
                                 let active = analysis.is_macro_source(m);
                                 let color = if active {
@@ -2525,18 +2521,14 @@ impl PatchEditor {
                                 };
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 2.0;
-                                    ui.label(
-                                        egui::RichText::new(macro_label(m))
-                                            .size(t.fonts.size_small)
-                                            .color(color),
-                                    );
+                                    caption(ui, macro_label(m), CaptionTone::Color(color));
                                     // Same Source glyph as the module-header badge,
                                     // shown only when the macro is actually wired.
                                     if active {
-                                        ui.label(
-                                            egui::RichText::new(ModRole::Source.glyph())
-                                                .size(t.fonts.size_small)
-                                                .color(t.colors.accent_purple),
+                                        caption(
+                                            ui,
+                                            ModRole::Source.glyph(),
+                                            CaptionTone::Color(t.colors.accent_purple),
                                         );
                                     }
                                 })
@@ -3444,11 +3436,7 @@ fn draw_mod_matrix_grid(
                             } else {
                                 format!("Routing {slot_num}")
                             };
-                            ui.label(
-                                egui::RichText::new(header)
-                                    .size(theme().fonts.size_small)
-                                    .color(content_tint),
-                            );
+                            caption(ui, header, CaptionTone::Color(content_tint));
                             ui.with_layout(
                                 egui::Layout::right_to_left(egui::Align::Center),
                                 |ui| {
@@ -3485,11 +3473,7 @@ fn draw_mod_matrix_grid(
                                                 "Routing has no effect - set both Source and Destination",
                                             )
                                         };
-                                        ui.label(
-                                            egui::RichText::new(icon)
-                                                .size(theme().fonts.size_small)
-                                                .color(color),
-                                        )
+                                        caption(ui, icon, CaptionTone::Color(color))
                                         .on_hover_text(tip);
                                     }
                                 },
@@ -3532,11 +3516,7 @@ fn draw_mod_matrix_grid(
                             arrow_icon.to_string()
                         };
                         ui.vertical_centered(|ui| {
-                            ui.label(
-                                egui::RichText::new(arrow_text)
-                                    .size(theme().fonts.size_small)
-                                    .color(frame_stroke_color),
-                            );
+                            caption(ui, arrow_text, CaptionTone::Color(frame_stroke_color));
                         });
 
                         // Destination picker — any modulatable param on any module.

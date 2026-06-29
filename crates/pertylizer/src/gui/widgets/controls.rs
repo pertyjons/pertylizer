@@ -1,10 +1,15 @@
 //! Shared composite controls built from egui primitives.
 //!
-//! These capture UI idioms repeated across the views (toggle buttons, frameless
-//! icon buttons, section headers, modal dialog scaffolding) so call sites stay
-//! short and visually consistent, and so the styling lives in one place.
+//! These capture UI idioms repeated across the views (themed labels, labeled
+//! rows, numeric presets, toggle buttons, frameless icon buttons, section
+//! headers, modal dialog scaffolding) so call sites stay short and visually
+//! consistent, and so the styling lives in one place.
 
-use eframe::egui::{self, Button, Color32, Response, RichText, Ui, Vec2};
+use std::ops::RangeInclusive;
+
+use eframe::egui::{
+    self, Button, Color32, DragValue, Response, RichText, Slider, Ui, Vec2, WidgetText,
+};
 
 use crate::gui::theme::theme;
 
@@ -15,14 +20,14 @@ const ICON_BUTTON_MIN_SIZE: f32 = 20.0;
 ///
 /// Returns the [`Response`] so callers can chain `.on_hover_text(..)` and
 /// `.clicked()`. Active uses `accent_primary`, inactive uses `text_dim`.
-pub fn toggle_button(ui: &mut Ui, label: impl Into<String>, active: bool) -> Response {
+pub fn toggle_button(ui: &mut Ui, label: impl Into<WidgetText>, active: bool) -> Response {
     toggle_button_colored(ui, label, active, theme().colors.accent_primary)
 }
 
 /// Like [`toggle_button`] but with a caller-chosen active color.
 pub fn toggle_button_colored(
     ui: &mut Ui,
-    label: impl Into<String>,
+    label: impl Into<WidgetText>,
     active: bool,
     active_color: Color32,
 ) -> Response {
@@ -31,7 +36,7 @@ pub fn toggle_button_colored(
     } else {
         theme().colors.text_dim
     };
-    ui.button(RichText::new(label.into()).strong().color(color))
+    ui.button(label.into().strong().color(color))
 }
 
 /// A frameless icon button with a square, consistent hit target.
@@ -67,16 +72,28 @@ pub fn icon_button_sized(
 }
 
 /// A section heading: a strong, accent-colored label at the theme heading size,
-/// followed by a small vertical gap.
-pub fn section_header(ui: &mut Ui, label: &str, color: Color32) {
+/// an optional small dimmed description line below it, then a small vertical gap.
+///
+/// Pass `None` for `description` for a bare heading. Returns the title label's
+/// [`Response`] so callers can chain `.on_hover_text(..)`.
+pub fn section_header(
+    ui: &mut Ui,
+    title: &str,
+    description: Option<&str>,
+    color: Color32,
+) -> Response {
     let t = theme();
-    ui.label(
-        RichText::new(label)
+    let res = ui.label(
+        RichText::new(title)
             .color(color)
             .size(t.fonts.size_heading)
             .strong(),
     );
+    if let Some(desc) = description {
+        caption(ui, desc, CaptionTone::Dim);
+    }
     ui.add_space(t.spacing.widget_spacing);
+    res
 }
 
 /// Outcome of a [`dialog_button_row`].
@@ -123,4 +140,106 @@ pub fn modal_window<R>(
         .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
         .show(ctx, content)
         .and_then(|r| r.inner)
+}
+
+/// A dim label at the **normal** text size, in the theme's dim colour. Replaces
+/// the hand-written `ui.label(RichText::new(t).color(theme().colors.text_dim))`.
+/// For a *smaller* (`size_small`) dim sub-label, use [`caption`] with
+/// [`CaptionTone::Dim`] instead — that is the only difference between the two.
+pub fn dim_label(ui: &mut Ui, text: impl Into<WidgetText>) -> Response {
+    ui.label(text.into().color(theme().colors.text_dim))
+}
+
+/// Colour tone for a [`caption`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CaptionTone {
+    /// Dimmed (`theme().colors.text_dim`).
+    Dim,
+    /// Secondary (`theme().colors.text_secondary`).
+    Secondary,
+    /// An explicit caller-chosen colour (accent/runtime tints). Prefer a
+    /// semantic variant when one fits — `Color` is not re-themeable.
+    Color(Color32),
+}
+
+/// A small caption label: the theme's `size_small` (smaller than [`dim_label`])
+/// plus the chosen tone colour. Folds the repeated
+/// `RichText::new(x).size(size_small).color(..)` pattern (section sub-labels,
+/// compact value read-outs, accent-tinted chips, …).
+pub fn caption(ui: &mut Ui, text: impl Into<String>, tone: CaptionTone) -> Response {
+    let t = theme();
+    let color = match tone {
+        CaptionTone::Dim => t.colors.text_dim,
+        CaptionTone::Secondary => t.colors.text_secondary,
+        CaptionTone::Color(c) => c,
+    };
+    ui.label(RichText::new(text).size(t.fonts.size_small).color(color))
+}
+
+/// A seconds `DragValue` preset (`" s"` suffix, caller-chosen drag `speed`). For
+/// controls that are genuinely a time entry; for unit sliders use [`suffix_slider`].
+pub fn time_drag_value(
+    ui: &mut Ui,
+    secs: &mut f32,
+    range: RangeInclusive<f32>,
+    speed: f64,
+) -> Response {
+    ui.add(DragValue::new(secs).speed(speed).range(range).suffix(" s"))
+}
+
+/// A `Slider` carrying a unit suffix (e.g. `" Hz"`, `"m"`). Generic over any
+/// numeric type so it also covers `i32`/`usize` state. Pass `""` for no suffix.
+pub fn suffix_slider<T: egui::emath::Numeric>(
+    ui: &mut Ui,
+    value: &mut T,
+    range: RangeInclusive<T>,
+    suffix: &str,
+) -> Response {
+    ui.add(Slider::new(value, range).suffix(suffix))
+}
+
+/// Like [`suffix_slider`] but on a logarithmic scale — for wide, frequency-like
+/// ranges where low values need as much slider travel as high ones (e.g. a Hz
+/// cutoff). A separate fn rather than a flag so the common linear case stays
+/// argument-light.
+pub fn log_suffix_slider<T: egui::emath::Numeric>(
+    ui: &mut Ui,
+    value: &mut T,
+    range: RangeInclusive<T>,
+    suffix: &str,
+) -> Response {
+    ui.add(Slider::new(value, range).logarithmic(true).suffix(suffix))
+}
+
+/// A `ComboBox` over a fixed `(variant, label)` table: the selected variant's
+/// label is shown, and picking a row writes it back to `current`. Folds the
+/// repeated `from_id_salt(..).selected_text(..).show_ui(|ui| for .. {
+/// selectable_value })` idiom. `id_salt` must be caller-supplied (and unique per
+/// combo) — egui 0.35's `AsIdSalt` requires `Debug`. Returns the combo button's
+/// [`Response`].
+pub fn enum_combo<T: PartialEq + Copy>(
+    ui: &mut Ui,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    current: &mut T,
+    options: &[(T, &str)],
+) -> Response {
+    let selected = options
+        .iter()
+        .find(|(v, _)| v == current)
+        .map_or("", |(_, l)| *l);
+    egui::ComboBox::from_id_salt(id_salt)
+        .selected_text(selected)
+        .show_ui(ui, |ui| {
+            for (v, l) in options {
+                ui.selectable_value(current, *v, *l);
+            }
+        })
+        .response
+}
+
+/// A destructive text button tinted with the theme's `accent_red` (Delete, Clear,
+/// Remove …). Folds the repeated `ui.button(RichText::new(x).color(accent_red))`
+/// idiom so the destructive colour lives in one place.
+pub fn danger_button(ui: &mut Ui, label: impl Into<WidgetText>) -> Response {
+    ui.button(label.into().color(theme().colors.accent_red))
 }

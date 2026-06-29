@@ -14,7 +14,7 @@ use egui_remixicon::icons as ri;
 
 use synth_core::{ChoiceOption, ModuleDescriptor, ParamKind, ParameterDescriptor, WidgetHint};
 
-use super::{Knob, WaveformSelector, WaveformType};
+use super::{CaptionTone, Knob, WaveformSelector, WaveformType, caption};
 use crate::gui::theme::theme;
 
 /// A parameter the user changed this frame: its descriptor plus the new value.
@@ -73,10 +73,10 @@ impl ModRole {
 /// Draw the inline Mod Matrix marker for a parameter — a small purple icon (the
 /// same accent + glyphs as the module-header badge) with an explanatory tooltip.
 fn draw_mod_marker(ui: &mut Ui, role: ModRole) {
-    ui.label(
-        egui::RichText::new(role.glyph())
-            .size(theme().fonts.size_small)
-            .color(theme().colors.accent_purple),
+    caption(
+        ui,
+        role.glyph(),
+        CaptionTone::Color(theme().colors.accent_purple),
     )
     .on_hover_text(role.tooltip());
 }
@@ -210,11 +210,7 @@ pub fn draw_parameter_grid<'d>(
             changes.push((*param, selected as f32));
         }
         if let Some(choice) = choices.get(selected) {
-            ui.label(
-                egui::RichText::new(&choice.name)
-                    .size(theme().fonts.size_small)
-                    .color(theme().colors.text_dim),
-            );
+            caption(ui, &choice.name, CaptionTone::Dim);
         }
     }
 

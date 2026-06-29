@@ -28,7 +28,7 @@ use synth_sequencer::{
 };
 
 use crate::gui::theme::theme;
-use crate::gui::widgets::{Knob, ModuleFrame, draw_module_header};
+use crate::gui::widgets::{Knob, ModuleFrame, dim_label, draw_module_header, enum_combo};
 use crate::undo::UndoAction;
 
 use super::SequencerViewState;
@@ -98,7 +98,7 @@ pub(crate) fn draw_note_fx_panel(
             )
         })
     }) else {
-        ui.label(RichText::new("Pattern unavailable…").color(t.colors.text_dim));
+        dim_label(ui, "Pattern unavailable…");
         return;
     };
 
@@ -401,12 +401,12 @@ fn edit_chord(ui: &mut egui::Ui, index: usize, c: &mut Chord, any_dragged: &mut 
         }
         ui.add_enabled_ui(spread > 0, |ui| {
             let mut dir = c.direction();
-            egui::ComboBox::from_id_salt((index, "dir"))
-                .selected_text(strum_direction_name(dir))
-                .show_ui(ui, |ui| {
-                    ui.selectable_value(&mut dir, StrumDirection::Up, "Up");
-                    ui.selectable_value(&mut dir, StrumDirection::Down, "Down");
-                });
+            enum_combo(
+                ui,
+                (index, "dir"),
+                &mut dir,
+                &[(StrumDirection::Up, "Up"), (StrumDirection::Down, "Down")],
+            );
             if dir != c.direction() {
                 let ivs: Vec<i8> = c.intervals().to_vec();
                 *c = rebuild_chord(&ivs, c.strum(), dir);
@@ -566,26 +566,6 @@ fn knob_normalized(
     *value = NormalizedValue::new(v);
 }
 
-/// A `ComboBox` over a fixed `(variant, label)` table for a `Copy` enum.
-fn enum_combo<T: PartialEq + Copy>(
-    ui: &mut egui::Ui,
-    id: impl std::hash::Hash + std::fmt::Debug, // egui 0.35: AsIdSalt requires Debug
-    current: &mut T,
-    options: &[(T, &'static str)],
-) {
-    let cur_label = options
-        .iter()
-        .find(|(v, _)| *v == *current)
-        .map_or("", |(_, l)| l);
-    egui::ComboBox::from_id_salt(id)
-        .selected_text(cur_label)
-        .show_ui(ui, |ui| {
-            for (v, l) in options {
-                ui.selectable_value(current, *v, *l);
-            }
-        });
-}
-
 const ARP_MODES: [(ArpMode, &str); 8] = [
     (ArpMode::Up, "Up"),
     (ArpMode::Down, "Down"),
@@ -641,13 +621,6 @@ const CHORD_INTERVAL_CHOICES: [(i8, &str); 6] = [
     (11, "maj 7th (+11)"),
     (12, "octave (+12)"),
 ];
-
-fn strum_direction_name(dir: StrumDirection) -> &'static str {
-    match dir {
-        StrumDirection::Up => "Up",
-        StrumDirection::Down => "Down",
-    }
-}
 
 /// Rebuild a chord from `intervals`, carrying over its strum spread + direction.
 /// `Chord::new` resets strum to zero, so every interval edit funnels through here

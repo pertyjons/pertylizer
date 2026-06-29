@@ -30,7 +30,7 @@ use crate::gui::patch_editor::{
     QuickAddRequest,
 };
 use crate::gui::theme::theme;
-use crate::gui::widgets::{draw_oscilloscope, draw_stereo_meter};
+use crate::gui::widgets::{danger_button, dim_label, draw_oscilloscope, draw_stereo_meter};
 use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
 use crate::io::settings::AppSettings;
 use crate::io::{GroupTemplateManager, MidiHandler, PatchManager};
@@ -2159,7 +2159,7 @@ impl SynthApp {
             ui.separator();
 
             // MIDI channel
-            ui.label(RichText::new("Ch").color(theme().colors.text_dim));
+            dim_label(ui, "Ch");
             let channel = inst.channel;
             let channel_label = if channel.is_omni() {
                 "Omni".to_string()
@@ -2304,7 +2304,7 @@ impl SynthApp {
             }
 
             // Oversampling
-            ui.label(RichText::new("OS").color(theme().colors.text_dim));
+            dim_label(ui, "OS");
             let current_os = inst.oversampling;
             egui::ComboBox::from_id_salt("patch_bar_os")
                 .selected_text(current_os.name())
@@ -2387,7 +2387,7 @@ impl SynthApp {
             ui.separator();
 
             // Sidechain source
-            ui.label(RichText::new("SC").color(theme().colors.text_dim));
+            dim_label(ui, "SC");
             let current_sc = inst.sidechain_source_id;
             let sc_label = match current_sc {
                 Some(src) => other_instruments
@@ -3095,14 +3095,7 @@ impl SynthApp {
                                         ui.close();
                                     }
                                     ui.separator();
-                                    if ui
-                                        .button(
-                                            RichText::new(format!(
-                                                "{} Delete…",
-                                                ri::DELETE_BIN_LINE
-                                            ))
-                                            .color(theme().colors.accent_red),
-                                        )
+                                    if danger_button(ui, format!("{} Delete…", ri::DELETE_BIN_LINE))
                                         .clicked()
                                     {
                                         delete_requested = Some(inst.id);
@@ -3168,7 +3161,7 @@ impl SynthApp {
             ui.set_min_width(250.0);
             let ports = MidiHandler::list_ports();
             if ports.is_empty() {
-                ui.label(RichText::new("No MIDI ports available").color(theme().colors.text_dim));
+                dim_label(ui, "No MIDI ports available");
             } else {
                 for port in &ports {
                     let is_current = self.midi_handler.port_name() == Some(port.as_str());
@@ -3312,7 +3305,7 @@ impl SynthApp {
             }
             ui.separator();
             if self.instruments.is_empty() {
-                ui.label(RichText::new("No instruments").color(theme().colors.text_dim));
+                dim_label(ui, "No instruments");
             } else {
                 // Capture id/name pairs first so we can mutate
                 // state inside the menu without borrowing
@@ -3455,7 +3448,7 @@ impl SynthApp {
             }
             if !extreme.is_empty() {
                 ui.separator();
-                ui.label(RichText::new("Extreme").color(theme().colors.text_dim));
+                dim_label(ui, "Extreme");
                 for i in &extreme {
                     let preset = &presets[*i];
                     let is_current = self.awe_enabled && self.awe_ui.selected_preset == Some(*i);
@@ -3781,21 +3774,21 @@ impl SynthApp {
                         )
                     };
 
-                    ui.label(RichText::new("Song name").color(t.colors.text_dim));
+                    dim_label(ui, "Song name");
                     if ui.text_edit_singleline(&mut name).changed() {
                         song_changed = true;
                     }
 
                     ui.add_space(t.spacing.md);
 
-                    ui.label(RichText::new("Song author").color(t.colors.text_dim));
+                    dim_label(ui, "Song author");
                     if ui.text_edit_singleline(&mut song_author).changed() {
                         song_changed = true;
                     }
 
                     ui.add_space(t.spacing.md);
 
-                    ui.label(RichText::new("Description").color(t.colors.text_dim));
+                    dim_label(ui, "Description");
                     if ui
                         .add(
                             egui::TextEdit::multiline(&mut description)
@@ -3810,7 +3803,7 @@ impl SynthApp {
                     ui.add_space(t.spacing.md);
 
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Tempo (BPM)").color(t.colors.text_dim));
+                        dim_label(ui, "Tempo (BPM)");
                         if ui
                             .add(
                                 egui::DragValue::new(&mut bpm)
@@ -3829,7 +3822,7 @@ impl SynthApp {
                     ui.add_space(t.spacing.md);
 
                     ui.horizontal(|ui| {
-                        ui.label(RichText::new("Time signature").color(t.colors.text_dim));
+                        dim_label(ui, "Time signature");
                         if ui
                             .add(egui::DragValue::new(&mut ts_num).range(1..=32).speed(0.1))
                             .changed()
@@ -3872,7 +3865,7 @@ impl SynthApp {
                 ui.label(RichText::new("Project Author").color(t.colors.text_primary));
                 ui.add_space(t.spacing.xs);
 
-                ui.label(RichText::new("Name").color(t.colors.text_dim));
+                dim_label(ui, "Name");
                 if ui
                     .text_edit_singleline(&mut self.current_project_author.name)
                     .changed()
@@ -3882,7 +3875,7 @@ impl SynthApp {
 
                 ui.add_space(t.spacing.sm);
 
-                ui.label(RichText::new("Email").color(t.colors.text_dim));
+                dim_label(ui, "Email");
                 if ui
                     .text_edit_singleline(&mut self.current_project_author.email)
                     .changed()
@@ -3892,7 +3885,7 @@ impl SynthApp {
 
                 ui.add_space(t.spacing.sm);
 
-                ui.label(RichText::new("Website").color(t.colors.text_dim));
+                dim_label(ui, "Website");
                 if ui
                     .text_edit_singleline(&mut self.current_project_author.website)
                     .changed()
@@ -3902,7 +3895,7 @@ impl SynthApp {
 
                 ui.add_space(t.spacing.sm);
 
-                ui.label(RichText::new("License").color(t.colors.text_dim));
+                dim_label(ui, "License");
                 if ui
                     .text_edit_singleline(&mut self.current_project_author.license)
                     .changed()
@@ -3962,15 +3955,11 @@ impl SynthApp {
                     if ui.button("Cancel").clicked() {
                         decision = Some(false);
                     }
-                    if ui
-                        .button(
-                            RichText::new(format!(
-                                "{} Delete",
-                                egui_remixicon::icons::DELETE_BIN_LINE
-                            ))
-                            .color(t.colors.accent_red),
-                        )
-                        .clicked()
+                    if danger_button(
+                        ui,
+                        format!("{} Delete", egui_remixicon::icons::DELETE_BIN_LINE),
+                    )
+                    .clicked()
                     {
                         decision = Some(true);
                     }
@@ -4026,14 +4015,14 @@ impl SynthApp {
             .show(ctx, |ui| {
                 let inst = &mut self.instruments[idx];
 
-                ui.label(RichText::new("Name").color(t.colors.text_dim));
+                dim_label(ui, "Name");
                 if ui.text_edit_singleline(&mut inst.name).changed() {
                     name_changed = true;
                 }
 
                 ui.add_space(t.spacing.md);
 
-                ui.label(RichText::new("Category").color(t.colors.text_dim));
+                dim_label(ui, "Category");
                 let mut cat = inst.category;
                 egui::ComboBox::from_id_salt("instrument_edit_category")
                     .selected_text(cat.name())
@@ -4058,11 +4047,10 @@ impl SynthApp {
 
                 ui.add_space(t.spacing.md);
 
-                ui.label(RichText::new("Description").color(t.colors.text_dim))
-                    .on_hover_text(
-                        "Per-instance song-role intent (e.g. \"chorus pad\", \"sub layer\"). \
+                dim_label(ui, "Description").on_hover_text(
+                    "Per-instance song-role intent (e.g. \"chorus pad\", \"sub layer\"). \
                         Distinct from Patch description below.",
-                    );
+                );
                 if ui
                     .add(
                         egui::TextEdit::multiline(&mut inst.description)
@@ -4077,11 +4065,10 @@ impl SynthApp {
 
                 ui.add_space(t.spacing.sm);
 
-                ui.label(RichText::new("Patch description").color(t.colors.text_dim))
-                    .on_hover_text(
-                        "Sound-design intent for this patch (how it works, what it's good for). \
+                dim_label(ui, "Patch description").on_hover_text(
+                    "Sound-design intent for this patch (how it works, what it's good for). \
                         Travels with the patch on save and is read back via MCP.",
-                    );
+                );
                 if ui
                     .add(
                         egui::TextEdit::multiline(&mut inst.patch_description)
@@ -4097,7 +4084,7 @@ impl SynthApp {
                 ui.add_space(t.spacing.md);
 
                 ui.horizontal(|ui| {
-                    ui.label(RichText::new("Color").color(t.colors.text_dim));
+                    dim_label(ui, "Color");
                     let mut color = inst
                         .color
                         .as_deref()
