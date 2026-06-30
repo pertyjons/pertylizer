@@ -89,7 +89,7 @@ zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 # Testing
 tempfile = "3.27.0"
-jsonschema = "0.46.6"
+jsonschema = "0.46.7"
 
 # Fixed-size heap-free collections
 arrayvec = "0.7.7"

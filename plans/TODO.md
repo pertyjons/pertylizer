@@ -368,6 +368,38 @@ Following the evaluation of [widget-helpers-plan.md](file:///home/per/github/per
 - [ ] Tier 3: `compare_to_reference`, `compare_patterns`, `compare_patches`,
   `humanize_notes`, `generate_variation`, `analyze_track`, `get_mix_meters`.
 
+### 4.2 Upgrade rmcp 1.8.0 → 2.0.0
+
+- [ ] **Upgrade the MCP SDK to rmcp 2.0.0.** Major version bump (`Cargo.toml:105`), but the
+  **JSON wire format is unchanged** — all breaks are at the Rust API level, and our usage is
+  concentrated in a single file (`crates/synth_mcp/src/server.rs`). schemars stays compatible:
+  rmcp 2.0 still depends on `schemars = "1.0"` (gated behind the `server` feature) and we derive
+  `JsonSchema` directly with 1.2.1, so no schemars conflict. Migration guide: rust-sdk discussion
+  #926. **Why bother (mostly hardening, no new features):** the **streamable-HTTP session-leak
+  fix** (PR #934) directly affects our long-running server on `127.0.0.1:9850`; plus OAuth
+  SSRF/spoofing fixes (#935/#937, less relevant for a local server) and `inputSchema`/`outputSchema`
+  now stripped+validated (#856/#860, may trim junk fields from our 175+ tool schemas). There is no
+  new macro/tool capability to leverage.
+
+  **What breaks (all in `server.rs`), from PR #927 "align model types with MCP 2025-11-25 spec":**
+    1. **Content/audio construction** (`preview_note`/`analyze_note`, ~L4619-4635):
+       `Content`/`RawContent`/`Annotated<T>` collapse into a flattened **`ContentBlock`**. The imports
+       `AnnotateAble, Annotated, RawAudioContent, RawContent` (L13-18) and the
+       `RawContent::Audio(RawAudioContent{..}).no_annotation()` path must be rewritten.
+    2. **Resource impls** (`list_resources`/`read_resource`, L4232-4373): `RawResource`,
+       `RawResourceTemplate`, `ResourceContents`, `.no_annotation()` — same `Annotated` removal.
+    3. **`#[non_exhaustive]`** on most wire structs: returns we *construct* with struct literals
+       (`ListResourcesResult`, `ReadResourceResult`) may need a builder / `..Default::default()`;
+       params we only *receive* (`PaginatedRequestParams`, `ReadResourceRequestParams`) are fine.
+    4. Renames (old kept as `#[deprecated]` aliases where practical): `ResourceReference`→
+       `ResourceTemplateReference`, `PrimitiveSchema`→`PrimitiveSchemaDefinition`, etc.
+
+  **What does NOT break:** the macro trio `#[tool]`/`#[tool_router]`/`#[tool_handler]` (API unchanged
+  in 2.0 — only an internal fully-qualified-syntax fix), so our **190 tool methods + `Parameters<T>`
+  compile as-is**; the manual `ToolCallContext`/`ToolRouter::call` dispatch in the overridden
+  `call_tool`; and the `transport::streamable_http_server::*` path. Mechanical migration, no logic
+  change — best done on a branch driven by the compiler + the bump-checklist build gate.
+
 ---
 
 ## 5. Architectural & Performance Hardening (Evaluation Needed)
