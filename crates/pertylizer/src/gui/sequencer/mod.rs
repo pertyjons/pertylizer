@@ -232,6 +232,13 @@ pub struct SequencerViewState {
     /// Same, for the piano roll's own scroll area (both are drawn in the
     /// same frame, so they cannot share one expected-offset slot).
     pr_last_auto_scroll_offset: Option<f32>,
+    /// When set, the settle-window scroll ignores the "only if off-screen" gate
+    /// and always recenters the playhead. Set by the explicit jump buttons (Go
+    /// to start / phrase ◀◀ ▶▶ / Go to playhead) so they always scroll the view
+    /// to the new position — even when it is already roughly in view, and across
+    /// the engine's asynchronous seek delay. Cleared when the settle window
+    /// expires.
+    force_reveal: bool,
     /// Frames left to keep repainting after a transport jump / seek / stop while
     /// stopped, so the timeline catches the engine's async playhead update and
     /// can scroll the marker back into view (off-screen follow).
@@ -331,6 +338,7 @@ impl SequencerViewState {
             auto_follow_playhead: true,
             last_auto_scroll_offset: None,
             pr_last_auto_scroll_offset: None,
+            force_reveal: false,
             follow_settle_frames: 0,
             record_quantize: 0,
             overdub: true,
@@ -423,6 +431,19 @@ impl SequencerViewState {
     fn reveal_playhead(&mut self) {
         self.auto_follow_playhead = true;
         self.follow_settle_frames = FOLLOW_SETTLE_FRAMES;
+        // A passive reveal is off-screen-gated; clear any forced bit left over
+        // from a previous jump so it cannot contaminate this settle window
+        // (`force` is opt-in per call via `reveal_playhead_force`).
+        self.force_reveal = false;
+    }
+
+    /// Like [`Self::reveal_playhead`] but forces the settle-window scroll to
+    /// recenter the marker even when it is already in view. For explicit
+    /// "jump to here" actions (Go to start / phrase ◀◀ ▶▶ / Go to playhead),
+    /// where the user expects the view to follow, not just the position.
+    fn reveal_playhead_force(&mut self) {
+        self.reveal_playhead();
+        self.force_reveal = true;
     }
 }
 
@@ -430,6 +451,31 @@ impl Default for SequencerViewState {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// The persistent id egui's `ScrollArea::id_salt(salt)` uses for its stored
+/// `State`, so callers can `State::load`/`store` the exact same memory slot to
+/// drive auto-follow scrolling.
+///
+/// egui 0.35 derives it as `ui.make_persistent_id(IdSalt::new(salt))`. Crucially
+/// `IdSalt::new` hashes with different seeds than `Id::new`, so a plain
+/// `Id::new(salt)` computes a *different* id and any forced scroll offset is
+/// silently dropped — keep this in lockstep with `ScrollArea::id_salt`.
+pub(super) fn scroll_state_id(ui: &egui::Ui, salt: &str) -> egui::Id {
+    ui.make_persistent_id(egui::IdSalt::new(salt))
+}
+
+/// Whether the user manually scrolled the area since auto-follow last set its
+/// horizontal offset. `expected` (the offset we requested) is clamped to the
+/// area's real max first, because egui clamps the stored offset to the content:
+/// a target past the end (playhead near the song end, or content narrower than
+/// the viewport) is not a manual drag.
+pub(super) fn user_scrolled_away<R>(
+    scroll_output: &egui::scroll_area::ScrollAreaOutput<R>,
+    expected: f32,
+) -> bool {
+    let max_x = (scroll_output.content_size.x - scroll_output.inner_rect.width()).max(0.0);
+    (scroll_output.state.offset.x - expected.clamp(0.0, max_x)).abs() > MANUAL_SCROLL_EPS
 }
 
 /// Apply a rename to a pattern under a short write-lock and push a
@@ -505,6 +551,9 @@ const DRAG_GHOST_STROKE: Color32 = Color32::from_rgb(120, 180, 255);
 /// while the transport is stopped, so the off-screen follow picks up the
 /// engine's asynchronous playhead update and scrolls the marker into view.
 const FOLLOW_SETTLE_FRAMES: u8 = 8;
+/// Pixel slack between the auto-follow target offset and the ScrollArea's
+/// actual offset before a divergence is treated as a manual user scroll.
+const MANUAL_SCROLL_EPS: f32 = 2.0;
 /// Colour for tempo-change markers on the ruler.
 const TEMPO_MARKER: Color32 = Color32::from_rgb(255, 180, 80);
 /// Fill for the step-entry mode banner.
@@ -1123,9 +1172,17 @@ pub(crate) fn draw_sequencer_view(
     // stop so the timeline catches the engine's async playhead update and the
     // off-screen follow can scroll the marker into view.
     if is_playing {
+        // `force_reveal` only applies to the stopped settle window; while
+        // playing, continuous follow does the scrolling, so drop the bit here
+        // so a jump made during playback can't leak into the settle window
+        // after a later Pause.
+        view_state.force_reveal = false;
         ctx.request_repaint();
     } else if view_state.follow_settle_frames > 0 {
         view_state.follow_settle_frames -= 1;
+        if view_state.follow_settle_frames == 0 {
+            view_state.force_reveal = false;
+        }
         ctx.request_repaint();
     }
 

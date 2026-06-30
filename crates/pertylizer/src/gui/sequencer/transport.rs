@@ -95,6 +95,7 @@ pub(super) fn draw_transport_bar(
             .clicked()
         {
             handle.send(EngineCommand::Seek { tick: Tick::ZERO });
+            view_state.reveal_playhead_force();
         }
 
         // Previous phrase — jump to the previous placement boundary (or, with
@@ -123,7 +124,7 @@ pub(super) fn draw_transport_bar(
                     .unwrap_or(0)
             };
             handle.send(EngineCommand::Seek { tick: Tick(prev) });
-            view_state.reveal_playhead();
+            view_state.reveal_playhead_force();
         }
 
         // Play / Pause toggle. Play starts from the cursor (or resumes in
@@ -163,7 +164,7 @@ pub(super) fn draw_transport_bar(
                     .unwrap_or(current_ticks)
             };
             handle.send(EngineCommand::Seek { tick: Tick(next) });
-            view_state.reveal_playhead();
+            view_state.reveal_playhead_force();
         }
 
         // Stop returns the playhead to the cursor; a second press once it is

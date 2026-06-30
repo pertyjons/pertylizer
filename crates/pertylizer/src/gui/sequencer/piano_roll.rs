@@ -1350,7 +1350,7 @@ pub(crate) fn draw_piano_roll(
 
     // Auto-follow playhead in piano roll during playback
     let pr_scroll_salt = "piano_roll_scroll";
-    let pr_scroll_id = ui.make_persistent_id(egui::Id::new(pr_scroll_salt));
+    let pr_scroll_id = super::scroll_state_id(ui, pr_scroll_salt);
     if is_playing
         && view_state.auto_follow_playhead
         && let Some(pt) = playhead_tick
@@ -1411,9 +1411,8 @@ pub(crate) fn draw_piano_roll(
     // arrangement timeline: if the offset after the scroll area differs from
     // what auto-follow set, the user dragged the scrollbar — stop fighting.
     if is_playing {
-        let actual_offset = scroll_output.state.offset.x;
         if let Some(expected) = view_state.pr_last_auto_scroll_offset
-            && (actual_offset - expected).abs() > 2.0
+            && super::user_scrolled_away(&scroll_output, expected)
         {
             view_state.auto_follow_playhead = false;
             view_state.pr_last_auto_scroll_offset = None;

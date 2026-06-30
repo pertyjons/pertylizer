@@ -212,7 +212,10 @@ fn draw_arrangement_toolbar(
             .on_hover_text("Scroll the timeline to the current playhead position")
             .clicked()
         {
-            view_state.reveal_playhead();
+            // Re-arm follow (so it keeps tracking if playing) and force an
+            // unconditional scroll so the jump always lands, even when stopped
+            // and the marker is already roughly in view.
+            view_state.reveal_playhead_force();
         }
     });
     ui.separator();
@@ -407,7 +410,7 @@ pub(super) fn draw_arrangement(
     // The right-side timeline owns the vertical scroll. The left header panel
     // mirrors the same y-offset so headers stay aligned with their rows.
     let scroll_salt = "seq_scroll";
-    let scroll_id = ui.make_persistent_id(egui::Id::new(scroll_salt));
+    let scroll_id = super::scroll_state_id(ui, scroll_salt);
     let header_v_offset = egui::scroll_area::State::load(ui.ctx(), scroll_id)
         .map(|s| s.offset.y)
         .unwrap_or(0.0);
@@ -425,7 +428,7 @@ pub(super) fn draw_arrangement(
     }
 
     // ── Timeline area (right side, uses painter for performance) ──
-    // The scroll area's actual ID = ui.make_persistent_id(Id::new(salt))
+    // The scroll area's actual ID = ui.make_persistent_id(IdSalt::new(salt))
 
     // Pre-set scroll offset for auto-follow before showing the scroll area.
     // While playing we continuously keep the playhead ~30% from the right edge.
@@ -444,13 +447,17 @@ pub(super) fn draw_arrangement(
             // Continuous follow: keep the playhead ~30% from the right edge.
             Some((playhead_x_offset - visible_width * 0.7).max(0.0))
         } else if view_state.follow_settle_frames > 0 {
-            // Settle window: if the marker is off-screen, re-center it ~30%
-            // from the left so the music ahead of it stays visible. A small
-            // slack keeps it from hugging the edge.
+            // Settle window after a transport action: recenter the marker ~30%
+            // from the left so the music ahead of it stays visible. An explicit
+            // jump (`force_reveal`: Go to start / phrase ◀◀ ▶▶ / Go to playhead)
+            // always recenters; a passive reveal (ruler seek / stop) only does
+            // so when the marker is off-screen, so a click on a visible spot is
+            // not yanked around. A small slack keeps it off the edge.
             let margin = pixels_per_beat;
             let off_screen = playhead_x_offset < current_offset + margin
                 || playhead_x_offset > current_offset + visible_width - margin;
-            off_screen.then(|| (playhead_x_offset - visible_width * 0.3).max(0.0))
+            (view_state.force_reveal || off_screen)
+                .then(|| (playhead_x_offset - visible_width * 0.3).max(0.0))
         } else {
             // Stopped with no recent transport action: leave the user's
             // scroll position alone.
@@ -491,16 +498,13 @@ pub(super) fn draw_arrangement(
             );
         });
 
-    // Detect manual scrolling to disable auto-follow
-    if is_playing {
-        let actual_offset = scroll_output.state.offset.x;
-        if let Some(expected) = view_state.last_auto_scroll_offset {
-            // If user scrolled manually (offset differs significantly from what we set)
-            if (actual_offset - expected).abs() > 2.0 {
-                view_state.auto_follow_playhead = false;
-                view_state.last_auto_scroll_offset = None;
-            }
-        }
+    // Detect manual scrolling to disable auto-follow.
+    if is_playing
+        && let Some(expected) = view_state.last_auto_scroll_offset
+        && super::user_scrolled_away(&scroll_output, expected)
+    {
+        view_state.auto_follow_playhead = false;
+        view_state.last_auto_scroll_offset = None;
     }
 
     // Re-enable auto-follow when playback starts from stopped

@@ -133,6 +133,22 @@ commit and the code carry the detail; history.md is the index.
 - Pattern data collected as snapshots (`collect_arrangement_data`, `collect_piano_roll_data`) before rendering to
   minimize lock hold time.
 
+### Shared widgets (`widgets/controls.rs`)
+
+- **Small reusable widgets and composite controls live in
+  `crates/pertylizer/src/gui/widgets/controls.rs`** (themed labels, icon buttons,
+  toggles, drag/slider presets, layout idioms like `right_aligned_row`, …). Don't
+  hand-roll the same `egui::Button`/`Label`/layout primitive inline at a call
+  site when it's a repeatable idiom — add a helper there and call it.
+- **Add it even when there's a single caller today.** Putting it in `controls.rs`
+  keeps the widget surface easy to consolidate: a later second user reuses it
+  instead of diverging, and related helpers can be merged in one place.
+- **Scope: small widgets only — not larger composites.** Big, view-specific
+  composites (whole panels, the `ModuleFrame` chrome / `draw_module_header` /
+  `draw_module_footer` painters in `widgets/frame.rs`, etc.) stay with their view
+  or chrome module; those *call* the small `controls.rs` helpers, they don't move
+  into `controls.rs`.
+
 ---
 
 ## MCP Integration
