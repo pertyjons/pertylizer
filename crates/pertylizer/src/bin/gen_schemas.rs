@@ -731,6 +731,25 @@ fn parameter_schema(param: &ParameterDescriptor) -> Value {
         return schema;
     }
 
+    // Bool-kind params are serialized by `save_project` as JSON booleans
+    // (`ParamValue::Bool`), but older/canonical projects store them as the numeric
+    // `0.0`/`1.0` form. Accept both so a binary-saved project (booleans) and a
+    // legacy/hand-authored one (numbers) both validate. `minimum`/`maximum` apply
+    // only to the numeric form (JSON Schema ignores them for booleans).
+    if matches!(param.kind, synth_core::ParamKind::Bool) {
+        let mut schema = json!({
+            "title": param.name,
+            "type": ["number", "boolean"],
+            "minimum": param.range.min,
+            "maximum": param.range.max,
+            "default": param.range.default,
+        });
+        if !description.is_empty() {
+            schema["description"] = json!(description);
+        }
+        return schema;
+    }
+
     let mut schema = json!({
         "title": param.name,
         "type": "number",

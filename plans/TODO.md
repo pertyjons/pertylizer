@@ -365,21 +365,6 @@ Following the evaluation of [widget-helpers-plan.md](file:///home/per/github/per
   or at minimum make the schema/description clearer so the shape is guessable on the first
   call. Surfaced 2026-06-30 while documenting the AudioScript wavefolder example patch.
 
-- [ ] **★ HIGH PRIORITY — generated schema rejects bool params that `save_project`
-  actually writes (round-trip / schema-gen mismatch).** `save_project` serializes
-  bool-kind module params as JSON **booleans** (`ParamValue::Bool`, `patch.rs:370,469`),
-  but the generated `schemas/{project,patch}.schema.json` types those params as
-  **numbers** — so the `example_files_validate_against_schemas` test (and any external
-  validator) rejects any binary-saved project containing a bool param (`cv_bipolar`,
-  `dither`, `limit`, `mute`, …). It stayed latent only because every committed example
-  predates this and uses the number form `0.0`/`1.0`; the moment a freshly-saved project
-  is committed it fails (hit 2026-06-30 with the AudioScript example — worked around by
-  hand-canonicalizing its bools to numbers). Fix at the source: make `gen_schemas` emit
-  `{"type": ["number", "boolean"]}` (or boolean) for `ParamKind::Bool` params so the
-  schema matches what the serializer writes, then regenerate. (Alternatively make the
-  project serializer emit numbers for bool params — but the format intentionally uses
-  `ParamValue::Bool`, so fixing the schema is the lower-risk direction.)
-
 - [ ] Tier 3: `compare_to_reference`, `compare_patterns`, `compare_patches`,
   `humanize_notes`, `generate_variation`, `analyze_track`, `get_mix_meters`.
 

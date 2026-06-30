@@ -3,7 +3,7 @@
   "version": "1.0",
   "instrument_count": 1,
   "active_instrument_id": 2,
-  "author_present": false,
+  "author_present": true,
   "instruments": [
     {
       "id": 2,

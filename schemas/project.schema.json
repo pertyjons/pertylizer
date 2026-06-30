@@ -2174,7 +2174,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Retrigger",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "sync_division": {
                   "default": 1.0,
@@ -2190,7 +2193,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Tempo Sync",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "waveform": {
                   "description": "LFO waveform",
@@ -2243,7 +2249,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "CV Bipolar",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "level": {
                   "default": 1.0,
@@ -2363,7 +2372,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Limit",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "master": {
                   "default": 1.0,
@@ -2379,7 +2391,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Mute",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 }
               },
               "type": "object"
@@ -2419,7 +2434,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Dither",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "limit": {
                   "default": 1.0,
@@ -2427,7 +2445,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Limit",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "master": {
                   "default": 0.800000011920929,
@@ -2443,7 +2464,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Mute",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "pan": {
                   "default": 0.0,
@@ -2525,7 +2549,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Tempo Sync",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "time": {
                   "default": 0.375,
@@ -3041,7 +3068,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Sidechain",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "threshold": {
                   "default": -20.0,
@@ -3262,7 +3292,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Freeze",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "gain": {
                   "default": 1.0,
@@ -3430,7 +3463,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Slot 10 Enabled",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "slot_10_source": {
                   "description": "Modulation source for slot 10",
@@ -3456,7 +3492,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Slot 11 Enabled",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "slot_11_source": {
                   "description": "Modulation source for slot 11",
@@ -3482,7 +3521,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Slot 12 Enabled",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "slot_12_source": {
                   "description": "Modulation source for slot 12",
@@ -3508,7 +3550,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Slot 13 Enabled",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "slot_13_source": {
                   "description": "Modulation source for slot 13",
@@ -3534,7 +3579,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Slot 14 Enabled",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "slot_14_source": {
                   "description": "Modulation source for slot 14",
@@ -3560,7 +3608,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Slot 15 Enabled",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "slot_15_source": {
                   "description": "Modulation source for slot 15",
@@ -3586,7 +3637,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Slot 16 Enabled",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "slot_16_source": {
                   "description": "Modulation source for slot 16",
@@ -3612,7 +3666,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Slot 1 Enabled",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "slot_1_source": {
                   "description": "Modulation source for slot 1",
@@ -3638,7 +3695,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Slot 2 Enabled",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "slot_2_source": {
                   "description": "Modulation source for slot 2",
@@ -3664,7 +3724,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Slot 3 Enabled",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "slot_3_source": {
                   "description": "Modulation source for slot 3",
@@ -3690,7 +3753,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Slot 4 Enabled",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "slot_4_source": {
                   "description": "Modulation source for slot 4",
@@ -3716,7 +3782,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Slot 5 Enabled",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "slot_5_source": {
                   "description": "Modulation source for slot 5",
@@ -3742,7 +3811,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Slot 6 Enabled",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "slot_6_source": {
                   "description": "Modulation source for slot 6",
@@ -3768,7 +3840,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Slot 7 Enabled",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "slot_7_source": {
                   "description": "Modulation source for slot 7",
@@ -3794,7 +3869,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Slot 8 Enabled",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "slot_8_source": {
                   "description": "Modulation source for slot 8",
@@ -3820,7 +3898,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Slot 9 Enabled",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "slot_9_source": {
                   "description": "Modulation source for slot 9",
@@ -4075,7 +4156,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Loop",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "loop_end": {
                   "default": 1.0,
@@ -5250,7 +5334,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Freeze",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "grain_size": {
                   "default": 50.0,
@@ -5454,7 +5541,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Freeze",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "mix": {
                   "default": 1.0,
@@ -5510,7 +5600,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Bipolar",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "curve": {
                   "description": "Easing curve shape",
@@ -5561,7 +5654,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Retrigger",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 }
               },
               "type": "object"
@@ -5601,7 +5697,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Freeze",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "gain": {
                   "default": 1.0,
@@ -6105,7 +6204,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Freeze",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "grain_size": {
                   "default": 40.0,
@@ -6220,7 +6322,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Freeze",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "mix": {
                   "default": 1.0,
@@ -6529,7 +6634,10 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Pitch Track",
-                  "type": "number"
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "play_mode": {
                   "description": "How the sample responds to note-on/off",
