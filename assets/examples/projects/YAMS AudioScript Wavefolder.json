@@ -1,0 +1,266 @@
+{
+  "file_type": "project",
+  "version": "1.0",
+  "instruments": [
+    {
+      "id": 2,
+      "name": "Folding Reed",
+      "channel": 1,
+      "volume": 1.0,
+      "pan": 0.0,
+      "muted": false,
+      "solo": false,
+      "key_range": [
+        0,
+        127
+      ],
+      "transpose": 0.0,
+      "oversampling": 1,
+      "category": 0,
+      "description": "Stereo AudioScript wavefolder. osc(sine, 5-voice unison) -> asc-1 (per-sample YAMS) -> amp -> out, env -> amp.cv; Ensemble Chorus + Reverb in the FX chain. The asc-1 program folds each channel with sin(in*drive) where drive tracks velocity, one-pole LPs via state cells, and adds an internal phasor sub-octave for body.",
+      "allocation_mode": "Polyphonic",
+      "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
+      "max_voices": 8,
+      "velocity_amp_sensitivity": 1.0,
+      "velocity_filter_sensitivity": 0.5,
+      "patch": {
+        "name": "Folding Reed",
+        "version": "1.0",
+        "modules": [
+          {
+            "id": "osc-1",
+            "type": "oscillator",
+            "position": {
+              "x": 0.0,
+              "y": 0.0
+            },
+            "parameters": {
+              "anti_alias": "polyblep",
+              "detune": 0.0,
+              "fm_amt": 1.0,
+              "fm_mode": "exponential",
+              "frequency": 440.0,
+              "level": 1.0,
+              "octave": 0.0,
+              "phase": 0.0,
+              "pulse_width": 0.5,
+              "uni_detune": 18.0,
+              "uni_phase": 1.0,
+              "uni_spread": 1.0,
+              "unison": 5,
+              "waveform": "sine",
+              "x_mod": 0.0
+            }
+          },
+          {
+            "id": "env-1",
+            "type": "envelope",
+            "position": {
+              "x": 0.0,
+              "y": 0.0
+            },
+            "parameters": {
+              "atk_curve": 0.0,
+              "attack": 0.02,
+              "dec_curve": 0.0,
+              "decay": 0.25,
+              "rel_curve": 0.0,
+              "release": 0.4,
+              "sustain": 0.85,
+              "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "amp-1",
+            "type": "amplifier",
+            "position": {
+              "x": 0.0,
+              "y": 0.0
+            },
+            "parameters": {
+              "cv_bipolar": 0.0,
+              "level": 1.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "out-1",
+            "type": "stereo_output",
+            "position": {
+              "x": 0.0,
+              "y": 0.0
+            },
+            "parameters": {
+              "dither": 0.0,
+              "limit": 1.0,
+              "master": 0.8,
+              "mute": 0.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "rev-1",
+            "type": "reverb",
+            "position": {
+              "x": 0.0,
+              "y": 0.0
+            },
+            "parameters": {
+              "damping": 0.5,
+              "decay": 0.5,
+              "diffusion": 0.5,
+              "low_cut": 120.0,
+              "mix": 0.25,
+              "pre_delay": 0.0,
+              "room_size": 0.6,
+              "width": 1.0
+            }
+          },
+          {
+            "id": "enc-1",
+            "type": "ensemble_chorus",
+            "position": {
+              "x": 0.0,
+              "y": 0.0
+            },
+            "parameters": {
+              "base_delay": 12.0,
+              "depth": 1.2,
+              "mix": 0.45,
+              "noise": 0.1,
+              "rate": 0.6,
+              "stereo_width": 1.0,
+              "tone": 0.4,
+              "voices": 2
+            }
+          },
+          {
+            "id": "asc-1",
+            "type": "audio_script",
+            "position": {
+              "x": 0.0,
+              "y": 0.0
+            },
+            "description": "Per-sample audio-rate YAMS program (one eval per sample). A stereo sine-wavefolder whose fold depth tracks note velocity, with a per-channel one-pole lowpass (state cells) and a self-generated sub-octave (internal phasor) for body — an oscillator, waveshaper and filter in a single node. Not reproducible with the static stock effects. See the script's inline comments.",
+            "parameters": {},
+            "scripts": {
+              "1": "# Stereo sine-wavefolder + self-generated sub-octave.\n# Runs once PER AUDIO SAMPLE — only the audio-rate AudioScript module\n# can do this (per-voice, per-sample DSP: oscillator + shaper + filter\n# all in one node). Harder velocity = deeper fold = brighter timbre.\n\nstate lpl = 0                 # one-pole lowpass memory, left  (persists per sample)\nstate lpr = 0                 # one-pole lowpass memory, right\n\nlet drive = 1 + velocity * 7  # fold depth tracks how hard the note is played\n\nlet fl = sin(in_l * drive)    # sine wavefolding adds harmonics live (left in)\nlet fr = sin(in_r * drive)    # right folded independently -> stereo width\n\nlpl = lpl + 0.35 * (fl - lpl) # one-pole LP tames the fold's brightness/alias\nlpr = lpr + 0.35 * (fr - lpr)\n\nlet f = mtof(note * 127)            # note pitch in Hz (the `note` macro is MIDI/127)\nlet sub = sin(phasor(f * 0.5) * tau) * 0.35  # internal sine one octave down -> body\n\nout.left  = lpl * 0.7 + sub   # folded top mixed with the sub-octave\nout.right = lpr * 0.7 + sub\n"
+            }
+          }
+        ],
+        "connections": [
+          {
+            "from": [
+              "osc-1",
+              "out_l"
+            ],
+            "to": [
+              "asc-1",
+              "in_l"
+            ]
+          },
+          {
+            "from": [
+              "osc-1",
+              "out_r"
+            ],
+            "to": [
+              "asc-1",
+              "in_r"
+            ]
+          },
+          {
+            "from": [
+              "env-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "cv"
+            ]
+          },
+          {
+            "from": [
+              "amp-1",
+              "out_l"
+            ],
+            "to": [
+              "out-1",
+              "in_l"
+            ]
+          },
+          {
+            "from": [
+              "amp-1",
+              "out_r"
+            ],
+            "to": [
+              "out-1",
+              "in_r"
+            ]
+          },
+          {
+            "from": [
+              "asc-1",
+              "out_l"
+            ],
+            "to": [
+              "amp-1",
+              "in_l"
+            ]
+          },
+          {
+            "from": [
+              "asc-1",
+              "out_r"
+            ],
+            "to": [
+              "amp-1",
+              "in_r"
+            ]
+          }
+        ],
+        "settings": {
+          "master_volume": 0.8,
+          "bpm": 120.0,
+          "octave_offset": 0,
+          "glide_time": 0.0,
+          "effect_chain_order": [
+            "enc-1",
+            "rev-1"
+          ]
+        }
+      }
+    }
+  ],
+  "active_instrument_id": 2,
+  "song": {
+    "name": "YAMS AudioScript Wavefolder",
+    "author": "Pertylizer",
+    "description": "Demonstrates the audio-rate AudioScript module (asc): per-sample scripted DSP. The 'Folding Reed' instrument runs one YAMS program per sample that (1) sine-wavefolds the unison oscillator with a velocity-tracked drive, (2) one-pole lowpass-filters each stereo channel via state cells, and (3) synthesizes its own sub-octave with an internal phasor — oscillator, waveshaper and filter all in one node. Harder velocity = deeper fold = brighter. None of this is reproducible with the static stock effects. Ensemble Chorus + Reverb add width and space.",
+    "patterns": [],
+    "next_pattern_id": 0,
+    "tracks": [],
+    "next_track_id": 0,
+    "arrangement": [],
+    "tempo_changes": [],
+    "time_signature_changes": [],
+    "default_tempo": 120.0,
+    "default_time_signature": {
+      "numerator": 4,
+      "denominator": 4
+    },
+    "row_resolution": {
+      "rows": 64,
+      "ticks_per_row": 240
+    },
+    "next_return_bus_id": 0
+  },
+  "global": {
+    "master_volume": 0.8,
+    "octave_offset": 0,
+    "glide_time": 0.0
+  }
+}

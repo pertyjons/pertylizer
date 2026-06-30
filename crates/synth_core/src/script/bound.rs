@@ -32,6 +32,21 @@ pub enum ScriptContext {
     Tempo,
     /// `1.0` while the transport is running, else `0.0`.
     Playing,
+    /// `1.0` only at sample 0 of the note's first block, else `0.0`. Audio-rate
+    /// one-shot init pulse (an [`AudioScript`] runs one eval per sample, so the
+    /// per-block `gate_on` would read `1` for the whole first block). Injected
+    /// per-sample by the audio module; reads `0.0` at control rate.
+    FirstSample,
+}
+
+/// Which audio input channel a per-sample source register reads. Mono `in`
+/// aliases the left channel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum AudioInputChannel {
+    /// `in` / `in_l` — the left (or mono) audio input.
+    Left,
+    /// `in_r` — the right audio input.
+    Right,
 }
 
 /// One source register a [`BoundScript`] reads, in register order: the voice
@@ -43,6 +58,11 @@ pub enum ScriptInput {
     Source(SrcAddr),
     /// A per-voice context value supplied directly by the engine.
     Context(ScriptContext),
+    /// A per-sample audio input (audio-rate scripts only). Resolves to `0.0` as a
+    /// block-constant placeholder; the [`AudioScript`] module overwrites this
+    /// register each sample from its input port (see
+    /// [`AudioBindings`](super::AudioBindings)).
+    AudioIn(AudioInputChannel),
     /// An unresolvable binding (e.g. an unknown module prefix) — always `0.0`.
     /// Keeps the register slot so later indices stay aligned with the bytecode.
     Zero,

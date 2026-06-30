@@ -137,11 +137,13 @@ impl PatchEditor {
 }
 
 /// Draw the shared per-slot YAMS expression-editor popup, reused by the Mod
-/// Matrix and the Script module. Compiles live for the status line (off the
-/// audio thread) and pushes `(slot, Some(src))` / `(slot, None)` actions the
-/// caller routes to `session.set_mod_script` / `clear_mod_script`. No-op when no
-/// slot's editor is open. The window is keyed by `state.id`, so each module's
-/// editor is independent.
+/// Matrix, the control-rate Script module, and the per-sample AudioScript module
+/// (`editor.audio_rate` selects the dialect for the live compile, title, hint,
+/// help, and CPU-cost line). Compiles live for the status line (off the audio
+/// thread) and pushes `(slot, Some(src))` / `(slot, None)` actions the caller
+/// routes to `session.set_mod_script` / `clear_mod_script`. No-op when no slot's
+/// editor is open. The window is keyed by `state.id`, so each module's editor is
+/// independent.
 pub(super) fn draw_slot_expression_editor(
     ui: &Ui,
     state: &mut ModulePanelState,
@@ -156,7 +158,14 @@ pub(super) fn draw_slot_expression_editor(
     let ctx = ui.ctx().clone();
     let mut keep_open = true;
     let mut closed_by_action = false;
-    egui::Window::new(format!("Slot {} - Expression", editor.slot + 1))
+    // AudioScript hosts a single per-sample program rather than numbered
+    // control-rate slots, so it gets a program-centric title.
+    let title = if editor.audio_rate {
+        "Audio program - per-sample DSP".to_string()
+    } else {
+        format!("Slot {} - Expression", editor.slot + 1)
+    };
+    egui::Window::new(title)
         .id(egui::Id::new(("mm_expr_editor", state.id, editor.slot)))
         .collapsible(false)
         .resizable(true)
@@ -165,11 +174,12 @@ pub(super) fn draw_slot_expression_editor(
         .open(&mut keep_open)
         .show(&ctx, |ui| {
             ui.horizontal(|ui| {
-                caption(
-                    ui,
-                    "YAMS expression - assign `out`, e.g. `out = lfo-1.out * velocity`",
-                    CaptionTone::Secondary,
-                );
+                let hint = if editor.audio_rate {
+                    "YAMS audio program - per-sample DSP, e.g. `out = tanh(in * 4)` (stereo: `out.left`/`out.right`)"
+                } else {
+                    "YAMS expression - assign `out`, e.g. `out = lfo-1.out * velocity`"
+                };
+                caption(ui, hint, CaptionTone::Secondary);
                 // Help toggle: opens the YAMS reference panel beside the editor.
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let help = ui
@@ -218,20 +228,32 @@ pub(super) fn draw_slot_expression_editor(
             // same compile feeds the feedback-loop check below, so the draft is
             // compiled once per frame, not twice.
             let trimmed = editor.draft.trim();
-            let (status, draft_refs): (Result<(), String>, HashSet<(ModuleId, u8)>) = if trimmed
-                .is_empty()
-            {
+            // `status`: compile result; `draft_refs`: module outputs the draft
+            // reads (cycle check); `audio_ops`: compiled per-sample instruction
+            // count, captured only for audio-rate programs (CPU-cost indicator).
+            let (status, draft_refs, audio_ops) = if trimmed.is_empty() {
                 (
                     Err("empty - Apply will clear the slot".to_string()),
                     HashSet::new(),
+                    None,
                 )
             } else {
-                let (program, diags) =
-                    synth_script::compile(&editor.draft, &synth_script::CompileOptions::default());
+                // Match the dialect `session::set_mod_script` will actually
+                // compile with, so the live status never green-lights grammar the
+                // install would reject (or vice-versa).
+                let opts = synth_script::CompileOptions {
+                    audio_rate: editor.audio_rate,
+                    ..synth_script::CompileOptions::default()
+                };
+                let (program, diags) = synth_script::compile(&editor.draft, &opts);
                 match program {
                     Some(p) => {
-                        let refs = script_refs_from_inputs(&p.into_bound(String::new()).inputs);
-                        (Ok(()), refs)
+                        let bound = p.into_bound(String::new());
+                        // The per-sample op count only matters for audio-rate
+                        // programs (the cost indicator below).
+                        let ops = editor.audio_rate.then(|| bound.script.code().len());
+                        let refs = script_refs_from_inputs(&bound.inputs);
+                        (Ok(()), refs, ops)
                     }
                     None => {
                         let msg = diags
@@ -247,6 +269,7 @@ pub(super) fn draw_slot_expression_editor(
                                 msg
                             }),
                             HashSet::new(),
+                            None,
                         )
                     }
                 }
@@ -268,13 +291,58 @@ pub(super) fn draw_slot_expression_editor(
                 }
             }
 
+            // Live CPU-cost indicator (audio-rate only). YAMS runs every branch
+            // every sample (eager evaluation), so the compiled instruction count
+            // is the worst-case per-sample cost by construction — a faithful proxy
+            // for CPU. We surface the exact op count (hard cap `MAX_INSTRUCTIONS`)
+            // plus a rough core-fraction estimate anchored to the `yams_audio`
+            // bench (~25 ops ≈ 9% of one core at 16 voices / 48 kHz). It is an
+            // estimate, not a live measurement — per-module audio-thread timing is
+            // out of scope (and would add forbidden syscalls to the hot path).
+            if let Some(ops) = audio_ops {
+                // Bench calibration: 9% core / 16 voices / 25 ops ≈ 0.36% per op.
+                const EST_CORE_PCT_PER_OP_16V: f32 = 9.0 / 25.0;
+                let pct16 = ops as f32 * EST_CORE_PCT_PER_OP_16V;
+                // Tiers anchored to the bench: ≤24 ops ≈ light (<9%), ≤64 ≈
+                // moderate (<23%), heavier programs warrant attention.
+                let color = if ops <= 24 {
+                    theme().colors.accent_green
+                } else if ops <= 64 {
+                    theme().colors.accent_yellow
+                } else {
+                    theme().colors.accent_orange
+                };
+                ui.label(
+                    egui::RichText::new(format!(
+                        "{}  ~{ops} ops/sample · ~{pct16:.0}% core @ 16 voices (est.)",
+                        ri::CPU_LINE
+                    ))
+                    .size(theme().fonts.size_small)
+                    .color(color),
+                )
+                .on_hover_text(format!(
+                    "Per-sample instruction count (hard cap {cap}). Every branch \
+                     runs every sample (eager evaluation), so this is the \
+                     worst-case cost. The percentage is a rough estimate \
+                     calibrated to the yams_audio benchmark at 48 kHz, not a live \
+                     measurement; actual load scales with voice count and device \
+                     sample rate. Heavy DSP inside a ternary branch is paid every \
+                     sample — lift it into a `state` cell instead.",
+                    cap = synth_core::script::MAX_INSTRUCTIONS,
+                ));
+            }
+
             // Feedback-loop notice (§3.5): a script reading its own or a
             // downstream script's output forms a one-block-delayed loop the cable
             // cycle-detection can't see. Purely informational — delayed feedback
             // (e.g. a leaky integrator) is sometimes intentional, so we warn
             // rather than block. Only Script-module slots can close such a loop.
-            if let Some(warning) =
-                script_graph.and_then(|g| g.cycle_warning(module_id, editor.slot, &draft_refs))
+            // The control-script dependency graph doesn't model the per-sample
+            // AudioScript path (whose feedback is intentional `state`-cell IIR),
+            // so the warning is suppressed there to avoid misleading notices.
+            if !editor.audio_rate
+                && let Some(warning) =
+                    script_graph.and_then(|g| g.cycle_warning(module_id, editor.slot, &draft_refs))
             {
                 ui.label(
                     egui::RichText::new(format!("{}  {warning}", ri::ALERT_LINE))
@@ -336,7 +404,13 @@ pub(super) fn draw_slot_expression_editor(
     // can be read side-by-side with the editor; its ✕ mirrors back to the toggle.
     if editor.show_help {
         let mut help_open = true;
-        draw_yams_help_window(&ctx, state.id, editor.slot, &mut help_open);
+        draw_yams_help_window(
+            &ctx,
+            state.id,
+            editor.slot,
+            editor.audio_rate,
+            &mut help_open,
+        );
         if !help_open {
             editor.show_help = false;
         }
@@ -350,13 +424,17 @@ pub(super) fn draw_slot_expression_editor(
 }
 
 /// The YAMS reference panel: a scrollable, read-only cheat-sheet covering the
-/// execution model (control-rate, one read per block — the key expectation),
-/// source syntax, the predefined identifiers, and the function catalog. Mirrors
-/// `docs/yams.md` so the in-app help stays close to the canonical reference.
+/// execution model, source syntax, the predefined identifiers, and the function
+/// catalog. Mirrors `docs/yams.md` so the in-app help stays close to the
+/// canonical reference. The execution-model and sources sections branch on
+/// `audio_rate` so an AudioScript author sees the per-sample dialect (`in`,
+/// `out.left`/`out.right`, `first_sample`, `state` cells) rather than the
+/// control-rate semantics.
 pub(super) fn draw_yams_help_window(
     ctx: &egui::Context,
     module: ModuleId,
     slot: u8,
+    audio_rate: bool,
     open: &mut bool,
 ) {
     let t = theme();
@@ -379,7 +457,12 @@ pub(super) fn draw_yams_help_window(
         );
     };
 
-    egui::Window::new("YAMS - reference")
+    let title = if audio_rate {
+        "YAMS - audio-rate reference"
+    } else {
+        "YAMS - reference"
+    };
+    egui::Window::new(title)
         .id(egui::Id::new(("yams_help", module, slot)))
         .collapsible(true)
         .resizable(true)
@@ -389,52 +472,104 @@ pub(super) fn draw_yams_help_window(
         .show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
                 head(ui, "What it is");
-                body(
-                    ui,
-                    "YAMS is a small control-rate expression language. Each slot \
-                     computes one value per voice, assigned to `out`. That value \
-                     becomes a normalized modulation offset (output ports are ±1; a \
-                     parameter maps to 0..1, or -1..1 if bipolar).",
-                );
+                if audio_rate {
+                    body(
+                        ui,
+                        "YAMS audio-rate is a small per-sample DSP language. The \
+                         program runs once per audio sample per voice, reading the \
+                         incoming sample with `in` (or `in_l`/`in_r`) and writing \
+                         the output sample to `out` (mono) or `out.left`/ \
+                         `out.right` (stereo). You process the actual waveform.",
+                    );
+                } else {
+                    body(
+                        ui,
+                        "YAMS is a small control-rate expression language. Each slot \
+                         computes one value per voice, assigned to `out`. That value \
+                         becomes a normalized modulation offset (output ports are ±1; a \
+                         parameter maps to 0..1, or -1..1 if bipolar).",
+                    );
+                }
 
-                head(ui, "How it runs (the key expectation)");
-                body(
-                    ui,
-                    "The script runs once per CONTROL BLOCK (~187-750 Hz), not per \
-                     audio sample. Every source you reference is SAMPLED once per \
-                     block - you read a value, you do not process the waveform. So \
-                     `osc-1.out` gives one sampled point of that oscillator per \
-                     block (great for a sub-audio osc used as an LFO; aliased for an \
-                     audio-rate one), never the audible waveform. Per-sample audio \
-                     processing is a separate audio-rate module (planned), not this.",
-                );
-                body(
-                    ui,
-                    "Sources resolve with a one-block latency, so a script reading \
-                     its own or a downstream script's output is a delayed feedback \
-                     path - allowed, but flagged below the editor.",
-                );
-                body(
-                    ui,
-                    "Evaluation is eager: every node runs every block. `?:`, `&&`, \
-                     `||` only SELECT an already-computed value - stateful functions \
-                     (lag, phasor, ...) keep ticking even on the untaken branch. \
-                     Math is NaN-free (x/0 = 0, safe log/sqrt).",
-                );
+                if audio_rate {
+                    head(ui, "How it runs (per sample)");
+                    body(
+                        ui,
+                        "The program runs once per AUDIO SAMPLE (e.g. 48000 Hz), so \
+                         `in` is the live input waveform, not a sampled point. Keep \
+                         it cheap: this is the audio hot path. Use `state` cells for \
+                         feedback / IIR filters (a `state` value persists across \
+                         samples); `first_sample` is 1 only on the very first sample \
+                         after note-on for one-shot init.",
+                    );
+                    body(
+                        ui,
+                        "Evaluation is eager: every node runs EVERY SAMPLE. `?:`, \
+                         `&&`, `||` only SELECT an already-computed value - both arms \
+                         are paid in full per sample, so do not hide a heavy biquad \
+                         inside a ternary branch; lift it into a `state` cell. Math \
+                         is NaN-free (x/0 = 0, safe log/sqrt).",
+                    );
+                } else {
+                    head(ui, "How it runs (the key expectation)");
+                    body(
+                        ui,
+                        "The script runs once per CONTROL BLOCK (~187-750 Hz), not per \
+                         audio sample. Every source you reference is SAMPLED once per \
+                         block - you read a value, you do not process the waveform. So \
+                         `osc-1.out` gives one sampled point of that oscillator per \
+                         block (great for a sub-audio osc used as an LFO; aliased for an \
+                         audio-rate one), never the audible waveform. Per-sample audio \
+                         processing is the separate AudioScript module.",
+                    );
+                    body(
+                        ui,
+                        "Sources resolve with a one-block latency, so a script reading \
+                         its own or a downstream script's output is a delayed feedback \
+                         path - allowed, but flagged below the editor.",
+                    );
+                    body(
+                        ui,
+                        "Evaluation is eager: every node runs every block. `?:`, `&&`, \
+                         `||` only SELECT an already-computed value - stateful functions \
+                         (lag, phasor, ...) keep ticking even on the untaken branch. \
+                         Math is NaN-free (x/0 = 0, safe log/sqrt).",
+                    );
+                }
 
                 head(ui, "Syntax");
-                code(ui, "src lfo = lfo-1.out   # bind a source by address");
-                code(ui, "let depth = mod_wheel * 0.5");
-                code(ui, "out = lfo * depth     # exactly one `out`");
-                body(
-                    ui,
-                    "All `src` bindings first, then `let`s, then one `out`. \
-                     Numbers need a leading zero (0.5, not .5). Durations: 50ms, \
-                     1.5s. Comments: # to end of line. Use the \"Select input\" \
-                     button to insert a source without typing the address.",
-                );
+                if audio_rate {
+                    code(ui, "state y = 0          # persists across samples");
+                    code(ui, "y = y + 0.1*(in - y) # one-pole lowpass");
+                    code(ui, "out = tanh(y * 2)    # mono out");
+                    code(ui, "# or stereo: out.left = ...  out.right = ...");
+                    body(
+                        ui,
+                        "`state` declarations first, then `let`s and assignments in \
+                         order, then `out` (or `out.left`/`out.right`). Numbers need \
+                         a leading zero (0.5, not .5). Comments: # to end of line.",
+                    );
+                } else {
+                    code(ui, "src lfo = lfo-1.out   # bind a source by address");
+                    code(ui, "let depth = mod_wheel * 0.5");
+                    code(ui, "out = lfo * depth     # exactly one `out`");
+                    body(
+                        ui,
+                        "All `src` bindings first, then `let`s, then one `out`. \
+                         Numbers need a leading zero (0.5, not .5). Durations: 50ms, \
+                         1.5s. Comments: # to end of line. Use the \"Select input\" \
+                         button to insert a source without typing the address.",
+                    );
+                }
 
                 head(ui, "Sources you can reference");
+                if audio_rate {
+                    body(
+                        ui,
+                        "- Audio input (per sample): in (= left), in_l, in_r. \
+                         first_sample is 1 on the first sample after note-on.",
+                    );
+                }
                 body(
                     ui,
                     "- Any module output port by address: lfo-1.out, env-2.out, \
@@ -458,7 +593,10 @@ pub(super) fn draw_yams_help_window(
                 code(ui, "floor ceil round trunc quantize(x,step)");
                 code(ui, "pow sqrt exp log");
                 code(ui, "sin cos tan atan atan2");
-                code(ui, "lerp/mix(a,b,t) smoothstep(a,b,x) sigmoid gauss");
+                code(
+                    ui,
+                    "tanh (soft-clip)  lerp/mix(a,b,t) smoothstep sigmoid gauss",
+                );
                 code(ui, "semis(x)->ratio  mtof(x)->Hz");
 
                 head(ui, "Functions - stateful (per-voice, reset on note-on)");

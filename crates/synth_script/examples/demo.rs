@@ -16,6 +16,8 @@ fn fill(inp: &SourceInput) -> f32 {
         SourceInput::Context(_) => 0.0,
         SourceInput::Module { module, member, .. } if module == "lfo" && member == "out" => 1.0,
         SourceInput::Module { .. } => 0.0,
+        // Audio inputs only appear in audio-rate scripts (not exercised here).
+        SourceInput::AudioIn(_) => 0.0,
     }
 }
 
@@ -49,6 +51,7 @@ fn show_valid(src: &str) {
                 .map(|i| match i {
                     SourceInput::Macro(m) => format!("{m:?}"),
                     SourceInput::Context(c) => format!("{c:?}"),
+                    SourceInput::AudioIn(ch) => format!("{ch:?}"),
                     SourceInput::Module {
                         module,
                         instance,

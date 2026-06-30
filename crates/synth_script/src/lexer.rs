@@ -24,6 +24,9 @@ pub enum TokenKind {
     Let,
     Out,
     Arr,
+    /// `state` — declares a persistent, author-addressable difference-equation
+    /// cell (custom IIR/feedback memory).
+    State,
     // Identifier (not a keyword).
     Ident(String),
     /// Numeric literal. `unit` is set for durations; `is_int` is true for a
@@ -79,6 +82,7 @@ impl TokenKind {
             Self::Let => Some("let"),
             Self::Out => Some("out"),
             Self::Arr => Some("arr"),
+            Self::State => Some("state"),
             _ => None,
         }
     }
@@ -175,6 +179,7 @@ impl Lexer<'_> {
             "let" => TokenKind::Let,
             "out" => TokenKind::Out,
             "arr" => TokenKind::Arr,
+            "state" => TokenKind::State,
             _ => TokenKind::Ident(text.to_string()),
         };
         self.push(kind, start, self.pos);

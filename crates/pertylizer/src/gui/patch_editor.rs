@@ -3881,6 +3881,46 @@ fn script_preview(src: &str) -> String {
 /// showing the installed YAMS source (truncated) and an ƒx button that opens the
 /// shared expression editor for that slot. The output-port nipples themselves are
 /// drawn by the descriptor-driven port column; this is only the editing UI.
+/// Draw one YAMS-slot row — caption, installed-script preview, and the `ƒx`
+/// edit button — shared by the Script and AudioScript grids. Returns `true`
+/// when `ƒx` was clicked this frame.
+fn draw_script_slot_row(
+    ui: &mut Ui,
+    state: &ModulePanelState,
+    slot: u8,
+    label: String,
+    accent_color: Color32,
+    hover: &str,
+) -> bool {
+    let t = theme();
+    let mut clicked = false;
+    ui.horizontal(|ui| {
+        // Pin the row to the output-port pitch so it lines up with the nipples.
+        ui.set_min_height(t.sizes.port_vertical_spacing);
+        caption(ui, label, CaptionTone::Color(accent_color));
+        let installed = state.slot_scripts.get(&slot);
+        let (preview, color) = match installed {
+            Some(src) => (script_preview(src), t.colors.text_secondary),
+            None => ("— empty —".to_string(), t.colors.text_dim),
+        };
+        caption(ui, preview, CaptionTone::Color(color));
+
+        let fx_color = if installed.is_some() {
+            t.colors.accent_green
+        } else {
+            t.colors.text_secondary
+        };
+        if ui
+            .button(egui::RichText::new("ƒx").color(fx_color))
+            .on_hover_text(hover)
+            .clicked()
+        {
+            clicked = true;
+        }
+    });
+    clicked
+}
+
 fn draw_script_module_grid(
     ui: &mut Ui,
     state: &mut ModulePanelState,
@@ -3891,9 +3931,6 @@ fn draw_script_module_grid(
     let mut mod_script_actions: Vec<(u8, Option<String>)> = Vec::new();
     let mut open_editor_for: Option<u8> = None;
     let t = theme();
-    // Match the output-port column's row pitch so each slot row lines up with
-    // its `outN` nipple.
-    let row_height = t.sizes.port_vertical_spacing;
 
     // Column header: the OUT port column starts with an "OUT" label that takes
     // up the top strip, so without a matching header here the slot rows would
@@ -3905,35 +3942,16 @@ fn draw_script_module_grid(
     );
 
     for slot in 0u8..synth_modules::script_module::SCRIPT_MODULE_OUTPUTS as u8 {
-        ui.horizontal(|ui| {
-            // Pin the row to the port pitch (24px) and centre its contents, so
-            // the rows neither drift from nor sit off-centre to the nipples.
-            ui.set_min_height(row_height);
-            caption(
-                ui,
-                format!("out{}", slot + 1),
-                CaptionTone::Color(accent_color),
-            );
-            let installed = state.slot_scripts.get(&slot);
-            let (preview, color) = match installed {
-                Some(src) => (script_preview(src), t.colors.text_secondary),
-                None => ("— empty —".to_string(), t.colors.text_dim),
-            };
-            caption(ui, preview, CaptionTone::Color(color));
-
-            let fx_color = if installed.is_some() {
-                t.colors.accent_green
-            } else {
-                t.colors.text_secondary
-            };
-            if ui
-                .button(egui::RichText::new("ƒx").color(fx_color))
-                .on_hover_text("Edit this slot's YAMS expression")
-                .clicked()
-            {
-                open_editor_for = Some(slot);
-            }
-        });
+        if draw_script_slot_row(
+            ui,
+            state,
+            slot,
+            format!("out{}", slot + 1),
+            accent_color,
+            "Edit this slot's YAMS expression",
+        ) {
+            open_editor_for = Some(slot);
+        }
     }
 
     // Open the editor for a clicked slot, seeding the draft from the installed
@@ -3943,6 +3961,64 @@ fn draw_script_module_grid(
         state.script_editor = Some(super::module_panel::ScriptEditorState {
             slot,
             draft,
+            ..Default::default()
+        });
+    }
+
+    draw_slot_expression_editor(ui, state, script_graph, catalog, &mut mod_script_actions);
+
+    PanelParamsResult {
+        param_changes: Vec::new(),
+        audio_input_action: None,
+        mod_script_actions,
+    }
+}
+
+/// Single-slot editor grid for the per-sample `AudioScript` module.
+///
+/// Unlike the control-rate Script module (8 independent `outN` slots), an
+/// AudioScript holds **one** stereo program (slot 0, driving `out` /
+/// `out.left` / `out.right`), so this renders a single `ƒx` row. It reuses the
+/// shared expression-editor popup (`draw_slot_expression_editor`) — the same
+/// code field — with the audio-rate dialect enabled, matching
+/// `session::compile_mod_script(.., audio_rate = true)`. The program is exposed
+/// by the engine as slot "1" and mirrored into `slot_scripts[0]` by
+/// `sync_module_scripts`, so the install/preview paths are identical to Script.
+fn draw_audio_script_module_grid(
+    ui: &mut Ui,
+    state: &mut ModulePanelState,
+    accent_color: Color32,
+    script_graph: Option<&ScriptDepGraph>,
+    catalog: &ModAddrCatalog,
+) -> PanelParamsResult {
+    let mut mod_script_actions: Vec<(u8, Option<String>)> = Vec::new();
+    let t = theme();
+
+    // 8px header strip mirrors the Script grid so the row lines up with the
+    // output-port column.
+    ui.label(
+        egui::RichText::new("PROGRAM")
+            .size(8.0)
+            .color(t.colors.text_dim),
+    );
+
+    let open_editor = draw_script_slot_row(
+        ui,
+        state,
+        0,
+        "dsp".to_string(),
+        accent_color,
+        "Edit this module's per-sample YAMS program",
+    );
+
+    // Seed the editor from the installed program (empty for a fresh module),
+    // flagging the audio-rate dialect so the live status matches the install.
+    if open_editor {
+        let draft = state.slot_scripts.get(&0).cloned().unwrap_or_default();
+        state.script_editor = Some(super::module_panel::ScriptEditorState {
+            slot: 0,
+            draft,
+            audio_rate: true,
             ..Default::default()
         });
     }

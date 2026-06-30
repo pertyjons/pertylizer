@@ -194,6 +194,11 @@
         }
       }
     },
+    "audio_script": {
+      "description": "Audio-rate scripted DSP (one YAMS eval per sample): waveshaper, bitcrusher, ring-mod, custom IIR. Stereo in/out.",
+      "name": "Audio Script",
+      "parameters": {}
+    },
     "bbd_delay": {
       "description": "Analog bucket-brigade delay emulation",
       "name": "BBD Delay",

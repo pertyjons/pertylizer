@@ -919,6 +919,112 @@ fn session_render_matches_independent_renders_bit_exact() {
     }
 }
 
+// -------------------------------------------------------------------------
+// Scripted-module replay in the offline NOTE renderer (analyze_note / preview).
+// Regression: OfflineNoteSession replayed parameters + bypass but never
+// installed YAMS scripts, so every scripted module (AudioScript / Script /
+// Mod Matrix) rendered SILENT through analyze_note — while the live engine and
+// the arrangement renderer played them correctly. An AudioScript whose program
+// is `out = in` is a pure passthrough: with the script installed it passes the
+// oscillator through; with no script installed it outputs zero -> silence.
+// -------------------------------------------------------------------------
+
+/// osc(saw) -> asc-1 (AudioScript) -> amp -> out, env -> amp.cv. No script is
+/// installed by the patch itself; tests install one via `set_mod_script`.
+fn audio_script_chain_patch() -> Patch {
+    use synth_core::ModuleType;
+    let mut patch = Patch::new("AudioScript Chain");
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Oscillator)
+            .waveform("sawtooth")
+            .param_f("level", 0.8)
+            .build(),
+    );
+    patch.add_module(ModuleBuilder::new(1, ModuleType::AudioScript).build());
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Envelope)
+            .param_f("attack", 0.001)
+            .param_f("decay", 0.0)
+            .param_f("sustain", 1.0)
+            .param_f("release", 0.01)
+            .build(),
+    );
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Amplifier)
+            .param_f("level", 1.0)
+            .build(),
+    );
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
+            .param_f("master", 1.0)
+            .build(),
+    );
+    patch.add_connection("osc-1", "out", "asc-1", "in_l");
+    patch.add_connection("asc-1", "out_l", "amp-1", "in");
+    patch.add_connection("env-1", "out", "amp-1", "cv");
+    patch.add_connection("amp-1", "left", "out-1", "in_l");
+    patch.add_connection("amp-1", "right", "out-1", "in_r");
+    patch
+}
+
+#[test]
+fn audio_script_program_is_replayed_in_offline_note_render() {
+    let mut rig = setup_with_patch(&audio_script_chain_patch());
+
+    // Sanity / control: with NO program installed the AudioScript passes zero,
+    // so the whole chain is silent in the offline render.
+    let silent = render_left_for(&rig);
+    let sustain = |samples: &[f32]| -> f32 {
+        let sr = 44_100usize;
+        let lo = sr / 100; // 10 ms
+        let hi = (9 * sr / 100).min(samples.len()); // 90 ms
+        if lo >= hi {
+            return 0.0;
+        }
+        rms(&samples[lo..hi])
+    };
+    let silent_rms = sustain(&silent);
+    assert!(
+        silent_rms < 1e-4,
+        "AudioScript with no program should be silent, got rms = {silent_rms}"
+    );
+
+    // Install an `out = in` passthrough program on asc-1 (the same path the GUI
+    // / MCP uses) and drain so the shared-graph snapshot carries the script.
+    let asc_id = ModuleId::new(ModuleType::AudioScript, 1);
+    rig.session
+        .set_mod_script(rig.instrument_id, asc_id, 0, "out = in")
+        .expect("install audio-rate passthrough script");
+    rig.drain(8);
+
+    // With the script replayed into the offline render, the oscillator now
+    // reaches the amp and the note is audible. Before the fix this was silent.
+    let rendered = render_note_to_buffer(
+        &rig.session,
+        &rig.sample_library,
+        rig.instrument_id,
+        MidiNote::new(60),
+        Velocity::from_midi(100),
+        100,
+        1000,
+    )
+    .expect("render");
+    // A clean replay emits no warnings — this turns a "silent for some reason"
+    // failure into a precise one (a dropped connection or failed script install
+    // would surface here rather than only as rms = 0).
+    assert!(
+        rendered.warnings.is_empty(),
+        "scripted render should be warning-free, got: {:?}",
+        rendered.warnings
+    );
+    let audible_rms = sustain(&extract_left(&rendered.samples));
+    assert!(
+        audible_rms > 1e-3,
+        "AudioScript `out = in` passthrough should pass the oscillator through in \
+         the offline render (script not replayed?): rms = {audible_rms}"
+    );
+}
+
 /// The same note rendered three times on one session is bit-exact each time
 /// (mirrors `arrangement_render_determinism::session_render_range_is_bit_exact_across_three_calls`).
 #[test]

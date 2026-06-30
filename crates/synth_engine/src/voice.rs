@@ -475,6 +475,12 @@ pub struct Voice {
     /// the module and emitted on its output ports rather than applied as offsets.
     script_module_ids: Vec<crate::ModuleId>,
 
+    /// Cached `AudioScript`-module IDs (Phase 4). Their **block-constant** sources
+    /// are resolved here each block (like the control scripts) and handed to the
+    /// module; the per-sample `eval_block` then runs inside the module's
+    /// `process()` during graph processing.
+    audio_script_ids: Vec<crate::ModuleId>,
+
     /// Pre-allocated buffer for mod matrix slot data (avoids per-frame Vec allocation).
     mod_slots_cache: Vec<(f32, synth_core::DestAddr, f32)>,
 
@@ -525,6 +531,7 @@ impl Voice {
             output_module_id: None,
             mod_matrix_id: None,
             script_module_ids: Vec::new(),
+            audio_script_ids: Vec::new(),
             mod_slots_cache: Vec::with_capacity(16),
             mono_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
             tuning_table: TuningTable::default(),
@@ -544,6 +551,7 @@ impl Voice {
 
         let mod_matrix_id = graph.find_module_by_type(ModuleType::ModMatrix);
         let script_module_ids = Self::collect_script_module_ids(&graph);
+        let audio_script_ids = Self::collect_module_ids(&graph, ModuleType::AudioScript);
 
         let mut voice = Self {
             id,
@@ -566,6 +574,7 @@ impl Voice {
             output_module_id: output_id,
             mod_matrix_id,
             script_module_ids,
+            audio_script_ids,
             mod_slots_cache: Vec::with_capacity(16),
             mono_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
             tuning_table: TuningTable::default(),
@@ -585,9 +594,15 @@ impl Voice {
     /// Collect the IDs of every Script module in `graph` (Phase 2). Cached so the
     /// per-block eval pass does not rescan the graph each time.
     fn collect_script_module_ids(graph: &ModuleGraph) -> Vec<crate::ModuleId> {
+        Self::collect_module_ids(graph, ModuleType::Script)
+    }
+
+    /// Collect the IDs of every module of `module_type` in `graph`. Cached so the
+    /// per-block passes do not rescan the graph each block.
+    fn collect_module_ids(graph: &ModuleGraph, module_type: ModuleType) -> Vec<crate::ModuleId> {
         graph
             .module_ids()
-            .filter(|id| id.module_type == ModuleType::Script)
+            .filter(|id| id.module_type == module_type)
             .collect()
     }
 
@@ -953,7 +968,10 @@ impl Voice {
         // === Control scripts: evaluate the Mod Matrix and Script modules ===
         // Both read the same per-block source snapshot (so `gate_on` is seen by
         // every consumer this block) and run before graph processing.
-        if self.mod_matrix_id.is_some() || !self.script_module_ids.is_empty() {
+        if self.mod_matrix_id.is_some()
+            || !self.script_module_ids.is_empty()
+            || !self.audio_script_ids.is_empty()
+        {
             // Control rate = evaluations per second = sample_rate / block_size;
             // drives time-based script ops (`lag`, `phasor`) and the `cr` var.
             let block = samples.as_usize().max(1) as f32;
@@ -969,6 +987,12 @@ impl Voice {
             for i in 0..self.script_module_ids.len() {
                 let id = self.script_module_ids[i];
                 self.eval_script_module(id, &macros, &sctx);
+            }
+            // Resolve each AudioScript module's block-constant sources and hand
+            // them over; its per-sample `eval_block` runs later, in graph.process().
+            for i in 0..self.audio_script_ids.len() {
+                let id = self.audio_script_ids[i];
+                self.prepare_audio_script(id, &macros, &sctx);
             }
         }
 
@@ -1121,6 +1145,41 @@ impl Voice {
                         module.eval_script_slot(slot, &self.script_scratch[slot][..n], &eval_ctx);
                 }
             }
+        }
+    }
+
+    /// Resolve an `AudioScript` module's **block-constant** source registers and
+    /// hand them to the module (Phase 4). Mirrors `eval_script_module`'s two-pass
+    /// borrow split: pass 1 resolves the script's `inputs` into the shared scratch
+    /// under `&graph` (audio-in / `first_sample` registers resolve to `0.0`
+    /// placeholders the module overwrites per-sample), pass 2 copies them into the
+    /// module under `&mut graph`. The actual per-sample `eval_block` happens inside
+    /// the module's `process()` during graph processing.
+    fn prepare_audio_script(
+        &mut self,
+        id: crate::ModuleId,
+        macros: &MacroValues,
+        sctx: &ScriptCtx,
+    ) {
+        // Pass 1: resolve the slot-0 script's sources into scratch row 0.
+        let n = {
+            let Some(module) = self.graph.get_module(id) else {
+                return;
+            };
+            let Some(Some(script)) = module.scripts().and_then(|s| s.first()) else {
+                return;
+            };
+            Self::resolve_script_sources(
+                &mut self.script_scratch[0],
+                &self.graph,
+                script,
+                macros,
+                sctx,
+            )
+        };
+        // Pass 2: copy the resolved block constants into the module.
+        if let Some(module) = self.graph.get_module_mut(id) {
+            module.set_audio_block_sources(&self.script_scratch[0][..n]);
         }
     }
 
@@ -1314,7 +1373,13 @@ impl Voice {
                 ScriptContext::BarPhase => sctx.bar_phase,
                 ScriptContext::Tempo => sctx.tempo,
                 ScriptContext::Playing => sctx.playing,
+                // Audio-rate one-shot; has no control-rate value. The AudioScript
+                // module injects the real per-sample pulse in `eval_block`.
+                ScriptContext::FirstSample => 0.0,
             },
+            // Per-sample audio inputs are block-constant placeholders here; the
+            // AudioScript module overwrites these registers each sample.
+            ScriptInput::AudioIn(_) => 0.0,
             ScriptInput::Zero => 0.0,
         }
     }
@@ -1331,6 +1396,7 @@ impl Voice {
 
         let mod_matrix_id = cloned_graph.find_module_by_type(ModuleType::ModMatrix);
         let script_module_ids = Self::collect_script_module_ids(&cloned_graph);
+        let audio_script_ids = Self::collect_module_ids(&cloned_graph, ModuleType::AudioScript);
 
         let mut voice = Self {
             id: self.id,
@@ -1353,6 +1419,7 @@ impl Voice {
             output_module_id: output_id,
             mod_matrix_id,
             script_module_ids,
+            audio_script_ids,
             mod_slots_cache: Vec::with_capacity(16),
             mono_buffer: AudioBuffer::new(MAX_BUFFER_SIZE),
             tuning_table: self.tuning_table.clone(),
@@ -1377,6 +1444,7 @@ impl Voice {
             .or_else(|| self.graph.find_module_by_type(ModuleType::Mixer));
         self.mod_matrix_id = self.graph.find_module_by_type(ModuleType::ModMatrix);
         self.script_module_ids = Self::collect_script_module_ids(&self.graph);
+        self.audio_script_ids = Self::collect_module_ids(&self.graph, ModuleType::AudioScript);
     }
 }
 
@@ -1823,6 +1891,80 @@ mod tests {
         assert!(
             peak < 1e-3,
             "scr-1.out1 -> amp.level must silence the voice"
+        );
+    }
+
+    /// Phase 4 acceptance: an `AudioScript` runs per-sample DSP in the voice
+    /// signal path, and the `Voice` resolves its block-constant sources. The
+    /// program is `out = in_l * velocity`: the audio passes through the per-sample
+    /// eval, scaled by `velocity` (a block-constant macro). If `prepare_audio_script`
+    /// did not run, `velocity` would read its `0.0` placeholder and the voice would
+    /// be silent — so a non-silent output proves both the per-sample audio path and
+    /// the block-constant resolution.
+    #[test]
+    fn audio_script_processes_audio_with_block_constant_velocity() {
+        use synth_core::script::{BoundScript, CompiledScript, Op, ScriptInput};
+        use synth_core::{MacroSource, SampleCount, SampleRate, SrcAddr};
+        use synth_modules::{Amplifier, AudioScript, Oscillator};
+
+        let mut voice = Voice::new(VoiceId::new(0));
+        let osc = voice.graph.add_module(Box::new(Oscillator::new()));
+        let asc = voice.graph.add_module(Box::new(AudioScript::new()));
+        let amp = voice.graph.add_module(Box::new(Amplifier::new()));
+        voice
+            .graph
+            .connect(osc, "out", asc, "in_l")
+            .expect("osc -> audio_script.in_l");
+        voice
+            .graph
+            .connect(asc, "out_l", amp, "in")
+            .expect("audio_script.out_l -> amp");
+        voice.update_output_cache();
+
+        // out = in_l * velocity  — register 0 = audio in (left), register 1 = velocity.
+        let prog = std::sync::Arc::new(BoundScript::new(
+            CompiledScript::new(
+                vec![Op::PushSource(0), Op::PushSource(1), Op::Mul],
+                Vec::new(),
+                2,
+                0,
+            ),
+            vec![
+                ScriptInput::AudioIn(synth_core::script::AudioInputChannel::Left),
+                ScriptInput::Source(SrcAddr::Macro(MacroSource::Velocity)),
+            ],
+            "out = in_l * velocity".to_string(),
+        ));
+        // The AudioScript hosts its program in slot 0.
+        let _ = voice.graph.set_script(asc, 0, Some(prog));
+
+        let ctx = ProcessContext {
+            samples: SampleCount::new(256),
+            sample_rate: SampleRate::DVD_QUALITY,
+            ..ProcessContext::default()
+        };
+        voice.note_on(MidiNote::A4, Velocity::MAX, SamplePosition::ZERO);
+
+        let mut l = AudioBuffer::new(256);
+        let mut r = AudioBuffer::new(256);
+        for _ in 0..4 {
+            voice.process_audio(&mut l, &mut r, &ctx);
+        }
+        let peak = (0..256).map(|i| l[i].abs()).fold(0.0_f32, f32::max);
+        assert!(
+            peak > 0.01,
+            "audio_script must pass the oscillator through (velocity resolved to 1.0)"
+        );
+
+        // Clearing the program silences the node (no script → no output).
+        let _ = voice.graph.set_script(asc, 0, None);
+        for _ in 0..2 {
+            voice.process_audio(&mut l, &mut r, &ctx);
+        }
+        let silent_peak = (0..256).map(|i| l[i].abs()).fold(0.0_f32, f32::max);
+        assert!(
+            silent_peak < 1e-4,
+            "clearing the script must silence the node"
         );
     }
 

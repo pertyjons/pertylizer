@@ -43,14 +43,24 @@ pub enum SessionError {
     ScriptCompile(String),
 }
 
-/// Compile a YAMS control-script `source` to a shared [`BoundScript`], **off the
-/// audio thread**. On failure returns the joined error diagnostics as a single
-/// message. Shared by the live load path ([`SynthSession::set_mod_script`]) and
-/// the offline renderer so both report compile errors identically.
+/// Compile a YAMS `source` to a shared [`BoundScript`], **off the audio thread**.
+/// On failure returns the joined error diagnostics as a single message. Shared by
+/// the live load path ([`SynthSession::set_mod_script`]) and the offline renderer
+/// so both report compile errors identically.
+///
+/// `audio_rate` selects the language dialect: `false` for control-rate hosts (Mod
+/// Matrix / Script module), `true` for the per-sample `AudioScript` module (which
+/// unlocks the audio-in / `first_sample` / `out.left`/`out.right` grammar). The
+/// caller derives it from the target module's type.
 pub(crate) fn compile_mod_script(
     source: &str,
+    audio_rate: bool,
 ) -> Result<Arc<synth_core::script::BoundScript>, String> {
-    let (program, diags) = synth_script::compile(source, &synth_script::CompileOptions::default());
+    let opts = synth_script::CompileOptions {
+        audio_rate,
+        ..synth_script::CompileOptions::default()
+    };
+    let (program, diags) = synth_script::compile(source, &opts);
     let Some(program) = program else {
         let msg = diags
             .iter()
@@ -910,8 +920,10 @@ impl SynthSession {
         // The control rate the engine actually runs at drives `lag` coefficient
         // folding; the default (48 kHz / 64-sample blocks) is the common case and
         // a mismatch only nudges constant-time smoothing — recompile on a real
-        // rate change is a later refinement.
-        let bound = compile_mod_script(source).map_err(SessionError::ScriptCompile)?;
+        // rate change is a later refinement. The `AudioScript` module compiles its
+        // program in the audio-rate dialect (per-sample `in`/`out.left`/…).
+        let audio_rate = module_id.module_type.script_is_audio_rate();
+        let bound = compile_mod_script(source, audio_rate).map_err(SessionError::ScriptCompile)?;
         let cmd = EngineCommand::SetModScript {
             instrument_id: Some(instrument_id),
             module_id,
@@ -1282,5 +1294,35 @@ mod tests {
             matches!(err, Err(SessionError::ScriptCompile(_))),
             "expected ScriptCompile, got {err:?}"
         );
+    }
+
+    /// The compile dialect follows the target module type: an `AudioScript`
+    /// program (audio-rate grammar — `in`, multi-out) compiles for an `AudioScript`
+    /// module but is a compile error for a control-rate module, and vice-versa.
+    #[test]
+    fn mod_script_dialect_follows_module_type() {
+        // Audio-rate grammar compiles only in the audio dialect.
+        assert!(compile_mod_script("out = tanh(in * 4)", true).is_ok());
+        assert!(compile_mod_script("out = tanh(in * 4)", false).is_err());
+        assert!(compile_mod_script("out.left = in_l\nout.right = in_r", true).is_ok());
+
+        // A plain control-rate program compiles in both dialects.
+        assert!(compile_mod_script("out = velocity * 0.5", false).is_ok());
+        assert!(compile_mod_script("out = velocity * 0.5", true).is_ok());
+
+        // set_mod_script picks the dialect from the module type: the same audio
+        // program is accepted for an AudioScript module, rejected for the Mod Matrix.
+        let (_engine, session) = test_session();
+        let asc = ModuleId::new(ModuleType::AudioScript, 1);
+        let mmx = ModuleId::new(ModuleType::ModMatrix, 1);
+        assert!(
+            session
+                .set_mod_script(InstrumentId::FIRST, asc, 0, "out = tanh(in * 4)")
+                .is_ok()
+        );
+        assert!(matches!(
+            session.set_mod_script(InstrumentId::FIRST, mmx, 0, "out = tanh(in * 4)"),
+            Err(SessionError::ScriptCompile(_))
+        ));
     }
 }

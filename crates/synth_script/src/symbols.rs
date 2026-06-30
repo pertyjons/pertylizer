@@ -4,7 +4,7 @@
 //! (decision #5): macros, context vars, constants, and functions. A `src`/`let`
 //! name that collides with any of them is a compile error ([`is_reserved`]).
 
-use synth_core::script::Builtin;
+use synth_core::script::{AudioInputChannel, Builtin};
 
 /// A per-voice macro input — always in scope, never bound with `src`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -36,6 +36,9 @@ pub enum Context {
     Tempo,
     /// `1.0` while the transport is running, else `0.0`.
     Playing,
+    /// `1.0` only at sample 0 of the note (audio-rate one-shot init). Resolved
+    /// only in audio-rate scripts; not offered in the control-script picker.
+    FirstSample,
 }
 
 /// A stateful built-in that carries per-voice register state.
@@ -146,6 +149,18 @@ pub fn macro_from_name(name: &str) -> Option<Macro> {
     })
 }
 
+/// Resolve an audio-input identifier to its channel. Audio-rate scripts only —
+/// the compiler gates these behind [`CompileOptions::audio_rate`]; in a
+/// control-rate script they are reserved but unresolvable. Mono `in` reads left.
+#[must_use]
+pub fn audio_in_channel(name: &str) -> Option<AudioInputChannel> {
+    Some(match name {
+        "in" | "in_l" => AudioInputChannel::Left,
+        "in_r" => AudioInputChannel::Right,
+        _ => return None,
+    })
+}
+
 /// Resolve a context-variable name.
 #[must_use]
 pub fn context_from_name(name: &str) -> Option<Context> {
@@ -203,6 +218,7 @@ pub fn resolve_fn(name: &str) -> Option<FnSpec> {
         "tan" => stateless(B::Tan),
         "atan" => stateless(B::Atan),
         "atan2" => stateless(B::Atan2),
+        "tanh" => stateless(B::Tanh),
         "lerp" | "mix" => stateless(B::Lerp),
         "smoothstep" => stateless(B::Smoothstep),
         "sigmoid" => stateless(B::Sigmoid),
@@ -235,7 +251,19 @@ pub fn is_reserved(name: &str) -> bool {
     // opcodes in the compiler (not `resolve_fn`), so they are reserved by name.
     matches!(
         name,
-        "src" | "let" | "out" | "arr" | "len" | "table_lin" | "scale_snap"
+        "src" | "let"
+            | "out"
+            | "arr"
+            | "state"
+            | "len"
+            | "table_lin"
+            | "scale_snap"
+            // Audio-rate identifiers — reserved in every mode (resolved only when
+            // `audio_rate`), so a control script cannot bind over them.
+            | "in"
+            | "in_l"
+            | "in_r"
+            | "first_sample"
     ) || resolve_fn(name).is_some()
         || macro_from_name(name).is_some()
         || context_from_name(name).is_some()

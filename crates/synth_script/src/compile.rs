@@ -8,19 +8,22 @@
 //! and the hard caps (decision #8). All errors are collected; any error → no
 //! program.
 
-use crate::ast::{ArrayDecl, BinaryOp, Binding, Expr, Local, Program, UnaryOp};
+use crate::ast::{
+    ArrayDecl, Assign, BinaryOp, Binding, BodyStmt, Expr, Local, OutChannel, Output, Program,
+    StateDecl, UnaryOp,
+};
 use crate::diag::Diagnostic;
 use crate::lexer::DurationUnit;
 use crate::parser::parse;
 use crate::span::Span;
 use crate::symbols::{
-    self, Context, FnKind, Macro, Stateful, constant_value, context_from_name, macro_from_name,
-    resolve_fn,
+    self, Context, FnKind, Macro, Stateful, audio_in_channel, constant_value, context_from_name,
+    macro_from_name, resolve_fn,
 };
 use synth_core::script::{
-    BoundScript, Builtin, CompiledScript, MAX_ARRAY_STORAGE, MAX_ARRAYS, MAX_INSTRUCTIONS,
-    MAX_LOCALS, MAX_NESTING_DEPTH, MAX_SOURCE_LEN, MAX_SOURCES, MAX_STATE, Op, ScriptContext,
-    ScriptInput, safe_div,
+    AudioInputChannel, BoundScript, Builtin, CompiledScript, MAX_ARRAY_STORAGE, MAX_ARRAYS,
+    MAX_INSTRUCTIONS, MAX_LOCALS, MAX_NESTING_DEPTH, MAX_SOURCE_LEN, MAX_SOURCES, MAX_STATE, Op,
+    ScriptContext, ScriptInput, safe_div,
 };
 use synth_core::{MacroSource, SrcAddr};
 
@@ -29,6 +32,9 @@ use synth_core::{MacroSource, SrcAddr};
 pub enum SourceInput {
     Macro(Macro),
     Context(Context),
+    /// A per-sample audio input (`in` / `in_l` / `in_r`) — audio-rate scripts
+    /// only; the engine overwrites this register each sample.
+    AudioIn(AudioInputChannel),
     /// A module member address, e.g. `lfo-1.out`. `instance` defaults to 1.
     Module {
         module: String,
@@ -64,6 +70,7 @@ fn input_to_runtime(input: &SourceInput) -> ScriptInput {
     match input {
         SourceInput::Macro(m) => ScriptInput::Source(SrcAddr::Macro(macro_to_runtime(*m))),
         SourceInput::Context(c) => ScriptInput::Context(context_to_runtime(*c)),
+        SourceInput::AudioIn(ch) => ScriptInput::AudioIn(*ch),
         SourceInput::Module {
             module,
             instance,
@@ -99,6 +106,7 @@ fn context_to_runtime(c: Context) -> ScriptContext {
         Context::BarPhase => ScriptContext::BarPhase,
         Context::Tempo => ScriptContext::Tempo,
         Context::Playing => ScriptContext::Playing,
+        Context::FirstSample => ScriptContext::FirstSample,
     }
 }
 
@@ -107,14 +115,21 @@ fn context_to_runtime(c: Context) -> ScriptContext {
 pub struct CompileOptions {
     /// Control rate in Hz — needed to precompute `lag` coefficients (a `lag`
     /// with a constant time folds its alpha here; recompile on a rate change).
+    /// At audio rate this is the sample rate (used the same way for `lag`).
     pub control_rate: f32,
+    /// Compile for the audio-rate [`AudioScript`](synth_core) module. Enables the
+    /// audio-only grammar — audio-in sources (`in`/`in_l`/`in_r`), the
+    /// `first_sample` one-shot, and `out.left`/`out.right` multi-out — which are
+    /// compile errors in a control-rate (Mod Matrix / Script module) script.
+    pub audio_rate: bool,
 }
 
 impl Default for CompileOptions {
     fn default() -> Self {
-        // 48 kHz / 64-sample blocks.
+        // 48 kHz / 64-sample blocks, control-rate (Mod Matrix / Script module).
         Self {
             control_rate: 750.0,
+            audio_rate: false,
         }
     }
 }
@@ -125,11 +140,13 @@ pub fn compile(src: &str, opts: &CompileOptions) -> (Option<CompiledProgram>, Ve
     let (program, diags) = parse(src);
     let mut compiler = Compiler {
         control_rate: opts.control_rate,
+        audio_rate: opts.audio_rate,
         code: Vec::new(),
         constants: Vec::new(),
         inputs: Vec::new(),
         bindings: Vec::new(),
         arrays: Vec::new(),
+        states: Vec::new(),
         array_storage: 0,
         locals: Vec::new(),
         next_state: 0,
@@ -164,13 +181,21 @@ struct ArrayEntry {
     len: u16,
 }
 
+/// A declared `state` cell: its name and the state-register index it owns.
+struct StateEntry {
+    name: String,
+    cell: u16,
+}
+
 struct Compiler {
     control_rate: f32,
+    audio_rate: bool,
     code: Vec<Op>,
     constants: Vec<f32>,
     inputs: Vec<SourceInput>,
     bindings: Vec<BindingEntry>,
     arrays: Vec<ArrayEntry>,
+    states: Vec<StateEntry>,
     array_storage: usize,
     locals: Vec<String>,
     next_state: u16,
@@ -197,15 +222,22 @@ impl Compiler {
         for a in &program.arrays {
             self.register_array(a);
         }
-        for l in &program.locals {
-            self.compile_local(l);
+        // Declared `state` cells are allocated before the body compiles, so a
+        // forward read/write of `s` resolves to a stable cell index (and any
+        // body `lag`/`phasor` cells are allocated after them).
+        for s in &program.states {
+            self.register_state(s);
         }
-        if let Some(out) = &program.output {
-            self.compile_expr(&out.expr, 0);
+        for stmt in &program.body {
+            match stmt {
+                BodyStmt::Local(l) => self.compile_local(l),
+                BodyStmt::Assign(a) => self.compile_assign(a),
+            }
         }
+        self.compile_outputs(&program.outputs);
 
         // Final caps (per-allocation caps were checked as they were hit).
-        let fallback = program.output.as_ref().map_or(Span::new(0, 0), |o| o.span);
+        let fallback = program.outputs.first().map_or(Span::new(0, 0), |o| o.span);
         if self.code.len() > MAX_INSTRUCTIONS {
             self.error(
                 fallback,
@@ -235,16 +267,45 @@ impl Compiler {
     fn name_taken(&self, name: &str) -> bool {
         self.bindings.iter().any(|b| b.alias == name)
             || self.arrays.iter().any(|a| a.name == name)
+            || self.states.iter().any(|s| s.name == name)
             || self.locals.iter().any(|l| l == name)
+    }
+
+    /// Emit a diagnostic if `name` shadows a built-in or collides with an
+    /// existing declaration. The single guard shared by every declaration site
+    /// (`src` / `arr` / `state` / `let`), so the rules and wording stay in lockstep.
+    fn check_unique_name(&mut self, name: &str, span: Span) {
+        if symbols::is_reserved(name) {
+            self.error(span, format!("cannot shadow built-in `{name}`"));
+        } else if self.name_taken(name) {
+            self.error(span, format!("duplicate name `{name}`"));
+        }
+    }
+
+    /// Register a `state s = <const>` declaration: allocate one persistent cell
+    /// and record `name → cell`. The initializer must fold to `0` (cells reset to
+    /// 0 on note-on; a non-zero seed comes from `first_sample` at audio rate).
+    fn register_state(&mut self, s: &StateDecl) {
+        let name = &s.name.name;
+        self.check_unique_name(name, s.name.span);
+        match const_eval(&s.init) {
+            Some(0.0) => {}
+            Some(_) => self.error(
+                s.init.span(),
+                "state cells initialize to 0 (note-on resets all state); seed a non-zero value from `first_sample` in an audio-rate script",
+            ),
+            None => self.error(s.init.span(), "state initializer must be a constant"),
+        }
+        let cell = self.alloc_state(1, s.span);
+        self.states.push(StateEntry {
+            name: name.clone(),
+            cell,
+        });
     }
 
     fn register_binding(&mut self, b: &Binding) {
         let name = &b.alias.name;
-        if symbols::is_reserved(name) {
-            self.error(b.alias.span, format!("cannot shadow built-in `{name}`"));
-        } else if self.name_taken(name) {
-            self.error(b.alias.span, format!("duplicate name `{name}`"));
-        }
+        self.check_unique_name(name, b.alias.span);
         self.bindings.push(BindingEntry {
             alias: name.clone(),
             module: b.address.module.clone(),
@@ -255,11 +316,7 @@ impl Compiler {
 
     fn register_array(&mut self, a: &ArrayDecl) {
         let name = &a.name.name;
-        if symbols::is_reserved(name) {
-            self.error(a.name.span, format!("cannot shadow built-in `{name}`"));
-        } else if self.name_taken(name) {
-            self.error(a.name.span, format!("duplicate name `{name}`"));
-        }
+        self.check_unique_name(name, a.name.span);
         if a.elements.is_empty() {
             self.error(
                 a.span,
@@ -297,17 +354,98 @@ impl Compiler {
 
     fn compile_local(&mut self, l: &Local) {
         let name = &l.name.name;
-        if symbols::is_reserved(name) {
-            self.error(l.name.span, format!("cannot shadow built-in `{name}`"));
-        } else if self.name_taken(name) {
-            self.error(l.name.span, format!("duplicate name `{name}`"));
-        }
+        self.check_unique_name(name, l.name.span);
         self.compile_expr(&l.expr, 0);
         let slot = self.locals.len() as u16;
         self.code.push(Op::StoreLocal(slot));
         self.locals.push(name.clone());
         if self.locals.len() > MAX_LOCALS {
             self.error(l.span, format!("too many locals (max {MAX_LOCALS})"));
+        }
+    }
+
+    /// Compile a `state`-cell assignment `s = expr` → evaluate the expression and
+    /// pop it into the cell (`Op::StoreState`). Stack-neutral, like `let`. Only a
+    /// declared `state` name is assignable.
+    fn compile_assign(&mut self, a: &Assign) {
+        let name = &a.name.name;
+        let Some(cell) = self.states.iter().find(|s| s.name == *name).map(|s| s.cell) else {
+            if symbols::is_reserved(name) {
+                self.error(a.name.span, format!("cannot assign to built-in `{name}`"));
+            } else if self.name_taken(name) {
+                self.error(
+                    a.name.span,
+                    format!("`{name}` is not a `state` cell; only `state` cells can be assigned"),
+                );
+            } else {
+                self.error(
+                    a.name.span,
+                    format!(
+                        "assignment to undeclared `{name}`; declare it with `state {name} = 0`"
+                    ),
+                );
+            }
+            // Still compile the RHS so nested errors in it are reported; the
+            // emitted code is discarded (an error path never yields a program).
+            self.compile_expr(&a.expr, 0);
+            return;
+        };
+        self.compile_expr(&a.expr, 0);
+        self.code.push(Op::StoreState(cell));
+    }
+
+    /// Compile the program's output statement(s), validating the channel mix.
+    ///
+    /// Control-rate: exactly one mono `out` (a channel output or a second `out`
+    /// is an error). Audio-rate: either one mono `out` (the
+    /// [`eval_block`](synth_core) fallback duplicates it to both channels) or up
+    /// to two channel outputs `out.left`/`out.right` (no duplicate channel, not
+    /// mixed with a mono `out`). A mono `out` leaves its value on the value stack;
+    /// a channel `out` emits `Op::StoreAudioOut(0|1)`.
+    fn compile_outputs(&mut self, outputs: &[Output]) {
+        self.validate_output_channels(outputs);
+        for o in outputs {
+            self.compile_expr(&o.expr, 0);
+            match o.channel {
+                // A bare `out` leaves its value on the stack (the VM reads the top
+                // as the mono result and duplicates it to both channels).
+                OutChannel::Mono => {}
+                OutChannel::Left => self.code.push(Op::StoreAudioOut(0)),
+                OutChannel::Right => self.code.push(Op::StoreAudioOut(1)),
+            }
+        }
+    }
+
+    /// Validate the set of output statements for the current rate, emitting a
+    /// diagnostic per violation (the emission itself stays simple).
+    fn validate_output_channels(&mut self, outputs: &[Output]) {
+        if !self.audio_rate {
+            // Control-rate: a single mono `out`, nothing stereo.
+            for o in outputs.iter().filter(|o| o.channel != OutChannel::Mono) {
+                self.error(
+                    o.span,
+                    "`out.left`/`out.right` (stereo output) is only available in an audio-rate script",
+                );
+            }
+        } else if outputs.iter().any(|o| o.channel == OutChannel::Mono) {
+            // Audio-rate: a mono `out` and a channel `out` cannot be mixed.
+            if let Some(o) = outputs.iter().find(|o| o.channel != OutChannel::Mono) {
+                self.error(
+                    o.span,
+                    "use a single `out` OR `out.left`/`out.right`, not both",
+                );
+            }
+        }
+        // Each channel may appear at most once (the second one would silently win).
+        self.dup_channel_error(outputs, OutChannel::Mono, "out");
+        self.dup_channel_error(outputs, OutChannel::Left, "out.left");
+        self.dup_channel_error(outputs, OutChannel::Right, "out.right");
+    }
+
+    /// Report the second (and later) occurrence of a duplicated output channel.
+    fn dup_channel_error(&mut self, outputs: &[Output], channel: OutChannel, label: &str) {
+        for o in outputs.iter().filter(|o| o.channel == channel).skip(1) {
+            self.error(o.span, format!("duplicate `{label}`"));
         }
     }
 
@@ -365,6 +503,11 @@ impl Compiler {
             self.code.push(Op::LoadLocal(slot as u16));
             return;
         }
+        // A bare `state` name reads the cell's current value (`Op::LoadState`).
+        if let Some(cell) = self.states.iter().find(|s| s.name == name).map(|s| s.cell) {
+            self.code.push(Op::LoadState(cell));
+            return;
+        }
         if let Some(b) = self.bindings.iter().find(|b| b.alias == name) {
             let input = SourceInput::Module {
                 module: b.module.clone(),
@@ -382,6 +525,17 @@ impl Compiler {
             self.push_source(SourceInput::Context(ctx));
             return;
         }
+        // Audio-only identifiers (`in`/`in_l`/`in_r`, `first_sample`) resolve only
+        // in an audio-rate script; in a control-rate one they are reserved but
+        // produce a clear error rather than a confusing "unknown identifier".
+        if let Some(ch) = audio_in_channel(name) {
+            self.resolve_audio_only(name, span, SourceInput::AudioIn(ch));
+            return;
+        }
+        if name == "first_sample" {
+            self.resolve_audio_only(name, span, SourceInput::Context(Context::FirstSample));
+            return;
+        }
         if self.arrays.iter().any(|a| a.name == name) {
             self.error(
                 span,
@@ -392,6 +546,22 @@ impl Compiler {
         }
         self.error(span, format!("unknown identifier `{name}`"));
         self.emit_const(0.0);
+    }
+
+    /// Resolve an audio-only identifier, gating it behind `audio_rate`: push its
+    /// source register in an audio-rate script, or emit a clear error (and a
+    /// placeholder `0`) in a control-rate one. Shared by the audio-in and
+    /// `first_sample` resolution paths.
+    fn resolve_audio_only(&mut self, name: &str, span: Span, src: SourceInput) {
+        if self.audio_rate {
+            self.push_source(src);
+        } else {
+            self.error(
+                span,
+                format!("`{name}` is only available in an audio-rate script"),
+            );
+            self.emit_const(0.0);
+        }
     }
 
     /// Resolve an array name to its `(base, len)` in the constant pool, if any.
@@ -1008,7 +1178,7 @@ mod tests {
         let out = eval(&prog, |inp| match inp {
             SourceInput::Module { .. } => 0.8,
             SourceInput::Macro(_) => 0.5,
-            SourceInput::Context(_) => 0.0,
+            SourceInput::Context(_) | SourceInput::AudioIn(_) => 0.0,
         });
         assert!(approx(out, 0.4));
     }
@@ -1496,5 +1666,252 @@ mod tests {
                 .iter()
                 .any(|e| e.contains("duplicate"))
         );
+    }
+
+    // ---- Phase 4 step 2a: `state` cells, assignment, `tanh` ---------------
+
+    /// Evaluate a program over `n` blocks, filling sources via `fill` each block,
+    /// against a single persistent `RegisterFile` — so state carries across blocks.
+    fn eval_n(prog: &CompiledProgram, fill: impl Fn(&SourceInput) -> f32, n: usize) -> f32 {
+        let sources: Vec<f32> = prog.inputs.iter().map(&fill).collect();
+        let mut regs = RegisterFile::new(0, SEED);
+        let ctx = EvalContext::new(CR);
+        let mut last = 0.0;
+        for _ in 0..n {
+            last = prog.script.eval(&sources, &mut regs, &ctx);
+        }
+        last
+    }
+
+    #[test]
+    fn state_cell_is_a_manual_accumulator() {
+        // `state s` declares one cell; `s = s + velocity` accumulates across blocks.
+        let prog = compile_ok("state s = 0\ns = s + velocity\nout = s");
+        assert_eq!(prog.script.state_count(), 1);
+        // velocity = 0.5 each block → 0.5, 1.0, 1.5 after three blocks.
+        assert!(approx(eval_n(&prog, |_| 0.5, 3), 1.5));
+    }
+
+    #[test]
+    fn state_read_returns_prior_value_until_assignment() {
+        // Reading `s` before its assignment in the same block sees last block's
+        // value (the IIR ordering guarantee): let prev = s; s = velocity; out = prev.
+        let prog = compile_ok("state s = 0\nlet prev = s\ns = velocity\nout = prev");
+        // Block 1: prev = 0 (cold). Block 2: prev = velocity from block 1.
+        let sources: Vec<f32> = prog.inputs.iter().map(|_| 0.7).collect();
+        let mut regs = RegisterFile::new(0, SEED);
+        let ctx = EvalContext::new(CR);
+        assert!(approx(prog.script.eval(&sources, &mut regs, &ctx), 0.0));
+        assert!(approx(prog.script.eval(&sources, &mut regs, &ctx), 0.7));
+    }
+
+    #[test]
+    fn state_is_stack_neutral_and_chains() {
+        // Two state cells updated in sequence; the program must stay balanced.
+        let prog = compile_ok("state a = 0\nstate b = 0\na = a + 1\nb = b + a\nout = b");
+        assert_eq!(prog.script.state_count(), 2);
+        // a: 1,2,3 ; b: 1,3,6.
+        assert!(approx(eval_n(&prog, |_| 0.0, 3), 6.0));
+    }
+
+    #[test]
+    fn assigning_a_non_state_is_an_error() {
+        assert!(
+            errors("let x = 1\nx = 2\nout = x")
+                .iter()
+                .any(|e| e.contains("not a `state` cell"))
+        );
+        assert!(
+            errors("s = 1\nout = 0")
+                .iter()
+                .any(|e| e.contains("undeclared"))
+        );
+        assert!(
+            errors("velocity = 1\nout = 0")
+                .iter()
+                .any(|e| e.contains("built-in"))
+        );
+    }
+
+    #[test]
+    fn state_keyword_and_nonzero_init_are_guarded() {
+        // `state` is a keyword, so it cannot be used as a `let` name at all (a
+        // parse error — stronger than the reserved-identifier shadow check).
+        assert!(!errors("let state = 1\nout = state").is_empty());
+        assert!(
+            errors("state s = 5\nout = s")
+                .iter()
+                .any(|e| e.contains("initialize to 0"))
+        );
+        assert!(
+            errors("state s = velocity\nout = s")
+                .iter()
+                .any(|e| e.contains("must be a constant"))
+        );
+    }
+
+    #[test]
+    fn state_counts_against_the_cap() {
+        // 16 state cells is exactly MAX_STATE; a 17th overflows.
+        let ok = (0..16)
+            .map(|i| format!("state s{i} = 0"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            compile(&format!("{ok}\nout = s0"), &CompileOptions::default())
+                .0
+                .is_some()
+        );
+        let over = (0..17)
+            .map(|i| format!("state s{i} = 0"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            errors(&format!("{over}\nout = s0"))
+                .iter()
+                .any(|e| e.contains("too much state"))
+        );
+    }
+
+    #[test]
+    fn tanh_folds_and_evaluates() {
+        // Stateless builtin: a constant argument folds at compile time.
+        assert!(approx(eval(&compile_ok("out = tanh(0)"), |_| 0.0), 0.0));
+        // Dynamic argument evaluates at runtime: tanh(velocity).
+        let prog = compile_ok("out = tanh(velocity)");
+        assert!(approx(eval(&prog, |_| 1.0), 1.0_f32.tanh()));
+        // `tanh` is reserved (cannot be shadowed).
+        assert!(
+            errors("let tanh = 1\nout = 0")
+                .iter()
+                .any(|e| e.contains("shadow"))
+        );
+    }
+
+    // ---- Phase 4 step 2b: audio-rate grammar ------------------------------
+
+    fn audio_opts() -> CompileOptions {
+        CompileOptions {
+            audio_rate: true,
+            ..CompileOptions::default()
+        }
+    }
+
+    fn compile_audio_ok(src: &str) -> CompiledProgram {
+        let (prog, diags) = compile(src, &audio_opts());
+        let errs: Vec<_> = diags.iter().filter(|d| d.is_error()).collect();
+        assert!(errs.is_empty(), "unexpected errors: {errs:?}");
+        prog.expect("a compiled audio program")
+    }
+
+    fn audio_errors(src: &str) -> Vec<String> {
+        compile(src, &audio_opts())
+            .1
+            .into_iter()
+            .filter(Diagnostic::is_error)
+            .map(|d| d.message)
+            .collect()
+    }
+
+    #[test]
+    fn audio_sources_are_gated_behind_audio_rate() {
+        // In a control-rate script the audio identifiers are reserved-but-unusable.
+        for name in ["in", "in_l", "in_r"] {
+            assert!(
+                errors(&format!("out = {name}"))
+                    .iter()
+                    .any(|e| e.contains("audio-rate")),
+                "`{name}` should be control-rate-rejected"
+            );
+        }
+        assert!(
+            errors("out = first_sample")
+                .iter()
+                .any(|e| e.contains("audio-rate"))
+        );
+        // At audio rate they compile to the right source kinds.
+        let prog = compile_audio_ok("out = in_l + in_r * first_sample");
+        assert!(
+            prog.inputs
+                .contains(&SourceInput::AudioIn(AudioInputChannel::Left))
+        );
+        assert!(
+            prog.inputs
+                .contains(&SourceInput::AudioIn(AudioInputChannel::Right))
+        );
+        assert!(
+            prog.inputs
+                .contains(&SourceInput::Context(Context::FirstSample))
+        );
+        // `in` aliases the left channel.
+        let mono = compile_audio_ok("out = in");
+        assert!(
+            mono.inputs
+                .contains(&SourceInput::AudioIn(AudioInputChannel::Left))
+        );
+    }
+
+    #[test]
+    fn multi_out_is_gated_and_emits_store_audio_out() {
+        // Control-rate rejects channel outputs.
+        assert!(
+            errors("out.left = velocity")
+                .iter()
+                .any(|e| e.contains("audio-rate"))
+        );
+        // Audio-rate emits StoreAudioOut(0) and StoreAudioOut(1).
+        let prog = compile_audio_ok("out.left = in_l\nout.right = in_r");
+        assert!(prog.script.code().contains(&Op::StoreAudioOut(0)));
+        assert!(prog.script.code().contains(&Op::StoreAudioOut(1)));
+        // Mixing mono and channel, or duplicating a channel, is an error.
+        assert!(
+            audio_errors("out = in\nout.left = in")
+                .iter()
+                .any(|e| e.contains("not both"))
+        );
+        assert!(
+            audio_errors("out.left = in\nout.left = in")
+                .iter()
+                .any(|e| e.contains("duplicate"))
+        );
+    }
+
+    #[test]
+    fn audio_waveshaper_round_trips_through_eval_block() {
+        use synth_core::script::AudioBindings;
+        // Compile a real audio DSP program and run it through eval_block, building
+        // the per-sample bindings from the compiled input list (as the module will).
+        let prog = compile_audio_ok("out = tanh(in * 4)");
+        let drive_reg = prog
+            .inputs
+            .iter()
+            .position(|i| *i == SourceInput::AudioIn(AudioInputChannel::Left))
+            .expect("an `in` source register") as u16;
+        let bindings = AudioBindings {
+            in_left: Some(drive_reg),
+            ..Default::default()
+        };
+
+        let input: Vec<f32> = vec![0.0, 0.1, -0.2, 0.5];
+        let mut sources = vec![0.0; prog.inputs.len()];
+        let mut regs = RegisterFile::new(0, SEED);
+        let mut l = vec![0.0; input.len()];
+        let mut r = vec![0.0; input.len()];
+        prog.script.eval_block(
+            &mut sources,
+            &bindings,
+            &input,
+            &input,
+            &mut l,
+            &mut r,
+            &mut regs,
+            &EvalContext::audio(48_000.0),
+            true,
+        );
+        for i in 0..input.len() {
+            let expected = (input[i] * 4.0).tanh();
+            assert!(approx(l[i], expected), "sample {i}: {} != {expected}", l[i]);
+            assert!(approx(r[i], expected), "mono duplicated to right");
+        }
     }
 }

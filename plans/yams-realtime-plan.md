@@ -20,6 +20,151 @@ heaviest lift in the plan for the narrowest unique payoff.
 
 ---
 
+## Status (verified against `main`, 2026-06-30)
+
+- **Phase 0 — DONE.** `ScriptHost` (`synth_core/src/script/host.rs`) is built and
+  wired; `RegisterFile` lives in the host inside each module (no `script_regs` on
+  `Voice`); two-step resolve→`eval_script_slot`; `PolyModule::set_voice_index`;
+  `set_script` returns the replaced `Arc` (`#[must_use]`); `script_trash`
+  deferred-drop ring. (One small bullet — zeroing a slot's state on a *live* script
+  swap — is described below and may still be open; verify before relying on it.)
+- **Phase 1 — DONE.** Transport sources `beat`/`bar_phase`/`tempo`/`playing` exist
+  (`synth_script/src/symbols.rs`, `synth_core/src/script/bound.rs`).
+- **Phase 2 — DONE.** The standalone control-rate **`ModuleType::Script`** module
+  exists (`synth_modules/src/script_module.rs`): K=8 slots `out1`..`out8`, embedded
+  `ScriptHost`, whole-buffer fill, chainable (`src x = scr-1.out1`). It is
+  control-rate — one value per block, broadcast across the buffer.
+- **Phase 3 (C) — dropped** (see note below).
+- **Phase 4 — IN PROGRESS** (branch `feat/yams-audio-script`), built in logical
+  sub-steps:
+  - **Step 1 — VM foundation: DONE.** Scalar warm-frame
+    `CompiledScript::eval_block()` (`synth_core/src/script/eval.rs`): the
+    op-dispatch loop is now a shared `run()` behind both per-block `eval` and
+    per-sample `eval_block`; `Stack::clear()` resets `sp` only; `Op::LoadState` /
+    `Op::StoreState` (author-addressable IIR state, layer-2 NaN-sanitized on
+    store) and `Op::StoreAudioOut(chan)` (multi-out) added to `bytecode.rs`;
+    `AudioBindings` carries the per-block-constant vs per-sample source split
+    (audio-in + `first_sample`); `EvalContext::audio()`. 6 unit tests (passthrough
+    bit-exact, gain, scripted one-pole via Load/StoreState, stereo multi-out,
+    `first_sample` one-shot, NaN-in-feedback clamp).
+  - **Step 2a — Compiler: `state` cells + `tanh`: DONE.** `state s = 0`
+    declaration (header) + `s = expr` assignment (ordered body statement) compile
+    to `Op::LoadState`/`StoreState`, routed through `alloc_state` (shared
+    `MAX_STATE` cap). The program body is now an ordered `Vec<BodyStmt>` (locals +
+    assignments) so straight-line order gives correct IIR semantics. `tanh`
+    builtin added. Non-zero state init is rejected with guidance toward
+    `first_sample`. Works at control rate too (custom one-pole etc.). 8 new tests
+    across lexer/parser/compile/fmt. (`synth_script` + `synth_core/bytecode.rs`.)
+  - **Step 2b — Compiler: audio-rate grammar: DONE.** `CompileOptions.audio_rate`
+    flag gates the audio-only grammar (compile error in a control-rate script):
+    audio-in sources `in`/`in_l`/`in_r` (`in` = left; underscores, since `-`
+    lexes as Minus), the `first_sample` one-shot, and `out.left`/`out.right`
+    multi-out (`Op::StoreAudioOut`, with mono/channel mix + duplicate-channel
+    validation). New runtime types `ScriptContext::FirstSample`,
+    `ScriptInput::AudioIn(AudioInputChannel)`; voice.rs resolves both to 0.0
+    block-constant placeholders (the audio module injects per-sample). 5 new
+    tests incl. a compile→`eval_block` `tanh(in*4)` waveshaper round-trip.
+  - **Step 3 — `AudioScript` module + engine wiring: DONE.**
+    `synth_modules/src/audio_script.rs`: a per-voice `PolyModule` running its YAMS
+    program once per sample via `CompiledScript::eval_block` in `process()`. Holds
+    a single `Arc<BoundScript>` + one `RegisterFile` (not the 16-slot
+    `ScriptHost`); stereo `in_l`/`in_r` → `out_l`/`out_r`; owns per-channel scratch
+    (a `HashMap` can't hand out two `&mut` channel buffers). `set_script` computes
+    `AudioBindings` + sizes the source buffer; `first_block` drives the
+    `first_sample` one-shot (only cleared once a non-empty block ran). New
+    `ModuleType::AudioScript`, factory registration, and voice wiring
+    (`audio_script_ids`, `prepare_audio_script` resolves block-constant sources
+    each block; refreshed in `update_output_cache` too). 7 module tests + a voice
+    integration test (per-sample DSP + block-constant `velocity`). **GUI add-module
+    palette entry deferred to Step 4** (the module is reachable via MCP/load).
+  - **Step 4 — benches + docs + authoring dialect: DONE (headless).** Criterion-
+    style `harness=false` bench (`synth_script/benches/yams_audio.rs`) measures the
+    audio-rate `eval_block` cost (simple waveshaper ≈3% of a core at 16 voices; a
+    heavy 25-op biquad ≈9%) — validating the perf model. `docs/yams.md` documents
+    `state` cells, `tanh`, and a full audio-rate section (in/in_l/in_r,
+    `first_sample`, multi-out, cost/stability). The authoring/persistence dialect
+    is wired: `compile_mod_script(source, audio_rate)` selects control- vs
+    audio-rate by the target module type, threaded through `set_mod_script` (live
+    author + live project load + MCP) and the offline renderer — so AudioScript
+    programs compile, save/load, and render correctly (headless test
+    `mod_script_dialect_follows_module_type`). The data-driven "Add module" menu
+    already reaches `AudioScript` (it's in `ModuleType::all()`).
+  - **Step 5 — GUI editor panel: DONE (headless; needs in-app eyeball).** The
+    `AudioScript` module now renders a single-slot grid
+    (`draw_audio_script_module_grid`, `patch_editor.rs`) dispatched on the
+    `"audio_script"` descriptor (`node.rs`), reusing the shared expression-editor
+    popup (`draw_slot_expression_editor`) — the same code field as the control
+    Script module. A shared `draw_script_slot_row` helper now backs both the
+    Script (8-slot) and AudioScript (1-slot) grids. `ScriptEditorState` carries an
+    `audio_rate` flag so the popup's live compile, window title, hint, and the
+    YAMS reference/help panel match the dialect
+    `session::compile_mod_script(.., audio_rate = true)` actually installs (and
+    the control-script cycle-warning is suppressed for the intentional per-sample
+    IIR feedback). The help panel branches its execution-model and sources
+    sections to the per-sample dialect (`in`/`in_l`/`in_r`, `first_sample`,
+    `state` cells, `out.left`/`out.right`) — fixed in the final xhigh review,
+    which two independent finders flagged as the one real defect. The program is
+    exposed by the engine as slot "1" and mirrored into `slot_scripts[0]` by
+    `sync_module_scripts`, so the install/preview paths are identical to Script.
+    Workspace green.
+  - **Step 6 — live CPU-cost indicator: DONE (headless; needs in-app eyeball).**
+    The audio-program editor now shows a per-sample instruction count plus a
+    rough core-fraction estimate (`popups.rs`, audio-rate only). Because YAMS
+    evaluates every branch every sample (eager), the compiled `code().len()` is
+    the worst-case per-sample cost by construction, so it is a faithful CPU
+    proxy; the percentage is anchored to the `yams_audio` bench (~25 ops ≈ 9% of
+    one core at 16 voices / 48 kHz) and labelled an estimate. Tiered colour
+    (green ≤24 ops, yellow ≤64, orange beyond) + a tooltip explaining it scales
+    with voice count / sample rate and steering authors away from heavy DSP in
+    ternary branches. **Deliberately not a live audio-thread measurement:**
+    per-module timing is dead infra (`cpu_tracker.rs`) and instrumenting the
+    per-sample voice loop would add forbidden syscalls to the RT hot path (only
+    the callback-level aggregate `cpu_usage`/`cpu_breakdown` is measured); the
+    static worst-case estimate is the RT-safe, honest choice and directly serves
+    the external review's "warn against heavy ternary branches" point.
+  - **Step 7 — offline-render script replay: DONE (headless; regression-tested).**
+    Bug found while building a demo AudioScript instrument over MCP: the patch
+    played live but `analyze_note`/`preview` rendered it SILENT. Root cause was a
+    per-renderer divergence — the `OfflineNoteSession` note loader
+    (`preview.rs::apply_module_state`) replayed parameters + bypass but never
+    installed YAMS scripts, so every scripted module (asc / scr / mmx) rendered
+    zero through the note path (the arrangement renderer already replayed them).
+    Fixed by replaying scripts in the note loader, and the two identical replay
+    blocks were de-duplicated into a shared `audio::replay_module_scripts` helper
+    (used by both `arrangement_render` and `preview`). New regression test
+    `audio_script_program_is_replayed_in_offline_note_render` (preview_integration.rs):
+    `out = in` passthrough is silent with no program, audible once installed.
+    Note: this also restored control-rate Script/Mod-Matrix scripts in
+    `analyze_note`, not just AudioScript. (`render_to_wav` was never affected —
+    the arrangement path already replayed scripts; my earlier MCP report
+    conflated the two.)
+  - **Step 8 — in-app eyeball + bundled example: DONE.** With the app rebuilt to
+    this branch (egui inspection on), the GUI was verified live via the egui MCP:
+    the AudioScript ƒx editor renders the audio-rate dialect (title "Audio program
+    - per-sample DSP", the `out = tanh(in*4)`/stereo hint, the code field, a green
+    "compiled" status, and the CPU line "~59 ops/sample · ~21% core @ 16 voices
+    (est.)"), and the `asc-1` panel shows the single-slot PROGRAM/dsp/ƒx grid. The
+    offline-render fix was live-verified earlier via `analyze_note` (silent before,
+    audible after rebuild) on a stereo wavefolder patch. A bundled example project
+    `assets/examples/projects/YAMS AudioScript Wavefolder.json` (a stereo
+    per-sample wavefolder that also synthesizes its own sub-octave inside the
+    script) was saved and round-tripped (build → save → load → render, non-silent,
+    stereo). NOTE: the egui a11y tree doesn't expose the patch-canvas popup widgets
+    (custom painters + reactive repaint), so the eyeball relied on screenshots, not
+    `query_tree`/`click`.
+  - **PHASE 4 (B) COMPLETE.** All 8 steps done; branch `feat/yams-audio-script`
+    (now ~13 commits, workspace green). NOT yet merged — squash-merge to main per
+    CLAUDE.md is the user's call.
+- **Future / out of plan:** a single-instance `AudioEffect` flavor of the audio
+  script for effect chains / return buses / the **master bus** (the per-voice
+  `PolyModule` script cannot live there — effects are a separate trait, one stereo
+  instance on summed audio). Cheapest audio-rate target (no polyphony multiplier).
+
+**Net: Phases 0–2 shipped; the live work is Phase 4 (+ the optional master/bus
+`AudioEffect` flavor).**
+
+---
+
 ## 0. Design foundation (governs the whole plan)
 
 Three facts from the code drive every decision below:
@@ -60,7 +205,7 @@ scales with voices and must be budgeted** (heavy stereo script × full polyphony
 
 ---
 
-## Phase 0 — Foundation: make script execution module-agnostic
+## Phase 0 — Foundation: make script execution module-agnostic — DONE (on `main`)
 
 **Goal:** zero behavior change; the Mod Matrix works exactly as today, but the
 script machinery is no longer Mod-Matrix-specific.
@@ -122,7 +267,7 @@ identical results to today's path; a two-voice PRNG-decorrelation test.
 
 ---
 
-## Phase 1 (E) — New sources: transport, tempo, more params
+## Phase 1 (E) — New sources: transport, tempo, more params — DONE (on `main`)
 
 Cheapest, purely additive, unlocks tempo sync everywhere.
 
@@ -153,7 +298,7 @@ Cheapest, purely additive, unlocks tempo sync everywhere.
 
 ---
 
-## Phase 2 (A) — The Script module
+## Phase 2 (A) — The Script module — DONE (on `main`)
 
 The headline of A+E: scripted control signals as first-class graph nodes —
 reusable, shared, chainable.
@@ -240,7 +385,10 @@ Self-contained, opt-in, with a budget guard. Builds directly on Phases 0/2.
 
 - **VM model: scalar warm-frame `eval_block()` as the baseline** — sample loop on
   the outside, ops inside, keeping stack/locals/regs warm across the loop (no
-  per-sample setup) + a **source split: per-block constant vs per-sample** (macros
+  per-sample setup — reset the value stack per sample via a new `Stack::clear()`
+  that sets `sp = 0`, *never* `Stack::new()`, which `memset`s the 64-float buffer
+  every sample; stale slots above `sp` are unread) + a **source split: per-block
+  constant vs per-sample** (macros
   / slow params resolved once per block; only audio-in + `phasor`/state tick per
   sample). This is the lever that halves–thirds the audio-rate cost.
   - **Why not a vectorized (op-over-the-block) VM as the primary model:** it
@@ -253,6 +401,18 @@ Self-contained, opt-in, with a budget guard. Builds directly on Phases 0/2.
     16 voices — not free. **Decision:** scalar warm-frame baseline (supports
     everything incl. feedback); add a vectorized fast-path *only* for the
     feed-forward subset later, benchmark-gated, never as the only VM.
+  - **Why scalar interpretation is expected to hold up (perf hypothesis,
+    statically verified):** YAMS bytecode is *branchless straight-line* code — no
+    jump/branch/loop opcodes exist, and even the `?:` ternary lowers to an eager
+    arithmetic-mux `Op::Select` that evaluates *both* arms (comparisons/logic
+    push 1.0/0.0). So the interpreter's indirect-dispatch sequence is identical
+    on every sample → the BTB memorizes it (near-zero mispredicts) and the
+    ≤`MAX_INSTRUCTIONS` (256) program fits L1-I. This is the reason the scalar
+    baseline can carry everything and the vectorized path stays deferred until a
+    bench proves dispatch is the bottleneck. **Op-budget caveat:** eager `Select`
+    means a ternary always pays for *both* arms every sample — `cond ? big : big`
+    costs the sum, not the taken branch. (Still a hypothesis until the Phase 4
+    criterion bench.)
 - **`Op::LoadState(u16)` / `Op::StoreState(u16)`** — push/pop an arbitrary state
   cell, so users can write custom IIR (biquad, allpass, feedback FM) as plain
   difference equations. Requires: (a) the scalar VM above; (b) a small **grammar
@@ -264,6 +424,15 @@ Self-contained, opt-in, with a budget guard. Builds directly on Phases 0/2.
   on the audio thread; note `MAX_STATE` is currently **16** cells — fine for a
   biquad/allpass, but may need raising if an audio-rate script chains several
   filters, so size it deliberately when Phase 4 lands;
+  the *surface syntax* for a declared state cell is **decided: assignment, not
+  side-effecting builtins** — read a bare `s` (compiles to `Op::LoadState`) and
+  write `s = expr` (compiles to `Op::StoreState`), mirroring `out = expr`.
+  Rationale: every current YAMS builtin (`sin`, `lag`, …) is a *pure* function, so
+  a `store_state(s, v)` builtin would be the language's first side-effecting call
+  and break the expression-tree model; assignment keeps evaluation and
+  state-mutation cleanly separate. Straight-line program order gives correct IIR
+  semantics (the `s` read returns the prior sample's stored value, the later
+  `s = …` write updates the cell for the next sample);
   (c) a `docs/yams.md` stability note — layer-2 `finite_or_zero` stops NaN but not
   amplitude runaway in an unstable loop (user's responsibility).
 - **`first_sample` context var (audio-rate one-shot init).** At control rate
@@ -276,7 +445,9 @@ Self-contained, opt-in, with a budget guard. Builds directly on Phases 0/2.
   clearer and matches `gate_on`'s intent.)
 - **Audio-input ports** as per-sample sources (`in`, `in-l`, `in-r`).
 - **Multi-out grammar** (`out.left = …`, `out.right = …`) — the one real
-  grammar/compiler change, required for stereo.
+  grammar/compiler change, required for stereo. `out.left`/`out.right` compile to
+  `Op::StoreAudioOut(0)`/`(1)`; a bare `out = expr` on a stereo module duplicates
+  to both channels (mono-compat default).
 - **`ModuleType::AudioScript`** with audio in/out ports, per-sample eval.
 - **CPU meter / budget guard** + opt-in (perf model: heavy stereo script × full
   polyphony ≈ half a core per instance).
@@ -293,7 +464,9 @@ Self-contained, opt-in, with a budget guard. Builds directly on Phases 0/2.
 indicator.
 **Test:** `out = tanh(in * drive)` vs a reference waveshaper; a scripted biquad vs
 a native biquad (validates `LoadState`/`StoreState` feedback); criterion bench
-confirms the audio-rate cost; null test (passthrough) is bit-exact.
+confirms the audio-rate cost; null test (passthrough) is bit-exact; a NaN/Inf
+injected into a feedback loop clamps to zero (`finite_or_zero`) without blowing up
+the engine.
 
 ---
 

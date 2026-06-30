@@ -9,7 +9,8 @@
 //! - Operator precedence matches the grammar's ten-level ladder.
 
 use crate::ast::{
-    ArrayDecl, BinaryOp, Binding, Expr, Ident, Local, ModuleRef, Output, Program, UnaryOp,
+    ArrayDecl, Assign, BinaryOp, Binding, BodyStmt, Expr, Ident, Local, ModuleRef, OutChannel,
+    Output, Program, StateDecl, UnaryOp,
 };
 use crate::diag::Diagnostic;
 use crate::lexer::{Token, TokenKind, lex};
@@ -136,8 +137,8 @@ impl Parser {
 
     fn program(&mut self) -> Program {
         self.skip_seps();
-        let (bindings, arrays) = self.parse_header();
-        let (locals, output) = self.parse_body();
+        let (bindings, arrays, states) = self.parse_header();
+        let (body, outputs) = self.parse_body();
         self.skip_seps();
         if !self.is_eof() {
             self.error_here("unexpected token after the 'out' statement");
@@ -148,16 +149,19 @@ impl Parser {
         Program {
             bindings,
             arrays,
-            locals,
-            output,
+            states,
+            body,
+            outputs,
         }
     }
 
-    /// Parse the header section: `src` bindings and `arr` const-table
-    /// declarations, in any order, until the body (`let`/`out`) begins.
-    fn parse_header(&mut self) -> (Vec<Binding>, Vec<ArrayDecl>) {
+    /// Parse the header section: `src` bindings, `arr` const-table declarations,
+    /// and `state` cell declarations, in any order, until the body (`let` /
+    /// assignment / `out`) begins.
+    fn parse_header(&mut self) -> (Vec<Binding>, Vec<ArrayDecl>, Vec<StateDecl>) {
         let mut bindings = Vec::new();
         let mut arrays = Vec::new();
+        let mut states = Vec::new();
         loop {
             match self.cur_kind() {
                 TokenKind::Src => match self.parse_binding() {
@@ -168,10 +172,32 @@ impl Parser {
                     Some(a) => arrays.push(a),
                     None => self.recover_to_sep(),
                 },
+                TokenKind::State => match self.parse_state_decl() {
+                    Some(s) => states.push(s),
+                    None => self.recover_to_sep(),
+                },
                 _ => break,
             }
         }
-        (bindings, arrays)
+        (bindings, arrays, states)
+    }
+
+    /// `state <name> = <expr>` — declare a persistent state cell.
+    fn parse_state_decl(&mut self) -> Option<StateDecl> {
+        let start = self.cur_span();
+        self.advance(); // `state`
+        let Some(name) = self.eat_ident() else {
+            self.error_here("expected a name after 'state'");
+            return None;
+        };
+        if !self.eat(&TokenKind::Eq) {
+            self.error_here("expected '=' in state declaration");
+            return None;
+        }
+        let init = self.expr();
+        let span = start.to(init.span());
+        self.expect_terminator();
+        Some(StateDecl { name, init, span })
     }
 
     fn parse_array_decl(&mut self) -> Option<ArrayDecl> {
@@ -273,24 +299,54 @@ impl Parser {
         })
     }
 
-    fn parse_body(&mut self) -> (Vec<Local>, Option<Output>) {
-        let mut locals = Vec::new();
-        while matches!(self.cur_kind(), TokenKind::Let) {
-            match self.parse_local() {
-                Some(l) => locals.push(l),
+    /// Parse the body: an ordered sequence of `let` locals and `<name> = expr`
+    /// state assignments, terminated by one or more `out` statements (a single
+    /// mono `out`, or `out.left` / `out.right`). Order is preserved (it matters
+    /// for state).
+    fn parse_body(&mut self) -> (Vec<BodyStmt>, Vec<Output>) {
+        let mut body = Vec::new();
+        loop {
+            match self.cur_kind() {
+                TokenKind::Let => match self.parse_local() {
+                    Some(l) => body.push(BodyStmt::Local(l)),
+                    None => self.recover_to_sep(),
+                },
+                // A bare identifier at statement level is a `state` assignment
+                // (`s = expr`); nothing else starts with an identifier here.
+                TokenKind::Ident(_) => match self.parse_assign() {
+                    Some(a) => body.push(BodyStmt::Assign(a)),
+                    None => self.recover_to_sep(),
+                },
+                _ => break,
+            }
+        }
+        let mut outputs = Vec::new();
+        while matches!(self.cur_kind(), TokenKind::Out) {
+            match self.parse_output() {
+                Some(o) => outputs.push(o),
                 None => self.recover_to_sep(),
             }
         }
-        let output = if matches!(self.cur_kind(), TokenKind::Out) {
-            self.parse_output().or_else(|| {
-                self.recover_to_sep();
-                None
-            })
-        } else {
+        if outputs.is_empty() {
             self.error_here("expected 'out = …'");
-            None
+        }
+        (body, outputs)
+    }
+
+    /// `<name> = <expr>` — a state-cell assignment statement.
+    fn parse_assign(&mut self) -> Option<Assign> {
+        let Some(name) = self.eat_ident() else {
+            self.error_here("expected a name");
+            return None;
         };
-        (locals, output)
+        if !self.eat(&TokenKind::Eq) {
+            self.error_here("expected '=' (a bare statement must be a `state` assignment)");
+            return None;
+        }
+        let expr = self.expr();
+        let span = name.span.to(expr.span());
+        self.expect_terminator();
+        Some(Assign { name, expr, span })
     }
 
     fn parse_local(&mut self) -> Option<Local> {
@@ -313,28 +369,37 @@ impl Parser {
     fn parse_output(&mut self) -> Option<Output> {
         let start = self.cur_span();
         self.advance(); // `out`
-        // Optional output name (reserved for multi-output).
-        let name = if matches!(self.cur_kind(), TokenKind::Ident(_)) {
-            self.eat_ident()
+        // Optional `.left` / `.right` channel selector (stereo multi-out). A bare
+        // `out` is mono. The compiler rejects channel outputs in a control script.
+        let channel = if self.eat(&TokenKind::Dot) {
+            match self.eat_member() {
+                Some(id) if id.name == "left" => OutChannel::Left,
+                Some(id) if id.name == "right" => OutChannel::Right,
+                Some(id) => {
+                    self.error(id.span, "expected `left` or `right` after `out.`");
+                    OutChannel::Mono
+                }
+                None => {
+                    self.error_here("expected `left` or `right` after `out.`");
+                    return None;
+                }
+            }
         } else {
-            None
+            OutChannel::Mono
         };
-        // The grammar reserves a named-output slot for the future multi-output
-        // direction; v1 has exactly one anonymous `out`. Reject a name rather
-        // than silently dropping it (which would imply multi-output works).
-        if let Some(name) = &name {
-            self.error(
-                name.span,
-                "named outputs are not supported in v1 (multi-output is future work)",
-            );
-        }
         if !self.eat(&TokenKind::Eq) {
             self.error_here("expected '=' in 'out' statement");
             return None;
         }
         let expr = self.expr();
         let span = start.to(expr.span());
-        Some(Output { name, expr, span })
+        // Outputs need a terminator now that several may follow one another.
+        self.expect_terminator();
+        Some(Output {
+            channel,
+            expr,
+            span,
+        })
     }
 
     // ---- expressions ------------------------------------------------------
@@ -597,7 +662,7 @@ mod tests {
     }
 
     fn out_expr(program: &Program) -> &Expr {
-        &program.output.as_ref().expect("an output").expr
+        &program.outputs.first().expect("an output").expr
     }
 
     #[test]
@@ -621,9 +686,26 @@ mod tests {
     #[test]
     fn locals_and_output() {
         let p = parse_ok("let depth = 0.5\nout = depth");
-        assert_eq!(p.locals.len(), 1);
-        assert_eq!(p.locals[0].name.name, "depth");
+        assert_eq!(p.body.len(), 1);
+        let BodyStmt::Local(l) = &p.body[0] else {
+            panic!("expected a local");
+        };
+        assert_eq!(l.name.name, "depth");
         assert!(matches!(out_expr(&p), Expr::Var { .. }));
+    }
+
+    #[test]
+    fn state_decl_and_assignment_parse() {
+        // `state` is a header declaration; `s = expr` is an ordered body statement.
+        let p = parse_ok("state s = 0\nlet x = s + 1\ns = x\nout = s");
+        assert_eq!(p.states.len(), 1);
+        assert_eq!(p.states[0].name.name, "s");
+        assert_eq!(p.body.len(), 2);
+        assert!(matches!(p.body[0], BodyStmt::Local(_)));
+        let BodyStmt::Assign(a) = &p.body[1] else {
+            panic!("expected an assignment");
+        };
+        assert_eq!(a.name.name, "s");
     }
 
     #[test]
@@ -733,11 +815,27 @@ mod tests {
     }
 
     #[test]
-    fn named_output_is_rejected_in_v1() {
-        let errs = errors("out foo = 1");
+    fn multi_out_channels_parse() {
+        // `out.left` / `out.right` parse into channel-tagged Output statements.
+        let p = parse_ok("out.left = a\nout.right = b");
+        assert_eq!(p.outputs.len(), 2);
+        assert_eq!(p.outputs[0].channel, OutChannel::Left);
+        assert_eq!(p.outputs[1].channel, OutChannel::Right);
+        // A bare `out` is mono.
+        let m = parse_ok("out = a");
+        assert_eq!(m.outputs[0].channel, OutChannel::Mono);
+    }
+
+    #[test]
+    fn bad_output_forms_are_errors() {
+        // A bare identifier after `out` (no dot) is not a channel — it's a syntax
+        // error (the old "named output" form is gone).
+        assert!(!errors("out foo = 1").is_empty());
+        // An unknown channel after the dot is rejected.
         assert!(
-            errs.iter().any(|e| e.contains("named outputs")),
-            "got: {errs:?}"
+            errors("out.middle = 1")
+                .iter()
+                .any(|e| e.contains("left` or `right"))
         );
     }
 
@@ -763,7 +861,7 @@ mod tests {
         assert!(diags.iter().any(Diagnostic::is_error));
         assert_eq!(program.bindings.len(), 1);
         assert_eq!(program.bindings[0].alias.name, "b");
-        assert!(program.output.is_some());
+        assert!(!program.outputs.is_empty());
     }
 
     #[test]
@@ -820,7 +918,7 @@ mod tests {
             "src lfo = lfo-1.out\nsrc env = env-2.out\nlet depth = lerp(0.2, 1.0, velocity)\nout = clamp(env * depth + lfo * 0.1, 0, 1)",
         );
         assert_eq!(p.bindings.len(), 2);
-        assert_eq!(p.locals.len(), 1);
+        assert_eq!(p.body.len(), 1);
         assert!(matches!(out_expr(&p), Expr::Call { .. }));
     }
 }

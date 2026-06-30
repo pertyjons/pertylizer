@@ -12,6 +12,11 @@ In short: a scalar slot says *"this source, scaled by this knob."* A YAMS slot
 says *"compute the offset however you like — from any combination of sources,
 math, curves, and per-voice state."*
 
+The same language also drives two standalone modules: the **Script** module
+(control-rate, exposes its slots as output ports) and the **AudioScript** module,
+which runs *per sample* to script audio DSP (see
+[Audio-rate scripts](#audio-rate-scripts-the-audioscript-module)).
+
 - **Runs per voice, at control rate** (`cr`, typically a few hundred Hz — not
   audio rate). One independent copy of the script's state per sounding voice.
 - **Compiled offline, evaluated in real time.** The UI/MCP thread compiles the
@@ -166,6 +171,11 @@ Consequences:
   evaluation order.
 - **Cost is worst-case by construction**, which is what makes the instruction
   cap exact. The extra cost of "untaken" branches is negligible at control rate.
+  **At audio rate it is not** — both arms of a `?:` run on *every sample*, so a
+  heavy DSP block (e.g. a biquad or other multi-op expression) placed inside a
+  ternary branch is paid in full per sample whether or not that branch is "live".
+  In audio-rate scripts, lift such blocks out into a `state`-backed value and let
+  the ternary select between cheap already-computed results instead.
 - A dead branch that would divide by zero or produce NaN is harmless — YAMS
   arithmetic is NaN-free (safe division, safe `log`/`sqrt`), the result clamps
   to a safe default, and it's discarded anyway.
@@ -178,18 +188,18 @@ Listed low → high precedence. Comparison operators are **non-associative** —
 `a < b < c` is a *syntax error* (parenthesize instead), not silent
 `(a < b) < c`.
 
-| Level | Operators        | Assoc | Notes |
-|------:|------------------|-------|-------|
-| 1     | `?:`             | right | ternary select |
-| 2     | `\|\|`           | left  | eager OR |
-| 3     | `&&`             | left  | eager AND |
-| 4     | `==` `!=`        | none  | cannot chain |
-| 5     | `<` `>` `<=` `>=`| none  | cannot chain |
-| 6     | `+` `-`          | left  | |
-| 7     | `*` `/` `%`      | left  | `/` by 0 → 0 (NaN-free) |
-| 8     | unary `-` `!`    | right | |
-| 9     | `^`              | right | power |
-| 10    | call / atom / `( )` | —  | |
+| Level | Operators           | Assoc | Notes                   |
+|------:|---------------------|-------|-------------------------| 
+|     1 | `?:`                | right | ternary select          |
+|     2 | `\|\|`              | left  | eager OR                |
+|     3 | `&&`                | left  | eager AND               |
+|     4 | `==` `!=`           | none  | cannot chain            |
+|     5 | `<` `>` `<=` `>=`   | none  | cannot chain            |
+|     6 | `+` `-`             | left  |                         |
+|     7 | `*` `/` `%`         | left  | `/` by 0 → 0 (NaN-free) |
+|     8 | unary `-` `!`       | right |                         |
+|     9 | `^`                 | right | power                   |
+|    10 | call / atom / `( )` | —     |                         |
 
 ---
 
@@ -202,27 +212,27 @@ shadowing.
 
 ### Macros (per-voice MIDI, already normalized)
 
-| Name         | Meaning |
-|--------------|---------|
-| `velocity`   | note-on velocity, `0..1` |
-| `mod_wheel`  | mod wheel (CC1), `0..1` |
-| `aftertouch` | channel aftertouch, `0..1` |
-| `pitch_bend` | pitch bend, `-1..1` |
-| `note`       | MIDI note number / 127 |
+| Name         | Meaning                       |
+|--------------|-------------------------------|
+| `velocity`   | note-on velocity, `0..1`      |
+| `mod_wheel`  | mod wheel (CC1), `0..1`       |
+| `aftertouch` | channel aftertouch, `0..1`    |
+| `pitch_bend` | pitch bend, `-1..1`           |
+| `note`       | MIDI note number / 127        |
 | `poly_at`    | polyphonic aftertouch, `0..1` |
 
 ### Context (per-voice, filled each block)
 
-| Name        | Meaning |
-|-------------|---------|
-| `gate`      | `1` while the note is held, else `0` |
-| `gate_on`   | `1` for the single block of note-on, else `0` |
-| `age`       | seconds since note-on |
+| Name        | Meaning                                                                                                                                                              |
+|-------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `gate`      | `1` while the note is held, else `0`                                                                                                                                 |
+| `gate_on`   | `1` for the single block of note-on, else `0`                                                                                                                        |
+| `age`       | seconds since note-on                                                                                                                                                |
 | `cr`        | **control** rate in Hz — `sample_rate / block_size`, ~hundreds of Hz (device-dependent). **Not** the audio sample rate; a 48 kHz device yields `cr ≈ 750`, not 48000 |
-| `beat`      | absolute transport position in beats (grows unbounded; `sin(beat * tau)` is a tempo-locked sine) |
-| `bar_phase` | phase within the current bar, `0..1` (4/4); wraps every bar |
-| `tempo`     | transport tempo in BPM (`tempo / 60` is beats per second) |
-| `playing`   | `1` while the transport is running, else `0` |
+| `beat`      | absolute transport position in beats (grows unbounded; `sin(beat * tau)` is a tempo-locked sine)                                                                     |
+| `bar_phase` | phase within the current bar, `0..1` (4/4); wraps every bar                                                                                                          |
+| `tempo`     | transport tempo in BPM (`tempo / 60` is beats per second)                                                                                                            |
+| `playing`   | `1` while the transport is running, else `0`                                                                                                                         |
 
 The transport vars (`beat`, `bar_phase`, `tempo`, `playing`) are global —
 every voice sees the same value each block — so they drive tempo-synced
@@ -248,17 +258,18 @@ they carry per-voice state.
 
 ### Stateless — pure functions of this block's inputs
 
-| Domain    | Functions |
-|-----------|-----------|
-| Range     | `abs(x)` · `sign(x)` · `min(a,b)` · `max(a,b)` · `clamp(x,lo,hi)` |
-| Rounding  | `floor(x)` · `ceil(x)` · `round(x)` · `trunc(x)` · `quantize(x,step)` |
-| Power/exp | `pow(x,e)` · `sqrt(x)` · `exp(x)` · `log(x)` |
-| Trig      | `sin(x)` · `cos(x)` · `tan(x)` · `atan(x)` · `atan2(y,x)` |
-| Interp    | `lerp(a,b,t)` · `mix(a,b,t)` *(alias of `lerp`)* · `smoothstep(a,b,x)` |
-| Curves    | `sigmoid(x)` · `gauss(x)` |
+| Domain    | Functions                                                                                                                                                                                                               |
+|-----------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| Range     | `abs(x)` · `sign(x)` · `min(a,b)` · `max(a,b)` · `clamp(x,lo,hi)`                                                                                                                                                       |
+| Rounding  | `floor(x)` · `ceil(x)` · `round(x)` · `trunc(x)` · `quantize(x,step)`                                                                                                                                                   |
+| Power/exp | `pow(x,e)` · `sqrt(x)` · `exp(x)` · `log(x)`                                                                                                                                                                            |
+| Trig      | `sin(x)` · `cos(x)` · `tan(x)` · `atan(x)` · `atan2(y,x)`                                                                                                                                                               |
+| Shaping   | `tanh(x)` → hyperbolic tangent, the canonical soft-clip / saturation curve (e.g. `tanh(in * drive)` in an audio-rate script)                                                                                            |
+| Interp    | `lerp(a,b,t)` · `mix(a,b,t)` *(alias of `lerp`)* · `smoothstep(a,b,x)`                                                                                                                                                  |
+| Curves    | `sigmoid(x)` · `gauss(x)`                                                                                                                                                                                               |
 | Musical   | `semis(x)` → `2^(x/12)` ratio · `mtof(m)` → Hz from a **raw MIDI note** (`mtof(69)` = 440 Hz; for the normalized `note` macro use `mtof(note * 127)`) · `scale_snap(x, arr)` → snap semitones to a scale (octave-aware) |
-| Polarity  | `unipolar(x)` → `x*0.5+0.5` (±1 → 0..1) · `bipolar(x)` → `x*2-1` (0..1 → ±1) |
-| Arrays    | `name[i]` index a const table (floor + clamp) · `len(name)` → element count (folds at compile time) · `table_lin(arr, pos)` → linear-interpolated lookup |
+| Polarity  | `unipolar(x)` → `x*0.5+0.5` (±1 → 0..1) · `bipolar(x)` → `x*2-1` (0..1 → ±1)                                                                                                                                            |
+| Arrays    | `name[i]` index a const table (floor + clamp) · `len(name)` → element count (folds at compile time) · `table_lin(arr, pos)` → linear-interpolated lookup                                                                |
 
 `sqrt`/`log` of non-positive inputs and `x/0` are clamped (NaN-free), so dead
 branches can't poison state. Array indexing and `len` operate on `arr` tables
@@ -266,22 +277,22 @@ declared in the header — see [Arrays](#arrays--const-lookup-tables).
 
 ### Stateful — carry a per-voice register
 
-| Function            | Meaning |
-|---------------------|---------|
-| `lag(x, t)`         | one-pole (exponential) smoothing toward `x`, time constant `t` — decelerates near the target (e.g. mod-wheel glide) |
-| `slew(x, up, down)` | **linear** slew limiter / portamento — constant rate, `up`/`down` in **units per second** (separate rise/fall) |
-| `sah(x, trig)`      | sample-and-hold: latch `x` on a rising edge of `trig` |
-| `accum(x)`          | integrator (running sum) |
-| `accum(x, reset)`   | integrator that zeroes on a rising edge of `reset` |
-| `delta(x)`          | change since previous block |
-| `phasor(rate)`      | own ramp `0 → 1` at `rate` Hz (free-running) |
-| `phasor(rate, sync)`| ramp that resets to 0 on a rising edge of `sync` (phase-align to note-on / a clock) |
-| `edge(x)`           | rising-edge detector |
-| `counter(trig)`     | event count |
-| `pulse(div)`        | trigger at the start of every `div`-th beat (beats 0, div, 2·div, …). `div` must be an integer ≥ 2: a *constant* is checked at compile time, but a *dynamic* `div` is accepted unchecked and **must stay an integer ≥ 2 at runtime** — a value < 2 (e.g. 1) makes `% div` stick at 0 and the trigger freezes |
-| `rand([lo, hi])`    | seeded PRNG (latch per note via `gate_on`) |
-| `rand_smooth(rate)` | smooth random LFO: band-limited wander in `[0, 1)`, new target every `1/rate` s. Unipolar — wrap in `bipolar(…)` for ±1 (e.g. pitch drift) |
-| `white()`           | per-block seeded noise |
+| Function             | Meaning                                                                                                                                                                                                                                                                                                      |
+|----------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `lag(x, t)`          | one-pole (exponential) smoothing toward `x`, time constant `t` — decelerates near the target (e.g. mod-wheel glide)                                                                                                                                                                                          |
+| `slew(x, up, down)`  | **linear** slew limiter / portamento — constant rate, `up`/`down` in **units per second** (separate rise/fall)                                                                                                                                                                                               |
+| `sah(x, trig)`       | sample-and-hold: latch `x` on a rising edge of `trig`                                                                                                                                                                                                                                                        |
+| `accum(x)`           | integrator (running sum)                                                                                                                                                                                                                                                                                     |
+| `accum(x, reset)`    | integrator that zeroes on a rising edge of `reset`                                                                                                                                                                                                                                                           |
+| `delta(x)`           | change since previous block                                                                                                                                                                                                                                                                                  |
+| `phasor(rate)`       | own ramp `0 → 1` at `rate` Hz (free-running)                                                                                                                                                                                                                                                                 |
+| `phasor(rate, sync)` | ramp that resets to 0 on a rising edge of `sync` (phase-align to note-on / a clock)                                                                                                                                                                                                                          |
+| `edge(x)`            | rising-edge detector                                                                                                                                                                                                                                                                                         |
+| `counter(trig)`      | event count                                                                                                                                                                                                                                                                                                  |
+| `pulse(div)`         | trigger at the start of every `div`-th beat (beats 0, div, 2·div, …). `div` must be an integer ≥ 2: a *constant* is checked at compile time, but a *dynamic* `div` is accepted unchecked and **must stay an integer ≥ 2 at runtime** — a value < 2 (e.g. 1) makes `% div` stick at 0 and the trigger freezes |
+| `rand([lo, hi])`     | seeded PRNG (latch per note via `gate_on`)                                                                                                                                                                                                                                                                   |
+| `rand_smooth(rate)`  | smooth random LFO: band-limited wander in `[0, 1)`, new target every `1/rate` s. Unipolar — wrap in `bipolar(…)` for ±1 (e.g. pitch drift)                                                                                                                                                                   |
+| `white()`            | per-block seeded noise                                                                                                                                                                                                                                                                                       |
 
 **Per-voice state.** Each voice gets its own register file. State resets on
 note-on so a reused/stolen voice never leaks the previous note. **Exception:**
@@ -300,6 +311,27 @@ the bar.
 (`50ms`) the smoothing coefficient is precomputed at compile time and the audio
 thread runs a single multiply-accumulate. A time *expression* costs a per-block
 coefficient computation.
+
+### Declared state cells (`state`)
+
+For custom difference equations (IIR filters, feedback) the built-in stateful
+ops aren't enough — you need to *name* your own memory. Declare a cell in the
+header and assign it as a statement:
+
+```
+state y = 0          # one persistent cell, starts at 0
+y = y + 0.1 * (in - y)   # write it (a one-pole lowpass)
+out = y              # read it
+```
+
+- **Read** a bare `s` (returns the cell's current value); **write** `s = expr`
+  (a statement, like `out =`). Reading `s` before its assignment in a block sees
+  the *prior* value — exactly the `y[n-1]` an IIR needs.
+- **Body order is significant.** `let`/`state`-assignment statements run top to
+  bottom, so straight-line order gives correct recurrence semantics.
+- Cells draw from the same **16-cell budget** as `lag`/`phasor`/… and reset to 0
+  on note-on. The initializer must be `0` today; seed a non-zero value from
+  `first_sample` in an audio-rate script (below).
 
 ---
 
@@ -432,12 +464,12 @@ name, the host may be a **Mod Matrix** (`mmx-N`) *or* a **Script module**
 (`scr-N`) — on a Mod Matrix the script's `out` is the slot's modulation offset;
 on a Script module it is the value of that slot's `outN` output port:
 
-| Field           | Meaning |
-|-----------------|---------|
-| `instrument_id` | instrument (0 = default) |
-| `module_id`     | the host module — a Mod Matrix (`mmx-1`) or Script module (`scr-1`) |
+| Field           | Meaning                                                                           |
+|-----------------|-----------------------------------------------------------------------------------|
+| `instrument_id` | instrument (0 = default)                                                          |
+| `module_id`     | the host module — a Mod Matrix (`mmx-1`) or Script module (`scr-1`)               |
 | `slot`          | 1-based slot — Mod Matrix `1..=16`, Script module `1..=8` (drives `out1`..`out8`) |
-| `source`        | YAMS source text; **empty string clears** the slot back to scalar |
+| `source`        | YAMS source text; **empty string clears** the slot back to scalar                 |
 
 A compile error comes back with diagnostics (all errors, not just the first).
 Read back installed scripts with `get_mod_matrix_routings` (Mod Matrix — a slot
@@ -465,6 +497,60 @@ for the editor and for tooling). Distinctions:
 - An unknown **module** (dangling `src`) is *not* — it's a zero-reading register
   (disable-and-keep).
 - Binding a reserved name (`let sin = …`) is a compile error.
+
+---
+
+## Audio-rate scripts (the AudioScript module)
+
+Everything above runs at **control rate** (one eval per block) and writes a
+*modulation offset*. The **AudioScript** module runs the *same language* at the
+**audio sample rate** — one eval per sample — and writes *audio*. That makes
+per-sample DSP scriptable: waveshapers/folders, bitcrusher, ring-mod, custom
+IIR/feedback filters. It's a per-voice graph node with stereo audio in/out ports
+(`in_l`/`in_r` → `out_l`/`out_r`), wired by hand like any other module.
+
+Audio-rate scripts unlock four extra pieces of grammar (compile errors in a
+control-rate script):
+
+- **Audio inputs** — `in` / `in_l` read the left input sample, `in_r` the right.
+  (Mono `in` aliases the left channel; underscores because `-` is the subtract
+  operator.) These tick **every sample**; all other sources (macros, context
+  vars, module addresses) are resolved **once per block** and held constant.
+- **`first_sample`** — `1.0` only at sample 0 of the note, `0.0` after. The
+  audio-rate one-shot: use it to seed feedback state once instead of the
+  per-block `gate_on` (which would re-fire for a whole block of samples).
+- **`out.left` / `out.right`** — write the two output channels independently. A
+  bare `out = expr` is mono (duplicated to both). Mix one form or the other, not
+  both.
+- **`state` cells** carry across *samples* (not blocks), so `s = s + a*(in - s)`
+  is a true per-sample one-pole.
+
+```
+# Soft-clip drive (a tube-ish saturator)
+out = tanh(in * 4)
+
+# Per-sample one-pole lowpass with a seeded coefficient
+state y = 0
+y = y + 0.08 * (in - y)
+out = y
+
+# Stereo width (mid/side), seeding nothing — pure feed-forward
+let m = (in_l + in_r) * 0.5
+let s = (in_l - in_r) * 0.5
+out.left  = m + s * 1.5
+out.right = m - s * 1.5
+```
+
+**Cost.** Audio rate runs one eval **per sample** — tens to hundreds of times
+the control-rate eval count (control rate is `sample_rate / block_size`, so the
+ratio is the block size: ~64× at the 64-sample default, more for larger host
+blocks). So an AudioScript's cost scales with polyphony and script length —
+budget it. The scalar evaluator is
+branchless straight-line bytecode, so a small waveshaper is a few % of a core
+across full polyphony, while a heavy multi-state filter is a larger slice (see
+`cargo bench -p synth_script --bench yams_audio`). Stability is the author's
+responsibility: NaN/Inf is clamped to 0 at every state write, but an unstable
+feedback loop can still run away in amplitude.
 
 ---
 

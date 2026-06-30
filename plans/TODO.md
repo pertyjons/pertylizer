@@ -199,6 +199,19 @@
   width; recommended defaults locked, ready to build); (b) **MCP** allocator-config
   surface (see step 6 triage).
 
+### 2.5 Hardening Newtype Invariants
+
+- [ ] **Harden type-safety invariants of domain newtypes.** Convert newtypes in `synth_core`
+  (like `NormalizedValue`, `BipolarValue`, `Phase`, `MidiNote`, etc.) from using public tuple
+  fields (e.g. `pub struct NormalizedValue(pub f32)`) to private fields (`pub struct NormalizedValue(f32)`).
+  This prevents external code from bypassing validation constraints and guarantees that values
+  remain valid once instantiated. Ensure that:
+    1. Validation-guaranteeing constructors (`new()`, etc.) are the only public creation vectors.
+    2. Explicit `new_unchecked()` constructors are exposed and used only in performance-critical
+       hot paths where the calling context has already proven/ensured correctness.
+    3. The helper macros in `macros.rs` and other modules are updated or verified to compile
+       properly under module-level visibility rules.
+
 ---
 
 ## 3. UI & Visual Polish
@@ -318,23 +331,20 @@ efficiency/altitude items deliberately left out of that change.
   reach. Confirm the sampler/engine tolerates a missing referenced sample
   gracefully (silent → no sound vs. panic), and consider warning on / blocking
   deletion of an in-use sample, or resetting referencing modules to "no sample".
+### 3.8 Shared widget helpers follow-ups (evaluating Phase 2 residual)
 
-### 3.8 Drop the vendored egui-0.35 forks once upstream ships 0.35
+Following the evaluation of [widget-helpers-plan.md](file:///home/per/github/pertylizer/plans/widget-helpers-plan.md), these are the remaining areas to polish the GUI helpers layer:
 
-- [ ] **Replace the two vendored `third_party/` crates with the real crates.io versions
-  once they publish egui-0.35-compatible releases.** The egui 0.34→0.35 upgrade was blocked
-  because neither `egui-remixicon` nor `egui-file-dialog` had a 0.35 release at the time
-  (egui 0.35 landed 2026-06-25). To unblock, both were vendored under `third_party/` with
-  their `egui` dep bumped to 0.35 and wired in via `[patch.crates-io]` in the root
-  `Cargo.toml`:
-    - `third_party/egui-remixicon/` — font-only, API unchanged (just `add_to_fonts` + the
-      `icons` consts). ~4.3MB, mostly the generated `icons.rs` + the `.ttf`.
-    - `third_party/egui-file-dialog/` — needed exactly **7** `show_inside`→`show` renames to
-      compile against 0.35; otherwise unchanged from 0.13.0.
-      When upstream releases 0.35 versions: bump `egui-remixicon` / `egui-file-dialog` to the new
-      crates.io versions, **remove the `[patch.crates-io]` block** and the whole `third_party/`
-      directory, and re-run the gate. Watch:
-      https://github.com/get200/egui-remixicon and https://github.com/fluxxcode/egui-file-dialog
+- [ ] **Global FileDialog memory across kinds.** Refactor `ensure_dialog` in [dialogs.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/dialogs.rs) to reuse a single global `FileDialog` instance across all kinds (Open/Save Patch, templates, etc.) rather than rebuilding it when `file_dialog_kind` changes. Update its `config_mut().file_filters` dynamically on every open. This enables directory memory and highlighting (`retain_selected_entry`) to survive switching between Open and Save actions.
+- [ ] **Unify inline name/description editors.** Create a helper `inline_editable_text(ui, &mut String, &mut bool, multiline)` in [controls.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/widgets/controls.rs) to wrap the focus-grabbing and lost-focus/Enter-key commit logic currently duplicated in [piano_roll.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/sequencer/piano_roll.rs#L2510) and [arrangement.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/sequencer/arrangement.rs#L1580).
+- [ ] **Address inline toggle button variations.** Several inline toggle styles (e.g. M/S muting/soloing badges, custom-colored selections) still bypass `toggle_button_colored`. Create a flexible `toggle_badge` or `selectable_toggle` helper to cover these and keep sizes consistent (preventing drift).
+- [ ] **Perform a visual eyeball check on normalized captions.** Verify that the normalized size shift (~9px to 10px `size_small`) for the 24 migrated `.small()` labels does not cause visual clipping or alignment issues in tight spaces (especially grid cells in [tracker.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/sequencer/tracker.rs) and Vol/Pan knob rows in [arrangement.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/sequencer/arrangement.rs)).
+
+### 3.9 Drop the vendored egui-0.35 forks once upstream ships 0.35
+
+- [ ] **Replace the vendored `third_party/egui-remixicon` crate with the crates.io version once they publish an egui-0.35-compatible release.** The egui 0.34→0.35 upgrade was blocked because neither `egui-remixicon` nor `egui-file-dialog` had a 0.35 release at the time (egui 0.35 landed 2026-06-25).
+  * Note: `egui-file-dialog` was already successfully upgraded to its official 0.35-native version `0.14.1` on crates.io and its fork was dropped.
+  * For `egui-remixicon`: when upstream releases a 0.35 version, bump `egui-remixicon` in `Cargo.toml`, remove the `[patch.crates-io]` block and the `third_party/egui-remixicon` directory, and verify the build. Watch: https://github.com/get200/egui-remixicon
 
 ---
 
@@ -342,5 +352,175 @@ efficiency/altitude items deliberately left out of that change.
 
 ### 4.1 MCP & AI Interaction
 
+- [ ] **★ HIGH PRIORITY — make `set_module_description` array-consistent with the other
+  mutating tools.** `set_module_description` takes **flat** params (`instrument_id`,
+  `module_id`, `description`) — unlike nearly every other mutating MCP tool, which take
+  arrays / `items`. This caused two deserialization errors before landing the right shape
+  (tried `items: [{instrument_id, module_id, description}]` → `instrument_id` + `items` →
+  finally fully flat). Worse, its sibling `set_instrument_description` takes
+  `items: [{instrument_id, description}]`, so the two siblings are mutually inconsistent.
+  Fix: either array-adapt `set_module_description` (e.g. `instrument_id` +
+  `items: [{module_id, description}]`, or self-contained
+  `items: [{instrument_id, module_id, description}]` to mirror `set_instrument_description`),
+  or at minimum make the schema/description clearer so the shape is guessable on the first
+  call. Surfaced 2026-06-30 while documenting the AudioScript wavefolder example patch.
+
+- [ ] **★ HIGH PRIORITY — generated schema rejects bool params that `save_project`
+  actually writes (round-trip / schema-gen mismatch).** `save_project` serializes
+  bool-kind module params as JSON **booleans** (`ParamValue::Bool`, `patch.rs:370,469`),
+  but the generated `schemas/{project,patch}.schema.json` types those params as
+  **numbers** — so the `example_files_validate_against_schemas` test (and any external
+  validator) rejects any binary-saved project containing a bool param (`cv_bipolar`,
+  `dither`, `limit`, `mute`, …). It stayed latent only because every committed example
+  predates this and uses the number form `0.0`/`1.0`; the moment a freshly-saved project
+  is committed it fails (hit 2026-06-30 with the AudioScript example — worked around by
+  hand-canonicalizing its bools to numbers). Fix at the source: make `gen_schemas` emit
+  `{"type": ["number", "boolean"]}` (or boolean) for `ParamKind::Bool` params so the
+  schema matches what the serializer writes, then regenerate. (Alternatively make the
+  project serializer emit numbers for bool params — but the format intentionally uses
+  `ParamValue::Bool`, so fixing the schema is the lower-risk direction.)
+
 - [ ] Tier 3: `compare_to_reference`, `compare_patterns`, `compare_patches`,
   `humanize_notes`, `generate_variation`, `analyze_track`, `get_mix_meters`.
+
+---
+
+## 5. Architectural & Performance Hardening (Evaluation Needed)
+
+### 5.1 Real-time safety: metadata deallocation on the audio thread
+- [ ] **Evaluate removing/disposing metadata outside the audio thread.** Some commands like `RenameInstrument` or `SetInstrumentDescription` pass `String` variables by value to the audio thread. When they are dropped, heap deallocation occurs. Evaluate whether metadata should be completely separated from the audio engine's internal structs (e.g. kept only in the GUI state / shared graph, leaving the audio thread to manage purely numeric IDs), or if old metadata must be sent back to the UI thread via a return queue for deallocation.
+
+### 5.2 Compiler optimizations: target-cpu native flag
+- [ ] **Evaluate building with `target-cpu=native`.** The current `.cargo/config.toml` only specifies `rustflags = ["-D", "warnings"]`. For locally compiled builds, evaluate enabling `-C target-cpu=native` to allow LLVM to generate SIMD instructions (like AVX2, FMA, etc.) on the target hardware. This can significantly speed up DSP loops for oscillators, filters, and mixers.
+
+### 5.3 Zero-copy optimization: bytemuck/zerocopy integration
+- [ ] **Evaluate using `bytemuck` or `zerocopy` for buffer conversions.** For high-performance transfers of audio buffers (e.g., telemetry spectrum/oscilloscope buffers, OSC packet serialization), evaluate integrating safe zero-copy casting crates to cast slices safely (e.g. `&[f32]` to `&[u8]`) without using manual `unsafe` code or copying elements.
+
+### 5.4 Invariant checking: debug_assert in new_unchecked constructors
+- [ ] **Evaluate adding `debug_assert!` inside `new_unchecked` newtype constructors.** Performance-critical constructors like `NormalizedValue::new_unchecked(value)` bypass bounds checks. Adding `debug_assert!` checks (e.g. validating `[0.0, 1.0]` bounds) will catch invalid states during testing and debug execution, compiling to zero-cost no-ops in release builds.
+
+### 5.5 Math optimizations: explicit Fused Multiply-Add (mul_add)
+- [ ] **Evaluate utilizing `f32::mul_add` for hot DSP filter/envelope paths.** In filter calculations (like those in `synth_dsp/src/filters.rs`), replacing `(a * b) + c` structures with explicit `a.mul_add(b, c)` guarantees the compiler uses Fused Multiply-Add (FMA) instructions, improving precision and performance on supported hardware (AVX2/NEON).
+
+### 5.6 Thread diagnostics: named background threads
+- [ ] **Evaluate using named threads via `std::thread::Builder` for background tasks.** Background threads spawned in `null_backend.rs`, `gui/analyze.rs`, `synth_osc/src/lib.rs`, and `main.rs` are currently unnamed. Transitioning to named threads will make debugging/profiling (using `htop`, `perf`, or `gdb`) much more readable.
+
+### 5.7 Real-time safety: replace HashMap usage on the audio thread
+- [ ] **Evaluate removing `HashMap` lookups/updates in the audio thread.** Structures like `last_automation_values`, `track_auto`, `prev_instrument_outputs`, and `track_controls` are managed via standard `std::collections::HashMap` in `synth_engine.rs` and `sequencer_engine.rs`. Since standard `HashMap` uses the relatively slow `SipHash 1-3` and has a worst-case complexity of $O(n)$ under collisions, it can introduce latency jitter. Evaluate replacing them with flat arrays (`[Option<T>; MAX]`) or linear search over small stack-allocated arrays (e.g. `arrayvec`), which are cache-friendly and have a deterministic $O(n)$ WCET bound.
+
+### 5.8 Real-time safety: automated allocation testing with assert-no-alloc
+- [ ] **Evaluate integrating `assert-no-alloc` or similar custom allocator guards in tests.** To prevent regression-based heap allocations/deallocations from slipping into the real-time audio thread (such as in `SynthEngine::process()`), evaluate wrapping the audio thread processing tests in a custom allocator tracker. This will fail the test suite immediately if a heap allocation/deallocation occurs in a designated real-time path.
+
+### 5.9 Compile-time safety: static assertions for lock-free data structures
+- [ ] **Evaluate using `static_assertions` to verify layouts/bounds of thread-transferred data.** To ensure command, event, and telemetry structs sent over lock-free ring buffers (like `EngineCommand` and `EngineEvent`) remain layout-stable, lock-free, and thread-safe, evaluate using compile-time static asserts (e.g., verifying `Send` bounds or struct sizes).
+
+### 5.10 Timing precision: sub-sample event & MIDI scheduling
+- [ ] **Evaluate implementing sub-sample event scheduling.** Currently, all commands and MIDI notes are processed via `process_commands()` at the start of each buffer block (block-rate quantization). For large buffer sizes (e.g. 512 or 1024 samples), this creates audible timing jitter and trigger latency. Evaluate adding sample-offset timestamps to `EngineCommand` and splitting buffer processing into sub-blocks at event offsets to provide microsecond-accurate note and parameter triggers.
+
+### 5.11 Performance optimization: memory alignment for SIMD vectorization
+- [ ] **Evaluate enforcing 32-byte (AVX2) or 64-byte (AVX-512) alignment for audio buffers.** The `AudioBuffer` uses a standard `Vec<f32>` which lacks strict alignment guarantees, forcing LLVM to generate unaligned memory loads (`vmovups`). Restructuring it to use custom-aligned allocators or crates like `aligned-vec` will ensure aligned vector operations (`vmovaps`), boosting auto-vectorization efficiency in filter and oscillator hot paths.
+
+### 5.12 Jitter reduction: elevate priority of MIDI threads
+- [ ] **Evaluate elevating scheduling priorities for MIDI threads.** The MIDI threads spawned by `midir` currently run with normal OS priority, unlike the high-priority (`SCHED_FIFO`) audio callback thread promoted by `cpal`. Under high system CPU load, this introduces MIDI processing jitter. Evaluate using OS-specific bindings (e.g. `pthread_setschedparam` or `libc` calls) to bump the MIDI thread priority just below the audio thread.
+
+### 5.13 Performance: optimize fast_sin_turns by avoiding redundant floor
+- [ ] **Evaluate introducing `fast_sin_turns_unchecked`.** The `fast_sin_turns` function currently calls `.floor()` to wrap values. However, in many hot paths (such as the sine oscillator), the input phase is already guaranteed to be in `[0.0, 1.0)`. Evaluate adding an unchecked variant `fast_sin_turns_unchecked` that assumes pre-wrapped input (backed by a debug assertion) to eliminate redundant floating-point `.floor()` instructions.
+
+### 5.14 Reproducibility & Real-time safety: replace fastrand on the audio thread
+- [ ] **Evaluate replacing `fastrand` usage in the audio thread.** While `synth_core/src/hash.rs` notes that the audio path should never call an RNG to preserve reproducibility and avoid thread-local storage (TLS) lookup overhead, several modules (like `noise.rs`, `drift_generator.rs`, and `oscillator.rs`) call `fastrand::f32()`. Evaluate refactoring these modules to use the deterministic SplitMix64-based helpers in `synth_core::hash`.
+
+### 5.15 Architectural: decouple SPSC channels in VisualizationBuffer
+- [ ] **Evaluate decoupling the SPSC channel ends in `VisualizationBuffer`.** Currently, both `Producer` and `Consumer` halves are stored in the shared `VisualizationBuffer` struct, requiring `parking_lot::Mutex` wrappers and `try_lock()` logic to satisfy `Sync`. Evaluate separating the channels: storing `Producer` exclusively inside the audio thread's processors and `Consumer` inside the GUI widgets. This removes the mutex and `try_lock()` overhead entirely, achieving true lock-free synchronization.
+
+### 5.16 User experience: custom panic hook for desktop crash diagnostics
+- [ ] **Evaluate implementing a custom panic hook.** When a panic occurs, the desktop app prints a stack trace to stderr and terminates. Evaluate setting a custom panic hook (`std::panic::set_hook`) to display a user-friendly crash dialog or dump diagnostics to a log file, improving the supportability of the desktop app.
+
+### 5.17 Performance: use dashmap instead of RwLock<HashMap> for concurrent maps
+- [ ] **Evaluate replacing `RwLock<HashMap>` with `dashmap`.** Shared maps in `hub.rs` and `shared_state.rs` (like `clients` and `modules`) are wrapped in a global `RwLock`. Evaluate using `dashmap` to allow concurrent, sharded reads and writes, reducing lock contention between UI and background/MCP threads.
+
+### 5.18 Architectural: eliminate multi-writer Mutex on CommandSender via multiple SPSC queues
+- [ ] **Evaluate replacing the single `Mutex`-wrapped command queue with multiple SPSC queues.** Currently, `CommandSender` wraps a single SPSC `Producer` in a `Mutex` to allow multiple threads (UI, MIDI callback, MCP) to send commands. However, locking this mutex inside the high-priority MIDI callback thread can introduce timing jitter and blocking when other threads are writing. Evaluate creating separate, dedicated SPSC queues for the UI, MIDI, and MCP threads, allowing the audio thread to drain them sequentially without locks.
+
+### 5.19 Performance: memory-mapped sample loading via memmap2
+- [ ] **Evaluate using memory-mapped files (`mmap`) for sample loading.** Currently, the `SampleLibrary` loads sample files entirely into heap-allocated `Vec<f32>` buffers during startup. For large sample libraries, this causes high memory consumption and loading delays. Evaluate integrating `memmap2` to memory-map the sample files, letting the OS load sample data on demand (page-on-demand) and share page cache memory.
+
+### 5.20 Audio compression: support compressed sample formats (FLAC/Ogg Vorbis)
+- [ ] **Evaluate adding support for compressed audio files.** Currently, only uncompressed `.wav` files are supported. For multisampled instruments, this demands large disk spaces. Evaluate adding support for FLAC or Ogg Vorbis (using lightweight, safe libraries like `claxon` or `lewton`) to compress project size and save I/O bandwidth during project load.
+
+### 5.21 Math optimization: factor out Hadamard scale in FDN reverb
+- [ ] **Evaluate factoring out the Hadamard scaling factor in FDN.** Currently, `FdnCore::process_sample` performs 64 multiplications by `HADAMARD_8[i][j]` (containing `+HADAMARD_SCALE` or `-HADAMARD_SCALE`). By factoring out `HADAMARD_SCALE` and performing the matrix mixing using only additions and subtractions of the input values, and then applying a single multiplication per channel at the end, we can reduce multiplications from 64 to 8 per sample.
+
+### 5.22 DSP optimization: polyphase decimation in oversampling half-band FIR
+- [ ] **Evaluate implementing polyphase decimation in `HalfBandFilter`.** Currently, `HalfBandFilter::decimate` calls `self.push()` twice for every pair of input samples, discarding the first output. Although the delay line state must be updated for all samples, calculating the FIR filter sum for the discarded sample is redundant. Evaluate splitting `push` into `push_state_only` (shifts delay line only) and `push` (shifts and calculates output) to reduce FIR filter arithmetic by 50% during decimation.
+
+### 5.23 Performance optimization: power-of-two circular buffer wrapping
+- [ ] **Evaluate enforcing power-of-two sizes for circular buffers.** Currently, circular buffer index wrapping in `BufferIndex` uses the modulo operator `%`, which translates to a slow division instruction on the CPU. Evaluate enforcing power-of-two buffer sizes in delay lines and using bitwise AND `index & (size - 1)` for wrapping to replace division with a single-cycle bitwise operation, speeding up delay lines and reverbs.
+
+### 5.24 Safety: mark new_unchecked newtype constructors as unsafe
+- [ ] **Evaluate marking `new_unchecked` constructors as `unsafe`.** Constructors like `NormalizedValue::new_unchecked(value)` bypass safety invariants but are marked as safe functions. In accordance with Rust safety conventions, evaluate marking them as `unsafe fn` to ensure that call sites must explicitly enclose them in `unsafe` blocks, documenting and guaranteeing that developers have verified the bounds/invariants.
+
+### 5.25 Architectural: RCU / arc-swap to eliminate RwLock<Song> read locks on the audio thread
+- [ ] **Evaluate replacing `RwLock<Song>` with an RCU/double-buffering pattern.** The audio thread uses `try_read()` on an `Arc<RwLock<Song>>` to access sequencer state. If the UI thread acquires a write lock (e.g. during a large project mutation), `try_read()` fails, causing the audio thread to skip blocks or play silence. Evaluate using RCU (Read-Copy-Update) pointers (like the `arc-swap` crate) or double-buffered pointer swaps to provide lock-free, contention-free reads on the audio thread.
+
+### 5.26 Architectural: feature flags to prune unused modules in synth_modules
+- [ ] **Evaluate adding Cargo feature flags to prune unused DSP modules.** The `synth_modules` crate contains 70 modules, which increases compilation times and binary sizes. Evaluate dividing these modules into categories (e.g. `reverb`, `spectral`, `oscillators`) gated behind Cargo features to allow lightweight builds when only a subset of DSP code is needed.
+
+### 5.27 Performance: flatten WavetableBank Vec<Vec<f32>> to contiguous vector
+- [ ] **Evaluate flattening `WavetableBank::frames` structure.** Currently, wavetable frames are stored as a nested `Vec<Vec<f32>>`, causing double indirection and poor CPU cache locality during sample scanning. Evaluate flattening this structure into a single contiguous `Vec<f32>` (of size `num_frames * FRAME_SIZE`) and indexing it mathematically (`frame_idx * FRAME_SIZE + sample_idx`) to improve cache line pre-fetching.
+
+### 5.28 Performance: replace rem_euclid with fast wrapping in Wavetable lookup
+- [ ] **Evaluate avoiding float `rem_euclid` in wavetable sampling.** In `WavetableBank::sample`, the `phase` is wrapped via `phase.rem_euclid(1.0)` which is slow on floats. Since `phase` is often generated by wrapping phase accumulators (already in `[0.0, 1.0)`), evaluate using a fast branch or assuming pre-wrapped inputs (backed by a debug assertion) to bypass `rem_euclid` in the lookup path.
+
+### 5.29 Architectural: share TuningTable via Arc across voices
+- [ ] **Evaluate wrapping `TuningTable` in an `Arc`.** Currently, each `Voice` owns a copy of the entire `TuningTable` struct (512 bytes). In 64-voice polyphony configs, this wastes memory and requires copying the entire table to every voice when the scale changes. Evaluate sharing a single `Arc<TuningTable>` across all voices to achieve zero-copy tuning updates.
+
+### 5.30 Build optimization: Profile-Guided Optimization (PGO)
+- [ ] **Evaluate documenting and supporting Profile-Guided Optimization.** Since Pertylizer is a performance-critical audio engine, evaluate setting up and documenting PGO compiler workflows (using `-C profile-generate` and `-C profile-use` flags) to allow LLVM to optimize hot branch layouts and inline placements based on real-world execution profiles.
+
+### 5.31 Performance optimization: pre-calculate reciprocals to avoid float divisions in hot paths
+- [ ] **Evaluate replacing float divisions with reciprocal multiplications.** The engine performs divisions like `delta_time / glide_time` during processing (e.g. in `GlideState::update`). In DSP hot paths, floating-point division is several times slower than multiplication. Evaluate calculating the reciprocal (`1.0 / value`) during parameter configuration and using multiplication in the real-time processing loop.
+
+### 5.32 Performance: optimize InterpolatedDelayLine read_cubic using power-of-two mask
+- [ ] **Evaluate replacing rem_euclid and modulo operations in `read_cubic`.** Currently, `read_cubic` performs a floating-point `rem_euclid`, one `floor`, and four integer `%` modulo operations per sample. By enforcing power-of-two buffer sizes, evaluate replacing the four integer modulos with bitwise AND operations (`idx & (len - 1)`) and the float `rem_euclid` with a branch or bitwise operations to speed up chorus/pitch-shifting.
+
+### 5.33 Performance: avoid double-precision f64 math in room mode calculations
+- [ ] **Evaluate replacing `f64` casting in `mode_frequency`.** In `room_modes.rs`, `mode_frequency` converts all `f32` parameters to `f64` to calculate frequencies (performing `f64::sqrt` and double-precision divisions). Since the inputs and outputs are all `f32`, evaluate using `f32` operations to avoid double-precision instruction overhead on 32-bit registers.
+
+### 5.34 Performance: pre-multiply WOLA norm in STFT synthesis window
+- [ ] **Evaluate caching normalized window values in `StftProcessor`.** In `StftProcessor::process`, the synthesis overlap-add loop performs two multiplications per sample (`ifft_out[j] * window[j] * norm`). By pre-multiplying `window[j] * norm` when the window is loaded, evaluate reducing the inner loop math to a single multiplication per sample.
+
+### 5.35 Performance: optimize WavetableBank linear interpolation math
+- [ ] **Evaluate optimizing lerp calculation in `WavetableBank::sample`.** The current linear interpolation uses `a * (1.0 - t) + b * t` which requires two float multiplications. Evaluate replacing it with `a + t * (b - a)` to reduce it to a single multiplication, saving up to 50% of the math inside the scanning hot path.
+
+### 5.36 Performance: utilize SIMD in StereoBiquad to process channels in parallel
+- [ ] **Evaluate using SIMD for stereo biquad filtering.** Currently, `StereoBiquad::process` processes left and right channels sequentially. Since both channels share filter coefficients, evaluate using SIMD vectors (`f32x2` or `f32x4` via `std::simd`) to process both channels concurrently, doubling the speed of biquad filters.
+
+### 5.37 Code quality: standardise on to_radians and to_degrees intrinsics
+- [ ] **Evaluate replacing custom degree-to-radian multipliers.** Degree-to-radian conversions are done by multiplying by `PI / 180.0` or similar literals. Standardizing on `f32::to_radians` is cleaner and utilizes optimal compile-time standard library intrinsics.
+
+### 5.38 DSP: implement parameter smoothing for CV/cutoff changes
+- [ ] **Evaluate adding parameter smoothing to hot paths.** Sudden jumps in block-by-block parameter updates can cause audible clicks and "zipper noise". Evaluate adding a lightweight parameter smoothing helper (e.g. 1-pole lowpass filter or a sample-rate linear ramp) inside oscillators, amplifiers, and filters to guarantee smooth transitions.
+
+### 5.39 Performance: replace per-bank OnceLock with a global initialized lazy structure
+- [ ] **Evaluate replacing separate `OnceLock` instances in `get_wavetable`.** Currently, lookup matches on separate static `OnceLock<WavetableBank>` variables, causing atomic synchronization checks on every call. Evaluate using a single global lazy structure (or pre-initialization step) to load all banks at startup and keep them in a contiguous static array, removing lookup overhead.
+
+### 5.40 DSP: support fractional note interpolation in TuningTable
+- [ ] **Evaluate implementing fractional MIDI note support for TuningTable.** The `TuningTable` maps integer MIDI notes (0-127) to frequencies. During pitch bend or microtonal slide execution, custom scales are bypassed or approximated using 12-TET scaling. Evaluate supporting fractional note lookup (`note_to_freq_fractional(note: f32)`) with interpolation between adjacent frequencies to preserve correct custom scale intervals during pitch sweeps.
+
+### 5.41 DSP: prevent CPU denormal performance spikes via FTZ/DAZ or anti-denormal noise
+- [ ] **Evaluate preventing CPU denormal exceptions in DSP filters.** Decaying signals in recursive filters (like biquad filters and comb filters) can reach extremely small subnormal/denormal ranges. This triggers CPU microcode exceptions that spike CPU load when instruments fade to silence. Evaluate setting Flush-to-Zero (FTZ) and Denormals-Are-Zero (DAZ) hardware flags on the audio thread or adding anti-denormal bias/noise (e.g. `1e-24`) to feedback states.
+
+### 5.42 Performance: eliminate rem_euclid in AdditiveOsc phase accumulation
+- [ ] **Evaluate replacing float `rem_euclid` in `AdditiveOsc::process`.** During phase accumulation, `rem_euclid(1.0)` is used to wrap phases. Since the phase increment is positive and small, evaluate replacing it with a simple conditional check `if new_phase >= 1.0 { new_phase -= 1.0; }` to avoid expensive float modulo divisions.
+
+### 5.43 Performance: utilize SIMD in AdditiveOsc for parallel harmonic synthesis
+- [ ] **Evaluate vectorizing additive synthesis.** The additive oscillator sums 32 harmonics per sample, representing a major CPU bottleneck. Evaluate using SIMD vectors (`f32x4` or `f32x8` via `std::simd`) to calculate phase updates and sine approximations for multiple harmonics concurrently to achieve a 3-4x speedup.
+
+### 5.44 Performance: optimize VectorMixer by hoisting gain calculations when CV is unconnected
+- [ ] **Evaluate hoisting bilinear gain calculations in `VectorMixer`.** Currently, `VectorMixer::process` calculates equal-power bilinear crossfade gains (using trigonometric/square root functions) per sample. When `x_cv` and `y_cv` ports are unconnected, XY coordinates are completely constant across the entire block. Evaluate checking for unconnected CV inputs and calculating the gains once per block outside the loop, saving significant CPU overhead.
+
+### 5.45 Performance: control-rate (downsampled) CV evaluation for VectorMixer
+- [ ] **Evaluate downsampling CV calculations in `VectorMixer`.** When CV modulations are connected, they change at control rate rather than audio rate. Evaluate computing equal-power gains at a downsampled rate (e.g., once every 16 samples) and linearly interpolating them between blocks to eliminate 90% of coordinate transform math.
+
+### 5.46 Architectural: use AtomicCell or raw atomics instead of RwLock in shared parameter/modulation telemetry
+- [ ] **Evaluate using lock-free atomics for parameter sharing.** Telemetry and state updates (like OSC, harmony analysis, and GUI updates) query parameters concurrently. Wrapping values in standard `RwLock` structures introduces locks and synchronization overhead. Evaluate using `crossbeam::atomic::AtomicCell` or direct atomic floats to allow lock-free, zero-overhead sharing of float parameter values between threads.

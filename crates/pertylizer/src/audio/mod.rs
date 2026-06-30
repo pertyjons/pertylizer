@@ -87,3 +87,51 @@ pub fn default_host() -> AudioResult<AudioHost> {
 pub fn null_host() -> AudioHost {
     AudioHost::new(Box::new(NullBackend::new()))
 }
+
+/// Replay a module snapshot's YAMS scripts onto its Script (`scr`) / Mod-Matrix
+/// (`mmx`) / AudioScript (`asc`) slots in an offline-render engine.
+///
+/// Both offline renderers (`arrangement_render` and `preview`/`OfflineNoteSession`)
+/// must do this — without it every scripted module renders silent (an
+/// uninstalled script makes the module output zero), which diverges from the
+/// live engine. Compilation runs here, off the audio thread; only the shared
+/// `Arc<BoundScript>` crosses to the engine. Slot keys are 1-based; a bad key or
+/// compile error is recorded in `warnings` (prefixed with `ctx`) and skipped
+/// rather than aborting the whole render. The `AudioScript` module compiles in
+/// the audio-rate dialect; control-rate hosts use the default dialect.
+pub(crate) fn replay_module_scripts(
+    handle: &mut synth_engine::EngineHandle,
+    instrument_id: synth_engine::instrument::InstrumentId,
+    module_snap: &synth_engine::ModuleStateSnapshot,
+    warnings: &mut Vec<String>,
+    ctx: &str,
+) {
+    let module_id = module_snap.id;
+    for (slot_key, source) in &module_snap.scripts {
+        let slot = match crate::session::parse_mod_slot_key(slot_key) {
+            Ok(slot) => slot,
+            Err(msg) => {
+                warnings.push(format!("{ctx}: {module_id} slot {slot_key} script: {msg}"));
+                continue;
+            }
+        };
+        let audio_rate = module_id.module_type.script_is_audio_rate();
+        let script = match crate::session::compile_mod_script(source, audio_rate) {
+            Ok(script) => script,
+            Err(msg) => {
+                warnings.push(format!("{ctx}: {module_id} slot {slot_key} script: {msg}"));
+                continue;
+            }
+        };
+        if !handle.send_blocking(synth_engine::EngineCommand::SetModScript {
+            instrument_id: Some(instrument_id),
+            module_id,
+            slot,
+            script: Some(script),
+        }) {
+            warnings.push(format!(
+                "{ctx}: failed to enqueue script for module {module_id} slot {slot_key}"
+            ));
+        }
+    }
+}

@@ -279,6 +279,17 @@ impl OfflineNoteSession {
                     });
                 }
             }
+
+            // Replay YAMS scripts (scr / mmx / asc) — without this the offline
+            // note renderer leaves every scripted module silent (shared with the
+            // arrangement loader; see `audio::replay_module_scripts`).
+            crate::audio::replay_module_scripts(
+                handle,
+                InstrumentId::FIRST,
+                module_snap,
+                warnings,
+                "preview",
+            );
         };
 
         // Split modules into voice-graph and effect-chain buckets so we can

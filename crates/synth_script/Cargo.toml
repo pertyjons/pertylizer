@@ -12,3 +12,7 @@ workspace = true
 
 [dependencies]
 synth_core = { path = "../synth_core" }
+
+[[bench]]
+name = "yams_audio"
+harness = false

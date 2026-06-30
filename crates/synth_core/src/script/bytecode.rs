@@ -52,6 +52,9 @@ pub enum Builtin {
     Tan,
     Atan,
     Atan2,
+    /// Hyperbolic tangent — the canonical soft-clip / saturation curve for
+    /// audio-rate waveshaping (`out = tanh(in * drive)`).
+    Tanh,
     Lerp,
     Smoothstep,
     Sigmoid,
@@ -82,6 +85,7 @@ impl Builtin {
             | Self::Cos
             | Self::Tan
             | Self::Atan
+            | Self::Tanh
             | Self::Sigmoid
             | Self::Gauss
             | Self::Semis
@@ -147,6 +151,7 @@ impl Builtin {
             Self::Tan => a.tan(),
             Self::Atan => a.atan(),
             Self::Atan2 => a.atan2(b),
+            Self::Tanh => a.tanh(),
             Self::Lerp => a + (b - a) * c,
             Self::Smoothstep => {
                 let t = safe_div(c - a, b - a).clamp(0.0, 1.0);
@@ -289,6 +294,23 @@ pub enum Op {
         base: u16,
         len: u16,
     },
+
+    // ---- audio-rate state + output (Phase 4 — audio-rate `eval_block`) -------
+    /// Push the value of a user-declared persistent state cell (`state s`). Read a
+    /// bare `s` → `LoadState(i)`. Unlike the stateful ops above (which own their
+    /// cells implicitly), these cells are author-addressable difference-equation
+    /// memory for custom IIR/feedback; the compiler routes their allocation through
+    /// the same `alloc_state` cap as `lag`/`phasor`.
+    LoadState(u16),
+    /// Pop a value and store it into a user-declared state cell (`s = expr` →
+    /// `StoreState(i)`). NaN/Inf is sanitized to 0 (layer-2), so a poisoned
+    /// feedback value can never persist across samples.
+    StoreState(u16),
+    /// Pop a value and write it to audio output channel `chan` (0 = left, 1 =
+    /// right) for the current sample. Emitted by the `out.left` / `out.right`
+    /// multi-out grammar; a mono `out = expr` leaves its value on the stack
+    /// instead (the `eval_block` fallback duplicates it to both channels).
+    StoreAudioOut(u8),
 }
 
 /// An immutable, compiled YAMS program. Shared across voices behind an `Arc`;

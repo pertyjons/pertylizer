@@ -22,7 +22,7 @@
 //! unimplemented); and a comment in the *middle* of a multi-line input
 //! statement is relocated rather than kept in place (the CST would fix both).
 
-use crate::ast::{BinaryOp, Expr, ModuleRef, Program, UnaryOp};
+use crate::ast::{BinaryOp, BodyStmt, Expr, ModuleRef, OutChannel, Program, UnaryOp};
 use crate::diag::Diagnostic;
 use crate::parser::parse;
 
@@ -143,6 +143,13 @@ fn render(program: &Program, comments: &[Comment], lines: &LineMap) -> String {
             text: format!("arr {} = [{}]", a.name.name, elems.join(", ")),
         });
     }
+    for s in &program.states {
+        stmts.push(Stmt::Binding {
+            sline: lines.line_of(s.span.start),
+            eline: lines.line_of(s.span.end),
+            text: format!("state {} = {}", s.name.name, render_expr(&s.init)),
+        });
+    }
     // `src` and `arr` are separate AST lists but share the header block; emit them
     // in source order so the comment-attachment loop below (which walks the
     // line-sorted comments with a single forward cursor) keeps seeing
@@ -152,23 +159,38 @@ fn render(program: &Program, comments: &[Comment], lines: &LineMap) -> String {
         Stmt::Binding { sline, .. } | Stmt::Body { sline, .. } => *sline,
     });
     let body_start = stmts.len();
-    for l in &program.locals {
-        stmts.push(Stmt::Body {
-            sline: lines.line_of(l.span.start),
-            eline: lines.line_of(l.span.end),
-            text: format!("let {} = {}", l.name.name, render_expr(&l.expr)),
-        });
+    for stmt in &program.body {
+        let (sline, eline, text) = match stmt {
+            BodyStmt::Local(l) => (
+                lines.line_of(l.span.start),
+                lines.line_of(l.span.end),
+                format!("let {} = {}", l.name.name, render_expr(&l.expr)),
+            ),
+            BodyStmt::Assign(a) => (
+                lines.line_of(a.span.start),
+                lines.line_of(a.span.end),
+                format!("{} = {}", a.name.name, render_expr(&a.expr)),
+            ),
+        };
+        stmts.push(Stmt::Body { sline, eline, text });
     }
-    if let Some(o) = &program.output {
+    // Output statement(s): a mono `out`, or the `out.left`/`out.right` pair.
+    let out_start = stmts.len();
+    for o in &program.outputs {
+        let kw = match o.channel {
+            OutChannel::Mono => "out",
+            OutChannel::Left => "out.left",
+            OutChannel::Right => "out.right",
+        };
         stmts.push(Stmt::Body {
             sline: lines.line_of(o.span.start),
             eline: lines.line_of(o.span.end),
-            text: format!("out = {}", render_expr(&o.expr)),
+            text: format!("{kw} = {}", render_expr(&o.expr)),
         });
     }
 
-    // The final `out` statement is the last one (locals are pushed before it).
-    let out_index = program.output.is_some().then(|| stmts.len() - 1);
+    // The blank line that sets off the output block goes before the first `out`.
+    let out_index = (!program.outputs.is_empty()).then_some(out_start);
 
     let mut out: Vec<String> = Vec::new();
     let mut next = 0usize; // index into comments (sorted by line)
@@ -498,5 +520,36 @@ mod tests {
     fn parse_error_is_reported() {
         assert!(format("out = a < b < c").is_err());
         assert!(format("src lfo = lfo-1.out").is_err()); // missing out
+    }
+
+    #[test]
+    fn state_decl_and_assignment_format() {
+        // `state` is a header declaration (set off by a blank line); the
+        // assignment renders without a keyword, like `out`.
+        assert_eq!(
+            fmt("state s=0\ns=s+velocity\nout=s"),
+            "state s = 0\n\ns = s + velocity\n\nout = s\n"
+        );
+    }
+
+    #[test]
+    fn state_program_is_idempotent() {
+        idempotent("state y = 0\nlet a = 0.2\ny = y + a * (velocity - y)\nout = y");
+    }
+
+    #[test]
+    fn tanh_formats() {
+        assert_eq!(fmt("out=tanh(velocity*4)"), "out = tanh(velocity * 4)\n");
+    }
+
+    #[test]
+    fn multi_out_formats_and_round_trips() {
+        // `out.left`/`out.right` render with their channel keyword; only the first
+        // gets the leading blank line, so the stereo pair stays together.
+        assert_eq!(
+            fmt("let x=in_l*0.5\nout.left=x\nout.right=in_r"),
+            "let x = in_l * 0.5\n\nout.left = x\nout.right = in_r\n"
+        );
+        idempotent("out.left = tanh(in_l)\nout.right = tanh(in_r)");
     }
 }

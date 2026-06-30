@@ -1,0 +1,65 @@
+{
+  "file_type": "project",
+  "version": "1.0",
+  "instrument_count": 1,
+  "active_instrument_id": 2,
+  "author_present": false,
+  "instruments": [
+    {
+      "id": 2,
+      "name": "Folding Reed",
+      "channel": 1,
+      "volume": 1.0,
+      "pan": 0.0,
+      "muted": false,
+      "solo": false,
+      "key_range": [
+        0,
+        127
+      ],
+      "transpose_semitones": 0.0,
+      "oversampling": 1,
+      "category": 0,
+      "description_len": 319,
+      "color_present": false,
+      "allocation_mode": "Polyphonic",
+      "unison_detune_cents": 10.0,
+      "unison_spread": 0.0,
+      "max_voices": 8,
+      "velocity_amp_sensitivity": 1.0,
+      "velocity_filter_sensitivity": 0.5,
+      "sidechain_source_id": null,
+      "patch_name": "Folding Reed",
+      "patch_description_present": false,
+      "module_count": 7,
+      "connection_count": 7,
+      "effect_chain_order_len": 2,
+      "group_count": 0
+    }
+  ],
+  "song": {
+    "name": "YAMS AudioScript Wavefolder",
+    "author": "Pertylizer",
+    "default_tempo_bpm": 120.0,
+    "time_signature_numerator": 4,
+    "time_signature_denominator": 4,
+    "pattern_count": 0,
+    "track_count": 0,
+    "placement_count": 0,
+    "total_notes": 0,
+    "tempo_change_count": 0
+  },
+  "global": {
+    "master_volume": 0.8,
+    "octave_offset": 0,
+    "glide_time_seconds": 0.0,
+    "awe_state_present": false,
+    "awe_enabled": null,
+    "awe_preset_name": null,
+    "awe_description_present": false
+  },
+  "samples": {
+    "count": 0,
+    "total_frames": 0
+  }
+}

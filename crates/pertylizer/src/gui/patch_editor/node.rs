@@ -19,8 +19,8 @@ use crate::gui::widgets::{CaptionTone, WidgetPortDirection, caption};
 use super::{
     AudioInputAction, AudioInputSnapshot, EFFECT_CHAIN_AMBER, ModAddrCatalog, ModuleBodyCtx,
     PanelParamsResult, PatchAnalysis, PatchEditor, PatchEditorResult, PortRenderInfo,
-    ScriptDepGraph, convert_port_type, draw_mod_matrix_grid, draw_script_module_grid,
-    draw_visualizer_display, trim_sweep_to_complete_cycles,
+    ScriptDepGraph, convert_port_type, draw_audio_script_module_grid, draw_mod_matrix_grid,
+    draw_script_module_grid, draw_visualizer_display, trim_sweep_to_complete_cycles,
 };
 
 impl PatchEditor {
@@ -523,6 +523,12 @@ pub(super) fn draw_module_panel_params(
     // output port), each opening the shared expression editor.
     if descriptor.type_id.0 == "script" {
         return draw_script_module_grid(ui, state, accent_color, script_graph, mod_catalog);
+    }
+
+    // Special handling for the AudioScript module — a single per-sample YAMS
+    // program (one stereo slot) rather than 8 control-rate slots.
+    if descriptor.type_id.0 == "audio_script" {
+        return draw_audio_script_module_grid(ui, state, accent_color, script_graph, mod_catalog);
     }
 
     // Signal Monitor — draw oscilloscope display above parameters

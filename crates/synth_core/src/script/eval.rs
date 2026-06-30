@@ -12,10 +12,17 @@ use crate::script::bytecode::{
 };
 
 /// Per-evaluation context supplied by the engine.
+///
+/// The VM is rate-agnostic: `control_rate` is whatever Hz the evaluation runs at,
+/// and it drives `dt = 1/rate` for the time-based stateful ops (`lag`, `slew`,
+/// `phasor`). At control rate that is `sample_rate / block_size` (one eval per
+/// block); at audio rate ([`eval_block`](CompiledScript::eval_block)) it is the
+/// full `sample_rate` (one eval per sample) — see [`Self::audio`].
 #[derive(Debug, Clone, Copy)]
 pub struct EvalContext {
-    /// Control rate in Hz (evaluations per second = sample_rate / block_size).
-    /// Drives time-based stateful ops (`lag`, `slew`, `phasor`).
+    /// Evaluation rate in Hz. Control rate (`sample_rate / block_size`) for the
+    /// per-block [`eval`](CompiledScript::eval); the audio sample rate for the
+    /// per-sample [`eval_block`](CompiledScript::eval_block).
     pub control_rate: f32,
 }
 
@@ -25,7 +32,16 @@ impl EvalContext {
         Self { control_rate }
     }
 
-    /// Seconds per control-rate block.
+    /// Construct an audio-rate context: the evaluation rate is the full sample
+    /// rate (one eval per sample). Just an intent-revealing alias for
+    /// [`Self::new`] — the VM math is identical, only the rate differs.
+    #[must_use]
+    pub fn audio(sample_rate: f32) -> Self {
+        Self::new(sample_rate)
+    }
+
+    /// Seconds per evaluation step (one block at control rate, one sample at
+    /// audio rate).
     fn dt(self) -> f32 {
         if self.control_rate > 0.0 {
             1.0 / self.control_rate
@@ -33,6 +49,33 @@ impl EvalContext {
             0.0
         }
     }
+}
+
+/// Which source registers an audio-rate script fills per-sample, rather than once
+/// per block. Everything else (macros, context vars, slow params) is resolved
+/// once and stays constant across the block; only these registers tick each
+/// sample (the per-block-constant vs per-sample source split). A `None` field
+/// means the script does not read that audio input.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct AudioBindings {
+    /// Source register fed the per-sample left / mono audio input (`in` / `in-l`).
+    pub in_left: Option<u16>,
+    /// Source register fed the per-sample right audio input (`in-r`).
+    pub in_right: Option<u16>,
+    /// Source register fed `first_sample` — `1.0` only at sample 0 of the note's
+    /// very first block, `0.0` everywhere after (audio-rate one-shot init).
+    pub first_sample: Option<u16>,
+}
+
+/// Per-sample audio output captured while running one evaluation. Each channel
+/// is `Some(v)` once the `out.left` / `out.right` multi-out grammar has written
+/// it (`Op::StoreAudioOut`), and `None` otherwise — a bare `out = expr` writes
+/// nothing here and leaves its value on the value stack, so `eval_block` falls
+/// back to duplicating the stack top to both unwritten channels.
+#[derive(Debug, Clone, Copy, Default)]
+struct ChannelOut {
+    left: Option<f32>,
+    right: Option<f32>,
 }
 
 /// Per-voice mutable state for a running script: persistent state cells plus the
@@ -93,10 +136,28 @@ impl CompiledScript {
     /// voice's persistent state. Returns the sanitized output offset.
     #[must_use]
     pub fn eval(&self, sources: &[f32], regs: &mut RegisterFile, ctx: &EvalContext) -> f32 {
-        let dt = ctx.dt();
         let mut stack = Stack::new();
         let mut locals = [0.0f32; MAX_LOCALS];
+        let mut out = ChannelOut::default();
+        self.run(sources, regs, ctx.dt(), &mut stack, &mut locals, &mut out);
+        finite_or_zero(stack.top())
+    }
 
+    /// Run the straight-line program once over `sources`, leaving the result on
+    /// the value stack (a bare `out = expr`) and/or in `out` (the `out.left` /
+    /// `out.right` multi-out grammar). The single shared op-dispatch loop behind
+    /// both [`eval`](Self::eval) (per block) and [`eval_block`](Self::eval_block)
+    /// (per sample) — kept in one place so the two rates can never diverge.
+    /// `dt` is the seconds-per-step the time-based ops integrate over.
+    fn run(
+        &self,
+        sources: &[f32],
+        regs: &mut RegisterFile,
+        dt: f32,
+        stack: &mut Stack,
+        locals: &mut [f32; MAX_LOCALS],
+        out: &mut ChannelOut,
+    ) {
         for op in &self.code {
             match *op {
                 Op::PushConst(i) => {
@@ -126,12 +187,12 @@ impl CompiledScript {
                     }
                 }
 
-                Op::Add => binop(&mut stack, |a, b| a + b),
-                Op::Sub => binop(&mut stack, |a, b| a - b),
-                Op::Mul => binop(&mut stack, |a, b| a * b),
-                Op::Div => binop(&mut stack, safe_div),
-                Op::Rem => binop(&mut stack, |a, b| if b == 0.0 { 0.0 } else { a % b }),
-                Op::Pow => binop(&mut stack, f32::powf),
+                Op::Add => binop(stack, |a, b| a + b),
+                Op::Sub => binop(stack, |a, b| a - b),
+                Op::Mul => binop(stack, |a, b| a * b),
+                Op::Div => binop(stack, safe_div),
+                Op::Rem => binop(stack, |a, b| if b == 0.0 { 0.0 } else { a % b }),
+                Op::Pow => binop(stack, f32::powf),
 
                 Op::Neg => {
                     let a = stack.pop();
@@ -142,14 +203,14 @@ impl CompiledScript {
                     stack.push(b2f(a == 0.0));
                 }
 
-                Op::Eq => binop(&mut stack, |a, b| b2f(a == b)),
-                Op::Ne => binop(&mut stack, |a, b| b2f(a != b)),
-                Op::Lt => binop(&mut stack, |a, b| b2f(a < b)),
-                Op::Gt => binop(&mut stack, |a, b| b2f(a > b)),
-                Op::Le => binop(&mut stack, |a, b| b2f(a <= b)),
-                Op::Ge => binop(&mut stack, |a, b| b2f(a >= b)),
-                Op::And => binop(&mut stack, |a, b| b2f(a != 0.0 && b != 0.0)),
-                Op::Or => binop(&mut stack, |a, b| b2f(a != 0.0 || b != 0.0)),
+                Op::Eq => binop(stack, |a, b| b2f(a == b)),
+                Op::Ne => binop(stack, |a, b| b2f(a != b)),
+                Op::Lt => binop(stack, |a, b| b2f(a < b)),
+                Op::Gt => binop(stack, |a, b| b2f(a > b)),
+                Op::Le => binop(stack, |a, b| b2f(a <= b)),
+                Op::Ge => binop(stack, |a, b| b2f(a >= b)),
+                Op::And => binop(stack, |a, b| b2f(a != 0.0 && b != 0.0)),
+                Op::Or => binop(stack, |a, b| b2f(a != 0.0 || b != 0.0)),
 
                 Op::Select => {
                     let els = stack.pop();
@@ -158,7 +219,7 @@ impl CompiledScript {
                     stack.push(if cond != 0.0 { then } else { els });
                 }
 
-                Op::Call(b) => apply_builtin(b, &mut stack),
+                Op::Call(b) => apply_builtin(b, stack),
 
                 Op::Lag(i) => {
                     let alpha = stack.pop();
@@ -340,10 +401,90 @@ impl CompiledScript {
                     }
                     stack.push(12.0 * octave + best);
                 }
+
+                // ---- Phase 4: author-addressable state + multi-out ----------
+                Op::LoadState(i) => stack.push(regs.state_get(i)),
+                Op::StoreState(i) => {
+                    let v = stack.pop();
+                    regs.state_set(i, v); // layer-2 sanitize: NaN/Inf → 0
+                }
+                Op::StoreAudioOut(chan) => {
+                    let v = finite_or_zero(stack.pop());
+                    if chan == 0 {
+                        out.left = Some(v);
+                    } else {
+                        out.right = Some(v);
+                    }
+                }
             }
         }
+    }
 
-        finite_or_zero(stack.top())
+    /// Evaluate the script once per sample across one audio block — the
+    /// audio-rate counterpart to [`eval`](Self::eval).
+    ///
+    /// The value stack and `locals` are allocated once and kept warm across the
+    /// whole block (only `sp` is reset per sample via [`Stack::clear`], never the
+    /// 64-float buffer), so per-sample overhead is just the op loop. `sources` is
+    /// pre-filled by the caller with the **per-block-constant** values (macros,
+    /// context vars, slow params); the registers named in `bindings` are the only
+    /// ones overwritten each sample — the audio inputs and the `first_sample`
+    /// one-shot. `ctx` carries the audio sample rate (see [`EvalContext::audio`]).
+    ///
+    /// Output: each sample's left/right is the `out.left` / `out.right` value
+    /// (`Op::StoreAudioOut`) when the program writes them, else the bare
+    /// `out = expr` value (the value-stack top) duplicated to both channels.
+    /// `first_block` is `true` only for the note's very first block, so
+    /// `first_sample` fires exactly once at global sample 0. Real-time safe.
+    #[allow(clippy::too_many_arguments)]
+    pub fn eval_block(
+        &self,
+        sources: &mut [f32],
+        bindings: &AudioBindings,
+        in_left: &[f32],
+        in_right: &[f32],
+        out_left: &mut [f32],
+        out_right: &mut [f32],
+        regs: &mut RegisterFile,
+        ctx: &EvalContext,
+        first_block: bool,
+    ) {
+        let dt = ctx.dt();
+        let n = out_left.len().min(out_right.len());
+        let mut stack = Stack::new();
+        let mut locals = [0.0f32; MAX_LOCALS];
+
+        for i in 0..n {
+            // Per-sample source injection: only the audio-in and `first_sample`
+            // registers tick; every other source stays at its block-constant value.
+            if let Some(r) = bindings.in_left {
+                set_source(sources, r, in_left.get(i).copied().unwrap_or(0.0));
+            }
+            if let Some(r) = bindings.in_right {
+                set_source(sources, r, in_right.get(i).copied().unwrap_or(0.0));
+            }
+            if let Some(r) = bindings.first_sample {
+                set_source(sources, r, f32::from(first_block && i == 0));
+            }
+
+            stack.clear(); // reset sp only — keep the warm buffer
+            let mut out = ChannelOut::default();
+            self.run(sources, regs, dt, &mut stack, &mut locals, &mut out);
+
+            // Mono fallback: a bare `out = expr` leaves its value on the stack;
+            // an unwritten channel (no `out.left`/`out.right`) duplicates it.
+            let mono = finite_or_zero(stack.top());
+            out_left[i] = out.left.unwrap_or(mono);
+            out_right[i] = out.right.unwrap_or(mono);
+        }
+    }
+}
+
+/// Overwrite one source register if it is in range (per-sample audio injection).
+#[inline]
+fn set_source(sources: &mut [f32], reg: u16, value: f32) {
+    if let Some(slot) = sources.get_mut(reg as usize) {
+        *slot = value;
     }
 }
 
@@ -360,6 +501,14 @@ impl Stack {
             buf: [0.0; MAX_STACK],
             sp: 0,
         }
+    }
+
+    /// Reset the stack to empty by zeroing the stack pointer only. The warm-frame
+    /// audio loop calls this per sample instead of `Stack::new()`, which would
+    /// `memset` the whole 64-float buffer every sample — stale slots above `sp`
+    /// are never read, so leaving them is safe.
+    fn clear(&mut self) {
+        self.sp = 0;
     }
 
     fn push(&mut self, v: f32) {
@@ -690,5 +839,225 @@ mod tests {
         v0.reset(0, SEED);
         let a0_again = script.eval(&[], &mut v0, &ctx);
         assert!(approx(a0, a0_again));
+    }
+
+    // ---- Phase 4: audio-rate `eval_block` ---------------------------------
+
+    const SR: f32 = 48_000.0;
+
+    /// Run an audio-rate program over one block. `sources` is the pre-resolved
+    /// block-constant slice (audio-in slots are placeholders, overwritten by the
+    /// bindings); returns the (left, right) output buffers.
+    #[allow(clippy::too_many_arguments)]
+    fn run_block(
+        code: &[Op],
+        constants: &[f32],
+        source_count: u16,
+        state_count: u16,
+        bindings: &AudioBindings,
+        sources: &mut [f32],
+        input: &[f32],
+        first_block: bool,
+    ) -> (Vec<f32>, Vec<f32>) {
+        let script =
+            CompiledScript::new(code.to_vec(), constants.to_vec(), source_count, state_count);
+        let mut regs = RegisterFile::new(0, SEED);
+        let n = input.len();
+        let mut l = vec![0.0; n];
+        let mut r = vec![0.0; n];
+        script.eval_block(
+            sources,
+            bindings,
+            input,
+            input,
+            &mut l,
+            &mut r,
+            &mut regs,
+            &EvalContext::audio(SR),
+            first_block,
+        );
+        (l, r)
+    }
+
+    #[test]
+    fn eval_block_passthrough_is_bit_exact() {
+        // `out = in` — left/right must equal the input sample-for-sample.
+        let bindings = AudioBindings {
+            in_left: Some(0),
+            ..Default::default()
+        };
+        let input: Vec<f32> = (0..8).map(|i| (i as f32 * 0.131).sin()).collect();
+        let mut sources = vec![0.0; 1];
+        let (l, r) = run_block(
+            &[Op::PushSource(0)],
+            &[],
+            1,
+            0,
+            &bindings,
+            &mut sources,
+            &input,
+            true,
+        );
+        for i in 0..input.len() {
+            assert_eq!(l[i], input[i], "left passthrough bit-exact");
+            assert_eq!(r[i], input[i], "mono out duplicates to right");
+        }
+    }
+
+    #[test]
+    fn eval_block_applies_per_sample_gain() {
+        // `out = in * 0.5`.
+        let bindings = AudioBindings {
+            in_left: Some(0),
+            ..Default::default()
+        };
+        let input: Vec<f32> = vec![1.0, -0.4, 0.8, -1.0];
+        let mut sources = vec![0.0; 1];
+        let (l, _r) = run_block(
+            &[Op::PushSource(0), Op::PushConst(0), Op::Mul],
+            &[0.5],
+            1,
+            0,
+            &bindings,
+            &mut sources,
+            &input,
+            true,
+        );
+        for i in 0..input.len() {
+            assert!(approx(l[i], input[i] * 0.5));
+        }
+    }
+
+    #[test]
+    fn eval_block_scripted_one_pole_matches_reference() {
+        // A custom IIR via LoadState/StoreState: y = y + a*(x - y); out = y.
+        //   LoadState(0) -> y
+        //   PushSource(0) -> y, x
+        //   LoadState(0) -> y, x, y
+        //   Sub          -> y, (x - y)
+        //   PushConst(0) -> y, (x-y), a
+        //   Mul          -> y, a*(x-y)
+        //   Add          -> y + a*(x-y)
+        //   StoreState(0)-> []  state[0] = new y
+        //   LoadState(0) -> new y (mono out)
+        let a = 0.2_f32;
+        let code = [
+            Op::LoadState(0),
+            Op::PushSource(0),
+            Op::LoadState(0),
+            Op::Sub,
+            Op::PushConst(0),
+            Op::Mul,
+            Op::Add,
+            Op::StoreState(0),
+            Op::LoadState(0),
+        ];
+        let bindings = AudioBindings {
+            in_left: Some(0),
+            ..Default::default()
+        };
+        let input: Vec<f32> = (0..32).map(|i| if i == 0 { 1.0 } else { 0.0 }).collect(); // impulse
+        let mut sources = vec![0.0; 1];
+        let (l, _r) = run_block(&code, &[a], 1, 1, &bindings, &mut sources, &input, true);
+
+        // Reference one-pole.
+        let mut y = 0.0_f32;
+        for (i, &x) in input.iter().enumerate() {
+            y += a * (x - y);
+            assert!(approx(l[i], y), "sample {i}: {} != {y}", l[i]);
+        }
+    }
+
+    #[test]
+    fn eval_block_multi_out_writes_independent_channels() {
+        // out.left = in;  out.right = -in  (via StoreAudioOut).
+        //   PushSource(0); StoreAudioOut(0)   -> left = in
+        //   PushSource(0); Neg; StoreAudioOut(1) -> right = -in
+        let code = [
+            Op::PushSource(0),
+            Op::StoreAudioOut(0),
+            Op::PushSource(0),
+            Op::Neg,
+            Op::StoreAudioOut(1),
+        ];
+        let bindings = AudioBindings {
+            in_left: Some(0),
+            ..Default::default()
+        };
+        let input: Vec<f32> = vec![0.25, -0.5, 1.0];
+        let mut sources = vec![0.0; 1];
+        let (l, r) = run_block(&code, &[], 1, 0, &bindings, &mut sources, &input, true);
+        for i in 0..input.len() {
+            assert!(approx(l[i], input[i]));
+            assert!(approx(r[i], -input[i]));
+        }
+    }
+
+    #[test]
+    fn eval_block_first_sample_fires_once_per_note() {
+        // `out = first_sample` — 1 only at global sample 0, then 0 forever.
+        let bindings = AudioBindings {
+            first_sample: Some(0),
+            ..Default::default()
+        };
+        let zeros = vec![0.0; 4];
+
+        // First block: sample 0 reads 1, the rest 0.
+        let mut sources = vec![0.0; 1];
+        let (l0, _r) = run_block(
+            &[Op::PushSource(0)],
+            &[],
+            1,
+            0,
+            &bindings,
+            &mut sources,
+            &zeros,
+            true,
+        );
+        assert!(approx(l0[0], 1.0));
+        assert!(l0[1..].iter().all(|&v| approx(v, 0.0)));
+
+        // A non-first block never fires.
+        let mut sources = vec![0.0; 1];
+        let (l1, _r) = run_block(
+            &[Op::PushSource(0)],
+            &[],
+            1,
+            0,
+            &bindings,
+            &mut sources,
+            &zeros,
+            false,
+        );
+        assert!(l1.iter().all(|&v| approx(v, 0.0)));
+    }
+
+    #[test]
+    fn eval_block_nan_in_feedback_is_clamped() {
+        // A feedback loop fed a NaN must clamp the state to 0, never blow up:
+        //   y = y + in;  out = y   (accumulate the input into state)
+        // Feeding a NaN once must not poison subsequent samples.
+        let code = [
+            Op::LoadState(0),
+            Op::PushSource(0),
+            Op::Add,
+            Op::StoreState(0),
+            Op::LoadState(0),
+        ];
+        let bindings = AudioBindings {
+            in_left: Some(0),
+            ..Default::default()
+        };
+        let input: Vec<f32> = vec![0.1, f32::NAN, 0.2, 0.3];
+        let mut sources = vec![0.0; 1];
+        let (l, _r) = run_block(&code, &[], 1, 1, &bindings, &mut sources, &input, true);
+        // Every output is finite — the NaN never propagates past the state write.
+        assert!(l.iter().all(|v| v.is_finite()), "outputs: {l:?}");
+        // The NaN sample writes `finite_or_zero(NaN) = 0` into the accumulator, so
+        // the loop resets to 0 there and resumes cleanly: 0.1, 0, 0.2, 0.5.
+        assert!(approx(l[0], 0.1));
+        assert!(approx(l[1], 0.0));
+        assert!(approx(l[2], 0.2));
+        assert!(approx(l[3], 0.5));
     }
 }

@@ -9,16 +9,20 @@
 pub use crate::lexer::DurationUnit;
 use crate::span::Span;
 
-/// A whole YAMS program: zero or more `src` bindings, zero or more `arr`
-/// const-table declarations, zero or more `let` locals, and a single `out`.
+/// A whole YAMS program. The **header** is declarations in any order: `src`
+/// bindings, `arr` const tables, and `state` cells. The **body** is an ordered
+/// list of statements (`let` locals and `s = expr` state assignments) whose
+/// source order is significant for state — a `state` read returns the prior
+/// value until its assignment runs. The program ends with a single `out`.
 /// `output` is `None` when the source had no (valid) `out` statement — a
 /// diagnostic was emitted in that case.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Program {
     pub bindings: Vec<Binding>,
     pub arrays: Vec<ArrayDecl>,
-    pub locals: Vec<Local>,
-    pub output: Option<Output>,
+    pub states: Vec<StateDecl>,
+    pub body: Vec<BodyStmt>,
+    pub outputs: Vec<Output>,
 }
 
 /// An identifier with its source span.
@@ -65,11 +69,50 @@ pub struct Local {
     pub span: Span,
 }
 
-/// `out [name] = <expr>` — the single output. `name` is reserved for the future
-/// multi-output direction and is unused in v1.
+/// `state <name> = <expr>` — declares a persistent per-voice state cell for
+/// custom IIR/feedback. The initializer must be a compile-time constant; cells
+/// reset to it on note-on (today only `0` is supported — seed a non-zero value
+/// from `first_sample` in an audio-rate script).
+#[derive(Debug, Clone, PartialEq)]
+pub struct StateDecl {
+    pub name: Ident,
+    pub init: Expr,
+    pub span: Span,
+}
+
+/// `<state-name> = <expr>` — write a declared `state` cell (compiles to
+/// `Op::StoreState`). A body statement so its position is significant: the write
+/// updates the cell for subsequent reads (the next sample, for an audio-rate IIR).
+#[derive(Debug, Clone, PartialEq)]
+pub struct Assign {
+    pub name: Ident,
+    pub expr: Expr,
+    pub span: Span,
+}
+
+/// One ordered body statement: a `let` local or a `state` assignment. Order is
+/// preserved by the compiler so straight-line program semantics give correct IIR.
+#[derive(Debug, Clone, PartialEq)]
+pub enum BodyStmt {
+    Local(Local),
+    Assign(Assign),
+}
+
+/// Which output a statement writes. A bare `out` is `Mono` (duplicated to both
+/// channels of a stereo audio script); `out.left` / `out.right` (audio-rate only)
+/// are the stereo multi-out grammar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum OutChannel {
+    Mono,
+    Left,
+    Right,
+}
+
+/// `out[.left|.right] = <expr>` — one output statement. A program has one mono
+/// `out`, or the `out.left`/`out.right` pair (audio-rate only).
 #[derive(Debug, Clone, PartialEq)]
 pub struct Output {
-    pub name: Option<Ident>,
+    pub channel: OutChannel,
     pub expr: Expr,
     pub span: Span,
 }

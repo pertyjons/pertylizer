@@ -67,6 +67,11 @@ pub struct ScriptEditorState {
     pub draft: String,
     /// Whether the YAMS help panel is open alongside the editor.
     pub show_help: bool,
+    /// When set, the draft is compiled with the audio-rate dialect (the
+    /// per-sample `AudioScript` module): `in`/`in_l`/`in_r`, `first_sample`, and
+    /// `out.left`/`out.right` are unlocked. Control-rate hosts (Mod Matrix /
+    /// Script) leave this `false`, matching `session::compile_mod_script`.
+    pub audio_rate: bool,
 }
 
 impl ModulePanelState {

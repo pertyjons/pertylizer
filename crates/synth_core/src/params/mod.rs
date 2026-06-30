@@ -235,6 +235,9 @@ pub enum ModuleType {
     Fof,
     // Scripting (per-voice control-signal generator)
     Script,
+    /// Per-voice audio-rate scripted DSP (YAMS, one eval per sample): waveshaper,
+    /// bitcrusher, ring-mod, custom IIR/filter. Audio in/out ports.
+    AudioScript,
 }
 
 impl ModuleType {
@@ -315,6 +318,8 @@ impl ModuleType {
                 | Self::Fof
                 // Scripting (per-voice control-signal generator)
                 | Self::Script
+                // Audio-rate scripted DSP (per-voice)
+                | Self::AudioScript
         )
     }
 
@@ -373,6 +378,21 @@ impl ModuleType {
     #[inline]
     pub fn is_global(&self) -> bool {
         !self.is_voice_module()
+    }
+
+    /// Whether this module's YAMS script compiles in the **audio-rate** dialect
+    /// (one eval per sample: `in`/`in_l`/`in_r`, `first_sample`,
+    /// `out.left`/`out.right`) rather than the control-rate dialect used by the
+    /// Mod Matrix and the control `Script` module.
+    ///
+    /// Single source of truth for the dialect decision shared by every script
+    /// install/compile site (`session::set_mod_script`, the offline-render
+    /// `audio::replay_module_scripts`); a new audio-rate scripted module type is
+    /// added here, not in each caller.
+    #[inline]
+    #[must_use]
+    pub fn script_is_audio_rate(&self) -> bool {
+        matches!(self, Self::AudioScript)
     }
 
     // ========================================================================
@@ -458,6 +478,7 @@ impl ModuleType {
             Self::VocalTract => "Vocal Tract",
             Self::Fof => "FOF",
             Self::Script => "Script",
+            Self::AudioScript => "Audio Script",
         }
     }
 
@@ -540,6 +561,7 @@ impl ModuleType {
             Self::VocalTract => "vtr",
             Self::Fof => "fof",
             Self::Script => "scr",
+            Self::AudioScript => "asc",
         }
     }
 
@@ -622,6 +644,7 @@ impl ModuleType {
             "vtr" => Some(Self::VocalTract),
             "fof" => Some(Self::Fof),
             "scr" => Some(Self::Script),
+            "asc" => Some(Self::AudioScript),
             _ => None,
         }
     }
