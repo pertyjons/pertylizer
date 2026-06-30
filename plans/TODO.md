@@ -103,9 +103,8 @@
 ### 2.4 Polyphony settings
 
 - [ ] **Unison detune + spread controls.** **Detune SHIPPED** (`268441f9`,
-  configurable end-to-end — see the progress block below). **Spread is the
-  remaining work** — full plan in
-  [`plans/unison-spread-plan.md`](unison-spread-plan.md). _History (why the
+  configurable end-to-end — see the progress block below). **Spread also
+  SHIPPED** (`eac9b020`, per-instrument unison stereo spread). _History (why the
   original config was removed before detune re-added it properly):_ the global
   `AllocationMode::Unison` *mode* always worked, but the detune amount used to be a
   **fixed 10-cent constant inlined in `allocate_unison`** (`voice_allocator.rs`). The old
@@ -194,10 +193,8 @@
   **DETUNE VERTICAL COMPLETE** (steps 1–6, merged to `main` as
   `268441f9`): unison detune is configurable end-to-end (allocator → command →
   snapshot → persistence w/ 10 ct backward-compat → GUI slider greyed outside
-  Unison mode → tests). **Still open:** (a) **spread** — full implementation plan
-  in [`plans/unison-spread-plan.md`](unison-spread-plan.md) (per-voice stereo
-  width; recommended defaults locked, ready to build); (b) **MCP** allocator-config
-  surface (see step 6 triage).
+  Unison mode → tests). **Spread SHIPPED** too (`eac9b020`, per-voice stereo
+  width). **Still open:** **MCP** allocator-config surface (see step 6 triage).
 
 ### 2.5 Hardening Newtype Invariants
 
@@ -333,7 +330,7 @@ efficiency/altitude items deliberately left out of that change.
   deletion of an in-use sample, or resetting referencing modules to "no sample".
 ### 3.8 Shared widget helpers follow-ups (evaluating Phase 2 residual)
 
-Following the evaluation of [widget-helpers-plan.md](file:///home/per/github/pertylizer/plans/widget-helpers-plan.md), these are the remaining areas to polish the GUI helpers layer:
+Residual after the shared-widget-helpers work landed — these are the remaining areas to polish the GUI helpers layer:
 
 - [ ] **Global FileDialog memory across kinds.** Refactor `ensure_dialog` in [dialogs.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/dialogs.rs) to reuse a single global `FileDialog` instance across all kinds (Open/Save Patch, templates, etc.) rather than rebuilding it when `file_dialog_kind` changes. Update its `config_mut().file_filters` dynamically on every open. This enables directory memory and highlighting (`retain_selected_entry`) to survive switching between Open and Save actions.
 - [ ] **Unify inline name/description editors.** Create a helper `inline_editable_text(ui, &mut String, &mut bool, multiline)` in [controls.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/widgets/controls.rs) to wrap the focus-grabbing and lost-focus/Enter-key commit logic currently duplicated in [piano_roll.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/sequencer/piano_roll.rs#L2510) and [arrangement.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/sequencer/arrangement.rs#L1580).

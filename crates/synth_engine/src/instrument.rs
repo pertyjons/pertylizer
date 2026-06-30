@@ -1378,8 +1378,7 @@ impl Instrument {
                 }
 
                 // Per-voice unison stereo spread. (The oversampled loop applies no
-                // AWE dry-pan — see plans/unison-spread-plan.md — so spread is applied
-                // independently here.)
+                // AWE dry-pan, so spread is applied independently here.)
                 apply_unison_spread(
                     &mut temp_left.as_mut_slice()[..os_count],
                     &mut temp_right.as_mut_slice()[..os_count],

@@ -1238,8 +1238,8 @@ impl Voice {
     /// raw frequency. Returns `None` if the member is not a parameter of `id`.
     ///
     /// (The descriptor lookup is a small linear scan of the module's params each
-    /// block; resolving it once at bind time into a cached accessor is the
-    /// documented follow-up in `plans/yams-realtime-plan.md` Phase 1.)
+    /// block; resolving it once at bind time into a cached accessor is a known
+    /// follow-up.)
     fn resolve_param_source(
         graph: &ModuleGraph,
         id: crate::ModuleId,
