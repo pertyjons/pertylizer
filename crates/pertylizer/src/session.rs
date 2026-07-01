@@ -835,6 +835,36 @@ impl SynthSession {
         self.command_sender.clone()
     }
 
+    /// Block until the audio thread has drained every command submitted so far,
+    /// or `timeout_ms` elapses. Returns `true` if the queue caught up, `false` on
+    /// timeout.
+    ///
+    /// Use this before reading the async-mirrored `shared_graph` (e.g. a save)
+    /// right after queuing graph mutations: `add_module`/`connect` only reach the
+    /// snapshot once the audio thread pops and applies them, so a save issued in
+    /// the same `batch_execute` would otherwise read a stale/truncated graph. The
+    /// command ring is FIFO, so once `processed` reaches the `enqueued` snapshot
+    /// taken here, all earlier mutations are applied *and* mirrored.
+    ///
+    /// If the audio thread is not running (e.g. an undriven test engine) this
+    /// waits out the full timeout — same bounded-wait behaviour as the
+    /// instrument-mirror wait in `project_apply`.
+    #[must_use]
+    pub fn wait_for_pending_commands(&self, timeout_ms: u64) -> bool {
+        let target = self.state.command_sync.enqueued();
+        if self.state.command_sync.processed() >= target {
+            return true;
+        }
+        let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
+        while std::time::Instant::now() < deadline {
+            if self.state.command_sync.processed() >= target {
+                return true;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        self.state.command_sync.processed() >= target
+    }
+
     /// Check if an instrument is known to this session. See
     /// [`Self::alive_instruments`] for why this reads the synchronous mirror
     /// rather than `EngineState::instrument_snapshots`.

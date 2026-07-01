@@ -272,12 +272,16 @@ pub fn save_patch_to(
     session: &SynthSession,
     instrument_id: InstrumentId,
 ) -> Result<String, String> {
-    // The save reads the async-mirrored instrument snapshot. If the instrument
-    // is known to the synchronous registry but not yet mirrored (e.g. it was
-    // just created in the same batch), give the audio thread a bounded window to
-    // catch up — the same gap-bridging apply_project does after AddInstrument —
-    // rather than failing a valid save.
+    // The save reads the async-mirrored instrument snapshot + shared_graph. If
+    // the instrument is known to the synchronous registry but not yet mirrored
+    // (e.g. it was just created in the same batch), give the audio thread a
+    // bounded window to catch up — the same gap-bridging apply_project does after
+    // AddInstrument — rather than failing a valid save. The command-drain wait
+    // additionally covers module *mutations* (add_module/connect on an existing
+    // instrument) queued in the same batch, which the instrument-existence wait
+    // alone does not, so the saved graph isn't stale/truncated.
     if session.instrument_exists(instrument_id) {
+        let _ = session.wait_for_pending_commands(SNAPSHOT_SYNC_TIMEOUT_MS);
         wait_for_instrument(session, instrument_id, SNAPSHOT_SYNC_TIMEOUT_MS);
     }
 
@@ -341,11 +345,19 @@ pub struct ProjectBuildOptions {
 }
 
 /// Build a `ProjectFile` from current engine + session + song state,
-/// in memory. Engine-derived fields (instruments, module graph, song,
-/// master volume) come from `session` / `song`; anything not in engine
-/// state (author, AWE, octave, glide) comes from `opts`. Module
-/// positions default to `Position::default()` — GUI callers overlay
-/// their `PatchEditor` positions afterwards.
+/// in memory (no disk I/O). Engine-derived fields (instruments, module
+/// graph, song, master volume) come from `session` / `song`; anything
+/// not in engine state (author, AWE, octave, glide) comes from `opts`.
+/// Module positions default to `Position::default()` — GUI callers
+/// overlay their `PatchEditor` positions afterwards.
+///
+/// **Blocks briefly:** this first runs the shared save sync barrier
+/// (`wait_for_pending_commands`, bounded to `SNAPSHOT_SYNC_TIMEOUT_MS`) so
+/// the built project reflects graph mutations queued but not yet mirrored.
+/// It returns *immediately* when the command queue is already caught up —
+/// the normal case while the audio thread is draining — so it is safe to
+/// call on the UI thread (GUI save / offline-export). The full timeout is
+/// only ever spent if the audio thread has stopped draining entirely.
 #[must_use]
 pub fn build_project_from_engine(
     session: &SynthSession,
@@ -353,6 +365,17 @@ pub fn build_project_from_engine(
     _sample_library: &SharedSampleLibrary,
     opts: ProjectBuildOptions,
 ) -> ProjectFile {
+    // Drain graph mutations queued earlier (an MCP batch's add_module/connect, or
+    // a GUI edit) before reading the async-mirrored shared_graph, so the built
+    // project reflects every queued command instead of a stale/truncated graph.
+    // This is the single sync barrier shared by *all* project save paths — the GUI
+    // File-menu save (`create_project_from_app`), the MCP save (`save_project_to`
+    // + `save_project_as_bundle`), and the rollback snapshot — so parity no longer
+    // depends on each caller remembering to wait. Bounded; returns immediately once
+    // the queue is caught up (the live case) or the audio thread is idle. Patch
+    // save has its own barrier in `save_patch_to`.
+    let _ = session.wait_for_pending_commands(SNAPSHOT_SYNC_TIMEOUT_MS);
+
     let snapshots = session.list_instruments();
     let engine_state = session.state();
     let shared_graph = &engine_state.shared_graph;
@@ -1077,6 +1100,80 @@ mod tests {
         assert!(
             compact.contains(r#""scripts":{"1":"out = velocity * 0.5"}"#),
             "saved project must round-trip the control script; got: {compact}"
+        );
+    }
+
+    /// The command-drain barrier (`SynthSession::wait_for_pending_commands`)
+    /// tracks the exact staleness the save path must avoid: a graph mutation
+    /// queued on an already-mirrored instrument is invisible in `shared_graph`
+    /// until the audio thread drains it, and the barrier reports "not caught up"
+    /// (`false`) until then. Once drained, the barrier reports `true` and the
+    /// mirror reflects the mutation.
+    #[test]
+    fn pending_command_wait_tracks_graph_mutation_drain() {
+        let (mut engine, handle) = SynthEngine::new();
+        let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
+
+        let id = InstrumentId::new(0);
+        session
+            .add_instrument_with_id(id, "X")
+            .expect("add instrument");
+        let _ = session.apply_patch(id, &minimal_patch("X"));
+
+        let stream_info = synth_core::StreamInfo {
+            sample_rate: HwSampleRate(TEST_SR),
+            buffer_size: synth_core::BufferSize(256),
+            channels: synth_core::ChannelCount::Stereo,
+            output_latency: std::time::Duration::ZERO,
+            input_latency: None,
+        };
+        engine.on_stream_start(&stream_info);
+        drive(&mut engine, 4);
+        // Everything queued so far is drained.
+        assert!(
+            session.wait_for_pending_commands(0),
+            "wait must report caught-up once the queue is drained"
+        );
+
+        let before = session
+            .state()
+            .shared_graph
+            .get_modules_for_instrument(id)
+            .len();
+
+        // Queue a mutation on the EXISTING (already-mirrored) instrument, then do
+        // NOT drive: the mirror is stale and the barrier must report it.
+        session
+            .add_module(id, ModuleType::Lfo)
+            .expect("queue add_module");
+        assert!(
+            !session.wait_for_pending_commands(30),
+            "an undrained mutation must report not-caught-up"
+        );
+        assert_eq!(
+            session
+                .state()
+                .shared_graph
+                .get_modules_for_instrument(id)
+                .len(),
+            before,
+            "shared_graph stays stale until the audio thread drains the command"
+        );
+
+        // Drive: the command drains, the barrier catches up, the mirror updates.
+        drive(&mut engine, 4);
+        assert!(
+            session.wait_for_pending_commands(0),
+            "wait must catch up after the queue drains"
+        );
+        assert_eq!(
+            session
+                .state()
+                .shared_graph
+                .get_modules_for_instrument(id)
+                .len(),
+            before + 1,
+            "the drained mutation is now visible in shared_graph"
         );
     }
 

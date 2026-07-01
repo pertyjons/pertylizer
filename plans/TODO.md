@@ -301,36 +301,7 @@ Residual after the shared-widget-helpers work landed — these are the remaining
 
 ### 4.1 MCP & AI Interaction
 
-> The 2026-07-01 MCP-hardening batch (array-consistent `set_module_description`,
-> `list_module_types brief` + `gui_only`, `save_patch`, port-name aliases +
-> `build_instrument` hard-error/rollback + batch atomicity) shipped on
-> `feat/mcp-ai-automation`. The items below are follow-ups surfaced during that
-> work's code review.
-
-- [ ] **`batch_msg` reports total failure as `OK: 0 …`.** Every batched mutating MCP tool
-  (`set_module_description`, `set_instrument_description`, `rename_instrument`, the color/mixer
-  setters, …) funnels through `batch_msg` (`synth_mcp/src/server.rs`), which unconditionally
-  prefixes `"OK: {ok_count} …"` and only appends `"; N failed: …"`. So a call where *every*
-  item fails returns `"OK: 0 module descriptions set; 1 failed: …"`, which reads as success to a
-  caller/script that gates on a leading `"Error:"`. Fix once, centrally: when `ok_count == 0` and
-  there were errors, lead with a failure marker (e.g. `"Error:"` / `"FAILED:"`) instead of `"OK:"`
-  so total failure is distinguishable from partial success. Touches all batch tools consistently.
-
-- [ ] **Snapshot-reading saves can miss graph mutations queued in the same `batch_execute`.**
-  `save_patch` / `save_project` read the async-mirrored `shared_graph`, which the audio thread only
-  updates after draining its `AddModule`/`Connect` command queue. `save_patch`'s bounded
-  `wait_for_instrument` bridges only the instrument-*creation* gap, not the module-*mutation* gap —
-  so a `batch_execute` that does `add_module`(s)/`connect`(s) on an existing instrument and then
-  `save_patch`/`save_project` in the same request can silently write a stale/truncated graph and
-  still report `"OK: Saved …"`. Documented as a caveat in the `save_patch` description for now; the
-  real fix is an engine-side sync barrier (a command the save can wait on until the audio thread has
-  drained pending graph mutations for the target instrument) reused by both save paths.
-
-- [ ] **Collapse the 4 identical `record_io_status` match arms (minor cleanup).** `do_save_project`,
-  `do_save_patch`, `do_new_project`, and `save_project_as_bundle` in
-  `crates/pertylizer/src/mcp_bridge.rs` each repeat
-  `match result { Ok(msg) => { record_io_status(Ok(msg.clone())); Ok(msg) } Err(e) => { record_io_status(Err(e.to_string())); Err(e) } }`.
-  Extract a tiny `fn record_io_result(&self, r: Result<String, McpBridgeError>) -> Result<String, McpBridgeError>` helper and call it from all four.
+_No open items._
 
 ---
 

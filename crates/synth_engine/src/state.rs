@@ -433,9 +433,64 @@ impl Default for TransportState {
 /// Uses `u64::MAX` which matches `InstrumentId::MASTER` — a non-real instrument.
 pub const NO_FOCUSED_INSTRUMENT: u64 = u64::MAX;
 
+/// Monotonic enqueue/drain counters bridging command *submission* (any thread
+/// using the `CommandSender`) and command *draining* (the audio thread's
+/// `process_commands`). A reader that needs the async-mirrored `shared_graph` to
+/// reflect commands it just queued snapshots [`enqueued`](Self::enqueued) and
+/// waits until [`processed`](Self::processed) catches up — at which point the
+/// audio thread has applied *and* mirrored every command submitted before the
+/// snapshot (the ring is FIFO). RT-safe: the audio thread does one relaxed load
+/// + release store per drained command; no allocation, no locking.
+///
+/// Invariant: **every** producer feeding the engine's command ring must call
+/// [`note_enqueued`](Self::note_enqueued) once per successful push, from inside
+/// the same critical section as the push, so `enqueued` advances in lockstep
+/// with FIFO position. Today the sole producer is `CommandSender`; if the
+/// multi-client `EngineHub` (which pushes without bumping) is ever wired to the
+/// engine's `command_consumer`, it must bump here too or the barrier can satisfy
+/// a wait before an earlier, uncounted command is drained.
+#[derive(Debug, Default)]
+pub struct CommandSync {
+    enqueued: AtomicU64,
+    processed: AtomicU64,
+}
+
+impl CommandSync {
+    /// Record that one command was successfully pushed onto the command ring.
+    /// Call once per successful push, from inside the producer's critical section
+    /// (see the type-level invariant): only on success, so a full-queue failure
+    /// never over-counts (which would leave `processed` unable to catch up), and
+    /// under the lock, so `enqueued` tracks FIFO position.
+    pub fn note_enqueued(&self) {
+        self.enqueued.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// The number of commands submitted so far (for a save/read to snapshot).
+    #[must_use]
+    pub fn enqueued(&self) -> u64 {
+        self.enqueued.load(Ordering::Acquire)
+    }
+
+    /// Record that the audio thread finished draining one command. Release
+    /// ordering so a reader that sees this count (via [`processed`](Self::processed))
+    /// also sees the `shared_graph` writes the command performed.
+    pub fn note_processed(&self) {
+        self.processed.fetch_add(1, Ordering::Release);
+    }
+
+    /// The number of commands the audio thread has drained so far.
+    #[must_use]
+    pub fn processed(&self) -> u64 {
+        self.processed.load(Ordering::Acquire)
+    }
+}
+
 /// Complete engine state shared between threads.
 #[derive(Debug)]
 pub struct EngineState {
+    /// Enqueue/drain counters so a read of the async-mirrored `shared_graph` can
+    /// wait for commands it just queued to be applied (see [`CommandSync`]).
+    pub command_sync: Arc<CommandSync>,
     /// Metering.
     pub meters: MeterState,
     /// Per-channel (per-instrument) post-fader peak meters, keyed by
@@ -491,6 +546,7 @@ pub struct EngineState {
 impl EngineState {
     pub fn new() -> Arc<Self> {
         Arc::new(Self {
+            command_sync: Arc::new(CommandSync::default()),
             meters: MeterState::new(),
             channel_meters: ChannelMeterBank::new(),
             return_meters: ChannelMeterBank::new(),
@@ -560,6 +616,7 @@ impl EngineState {
 impl Default for EngineState {
     fn default() -> Self {
         Self {
+            command_sync: Arc::new(CommandSync::default()),
             meters: MeterState::new(),
             channel_meters: ChannelMeterBank::new(),
             return_meters: ChannelMeterBank::new(),

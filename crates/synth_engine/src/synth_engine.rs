@@ -24,7 +24,7 @@ use crate::sequencer_engine::{PlayState, SequencerEngine};
 use crate::shared_state::{
     ConnectionSnapshot, ModuleStateSnapshot, ReturnBusSnapshot, ReturnEffectSnapshot,
 };
-use crate::state::EngineState;
+use crate::state::{CommandSync, EngineState};
 use crate::visualizers::{LevelMeter, Oscilloscope, SpectrumAnalyzer, VisualizationBuffer};
 use synth_awe::{AweEngine, SpatialContext, SpatialVoiceBank};
 use synth_core::params::LfoWaveform;
@@ -81,19 +81,38 @@ pub struct DroppedModule(pub Box<dyn PolyModuleTrait>);
 #[derive(Clone)]
 pub struct CommandSender {
     producer: Arc<Mutex<ringbuf::HeapProd<EngineCommand>>>,
+    /// Shared enqueue/drain counters. Bumped on every successful push so a
+    /// reader (e.g. a save) can wait for the audio thread to catch up before
+    /// reading the async-mirrored `shared_graph`. See [`CommandSync`].
+    command_sync: Arc<CommandSync>,
 }
 
 impl CommandSender {
-    /// Create a new CommandSender from a ring buffer producer.
-    pub fn new(producer: ringbuf::HeapProd<EngineCommand>) -> Self {
+    /// Create a new CommandSender from a ring buffer producer and the engine's
+    /// shared [`CommandSync`] counters (same `Arc` the audio thread bumps on
+    /// drain).
+    pub fn new(producer: ringbuf::HeapProd<EngineCommand>, command_sync: Arc<CommandSync>) -> Self {
         Self {
             producer: Arc::new(Mutex::new(producer)),
+            command_sync,
         }
     }
 
     /// Send a command to the engine (non-blocking, may fail if queue full).
     pub fn send(&self, command: EngineCommand) -> bool {
-        self.producer.lock().try_push(command).is_ok()
+        // Bump `enqueued` *inside* the producer lock, atomically with the push:
+        // it must advance in lockstep with FIFO position so a save's
+        // `wait_for_pending_commands` snapshot always accounts for every command
+        // already ahead of the caller's in the ring. Bumping after releasing the
+        // lock would let a concurrent sender's still-uncounted push drain first
+        // and satisfy the wait prematurely (stale-graph read). See `CommandSync`.
+        let mut producer = self.producer.lock();
+        if producer.try_push(command).is_ok() {
+            self.command_sync.note_enqueued();
+            true
+        } else {
+            false
+        }
     }
 
     /// Send a command to the engine, blocking until there's space.
@@ -111,24 +130,36 @@ impl CommandSender {
         let mut cmd = command;
 
         loop {
-            match self.producer.lock().try_push(cmd) {
-                Ok(()) => return true,
-                Err(returned_cmd) => {
-                    cmd = returned_cmd;
-                    attempts += 1;
-                    if attempts >= MAX_ATTEMPTS {
-                        eprintln!("Command queue timeout after {attempts} attempts!");
-                        return self.producer.lock().try_push(cmd).is_ok();
+            // Lock, push, and bump `enqueued` on success in one critical section
+            // (see `send`); release the guard before any backoff sleep.
+            let returned_cmd = {
+                let mut producer = self.producer.lock();
+                match producer.try_push(cmd) {
+                    Ok(()) => {
+                        self.command_sync.note_enqueued();
+                        return true;
                     }
-                    // Exponential backoff with cap at last value
-                    let sleep_idx = (attempts as usize).min(BACKOFF_MILLIS.len() - 1);
-                    let sleep_ms = BACKOFF_MILLIS[sleep_idx];
-                    if sleep_ms > 0 {
-                        std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
-                    } else {
-                        std::thread::yield_now();
-                    }
+                    Err(returned_cmd) => returned_cmd,
                 }
+            };
+            cmd = returned_cmd;
+            attempts += 1;
+            if attempts >= MAX_ATTEMPTS {
+                eprintln!("Command queue timeout after {attempts} attempts!");
+                let mut producer = self.producer.lock();
+                if producer.try_push(cmd).is_ok() {
+                    self.command_sync.note_enqueued();
+                    return true;
+                }
+                return false;
+            }
+            // Exponential backoff with cap at last value
+            let sleep_idx = (attempts as usize).min(BACKOFF_MILLIS.len() - 1);
+            let sleep_ms = BACKOFF_MILLIS[sleep_idx];
+            if sleep_ms > 0 {
+                std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
+            } else {
+                std::thread::yield_now();
             }
         }
     }
@@ -641,7 +672,7 @@ impl SynthEngine {
         engine.update_shared_instruments();
 
         let handle = EngineHandle {
-            command_sender: CommandSender::new(command_producer),
+            command_sender: CommandSender::new(command_producer, Arc::clone(&state.command_sync)),
             event_consumer,
             return_consumer,
             instrument_return_consumer,
@@ -789,6 +820,10 @@ impl SynthEngine {
     fn process_commands(&mut self) {
         while let Some(command) = self.command_consumer.try_pop() {
             self.handle_command(command);
+            // Publish drain progress *after* handle_command has mirrored its
+            // effect into shared_graph, so a reader that waits on this count
+            // (see CommandSync) sees the mirrored state too.
+            self.state.command_sync.note_processed();
         }
     }
 

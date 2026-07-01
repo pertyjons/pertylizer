@@ -6711,13 +6711,9 @@ impl AppSynthBridge {
                 self.stash_refresh(ProjectRefresh::Loaded(project));
                 self.set_last_loaded_path(Some(path));
                 self.clear_mix_baseline();
-                self.record_io_status(Ok(msg.clone()));
-                Ok(msg)
+                self.record_io_result(Ok(msg))
             }
-            Err(e) => {
-                self.record_io_status(Err(e.to_string()));
-                Err(e)
-            }
+            Err(e) => self.record_io_result(Err(e)),
         }
     }
 
@@ -6779,6 +6775,11 @@ impl AppSynthBridge {
     fn do_save_project(&self, path: std::path::PathBuf) -> Result<String, McpBridgeError> {
         let _guard = self.shared.project_io_lock.lock();
 
+        // The command-drain barrier that keeps a save from reading a stale/truncated
+        // graph (queued add_module/connect not yet mirrored) now lives inside
+        // `build_project_from_engine`, the shared builder both branches below reach
+        // (`save_project_to` and `save_project_as_bundle`), so every save path — GUI
+        // and MCP — is covered by one mechanism.
         let has_samples = self.sample_library.read().is_ok_and(|lib| !lib.is_empty());
         let path = crate::project::normalize_project_path(&path, has_samples);
         let opts = self.build_save_options();
@@ -6796,16 +6797,7 @@ impl AppSynthBridge {
             .map_err(McpBridgeError::Other)
         };
 
-        match result {
-            Ok(msg) => {
-                self.record_io_status(Ok(msg.clone()));
-                Ok(msg)
-            }
-            Err(e) => {
-                self.record_io_status(Err(e.to_string()));
-                Err(e)
-            }
-        }
+        self.record_io_result(result)
     }
 
     fn do_save_patch(
@@ -6818,16 +6810,7 @@ impl AppSynthBridge {
         let result = crate::project_apply::save_patch_to(&path, &self.session, instrument_id)
             .map_err(McpBridgeError::Other);
 
-        match result {
-            Ok(msg) => {
-                self.record_io_status(Ok(msg.clone()));
-                Ok(msg)
-            }
-            Err(e) => {
-                self.record_io_status(Err(e.to_string()));
-                Err(e)
-            }
-        }
+        self.record_io_result(result)
     }
 
     fn do_new_project(&self) -> Result<String, McpBridgeError> {
@@ -6842,20 +6825,13 @@ impl AppSynthBridge {
         )
         .map_err(McpBridgeError::Other);
 
-        match result {
-            Ok(msg) => {
-                self.set_shared_author(None);
-                self.stash_refresh(ProjectRefresh::Reset);
-                self.set_last_loaded_path(None);
-                self.clear_mix_baseline();
-                self.record_io_status(Ok(msg.clone()));
-                Ok(msg)
-            }
-            Err(e) => {
-                self.record_io_status(Err(e.to_string()));
-                Err(e)
-            }
+        if result.is_ok() {
+            self.set_shared_author(None);
+            self.stash_refresh(ProjectRefresh::Reset);
+            self.set_last_loaded_path(None);
+            self.clear_mix_baseline();
         }
+        self.record_io_result(result)
     }
 
     /// Construct a `ProjectFile` from engine state, bundle it with the
@@ -6927,6 +6903,20 @@ impl AppSynthBridge {
         self.shared
             .project_revision
             .fetch_add(1, std::sync::atomic::Ordering::Release);
+    }
+
+    /// Record a project-I/O `Result` (mapping the error to its string form) and
+    /// pass it through unchanged, so callers can `self.record_io_result(result)`
+    /// instead of repeating the `match { Ok => record; Err => record }` arms.
+    fn record_io_result(
+        &self,
+        result: Result<String, McpBridgeError>,
+    ) -> Result<String, McpBridgeError> {
+        match &result {
+            Ok(msg) => self.record_io_status(Ok(msg.clone())),
+            Err(e) => self.record_io_status(Err(e.to_string())),
+        }
+        result
     }
 
     fn set_last_loaded_path(&self, path: Option<std::path::PathBuf>) {

@@ -337,10 +337,19 @@ fn validation_err(e: McpBridgeError) -> String {
 /// Summarise a batch of single-item mutations into one response string.
 /// `noun` describes the items (e.g. "notes removed", "modules added").
 /// `details` (optional, e.g. created module-ids) are listed when present, and
-/// any per-item errors are appended. A whole-batch failure is still reported as
-/// a partial success with the failures listed, so callers see exactly what stuck.
+/// any per-item errors are appended. Full/partial success leads with `OK:`; a
+/// whole-batch failure (nothing succeeded) leads with `Error:` so a caller that
+/// gates on a leading marker can tell total failure from partial success.
 fn batch_msg(ok_count: usize, noun: &str, details: &[String], errors: &[String]) -> String {
-    let mut out = format!("OK: {ok_count} {noun}");
+    // Total failure (nothing succeeded) must not read as success: a caller/script
+    // that gates on a leading "Error:" would treat "OK: 0 …" as a pass. Lead with
+    // a failure marker when every item failed, keep "OK:" for full/partial success.
+    let leader = if ok_count == 0 && !errors.is_empty() {
+        "Error:"
+    } else {
+        "OK:"
+    };
+    let mut out = format!("{leader} {ok_count} {noun}");
     if !details.is_empty() {
         out.push_str(&format!(" ({})", details.join(", ")));
     }
@@ -358,6 +367,39 @@ fn batch_json<T: serde::Serialize>(noun: &str, oks: &[T], errors: &[String]) -> 
     let oks_value =
         serde_json::to_value(oks).unwrap_or_else(|_| serde_json::Value::Array(Vec::new()));
     to_json(&serde_json::json!({ noun: oks_value, "errors": errors }))
+}
+
+/// Classify a tool result string as a *total* failure, for `batch_execute`'s
+/// stop-on-error / rollback gate. Prose results lead with `"Error:"` on failure
+/// (and [`batch_msg`] now does so for whole-batch failures too). [`batch_json`]
+/// results stay valid JSON, so their whole-batch failure is detected
+/// structurally: a non-empty `"errors"` array with no successes (every other
+/// array field empty) — the `{ "<noun>": [], "errors": [..] }` shape. Partial
+/// success (some items landed) is *not* a failure, matching the prose path.
+fn result_is_failure(result: &str) -> bool {
+    if result.starts_with("Error:") {
+        return true;
+    }
+    // Only batch_json emits an "errors" array, and it always starts with '{'.
+    if !result.starts_with('{') {
+        return false;
+    }
+    let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(result)
+    else {
+        return false;
+    };
+    let errors_nonempty = map
+        .get("errors")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|a| !a.is_empty());
+    if !errors_nonempty {
+        return false;
+    }
+    // Total failure only: no non-"errors" array carries any success.
+    let any_success = map
+        .iter()
+        .any(|(k, v)| k != "errors" && v.as_array().is_some_and(|a| !a.is_empty()));
+    !any_success
 }
 
 /// Convert a tagged [`ParamValueInput`] into the bridge's [`BridgeParamValue`],
@@ -3770,14 +3812,20 @@ fn is_bridge_error(msg: &str) -> bool {
 }
 
 impl SynthMcpServer {
-    /// Dispatch a tool call by name with JSON params.
-    /// Used by `batch_execute` to run arbitrary tool calls.
+    /// Dispatch a tool call by name with JSON params, returning the result text
+    /// and whether it represents a failure.
+    ///
+    /// Used by `batch_execute`, which needs the failure verdict for its
+    /// success / stop-on-error / rollback accounting. We compute it here — the
+    /// same `result_is_failure` classification that drives the log severity below
+    /// — and hand it back so the caller doesn't re-parse the (possibly JSON)
+    /// result string a second time.
     async fn dispatch_tool(
         &self,
         tool: &str,
         params: serde_json::Value,
         validate_only: bool,
-    ) -> Result<String, String> {
+    ) -> (String, bool) {
         let started = Instant::now();
         // Isolate a panicking sub-op (e.g. a panic inside a `block_in_place`
         // bridge call) so one bad op surfaces as an error instead of killing
@@ -3793,16 +3841,27 @@ impl SynthMcpServer {
             Err(msg) => Err(format!("Error: tool '{tool}' panicked: {msg}")),
         };
         let elapsed_ms = started.elapsed().as_millis();
-        match &result {
-            Err(msg) => tracing::warn!(
-                session_id = self.session_id,
-                tool,
-                elapsed_ms,
-                error = %msg,
-                "MCP batch dispatch rejected tool call"
-            ),
-            Ok(s) if s.starts_with("Error:") => {
-                if is_bridge_error(s) {
+        match result {
+            // A hard dispatch rejection (unknown tool, invalid params, panic) is
+            // always a failure and always worth a warn.
+            Err(msg) => {
+                tracing::warn!(
+                    session_id = self.session_id,
+                    tool,
+                    elapsed_ms,
+                    error = %msg,
+                    "MCP batch dispatch rejected tool call"
+                );
+                (msg, true)
+            }
+            // Detect tool-reported failures structurally via `result_is_failure`
+            // (the same gate the rollback/stop path uses), not a raw `"Error:"`
+            // prefix: a `batch_json` tool (create_instrument / import_sample /
+            // duplicate_sample) whose items *all* fail returns
+            // `{ "<noun>": [], "errors": [..] }` — valid JSON with no leading
+            // "Error:", which a prefix check would miss and log at `trace!`.
+            Ok(s) if result_is_failure(&s) => {
+                if is_bridge_error(&s) {
                     tracing::warn!(
                         session_id = self.session_id,
                         tool,
@@ -3819,15 +3878,18 @@ impl SynthMcpServer {
                         "MCP tool returned validation error"
                     );
                 }
+                (s, true)
             }
-            Ok(_) => tracing::trace!(
-                session_id = self.session_id,
-                tool,
-                elapsed_ms,
-                "MCP tool call succeeded"
-            ),
+            Ok(s) => {
+                tracing::trace!(
+                    session_id = self.session_id,
+                    tool,
+                    elapsed_ms,
+                    "MCP tool call succeeded"
+                );
+                (s, false)
+            }
         }
-        result
     }
 
     /// Names of every tool registered with the rmcp tool-router.
@@ -7573,9 +7635,9 @@ impl SynthMcpServer {
         description = "Save a single instrument as a standalone patch file (its modules, \
         connections, and patch metadata only — no song or other instruments). This is the \
         single-instrument format that load_project reads back, distinct from save_project which \
-        writes the whole project. It captures the instrument's currently-mirrored graph; \
-        module/connection changes queued in the SAME batch_execute may not be reflected yet, so \
-        save the patch in a separate call after mutating the graph."
+        writes the whole project. It waits (bounded) for graph mutations queued earlier in the \
+        SAME batch_execute (add_module/connect) to be applied before reading the graph, so an \
+        in-batch build-then-save captures the freshly-added modules/connections."
     )]
     async fn save_patch(&self, params: Parameters<SavePatchParam>) -> String {
         if let Err(e) = validate_file_path(&params.0.path) {
@@ -8292,36 +8354,23 @@ impl SynthMcpServer {
                 continue;
             }
 
-            match self.dispatch_tool(&op.tool, op.params, dry_run).await {
-                Ok(result) => {
-                    let is_error = result.starts_with("Error:");
-                    results.push(BatchExecItemResult {
-                        index: i,
-                        tool: op.tool,
-                        success: !is_error,
-                        result,
-                    });
-                    if is_error {
-                        failed += 1;
-                        if stop_on_error {
-                            break;
-                        }
-                    } else {
-                        succeeded += 1;
-                    }
+            // `dispatch_tool` already classified the result (the same
+            // `result_is_failure` gate that set its log severity), so use its
+            // verdict directly rather than re-parsing the result string here.
+            let (result, is_error) = self.dispatch_tool(&op.tool, op.params, dry_run).await;
+            results.push(BatchExecItemResult {
+                index: i,
+                tool: op.tool,
+                success: !is_error,
+                result,
+            });
+            if is_error {
+                failed += 1;
+                if stop_on_error {
+                    break;
                 }
-                Err(err) => {
-                    results.push(BatchExecItemResult {
-                        index: i,
-                        tool: op.tool,
-                        success: false,
-                        result: err,
-                    });
-                    failed += 1;
-                    if stop_on_error {
-                        break;
-                    }
-                }
+            } else {
+                succeeded += 1;
             }
         }
 
@@ -8487,6 +8536,70 @@ mod automation_target_input_tests {
     fn validate_automation_point_requires_a_target() {
         assert!(validate_automation_point(&point(None, None)).is_err());
         assert!(validate_automation_point(&point(Some("Volume"), None)).is_ok());
+    }
+}
+
+#[cfg(test)]
+mod batch_msg_tests {
+    use super::*;
+
+    #[test]
+    fn full_success_leads_with_ok() {
+        assert_eq!(batch_msg(3, "widgets set", &[], &[]), "OK: 3 widgets set");
+    }
+
+    #[test]
+    fn partial_success_leads_with_ok_and_lists_failures() {
+        let msg = batch_msg(2, "widgets set", &[], &["boom".to_string()]);
+        assert!(msg.starts_with("OK: 2 widgets set"), "got: {msg}");
+        assert!(msg.contains("1 failed: boom"), "got: {msg}");
+    }
+
+    #[test]
+    fn total_failure_leads_with_error_not_ok() {
+        // Every item failed: the message must not read as success to a caller
+        // that gates on a leading "Error:".
+        let msg = batch_msg(0, "widgets set", &[], &["boom".to_string()]);
+        assert!(msg.starts_with("Error: 0 widgets set"), "got: {msg}");
+        assert!(
+            !msg.starts_with("OK:"),
+            "total failure must not lead with OK: {msg}"
+        );
+        assert!(msg.contains("1 failed: boom"), "got: {msg}");
+    }
+
+    #[test]
+    fn empty_batch_leads_with_ok() {
+        // Nothing attempted, nothing failed — still a benign success.
+        assert_eq!(batch_msg(0, "widgets set", &[], &[]), "OK: 0 widgets set");
+    }
+
+    #[test]
+    fn result_is_failure_flags_prose_and_json_total_failure() {
+        // Prose leaders.
+        assert!(result_is_failure("Error: nope"));
+        assert!(result_is_failure(&batch_msg(
+            0,
+            "x",
+            &[],
+            &["e".to_string()]
+        )));
+        assert!(!result_is_failure("OK: 2 x; 1 failed: e"));
+        assert!(!result_is_failure("OK: 3 x"));
+
+        // batch_json: total failure (no successes) is a failure; partial/full is not.
+        let total_fail = batch_json("created", &Vec::<u64>::new(), &["boom".to_string()]);
+        assert!(result_is_failure(&total_fail), "got: {total_fail}");
+        let partial = batch_json("created", &[1_u64], &["boom".to_string()]);
+        assert!(
+            !result_is_failure(&partial),
+            "partial success is not a failure"
+        );
+        let full = batch_json("created", &[1_u64, 2], &[]);
+        assert!(!result_is_failure(&full), "full success is not a failure");
+
+        // A non-batch JSON blob with an empty errors list is not a failure.
+        assert!(!result_is_failure(r#"{"created":[],"errors":[]}"#));
     }
 }
 
