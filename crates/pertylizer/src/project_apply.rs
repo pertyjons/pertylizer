@@ -1103,6 +1103,265 @@ mod tests {
         );
     }
 
+    /// A saved patch's control scripts must survive being *loaded back* — the
+    /// save side is covered above, but nothing exercised the load side, where
+    /// `apply_patch` re-installs each slot script. Regression guard for the
+    /// script-load bug (glyphs/markers vanished after reload).
+    #[test]
+    fn load_patch_round_trips_control_scripts() {
+        let (mut engine, handle) = SynthEngine::new();
+        let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
+        let song: SharedSong = Arc::new(PRwLock::new(Song::new("Scripts")));
+        let sample_library: SharedSampleLibrary = Arc::new(std::sync::RwLock::new(
+            synth_sampler::SampleLibrary::default(),
+        ));
+
+        let id = InstrumentId::new(0);
+        session
+            .add_instrument_with_id(id, "Scripted")
+            .expect("add instrument");
+        let mut patch = minimal_patch("Scripted Patch");
+        patch.add_module(ModuleBuilder::new(1, ModuleType::ModMatrix).build());
+        let _ = session.apply_patch(id, &patch);
+
+        let stream_info = synth_core::StreamInfo {
+            sample_rate: HwSampleRate(TEST_SR),
+            buffer_size: synth_core::BufferSize(256),
+            channels: synth_core::ChannelCount::Stereo,
+            output_latency: std::time::Duration::ZERO,
+            input_latency: None,
+        };
+        engine.on_stream_start(&stream_info);
+        drive(&mut engine, 4);
+
+        session
+            .set_mod_script(
+                id,
+                "mmx-1".parse().expect("mmx id"),
+                0,
+                "out = velocity * 0.5",
+            )
+            .expect("set_mod_script");
+        drive(&mut engine, 4);
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("scripts.json");
+        save_patch_to(&path, &session, id).expect("save_patch_to");
+        assert!(
+            std::fs::read_to_string(&path)
+                .expect("read saved patch")
+                .contains("out = velocity * 0.5"),
+            "sanity: the saved patch file must contain the script"
+        );
+
+        // Load the patch back through the real load path, then let the queued
+        // clear/add/param/script commands drain.
+        load_file_into_engine(&path, &session, &song, &sample_library).expect("load patch");
+        drive(&mut engine, 16);
+
+        // Re-serialise the reloaded instrument; the script must have survived.
+        let path2 = dir.path().join("scripts_reloaded.json");
+        save_patch_to(&path2, &session, InstrumentId::FIRST).expect("save reloaded");
+        let reloaded = std::fs::read_to_string(&path2).expect("read reloaded patch");
+        assert!(
+            reloaded.contains("out = velocity * 0.5"),
+            "loading a patch must restore its control scripts; got: {reloaded}"
+        );
+    }
+
+    /// The GUI load path (`patch_bridge::load_patch`) builds the graph
+    /// module-by-module rather than via `session.apply_patch`, and previously
+    /// skipped per-slot control scripts entirely — so a saved patch's Mod Matrix /
+    /// Script / AudioScript slot scripts silently vanished on load in the app
+    /// (their marker glyphs disappeared). Guards that the GUI path now installs
+    /// them. Note the *headless* path (`load_patch_round_trips_control_scripts`)
+    /// already worked — this covers the separate GUI code path.
+    #[test]
+    fn gui_load_patch_installs_control_scripts() {
+        use crate::gui::keyboard::PianoKeyboard;
+        use crate::gui::patch_editor::PatchEditor;
+
+        let (mut engine, mut handle) = SynthEngine::new();
+        let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
+        let id = InstrumentId::new(0);
+        session
+            .add_instrument_with_id(id, "Scripted")
+            .expect("add instrument");
+
+        let mut patch = minimal_patch("Scripted Patch");
+        let mut mm = ModuleBuilder::new(1, ModuleType::ModMatrix).build();
+        mm.scripts
+            .insert("1".to_string(), "out = velocity * 0.5".to_string());
+        patch.add_module(mm);
+        // Round-trip through JSON so the test also covers on-disk deserialization
+        // of `scripts` (the real load reads a file), not just an in-memory patch.
+        let patch: Patch =
+            serde_json::from_str(&serde_json::to_string(&patch).expect("serialize patch"))
+                .expect("deserialize patch");
+        let mmx = patch
+            .modules
+            .iter()
+            .find(|m| m.id == "mmx-1")
+            .expect("mmx module present after round-trip");
+        assert_eq!(
+            mmx.scripts.get("1").map(String::as_str),
+            Some("out = velocity * 0.5"),
+            "scripts must survive JSON round-trip"
+        );
+
+        let mut editor = PatchEditor::new();
+        let mut keyboard = PianoKeyboard::new();
+        let mut glide = synth_core::Seconds::ZERO;
+        crate::gui::patch_bridge::load_patch(
+            &patch,
+            &mut editor,
+            &session,
+            &mut handle,
+            &mut keyboard,
+            &mut glide,
+            id,
+            false,
+        );
+
+        let stream_info = synth_core::StreamInfo {
+            sample_rate: HwSampleRate(TEST_SR),
+            buffer_size: synth_core::BufferSize(256),
+            channels: synth_core::ChannelCount::Stereo,
+            output_latency: std::time::Duration::ZERO,
+            input_latency: None,
+        };
+        engine.on_stream_start(&stream_info);
+        drive(&mut engine, 16);
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("gui_scripts.json");
+        save_patch_to(&path, &session, id).expect("save_patch_to");
+        let json = std::fs::read_to_string(&path).expect("read saved patch");
+        assert!(
+            json.contains("out = velocity * 0.5"),
+            "GUI load_patch must install slot control scripts; got: {json}"
+        );
+    }
+
+    /// Faithful repro of the real failure: a Script module and a Mod Matrix slot
+    /// whose scripts *reference other modules* (`src o = osc-1.out`), loaded via
+    /// the GUI path. The earlier test used a reference-free script and passed even
+    /// while the app still dropped these.
+    #[test]
+    fn gui_load_patch_installs_module_referencing_scripts() {
+        use crate::gui::keyboard::PianoKeyboard;
+        use crate::gui::patch_editor::PatchEditor;
+
+        let (mut engine, mut handle) = SynthEngine::new();
+        let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
+        let id = InstrumentId::new(0);
+        session
+            .add_instrument_with_id(id, "Scripted")
+            .expect("add instrument");
+
+        let mut patch = minimal_patch("Scripted Patch");
+        let mut scr = ModuleBuilder::new(1, ModuleType::Script).build();
+        scr.scripts
+            .insert("1".to_string(), "src o = osc-1.out\nout = o".to_string());
+        patch.add_module(scr);
+        let mut mm = ModuleBuilder::new(1, ModuleType::ModMatrix).build();
+        mm.scripts
+            .insert("1".to_string(), "src a = amp-1.level\nout = a".to_string());
+        patch.add_module(mm);
+        let patch: Patch = serde_json::from_str(&serde_json::to_string(&patch).expect("serialize"))
+            .expect("deserialize");
+
+        let mut editor = PatchEditor::new();
+        let mut keyboard = PianoKeyboard::new();
+        let mut glide = synth_core::Seconds::ZERO;
+        crate::gui::patch_bridge::load_patch(
+            &patch,
+            &mut editor,
+            &session,
+            &mut handle,
+            &mut keyboard,
+            &mut glide,
+            id,
+            false,
+        );
+
+        let stream_info = synth_core::StreamInfo {
+            sample_rate: HwSampleRate(TEST_SR),
+            buffer_size: synth_core::BufferSize(256),
+            channels: synth_core::ChannelCount::Stereo,
+            output_latency: std::time::Duration::ZERO,
+            input_latency: None,
+        };
+        engine.on_stream_start(&stream_info);
+        drive(&mut engine, 16);
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("gui_ref_scripts.json");
+        save_patch_to(&path, &session, id).expect("save_patch_to");
+        let json = std::fs::read_to_string(&path).expect("read saved patch");
+        assert!(
+            json.contains("src o = osc-1.out"),
+            "Script-module slot script must install on GUI load; got: {json}"
+        );
+        assert!(
+            json.contains("src a = amp-1.level"),
+            "Mod Matrix slot script must install on GUI load; got: {json}"
+        );
+    }
+
+    /// The GUI *save* path (`create_patch_from_editor`) must capture per-slot
+    /// control scripts from the engine snapshot — it previously hardcoded an empty
+    /// map, so "Save Patch…" silently stripped every slot script (the saved file
+    /// then loaded scriptless, markers gone). Complements the load-side guards.
+    #[test]
+    fn gui_save_patch_captures_control_scripts() {
+        use crate::gui::patch_editor::PatchEditor;
+
+        let (mut engine, handle) = SynthEngine::new();
+        let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
+        let id = InstrumentId::new(0);
+        session
+            .add_instrument_with_id(id, "Scripted")
+            .expect("add instrument");
+
+        let mmx = ModuleId::new(ModuleType::ModMatrix, 1);
+        let descriptor = session
+            .add_module_with_id(id, mmx, ModuleType::ModMatrix)
+            .expect("add module");
+        session
+            .set_mod_script(id, mmx, 0, "out = velocity * 0.5")
+            .expect("set_mod_script");
+
+        let stream_info = synth_core::StreamInfo {
+            sample_rate: HwSampleRate(TEST_SR),
+            buffer_size: synth_core::BufferSize(256),
+            channels: synth_core::ChannelCount::Stereo,
+            output_latency: std::time::Duration::ZERO,
+            input_latency: None,
+        };
+        engine.on_stream_start(&stream_info);
+        drive(&mut engine, 16);
+
+        let mut editor = PatchEditor::new();
+        editor.add_module_at(mmx, descriptor, eframe::egui::Pos2::ZERO);
+
+        let patch = crate::gui::patch_bridge::create_patch_from_editor(
+            "Scripted",
+            &editor,
+            Some((&**session.state(), id)),
+        );
+        let m = patch
+            .modules
+            .iter()
+            .find(|m| m.id == "mmx-1")
+            .expect("mmx module present in saved patch");
+        assert_eq!(
+            m.scripts.get("1").map(String::as_str),
+            Some("out = velocity * 0.5"),
+            "GUI Save Patch must capture slot scripts from the engine snapshot"
+        );
+    }
+
     /// The command-drain barrier (`SynthSession::wait_for_pending_commands`)
     /// tracks the exact staleness the save path must avoid: a graph mutation
     /// queued on an already-mirrored instrument is invisible in `shared_graph`

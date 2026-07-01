@@ -145,19 +145,78 @@ the MCP surface remains:
 Header badges and MCP surfacing shipped in v0.289.0 (`get_mod_matrix_routings`, virtual `"matrix"`
 port on `list_modules`, header arrow badge with tooltip). Remaining work:
 
-- [ ] **Reflect YAMS-script sources in the per-knob source markers + macro rail (S2.4 follow-up).**
-  After the expression editor shipped, a scripted Mod Matrix slot has no slot *source* address —
-  its sources live inside the script (`src lfo = lfo-1.out`, plus macros like `velocity`/`mod_wheel`).
-  `PatchAnalysis::from_panels` (`gui/patch_editor.rs`) only reads `slot_addrs` source/dest, so the
-  modules/macros a script reads are **not** marked (the S1.5a/b source glyphs + macro-source rail stay
-  dark for script-only sources). Fix: for each entry in `panel.slot_scripts`, extract its referenced
-  sources and fold them into `mod_matrix_sources` / `mod_matrix_macros` alongside the scalar slot
-  sources. Cleanest extraction is `synth_script::compile(text)` → `program.into_bound(text).inputs`
-  (a `Vec<ScriptInput>`; `ScriptInput::Source(SrcAddr::Module{..})` → resolve to `ModuleId` like the
-  existing slot-source path, `SrcAddr::Macro(m)` → `mod_matrix_macros`). **Caveat:** `from_panels`
-  runs per frame, so compiling every scripted slot each frame is wasteful — cache the extracted
-  source set per (slot, script-text) and invalidate when `slot_scripts` changes, rather than
-  recompiling unconditionally.
+- [ ] **Reflect *script*-read sources in the patch-editor source markers, and distinguish
+  Mod Matrix / Script / AudioScript sources by icon+colour.** Three modules read modulation
+  sources *from inside a script* rather than through a cable or a scalar slot address, so those
+  sources are currently **invisible** in the patch editor:
+    1. **Mod Matrix** slots whose amount is overridden by a YAMS expression (`src lfo = lfo-1.out`,
+       macros like `velocity`/`mod_wheel`) — no scalar slot *source* address exists.
+    2. **`ScriptModule`** (`ModuleType::Script`, key `"script"`) — has **no input ports at all**;
+       100 % of its inputs are in-script `SrcAddr` references, so nothing shows in the cable graph
+       *or* the markers.
+    3. **`AudioScript`** (`ModuleType::AudioScript`, key `"asc"`) — its per-sample audio comes via
+       the `in_l`/`in_r` ports (cabled, already visible), but its **block-constant** modulation
+       sources (macros, `lfo-1.out`, module params) are in-script references — invisible.
+
+  Today `PatchAnalysis::from_panels` (`gui/patch_editor.rs`) only inspects `ModuleType::ModMatrix`
+  panels and only their scalar `slot_addrs`; it never reads `slot_scripts`. So the S1.5a/b source
+  glyphs, header badge, and macro rail stay dark for every script-read source.
+
+  **What a script source can be (not just knobs).** `Voice::resolve_source` (`synth_engine/voice.rs`)
+  resolves a `SrcAddr::Module{ module_type, instance, name }` to **any** of: an **output port**
+  (`get_module_output`), **any parameter** by `type_id` (normalised through its descriptor
+  range+curve — so sliders/dropdowns/toggles, not only knobs), the KineticModulator `vel`/`acc`
+  pseudo-outputs, or a **macro** (`SrcAddr::Macro`). The markers must therefore cover every
+  parameter widget type **and** output ports **and** the macro rail — not just knobs.
+
+  **Extraction.** `slot_scripts` (`gui/module_panel.rs`) is already populated for *every* module
+  snapshot (`sync_module_scripts`), so the data is present for ModMatrix, Script and AudioScript
+  panels alike. For each script text, compile once and walk its bound inputs:
+  `synth_script::compile(text, opts)` → `program.into_bound(text).inputs` (a `Vec<ScriptInput>`);
+  `ScriptInput::Source(SrcAddr::Module{..})` → resolve to the source `ModuleId`+member (as the
+  existing scalar slot-source path does), `ScriptInput::Source(SrcAddr::Macro(m))` → macro rail.
+  The extraction machinery already half-exists as `script_refs_from_inputs` (`patch_editor.rs`), but
+  it currently filters to `ModuleType::Script` *outputs* for the §3.5 cycle detector and discards
+  macros + other module sources — generalise it to keep all module sources + macros.
+
+  **Icon + colour scheme** (three distinct source kinds, two icons):
+
+  | Source kind             | Icon                         | Colour                   |
+  |-------------------------|------------------------------|--------------------------|
+  | Mod Matrix              | `↗` `ARROW_RIGHT_UP_LINE`    | `accent_purple` (existing)|
+  | Script (control-rate)   | `ƒx` `FUNCTION_LINE`         | `accent_cyan` (teal)     |
+  | AudioScript (audio-rate)| `ƒx` `FUNCTION_LINE`         | `accent_yellow`          |
+
+  Destination markers stay Mod-Matrix-only (`↙`, purple) — scripts write out via ports/cables,
+  which are already visible. **No "what feeds what" tooltip** in this pass (deferred to a future
+  item); the marker just says *which kinds* read this element.
+
+  **Four rendering layers, all zero layout-stretch:**
+    - **Footer status badge** (module level) — in `draw_module_footer` (`widgets/frame.rs`), show the
+      glyph(s) for whichever kinds this module feeds (own row, no layout pressure).
+    - **Param — slider/dropdown/waveform** — the glyph folds into the param *name label* via the
+      existing `labeled_param` (`widgets/param_grid.rs`) `AtomLayout` trailing atom; already works
+      for all non-knob widgets, so this is free once the source set is populated.
+    - **Param — knob** — corner glyph on the knob via the existing `mod_marker` path.
+    - **Output port** — a **corner glyph painted inside the port's fixed 20×20 box** (`widgets/port.rs`
+      allocates `Vec2::splat(20.0)` but draws only an ~8 px-radius shape, so there is corner room —
+      paint the glyph via `painter.text`, e.g. top-right, in the source-kind colour). **Zero width
+      change**, consistent with the knob corner glyph, and it also disambiguates a script-fed output
+      (which has no cable, so today renders as an empty/"dangling" `is_connected == false` dot).
+
+  **Data-model change.** The current per-element role is a single `ModRole` (`Source`/`Destination`/
+  `Both`) — it can express only one role. An element can now be several source kinds at once
+  (Matrix **and** Script **and** AudioScript), so replace `Option<ModRole>` with a small **set** of
+  markers rendered as up to a few adjacent mini-glyphs.
+
+  **Caveats / open sub-decisions:**
+    - **Don't compile per frame.** `from_panels` runs every frame; compiling every script each frame
+      is wasteful. Cache the extracted source set per `(module_id, slot, script-text)` and invalidate
+      when `slot_scripts` changes. This matters more now that many modules (each `ScriptModule` has up
+      to 8 slots) can carry scripts, not just the Mod Matrix.
+    - **Multiple glyphs in one corner.** When a knob or a port feeds more than one kind, decide how the
+      mini-glyphs cluster in the limited corner space (small horizontal cluster vs. concentric on
+      ports). Minor; settle during implementation.
 
 ### 3.5 MSEG UI overhaul (problematic — needs review)
 

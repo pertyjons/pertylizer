@@ -1095,8 +1095,8 @@ fn draw_effect_module(
                                 .map_or(p.range.default, Param::as_f32)
                         },
                         |_, _| true,
-                        // Effects have no Mod Matrix participation in the mixer view.
-                        |_| None,
+                        // Effects have no modulation markers in the mixer view.
+                        |_| crate::gui::widgets::ModMarkers::default(),
                     );
                     for (param, value) in changes {
                         handle.send(target.set_param(fx.module_id, param.id.with_f32(value)));

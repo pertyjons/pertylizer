@@ -22,86 +22,181 @@ use crate::gui::theme::theme;
 /// parameters); apply it with `descriptor.id.with_f32(value)`.
 pub type ParamChange<'d> = (&'d ParameterDescriptor, f32);
 
-/// How a parameter participates in the Mod Matrix, for the per-knob marker
-/// (S1.5a/b). Mirrors the three-state module-header badge so the per-parameter
-/// marker reads as a precise zoom-in of the module roll-up.
+/// One modulation marker shown beside a parameter, port, macro, or module. Each
+/// kind is a distinct glyph+colour so the three source kinds (Mod Matrix / Script
+/// / AudioScript) and the Mod Matrix destination are all visually separable. A
+/// single element can carry several at once — see [`ModMarkers`].
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ModRole {
-    /// The parameter's value is read as a modulation source.
-    Source,
-    /// A routing modulates this parameter.
-    Destination,
-    /// Both at once.
-    Both,
+pub enum ModMarker {
+    /// A Mod Matrix slot reads this element as its source.
+    MatrixSource,
+    /// A control-rate Script module (`ModuleType::Script`) reads this as a source.
+    ScriptSource,
+    /// An audio-rate AudioScript module (`ModuleType::AudioScript`) reads this.
+    AudioScriptSource,
+    /// A Mod Matrix slot modulates this parameter (destination).
+    MatrixDest,
 }
 
-impl ModRole {
-    /// Build from `(is_source, is_destination)` flags — the module-header badge's
-    /// roll-up shape. `None` when the element participates in neither.
-    #[must_use]
-    pub fn from_flags(is_source: bool, is_destination: bool) -> Option<Self> {
-        match (is_source, is_destination) {
-            (true, true) => Some(Self::Both),
-            (true, false) => Some(Self::Source),
-            (false, true) => Some(Self::Destination),
-            (false, false) => None,
-        }
-    }
-
-    /// Icon glyph. Shared with the module-header badge so the per-knob marker and
-    /// the module roll-up never disagree on which arrow means which role.
+impl ModMarker {
+    /// Icon glyph. The two script source kinds share one `ƒx` glyph and are told
+    /// apart by colour; the Mod Matrix uses directional arrows.
     #[must_use]
     pub fn glyph(self) -> &'static str {
         match self {
-            Self::Source => ri::ARROW_RIGHT_UP_LINE,
-            Self::Destination => ri::ARROW_LEFT_DOWN_LINE,
-            Self::Both => ri::ARROW_LEFT_RIGHT_LINE,
+            Self::MatrixSource => ri::ARROW_RIGHT_UP_LINE,
+            Self::ScriptSource | Self::AudioScriptSource => ri::FUNCTION_LINE,
+            Self::MatrixDest => ri::ARROW_LEFT_DOWN_LINE,
         }
     }
 
-    fn tooltip(self) -> &'static str {
+    /// The fixed corner of a widget box this marker paints in, as `(anchor point,
+    /// alignment)`. Each kind always uses the same corner, so a glyph's *position*
+    /// is a second cue to its kind on top of its colour, and two markers can never
+    /// collide. The two Mod Matrix arrows point out of their corner (↗ top-right,
+    /// ↙ bottom-left); the scripts take the remaining corners (Script top-left,
+    /// AudioScript bottom-right).
+    ///
+    /// With `outside` the glyph is nudged just past the corner *horizontally* so it
+    /// clears a round widget body (knobs) on the left/right, while growing
+    /// *vertically inward* — the top pair sits just below the top edge and the
+    /// bottom pair just above the bottom edge (clear of the label under a knob),
+    /// rather than floating above/below the cell. `outside == false` tucks the
+    /// glyph fully inside the corner (ports, whose fixed box has no spare room).
+    #[must_use]
+    pub fn corner(self, rect: egui::Rect, outside: bool) -> (egui::Pos2, egui::Align2) {
+        use egui::{Align2, vec2};
+        const G: f32 = 1.0;
+        match (self, outside) {
+            (Self::MatrixSource, false) => (rect.right_top(), Align2::RIGHT_TOP),
+            (Self::ScriptSource, false) => (rect.left_top(), Align2::LEFT_TOP),
+            (Self::AudioScriptSource, false) => (rect.right_bottom(), Align2::RIGHT_BOTTOM),
+            (Self::MatrixDest, false) => (rect.left_bottom(), Align2::LEFT_BOTTOM),
+            (Self::MatrixSource, true) => (rect.right_top() + vec2(G, 0.0), Align2::LEFT_TOP),
+            (Self::ScriptSource, true) => (rect.left_top() + vec2(-G, 0.0), Align2::RIGHT_TOP),
+            (Self::AudioScriptSource, true) => {
+                (rect.right_bottom() + vec2(G, 0.0), Align2::LEFT_BOTTOM)
+            }
+            (Self::MatrixDest, true) => (rect.left_bottom() + vec2(-G, 0.0), Align2::RIGHT_BOTTOM),
+        }
+    }
+
+    /// Accent colour — purple for the Mod Matrix, teal for a Script, yellow for an
+    /// AudioScript.
+    #[must_use]
+    pub fn color(self) -> Color32 {
+        let c = &theme().colors;
         match self {
-            Self::Source => "Mod Matrix source\nThis parameter's value drives a Mod Matrix slot.",
-            Self::Destination => {
+            Self::MatrixSource | Self::MatrixDest => c.accent_purple,
+            Self::ScriptSource => c.accent_cyan,
+            Self::AudioScriptSource => c.accent_yellow,
+        }
+    }
+
+    /// Per-element hover text (a parameter, port or macro that participates).
+    #[must_use]
+    pub fn tooltip(self) -> &'static str {
+        match self {
+            Self::MatrixSource => "Mod Matrix source\nRead as a source by a Mod Matrix slot.",
+            Self::ScriptSource => "Script source\nRead as a source by a Script module.",
+            Self::AudioScriptSource => {
+                "AudioScript source\nRead as a source by an AudioScript module."
+            }
+            Self::MatrixDest => {
                 "Mod Matrix destination\nA Mod Matrix slot modulates this parameter."
             }
-            Self::Both => "Mod Matrix\nThis parameter is both a source and a destination.",
+        }
+    }
+
+    /// Module-level hover text for the bottom status-bar badge (the roll-up of a
+    /// whole module's participation, not a single parameter).
+    #[must_use]
+    pub fn module_tooltip(self) -> &'static str {
+        match self {
+            Self::MatrixSource => {
+                "Mod Matrix source\nThis module drives one or more Mod Matrix slots."
+            }
+            Self::ScriptSource => "Script source\nA Script module reads a value from this module.",
+            Self::AudioScriptSource => {
+                "AudioScript source\nAn AudioScript module reads a value from this module."
+            }
+            Self::MatrixDest => {
+                "Mod Matrix destination\nA Mod Matrix slot modulates a parameter on this module."
+            }
         }
     }
 }
 
-/// Draw the inline Mod Matrix marker for a parameter — a small purple icon (the
-/// same accent + glyphs as the module-header badge) with an explanatory tooltip.
-fn draw_mod_marker(ui: &mut Ui, role: ModRole) {
-    caption(
-        ui,
-        role.glyph(),
-        CaptionTone::Color(theme().colors.accent_purple),
-    )
-    .on_hover_text(role.tooltip());
+/// The set of modulation markers on one element. An element can be several source
+/// kinds at once (read by a Mod Matrix *and* a Script, say), so this is a set of
+/// independent flags rather than a single role. All-false means "not wired".
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ModMarkers {
+    pub matrix_source: bool,
+    pub script_source: bool,
+    pub audio_script_source: bool,
+    pub matrix_dest: bool,
 }
 
-/// Draw a parameter's name label with its optional Mod Matrix marker folded into
-/// the *same* widget as a trailing atom. A free-standing `ui.label` + marker
-/// (the old pattern) leaves egui to vertically centre two separate widgets whose
-/// text sizes differ, so the marker's baseline could drift from the name; as one
-/// `AtomLayout` they share a baseline and a single `icon_spacing` gap. The role
-/// tooltip is applied to the whole cell when a marker is present.
-fn labeled_param(ui: &mut Ui, param: &ParameterDescriptor, role: Option<ModRole>) {
+impl ModMarkers {
+    /// `true` when no marker is active (draw nothing).
+    #[must_use]
+    pub fn is_empty(self) -> bool {
+        !(self.matrix_source || self.script_source || self.audio_script_source || self.matrix_dest)
+    }
+
+    /// The active markers in a stable draw order (sources first, then destination).
+    pub fn iter(self) -> impl Iterator<Item = ModMarker> {
+        [
+            self.matrix_source.then_some(ModMarker::MatrixSource),
+            self.script_source.then_some(ModMarker::ScriptSource),
+            self.audio_script_source
+                .then_some(ModMarker::AudioScriptSource),
+            self.matrix_dest.then_some(ModMarker::MatrixDest),
+        ]
+        .into_iter()
+        .flatten()
+    }
+}
+
+/// Draw the inline modulation markers for a toggle parameter — small coloured
+/// glyphs, each with its own hover tooltip. No-op when the set is empty.
+fn draw_mod_markers_inline(ui: &mut Ui, markers: ModMarkers) {
+    for m in markers.iter() {
+        caption(ui, m.glyph(), CaptionTone::Color(m.color())).on_hover_text(m.tooltip());
+    }
+}
+
+/// Draw a parameter's name label with its modulation markers folded into the
+/// *same* widget as trailing atoms. A free-standing `ui.label` + markers leaves
+/// egui to vertically centre separate widgets whose text sizes differ, so a
+/// marker's baseline could drift from the name; as one `AtomLayout` they share a
+/// baseline and gap. Each active marker's tooltip is joined onto the whole cell.
+fn labeled_param(ui: &mut Ui, param: &ParameterDescriptor, markers: ModMarkers) {
     let name = egui::RichText::new(&param.name)
         .size(theme().fonts.size_normal)
         .color(theme().colors.text_secondary);
-    let Some(role) = role else {
+    if markers.is_empty() {
         ui.label(name);
         return;
-    };
-    let marker = egui::RichText::new(role.glyph())
-        .size(theme().fonts.size_small)
-        .color(theme().colors.accent_purple);
-    egui::AtomLayout::new((name, marker))
+    }
+    let mut atoms = egui::Atoms::new(name);
+    for m in markers.iter() {
+        atoms.push_right(
+            egui::RichText::new(m.glyph())
+                .size(theme().fonts.size_small)
+                .color(m.color()),
+        );
+    }
+    let tip = markers
+        .iter()
+        .map(ModMarker::tooltip)
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    egui::AtomLayout::new(atoms)
         .show(ui)
         .response
-        .on_hover_text(role.tooltip());
+        .on_hover_text(tip);
 }
 
 /// Which widget group the auto-renderer draws a parameter in.
@@ -161,16 +256,16 @@ fn param_render_group(p: &ParameterDescriptor) -> Option<RenderGroup> {
 ///
 /// `get` supplies a parameter's current value; `choice_visible` filters dropdown
 /// choices (the patch editor hides mod-matrix targets that aren't wired up — the
-/// mixer shows everything by returning `true`). `mod_role` reports whether a
-/// parameter participates in the Mod Matrix so a marker is drawn beside it (the
-/// mixer returns `None` for every parameter).
+/// mixer shows everything by returning `true`). `markers` reports which modulation
+/// markers a parameter carries so they are drawn beside it (the mixer returns an
+/// empty set for every parameter).
 pub fn draw_parameter_grid<'d>(
     ui: &mut Ui,
     descriptor: &'d ModuleDescriptor,
     accent: Color32,
     get: impl Fn(&ParameterDescriptor) -> f32,
     choice_visible: impl Fn(&ParameterDescriptor, &ChoiceOption) -> bool,
-    mod_role: impl Fn(&ParameterDescriptor) -> Option<ModRole>,
+    markers: impl Fn(&ParameterDescriptor) -> ModMarkers,
 ) -> Vec<ParamChange<'d>> {
     let mut changes = Vec::new();
 
@@ -201,7 +296,7 @@ pub fn draw_parameter_grid<'d>(
             continue;
         }
         let mut selected = (get(param).round() as usize).min(waveforms.len() - 1);
-        labeled_param(ui, param, mod_role(param));
+        labeled_param(ui, param, markers(param));
         if WaveformSelector::new(&mut selected)
             .waveforms(waveforms)
             .accent_color(accent)
@@ -218,7 +313,7 @@ pub fn draw_parameter_grid<'d>(
     for param in &slider_params {
         let mut value = get(param);
         ui.horizontal(|ui| {
-            labeled_param(ui, param, mod_role(param));
+            labeled_param(ui, param, markers(param));
             ui.add_space(theme().spacing.xs);
             let is_integer = param.kind == ParamKind::Integer;
             let is_time =
@@ -282,7 +377,7 @@ pub fn draw_parameter_grid<'d>(
         let current = get(param);
         let mut selected = current.round() as usize;
         ui.horizontal(|ui| {
-            labeled_param(ui, param, mod_role(param));
+            labeled_param(ui, param, markers(param));
             let text = choices
                 .get(selected)
                 .map(|c| c.name.clone())
@@ -322,9 +417,7 @@ pub fn draw_parameter_grid<'d>(
                 if ui.checkbox(&mut checked, &param.name).changed() {
                     changes.push((*param, if checked { 1.0 } else { 0.0 }));
                 }
-                if let Some(role) = mod_role(param) {
-                    draw_mod_marker(ui, role);
-                }
+                draw_mod_markers_inline(ui, markers(param));
             }
         });
     }
@@ -332,7 +425,7 @@ pub fn draw_parameter_grid<'d>(
     // Knobs, in rows.
     if !knob_params.is_empty() {
         ui.add_space(theme().spacing.xs);
-        changes.extend(draw_knobs(ui, &knob_params, accent, &get, &mod_role));
+        changes.extend(draw_knobs(ui, &knob_params, accent, &get, &markers));
     }
 
     changes
@@ -346,7 +439,7 @@ pub fn draw_knobs<'d>(
     params: &[&'d ParameterDescriptor],
     accent: Color32,
     get: impl Fn(&ParameterDescriptor) -> f32,
-    mod_role: impl Fn(&ParameterDescriptor) -> Option<ModRole>,
+    markers: impl Fn(&ParameterDescriptor) -> ModMarkers,
 ) -> Vec<ParamChange<'d>> {
     /// Cap per row so wide panels still read as a grid rather than one long line.
     const MAX_PER_ROW: usize = 5;
@@ -378,15 +471,12 @@ pub fn draw_knobs<'d>(
                     |ui| {
                         let current = get(param);
                         let mut value = current;
-                        // A modulated knob shows the marker as a corner glyph (the
-                        // same purple language as the label-group markers), kept off
-                        // the label so it never widens the fixed-width grid cell.
-                        let mut knob = Knob::from_descriptor(&mut value, param)
+                        // A modulated knob shows its markers as corner glyphs, kept
+                        // off the label so they never widen the fixed-width grid cell.
+                        let knob = Knob::from_descriptor(&mut value, param)
                             .size(knob_size)
-                            .accent_color(accent);
-                        if let Some(role) = mod_role(param) {
-                            knob = knob.mod_marker(role.glyph(), theme().colors.accent_purple);
-                        }
+                            .accent_color(accent)
+                            .mod_markers(markers(param));
                         knob.show(ui);
                         if (value - current).abs() > f32::EPSILON {
                             changes.push((*param, value));

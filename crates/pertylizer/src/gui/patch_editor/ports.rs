@@ -266,6 +266,7 @@ impl PatchEditor {
                             let (response, center) = PortWidget::new(port.port_type)
                                 .connected(port.is_connected)
                                 .highlighted(is_highlighted)
+                                .markers(port.markers)
                                 .show(ui);
 
                             store_position(port, center);

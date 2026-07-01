@@ -27,14 +27,15 @@ pub use cable::{
 pub use controls::{
     CaptionTone, DialogButton, ICON_BUTTON_SIZE, caption, clickable_label, danger_button,
     dialog_button_row, dim_label, empty_state, enum_combo, icon_button, labeled_row,
-    log_suffix_slider, modal_window, right_aligned_row, section_header, strong_label,
-    suffix_slider, time_drag_value, toggle_button, toggle_button_colored, unit_drag_value,
+    log_suffix_slider, modal_window, paint_marker_corners, right_aligned_row, section_header,
+    strong_label, suffix_slider, time_drag_value, toggle_button, toggle_button_colored,
+    unit_drag_value,
 };
 pub use envelope::{EnvelopeChanges, EnvelopeEditor, draw_adsr_curve};
 pub use frame::{ModuleFrame, blend_rgb, draw_module_footer, draw_module_header};
 pub use knob::Knob;
 pub use meter::{Meter, draw_level_meter, draw_stereo_meter, level_color};
-pub use param_grid::{ModRole, ParamChange, draw_knobs, draw_parameter_grid};
+pub use param_grid::{ModMarker, ModMarkers, ParamChange, draw_knobs, draw_parameter_grid};
 pub use port::{PortWidget, WidgetPortDirection, WidgetPortType};
 pub use scope::{draw_oscilloscope, draw_oscilloscope_with_trigger};
 pub use spectrum::draw_spectrum_analyzer;

@@ -27,8 +27,8 @@ use crate::patch::{
 use super::module_panel::{ModulePanelState, PortPosition, category_color};
 use super::theme::theme;
 use super::widgets::{
-    CaptionTone, ModRole, ModuleFrame, WidgetPortDirection, WidgetPortType, cable_color, caption,
-    draw_cable_dragging, draw_module_footer, draw_module_header,
+    CaptionTone, ModMarkers, ModuleFrame, WidgetPortDirection, WidgetPortType, cable_color,
+    caption, draw_cable_dragging, draw_module_footer, draw_module_header,
 };
 
 mod canvas;
@@ -185,117 +185,262 @@ fn draw_module_zone<'a>(
     );
 }
 
+/// Which modulation consumers read an element (a param/port/macro) as a source.
+/// A single element can be read by several at once (a Mod Matrix slot *and* a
+/// Script, say), so these are independent flags rather than one enum. The kind is
+/// determined by the *consuming* module: a Mod Matrix slot → `matrix`, a
+/// `ModuleType::Script` → `script`, a `ModuleType::AudioScript` → `audio_script`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct SourceKinds {
+    matrix: bool,
+    script: bool,
+    audio_script: bool,
+}
+
+impl SourceKinds {
+    fn add(&mut self, kind: SourceKind) {
+        match kind {
+            SourceKind::Matrix => self.matrix = true,
+            SourceKind::Script => self.script = true,
+            SourceKind::AudioScript => self.audio_script = true,
+        }
+    }
+
+    #[must_use]
+    fn to_markers(self) -> ModMarkers {
+        ModMarkers {
+            matrix_source: self.matrix,
+            script_source: self.script,
+            audio_script_source: self.audio_script,
+            matrix_dest: false,
+        }
+    }
+}
+
+/// The kind of consumer reading a source, derived from the consuming module type.
+#[derive(Debug, Clone, Copy)]
+enum SourceKind {
+    Matrix,
+    Script,
+    AudioScript,
+}
+
 /// Patch analysis: counts module types to enable smart display names and filtering.
 ///
 /// Built once per frame from the current panels. Used for:
 /// - Numbered module titles ("LFO 1" / "LFO 2" when 2+ LFOs, "LFO" when only 1)
 /// - Filtering mod matrix dropdown choices (hide "LFO 2" source if only 1 LFO exists)
-/// - Mod-matrix-reference lookups for the header badge (so source/destination
-///   modules show that they're wired through the matrix even with zero cables)
+/// - Modulation-source lookups for the per-knob/port/footer markers (so a module
+///   read via the Mod Matrix or a script shows it even with zero cables)
 pub(crate) struct PatchAnalysis {
     /// How many of each module type exist.
     module_counts: HashMap<ModuleType, u16>,
-    /// Modules referenced as a Mod Matrix source, with the set of source
-    /// port/param `name`s per module (S1.5b) — drives the per-knob source marker
-    /// when a `name` matches a parameter `type_id` (a `detune` param); output
-    /// ports like `out` have no knob, so they only roll up to the header badge.
-    mod_matrix_sources: HashMap<ModuleId, HashSet<String>>,
+    /// Modules read as a modulation source, keyed by source port/param `name`, with
+    /// the set of consumer kinds per name (S1.5b). Drives the per-knob/port source
+    /// marker when a `name` matches a parameter `type_id` (a `detune` param) or an
+    /// output port (`out`). A source may be read via a Mod Matrix slot's scalar
+    /// address, a Mod Matrix slot's YAMS script, a Script module, or an AudioScript.
+    sources: HashMap<ModuleId, HashMap<String, SourceKinds>>,
     /// Modules referenced as a Mod Matrix destination, with the set of modulated
     /// parameter `type_id`s per module (S1.5a) — drives the per-knob marker; the
-    /// keys alone roll up to the module-header badge.
+    /// keys alone roll up to the module-header badge. Scripts write via ports, so
+    /// destinations are Mod-Matrix-only.
     mod_matrix_destinations: HashMap<ModuleId, HashSet<String>>,
-    /// Macros (`velocity`, `mod_wheel`, …) used as a Mod Matrix source (S1.5b).
-    /// Macros have no `ModuleId` to badge, so they get the macro-source rail.
-    mod_matrix_macros: HashSet<MacroSource>,
+    /// Macros (`velocity`, `mod_wheel`, …) read as a modulation source, with the
+    /// consumer kinds per macro (S1.5b). Macros have no `ModuleId` to badge, so
+    /// they get the macro-source rail.
+    macros: HashMap<MacroSource, SourceKinds>,
+}
+
+/// Extracted script-read sources for one scripted slot: the module params/ports
+/// and macros the compiled script reads (`ScriptInput::Source`). Cached per
+/// `(module, slot, text)` so [`PatchAnalysis::from_panels`] doesn't recompile
+/// every frame.
+#[derive(Clone, Default)]
+struct ScriptSourceRefs {
+    /// `(source module, member name)` for each `SrcAddr::Module` the script reads.
+    modules: Vec<(ModuleId, String)>,
+    /// Each macro the script reads.
+    macros: Vec<MacroSource>,
+}
+
+/// Per-slot source-reference cache: `(module, slot) → (script text, refs)`. Skips
+/// recompiling a slot whose text is unchanged, so the per-frame cost scales with
+/// *changed* scripts, not all of them.
+type ScriptSourceCache = HashMap<(ModuleId, u8), (String, ScriptSourceRefs)>;
+
+/// Compile `src` (with the given audio/control dialect) and return its resolved
+/// source inputs. Empty for a blank or uncompilable script (the live editor
+/// already flags compile errors). Shared by every caller that walks a script's
+/// `inputs`, so the compile boilerplate lives in one place.
+fn compiled_script_inputs(src: &str, audio_rate: bool) -> Vec<synth_core::script::ScriptInput> {
+    if src.trim().is_empty() {
+        return Vec::new();
+    }
+    let opts = synth_script::CompileOptions {
+        audio_rate,
+        ..synth_script::CompileOptions::default()
+    };
+    let (program, _diags) = synth_script::compile(src, &opts);
+    // `into_bound` needs an owned source string only for persistence/inspection;
+    // we read `inputs` and discard it, so an empty string is fine here.
+    program.map_or_else(Vec::new, |p| p.into_bound(String::new()).inputs)
+}
+
+/// Collect the modules and macros a script reads as sources (`ScriptInput::Source`).
+fn extract_script_sources(src: &str, audio_rate: bool) -> ScriptSourceRefs {
+    let mut refs = ScriptSourceRefs::default();
+    for input in compiled_script_inputs(src, audio_rate) {
+        match input {
+            synth_core::script::ScriptInput::Source(SrcAddr::Module {
+                module_type,
+                instance,
+                name,
+            }) => {
+                refs.modules.push((
+                    ModuleId::new(module_type, instance),
+                    name.as_str().to_string(),
+                ));
+            }
+            synth_core::script::ScriptInput::Source(SrcAddr::Macro(m)) => refs.macros.push(m),
+            _ => {}
+        }
+    }
+    refs
 }
 
 impl PatchAnalysis {
-    /// Build from current patch panels.
-    fn from_panels(panels: &HashMap<ModuleId, ModulePanelState>) -> Self {
+    /// Build from current patch panels. `cache` memoises each scripted slot's
+    /// extracted sources so unchanged scripts are not recompiled every frame.
+    fn from_panels(
+        panels: &HashMap<ModuleId, ModulePanelState>,
+        cache: &mut ScriptSourceCache,
+    ) -> Self {
         let mut module_counts: HashMap<ModuleType, u16> = HashMap::new();
         for id in panels.keys() {
             *module_counts.entry(id.module_type).or_insert(0) += 1;
         }
 
-        let mut mod_matrix_sources: HashMap<ModuleId, HashSet<String>> = HashMap::new();
+        let mut sources: HashMap<ModuleId, HashMap<String, SourceKinds>> = HashMap::new();
         let mut mod_matrix_destinations: HashMap<ModuleId, HashSet<String>> = HashMap::new();
-        let mut mod_matrix_macros: HashSet<MacroSource> = HashSet::new();
+        let mut macros: HashMap<MacroSource, SourceKinds> = HashMap::new();
+
+        // Record a module-read source, ignoring addresses that name a module not in
+        // the patch. Owned `String` key (cloned only on insert): `markers_for_param`
+        // looks up by `&str` per knob per frame, so a `PortName` set would force a
+        // global intern lock.
+        let record_module = |sources: &mut HashMap<ModuleId, HashMap<String, SourceKinds>>,
+                             mid: ModuleId,
+                             name: &str,
+                             kind: SourceKind| {
+            if panels.contains_key(&mid) {
+                sources
+                    .entry(mid)
+                    .or_default()
+                    .entry(name.to_string())
+                    .or_default()
+                    .add(kind);
+            }
+        };
 
         for (id, panel) in panels {
-            if id.module_type != ModuleType::ModMatrix {
-                continue;
+            // Only these three module types read modulation sources; the consumer's
+            // type is the source kind (matrix / script / audio-script marker).
+            let kind = match id.module_type {
+                ModuleType::ModMatrix => SourceKind::Matrix,
+                ModuleType::Script => SourceKind::Script,
+                ModuleType::AudioScript => SourceKind::AudioScript,
+                _ => continue,
+            };
+
+            // Mod Matrix scalar slot addresses (S1.5c): resolve each enabled slot's
+            // source/dest address (mirrored in `slot_addrs`) to the module it names.
+            // The f32 index in `param_values` can't represent arbitrary addresses
+            // (`lfo-3.out`), so reading it here would miss the picker's targets.
+            if id.module_type == ModuleType::ModMatrix {
+                for slot in 0..synth_core::MAX_MOD_MATRIX_SLOTS as u8 {
+                    let enabled_name = ModMatrixParam::SlotEnabled(slot, true).name();
+                    let enabled = panel
+                        .param_values
+                        .get(enabled_name)
+                        .map(|v| *v != 0.0)
+                        .unwrap_or(true);
+                    if !enabled {
+                        continue;
+                    }
+
+                    let source_name = ModMatrixParam::SlotSource(slot, None).name();
+                    if let Some(addr) = panel.slot_addrs.get(source_name) {
+                        match SrcAddr::parse(addr) {
+                            Some(SrcAddr::Module {
+                                module_type,
+                                instance,
+                                name,
+                            }) => {
+                                let mid = ModuleId::new(module_type, instance);
+                                record_module(&mut sources, mid, name.as_str(), SourceKind::Matrix);
+                            }
+                            // A macro source has no `ModuleId` — record it for the rail.
+                            Some(SrcAddr::Macro(m)) => macros.entry(m).or_default().add(kind),
+                            None => {}
+                        }
+                    }
+
+                    let dest_name = ModMatrixParam::SlotDestination(slot, None).name();
+                    if let Some(addr) = panel.slot_addrs.get(dest_name)
+                        && let Some(dst) = DestAddr::parse(addr)
+                    {
+                        let mid = ModuleId::new(dst.module_type, dst.instance);
+                        if panels.contains_key(&mid) {
+                            mod_matrix_destinations
+                                .entry(mid)
+                                .or_default()
+                                .insert(dst.param.as_str().to_string());
+                        }
+                    }
+                }
             }
 
-            // Routings are address-based (S1.5c): resolve each slot's source/dest
-            // address (mirrored in `slot_addrs`) to the real module instance it
-            // names, and flag it if that module is present. The legacy f32 index in
-            // `param_values` can't represent arbitrary addresses (`lfo-3.out`), so
-            // reading it here would miss exactly the targets the picker enables.
-            for slot in 0..synth_core::MAX_MOD_MATRIX_SLOTS as u8 {
-                let enabled_name = ModMatrixParam::SlotEnabled(slot, true).name();
-                let enabled = panel
-                    .param_values
-                    .get(enabled_name)
-                    .map(|v| *v != 0.0)
-                    .unwrap_or(true);
-                if !enabled {
-                    continue;
-                }
-
-                let source_name = ModMatrixParam::SlotSource(slot, None).name();
-                if let Some(addr) = panel.slot_addrs.get(source_name) {
-                    match SrcAddr::parse(addr) {
-                        Some(SrcAddr::Module {
-                            module_type,
-                            instance,
-                            name,
-                        }) => {
-                            let mid = ModuleId::new(module_type, instance);
-                            if panels.contains_key(&mid) {
-                                // Owned `String` for the same reason as destinations:
-                                // `mod_role_for_param` looks up by `&str` per knob per
-                                // frame, so avoid a `PortName::intern` global lock.
-                                mod_matrix_sources
-                                    .entry(mid)
-                                    .or_default()
-                                    .insert(name.as_str().to_string());
-                            }
-                        }
-                        // A macro source has no `ModuleId` to badge — record it for the
-                        // macro-source rail instead.
-                        Some(SrcAddr::Macro(m)) => {
-                            mod_matrix_macros.insert(m);
-                        }
-                        None => {}
+            // Script-read sources (all three consumer kinds): each scripted slot's
+            // YAMS text reads modules/macros that are invisible to the cable graph
+            // and the scalar addresses above. Compile once per changed slot (cached).
+            let audio_rate = id.module_type.script_is_audio_rate();
+            for (slot, src) in &panel.slot_scripts {
+                // A disabled Mod Matrix slot routes nothing, so its script must not
+                // emit markers either — mirroring the scalar-address path above.
+                // Script / AudioScript modules have no per-slot enable.
+                if id.module_type == ModuleType::ModMatrix {
+                    let enabled = panel
+                        .param_values
+                        .get(ModMatrixParam::SlotEnabled(*slot, true).name())
+                        .map(|v| *v != 0.0)
+                        .unwrap_or(true);
+                    if !enabled {
+                        continue;
                     }
                 }
 
-                let dest_name = ModMatrixParam::SlotDestination(slot, None).name();
-                if let Some(addr) = panel.slot_addrs.get(dest_name)
-                    && let Some(dst) = DestAddr::parse(addr)
-                {
-                    let mid = ModuleId::new(dst.module_type, dst.instance);
-                    if panels.contains_key(&mid) {
-                        // Store the `type_id` as an owned `String`, not the interned
-                        // `PortName`: `mod_role_for_param` is called per knob per
-                        // frame with a `&str` type_id, and a `PortName` set would
-                        // force `PortName::intern` (a global write-lock) on every
-                        // lookup. The only cost here is one alloc per routing during
-                        // the already-per-frame rebuild.
-                        mod_matrix_destinations
-                            .entry(mid)
-                            .or_default()
-                            .insert(dst.param.as_str().to_string());
-                    }
+                let key = (*id, *slot);
+                // Recompute only when the slot's script text changed; on a cache hit
+                // read the stored refs by reference (no per-frame Vec clone).
+                if !matches!(cache.get(&key), Some((cached_src, _)) if cached_src == src) {
+                    cache.insert(key, (src.clone(), extract_script_sources(src, audio_rate)));
+                }
+                let refs = &cache[&key].1;
+                for (mid, name) in &refs.modules {
+                    record_module(&mut sources, *mid, name, kind);
+                }
+                for m in &refs.macros {
+                    macros.entry(*m).or_default().add(kind);
                 }
             }
         }
 
         Self {
             module_counts,
-            mod_matrix_sources,
+            sources,
             mod_matrix_destinations,
-            mod_matrix_macros,
+            macros,
         }
     }
 
@@ -313,9 +458,12 @@ impl PatchAnalysis {
         format!("{base_name} {}", module_id.instance)
     }
 
-    /// `true` if any Mod Matrix slot routes from this module.
+    /// `true` if any Mod Matrix slot routes from this module (used for node-opacity
+    /// dimming, which follows the Mod Matrix specifically).
     fn is_mod_matrix_source(&self, module_id: ModuleId) -> bool {
-        self.mod_matrix_sources.contains_key(&module_id)
+        self.sources
+            .get(&module_id)
+            .is_some_and(|members| members.values().any(|k| k.matrix))
     }
 
     /// `true` if any Mod Matrix slot routes to this module.
@@ -323,27 +471,60 @@ impl PatchAnalysis {
         self.mod_matrix_destinations.contains_key(&module_id)
     }
 
-    /// `true` if a Mod Matrix slot reads this macro as its source (S1.5b) —
-    /// drives the macro-source rail chip.
-    fn is_macro_source(&self, macro_source: MacroSource) -> bool {
-        self.mod_matrix_macros.contains(&macro_source)
+    /// The modulation markers a macro carries (S1.5b) — the source kinds that read
+    /// it. Macros are never a destination.
+    fn markers_for_macro(&self, macro_source: MacroSource) -> ModMarkers {
+        self.macros
+            .get(&macro_source)
+            .copied()
+            .unwrap_or_default()
+            .to_markers()
     }
 
-    /// The Mod Matrix role of a specific parameter on a module, for the per-knob
-    /// marker (S1.5a/b). Both directions are tracked at parameter granularity: a
-    /// source `name` that is a parameter (`detune`) marks that knob; a destination
-    /// param marks its knob; a param that is both gets the `Both` glyph.
-    /// `param_type_id` is the descriptor `type_id`.
-    fn mod_role_for_param(&self, module_id: ModuleId, param_type_id: &str) -> Option<ModRole> {
-        let is_source = self
-            .mod_matrix_sources
+    /// The modulation markers of a specific parameter on a module, for the per-knob
+    /// marker (S1.5a/b). Source kinds are tracked per member name (a source `name`
+    /// that is a parameter such as `detune` marks that knob); destinations are
+    /// always a parameter. `param_type_id` is the descriptor `type_id`.
+    fn markers_for_param(&self, module_id: ModuleId, param_type_id: &str) -> ModMarkers {
+        let mut markers = self
+            .sources
             .get(&module_id)
-            .is_some_and(|params| params.contains(param_type_id));
-        let is_dest = self
+            .and_then(|members| members.get(param_type_id))
+            .copied()
+            .unwrap_or_default()
+            .to_markers();
+        markers.matrix_dest = self
             .mod_matrix_destinations
             .get(&module_id)
             .is_some_and(|params| params.contains(param_type_id));
-        ModRole::from_flags(is_source, is_dest)
+        markers
+    }
+
+    /// The source markers of an output port (S1.5, port variant). A port is only
+    /// ever a source, never a destination, so this reports source kinds only.
+    fn markers_for_port(&self, module_id: ModuleId, port_name: &str) -> ModMarkers {
+        self.sources
+            .get(&module_id)
+            .and_then(|members| members.get(port_name))
+            .copied()
+            .unwrap_or_default()
+            .to_markers()
+    }
+
+    /// The module-level roll-up of markers for the bottom status-bar badge — the
+    /// union of every source/destination role any of the module's params/ports
+    /// participates in.
+    fn markers_for_module(&self, module_id: ModuleId) -> ModMarkers {
+        let mut markers = ModMarkers::default();
+        if let Some(members) = self.sources.get(&module_id) {
+            for k in members.values() {
+                markers.matrix_source |= k.matrix;
+                markers.script_source |= k.script;
+                markers.audio_script_source |= k.audio_script;
+            }
+        }
+        markers.matrix_dest = self.is_mod_matrix_destination(module_id);
+        markers
     }
 }
 
@@ -354,16 +535,8 @@ impl PatchAnalysis {
 /// feedback loop (LFO / macro / context sources can't). A script that fails to
 /// compile yields an empty set (the live editor already flags the compile error).
 fn script_output_refs(src: &str) -> HashSet<(ModuleId, u8)> {
-    if src.trim().is_empty() {
-        return HashSet::new();
-    }
-    let (program, _diags) = synth_script::compile(src, &synth_script::CompileOptions::default());
-    let Some(program) = program else {
-        return HashSet::new();
-    };
-    // `into_bound` needs an owned source string only for persistence/inspection;
-    // we read `inputs` and discard it, so an empty string is fine here.
-    script_refs_from_inputs(&program.into_bound(String::new()).inputs)
+    // Feedback detection only concerns Script modules, which are control-rate.
+    script_refs_from_inputs(&compiled_script_inputs(src, false))
 }
 
 /// The Script-module output slots referenced by an already-compiled script's
@@ -861,6 +1034,10 @@ struct PortRenderInfo {
     description: String,
     port_type: WidgetPortType,
     is_connected: bool,
+    /// Modulation source markers for this port (S1.5, port variant) — painted as a
+    /// corner glyph cluster inside the port's fixed box. Only output ports can be a
+    /// source, so input ports always carry an empty set.
+    markers: ModMarkers,
 }
 
 /// State for a pending connection being drawn.
@@ -1026,6 +1203,10 @@ pub struct PatchEditor {
     /// script — only a slot whose text changed is re-extracted. See
     /// `build_script_graph`.
     script_ref_cache: ScriptRefCache,
+    /// Per-slot cache of the modules/macros each scripted slot reads as sources,
+    /// for the modulation markers (§3.4). `PatchAnalysis::from_panels` runs every
+    /// frame, so this skips recompiling a slot whose script text is unchanged.
+    source_ref_cache: ScriptSourceCache,
     /// Modules that the in-progress cable drag must NOT connect to because the
     /// edge would form a cycle. Recomputed once per frame from a single graph
     /// traversal (see `recompute_drag_cycle_blocked`); empty when not dragging.
@@ -1116,6 +1297,7 @@ impl PatchEditor {
             prev_mod_matrix_attachments: Vec::new(),
             connected_ports_cache: HashMap::new(),
             script_ref_cache: HashMap::new(),
+            source_ref_cache: HashMap::new(),
             drag_cycle_blocked: HashSet::new(),
             description_editor: None,
             info_popup: None,
@@ -2004,7 +2186,7 @@ impl PatchEditor {
         self.recompute_drag_cycle_blocked();
 
         self.realign_effect_chain_if_changed(effect_chain_order);
-        let analysis = PatchAnalysis::from_panels(&self.panels);
+        let analysis = PatchAnalysis::from_panels(&self.panels, &mut self.source_ref_cache);
         self.realign_mod_matrix_attachments_if_changed(&analysis);
 
         // Addressing targets for the Mod Matrix pickers (S1.5c) and the Script
@@ -2183,13 +2365,13 @@ impl PatchEditor {
                     );
 
                     // Dim modules that aren't connected to output, or are bypassed.
-                    // Matrix-referenced modules count as connected (routed via slot
-                    // instead of cable).
+                    // A module read/written by any modulation routing (Mod Matrix,
+                    // Script, or AudioScript) counts as connected — it participates
+                    // via a slot/script instead of a cable, so it must not look
+                    // orphaned.
                     let opacity = if is_bypassed {
                         0.4
-                    } else if is_global_module
-                        || analysis.is_mod_matrix_source(module_id)
-                        || analysis.is_mod_matrix_destination(module_id)
+                    } else if is_global_module || !analysis.markers_for_module(module_id).is_empty()
                     {
                         1.0
                     } else {
@@ -2474,8 +2656,12 @@ impl PatchEditor {
         self.scene_rect = Some(scene_rect);
 
         // Macro-source rail (S1.5b): a fixed SCREEN-space strip — drawn OUTSIDE the
-        // Scene so it never pans/zooms with the canvas.
-        if analysis.count(ModuleType::ModMatrix) > 0 {
+        // Scene so it never pans/zooms with the canvas. Shown whenever a module that
+        // can read a macro exists (Mod Matrix or either script module).
+        if analysis.count(ModuleType::ModMatrix) > 0
+            || analysis.count(ModuleType::Script) > 0
+            || analysis.count(ModuleType::AudioScript) > 0
+        {
             self.draw_macro_source_rail(ui, instrument_id, visible_rect, &analysis);
         }
 
@@ -2518,31 +2704,28 @@ impl PatchEditor {
                         ui.horizontal(|ui| {
                             caption(ui, "Macros", CaptionTone::Dim);
                             for m in MacroSource::ALL {
-                                let active = analysis.is_macro_source(m);
-                                let color = if active {
-                                    t.colors.accent_purple
+                                let markers = analysis.markers_for_macro(m);
+                                // Colour the label with the highest-priority active
+                                // source kind, or dim it when the macro is unwired.
+                                let label_color = markers
+                                    .iter()
+                                    .next()
+                                    .map_or(t.colors.text_dim, |mk| mk.color());
+                                let tip = if markers.is_empty() {
+                                    format!("{}\nAvailable as a modulation source.", macro_label(m))
                                 } else {
-                                    t.colors.text_dim
-                                };
-                                let tip = if active {
                                     format!(
-                                        "{}\nDrives one or more Mod Matrix slots.",
+                                        "{}\nDrives one or more modulation routings.",
                                         macro_label(m)
                                     )
-                                } else {
-                                    format!("{}\nAvailable as a Mod Matrix source.", macro_label(m))
                                 };
                                 ui.horizontal(|ui| {
                                     ui.spacing_mut().item_spacing.x = 2.0;
-                                    caption(ui, macro_label(m), CaptionTone::Color(color));
-                                    // Same Source glyph as the module-header badge,
-                                    // shown only when the macro is actually wired.
-                                    if active {
-                                        caption(
-                                            ui,
-                                            ModRole::Source.glyph(),
-                                            CaptionTone::Color(t.colors.accent_purple),
-                                        );
+                                    caption(ui, macro_label(m), CaptionTone::Color(label_color));
+                                    // One glyph per source kind that reads the macro,
+                                    // matching the per-knob / footer marker colours.
+                                    for mk in markers.iter() {
+                                        caption(ui, mk.glyph(), CaptionTone::Color(mk.color()));
                                     }
                                 })
                                 .response
@@ -2858,7 +3041,7 @@ impl PatchEditor {
     /// `realign_mod_matrix_attachments_if_changed()` call is a no-op.
     /// Use after loading a project so saved positions survive.
     pub fn mark_mod_matrix_attachments_aligned(&mut self) {
-        let analysis = PatchAnalysis::from_panels(&self.panels);
+        let analysis = PatchAnalysis::from_panels(&self.panels, &mut self.source_ref_cache);
         self.prev_mod_matrix_attachments = self.collect_mod_matrix_attachments(&analysis);
     }
 
@@ -3171,7 +3354,7 @@ impl PatchEditor {
         // the Modulation zone by category, but matrix attachments belong
         // beneath the matrix.
         self.prev_mod_matrix_attachments.clear();
-        let analysis = PatchAnalysis::from_panels(&self.panels);
+        let analysis = PatchAnalysis::from_panels(&self.panels, &mut self.source_ref_cache);
         self.realign_mod_matrix_attachments_if_changed(&analysis);
     }
 }
@@ -4606,17 +4789,20 @@ mod patch_analysis_tests {
             panels.insert(id, state);
         }
 
-        let analysis = PatchAnalysis::from_panels(&panels);
+        let analysis = PatchAnalysis::from_panels(&panels, &mut HashMap::new());
         assert!(analysis.is_mod_matrix_source(ModuleId::new(ModuleType::Envelope, 6)));
         assert!(analysis.is_mod_matrix_destination(ModuleId::new(ModuleType::Filter, 3)));
         // Per-parameter destination marker (S1.5a): only the addressed param
         // ("cutoff") is a destination on flt-3, not its other knobs.
         let flt3 = ModuleId::new(ModuleType::Filter, 3);
-        assert_eq!(
-            analysis.mod_role_for_param(flt3, "cutoff"),
-            Some(ModRole::Destination)
-        );
-        assert_eq!(analysis.mod_role_for_param(flt3, "resonance"), None);
+        let cutoff = analysis.markers_for_param(flt3, "cutoff");
+        assert!(cutoff.matrix_dest && !cutoff.matrix_source);
+        assert!(analysis.markers_for_param(flt3, "resonance").is_empty());
+        // The source's output *port* carries the matrix source marker (S1.5 port
+        // variant), while a non-referenced port stays clear.
+        let env6 = ModuleId::new(ModuleType::Envelope, 6);
+        assert!(analysis.markers_for_port(env6, "out").matrix_source);
+        assert!(analysis.markers_for_port(env6, "level").is_empty());
         // Instances the addresses don't name (and which aren't present) must not
         // be flagged.
         assert!(!analysis.is_mod_matrix_source(ModuleId::new(ModuleType::Envelope, 2)));
@@ -4640,9 +4826,97 @@ mod patch_analysis_tests {
         ] {
             panels.insert(id, state);
         }
-        let analysis = PatchAnalysis::from_panels(&panels);
+        let analysis = PatchAnalysis::from_panels(&panels, &mut HashMap::new());
         assert!(!analysis.is_mod_matrix_source(ModuleId::new(ModuleType::Lfo, 1)));
         assert!(!analysis.is_mod_matrix_destination(ModuleId::new(ModuleType::Oscillator, 1)));
+    }
+
+    /// A disabled Mod Matrix slot must clear its *script*-read sources too, not just
+    /// the scalar-address ones — the routing is off, so no markers.
+    #[test]
+    fn disabled_slot_clears_script_sources() {
+        let mut panels = HashMap::new();
+        let mm = ModuleId::new(ModuleType::ModMatrix, 1);
+        let mut state = ModulePanelState::new(mm, Pos2::ZERO);
+        state
+            .slot_scripts
+            .insert(0, "out = lfo-1.out * velocity".to_string());
+        state.param_values.insert(
+            ModMatrixParam::SlotEnabled(0, true).name().to_string(),
+            0.0, // disabled
+        );
+        panels.insert(mm, state);
+        let (lfo_id, lfo_state) = stub_panel(ModuleType::Lfo, 1);
+        panels.insert(lfo_id, lfo_state);
+
+        let analysis = PatchAnalysis::from_panels(&panels, &mut HashMap::new());
+        assert!(analysis.markers_for_module(lfo_id).is_empty());
+        assert!(analysis.markers_for_macro(MacroSource::Velocity).is_empty());
+    }
+
+    /// A control-rate Script module marks the modules/macros its script reads as
+    /// *Script* sources (teal), distinct from the Mod Matrix — even though there is
+    /// no cable and no scalar slot address. (`script_panel` builds a Script module;
+    /// it is defined alongside the feedback-graph tests below.)
+    #[test]
+    fn script_module_marks_read_sources() {
+        let mut panels = HashMap::new();
+        let (scr, scr_state) = script_panel(
+            1,
+            &[(
+                0,
+                "src lfo = lfo-1.out\nsrc cut = flt-1.cutoff\nout = lfo * velocity + cut",
+            )],
+        );
+        panels.insert(scr, scr_state);
+        for (id, state) in [
+            stub_panel(ModuleType::Lfo, 1),
+            stub_panel(ModuleType::Filter, 1),
+        ] {
+            panels.insert(id, state);
+        }
+        let analysis = PatchAnalysis::from_panels(&panels, &mut HashMap::new());
+
+        // The LFO's output port is read by a Script, not the Mod Matrix.
+        let lfo = analysis.markers_for_module(ModuleId::new(ModuleType::Lfo, 1));
+        assert!(lfo.script_source && !lfo.matrix_source);
+        assert!(!analysis.is_mod_matrix_source(ModuleId::new(ModuleType::Lfo, 1)));
+
+        // A param source lights the Script marker on that exact param only.
+        let flt1 = ModuleId::new(ModuleType::Filter, 1);
+        let cutoff = analysis.markers_for_param(flt1, "cutoff");
+        assert!(cutoff.script_source && !cutoff.matrix_source && !cutoff.matrix_dest);
+        assert!(analysis.markers_for_param(flt1, "resonance").is_empty());
+
+        // The macro rail reflects the Script kind.
+        assert!(
+            analysis
+                .markers_for_macro(MacroSource::Velocity)
+                .script_source
+        );
+    }
+
+    /// An AudioScript compiles with the *audio* dialect: `in_l` is a compile error
+    /// at control rate, so `lfo-1.out` is only extracted (as an AudioScript source,
+    /// yellow) if the audio-rate dialect was selected for this module type.
+    #[test]
+    fn audio_script_uses_audio_dialect() {
+        let mut panels = HashMap::new();
+        let (asc, mut asc_state) = stub_panel(ModuleType::AudioScript, 1);
+        asc_state
+            .slot_scripts
+            .insert(0, "src lfo = lfo-1.out\nout = in_l * lfo".to_string());
+        panels.insert(asc, asc_state);
+        let (lfo_id, lfo_state) = stub_panel(ModuleType::Lfo, 1);
+        panels.insert(lfo_id, lfo_state);
+
+        let analysis = PatchAnalysis::from_panels(&panels, &mut HashMap::new());
+        let lfo = analysis.markers_for_module(lfo_id);
+        assert!(
+            lfo.audio_script_source,
+            "audio-rate dialect must compile and record lfo-1.out"
+        );
+        assert!(!lfo.matrix_source && !lfo.script_source);
     }
 
     /// The patch editor must refuse to highlight / allow a drag that would form

@@ -211,6 +211,28 @@ fn load_module(
         handle,
         instrument_id,
     );
+
+    // Install per-slot control scripts (Step 2). The engine-side apply
+    // (`session.apply_patch`) does this on the headless/project path, but the GUI
+    // load path builds the graph module-by-module and previously skipped scripts,
+    // so a saved patch's Mod Matrix / Script / AudioScript slot scripts were
+    // silently dropped on load (their source/marker glyphs vanished). Applied
+    // after params so the routing already exists; the GUI panel's `slot_scripts`
+    // mirror then repopulates from the engine snapshot via `sync_module_scripts`.
+    // Keys are 1-based; a bad key or compile error is logged and skipped so the
+    // rest of the patch still loads.
+    for (slot_key, source) in &module_state.scripts {
+        let slot = match crate::session::parse_mod_slot_key(slot_key) {
+            Ok(slot) => slot,
+            Err(msg) => {
+                eprintln!("patch_bridge: {module_id} script: {msg}");
+                continue;
+            }
+        };
+        if let Err(e) = session.set_mod_script(instrument_id, module_id, slot, source) {
+            eprintln!("patch_bridge: {module_id} slot {slot_key} script: {e}");
+        }
+    }
 }
 
 /// Visualizer/SignalMonitor modules need a `VisualizationBuffer`
@@ -615,33 +637,27 @@ pub fn create_patch_from_editor(
 ) -> Patch {
     let mut patch = Patch::new(name);
 
-    // Build a lookup of engine parameter values when available.
-    // Store raw Param values so we can match them to descriptors by kind.
-    let engine_params: HashMap<String, Vec<Param>> = engine_state
-        .map(|(state, inst_id)| {
-            state
-                .shared_graph
-                .get_modules_for_instrument(inst_id)
-                .into_iter()
-                .map(|m| (m.id.to_string(), m.parameters.clone()))
-                .collect()
-        })
-        .unwrap_or_default();
-
-    // Per-instance descriptions live only in the engine snapshot (not the GUI
-    // module cache), so pull them here too — otherwise a standalone "Save
-    // Patch…" would drop descriptions set via MCP.
-    let engine_descriptions: HashMap<String, String> = engine_state
-        .map(|(state, inst_id)| {
-            state
-                .shared_graph
-                .get_modules_for_instrument(inst_id)
-                .into_iter()
-                .filter(|m| !m.description.is_empty())
-                .map(|m| (m.id.to_string(), m.description.clone()))
-                .collect()
-        })
-        .unwrap_or_default();
+    // Fields that live only in the engine snapshot, not the GUI module cache:
+    // parameter values (authoritative over stale GUI cache, e.g. after MCP edits),
+    // per-instance descriptions, and per-slot control scripts. Read them in ONE
+    // `get_modules_for_instrument` pass (one lock, one snapshot clone) so all three
+    // come from a single coherent view — and so "Save Patch…" keeps descriptions/
+    // scripts set via MCP rather than dropping them.
+    let mut engine_params: HashMap<String, Vec<Param>> = HashMap::new();
+    let mut engine_descriptions: HashMap<String, String> = HashMap::new();
+    let mut engine_scripts: HashMap<String, BTreeMap<String, String>> = HashMap::new();
+    if let Some((state, inst_id)) = engine_state {
+        for m in state.shared_graph.get_modules_for_instrument(inst_id) {
+            let key = m.id.to_string();
+            if !m.scripts.is_empty() {
+                engine_scripts.insert(key.clone(), m.scripts);
+            }
+            if !m.description.is_empty() {
+                engine_descriptions.insert(key.clone(), m.description);
+            }
+            engine_params.insert(key, m.parameters);
+        }
+    }
 
     // Pull the per-instrument fields that live only in the engine snapshot
     // (not the GUI module cache) in a single locked lookup: the effect-chain
@@ -708,7 +724,10 @@ pub fn create_patch_from_editor(
                     .cloned()
                     .unwrap_or_default(),
                 parameters: param_map,
-                scripts: std::collections::BTreeMap::new(),
+                scripts: engine_scripts
+                    .get(&module_id.to_string())
+                    .cloned()
+                    .unwrap_or_default(),
             });
         }
     }

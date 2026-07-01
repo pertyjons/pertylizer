@@ -35,9 +35,9 @@ pub struct Knob<'a> {
     /// Optional quantization step in value units (e.g. `1.0` for integer knobs).
     /// Drags snap to the nearest multiple of `step` offset from `range.min`.
     step: Option<f32>,
-    /// Optional Mod Matrix marker `(glyph, color)` painted in the knob's corner —
-    /// kept off the label so it never widens the cell (S1.5a).
-    mod_marker: Option<(&'static str, Color32)>,
+    /// Modulation markers painted in the knob's top-right corner — kept off the
+    /// label so they never widen the cell (S1.5a).
+    mod_markers: super::ModMarkers,
 }
 
 impl<'a> Knob<'a> {
@@ -52,7 +52,7 @@ impl<'a> Knob<'a> {
             size: 40.0, // Smaller default size
             accent_color: theme().colors.accent_orange,
             step: None,
-            mod_marker: None,
+            mod_markers: super::ModMarkers::default(),
         }
     }
 
@@ -68,7 +68,7 @@ impl<'a> Knob<'a> {
             accent_color: theme().colors.accent_orange,
             // Integer params snap to whole numbers — the kind supplies the step.
             step: (descriptor.kind == ParamKind::Integer).then_some(1.0),
-            mod_marker: None,
+            mod_markers: super::ModMarkers::default(),
         }
     }
 
@@ -91,10 +91,10 @@ impl<'a> Knob<'a> {
         }
     }
 
-    /// Paint a small Mod Matrix marker glyph in the knob's top-right corner.
+    /// Set the modulation markers painted in the knob's top-right corner.
     #[must_use]
-    pub fn mod_marker(mut self, glyph: &'static str, color: Color32) -> Self {
-        self.mod_marker = Some((glyph, color));
+    pub fn mod_markers(mut self, markers: super::ModMarkers) -> Self {
+        self.mod_markers = markers;
         self
     }
 
@@ -268,18 +268,10 @@ impl<'a> Knob<'a> {
             center + Vec2::new(value_angle.cos(), value_angle.sin()) * indicator_radius;
         painter.circle_filled(indicator_pos, indicator_size, t.colors.text_primary);
 
-        // Mod Matrix marker in the top-right corner (S1.5a) — same purple glyph
-        // language as the module-header badge, painted over the knob so it never
-        // changes the cell's footprint.
-        if let Some((glyph, color)) = self.mod_marker {
-            painter.text(
-                Pos2::new(knob_rect.right(), knob_rect.top()),
-                egui::Align2::RIGHT_TOP,
-                glyph,
-                egui::FontId::proportional(11.0),
-                color,
-            );
-        }
+        // Modulation markers, one per fixed corner (S1.5a) — pushed just outside
+        // the knob circle (into the cell's padding, no footprint change) so they
+        // read clearly, each with its own hover tooltip.
+        super::paint_marker_corners(ui, knob_rect, self.mod_markers, true);
 
         // Label below knob
         if !self.label.is_empty() {

@@ -15,6 +15,7 @@ pub struct PortWidget {
     port_type: WidgetPortType,
     connected: bool,
     highlighted: bool,
+    markers: super::ModMarkers,
 }
 
 /// Port type for widget rendering.
@@ -65,6 +66,7 @@ impl PortWidget {
             port_type,
             connected: false,
             highlighted: false,
+            markers: super::ModMarkers::default(),
         }
     }
 
@@ -76,6 +78,13 @@ impl PortWidget {
     /// Mark this port as a valid connection target (glowing highlight).
     pub fn highlighted(mut self, highlighted: bool) -> Self {
         self.highlighted = highlighted;
+        self
+    }
+
+    /// Set the modulation source markers painted in the port's corner (S1.5).
+    #[must_use]
+    pub fn markers(mut self, markers: super::ModMarkers) -> Self {
+        self.markers = markers;
         self
     }
 
@@ -139,6 +148,12 @@ impl PortWidget {
                 Some(Stroke::new(1.5, color.gamma_multiply(0.7))),
             );
         }
+
+        // Modulation source markers (S1.5, port variant): one glyph per fixed
+        // corner tucked inside the 20×20 box (no room to push them out like a
+        // knob), each with its own hover tooltip. Same vocabulary as the knob
+        // markers, so a script-fed output (no cable) reads as "used".
+        super::paint_marker_corners(ui, rect, self.markers, false);
 
         (response, center)
     }

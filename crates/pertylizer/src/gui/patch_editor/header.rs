@@ -12,7 +12,7 @@ use synth_core::ModuleCategory;
 use synth_engine::ModuleId;
 
 use crate::gui::theme::theme;
-use crate::gui::widgets::{ICON_BUTTON_SIZE, ModRole, icon_button};
+use crate::gui::widgets::{ICON_BUTTON_SIZE, icon_button};
 
 use super::{
     DescriptionEditorState, EFFECT_CHAIN_AMBER, ModuleConnectivity, ModuleHeaderCtx, PatchAnalysis,
@@ -41,7 +41,6 @@ impl PatchEditor {
             connectivity,
             ..
         } = ctx;
-        let t = theme();
 
         // Source indicator (no inputs)
         if is_source {
@@ -109,27 +108,11 @@ impl PatchEditor {
         };
         icon_button(ui, conn_icon, conn_color, conn_tooltip);
 
-        let is_matrix_source = analysis.is_mod_matrix_source(module_id);
-        let is_matrix_destination = analysis.is_mod_matrix_destination(module_id);
-        if let Some(badge_role) = ModRole::from_flags(is_matrix_source, is_matrix_destination) {
-            let badge_color = t.colors.accent_purple;
-            // Share the icon mapping with the per-knob marker so the module
-            // roll-up and its parameters never show conflicting arrows; the
-            // tooltips stay module-level.
-            let badge_icon = badge_role.glyph();
-            let badge_tip = match (is_matrix_source, is_matrix_destination) {
-                (true, true) => {
-                    "Mod Matrix\nRouted as both source and destination via the Mod Matrix."
-                }
-                (true, false) => {
-                    "Mod Matrix Source\nThis module drives one or more Mod Matrix slots.\nLook in the Mod Matrix module for slot details."
-                }
-                (false, true) => {
-                    "Mod Matrix Destination\nA Mod Matrix slot modulates a parameter on this module.\nLook in the Mod Matrix module for slot details."
-                }
-                _ => "",
-            };
-            icon_button(ui, badge_icon, badge_color, badge_tip);
+        // Modulation roll-up: one badge per kind that reads from or writes to this
+        // module (Mod Matrix / Script / AudioScript source, Mod Matrix destination).
+        // The glyph+colour and draw order match the per-knob and macro-rail markers.
+        for m in analysis.markers_for_module(module_id).iter() {
+            icon_button(ui, m.glyph(), m.color(), m.module_tooltip());
         }
     }
 

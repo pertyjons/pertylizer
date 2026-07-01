@@ -8,11 +8,38 @@
 use std::ops::RangeInclusive;
 
 use eframe::egui::{
-    self, Button, Color32, DragValue, InnerResponse, Response, RichText, Slider, Ui, Vec2,
+    self, Button, Color32, DragValue, InnerResponse, Rect, Response, RichText, Slider, Ui, Vec2,
     WidgetText,
 };
 
+use super::ModMarkers;
 use crate::gui::theme::theme;
+
+/// Paint each active modulation marker in its fixed corner of `rect`, each with its
+/// own hover tooltip. Painter-based so the glyphs never change the widget's
+/// footprint. Each marker kind owns one corner (see
+/// [`ModMarker::corner`](super::ModMarker::corner)), so two markers never collide
+/// and a glyph's position reinforces its kind. With `outside` the glyphs sit just
+/// clear of the widget body (knobs); otherwise they tuck into the corners (ports).
+/// `interact` uses `&Ui`, so this composes even while a `Painter` borrow is live.
+pub fn paint_marker_corners(ui: &Ui, rect: Rect, markers: ModMarkers, outside: bool) {
+    for m in markers.iter() {
+        let (pos, align) = m.corner(rect, outside);
+        let glyph_rect = ui.painter().text(
+            pos,
+            align,
+            m.glyph(),
+            egui::FontId::proportional(11.0),
+            m.color(),
+        );
+        ui.interact(
+            glyph_rect,
+            ui.id().with(("mod_marker", m as u8)),
+            egui::Sense::hover(),
+        )
+        .on_hover_text(m.tooltip());
+    }
+}
 
 /// The single hit-target size for every frameless icon button (and status badge).
 /// Exposed so callers that must build a raw `egui::Button` (e.g. a `MenuButton`)

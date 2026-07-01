@@ -257,6 +257,9 @@ impl PatchEditor {
                     p.port_name,
                     direction,
                 ),
+                // Collapsed group ports don't carry modulation markers yet — the
+                // per-module ports (see node.rs) do. Follow-up if groups need them.
+                markers: crate::gui::widgets::ModMarkers::default(),
             })
             .collect();
 

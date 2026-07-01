@@ -14,7 +14,7 @@ use synth_engine::{EngineHandle, ModuleId};
 use crate::audio::input::InputState;
 use crate::gui::module_panel::{ModulePanelState, PortPosition};
 use crate::gui::theme::theme;
-use crate::gui::widgets::{CaptionTone, WidgetPortDirection, caption};
+use crate::gui::widgets::{CaptionTone, ModMarkers, WidgetPortDirection, caption};
 
 use super::{
     AudioInputAction, AudioInputSnapshot, EFFECT_CHAIN_AMBER, ModAddrCatalog, ModuleBodyCtx,
@@ -164,6 +164,7 @@ impl PatchEditor {
                         descriptor,
                         WidgetPortDirection::Input,
                         connected_ports,
+                        analysis,
                     );
                 });
 
@@ -205,6 +206,7 @@ impl PatchEditor {
                         descriptor,
                         WidgetPortDirection::Output,
                         connected_ports,
+                        analysis,
                     );
                 });
             });
@@ -218,6 +220,7 @@ impl PatchEditor {
         descriptor: &ModuleDescriptor,
         direction: WidgetPortDirection,
         connected_ports: &[PortName],
+        analysis: &PatchAnalysis,
     ) {
         use synth_core::PortDirection as CorePortDirection;
 
@@ -237,6 +240,13 @@ impl PatchEditor {
                 description: p.description.clone(),
                 port_type: convert_port_type(p.port_type),
                 is_connected: connected_ports.contains(&p.name),
+                // Only output ports can be read as a modulation source.
+                markers: match direction {
+                    WidgetPortDirection::Output => {
+                        analysis.markers_for_port(module_id, p.name.as_str())
+                    }
+                    WidgetPortDirection::Input => ModMarkers::default(),
+                },
             })
             .collect();
 
@@ -288,12 +298,12 @@ pub(super) fn draw_module_panel_params(
 
     let mut param_changes = Vec::new();
     let mut audio_input_action = None;
-    // Per-knob Mod Matrix marker (S1.5a/b): a parameter is marked when a routing
+    // Per-knob modulation markers (S1.5a/b): a parameter is marked when a routing
     // targets this module's matching `type_id` (destination) or reads it as a
-    // source param — the three-state direction comes from `mod_role_for_param`.
+    // source param — the marker set comes from `markers_for_param`.
     let module_id = state.id;
-    let mod_role =
-        |p: &synth_core::ParameterDescriptor| analysis.mod_role_for_param(module_id, &p.type_id);
+    let markers =
+        |p: &synth_core::ParameterDescriptor| analysis.markers_for_param(module_id, &p.type_id);
 
     // For Visualizer modules, draw visualization FIRST (before parameters)
     if descriptor.category == ModuleCategory::Visualizer {
@@ -378,7 +388,7 @@ pub(super) fn draw_module_panel_params(
                         .copied()
                         .unwrap_or(p.range.default)
                 },
-                mod_role,
+                markers,
             );
             for (param, value) in changes {
                 state.param_values.insert(param.name.clone(), value);
@@ -602,7 +612,7 @@ pub(super) fn draw_module_panel_params(
         // The Mod Matrix has its own picker path (early return above); every other
         // module's choices are always shown.
         |_p, _choice| true,
-        mod_role,
+        markers,
     );
     for (param, value) in changes {
         state.param_values.insert(param.name.clone(), value);
