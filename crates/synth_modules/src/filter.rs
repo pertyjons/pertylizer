@@ -770,7 +770,7 @@ impl PolyModule for LadderFilter {
     }
 
     fn module_type(&self) -> ModuleType {
-        ModuleType::Filter
+        ModuleType::LadderFilter
     }
 
     fn reset(&mut self) {

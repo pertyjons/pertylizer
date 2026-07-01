@@ -1,0 +1,1260 @@
+{
+  "file_type": "project",
+  "version": "1.0",
+  "instruments": [
+    {
+      "id": 1,
+      "name": "All Modules",
+      "channel": 1,
+      "volume": 1.0,
+      "pan": 0.0,
+      "muted": false,
+      "solo": false,
+      "key_range": [
+        0,
+        127
+      ],
+      "transpose": 0.0,
+      "oversampling": 1,
+      "category": 0,
+      "allocation_mode": "Polyphonic",
+      "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
+      "max_voices": 8,
+      "velocity_amp_sensitivity": 1.0,
+      "velocity_filter_sensitivity": 0.5,
+      "patch": {
+        "name": "All Modules",
+        "version": "1.0",
+        "description": "Reference project holding one instance of every add_module-able module type (voice modules + effects), unconnected. Built via MCP as a layout/size reference and a schema-round-trip regression catcher. The 3 visualizer modules (Oscilloscope, Meter, Spectrum) are absent — they can't be added via MCP (require a GUI VisualizationBuffer).",
+        "modules": [
+          {
+            "id": "osc-1",
+            "type": "oscillator",
+            "position": {
+              "x": 1312.0,
+              "y": 3648.0
+            },
+            "parameters": {
+              "anti_alias": "polyblep",
+              "detune": 0.0,
+              "fm_amt": 0.9365723,
+              "fm_mode": "exponential",
+              "frequency": 440.0,
+              "level": 1.0,
+              "octave": 0.0,
+              "phase": 0.0,
+              "pulse_width": 0.5,
+              "uni_detune": 10.0,
+              "uni_phase": 1.0,
+              "uni_spread": 0.5,
+              "unison": 1,
+              "waveform": "sawtooth",
+              "x_mod": 0.024182128
+            }
+          },
+          {
+            "id": "mth-1",
+            "type": "math_oscillator",
+            "position": {
+              "x": 1312.0,
+              "y": 5088.0
+            },
+            "parameters": {
+              "algorithm": "sine_fm",
+              "frequency": 440.0,
+              "level": 1.0,
+              "param_a": 0.5,
+              "param_b": 0.5,
+              "param_c": 0.5
+            }
+          },
+          {
+            "id": "sub-1",
+            "type": "sub_oscillator",
+            "position": {
+              "x": 1312.0,
+              "y": 9248.0
+            },
+            "parameters": {
+              "level": 0.5,
+              "octave": "minus1",
+              "waveform": "square"
+            }
+          },
+          {
+            "id": "nse-1",
+            "type": "noise",
+            "position": {
+              "x": 1312.0,
+              "y": 5888.0
+            },
+            "parameters": {
+              "level": 0.8,
+              "type": "white"
+            }
+          },
+          {
+            "id": "flt-1",
+            "type": "filter",
+            "position": {
+              "x": 1312.0,
+              "y": 6656.0
+            },
+            "parameters": {
+              "cutoff": 1000.0,
+              "cv_amt": 1.0,
+              "drive": 1.0,
+              "env_amt": 0.25,
+              "key_track": 0.0,
+              "model": "standard",
+              "morph": 0.0,
+              "resonance": 0.0,
+              "type": "lowpass"
+            }
+          },
+          {
+            "id": "env-1",
+            "type": "envelope",
+            "position": {
+              "x": 1312.0,
+              "y": 640.0
+            },
+            "parameters": {
+              "atk_curve": 0.0,
+              "attack": 0.01,
+              "dec_curve": 0.0,
+              "decay": 0.1,
+              "rel_curve": 0.0,
+              "release": 0.3,
+              "sustain": 0.7,
+              "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "lfo-1",
+            "type": "lfo",
+            "position": {
+              "x": 1312.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "depth": 1.0,
+              "phase": 0.0,
+              "rate": 1.0,
+              "retrigger": false,
+              "sync_division": 1.0,
+              "tempo_sync": false,
+              "waveform": "sine"
+            }
+          },
+          {
+            "id": "amp-1",
+            "type": "amplifier",
+            "position": {
+              "x": 1312.0,
+              "y": 8928.0
+            },
+            "parameters": {
+              "cv_bipolar": false,
+              "level": 1.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "mix-1",
+            "type": "mixer",
+            "position": {
+              "x": 1312.0,
+              "y": 7712.0
+            },
+            "parameters": {
+              "input_1": 1.0,
+              "input_2": 1.0,
+              "input_3": 1.0,
+              "input_4": 1.0,
+              "input_5": 1.0,
+              "input_6": 1.0,
+              "input_7": 1.0,
+              "input_8": 1.0,
+              "limit": false,
+              "master": 1.0,
+              "mute": false
+            }
+          },
+          {
+            "id": "out-1",
+            "type": "stereo_output",
+            "position": {
+              "x": 1312.0,
+              "y": 4832.0
+            },
+            "parameters": {
+              "dither": false,
+              "limit": true,
+              "master": 0.8,
+              "mute": false,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "dly-1",
+            "type": "delay",
+            "position": {
+              "x": 32.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "feedback": 0.4,
+              "mix": 0.5,
+              "mode": "mono",
+              "sync_division": 1.0,
+              "tempo_sync": false,
+              "time_left": 0.375,
+              "time_right": 0.5,
+              "tone": 0.3939394
+            }
+          },
+          {
+            "id": "rev-1",
+            "type": "reverb",
+            "position": {
+              "x": 32.0,
+              "y": 384.0
+            },
+            "parameters": {
+              "damping": 0.5,
+              "decay": 0.5,
+              "diffusion": 0.5,
+              "low_cut": 80.0,
+              "mix": 0.3,
+              "pre_delay": 0.0,
+              "room_size": 0.5,
+              "width": 1.0
+            }
+          },
+          {
+            "id": "dst-1",
+            "type": "distortion",
+            "position": {
+              "x": 32.0,
+              "y": 736.0
+            },
+            "parameters": {
+              "bit_depth": 8.0,
+              "drive": 0.5,
+              "mix": 1.0,
+              "tone": 0.8,
+              "type": "soft_clip"
+            }
+          },
+          {
+            "id": "chr-1",
+            "type": "chorus",
+            "position": {
+              "x": 32.0,
+              "y": 1024.0
+            },
+            "parameters": {
+              "depth": 0.5,
+              "mix": 0.5,
+              "rate": 0.5,
+              "voices": 2
+            }
+          },
+          {
+            "id": "phs-1",
+            "type": "phaser",
+            "position": {
+              "x": 32.0,
+              "y": 1280.0
+            },
+            "parameters": {
+              "center_freq": 1000.0,
+              "depth": 0.7,
+              "feedback": 0.7,
+              "mix": 0.5,
+              "rate": 0.5
+            }
+          },
+          {
+            "id": "fln-1",
+            "type": "flanger",
+            "position": {
+              "x": 32.0,
+              "y": 1600.0
+            },
+            "parameters": {
+              "delay": 2.0,
+              "depth": 0.7,
+              "feedback": 0.7,
+              "mix": 0.5,
+              "rate": 0.3
+            }
+          },
+          {
+            "id": "cmp-1",
+            "type": "compressor",
+            "position": {
+              "x": 32.0,
+              "y": 1920.0
+            },
+            "parameters": {
+              "attack": 10.0,
+              "makeup": 0.0,
+              "mix": 1.0,
+              "ratio": 4.0,
+              "release": 100.0,
+              "sc_filter": 80.0,
+              "sidechain": false,
+              "threshold": -20.0
+            }
+          },
+          {
+            "id": "equ-1",
+            "type": "eq",
+            "position": {
+              "x": 32.0,
+              "y": 2240.0
+            },
+            "parameters": {
+              "high_freq": 4000.0,
+              "high_gain": 0.0,
+              "low_freq": 200.0,
+              "low_gain": 0.0,
+              "mid_freq": 1000.0,
+              "mid_gain": 0.0,
+              "mid_q": 1.0,
+              "mix": 1.0
+            }
+          },
+          {
+            "id": "wsh-1",
+            "type": "waveshaper",
+            "position": {
+              "x": 32.0,
+              "y": 2560.0
+            },
+            "parameters": {
+              "bias": 0.0,
+              "curve": "soft_clip",
+              "drive": 0.3,
+              "mix": 1.0,
+              "symmetry": 0.0
+            }
+          },
+          {
+            "id": "mmx-1",
+            "type": "mod_matrix",
+            "position": {
+              "x": 832.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "grid_size": "2x2",
+              "slot_10_amount": 0.0,
+              "slot_10_dest": "none",
+              "slot_10_enabled": true,
+              "slot_10_source": "none",
+              "slot_11_amount": 0.0,
+              "slot_11_dest": "none",
+              "slot_11_enabled": true,
+              "slot_11_source": "none",
+              "slot_12_amount": 0.0,
+              "slot_12_dest": "none",
+              "slot_12_enabled": true,
+              "slot_12_source": "none",
+              "slot_13_amount": 0.0,
+              "slot_13_dest": "none",
+              "slot_13_enabled": true,
+              "slot_13_source": "none",
+              "slot_14_amount": 0.0,
+              "slot_14_dest": "none",
+              "slot_14_enabled": true,
+              "slot_14_source": "none",
+              "slot_15_amount": 0.0,
+              "slot_15_dest": "none",
+              "slot_15_enabled": true,
+              "slot_15_source": "none",
+              "slot_16_amount": 0.0,
+              "slot_16_dest": "none",
+              "slot_16_enabled": true,
+              "slot_16_source": "none",
+              "slot_1_amount": 0.0,
+              "slot_1_dest": "none",
+              "slot_1_enabled": true,
+              "slot_1_source": "none",
+              "slot_2_amount": 0.0,
+              "slot_2_dest": "none",
+              "slot_2_enabled": true,
+              "slot_2_source": "none",
+              "slot_3_amount": 0.0,
+              "slot_3_dest": "none",
+              "slot_3_enabled": true,
+              "slot_3_source": "none",
+              "slot_4_amount": 0.0,
+              "slot_4_dest": "none",
+              "slot_4_enabled": true,
+              "slot_4_source": "none",
+              "slot_5_amount": 0.0,
+              "slot_5_dest": "none",
+              "slot_5_enabled": true,
+              "slot_5_source": "none",
+              "slot_6_amount": 0.0,
+              "slot_6_dest": "none",
+              "slot_6_enabled": true,
+              "slot_6_source": "none",
+              "slot_7_amount": 0.0,
+              "slot_7_dest": "none",
+              "slot_7_enabled": true,
+              "slot_7_source": "none",
+              "slot_8_amount": 0.0,
+              "slot_8_dest": "none",
+              "slot_8_enabled": true,
+              "slot_8_source": "none",
+              "slot_9_amount": 0.0,
+              "slot_9_dest": "none",
+              "slot_9_enabled": true,
+              "slot_9_source": "none"
+            }
+          },
+          {
+            "id": "rng-1",
+            "type": "ring_mod",
+            "position": {
+              "x": 1312.0,
+              "y": 10016.0
+            },
+            "parameters": {
+              "carrier_freq": 440.0,
+              "carrier_wave": "sine",
+              "freq_ratio": 0.5,
+              "key_track": 0.0,
+              "mix": 0.5
+            }
+          },
+          {
+            "id": "efl-1",
+            "type": "envelope_follower",
+            "position": {
+              "x": 1312.0,
+              "y": 7264.0
+            },
+            "parameters": {
+              "attack": 5.0,
+              "release": 50.0,
+              "sensitivity": 0.5
+            }
+          },
+          {
+            "id": "wtb-1",
+            "type": "wavetable_osc",
+            "position": {
+              "x": 1312.0,
+              "y": 6976.0
+            },
+            "parameters": {
+              "detune": 0.0,
+              "level": 0.8,
+              "octave": 0,
+              "position": 0.0,
+              "table": "basic"
+            }
+          },
+          {
+            "id": "msg-1",
+            "type": "mseg",
+            "position": {
+              "x": 1312.0,
+              "y": 3296.0
+            },
+            "parameters": {
+              "loop": false,
+              "loop_end": 1,
+              "loop_start": 0,
+              "seg0_curve": 0.0,
+              "seg0_level": 1.0,
+              "seg0_time": 0.01,
+              "seg1_curve": 0.0,
+              "seg1_level": 0.7,
+              "seg1_time": 0.1,
+              "seg2_curve": 0.0,
+              "seg2_level": 0.7,
+              "seg2_time": 0.5,
+              "seg3_curve": 0.0,
+              "seg3_level": 0.0,
+              "seg3_time": 0.3,
+              "segments": 4,
+              "sustain_seg": 2,
+              "time_scale": 1.0
+            }
+          },
+          {
+            "id": "add-1",
+            "type": "additive_osc",
+            "position": {
+              "x": 1312.0,
+              "y": 5376.0
+            },
+            "parameters": {
+              "brightness": 0.7,
+              "level": 1.0,
+              "odd_even": 0.5,
+              "randomize": 0.1,
+              "stretch": 0.0,
+              "tilt": 0.5
+            }
+          },
+          {
+            "id": "bbd-1",
+            "type": "bbd_delay",
+            "position": {
+              "x": 32.0,
+              "y": 2848.0
+            },
+            "parameters": {
+              "clock_noise": 0.2,
+              "feedback": 0.5,
+              "mix": 0.5,
+              "time": 0.3,
+              "tone": 0.5,
+              "wow_flutter": 0.3
+            }
+          },
+          {
+            "id": "mds-1",
+            "type": "mid_side",
+            "position": {
+              "x": 32.0,
+              "y": 3200.0
+            },
+            "parameters": {
+              "mid_gain": 0.0,
+              "mix": 1.0,
+              "rotation": 0.0,
+              "side_gain": 0.0,
+              "width": 0.5
+            }
+          },
+          {
+            "id": "lmt-1",
+            "type": "limiter",
+            "position": {
+              "x": 32.0,
+              "y": 3520.0
+            },
+            "parameters": {
+              "ceiling": -0.3,
+              "look_ahead": 3.0,
+              "mix": 1.0,
+              "release": 100.0
+            }
+          },
+          {
+            "id": "euc-1",
+            "type": "euclidean",
+            "position": {
+              "x": 1312.0,
+              "y": 10240.0
+            },
+            "parameters": {
+              "pulses": 4,
+              "rotation": 0,
+              "steps": 16,
+              "swing": 0.0
+            }
+          },
+          {
+            "id": "tur-1",
+            "type": "turing_machine",
+            "position": {
+              "x": 1312.0,
+              "y": 8384.0
+            },
+            "parameters": {
+              "length": 16,
+              "mutation": 0.5,
+              "range": 0.5,
+              "scale": "chromatic"
+            }
+          },
+          {
+            "id": "rgt-1",
+            "type": "random_gates",
+            "position": {
+              "x": 1312.0,
+              "y": 992.0
+            },
+            "parameters": {
+              "burst": 0.1,
+              "density": 0.5,
+              "gate_len": 0.5,
+              "seed": 42
+            }
+          },
+          {
+            "id": "kbp-1",
+            "type": "keyboard_panner",
+            "position": {
+              "x": 1312.0,
+              "y": 4608.0
+            },
+            "parameters": {
+              "center": 60,
+              "curve": 0.0,
+              "invert": "normal",
+              "spread": 0.5
+            }
+          },
+          {
+            "id": "bdy-1",
+            "type": "body_resonance",
+            "position": {
+              "x": 1312.0,
+              "y": 2496.0
+            },
+            "parameters": {
+              "bright": 0.5,
+              "freq": 200.0,
+              "mix": 0.32079104,
+              "resonance": 0.5,
+              "size": 0.5
+            }
+          },
+          {
+            "id": "mec-1",
+            "type": "mechanical_noise",
+            "position": {
+              "x": 1312.0,
+              "y": 2240.0
+            },
+            "parameters": {
+              "cutoff": 3000.0,
+              "duration": 10.0,
+              "level": 0.1,
+              "type": "key_down",
+              "vel_sens": 0.496499
+            }
+          },
+          {
+            "id": "grn-1",
+            "type": "granular_osc",
+            "position": {
+              "x": 1312.0,
+              "y": 288.0
+            },
+            "parameters": {
+              "density": 0.5,
+              "freeze": false,
+              "grain_size": 50.0,
+              "level": 1.0,
+              "pan_spread": 0.0,
+              "pitch_spread": 0.0,
+              "pos_spread": 0.1,
+              "position": 0.0,
+              "source": "saw",
+              "window": "hann"
+            }
+          },
+          {
+            "id": "cnv-1",
+            "type": "convolver",
+            "position": {
+              "x": 32.0,
+              "y": 3776.0
+            },
+            "parameters": {
+              "brightness": 0.8,
+              "decay": 1.0,
+              "dynamic": 0.0,
+              "ir_type": "plate",
+              "mix": 0.3,
+              "pre_delay": 0.0
+            }
+          },
+          {
+            "id": "pvc-1",
+            "type": "phase_vocoder",
+            "position": {
+              "x": 32.0,
+              "y": 4128.0
+            },
+            "parameters": {
+              "fft_size": "1024",
+              "freeze": false,
+              "mix": 1.0,
+              "pitch_shift": 0.0
+            }
+          },
+          {
+            "id": "kin-1",
+            "type": "kinetic_modulator",
+            "position": {
+              "x": 1312.0,
+              "y": 8608.0
+            },
+            "parameters": {
+              "bipolar": false,
+              "curve": "cubic_out",
+              "duration": 0.5,
+              "loop_mode": "one_shot",
+              "overshoot": 0.5,
+              "retrigger": true
+            }
+          },
+          {
+            "id": "fsf-1",
+            "type": "frequency_shifter",
+            "position": {
+              "x": 32.0,
+              "y": 4448.0
+            },
+            "parameters": {
+              "mix": 1.0,
+              "mode": 0.0,
+              "shift": 0.0
+            }
+          },
+          {
+            "id": "vec-1",
+            "type": "vector_mixer",
+            "position": {
+              "x": 1312.0,
+              "y": 2976.0
+            },
+            "parameters": {
+              "x": 0.0,
+              "y": 0.0072119236
+            }
+          },
+          {
+            "id": "las-1",
+            "type": "la_synth",
+            "position": {
+              "x": 1312.0,
+              "y": 5632.0
+            },
+            "parameters": {
+              "attack_level": 0.7,
+              "attack_time": 30.0,
+              "attack_type": 0.0,
+              "brightness": 0.5,
+              "x_fade_time": 50.0
+            }
+          },
+          {
+            "id": "ptr-1",
+            "type": "pitch_tracker",
+            "position": {
+              "x": 1312.0,
+              "y": 1792.0
+            },
+            "parameters": {
+              "max_freq": 2000.0,
+              "min_freq": 50.0,
+              "sensitivity": 0.5,
+              "smoothing": 0.3
+            }
+          },
+          {
+            "id": "enc-1",
+            "type": "ensemble_chorus",
+            "position": {
+              "x": 32.0,
+              "y": 4704.0
+            },
+            "parameters": {
+              "base_delay": 12.0,
+              "depth": 1.2,
+              "mix": 0.5,
+              "noise": 0.1,
+              "rate": 0.6,
+              "stereo_width": 1.0,
+              "tone": 0.4,
+              "voices": 2
+            }
+          },
+          {
+            "id": "shr-1",
+            "type": "shimmer_reverb",
+            "position": {
+              "x": 32.0,
+              "y": 5024.0
+            },
+            "parameters": {
+              "damping": 0.4,
+              "decay": 0.7,
+              "mix": 0.4,
+              "pitch": 12.0,
+              "pre_delay": 0.0,
+              "room_size": 0.6,
+              "shimmer": 0.35
+            }
+          },
+          {
+            "id": "gfx-1",
+            "type": "granular_fx",
+            "position": {
+              "x": 32.0,
+              "y": 5376.0
+            },
+            "parameters": {
+              "buffer": 2.0,
+              "density": 0.6,
+              "freeze": false,
+              "grain_size": 40.0,
+              "mix": 1.0,
+              "pan_spread": 0.5,
+              "pitch_spread": 0.2,
+              "pos_spread": 0.3,
+              "position": 0.5
+            }
+          },
+          {
+            "id": "sbl-1",
+            "type": "spectral_blur",
+            "position": {
+              "x": 32.0,
+              "y": 5696.0
+            },
+            "parameters": {
+              "blur_freq": 0.3,
+              "blur_time": 0.7,
+              "fft_size": "1024",
+              "freeze": false,
+              "mix": 1.0
+            }
+          },
+          {
+            "id": "mdr-1",
+            "type": "modal_resonator",
+            "position": {
+              "x": 32.0,
+              "y": 6016.0
+            },
+            "parameters": {
+              "base_note": 60,
+              "brightness": 0.5,
+              "decay": 0.6,
+              "mix": 1.0,
+              "modes": 8,
+              "spread": 0.3
+            }
+          },
+          {
+            "id": "rgr-1",
+            "type": "reverse_gate_reverb",
+            "position": {
+              "x": 32.0,
+              "y": 6336.0
+            },
+            "parameters": {
+              "gate_time": 120.0,
+              "mix": 1.0,
+              "mode": "reverse",
+              "threshold": -24.0,
+              "trigger": "periodic",
+              "window": 600.0
+            }
+          },
+          {
+            "id": "frc-1",
+            "type": "fractal_osc",
+            "position": {
+              "x": 1312.0,
+              "y": 10496.0
+            },
+            "parameters": {
+              "dispersion": 0.0,
+              "level": 1.0,
+              "roughness": 0.5,
+              "spacing": 0.11,
+              "spread": 0.5
+            }
+          },
+          {
+            "id": "sam-1",
+            "type": "sampler",
+            "position": {
+              "x": 1312.0,
+              "y": 1248.0
+            },
+            "parameters": {
+              "direction": "forward",
+              "fine_tune": 0.0,
+              "level": 0.8,
+              "pitch_tracking": true,
+              "play_mode": "sustain",
+              "sample_select": {
+                "sample_id": 0
+              },
+              "start_offset": 0.0,
+              "velocity_sensitivity": 1.0
+            }
+          },
+          {
+            "id": "ain-1",
+            "type": "audio_input",
+            "position": {
+              "x": 1312.0,
+              "y": 1536.0
+            },
+            "parameters": {
+              "level": 1.0
+            }
+          },
+          {
+            "id": "ldr-1",
+            "type": "ladder_filter",
+            "position": {
+              "x": 1312.0,
+              "y": 9792.0
+            },
+            "parameters": {
+              "cutoff": 1000.0,
+              "drive": 1.0,
+              "resonance": 0.0
+            }
+          },
+          {
+            "id": "drf-1",
+            "type": "drift_generator",
+            "position": {
+              "x": 1312.0,
+              "y": 2048.0
+            },
+            "parameters": {
+              "depth": 0.5037109,
+              "rate": 0.2,
+              "smoothness": 0.7
+            }
+          },
+          {
+            "id": "cha-1",
+            "type": "chaotic_osc",
+            "position": {
+              "x": 1312.0,
+              "y": 9568.0
+            },
+            "parameters": {
+              "chaos": 0.5,
+              "depth": 1.0,
+              "rate": 1.0,
+              "system": "rossler"
+            }
+          },
+          {
+            "id": "fmt-1",
+            "type": "formant_filter",
+            "position": {
+              "x": 1312.0,
+              "y": 8128.0
+            },
+            "parameters": {
+              "cutoff": 1000.0,
+              "mix": 1.0,
+              "resonance": 0.5,
+              "vowel": 0.0
+            }
+          },
+          {
+            "id": "fog-1",
+            "type": "fooglers",
+            "position": {
+              "x": 1312.0,
+              "y": 4096.0
+            },
+            "parameters": {
+              "damping": 0.3,
+              "feedback": 0.8,
+              "level": 0.5,
+              "tap1": 0.3,
+              "tap2": 0.7128125
+            }
+          },
+          {
+            "id": "btd-1",
+            "type": "beat_detector",
+            "position": {
+              "x": 1312.0,
+              "y": 2752.0
+            },
+            "parameters": {
+              "filter_freq": 156.68013,
+              "hold_time": 50.0,
+              "sensitivity": 0.5
+            }
+          },
+          {
+            "id": "pad-1",
+            "type": "pad_synth",
+            "position": {
+              "x": 1312.0,
+              "y": 7456.0
+            },
+            "parameters": {
+              "bandwidth": 0.4,
+              "base_freq": 261.63,
+              "detune": 0.0,
+              "level": 0.8,
+              "tilt": 0.5
+            }
+          },
+          {
+            "id": "amf-1",
+            "type": "am_formant",
+            "position": {
+              "x": 1312.0,
+              "y": 4352.0
+            },
+            "parameters": {
+              "carrier_ratio": 0.5,
+              "depth": 0.8,
+              "level": 0.8,
+              "vowel": 0.0
+            }
+          },
+          {
+            "id": "teq-1",
+            "type": "tilt_eq",
+            "position": {
+              "x": 32.0,
+              "y": 6656.0
+            },
+            "parameters": {
+              "center_freq": 800.0,
+              "mix": 1.0,
+              "tilt": 0.0
+            }
+          },
+          {
+            "id": "uvb-1",
+            "type": "univibe",
+            "position": {
+              "x": 32.0,
+              "y": 6912.0
+            },
+            "parameters": {
+              "depth": 0.7,
+              "feedback": 0.3,
+              "mix": 0.5,
+              "rate": 2.0
+            }
+          },
+          {
+            "id": "cxo-1",
+            "type": "crossover_splitter",
+            "position": {
+              "x": 32.0,
+              "y": 7168.0
+            },
+            "parameters": {
+              "frequency": 1000.0,
+              "high_gain": 1.0,
+              "low_gain": 1.0,
+              "mix": 1.0
+            }
+          },
+          {
+            "id": "vcd-1",
+            "type": "vocoder",
+            "position": {
+              "x": 32.0,
+              "y": 7424.0
+            },
+            "parameters": {
+              "mix": 1.0,
+              "order": 0.5,
+              "window_size": 20.0
+            }
+          },
+          {
+            "id": "vox-1",
+            "type": "voice_synth",
+            "position": {
+              "x": 1312.0,
+              "y": 10752.0
+            },
+            "parameters": {
+              "breathiness": 0.0,
+              "formant_shift": 0.5,
+              "level": 0.8,
+              "open_quotient": 0.5,
+              "tilt": 0.0,
+              "unison_detune": 15.0,
+              "unison_spread": 0.7,
+              "unison_voices": 0.0,
+              "vibrato_depth": 0.0,
+              "vibrato_rate": 5.5,
+              "vowel": 0.0
+            }
+          },
+          {
+            "id": "vtr-1",
+            "type": "vocal_tract",
+            "position": {
+              "x": 1312.0,
+              "y": 11456.0
+            },
+            "parameters": {
+              "breathiness": 0.1,
+              "constriction": 0.3,
+              "length": 0.5,
+              "level": 0.8,
+              "lips": 0.5,
+              "nasality": 0.0,
+              "tongue": 0.5
+            }
+          },
+          {
+            "id": "fof-1",
+            "type": "fof",
+            "position": {
+              "x": 1312.0,
+              "y": 6336.0
+            },
+            "parameters": {
+              "bandwidth": 0.5,
+              "breathiness": 0.0,
+              "formant_shift": 0.5,
+              "level": 0.8,
+              "skirt": 0.3,
+              "unison_detune": 15.0,
+              "unison_spread": 0.7,
+              "unison_voices": 0.0,
+              "vibrato_depth": 0.0,
+              "vibrato_rate": 5.5,
+              "vowel": 0.0
+            }
+          },
+          {
+            "id": "scr-1",
+            "type": "script",
+            "position": {
+              "x": 1312.0,
+              "y": 11072.0
+            },
+            "parameters": {}
+          },
+          {
+            "id": "asc-1",
+            "type": "audio_script",
+            "position": {
+              "x": 1312.0,
+              "y": 6112.0
+            },
+            "parameters": {}
+          },
+          {
+            "id": "mtr-1",
+            "type": "level_meter",
+            "position": {
+              "x": 352.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "hold": 1.0
+            }
+          },
+          {
+            "id": "scp-1",
+            "type": "oscilloscope",
+            "position": {
+              "x": 352.0,
+              "y": 384.0
+            },
+            "parameters": {
+              "freeze": 0.0,
+              "gain": 1.0,
+              "time": 0.01,
+              "trig": 0.5
+            }
+          },
+          {
+            "id": "spa-1",
+            "type": "spectrum_analyzer",
+            "position": {
+              "x": 352.0,
+              "y": 736.0
+            },
+            "parameters": {
+              "gain": 1.0
+            }
+          }
+        ],
+        "connections": [],
+        "settings": {
+          "master_volume": 0.8,
+          "bpm": 120.0,
+          "octave_offset": 0,
+          "glide_time": 0.0,
+          "canvas_size": {
+            "width": 1762.0,
+            "height": 11956.0
+          },
+          "effect_chain_order": [
+            "dly-1",
+            "rev-1",
+            "dst-1",
+            "chr-1",
+            "phs-1",
+            "fln-1",
+            "cmp-1",
+            "equ-1",
+            "wsh-1",
+            "bbd-1",
+            "mds-1",
+            "lmt-1",
+            "cnv-1",
+            "pvc-1",
+            "fsf-1",
+            "enc-1",
+            "shr-1",
+            "gfx-1",
+            "sbl-1",
+            "mdr-1",
+            "rgr-1",
+            "teq-1",
+            "uvb-1",
+            "cxo-1",
+            "vcd-1"
+          ]
+        }
+      }
+    }
+  ],
+  "active_instrument_id": 1,
+  "author": {
+    "name": "Per Jonsson",
+    "email": "pertyjons@gmail.com",
+    "website": "https://github.com/pertyjons"
+  },
+  "song": {
+    "name": "Untitled",
+    "author": "",
+    "description": "",
+    "patterns": [],
+    "next_pattern_id": 0,
+    "tracks": [],
+    "next_track_id": 0,
+    "arrangement": [],
+    "tempo_changes": [],
+    "time_signature_changes": [],
+    "default_tempo": 120.0,
+    "default_time_signature": {
+      "numerator": 4,
+      "denominator": 4
+    },
+    "row_resolution": {
+      "rows": 64,
+      "ticks_per_row": 240
+    },
+    "next_return_bus_id": 0
+  },
+  "global": {
+    "master_volume": 0.8,
+    "octave_offset": 0,
+    "glide_time": 0.0
+  }
+}
