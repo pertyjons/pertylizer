@@ -32,7 +32,7 @@ use synth_mcp::types::{
     NoteInfo, NoteProcessorInfo, OptimizeResult, ParamTypeInfo, ParameterInfo, PatchModuleInfo,
     PatchParamInfo, PatchParamValue, PatchResourceData, PatternInfo, PlacementInfo,
     ProjectSchemaInfo, RebuildInstrumentResult, RenderToWavResult, SetSongResult, SongInfo,
-    TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
+    TempoPoint, TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
 };
 
 use crate::mcp_shared::McpSharedState;
@@ -1668,6 +1668,7 @@ impl SynthBridge for AppSynthBridge {
             transport_loop_enabled: loop_enabled,
             transport_loop_start_beats: ticks_to_beats_u64(loop_start.0),
             transport_loop_end_beats: ticks_to_beats_u64(loop_end.0),
+            tempo_map: tempo_points(&song),
         })
     }
 
@@ -1715,6 +1716,31 @@ impl SynthBridge for AppSynthBridge {
             });
         }
         Ok(())
+    }
+
+    fn set_tempo_at(&self, points: &[(u64, f32, bool)]) -> Result<(), McpBridgeError> {
+        // The engine reads the tempo map live via `Song::tempo_at` each tick,
+        // so mutating it under the shared-song lock is enough — no
+        // `EngineCommand::SetTempo` (that is only for the global default).
+        let mut song = self.shared.song.write();
+        for &(tick, bpm, ramp) in points {
+            song.set_tempo_ramp_at(synth_sequencer::Tick(tick), synth_core::Bpm::new(bpm), ramp);
+        }
+        Ok(())
+    }
+
+    fn remove_tempo_at(&self, ticks: &[u64]) -> Result<usize, McpBridgeError> {
+        let mut song = self.shared.song.write();
+        let removed = ticks
+            .iter()
+            .filter(|&&tick| song.remove_tempo_change(synth_sequencer::Tick(tick)))
+            .count();
+        Ok(removed)
+    }
+
+    fn get_tempo_map(&self) -> Result<Vec<TempoPoint>, McpBridgeError> {
+        let song = self.shared.song.read();
+        Ok(tempo_points(&song))
     }
 
     fn set_song_name(&self, name: &str) -> Result<(), McpBridgeError> {
@@ -7301,6 +7327,18 @@ fn note_to_info(n: &synth_sequencer::Note) -> NoteInfo {
 #[allow(clippy::cast_precision_loss)]
 fn ticks_to_beats_u64(ticks: u64) -> f32 {
     ticks as f32 / synth_sequencer::TICKS_PER_QUARTER as f32
+}
+
+/// Snapshot a song's tempo map as MCP `TempoPoint`s (sorted by tick).
+fn tempo_points(song: &synth_sequencer::Song) -> Vec<TempoPoint> {
+    song.tempo_changes()
+        .iter()
+        .map(|c| TempoPoint {
+            tick: c.tick.0,
+            bpm: c.bpm.0,
+            ramp: c.ramp,
+        })
+        .collect()
 }
 
 /// Parse a parameter name string to `AutoInstrumentParam`.

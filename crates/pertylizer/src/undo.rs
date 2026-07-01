@@ -157,16 +157,18 @@ pub(crate) enum UndoAction {
     },
 
     // ── Tempo curve ──
-    /// A tempo change at a specific tick was set, replaced, or removed.
+    /// A tempo change at a specific tick was set, replaced, or removed. Each
+    /// side carries `(bpm, ramp)` where `ramp` selects a linear ramp toward the
+    /// next point vs a step change.
     ///
-    /// `old_bpm = None` means there was no explicit change at this tick;
-    /// `new_bpm = None` means the change was removed. The two together cover
-    /// "Set tempo here…" (None → Some), edit (Some(a) → Some(b)) and
-    /// "Remove tempo change here" (Some → None).
+    /// `old = None` means there was no explicit change at this tick; `new = None`
+    /// means the change was removed. The two together cover "Set tempo here…"
+    /// (None → Some), edit / ramp toggle (Some(a) → Some(b)) and "Remove tempo
+    /// change here" (Some → None).
     SetTempo {
         tick: Tick,
-        old_bpm: Option<Bpm>,
-        new_bpm: Option<Bpm>,
+        old: Option<(Bpm, bool)>,
+        new: Option<(Bpm, bool)>,
     },
 
     // ── Arrangement ──
@@ -582,14 +584,10 @@ impl UndoManager {
                 old_length: *new_length,
                 new_length: *old_length,
             },
-            UndoAction::SetTempo {
-                tick,
-                old_bpm,
-                new_bpm,
-            } => UndoAction::SetTempo {
+            UndoAction::SetTempo { tick, old, new } => UndoAction::SetTempo {
                 tick: *tick,
-                old_bpm: *new_bpm,
-                new_bpm: *old_bpm,
+                old: *new,
+                new: *old,
             },
             UndoAction::MovePlacement {
                 pattern_id,
@@ -919,19 +917,14 @@ mod tests {
         // Apply tempo at a tick that had no explicit change → inverse must be a remove.
         let apply = UndoAction::SetTempo {
             tick: Tick(960),
-            old_bpm: None,
-            new_bpm: Some(Bpm::new(140.0)),
+            old: None,
+            new: Some((Bpm::new(140.0), false)),
         };
         let inv = UndoManager::inverse(&apply);
-        if let UndoAction::SetTempo {
-            tick,
-            old_bpm,
-            new_bpm,
-        } = inv
-        {
+        if let UndoAction::SetTempo { tick, old, new } = inv {
             assert_eq!(tick, Tick(960));
-            assert_eq!(old_bpm, Some(Bpm::new(140.0)));
-            assert_eq!(new_bpm, None);
+            assert_eq!(old, Some((Bpm::new(140.0), false)));
+            assert_eq!(new, None);
         } else {
             panic!("Expected SetTempo inverse");
         }
@@ -939,19 +932,16 @@ mod tests {
 
     #[test]
     fn test_inverse_of_set_tempo_remove_round_trips() {
-        // Remove an existing tempo change → inverse must re-apply it.
+        // Remove an existing (ramp) tempo change → inverse must re-apply it verbatim.
         let remove = UndoAction::SetTempo {
             tick: Tick(1920),
-            old_bpm: Some(Bpm::new(96.0)),
-            new_bpm: None,
+            old: Some((Bpm::new(96.0), true)),
+            new: None,
         };
         let inv = UndoManager::inverse(&remove);
-        if let UndoAction::SetTempo {
-            old_bpm, new_bpm, ..
-        } = inv
-        {
-            assert_eq!(old_bpm, None);
-            assert_eq!(new_bpm, Some(Bpm::new(96.0)));
+        if let UndoAction::SetTempo { old, new, .. } = inv {
+            assert_eq!(old, None);
+            assert_eq!(new, Some((Bpm::new(96.0), true)));
         } else {
             panic!("Expected SetTempo inverse");
         }

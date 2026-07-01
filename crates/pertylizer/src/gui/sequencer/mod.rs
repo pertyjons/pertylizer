@@ -717,8 +717,9 @@ struct ArrangementData {
     patterns: Vec<PatternInfo>,
     time_sig: TimeSignature,
     song_end_tick: u64,
-    /// Tempo automation points: (tick, BPM). Sorted by tick.
-    tempo_changes: Vec<(u64, f32)>,
+    /// Tempo automation points: (tick, BPM, ramp). `ramp` = linear ramp toward
+    /// the next point (accelerando/ritardando) vs a step change. Sorted by tick.
+    tempo_changes: Vec<(u64, f32, bool)>,
 }
 
 // ============================================================================

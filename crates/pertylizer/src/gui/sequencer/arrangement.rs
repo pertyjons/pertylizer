@@ -110,10 +110,10 @@ pub(super) fn collect_arrangement_data(song: &Arc<RwLock<Song>>) -> Option<Arran
         .collect();
 
     let time_sig = song.default_time_signature;
-    let tempo_changes: Vec<(u64, f32)> = song
+    let tempo_changes: Vec<(u64, f32, bool)> = song
         .tempo_changes()
         .iter()
-        .map(|tc| (tc.tick.0, tc.bpm.as_f32()))
+        .map(|tc| (tc.tick.0, tc.bpm.as_f32(), tc.ramp))
         .collect();
 
     Some(ArrangementData {
@@ -1127,9 +1127,9 @@ fn draw_arrangement_timeline(
     // ── Tempo change markers on the ruler ──
     if !data.tempo_changes.is_empty() {
         let tempo_color = TEMPO_MARKER;
-        for (tick, bpm) in &data.tempo_changes {
+        for (i, (tick, bpm, ramp)) in data.tempo_changes.iter().enumerate() {
             let x = tick_to_x(*tick);
-            // Small flag: vertical tick + label "120.0".
+            // Vertical flag + BPM label.
             painter.line_segment(
                 [Pos2::new(x, tl_y + 1.0), Pos2::new(x, tl_y + RULER_HEIGHT)],
                 Stroke::new(1.5, tempo_color),
@@ -1141,6 +1141,37 @@ fn draw_arrangement_timeline(
                 egui::FontId::proportional(9.0),
                 tempo_color,
             );
+            // A ramp point caps its flag with a small arrowhead: up = accelerando,
+            // down = ritardando toward the next point. Direction only (the ruler
+            // has no BPM axis; the real curve is the future tempo lane). A ramp
+            // with no following point holds constant, so it gets no arrow.
+            if *ramp {
+                let dir = data
+                    .tempo_changes
+                    .get(i + 1)
+                    .map_or(0.0, |(_, next_bpm, _)| (next_bpm - bpm).signum());
+                if dir != 0.0 {
+                    let (top, bot) = (tl_y + 1.0, tl_y + 7.0);
+                    let tri = if dir > 0.0 {
+                        vec![
+                            Pos2::new(x, top),
+                            Pos2::new(x - 3.0, bot),
+                            Pos2::new(x + 3.0, bot),
+                        ]
+                    } else {
+                        vec![
+                            Pos2::new(x - 3.0, top),
+                            Pos2::new(x + 3.0, top),
+                            Pos2::new(x, bot),
+                        ]
+                    };
+                    painter.add(egui::Shape::convex_polygon(
+                        tri,
+                        tempo_color,
+                        egui::Stroke::NONE,
+                    ));
+                }
+            }
         }
     }
 
@@ -1260,50 +1291,94 @@ fn draw_arrangement_context_menu(
         ui.separator();
 
         // Tempo automation at the clicked (snapped) tick.
-        let existing_bpm: Option<f32> = data
+        let existing: Option<(f32, bool)> = data
             .tempo_changes
             .iter()
-            .find(|(t, _)| *t == snapped)
-            .map(|(_, b)| *b);
-        let default_bpm = existing_bpm.unwrap_or_else(|| {
-            // Seed from the song's tempo at this position so
-            // dragging from a curve point feels stable.
-            song.try_read()
-                .map(|s| s.tempo_at(Tick(snapped)).as_f32())
-                .unwrap_or(120.0)
-        });
+            .find(|(t, _, _)| *t == snapped)
+            .map(|(_, b, r)| (*b, *r));
+        let default_bpm = existing.map_or_else(
+            || {
+                // Seed from the song's tempo at this position so editing an
+                // existing curve point feels stable.
+                song.try_read()
+                    .map(|s| s.tempo_at(Tick(snapped)).as_f32())
+                    .unwrap_or(120.0)
+            },
+            |(b, _)| b,
+        );
         ui.menu_button("Set tempo here…", |ui| {
+            // Live-apply BPM edit: the song is the buffer (like the knobs and the
+            // ramp toggle). A per-frame `let mut bpm = default` local resets every
+            // frame, so a mouse drag could never accumulate — instead seed from the
+            // song's current value and write straight back on change. Undo is
+            // coalesced to one entry per gesture (drag or keyboard edit); the two
+            // gesture kinds are disjoint, so exactly one end event fires each time.
+            // `default_bpm` already resolves to the existing point's bpm when one
+            // exists, else the song's tempo at this tick.
             let mut bpm = default_bpm;
-            ui.horizontal(|ui| {
-                ui.add(
-                    egui::DragValue::new(&mut bpm)
-                        .range(20.0..=300.0)
-                        .speed(0.5)
-                        .fixed_decimals(1)
-                        .suffix(" BPM"),
-                );
-                if ui.button("Apply").clicked() {
-                    let new_bpm = Bpm::new(bpm);
-                    let old_bpm = existing_bpm.map(Bpm::new);
-                    if old_bpm != Some(new_bpm) {
-                        song.write().set_tempo_at(Tick(snapped), new_bpm);
-                        undo_manager.push(crate::undo::UndoAction::SetTempo {
-                            tick: Tick(snapped),
-                            old_bpm,
-                            new_bpm: Some(new_bpm),
-                        });
-                    }
-                    ui.close();
+            // A newly-created point (drag with no existing change) is a step; when a
+            // point exists we preserve its ramp flag while editing the bpm.
+            let ramp = existing.is_some_and(|(_, r)| r);
+            let resp = ui
+                .horizontal(|ui| {
+                    ui.label("Tempo");
+                    ui.add(
+                        egui::DragValue::new(&mut bpm)
+                            .range(20.0..=300.0)
+                            .speed(0.5)
+                            .fixed_decimals(1)
+                            .suffix(" BPM"),
+                    )
+                })
+                .inner;
+
+            let undo_id = ui.id().with(("tempo_edit_old", snapped));
+            if resp.drag_started() || resp.gained_focus() {
+                // Snapshot the pre-edit state so the whole gesture is one undo.
+                let old = existing.map(|(b, r)| (Bpm::new(b), r));
+                ui.memory_mut(|m| m.data.insert_temp(undo_id, old));
+            }
+            if resp.changed() {
+                song.write()
+                    .set_tempo_ramp_at(Tick(snapped), Bpm::new(bpm), ramp);
+            }
+            if resp.drag_stopped() || resp.lost_focus() {
+                let old: Option<(Bpm, bool)> = ui
+                    .memory(|m| m.data.get_temp::<Option<(Bpm, bool)>>(undo_id))
+                    .flatten();
+                let new = Some((Bpm::new(bpm), ramp));
+                if old != new {
+                    undo_manager.push(crate::undo::UndoAction::SetTempo {
+                        tick: Tick(snapped),
+                        old,
+                        new,
+                    });
                 }
-            });
-            if let Some(existing) = existing_bpm {
+            }
+            // Ramp toggle for an existing point. It applies immediately (the song
+            // is the source of truth, re-read each frame), so no per-frame local
+            // state that would fail to persist across frames.
+            if let Some((existing_bpm, existing_ramp)) = existing {
+                let mut ramp = existing_ramp;
+                let resp = ui.checkbox(&mut ramp, "Ramp to next").on_hover_text(
+                    "Ramp linearly toward the next tempo point (accelerando/ritardando) instead of a step change.",
+                );
+                if resp.changed() {
+                    let bpm = Bpm::new(existing_bpm);
+                    song.write().set_tempo_ramp_at(Tick(snapped), bpm, ramp);
+                    undo_manager.push(crate::undo::UndoAction::SetTempo {
+                        tick: Tick(snapped),
+                        old: Some((bpm, existing_ramp)),
+                        new: Some((bpm, ramp)),
+                    });
+                }
                 ui.separator();
                 if danger_button(ui, "Remove tempo change here").clicked() {
                     if song.write().remove_tempo_change(Tick(snapped)) {
                         undo_manager.push(crate::undo::UndoAction::SetTempo {
                             tick: Tick(snapped),
-                            old_bpm: Some(Bpm::new(existing)),
-                            new_bpm: None,
+                            old: Some((Bpm::new(existing_bpm), existing_ramp)),
+                            new: None,
                         });
                     }
                     ui.close();

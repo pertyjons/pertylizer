@@ -15,6 +15,67 @@ pub struct TempoChange {
     pub tick: Tick,
     /// New tempo in BPM.
     pub bpm: Bpm,
+    /// When `true`, the tempo ramps linearly (in tick space) from `bpm` at
+    /// `tick` toward the *next* change's bpm, reaching it exactly at that
+    /// change (accelerando / ritardando). With no following change the tempo
+    /// holds constant at `bpm`. When `false` (the default) the tempo steps to
+    /// `bpm` at `tick` and holds until the next change.
+    #[serde(default)]
+    pub ramp: bool,
+}
+
+/// Seconds to advance from `seg_start` to tick `q` within a tempo segment whose
+/// full extent is `[seg_start, seg_end]`, tempo `b0` at `seg_start` ramping to
+/// `b_end` at `seg_end` when `ramp` (else constant `b0`). `q` must lie in
+/// `[seg_start, seg_end]`. BPMs are assumed positive.
+///
+/// For a linear-in-tick ramp, time is the exact log-integral of `60/bpm`:
+/// `K·ln(b_q/b0)/(b_end−b0)` with `K = full_beats·60`. `ln_1p` keeps it stable
+/// as `b_end → b0`, and a `< 1e-5` branch falls back to the endpoint-average
+/// constant tempo to avoid the `0/0` cancellation.
+fn ramp_segment_seconds(
+    seg_start: u64,
+    seg_end: u64,
+    b0: f64,
+    b_end: f64,
+    ramp: bool,
+    q: u64,
+) -> f64 {
+    debug_assert!(b0 > 0.0 && b_end > 0.0, "tempo must be positive");
+    let beats = (q - seg_start) as f64 / f64::from(TICKS_PER_QUARTER);
+    if !ramp || seg_end <= seg_start {
+        return beats * 60.0 / b0;
+    }
+    let diff = b_end - b0;
+    if diff.abs() < 1e-5 {
+        // Flat / near-flat ramp: constant tempo at the endpoint average.
+        return beats * 60.0 / ((b0 + b_end) * 0.5);
+    }
+    let full_beats = (seg_end - seg_start) as f64 / f64::from(TICKS_PER_QUARTER);
+    let k = full_beats * 60.0;
+    let b_q = b0 + diff * ((q - seg_start) as f64 / (seg_end - seg_start) as f64);
+    k * ((b_q - b0) / b0).ln_1p() / diff
+}
+
+/// Inverse of [`ramp_segment_seconds`]: the tick offset from a segment's start
+/// reached after `s` seconds into a segment of length `seg_ticks` (tempo `b0`
+/// ramping to `b_end` when `ramp`). Uses `exp_m1` for stability and clamps the
+/// fraction to `[0, 1]`.
+#[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+fn ramp_segment_tick_offset(seg_ticks: u64, b0: f64, b_end: f64, ramp: bool, s: f64) -> u64 {
+    debug_assert!(b0 > 0.0 && b_end > 0.0, "tempo must be positive");
+    if seg_ticks == 0 {
+        return 0;
+    }
+    let k = (seg_ticks as f64 / f64::from(TICKS_PER_QUARTER)) * 60.0;
+    let diff = b_end - b0;
+    let u = if !ramp || diff.abs() < 1e-5 {
+        b0 * s / k
+    } else {
+        // b_q = b0·exp(s·diff/K) ⇒ u = (b_q − b0)/diff, via exp_m1.
+        b0 * (s * diff / k).exp_m1() / diff
+    };
+    (u.clamp(0.0, 1.0) * seg_ticks as f64) as u64
 }
 
 /// Time signature change event.
@@ -708,25 +769,49 @@ impl Song {
 
     // === Tempo ===
 
-    /// Set tempo at a position.
+    /// Set a **step** tempo change at a position (replaces any existing change
+    /// at `tick`). For a ramp, use [`Self::set_tempo_ramp_at`].
     pub fn set_tempo_at(&mut self, tick: Tick, bpm: Bpm) {
+        self.set_tempo_ramp_at(tick, bpm, false);
+    }
+
+    /// Set a tempo change at a position with an explicit ramp mode. When `ramp`
+    /// is `true` the tempo ramps linearly toward the next change (see
+    /// [`TempoChange::ramp`]); when `false` it is a step. Replaces any existing
+    /// change at `tick`.
+    pub fn set_tempo_ramp_at(&mut self, tick: Tick, bpm: Bpm, ramp: bool) {
         // Remove existing at same tick
         self.tempo_changes.retain(|t| t.tick != tick);
 
-        let change = TempoChange { tick, bpm };
+        let change = TempoChange { tick, bpm, ramp };
         let pos = self.tempo_changes.partition_point(|t| t.tick <= tick);
         self.tempo_changes.insert(pos, change);
     }
 
-    /// Get tempo at a position.
+    /// Get the tempo at a position, interpolating across ramp segments.
+    ///
+    /// Returns the preceding change's bpm for a step, the linearly interpolated
+    /// bpm when that change is a ramp and a following change exists, or
+    /// [`Self::default_tempo`] before the first change.
     #[must_use]
     pub fn tempo_at(&self, tick: Tick) -> Bpm {
         let pos = self.tempo_changes.partition_point(|t| t.tick <= tick);
-        if pos > 0 {
-            self.tempo_changes[pos - 1].bpm
-        } else {
-            self.default_tempo
+        if pos == 0 {
+            return self.default_tempo;
         }
+        let prev = &self.tempo_changes[pos - 1];
+        // Ramp only when the starting point is a ramp AND a following point
+        // exists to ramp toward; otherwise the tempo holds at `prev.bpm`.
+        if let Some(next) = self.tempo_changes.get(pos)
+            && prev.ramp
+            && next.tick.0 > prev.tick.0
+        {
+            let u = (tick.0 - prev.tick.0) as f32 / (next.tick.0 - prev.tick.0) as f32;
+            let b0 = prev.bpm.as_f32();
+            let b1 = next.bpm.as_f32();
+            return Bpm::new(b0 + (b1 - b0) * u);
+        }
+        prev.bpm
     }
 
     /// Get all tempo changes.
@@ -778,67 +863,66 @@ impl Song {
 
     // === Time conversion ===
 
-    /// Convert tick to seconds (handles tempo changes).
+    /// Convert tick to seconds (handles both step and ramp tempo changes).
     #[must_use]
     pub fn tick_to_seconds(&self, target: Tick) -> f64 {
         let mut seconds = 0.0;
-        let mut current_tick = Tick(0);
-        let mut current_tempo = self.default_tempo;
+        // Segment currently being walked: it starts at `seg_start` with tempo
+        // `b0` and (when `ramp`) ramps toward the next change's bpm. The
+        // pre-first-change segment on `default_tempo` is always constant.
+        let mut seg_start = 0u64;
+        let mut b0 = f64::from(self.default_tempo.as_f32());
+        let mut ramp = false;
 
         for change in &self.tempo_changes {
+            let b_end = f64::from(change.bpm.as_f32());
             if change.tick >= target {
-                break;
+                // `target` lies inside the segment ending at this change.
+                return seconds
+                    + ramp_segment_seconds(seg_start, change.tick.0, b0, b_end, ramp, target.0);
             }
-
-            // Time to this tempo change
-            let ticks = change.tick.0 - current_tick.0;
-            let beats = ticks as f64 / TICKS_PER_QUARTER as f64;
-            seconds += beats * 60.0 / f64::from(current_tempo.as_f32());
-
-            current_tick = change.tick;
-            current_tempo = change.bpm;
+            seconds +=
+                ramp_segment_seconds(seg_start, change.tick.0, b0, b_end, ramp, change.tick.0);
+            seg_start = change.tick.0;
+            b0 = b_end;
+            ramp = change.ramp;
         }
 
-        // Remaining ticks
-        let remaining_ticks = target.0 - current_tick.0;
-        let remaining_beats = remaining_ticks as f64 / TICKS_PER_QUARTER as f64;
-        seconds += remaining_beats * 60.0 / f64::from(current_tempo.as_f32());
-
-        seconds
+        // `target` is past all changes: the final segment is constant at `b0`.
+        seconds + ramp_segment_seconds(seg_start, seg_start, b0, b0, false, target.0)
     }
 
-    /// Convert seconds to tick (handles tempo changes).
+    /// Convert seconds to tick (inverse of [`Self::tick_to_seconds`]; handles
+    /// both step and ramp tempo changes).
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn seconds_to_tick(&self, target_seconds: f64) -> Tick {
         let mut seconds = 0.0;
-        let mut current_tick = Tick(0);
-        let mut current_tempo = self.default_tempo;
+        let mut seg_start = 0u64;
+        let mut b0 = f64::from(self.default_tempo.as_f32());
+        let mut ramp = false;
 
         for change in &self.tempo_changes {
-            let ticks = change.tick.0 - current_tick.0;
-            let beats = ticks as f64 / TICKS_PER_QUARTER as f64;
-            let tempo = f64::from(current_tempo.as_f32());
-            let segment_seconds = beats * 60.0 / tempo;
+            let b_end = f64::from(change.bpm.as_f32());
+            let seg_ticks = change.tick.0 - seg_start;
+            let segment_seconds =
+                ramp_segment_seconds(seg_start, change.tick.0, b0, b_end, ramp, change.tick.0);
 
             if seconds + segment_seconds >= target_seconds {
-                // Target is in this segment
-                let remaining_seconds = target_seconds - seconds;
-                let remaining_beats = remaining_seconds * tempo / 60.0;
-                let remaining_ticks = (remaining_beats * TICKS_PER_QUARTER as f64) as u64;
-                return Tick(current_tick.0 + remaining_ticks);
+                let s = target_seconds - seconds;
+                let offset = ramp_segment_tick_offset(seg_ticks, b0, b_end, ramp, s);
+                return Tick(seg_start + offset);
             }
 
             seconds += segment_seconds;
-            current_tick = change.tick;
-            current_tempo = change.bpm;
+            seg_start = change.tick.0;
+            b0 = b_end;
+            ramp = change.ramp;
         }
 
-        // Target is after all tempo changes
-        let tempo = f64::from(current_tempo.as_f32());
-        let remaining_seconds = target_seconds - seconds;
-        let remaining_beats = remaining_seconds * tempo / 60.0;
+        // Target is after all tempo changes: constant tempo at `b0`.
+        let remaining_beats = (target_seconds - seconds) * b0 / 60.0;
         let remaining_ticks = (remaining_beats * TICKS_PER_QUARTER as f64) as u64;
-        Tick(current_tick.0 + remaining_ticks)
+        Tick(seg_start + remaining_ticks)
     }
 
     /// Remove patterns and tracks not referenced by any arrangement placement.
@@ -1048,6 +1132,78 @@ mod tests {
         song.set_tempo_at(Tick(1000), Bpm::new(180.0));
         assert_eq!(song.tempo_at(Tick(500)), Bpm::new(120.0));
         assert_eq!(song.tempo_at(Tick(1500)), Bpm::new(180.0));
+    }
+
+    #[test]
+    fn tempo_at_ramp_interpolates() {
+        let mut song = Song::new("ramp");
+        song.set_tempo_ramp_at(Tick(0), Bpm::new(120.0), true);
+        song.set_tempo_at(Tick(960), Bpm::new(240.0));
+
+        // Midpoint of a linear-in-tick ramp is the endpoint mean.
+        assert!((song.tempo_at(Tick(480)).as_f32() - 180.0).abs() < 1e-3);
+        // Endpoints are exact.
+        assert!((song.tempo_at(Tick(0)).as_f32() - 120.0).abs() < 1e-3);
+        assert!((song.tempo_at(Tick(960)).as_f32() - 240.0).abs() < 1e-3);
+        // Past the last change: holds constant (nothing to ramp toward).
+        assert!((song.tempo_at(Tick(1920)).as_f32() - 240.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn tick_to_seconds_ramp_matches_closed_form() {
+        let mut song = Song::new("ramp");
+        song.set_tempo_ramp_at(Tick(0), Bpm::new(120.0), true);
+        song.set_tempo_at(Tick(960), Bpm::new(240.0));
+
+        // Exact log-integral over the ramp: K·ln(b1/b0)/(b1−b0), K = 1 beat · 60.
+        let expected = 60.0 * f64::ln(2.0) / 120.0;
+        assert!((song.tick_to_seconds(Tick(960)) - expected).abs() < 1e-6);
+        // A step change with equal endpoints would give 0.5 s over the beat;
+        // the ramp is faster on average, so strictly less.
+        assert!(song.tick_to_seconds(Tick(960)) < 0.5);
+    }
+
+    #[test]
+    fn seconds_to_tick_inverts_ramp() {
+        let mut song = Song::new("ramp");
+        song.set_tempo_ramp_at(Tick(0), Bpm::new(90.0), true); // seg 0: 90→160 ramp
+        song.set_tempo_ramp_at(Tick(1920), Bpm::new(160.0), true); // seg 1: 160→120 ramp
+        song.set_tempo_at(Tick(3840), Bpm::new(120.0)); // constant tail
+
+        for &t in &[0_u64, 500, 960, 1920, 2500, 3840, 5000] {
+            let seconds = song.tick_to_seconds(Tick(t));
+            let back = song.seconds_to_tick(seconds);
+            // Integer-tick truncation costs at most a couple of ticks.
+            assert!(
+                (back.0 as i64 - t as i64).abs() <= 2,
+                "round-trip t={t} -> {seconds}s -> {}",
+                back.0
+            );
+        }
+    }
+
+    #[test]
+    fn tempo_map_round_trips_json() {
+        let mut song = Song::new("rt");
+        song.default_tempo = Bpm::new(100.0);
+        song.set_tempo_at(Tick(960), Bpm::new(140.0));
+        song.set_tempo_at(Tick(3840), Bpm::new(90.0));
+        // Out-of-order insert must land sorted.
+        song.set_tempo_at(Tick(1920), Bpm::new(160.0));
+
+        let json = serde_json::to_string(&song).unwrap();
+        let back: Song = serde_json::from_str(&json).unwrap();
+
+        let changes = back.tempo_changes();
+        assert_eq!(changes.len(), 3);
+        assert_eq!(changes[0].tick, Tick(960));
+        assert_eq!(changes[1].tick, Tick(1920));
+        assert_eq!(changes[2].tick, Tick(3840));
+        assert_eq!(changes[0].bpm, Bpm::new(140.0));
+        assert_eq!(changes[1].bpm, Bpm::new(160.0));
+        assert_eq!(changes[2].bpm, Bpm::new(90.0));
+        assert_eq!(back.default_tempo, Bpm::new(100.0));
+        assert_eq!(back.tempo_at(Tick(2000)), Bpm::new(160.0));
     }
 
     #[test]

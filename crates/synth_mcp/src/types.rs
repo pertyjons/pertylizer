@@ -656,6 +656,23 @@ pub struct SongInfo {
     /// Transport loop end (exclusive) in beats. Only meaningful when
     /// `transport_loop_enabled` is true.
     pub transport_loop_end_beats: f32,
+    /// Tempo map: position-specific tempo changes (sorted by tick). Distinct
+    /// from `tempo` (the global default). Empty when the song uses a single
+    /// constant tempo. Edit via `set_tempo_at` / `remove_tempo_at`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tempo_map: Vec<TempoPoint>,
+}
+
+/// A single tempo-map point: a tempo change at an absolute tick position.
+#[derive(Debug, Clone, Serialize)]
+pub struct TempoPoint {
+    /// Absolute position in ticks (960 ticks = 1 quarter note).
+    pub tick: u64,
+    /// Tempo in BPM from this point onward (until the next point).
+    pub bpm: f32,
+    /// When true, the tempo ramps linearly toward the next point's bpm
+    /// (accelerando / ritardando); when false it is a step change.
+    pub ramp: bool,
 }
 
 /// Information about a pattern.

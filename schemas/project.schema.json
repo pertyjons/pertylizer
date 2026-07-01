@@ -9249,6 +9249,11 @@
           "$ref": "#/$defs/Bpm",
           "description": "New tempo in BPM."
         },
+        "ramp": {
+          "default": false,
+          "description": "When `true`, the tempo ramps linearly (in tick space) from `bpm` at\n`tick` toward the *next* change's bpm, reaching it exactly at that\nchange (accelerando / ritardando). With no following change the tempo\nholds constant at `bpm`. When `false` (the default) the tempo steps to\n`bpm` at `tick` and holds until the next change.",
+          "type": "boolean"
+        },
         "tick": {
           "$ref": "#/$defs/Tick",
           "description": "Position of the tempo change."

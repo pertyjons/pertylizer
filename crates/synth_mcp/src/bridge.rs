@@ -25,7 +25,8 @@ use crate::types::{
     MatrixRoutingInfo, ModuleInfo, ModuleSearchResult, ModuleTypeBrief, ModuleTypeInfo, NoteInfo,
     NoteProcessorInfo, OptimizeResult, ParameterInfo, PatchResourceData, PatternInfo,
     PlacementInfo, ProjectLintEntry, ProjectLintReport, ProjectSchemaInfo, ReturnBusInfo,
-    ReturnEffectInfo, SampleInfo, SamplerStateInfo, SetSongResult, SongInfo, TrackInfo, UiSnapshot,
+    ReturnEffectInfo, SampleInfo, SamplerStateInfo, SetSongResult, SongInfo, TempoPoint, TrackInfo,
+    UiSnapshot,
 };
 
 // === Bridge-level data structures for batch operations ===
@@ -893,6 +894,21 @@ pub trait SynthBridge: Send + Sync + 'static {
 
     /// Set the song tempo in BPM.
     fn set_song_tempo(&self, bpm: f32) -> Result<(), McpBridgeError>;
+
+    /// Add or replace tempo-map points as `(tick, bpm, ramp)`. Each point
+    /// replaces any existing change at the same tick; `ramp` selects a linear
+    /// ramp toward the next point (`true`) or a step change (`false`). This
+    /// edits the tempo *map*, not the global default tempo (see
+    /// [`Self::set_song_tempo`]).
+    fn set_tempo_at(&self, points: &[(u64, f32, bool)]) -> Result<(), McpBridgeError>;
+
+    /// Remove tempo-map points at the given absolute ticks. Returns how many
+    /// were actually removed.
+    fn remove_tempo_at(&self, ticks: &[u64]) -> Result<usize, McpBridgeError>;
+
+    /// Read the full tempo map, sorted by tick. Does not include the global
+    /// default tempo.
+    fn get_tempo_map(&self) -> Result<Vec<TempoPoint>, McpBridgeError>;
 
     /// Set the song name.
     fn set_song_name(&self, name: &str) -> Result<(), McpBridgeError>;

@@ -2241,6 +2241,33 @@ pub struct SetSongTempoParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct TempoPointParam {
+    #[schemars(description = "Absolute position in ticks (960 ticks = 1 quarter note)")]
+    pub tick: u64,
+    #[schemars(description = "Tempo in BPM at this point (20-999)")]
+    pub bpm: f32,
+    #[serde(default)]
+    #[schemars(
+        description = "When true, ramp linearly from this point's bpm toward the next point's bpm (accelerando/ritardando), reaching it at the next point. When false (default), a step change. A ramp with no following point holds constant."
+    )]
+    pub ramp: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetTempoAtParam {
+    #[schemars(
+        description = "Tempo-map points to add or replace. A point replaces any existing change at the same tick."
+    )]
+    pub points: Vec<TempoPointParam>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RemoveTempoAtParam {
+    #[schemars(description = "Absolute ticks whose tempo change should be removed")]
+    pub ticks: Vec<u64>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetTransportLoopParam {
     #[schemars(description = "Loop start in beats (1 beat = quarter note)")]
     pub start_beats: f32,
@@ -4001,6 +4028,9 @@ impl SynthMcpServer {
             // Song
             "get_song_info" => get_song_info(NoParams),
             "set_song_tempo" => set_song_tempo(SetSongTempoParam),
+            "set_tempo_at" => set_tempo_at(SetTempoAtParam),
+            "remove_tempo_at" => remove_tempo_at(RemoveTempoAtParam),
+            "get_tempo_map" => get_tempo_map(NoParams),
             "set_song_name" => set_song_name(SetSongNameParam),
             "set_song_author" => set_song_author(SetSongAuthorParam),
             "set_song_description" => set_song_description(SetSongDescriptionParam),
@@ -6021,6 +6051,47 @@ impl SynthMcpServer {
         }
         match self.bridge.set_song_tempo(params.0.bpm) {
             Ok(()) => format!("OK: tempo set to {} BPM", params.0.bpm),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Add or replace tempo-map points at absolute ticks (960 ticks per quarter note). Each point is a step by default, or set ramp=true for a linear accelerando/ritardando toward the next point. This edits the tempo MAP (position-specific tempo), NOT the global default tempo — use set_song_tempo for that. A point replaces any existing change at the same tick. Array-first: pass multiple points in one call. Inspect the map via get_tempo_map or get_song_info."
+    )]
+    async fn set_tempo_at(&self, params: Parameters<SetTempoAtParam>) -> String {
+        for point in &params.0.points {
+            if let Err(e) = validate_range("tempo", point.bpm, 20.0, 999.0) {
+                return format!("Error: {e}");
+            }
+        }
+        let points: Vec<(u64, f32, bool)> = params
+            .0
+            .points
+            .iter()
+            .map(|p| (p.tick, p.bpm, p.ramp))
+            .collect();
+        match self.bridge.set_tempo_at(&points) {
+            Ok(()) => format!("OK: set {} tempo-map point(s)", points.len()),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Remove tempo-map points at the given absolute ticks. Returns how many were removed. Does not affect the global default tempo (set_song_tempo)."
+    )]
+    async fn remove_tempo_at(&self, params: Parameters<RemoveTempoAtParam>) -> String {
+        match self.bridge.remove_tempo_at(&params.0.ticks) {
+            Ok(n) => format!("OK: removed {n} tempo-map point(s)"),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Get the tempo map: position-specific tempo changes, sorted by tick. Does not include the global default tempo — see get_song_info for that."
+    )]
+    async fn get_tempo_map(&self, _params: Parameters<NoParams>) -> String {
+        match self.bridge.get_tempo_map() {
+            Ok(map) => to_json(&map),
             Err(e) => format!("Error: {e}"),
         }
     }

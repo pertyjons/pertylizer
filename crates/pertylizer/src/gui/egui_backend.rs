@@ -4659,10 +4659,10 @@ impl SynthApp {
                     pattern.length = *new_length;
                 }
             }
-            UndoAction::SetTempo { tick, new_bpm, .. } => {
+            UndoAction::SetTempo { tick, new, .. } => {
                 let mut song_w = self.song.write();
-                if let Some(bpm) = *new_bpm {
-                    song_w.set_tempo_at(*tick, bpm);
+                if let Some((bpm, ramp)) = *new {
+                    song_w.set_tempo_ramp_at(*tick, bpm, ramp);
                 } else {
                     song_w.remove_tempo_change(*tick);
                 }
