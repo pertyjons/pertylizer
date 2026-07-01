@@ -443,6 +443,10 @@ pub struct ModuleTypeInfo {
     pub description: String,
     /// Category: "voice", "effect", or "visualizer".
     pub category: String,
+    /// True if this type can only be created with a GUI (a visualizer needing a
+    /// `VisualizationBuffer`); `add_module` rejects these over MCP. Lets callers
+    /// filter GUI-only types out up front instead of discovering it by failing.
+    pub gui_only: bool,
     /// Input ports with signal type info.
     pub input_ports: Vec<PortTypeInfo>,
     /// Output ports with signal type info.
@@ -458,6 +462,25 @@ pub struct ModuleTypeInfo {
     /// `{ "<algorithm_id>": { "param_a": { "name", "description" }, ... } }`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub algorithm_parameters: Option<serde_json::Value>,
+}
+
+/// Compact catalog entry returned by `list_module_types` in `brief` mode.
+///
+/// The full [`ModuleTypeInfo`] catalog (every port + parameter for ~70 module
+/// types) is hundreds of KB and can exceed a tool-result token cap; this trims
+/// it to just what a caller needs to pick a `type_key` and pass it to
+/// `add_module` / `get_module_type_info`.
+#[derive(Debug, Clone, Serialize)]
+pub struct ModuleTypeBrief {
+    /// Type key to pass to add_module (e.g. "osc", "flt").
+    pub type_key: String,
+    /// Display name (e.g. "Oscillator").
+    pub name: String,
+    /// Category: "voice", "effect", or "visualizer".
+    pub category: String,
+    /// True if this type can only be created with a GUI (a visualizer);
+    /// `add_module` rejects these over MCP, so callers can skip them up front.
+    pub gui_only: bool,
 }
 
 /// Result of a `search_modules` text/filter query.

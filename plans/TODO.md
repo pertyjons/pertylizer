@@ -301,88 +301,36 @@ Residual after the shared-widget-helpers work landed — these are the remaining
 
 ### 4.1 MCP & AI Interaction
 
-- [ ] **★ HIGH PRIORITY — make `set_module_description` array-consistent with the other
-  mutating tools.** `set_module_description` takes **flat** params (`instrument_id`,
-  `module_id`, `description`) — unlike nearly every other mutating MCP tool, which take
-  arrays / `items`. This caused two deserialization errors before landing the right shape
-  (tried `items: [{instrument_id, module_id, description}]` → `instrument_id` + `items` →
-  finally fully flat). Worse, its sibling `set_instrument_description` takes
-  `items: [{instrument_id, description}]`, so the two siblings are mutually inconsistent.
-  Fix: either array-adapt `set_module_description` (e.g. `instrument_id` +
-  `items: [{module_id, description}]`, or self-contained
-  `items: [{instrument_id, module_id, description}]` to mirror `set_instrument_description`),
-  or at minimum make the schema/description clearer so the shape is guessable on the first
-  call. Surfaced 2026-06-30 while documenting the AudioScript wavefolder example patch.
+> The 2026-07-01 MCP-hardening batch (array-consistent `set_module_description`,
+> `list_module_types brief` + `gui_only`, `save_patch`, port-name aliases +
+> `build_instrument` hard-error/rollback + batch atomicity) shipped on
+> `feat/mcp-ai-automation`. The items below are follow-ups surfaced during that
+> work's code review.
 
-- [ ] **`list_module_types` response is too large to consume.** The full catalog is ~275 KB
-  / 10 311 lines (72 module types with every port + parameter), which blows past the tool-result
-  token cap — it can't be read inline at all, only dumped to a file and `jq`'d. There's no
-  lightweight variant. Fix: add a `brief`/`keys_only` mode (or make `search_modules` with no
-  filter return a compact `[{type_key, name, category}]` list) so callers can get the catalog
-  without the full port/parameter dump. Surfaced 2026-07-01 building the all-modules reference patch.
+- [ ] **`batch_msg` reports total failure as `OK: 0 …`.** Every batched mutating MCP tool
+  (`set_module_description`, `set_instrument_description`, `rename_instrument`, the color/mixer
+  setters, …) funnels through `batch_msg` (`synth_mcp/src/server.rs`), which unconditionally
+  prefixes `"OK: {ok_count} …"` and only appends `"; N failed: …"`. So a call where *every*
+  item fails returns `"OK: 0 module descriptions set; 1 failed: …"`, which reads as success to a
+  caller/script that gates on a leading `"Error:"`. Fix once, centrally: when `ok_count == 0` and
+  there were errors, lead with a failure marker (e.g. `"Error:"` / `"FAILED:"`) instead of `"OK:"`
+  so total failure is distinguishable from partial success. Touches all batch tools consistently.
 
-- [ ] **`add_module` can't add visualizer modules; no way to know in advance.** Adding
-  `scp`/`mtr`/`spa` (Oscilloscope/Meter/Spectrum) fails with *"visualizer modules require GUI
-  (VisualizationBuffer)"*, so "add every module type" is impossible from MCP. Nothing in the
-  catalog flags which types are GUI-only, so the failure is only discoverable by trying. Fix:
-  either let MCP create them with a headless/no-op buffer, or add a `gui_only: true` flag to the
-  catalog entries so callers can filter them out up front. Surfaced 2026-07-01.
+- [ ] **Snapshot-reading saves can miss graph mutations queued in the same `batch_execute`.**
+  `save_patch` / `save_project` read the async-mirrored `shared_graph`, which the audio thread only
+  updates after draining its `AddModule`/`Connect` command queue. `save_patch`'s bounded
+  `wait_for_instrument` bridges only the instrument-*creation* gap, not the module-*mutation* gap —
+  so a `batch_execute` that does `add_module`(s)/`connect`(s) on an existing instrument and then
+  `save_patch`/`save_project` in the same request can silently write a stale/truncated graph and
+  still report `"OK: Saved …"`. Documented as a caveat in the `save_patch` description for now; the
+  real fix is an engine-side sync barrier (a command the save can wait on until the audio thread has
+  drained pending graph mutations for the target instrument) reused by both save paths.
 
-- [ ] **No MCP tool to save a single instrument as a patch file.** Only `save_project` exists
-  (whole project → JSON); `load_project` *reads* single patch files, but there's no `save_patch`
-  / `export_instrument` to write one. So an attempt to save one instrument to
-  `assets/examples/patches/` produced a **project** file (had to be moved to
-  `assets/examples/projects/` afterwards) rather than the single-instrument patch format the
-  examples use. Fix: add a `save_patch(instrument_id, path)` that writes patch format.
-  Surfaced 2026-07-01.
-
-- [ ] **`build_instrument`'s description example uses wrong port names, silently
-  producing zero-connection instruments.** The example in the tool description says
-  `from_port:'output'` / `to_port:'input'`, but the very modules in that example
-  (`osc`/`amp`/`out`) expose ports `out` / `in` — so following the example verbatim fails
-  with `osc-1 has no output port 'output', available: ["out", "out_l", "out_r", "phase"]`.
-  Worse, the instrument is still created but with `connection_count: 0` and the errors buried
-  in a per-instrument `errors` array, which is easy to miss. The `connect` schema has the same
-  inconsistency (`from_port` example is correct `'out'`, but `to_port` example says `'input'`).
-  Fix: correct the examples to `out`/`in`; and/or accept `output`→`out` / `input`→`in`
-  aliases; and/or return a hard error when *every* connection in a `build_instrument` call
-  fails instead of a "successful" instrument with no wiring. Surfaced 2026-07-01 smoke-testing
-  the MCP after the rmcp 2.0 upgrade.
-
-- [ ] Tier 3: `compare_to_reference`, `compare_patterns`, `compare_patches`,
-  `humanize_notes`, `generate_variation`, `analyze_track`, `get_mix_meters`.
-
-### 4.2 Upgrade rmcp 1.8.0 → 2.0.0
-
-- [ ] **Upgrade the MCP SDK to rmcp 2.0.0.** Major version bump (`Cargo.toml:105`), but the
-  **JSON wire format is unchanged** — all breaks are at the Rust API level, and our usage is
-  concentrated in a single file (`crates/synth_mcp/src/server.rs`). schemars stays compatible:
-  rmcp 2.0 still depends on `schemars = "1.0"` (gated behind the `server` feature) and we derive
-  `JsonSchema` directly with 1.2.1, so no schemars conflict. Migration guide: rust-sdk discussion
-  #926. **Why bother (mostly hardening, no new features):** the **streamable-HTTP session-leak
-  fix** (PR #934) directly affects our long-running server on `127.0.0.1:9850`; plus OAuth
-  SSRF/spoofing fixes (#935/#937, less relevant for a local server) and `inputSchema`/`outputSchema`
-  now stripped+validated (#856/#860, may trim junk fields from our 175+ tool schemas). There is no
-  new macro/tool capability to leverage.
-
-  **What breaks (all in `server.rs`), from PR #927 "align model types with MCP 2025-11-25 spec":**
-    1. **Content/audio construction** (`preview_note`/`analyze_note`, ~L4619-4635):
-       `Content`/`RawContent`/`Annotated<T>` collapse into a flattened **`ContentBlock`**. The imports
-       `AnnotateAble, Annotated, RawAudioContent, RawContent` (L13-18) and the
-       `RawContent::Audio(RawAudioContent{..}).no_annotation()` path must be rewritten.
-    2. **Resource impls** (`list_resources`/`read_resource`, L4232-4373): `RawResource`,
-       `RawResourceTemplate`, `ResourceContents`, `.no_annotation()` — same `Annotated` removal.
-    3. **`#[non_exhaustive]`** on most wire structs: returns we *construct* with struct literals
-       (`ListResourcesResult`, `ReadResourceResult`) may need a builder / `..Default::default()`;
-       params we only *receive* (`PaginatedRequestParams`, `ReadResourceRequestParams`) are fine.
-    4. Renames (old kept as `#[deprecated]` aliases where practical): `ResourceReference`→
-       `ResourceTemplateReference`, `PrimitiveSchema`→`PrimitiveSchemaDefinition`, etc.
-
-  **What does NOT break:** the macro trio `#[tool]`/`#[tool_router]`/`#[tool_handler]` (API unchanged
-  in 2.0 — only an internal fully-qualified-syntax fix), so our **190 tool methods + `Parameters<T>`
-  compile as-is**; the manual `ToolCallContext`/`ToolRouter::call` dispatch in the overridden
-  `call_tool`; and the `transport::streamable_http_server::*` path. Mechanical migration, no logic
-  change — best done on a branch driven by the compiler + the bump-checklist build gate.
+- [ ] **Collapse the 4 identical `record_io_status` match arms (minor cleanup).** `do_save_project`,
+  `do_save_patch`, `do_new_project`, and `save_project_as_bundle` in
+  `crates/pertylizer/src/mcp_bridge.rs` each repeat
+  `match result { Ok(msg) => { record_io_status(Ok(msg.clone())); Ok(msg) } Err(e) => { record_io_status(Err(e.to_string())); Err(e) } }`.
+  Extract a tiny `fn record_io_result(&self, r: Result<String, McpBridgeError>) -> Result<String, McpBridgeError>` helper and call it from all four.
 
 ---
 

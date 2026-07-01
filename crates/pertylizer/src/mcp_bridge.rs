@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use synth_core::{
     BipolarValue, DestAddr, Gain, MidiNote, ModMatrixParam, ModuleType, NormalizedValue, Param,
-    ParameterUnit, PortDirection, SampleCount, SrcAddr, Velocity,
+    ParameterUnit, PortDescriptor, PortDirection, PortName, SampleCount, SrcAddr, Velocity,
 };
 use synth_engine::EngineCommand;
 use synth_engine::commands::ModuleId;
@@ -28,8 +28,8 @@ use synth_mcp::types::{
     BatchResult, BuildInstrumentResult, CompareMixResult, ConnectionCheckResult, ConnectionInfo,
     DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic, HarmonyChordEvent,
     HarmonyKeyEstimate, HarmonyScope, HarmonyStats, InstrumentInfo, MaskingPair, MatrixRoutingInfo,
-    MixBusMetrics, MixDelta, ModuleInfo, ModuleSearchResult, ModuleTypeInfo, NoteInfo,
-    NoteProcessorInfo, OptimizeResult, ParamTypeInfo, ParameterInfo, PatchModuleInfo,
+    MixBusMetrics, MixDelta, ModuleInfo, ModuleSearchResult, ModuleTypeBrief, ModuleTypeInfo,
+    NoteInfo, NoteProcessorInfo, OptimizeResult, ParamTypeInfo, ParameterInfo, PatchModuleInfo,
     PatchParamInfo, PatchParamValue, PatchResourceData, PatternInfo, PlacementInfo,
     ProjectSchemaInfo, RebuildInstrumentResult, RenderToWavResult, SetSongResult, SongInfo,
     TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
@@ -80,6 +80,48 @@ pub struct AppSynthBridge {
     /// `rollback: true` runs. Captured before the first op, applied back if any
     /// op fails, then cleared. `None` outside a rollback batch.
     rollback_snapshot: parking_lot::Mutex<Option<Box<crate::project::ProjectFile>>>,
+}
+
+/// Legacy port-name aliases so the historical example port names still connect
+/// instead of silently producing a zero-connection instrument. Single source of
+/// truth for the alias table shared by `resolve_port_name` and `check_connection`.
+fn port_alias(requested: &str) -> Option<&'static str> {
+    match requested {
+        "output" => Some("out"),
+        "input" => Some("in"),
+        _ => None,
+    }
+}
+
+/// Resolve a requested port name against a module's `ports` for `direction`.
+///
+/// Exact name matches win; otherwise the [`port_alias`] table is tried. Returns
+/// the canonical [`PortName`] to hand to the engine, or a debug list of the
+/// available ports in that direction on failure.
+fn resolve_port_name(
+    ports: &[PortDescriptor],
+    requested: &str,
+    direction: PortDirection,
+) -> Result<PortName, String> {
+    if let Some(p) = ports
+        .iter()
+        .find(|p| p.direction == direction && p.name.as_str() == requested)
+    {
+        return Ok(p.name);
+    }
+    if let Some(alias) = port_alias(requested)
+        && let Some(p) = ports
+            .iter()
+            .find(|p| p.direction == direction && p.name.as_str() == alias)
+    {
+        return Ok(p.name);
+    }
+    let available: Vec<&str> = ports
+        .iter()
+        .filter(|p| p.direction == direction)
+        .map(|p| p.name.as_str())
+        .collect();
+    Err(format!("{available:?}"))
 }
 
 impl AppSynthBridge {
@@ -253,14 +295,16 @@ impl AppSynthBridge {
         Ok((mid, pd.id.with_f32(value), info))
     }
 
-    /// Validate that a module exists and has the given port in the expected direction.
+    /// Validate that a module exists and has the given port in the expected
+    /// direction, returning the canonical port name (resolving `output`/`input`
+    /// aliases) to hand to the engine.
     fn validate_port(
         &self,
         instrument_id: InstrumentId,
         module_str: &str,
         port: &str,
         direction: PortDirection,
-    ) -> Result<(), McpBridgeError> {
+    ) -> Result<PortName, McpBridgeError> {
         let mid: ModuleId = module_str
             .parse()
             .map_err(|_| McpBridgeError::ModuleNotFound(module_str.to_string()))?;
@@ -270,26 +314,13 @@ impl AppSynthBridge {
             .module_descriptor(instrument_id, mid)
             .ok_or_else(|| McpBridgeError::ModuleNotFound(module_str.to_string()))?;
 
-        let has_port = descriptor
-            .ports
-            .iter()
-            .any(|p| p.name == port && p.direction == direction);
-
-        if !has_port {
-            let available: Vec<&str> = descriptor
-                .ports
-                .iter()
-                .filter(|p| p.direction == direction)
-                .map(|p| p.name.as_str())
-                .collect();
-            return Err(McpBridgeError::PortNotFound {
+        resolve_port_name(&descriptor.ports, port, direction).map_err(|available| {
+            McpBridgeError::PortNotFound {
                 module: module_str.to_string(),
                 port: port.to_string(),
-                available: format!("{available:?}"),
-            });
-        }
-
-        Ok(())
+                available,
+            }
+        })
     }
 
     /// Validate that an instrument exists in the shared snapshots.
@@ -1498,11 +1529,36 @@ impl SynthBridge for AppSynthBridge {
         Ok(result)
     }
 
+    fn list_module_types_brief(&self) -> Result<Vec<ModuleTypeBrief>, McpBridgeError> {
+        use crate::module_factory::ALL_MODULE_TYPES;
+
+        // No descriptor needed — type_key/name/category come straight off the
+        // ModuleType, so this stays tiny even at ~70 module types.
+        Ok(ALL_MODULE_TYPES
+            .iter()
+            .map(|&mt| ModuleTypeBrief {
+                type_key: mt.prefix().to_string(),
+                name: mt.name().to_string(),
+                category: module_category(mt).to_string(),
+                gui_only: mt.is_visualizer(),
+            })
+            .collect())
+    }
+
     fn add_module(&self, instrument_id: u64, module_type: &str) -> Result<String, McpBridgeError> {
         self.validate_instrument(instrument_id)?;
 
         let mt = parse_module_type(module_type)
             .ok_or_else(|| McpBridgeError::InvalidModuleType(module_type.to_string()))?;
+
+        if mt.is_visualizer() {
+            return Err(McpBridgeError::Other(format!(
+                "{} is a GUI-only visualizer and cannot be added over MCP (it needs a \
+                 VisualizationBuffer); such types are flagged gui_only:true by \
+                 list_module_types(brief:true) so you can filter them out",
+                mt.name()
+            )));
+        }
 
         let (module_id, _descriptor) = self
             .session
@@ -1535,8 +1591,8 @@ impl SynthBridge for AppSynthBridge {
         self.validate_instrument(instrument_id)?;
         let inst_id = InstrumentId::new(instrument_id);
 
-        self.validate_port(inst_id, from_module, from_port, PortDirection::Output)?;
-        self.validate_port(inst_id, to_module, to_port, PortDirection::Input)?;
+        let from_pn = self.validate_port(inst_id, from_module, from_port, PortDirection::Output)?;
+        let to_pn = self.validate_port(inst_id, to_module, to_port, PortDirection::Input)?;
 
         let from_id: ModuleId = from_module
             .parse()
@@ -1546,13 +1602,7 @@ impl SynthBridge for AppSynthBridge {
             .map_err(|_| McpBridgeError::ModuleNotFound(to_module.to_string()))?;
 
         self.session
-            .connect(
-                inst_id,
-                from_id,
-                from_port.to_string(),
-                to_id,
-                to_port.to_string(),
-            )
+            .connect(inst_id, from_id, from_pn, to_id, to_pn)
             .map_err(|_| McpBridgeError::CommandSendFailed { command: "connect" })
     }
 
@@ -1567,8 +1617,8 @@ impl SynthBridge for AppSynthBridge {
         self.validate_instrument(instrument_id)?;
         let inst_id = InstrumentId::new(instrument_id);
 
-        self.validate_port(inst_id, from_module, from_port, PortDirection::Output)?;
-        self.validate_port(inst_id, to_module, to_port, PortDirection::Input)?;
+        let from_pn = self.validate_port(inst_id, from_module, from_port, PortDirection::Output)?;
+        let to_pn = self.validate_port(inst_id, to_module, to_port, PortDirection::Input)?;
 
         let from_id: ModuleId = from_module
             .parse()
@@ -1581,9 +1631,9 @@ impl SynthBridge for AppSynthBridge {
             .disconnect(
                 InstrumentId::new(instrument_id),
                 from_id,
-                from_port.to_string(),
+                from_pn,
                 to_id,
-                to_port.to_string(),
+                to_pn,
             )
             .map_err(|_| McpBridgeError::CommandSendFailed {
                 command: "disconnect",
@@ -2652,61 +2702,73 @@ impl SynthBridge for AppSynthBridge {
                 }
             };
 
-            // Validate source port exists and is an output
-            if let Some(Some(desc)) = module_descriptors.get(conn.from_index) {
-                let has_output = desc.ports.iter().any(|p| {
-                    p.name.as_str() == conn.from_port
-                        && p.direction == synth_core::PortDirection::Output
-                });
-                if !has_output {
-                    let available: Vec<&str> = desc
-                        .ports
-                        .iter()
-                        .filter(|p| p.direction == synth_core::PortDirection::Output)
-                        .map(|p| p.name.as_str())
-                        .collect();
-                    errors.push(format!(
-                        "{from_mid} has no output port '{}', available: {available:?}",
-                        conn.from_port
-                    ));
-                    continue;
+            // Resolve + validate the source (output) port, honoring output/input aliases.
+            let from_port = match module_descriptors
+                .get(conn.from_index)
+                .and_then(|d| d.as_ref())
+            {
+                Some(desc) => {
+                    match resolve_port_name(&desc.ports, &conn.from_port, PortDirection::Output) {
+                        Ok(name) => name,
+                        Err(available) => {
+                            errors.push(format!(
+                                "{from_mid} has no output port '{}', available: {available}",
+                                conn.from_port
+                            ));
+                            continue;
+                        }
+                    }
                 }
-            }
+                None => PortName::from(conn.from_port.as_str()),
+            };
 
-            // Validate destination port exists and is an input
-            if let Some(Some(desc)) = module_descriptors.get(conn.to_index) {
-                let has_input = desc.ports.iter().any(|p| {
-                    p.name.as_str() == conn.to_port
-                        && p.direction == synth_core::PortDirection::Input
-                });
-                if !has_input {
-                    let available: Vec<&str> = desc
-                        .ports
-                        .iter()
-                        .filter(|p| p.direction == synth_core::PortDirection::Input)
-                        .map(|p| p.name.as_str())
-                        .collect();
-                    errors.push(format!(
-                        "{to_mid} has no input port '{}', available: {available:?}",
-                        conn.to_port
-                    ));
-                    continue;
+            // Resolve + validate the destination (input) port.
+            let to_port = match module_descriptors
+                .get(conn.to_index)
+                .and_then(|d| d.as_ref())
+            {
+                Some(desc) => {
+                    match resolve_port_name(&desc.ports, &conn.to_port, PortDirection::Input) {
+                        Ok(name) => name,
+                        Err(available) => {
+                            errors.push(format!(
+                                "{to_mid} has no input port '{}', available: {available}",
+                                conn.to_port
+                            ));
+                            continue;
+                        }
+                    }
                 }
-            }
+                None => PortName::from(conn.to_port.as_str()),
+            };
 
-            match self.session.connect(
-                inst_id,
-                from_mid,
-                conn.from_port.clone(),
-                to_mid,
-                conn.to_port.clone(),
-            ) {
+            match self
+                .session
+                .connect(inst_id, from_mid, from_port, to_mid, to_port)
+            {
                 Ok(()) => connection_count += 1,
                 Err(e) => errors.push(format!(
                     "connect {}:{} → {}:{}: {e}",
                     from_mid, conn.from_port, to_mid, conn.to_port
                 )),
             }
+        }
+
+        // Reject a "successful" NEW instrument that got none of its requested
+        // wiring: every connection failing almost always means wrong port names,
+        // and a zero-connection instrument is silently broken. Roll it back so a
+        // fully-failed build leaves no orphan (and a retry can't accumulate
+        // duplicates). This applies only to freshly-created instruments — an
+        // existing one targeted by `instrument_id` (e.g. a rebuild) is left to
+        // return its normal result + errors so callers like
+        // `rebuild_instrument_preserve_automation` still get their lane report.
+        if spec.instrument_id.is_none() && connection_count == 0 && !spec.connections.is_empty() {
+            let _ = self.session.remove_instrument(inst_id);
+            return Err(McpBridgeError::Other(format!(
+                "all {} requested connection(s) failed — instrument rolled back, none created: {}",
+                spec.connections.len(),
+                errors.join("; ")
+            )));
         }
 
         Ok(BuildInstrumentResult {
@@ -2725,9 +2787,28 @@ impl SynthBridge for AppSynthBridge {
         &self,
         specs: &[BridgeInstrumentDef],
     ) -> Result<Vec<BuildInstrumentResult>, McpBridgeError> {
-        let mut results = Vec::with_capacity(specs.len());
+        let mut results: Vec<BuildInstrumentResult> = Vec::with_capacity(specs.len());
         for spec in specs {
-            results.push(self.build_instrument(spec)?);
+            match self.build_instrument(spec) {
+                Ok(result) => results.push(result),
+                Err(e) => {
+                    // Keep the batch atomic: on any failure, roll back the
+                    // instruments this call already created so no orphans are
+                    // left and a retry can't accumulate duplicates. Only the
+                    // freshly-created ones (id assigned by this call) are
+                    // removed; existing instruments targeted by `instrument_id`
+                    // were owned by the caller before the call. The failing
+                    // spec already rolled itself back inside build_instrument.
+                    for (built, built_spec) in results.iter().zip(specs) {
+                        if built_spec.instrument_id.is_none() {
+                            let _ = self
+                                .session
+                                .remove_instrument(InstrumentId::new(built.instrument_id));
+                        }
+                    }
+                    return Err(e);
+                }
+            }
         }
         Ok(results)
     }
@@ -4022,6 +4103,14 @@ impl SynthBridge for AppSynthBridge {
 
     fn save_project(&self, path: &str) -> Result<String, McpBridgeError> {
         self.do_save_project(std::path::PathBuf::from(path))
+    }
+
+    fn save_patch(&self, instrument_id: u64, path: &str) -> Result<String, McpBridgeError> {
+        self.validate_instrument(instrument_id)?;
+        self.do_save_patch(
+            InstrumentId::new(instrument_id),
+            std::path::PathBuf::from(path),
+        )
     }
 
     fn load_project(&self, path: &str) -> Result<String, McpBridgeError> {
@@ -5932,8 +6021,21 @@ impl SynthBridge for AppSynthBridge {
             .module_descriptor(inst_id, to_mid)
             .ok_or_else(|| McpBridgeError::ModuleNotFound(to_module.to_string()))?;
 
-        let from_port_desc = from_desc.ports.iter().find(|p| p.name == from_port);
-        let to_port_desc = to_desc.ports.iter().find(|p| p.name == to_port);
+        // Honor the same output/input aliases connect() accepts so the diagnostic agrees.
+        let alias_of = |ports: &[PortDescriptor], req: &str| -> String {
+            match port_alias(req) {
+                Some(a) if ports.iter().any(|p| p.name.as_str() == a) => a.to_string(),
+                _ => req.to_string(),
+            }
+        };
+        let from_port = alias_of(&from_desc.ports, from_port);
+        let to_port = alias_of(&to_desc.ports, to_port);
+
+        let from_port_desc = from_desc
+            .ports
+            .iter()
+            .find(|p| p.name == from_port.as_str());
+        let to_port_desc = to_desc.ports.iter().find(|p| p.name == to_port.as_str());
 
         let Some(from_pd) = from_port_desc else {
             let available: Vec<&str> = from_desc.ports.iter().map(|p| p.name.as_str()).collect();
@@ -6693,6 +6795,28 @@ impl AppSynthBridge {
             )
             .map_err(McpBridgeError::Other)
         };
+
+        match result {
+            Ok(msg) => {
+                self.record_io_status(Ok(msg.clone()));
+                Ok(msg)
+            }
+            Err(e) => {
+                self.record_io_status(Err(e.to_string()));
+                Err(e)
+            }
+        }
+    }
+
+    fn do_save_patch(
+        &self,
+        instrument_id: InstrumentId,
+        path: std::path::PathBuf,
+    ) -> Result<String, McpBridgeError> {
+        let _guard = self.shared.project_io_lock.lock();
+
+        let result = crate::project_apply::save_patch_to(&path, &self.session, instrument_id)
+            .map_err(McpBridgeError::Other);
 
         match result {
             Ok(msg) => {
@@ -12482,6 +12606,17 @@ fn module_edit_distance(a: &str, b: &str) -> usize {
     prev[b.len()]
 }
 
+/// Coarse catalog category for a module type: "voice", "effect", or "visualizer".
+fn module_category(mt: synth_core::ModuleType) -> &'static str {
+    if mt.is_voice_module() {
+        "voice"
+    } else if mt.is_effect() {
+        "effect"
+    } else {
+        "visualizer"
+    }
+}
+
 /// Build a [`ModuleTypeInfo`] from a [`ModuleType`] and its descriptor.
 fn build_module_type_info(
     mt: synth_core::ModuleType,
@@ -12489,13 +12624,7 @@ fn build_module_type_info(
 ) -> ModuleTypeInfo {
     use synth_core::PortDirection;
 
-    let category = if mt.is_voice_module() {
-        "voice"
-    } else if mt.is_effect() {
-        "effect"
-    } else {
-        "visualizer"
-    };
+    let category = module_category(mt);
 
     let port_to_info = |p: &synth_core::PortDescriptor| synth_mcp::types::PortTypeInfo {
         name: p.name.to_string(),
@@ -12544,6 +12673,7 @@ fn build_module_type_info(
         name: mt.name().to_string(),
         description: desc.description.clone(),
         category: category.to_string(),
+        gui_only: mt.is_visualizer(),
         input_ports,
         output_ports,
         parameters,
@@ -13335,6 +13465,81 @@ mod mcp_helper_tests {
     use super::*;
     use std::assert_matches;
     use synth_core::ModuleType;
+
+    #[test]
+    fn module_category_classifies_known_types() {
+        assert_eq!(module_category(ModuleType::Oscillator), "voice");
+        assert_eq!(module_category(ModuleType::Reverb), "effect");
+        assert_eq!(module_category(ModuleType::Oscilloscope), "visualizer");
+    }
+
+    #[test]
+    fn brief_catalog_entries_are_well_formed() {
+        use crate::module_factory::ALL_MODULE_TYPES;
+
+        assert!(!ALL_MODULE_TYPES.is_empty());
+        for &mt in ALL_MODULE_TYPES.iter() {
+            let key = mt.prefix();
+            let cat = module_category(mt);
+            assert!(!key.is_empty(), "{mt:?} has an empty type_key");
+            assert!(!mt.name().is_empty(), "{mt:?} has an empty name");
+            assert!(
+                matches!(cat, "voice" | "effect" | "visualizer"),
+                "{mt:?} has unexpected category {cat}"
+            );
+            // The gui_only flag mirrors is_visualizer, and today that is exactly
+            // the "visualizer" category — keep the two in lockstep.
+            assert_eq!(
+                mt.is_visualizer(),
+                cat == "visualizer",
+                "{mt:?}: gui_only/category disagree"
+            );
+        }
+    }
+
+    #[test]
+    fn port_alias_table() {
+        assert_eq!(port_alias("output"), Some("out"));
+        assert_eq!(port_alias("input"), Some("in"));
+        assert_eq!(port_alias("out"), None);
+        assert_eq!(port_alias("cutoff_cv"), None);
+    }
+
+    #[test]
+    fn resolve_port_name_matches_exact_and_aliases() {
+        let ports = vec![
+            PortDescriptor::audio_output("out", "Out"),
+            PortDescriptor::audio_input("in", "In"),
+        ];
+        // Exact match wins.
+        assert_eq!(
+            resolve_port_name(&ports, "out", PortDirection::Output)
+                .unwrap()
+                .as_str(),
+            "out"
+        );
+        // output -> out / input -> in aliases resolve to the canonical name.
+        assert_eq!(
+            resolve_port_name(&ports, "output", PortDirection::Output)
+                .unwrap()
+                .as_str(),
+            "out"
+        );
+        assert_eq!(
+            resolve_port_name(&ports, "input", PortDirection::Input)
+                .unwrap()
+                .as_str(),
+            "in"
+        );
+        // Right name, wrong direction is rejected (an output is not an input).
+        assert!(resolve_port_name(&ports, "out", PortDirection::Input).is_err());
+        // Unknown port fails and the error lists the available names.
+        let err = resolve_port_name(&ports, "bogus", PortDirection::Output).unwrap_err();
+        assert!(
+            err.contains("out"),
+            "error should list available ports: {err}"
+        );
+    }
 
     /// The embedded `.pertyproj` schema that `get_project_schema` ships is valid
     /// JSON and a well-formed JSON Schema document (has `$schema`, an object

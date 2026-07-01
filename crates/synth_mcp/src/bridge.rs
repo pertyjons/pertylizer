@@ -22,10 +22,10 @@ use crate::types::{
     ChordProgressionStep, ConnectionCheckResult, ConnectionInfo, CreateChordProgressionResult,
     DetailedSampleInfo, DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic,
     InputDeviceInfo, InputStateInfo, InsertModuleResult, InstrumentInfo, InstrumentProfileResult,
-    MatrixRoutingInfo, ModuleInfo, ModuleSearchResult, ModuleTypeInfo, NoteInfo, NoteProcessorInfo,
-    OptimizeResult, ParameterInfo, PatchResourceData, PatternInfo, PlacementInfo, ProjectLintEntry,
-    ProjectLintReport, ProjectSchemaInfo, ReturnBusInfo, ReturnEffectInfo, SampleInfo,
-    SamplerStateInfo, SetSongResult, SongInfo, TrackInfo, UiSnapshot,
+    MatrixRoutingInfo, ModuleInfo, ModuleSearchResult, ModuleTypeBrief, ModuleTypeInfo, NoteInfo,
+    NoteProcessorInfo, OptimizeResult, ParameterInfo, PatchResourceData, PatternInfo,
+    PlacementInfo, ProjectLintEntry, ProjectLintReport, ProjectSchemaInfo, ReturnBusInfo,
+    ReturnEffectInfo, SampleInfo, SamplerStateInfo, SetSongResult, SongInfo, TrackInfo, UiSnapshot,
 };
 
 // === Bridge-level data structures for batch operations ===
@@ -681,6 +681,10 @@ pub trait SynthBridge: Send + Sync + 'static {
 
     /// List all available module types with their ports and parameters.
     fn list_module_types(&self) -> Result<Vec<ModuleTypeInfo>, McpBridgeError>;
+
+    /// Compact catalog: just `{type_key, name, category}` per module type, for
+    /// callers that only need to pick a type without the full port/parameter dump.
+    fn list_module_types_brief(&self) -> Result<Vec<ModuleTypeBrief>, McpBridgeError>;
 
     /// Add a module to an instrument's voice graph. Returns confirmation message.
     fn add_module(&self, instrument_id: u64, module_type: &str) -> Result<String, McpBridgeError>;
@@ -1487,6 +1491,11 @@ pub trait SynthBridge: Send + Sync + 'static {
     ///
     /// **Warning:** Performs file I/O. Must not be called from the audio thread.
     fn save_project(&self, path: &str) -> Result<String, McpBridgeError>;
+
+    /// Save a single instrument as a standalone patch file.
+    ///
+    /// **Warning:** Performs file I/O. Must not be called from the audio thread.
+    fn save_patch(&self, instrument_id: u64, path: &str) -> Result<String, McpBridgeError>;
 
     /// Load a project from a file.
     ///

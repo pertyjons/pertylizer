@@ -213,6 +213,17 @@ pub fn load_file_into_engine(
     }
 }
 
+/// Create the parent directory of a save path when it has a non-empty one.
+/// Shared by the project and single-patch save paths.
+fn ensure_parent_dir(path: &std::path::Path) -> Result<(), String> {
+    if let Some(parent) = path.parent()
+        && !parent.as_os_str().is_empty()
+    {
+        std::fs::create_dir_all(parent).map_err(|e| format!("create parent dir: {e}"))?;
+    }
+    Ok(())
+}
+
 /// Save the current engine + session + song state to `path` as a JSON
 /// `ProjectFile`. Headless counterpart of `egui_backend::create_project_from_app`,
 /// reading instrument metadata from `InstrumentSnapshot` (engine-mirrored,
@@ -236,11 +247,7 @@ pub fn save_project_to(
 ) -> Result<String, String> {
     let project = build_project_from_engine(session, song, sample_library, opts);
 
-    if let Some(parent) = path.parent()
-        && !parent.as_os_str().is_empty()
-    {
-        std::fs::create_dir_all(parent).map_err(|e| format!("create parent dir: {e}"))?;
-    }
+    ensure_parent_dir(path)?;
 
     project.save(path).map_err(|e| e.to_string())?;
 
@@ -252,6 +259,64 @@ pub fn save_project_to(
         project.instruments.len(),
         pattern_count,
         track_count
+    ))
+}
+
+/// Save a single instrument's voice graph as a standalone patch file — the same
+/// single-instrument format the GUI's "Save Patch" writes and that
+/// `project::load_file` reads back as `LoadedFile::Patch`. Unlike
+/// [`save_project_to`], this writes exactly one instrument's modules,
+/// connections, and patch metadata (no song, no other instruments).
+pub fn save_patch_to(
+    path: &std::path::Path,
+    session: &SynthSession,
+    instrument_id: InstrumentId,
+) -> Result<String, String> {
+    // The save reads the async-mirrored instrument snapshot. If the instrument
+    // is known to the synchronous registry but not yet mirrored (e.g. it was
+    // just created in the same batch), give the audio thread a bounded window to
+    // catch up — the same gap-bridging apply_project does after AddInstrument —
+    // rather than failing a valid save.
+    if session.instrument_exists(instrument_id) {
+        wait_for_instrument(session, instrument_id, SNAPSHOT_SYNC_TIMEOUT_MS);
+    }
+
+    let snapshots = session.list_instruments();
+    let snap = snapshots
+        .iter()
+        .find(|s| s.id == instrument_id)
+        .ok_or_else(|| {
+            // Distinguish a genuinely unknown id from one that never mirrored in
+            // time, so the failure is honest rather than a misleading "not found".
+            if session.instrument_exists(instrument_id) {
+                format!(
+                    "instrument {} exists but its state could not be mirrored to the save \
+                     snapshot in time",
+                    instrument_id.as_u64()
+                )
+            } else {
+                format!("instrument {} not found", instrument_id.as_u64())
+            }
+        })?;
+
+    let engine_state = session.state();
+    let shared_graph = &engine_state.shared_graph;
+    // These filter-then-clone (only the target instrument's snapshots), cheaper
+    // than get_all_modules()/get_connections() which clone the whole graph first.
+    let modules = shared_graph.get_modules_for_instrument(instrument_id);
+    let connections = shared_graph.get_connections_for_instrument(instrument_id);
+
+    let patch = build_patch_from_engine(session, snap, &modules, &connections);
+
+    ensure_parent_dir(path)?;
+    patch.save(path).map_err(|e| e.to_string())?;
+
+    Ok(format!(
+        "Saved patch: {} ({}, {} module(s), {} connection(s))",
+        path.display(),
+        snap.name,
+        patch.modules.len(),
+        patch.connections.len()
     ))
 }
 
@@ -827,14 +892,33 @@ pub(crate) fn prune_unused_samples(
     to_remove.into_iter().map(|(_, name)| name).collect()
 }
 
-fn wait_for_instrument_count(session: &SynthSession, target: usize, timeout_ms: u64) {
+/// Bounded window a snapshot-reading save waits for the audio thread to mirror a
+/// just-created instrument (matches `apply_project`'s post-load bridge).
+const SNAPSHOT_SYNC_TIMEOUT_MS: u64 = 2_000;
+
+/// Poll `session` (5 ms tick) until `done` holds or `timeout_ms` elapses.
+/// Bridges the gap between synchronous engine commands and the audio thread
+/// mirroring them into the instrument snapshot the load/save paths read.
+fn wait_until(session: &SynthSession, timeout_ms: u64, done: impl Fn(&SynthSession) -> bool) {
     let deadline = std::time::Instant::now() + std::time::Duration::from_millis(timeout_ms);
     while std::time::Instant::now() < deadline {
-        if session.list_instruments().len() >= target {
+        if done(session) {
             return;
         }
         std::thread::sleep(std::time::Duration::from_millis(5));
     }
+}
+
+fn wait_for_instrument_count(session: &SynthSession, target: usize, timeout_ms: u64) {
+    wait_until(session, timeout_ms, |s| {
+        s.list_instruments().len() >= target
+    });
+}
+
+fn wait_for_instrument(session: &SynthSession, instrument_id: InstrumentId, timeout_ms: u64) {
+    wait_until(session, timeout_ms, |s| {
+        s.list_instruments().iter().any(|i| i.id == instrument_id)
+    });
 }
 
 fn log_err<T>(op: &str, result: Result<T, SessionError>) {
@@ -994,6 +1078,66 @@ mod tests {
             compact.contains(r#""scripts":{"1":"out = velocity * 0.5"}"#),
             "saved project must round-trip the control script; got: {compact}"
         );
+    }
+
+    /// `save_patch_to` writes a single instrument's graph as a standalone patch
+    /// file that `load_file` reads back as `LoadedFile::Patch` (not a project),
+    /// carrying exactly that instrument's modules + connections.
+    #[test]
+    fn save_patch_writes_a_loadable_single_instrument_patch() {
+        use crate::project::{LoadedFile, load_file};
+
+        let (mut engine, handle) = SynthEngine::new();
+        let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
+
+        let lead = InstrumentId::new(0);
+        session
+            .add_instrument_with_id(lead, "Lead")
+            .expect("add lead");
+        let _ = session.apply_patch(lead, &minimal_patch("Lead Patch"));
+
+        // A second instrument with a distinctive module (an LFO the lead lacks),
+        // so the save must actually scope to `lead` — an unscoped or inverted
+        // filter would pull this module into the saved patch.
+        let other = InstrumentId::new(1);
+        session
+            .add_instrument_with_id(other, "Other")
+            .expect("add other");
+        let mut other_patch = minimal_patch("Other Patch");
+        other_patch.add_module(ModuleBuilder::new(1, ModuleType::Lfo).build());
+        let _ = session.apply_patch(other, &other_patch);
+
+        let stream_info = synth_core::StreamInfo {
+            sample_rate: HwSampleRate(TEST_SR),
+            buffer_size: synth_core::BufferSize(256),
+            channels: synth_core::ChannelCount::Stereo,
+            output_latency: std::time::Duration::ZERO,
+            input_latency: None,
+        };
+        engine.on_stream_start(&stream_info);
+        drive(&mut engine, 4);
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("lead.json");
+        let msg = save_patch_to(&path, &session, lead).expect("save_patch_to");
+        assert!(msg.contains("Lead"), "message names the instrument: {msg}");
+
+        match load_file(&path).expect("load saved patch") {
+            LoadedFile::Patch(loaded) => {
+                // Patch name mirrors the instrument name (build_patch_from_engine).
+                assert_eq!(loaded.name, "Lead");
+                assert_eq!(loaded.modules.len(), 3, "only the lead's osc + amp + out");
+                assert_eq!(loaded.connections.len(), 3, "all three cables persisted");
+                assert!(
+                    loaded
+                        .modules
+                        .iter()
+                        .all(|m| m.module_type != ModuleType::Lfo),
+                    "the other instrument's LFO must not leak into the lead's patch"
+                );
+            }
+            _ => panic!("expected a single-instrument patch, got a different file kind"),
+        }
     }
 
     /// Spin up a fresh engine, install two instruments with patches and

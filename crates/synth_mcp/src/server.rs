@@ -642,6 +642,17 @@ pub struct SearchModulesParam {
     pub query: Option<String>,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ListModuleTypesParam {
+    #[schemars(
+        description = "If true, return a compact list of just {type_key, name, category} per \
+        module type instead of the full port/parameter catalog (which is hundreds of KB and can \
+        exceed the tool-result token cap). Use brief to pick a type_key, then get_module_type_info \
+        for that one type's full details. Default false."
+    )]
+    pub brief: Option<bool>,
+}
+
 /// Single from/to port pair for the `check_connection` validator.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct CheckConnectionParam {
@@ -649,11 +660,11 @@ pub struct CheckConnectionParam {
     pub instrument_id: u64,
     #[schemars(description = "Source module ID, e.g. 'osc-1'")]
     pub from_module: String,
-    #[schemars(description = "Source port name, e.g. 'output'")]
+    #[schemars(description = "Source port name, e.g. 'out' ('output' is accepted as an alias)")]
     pub from_port: String,
     #[schemars(description = "Destination module ID, e.g. 'flt-1'")]
     pub to_module: String,
-    #[schemars(description = "Destination port name, e.g. 'input'")]
+    #[schemars(description = "Destination port name, e.g. 'in' ('input' is accepted as an alias)")]
     pub to_port: String,
 }
 
@@ -1789,11 +1800,11 @@ pub struct RemoveModulesParam {
 pub struct ConnectionInput {
     #[schemars(description = "Source module ID, e.g. 'osc-1'")]
     pub from_module: String,
-    #[schemars(description = "Source port name, e.g. 'out'")]
+    #[schemars(description = "Source port name, e.g. 'out' ('output' is accepted as an alias)")]
     pub from_port: String,
     #[schemars(description = "Destination module ID, e.g. 'flt-1'")]
     pub to_module: String,
-    #[schemars(description = "Destination port name, e.g. 'input'")]
+    #[schemars(description = "Destination port name, e.g. 'in' ('input' is accepted as an alias)")]
     pub to_port: String,
 }
 
@@ -1995,7 +2006,7 @@ pub struct SetPatchDescriptionParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetModuleDescriptionParam {
+pub struct ModuleDescriptionInput {
     #[schemars(description = "Instrument ID that owns the module")]
     pub instrument_id: u64,
     #[schemars(description = "Module ID, e.g. \"lfo-1\" or \"flt-2\"")]
@@ -2006,6 +2017,16 @@ pub struct SetModuleDescriptionParam {
         which documents the module *type*. Pass \"\" to clear. Max 2000 characters."
     )]
     pub description: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetModuleDescriptionParam {
+    #[schemars(
+        description = "Array of per-module description updates. Each item is self-contained \
+        ({instrument_id, module_id, description}), mirroring set_instrument_description, so one \
+        call can annotate modules across different instruments."
+    )]
+    pub items: Vec<ModuleDescriptionInput>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -3351,6 +3372,14 @@ pub struct ProjectPathParam {
     pub path: String,
 }
 
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SavePatchParam {
+    #[schemars(description = "ID of the instrument to export as a patch")]
+    pub instrument_id: u64,
+    #[schemars(description = "Absolute file path for the patch (.json)")]
+    pub path: String,
+}
+
 // === AWE parameter structs ===
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -3865,7 +3894,7 @@ impl SynthMcpServer {
             "get_ui_snapshot" => get_ui_snapshot(InstrumentIdParam),
 
             // Module types & discovery
-            "list_module_types" => list_module_types(NoParams),
+            "list_module_types" => list_module_types(ListModuleTypesParam),
             "get_module_type_info" => get_module_type_info(GetModuleTypeInfoParam),
             "search_modules" => search_modules(SearchModulesParam),
             "list_port_types" => list_port_types(NoParams),
@@ -4009,6 +4038,7 @@ impl SynthMcpServer {
             // Project
             "new_project" => new_project(NoParams),
             "save_project" => save_project(ProjectPathParam),
+            "save_patch" => save_patch(SavePatchParam),
             "load_project" => load_project(ProjectPathParam),
             "optimize_project" => optimize_project(NoParams),
 
@@ -5309,9 +5339,19 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "List all available module types with their ports and parameters. Use the type_key to add modules with add_module."
+        description = "List all available module types. By default returns the full catalog \
+        (every port + parameter per type) — this is hundreds of KB and can exceed the tool-result \
+        token cap, so pass brief:true for a compact {type_key, name, category} list, then call \
+        get_module_type_info for the one type you want. Use the type_key to add modules with \
+        add_module."
     )]
-    async fn list_module_types(&self, _params: Parameters<NoParams>) -> String {
+    async fn list_module_types(&self, params: Parameters<ListModuleTypesParam>) -> String {
+        if params.0.brief.unwrap_or(false) {
+            return match self.bridge.list_module_types_brief() {
+                Ok(types) => to_json(&types),
+                Err(e) => format!("Error: {e}"),
+            };
+        }
         match self.bridge.list_module_types() {
             Ok(types) => to_json(&types),
             Err(e) => format!("Error: {e}"),
@@ -5319,7 +5359,7 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Add one or more modules to the instrument's voice graph. Modules appear in the GUI on the next frame. Returns the assigned module IDs (see also list_modules)."
+        description = "Add one or more modules to the instrument's voice graph. Modules appear in the GUI on the next frame. Returns the assigned module IDs (see also list_modules). GUI-only visualizer types (Oscilloscope/Meter/Spectrum) can't be added over MCP — they're flagged gui_only:true in list_module_types."
     )]
     async fn add_module(&self, params: Parameters<AddModulesParam>) -> String {
         let p = params.0;
@@ -5352,7 +5392,7 @@ impl SynthMcpServer {
 
     #[tool(
         description = "Connect one or more module port pairs in one call. Returns the number of successful connections and any errors. \
-                       Each connection specifies from_module:from_port → to_module:to_port."
+                       Each connection specifies from_module:from_port → to_module:to_port. Port names must match the module's ports (typically 'out'/'in'); the aliases 'output'→'out' and 'input'→'in' are also accepted."
     )]
     async fn connect(&self, params: Parameters<ConnectMultipleParam>) -> String {
         let mut ok_count = 0usize;
@@ -5600,38 +5640,32 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Set or clear the free-text description on a specific module instance \
-        (what this particular module is for — e.g. \"wobble LFO for the filter cutoff\"). \
+        description = "Set or clear the free-text description on one or more module instances \
+        (what a particular module is for — e.g. \"wobble LFO for the filter cutoff\"). Takes an \
+        array of self-contained {instrument_id, module_id, description} items, so a single call \
+        can annotate modules across different instruments (mirrors set_instrument_description). \
         Distinct from get_module_type_info, which documents the module *type*. The description \
         travels with the patch when saved and is readable via get_module_info / list_modules. \
-        Pass \"\" to clear. Max 2000 characters; rejected if the module does not exist."
+        Pass \"\" to clear an item. Max 2000 characters; an item is rejected if the module does \
+        not exist."
     )]
     async fn set_module_description(
         &self,
         params: Parameters<SetModuleDescriptionParam>,
     ) -> String {
-        match self.bridge.set_module_description(
-            params.0.instrument_id,
-            &params.0.module_id,
-            &params.0.description,
-        ) {
-            Ok(()) => {
-                if params.0.description.is_empty() {
-                    format!(
-                        "OK: cleared description on module {} (instrument {})",
-                        params.0.module_id, params.0.instrument_id
-                    )
-                } else {
-                    format!(
-                        "OK: set description on module {} (instrument {}, {} chars)",
-                        params.0.module_id,
-                        params.0.instrument_id,
-                        params.0.description.chars().count()
-                    )
-                }
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            match self.bridge.set_module_description(
+                it.instrument_id,
+                &it.module_id,
+                &it.description,
+            ) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("{}:{}: {e}", it.instrument_id, it.module_id)),
             }
-            Err(e) => format!("Error: {e}"),
         }
+        batch_msg(ok_count, "module descriptions set", &[], &errors)
     }
 
     #[tool(
@@ -7422,7 +7456,8 @@ impl SynthMcpServer {
     #[tool(
         description = "Build one or more complete instruments in one call. Each instrument has its own modules and connections; \
                        modules are referenced by 0-based array index in connections. Returns per-instrument results with instrument_id and module_ids. \
-                       Example instrument: modules=[{module_type:'osc'},{module_type:'amp'},{module_type:'out'}], connections=[{from:0,from_port:'output',to:1,to_port:'input'},{from:1,from_port:'output',to:2,to_port:'input'}]"
+                       Port names must match the module's ports (osc/amp/out expose 'out'/'in'); the aliases 'output'→'out' and 'input'→'in' are also accepted. If every requested connection fails the whole call errors instead of returning a zero-connection instrument (a freshly-created instrument is rolled back, so no orphan is left). \
+                       Example instrument: modules=[{module_type:'osc'},{module_type:'amp'},{module_type:'out'}], connections=[{from:0,from_port:'out',to:1,to_port:'in'},{from:1,from_port:'out',to:2,to_port:'in'}]"
     )]
     async fn build_instrument(&self, params: Parameters<BuildInstrumentsParam>) -> String {
         for (idx, inst) in params.0.instruments.iter().enumerate() {
@@ -7531,6 +7566,29 @@ impl SynthMcpServer {
         tokio::task::block_in_place(|| match self.bridge.save_project(&params.0.path) {
             Ok(msg) => format!("OK: {msg}"),
             Err(e) => format!("Error: {e}"),
+        })
+    }
+
+    #[tool(
+        description = "Save a single instrument as a standalone patch file (its modules, \
+        connections, and patch metadata only — no song or other instruments). This is the \
+        single-instrument format that load_project reads back, distinct from save_project which \
+        writes the whole project. It captures the instrument's currently-mirrored graph; \
+        module/connection changes queued in the SAME batch_execute may not be reflected yet, so \
+        save the patch in a separate call after mutating the graph."
+    )]
+    async fn save_patch(&self, params: Parameters<SavePatchParam>) -> String {
+        if let Err(e) = validate_file_path(&params.0.path) {
+            return e;
+        }
+        tokio::task::block_in_place(|| {
+            match self
+                .bridge
+                .save_patch(params.0.instrument_id, &params.0.path)
+            {
+                Ok(msg) => format!("OK: {msg}"),
+                Err(e) => format!("Error: {e}"),
+            }
         })
     }
 
