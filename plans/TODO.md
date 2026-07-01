@@ -4,32 +4,15 @@
 
 ### 1.1 Tempo automation
 
-The **tempo map** (position-specific tempo + accelerando/ritardando ramps) shipped:
-MCP tools (`set_tempo_at` / `remove_tempo_at` / `get_tempo_map`, each with a `ramp`
-flag) + the map in `get_song_info`; ramp interpolation in `tempo_at` and ramp-aware
-`tick_to_seconds` / `seconds_to_tick`; ramp-aware undo (`SetTempo` + `MoveTempo`); and
-a draggable GUI tempo lane in the arrangement (curve + handles, drag/add/remove,
-hover glow). (Not to be confused with the generic `AutomationTarget::Global(Tempo)`
-lane, removed for good 2026-06-01 — a tempo-map point can't be a per-block lane value;
-that dead code is not coming back.)
-
-Optional polish left:
-
-- [ ] **Dynamic tempo-lane BPM axis (improvement).** The lane maps a fixed
-  `LANE_BPM_MIN..MAX` window (40–240 BPM) to its vertical axis; points outside clamp
-  to the top/bottom edge, so a song using only e.g. 60–80 BPM wastes most of the lane
-  and one using 300 BPM pins to the edge. Consider deriving the visible range from the
-  map's min/max (with padding) — or a small user-set zoom — so the curve fills the lane
-  usefully. Trade-off: a shifting axis makes vertical drag feel less predictable, so
-  keep it stable *during* a drag if made dynamic.
-
-- [ ] **Clarify global-default vs tempo-map in the ruler menu (UX).** The arrangement
-  ruler's right-click "Set tempo here…" edits the position-specific map, while
-  `set_song_tempo` (MCP) / the transport tempo field set the *global default* that
-  governs the timeline before the first map point. These two "tempo" controls read as
-  the same thing. Now that the lane visualizes the map, make the distinction legible —
-  e.g. label the default segment in the lane, or reword the menu so it's clear the ruler
-  edits a *point in the map*, not the song's base tempo.
+**Done.** The **tempo map** (position-specific tempo + accelerando/ritardando ramps)
+shipped in full: MCP tools (`set_tempo_at` / `remove_tempo_at` / `get_tempo_map`, each
+with a `ramp` flag) + the map in `get_song_info`; ramp interpolation in `tempo_at` and
+ramp-aware `tick_to_seconds` / `seconds_to_tick`; ramp-aware undo (`SetTempo` +
+`MoveTempo`); and a draggable GUI tempo lane in the arrangement — curve + handles with
+drag/add/remove, hover glow, a dynamic BPM axis (frozen during a drag), and the global
+default drawn/labelled distinct from map points. (Not to be confused with the generic
+`AutomationTarget::Global(Tempo)` lane, removed for good 2026-06-01 — a tempo-map point
+can't be a per-block lane value; that dead code is not coming back.)
 
 ### 1.2 Section markers
 

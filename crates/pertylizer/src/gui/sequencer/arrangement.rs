@@ -335,6 +335,28 @@ fn apply_pattern_length(
     }
 }
 
+/// Visible BPM window for the tempo lane's vertical axis, fitted to the map
+/// (default tempo + all points) with padding so the curve fills the lane. Kept
+/// to a usable minimum span and clamped to the valid `[20, 300]` tempo range.
+fn tempo_lane_range(data: &ArrangementData) -> (f32, f32) {
+    let mut lo = data.default_tempo;
+    let mut hi = data.default_tempo;
+    for &(_, bpm, _) in &data.tempo_changes {
+        lo = lo.min(bpm);
+        hi = hi.max(bpm);
+    }
+    let pad = ((hi - lo) * 0.2).max(15.0);
+    lo = (lo - pad).max(20.0);
+    hi = (hi + pad).min(300.0);
+    if hi - lo < 40.0 {
+        // Degenerate (few / equal tempos): centre a fixed span on the midpoint.
+        let mid = ((lo + hi) * 0.5).clamp(40.0, 280.0);
+        lo = mid - 20.0;
+        hi = mid + 20.0;
+    }
+    (lo, hi)
+}
+
 /// Draw the arrangement view with track headers and timeline.
 ///
 /// Returns `Some(PatternId)` if a placement was double-clicked.
@@ -1142,56 +1164,116 @@ fn draw_arrangement_timeline(
     {
         let tempo_color = TEMPO_MARKER;
         let lane_pad = 8.0;
-        let y_hi = lane_top + lane_pad; // maps LANE_BPM_MAX
-        let y_lo = tracks_top - lane_pad; // maps LANE_BPM_MIN
+        let y_hi = lane_top + lane_pad; // top edge → axis max
+        let y_lo = tracks_top - lane_pad; // bottom edge → axis min
+
+        // Dynamic BPM axis fitted to the map. Freeze it while a handle is being
+        // dragged so vertical drag stays 1:1 (a live-rescaling axis makes the
+        // point slip under the cursor); recompute + re-store when idle.
+        let axis_id = ui.id().with("tempo_lane_axis");
+        let dragging = ui.ctx().dragged_id().is_some_and(|d| {
+            (0..data.tempo_changes.len()).any(|i| d == ui.id().with(("tempo_handle", i)))
+        });
+        let (bpm_min, bpm_max) = if dragging {
+            ui.memory(|m| m.data.get_temp::<(f32, f32)>(axis_id))
+                .unwrap_or_else(|| tempo_lane_range(data))
+        } else {
+            let range = tempo_lane_range(data);
+            ui.memory_mut(|m| m.data.insert_temp(axis_id, range));
+            range
+        };
         let bpm_to_y = |bpm: f32| {
-            let f = ((bpm - LANE_BPM_MIN) / (LANE_BPM_MAX - LANE_BPM_MIN)).clamp(0.0, 1.0);
+            let f = ((bpm - bpm_min) / (bpm_max - bpm_min)).clamp(0.0, 1.0);
             y_lo + f * (y_hi - y_lo)
         };
         let right_x = tl_x + timeline_width;
 
-        // Piecewise curve: a leading constant segment at the default tempo, then
-        // one segment per point (step = flat-then-jump, ramp = sloped), and a
-        // trailing constant segment to the right edge.
-        let mut prev_x = tl_x;
-        let mut prev_bpm = data.default_tempo;
-        let mut prev_ramp = false; // the pre-first-point segment is always constant
-        for (tick, bpm, ramp) in &data.tempo_changes {
-            let x = tick_to_x(*tick);
-            let y_prev = bpm_to_y(prev_bpm);
-            let y_here = bpm_to_y(*bpm);
-            if prev_ramp {
+        // Leading segment governed by the *global default* tempo (up to the first
+        // map point, or the whole lane when there are none). Drawn dim + labelled
+        // so it reads as the default, distinct from the bright map points.
+        let default_y = bpm_to_y(data.default_tempo);
+        let dim = tempo_color.gamma_multiply(0.4);
+        let first_x = data
+            .tempo_changes
+            .first()
+            .map_or(right_x, |(t, _, _)| tick_to_x(*t));
+        // Only when there is an actual default region — i.e. the first point is
+        // past tick 0 (or there are no points). A first point at tick 0 governs
+        // from the start, so drawing/labelling a default here would be misleading.
+        if first_x > tl_x {
+            painter.line_segment(
+                [Pos2::new(tl_x, default_y), Pos2::new(first_x, default_y)],
+                Stroke::new(1.0, dim),
+            );
+            if let Some((_, b0, _)) = data.tempo_changes.first() {
+                // Step from the default level to the first point.
                 painter.line_segment(
-                    [Pos2::new(prev_x, y_prev), Pos2::new(x, y_here)],
+                    [
+                        Pos2::new(first_x, default_y),
+                        Pos2::new(first_x, bpm_to_y(*b0)),
+                    ],
+                    Stroke::new(1.0, dim),
+                );
+            }
+            painter.text(
+                Pos2::new(tl_x + 3.0, default_y + 1.0),
+                egui::Align2::LEFT_TOP,
+                "default",
+                egui::FontId::proportional(8.0),
+                tempo_color.gamma_multiply(0.7),
+            );
+        }
+
+        // Map segments: each point draws its outgoing segment to the next point
+        // (step = flat-then-jump, ramp = sloped), the last one holding to the
+        // right edge.
+        for i in 0..data.tempo_changes.len() {
+            let (_, bpm, ramp) = data.tempo_changes[i];
+            let x = tick_to_x(data.tempo_changes[i].0);
+            let y = bpm_to_y(bpm);
+            let (next_x, next_y) = data
+                .tempo_changes
+                .get(i + 1)
+                .map_or((right_x, y), |n| (tick_to_x(n.0), bpm_to_y(n.1)));
+            if ramp {
+                painter.line_segment(
+                    [Pos2::new(x, y), Pos2::new(next_x, next_y)],
                     Stroke::new(1.5, tempo_color),
                 );
             } else {
                 painter.line_segment(
-                    [Pos2::new(prev_x, y_prev), Pos2::new(x, y_prev)],
+                    [Pos2::new(x, y), Pos2::new(next_x, y)],
                     Stroke::new(1.5, tempo_color),
                 );
-                painter.line_segment(
-                    [Pos2::new(x, y_prev), Pos2::new(x, y_here)],
-                    Stroke::new(1.0, tempo_color.gamma_multiply(0.5)),
-                );
+                if data.tempo_changes.get(i + 1).is_some() {
+                    painter.line_segment(
+                        [Pos2::new(next_x, y), Pos2::new(next_x, next_y)],
+                        Stroke::new(1.0, tempo_color.gamma_multiply(0.5)),
+                    );
+                }
             }
-            prev_x = x;
-            prev_bpm = *bpm;
-            prev_ramp = *ramp;
         }
-        painter.line_segment(
-            [
-                Pos2::new(prev_x, bpm_to_y(prev_bpm)),
-                Pos2::new(right_x, bpm_to_y(prev_bpm)),
-            ],
-            Stroke::new(1.5, tempo_color),
-        );
+
+        // Axis scale labels at the lane's left edge (the padded extremes are
+        // always clear of the curve), so the dynamic BPM range is legible.
+        for (bpm, y, anchor) in [
+            (bpm_max, y_hi, egui::Align2::LEFT_TOP),
+            (bpm_min, y_lo, egui::Align2::LEFT_BOTTOM),
+        ] {
+            painter.text(
+                Pos2::new(tl_x + 2.0, y),
+                anchor,
+                format!("{bpm:.0}"),
+                egui::FontId::proportional(8.0),
+                t.colors.text_dim,
+            );
+        }
 
         // ── Interaction (handles are drawn here so hover/drag glow reflects the
         // live response state) ──
         let y_to_bpm = |y: f32| {
             let f = ((y - y_lo) / (y_hi - y_lo)).clamp(0.0, 1.0);
-            LANE_BPM_MIN + f * (LANE_BPM_MAX - LANE_BPM_MIN)
+            bpm_min + f * (bpm_max - bpm_min)
         };
 
         // Empty-lane background: double-click or right-click to add a point at the
@@ -1533,7 +1615,13 @@ fn draw_arrangement_context_menu(
             },
             |(b, _)| b,
         );
-        ui.menu_button("Set tempo here…", |ui| {
+        ui.menu_button("Tempo point here…", |ui| {
+            // A position-specific point in the tempo *map*, distinct from the
+            // song's global default (set via the transport tempo field).
+            ui.label(
+                RichText::new("Tempo-map point (not the song default)").color(t.colors.text_dim),
+            );
+            ui.separator();
             // Live-apply BPM edit: the song is the buffer (like the knobs and the
             // ramp toggle). A per-frame `let mut bpm = default` local resets every
             // frame, so a mouse drag could never accumulate — instead seed from the
