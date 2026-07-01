@@ -582,9 +582,10 @@ pub(super) fn draw_yams_help_window(
                 );
                 body(
                     ui,
-                    "- Context: gate, gate_on, age (s), sr, beat, bar_phase (0..1), \
-                     tempo (BPM), playing. The transport vars are shared by all \
-                     voices - tempo-synced: out = sin(beat * tau).",
+                    "- Context: gate, gate_on, age (s), cr (control rate Hz), \
+                     sr (audio sample rate Hz), note_hz (voice pitch), beat, \
+                     bar_phase (0..1), tempo (BPM), playing. The transport vars are \
+                     shared by all voices - tempo-synced: out = sin(beat * tau).",
                 );
                 body(ui, "- Constants: pi, tau (2*pi), e.");
 

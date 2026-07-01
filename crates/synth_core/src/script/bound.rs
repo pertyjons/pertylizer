@@ -24,6 +24,15 @@ pub enum ScriptContext {
     /// Control rate in Hz (`sample_rate / block_size`), *not* the audio sample
     /// rate.
     Cr,
+    /// Audio sample rate in Hz (the device / render rate). Unlike [`Self::Cr`]
+    /// this is the per-sample rate; `sr / cr` is the block size. Lets an
+    /// audio-rate script be sample-rate-portable instead of hardcoding a rate.
+    Sr,
+    /// The voice's current playing frequency in Hz, including glide, pitch bend,
+    /// and per-note vibrato (but not per-oscillator detune). Lets a scripted
+    /// oscillator track the note faithfully — `phasor(note_hz)` — instead of
+    /// `mtof(note)`, which sees only the raw note number.
+    NoteHz,
     /// Absolute transport position in beats (grows unbounded while playing).
     Beat,
     /// Phase within the current bar, `0..1` (4/4).

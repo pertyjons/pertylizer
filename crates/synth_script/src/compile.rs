@@ -102,6 +102,8 @@ fn context_to_runtime(c: Context) -> ScriptContext {
         Context::GateOn => ScriptContext::GateOn,
         Context::Age => ScriptContext::Age,
         Context::Cr => ScriptContext::Cr,
+        Context::Sr => ScriptContext::Sr,
+        Context::NoteHz => ScriptContext::NoteHz,
         Context::Beat => ScriptContext::Beat,
         Context::BarPhase => ScriptContext::BarPhase,
         Context::Tempo => ScriptContext::Tempo,
@@ -1252,16 +1254,38 @@ mod tests {
     }
 
     #[test]
-    fn control_rate_var_is_cr_not_sr() {
-        // The control-rate context var was renamed `sr` → `cr`; the old name is
-        // gone (it conventionally reads as "sample rate", an order-of-magnitude trap).
+    fn cr_and_sr_are_distinct_context_vars() {
+        // `cr` is the control rate (`sample_rate / block_size`); `sr` is the audio
+        // sample rate. Both resolve, to *different* source registers, so a script
+        // can read either without one aliasing the other.
         compile_ok("out = cr");
-        assert!(
-            errors("out = sr")
-                .iter()
-                .any(|e| e.contains("unknown identifier")),
-            "`sr` must no longer resolve"
+        let prog = compile_ok("out = sr");
+        assert_eq!(
+            prog.inputs,
+            vec![SourceInput::Context(Context::Sr)],
+            "`sr` resolves to the audio sample-rate context var"
         );
+        // Reading `sr` must pick up the Sr fill, not the Cr fill.
+        let out = eval(&prog, |inp| match inp {
+            SourceInput::Context(Context::Sr) => 48_000.0,
+            SourceInput::Context(Context::Cr) => 750.0,
+            _ => 0.0,
+        });
+        assert!(approx(out, 48_000.0), "`sr` read the wrong register: {out}");
+    }
+
+    #[test]
+    fn note_hz_resolves_to_the_voice_frequency_var() {
+        // `note_hz` is the voice's playing frequency; it must resolve to its own
+        // context register, distinct from the raw `note` macro.
+        let prog = compile_ok("out = note_hz");
+        assert_eq!(prog.inputs, vec![SourceInput::Context(Context::NoteHz)]);
+        let out = eval(&prog, |inp| match inp {
+            SourceInput::Context(Context::NoteHz) => 220.0,
+            SourceInput::Macro(Macro::Note) => 57.0,
+            _ => 0.0,
+        });
+        assert!(approx(out, 220.0), "`note_hz` read the wrong source: {out}");
     }
 
     #[test]

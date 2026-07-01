@@ -119,6 +119,28 @@ the MCP surface remains:
     3. The helper macros in `macros.rs` and other modules are updated or verified to compile
        properly under module-level visibility rules.
 
+### 2.6 YAMS scripting follow-ups
+
+- [ ] **Per-sample pitch binding for `note_hz` in AudioScript.** The `note_hz`
+  context var is currently *block-constant* — resolved once per block by the
+  voice (`ScriptCtx`), same as the oscillator's own `set_voice_pitch`. So an
+  audio-rate `phasor(note_hz)` does not follow intra-block pitch bend / glide at
+  per-sample resolution; fast portamento steps once per block. A future
+  per-sample pitch binding (analogous to how the audio-in registers are injected
+  each sample in `eval_block`, via `AudioBindings`) would make scripted
+  oscillators track fast portamento faithfully. Small-to-medium; only matters for
+  audible fast glides.
+- [ ] **Generate the context-var lists from `CONTEXT_CATALOG` instead of hand
+  maintenance.** The YAMS context vars now live in *seven* parallel places
+  (`Context` enum, `context_from_name`, `CONTEXT_CATALOG`, `context_to_runtime`,
+  `ScriptContext` + `resolve_script_input`, the patch-editor help popup in
+  `gui/patch_editor/popups.rs`, and the table in `docs/yams.md`). The
+  `every_context_var_declares_catalog_membership` test guards the
+  catalog↔resolver↔enum triangle, but the GUI popup and `yams.md` are still
+  hand-maintained prose and already drifted once (a stale `sr`). Generate the
+  popup line (and ideally the docs table) from `CONTEXT_CATALOG` so there is one
+  source of truth. Cleanup/aesthetics — no behaviour change.
+
 ---
 
 ## 3. UI & Visual Polish

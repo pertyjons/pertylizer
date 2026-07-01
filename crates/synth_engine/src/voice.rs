@@ -73,6 +73,13 @@ struct ScriptCtx {
     age: f32,
     /// Control rate in Hz (`sample_rate / block_size`), not the audio sample rate.
     cr: f32,
+    /// Audio sample rate in Hz (the device / render rate); `sr / cr` is the block
+    /// size. Lets an audio-rate script stay portable instead of hardcoding a rate.
+    sr: f32,
+    /// The voice's current playing frequency in Hz — glide, pitch bend, and
+    /// per-note vibrato folded in (the value handed to the sound sources this
+    /// block). Lets a scripted oscillator track the note via `phasor(note_hz)`.
+    note_hz: f32,
     /// Absolute transport position in beats (grows unbounded while playing).
     beat: f32,
     /// Phase within the current bar, `0..1` (4/4).
@@ -977,7 +984,10 @@ impl Voice {
             let block = samples.as_usize().max(1) as f32;
             let control_rate = context.sample_rate.as_f32() / block;
             let macros = self.macro_values();
-            let sctx = self.script_ctx(control_rate, context);
+            // `freq` is the voice's current playing pitch (glide + bend + vibrato),
+            // just delivered to the sound sources above; expose it to scripts as
+            // `note_hz` so a scripted oscillator tracks the note.
+            let sctx = self.script_ctx(control_rate, freq, context);
 
             if let Some(mm_id) = self.mod_matrix_id {
                 self.apply_mod_matrix(mm_id, &macros, &sctx);
@@ -1079,7 +1089,12 @@ impl Voice {
     /// Per-voice control-script context for this block: gate/age/cr (Step 2) plus
     /// the transport sources (Phase 1). Transport newtypes normalize to `f32`
     /// here; `bar_phase` is the 0..1 position within the 4/4 bar.
-    fn script_ctx(&self, control_rate: f32, context: &ProcessContext<'_>) -> ScriptCtx {
+    fn script_ctx(
+        &self,
+        control_rate: f32,
+        note_hz: Hertz,
+        context: &ProcessContext<'_>,
+    ) -> ScriptCtx {
         ScriptCtx {
             gate: f32::from(matches!(self.state, VoiceState::Active { .. })),
             gate_on: f32::from(self.note_on_block),
@@ -1089,6 +1104,8 @@ impl Voice {
             // perturb the voice-stealing priority that also reads `age`.
             age: self.age.to_seconds(context.sample_rate).as_f32(),
             cr: control_rate,
+            sr: context.sample_rate.as_f32(),
+            note_hz: note_hz.as_f32(),
             beat: context.position_beats.as_f32(),
             bar_phase: (context.position_beats.beat_in_bar() / 4.0) as f32,
             tempo: context.tempo.as_f32(),
@@ -1369,6 +1386,8 @@ impl Voice {
                 ScriptContext::GateOn => sctx.gate_on,
                 ScriptContext::Age => sctx.age,
                 ScriptContext::Cr => sctx.cr,
+                ScriptContext::Sr => sctx.sr,
+                ScriptContext::NoteHz => sctx.note_hz,
                 ScriptContext::Beat => sctx.beat,
                 ScriptContext::BarPhase => sctx.bar_phase,
                 ScriptContext::Tempo => sctx.tempo,

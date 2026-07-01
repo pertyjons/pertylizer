@@ -27,6 +27,16 @@ pub enum Context {
     /// rate. Drives time-based stateful math; supplied as an input rather than a
     /// constant because it depends on the device sample rate.
     Cr,
+    /// Audio sample rate in Hz (the device / render rate). `sr / cr` is the
+    /// block size; an audio-rate script uses it to stay portable across rates
+    /// instead of hardcoding one. Supplied as an input for the same reason as
+    /// [`Self::Cr`].
+    Sr,
+    /// The voice's current playing frequency in Hz — glide, pitch bend, and
+    /// per-note vibrato included. Lets a scripted oscillator track the note
+    /// (`phasor(note_hz)`) instead of `mtof(note)`, which sees only the raw
+    /// note number and ignores bend/glide.
+    NoteHz,
     /// Absolute transport position in beats (e.g. `sin(beat * tau)` is a
     /// tempo-locked sine). Grows unbounded while playing.
     Beat,
@@ -129,6 +139,8 @@ pub const CONTEXT_CATALOG: &[(&str, &str)] = &[
     ("gate_on", "Gate note-on edge"),
     ("age", "Voice age (s)"),
     ("cr", "Control rate (Hz)"),
+    ("sr", "Sample rate (Hz)"),
+    ("note_hz", "Note frequency (Hz)"),
     ("beat", "Transport beat"),
     ("bar_phase", "Bar phase (0..1)"),
     ("tempo", "Tempo (BPM)"),
@@ -169,6 +181,8 @@ pub fn context_from_name(name: &str) -> Option<Context> {
         "gate_on" => Context::GateOn,
         "age" => Context::Age,
         "cr" => Context::Cr,
+        "sr" => Context::Sr,
+        "note_hz" => Context::NoteHz,
         "beat" => Context::Beat,
         "bar_phase" => Context::BarPhase,
         "tempo" => Context::Tempo,
@@ -291,5 +305,67 @@ mod tests {
                 "context {name} unresolved"
             );
         }
+    }
+
+    /// Exhaustive map from every `Context` variant to its picker-catalog name, or
+    /// `None` for vars deliberately excluded from the control-script picker
+    /// (audio-only). Exhaustive on purpose: adding a `Context` variant fails to
+    /// compile here until its catalog membership is declared, which is the
+    /// forcing function that keeps [`CONTEXT_CATALOG`] (and the sites that mirror
+    /// it — the GUI help popup, `docs/yams.md`) from silently drifting.
+    fn catalog_name(var: Context) -> Option<&'static str> {
+        match var {
+            Context::Gate => Some("gate"),
+            Context::GateOn => Some("gate_on"),
+            Context::Age => Some("age"),
+            Context::Cr => Some("cr"),
+            Context::Sr => Some("sr"),
+            Context::NoteHz => Some("note_hz"),
+            Context::Beat => Some("beat"),
+            Context::BarPhase => Some("bar_phase"),
+            Context::Tempo => Some("tempo"),
+            Context::Playing => Some("playing"),
+            Context::FirstSample => None, // audio-only; not offered in the picker
+        }
+    }
+
+    #[test]
+    fn every_context_var_declares_catalog_membership() {
+        // Every `Context` variant, so the reverse check below covers the whole
+        // enum. Kept beside `catalog_name`, whose exhaustive match forces a new
+        // variant to be handled; this list forces it to also be tested.
+        const ALL: &[Context] = &[
+            Context::Gate,
+            Context::GateOn,
+            Context::Age,
+            Context::Cr,
+            Context::Sr,
+            Context::NoteHz,
+            Context::Beat,
+            Context::BarPhase,
+            Context::Tempo,
+            Context::Playing,
+            Context::FirstSample,
+        ];
+        for &var in ALL {
+            if let Some(name) = catalog_name(var) {
+                assert!(
+                    CONTEXT_CATALOG.iter().any(|(n, _)| *n == name),
+                    "context var `{name}` missing from CONTEXT_CATALOG"
+                );
+                assert_eq!(
+                    context_from_name(name),
+                    Some(var),
+                    "resolver mismatch for `{name}`"
+                );
+            }
+        }
+        // And no stray catalog entries beyond the declared picker vars.
+        let picker_count = ALL.iter().filter(|v| catalog_name(**v).is_some()).count();
+        assert_eq!(
+            CONTEXT_CATALOG.len(),
+            picker_count,
+            "CONTEXT_CATALOG has entries not declared in catalog_name"
+        );
     }
 }

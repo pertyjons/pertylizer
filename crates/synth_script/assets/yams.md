@@ -229,6 +229,8 @@ shadowing.
 | `gate_on`   | `1` for the single block of note-on, else `0`                                                                                                                        |
 | `age`       | seconds since note-on                                                                                                                                                |
 | `cr`        | **control** rate in Hz — `sample_rate / block_size`, ~hundreds of Hz (device-dependent). **Not** the audio sample rate; a 48 kHz device yields `cr ≈ 750`, not 48000 |
+| `sr`        | **audio sample** rate in Hz — the device / render rate (e.g. 48000, or 44100 in the offline render). `sr / cr` is the block size. Use it to keep an audio-rate script portable instead of hardcoding a rate |
+| `note_hz`   | the voice's current playing frequency in Hz — glide, pitch bend, and per-note vibrato included (not per-oscillator detune). A scripted oscillator tracks the note with `phasor(note_hz)`, more faithfully than `mtof(note)` (which sees only the raw note number) |
 | `beat`      | absolute transport position in beats (grows unbounded; `sin(beat * tau)` is a tempo-locked sine)                                                                     |
 | `bar_phase` | phase within the current bar, `0..1` (4/4); wraps every bar                                                                                                          |
 | `tempo`     | transport tempo in BPM (`tempo / 60` is beats per second)                                                                                                            |
@@ -539,6 +541,9 @@ let m = (in_l + in_r) * 0.5
 let s = (in_l - in_r) * 0.5
 out.left  = m + s * 1.5
 out.right = m - s * 1.5
+
+# Scripted saw oscillator — `note_hz` tracks glide/bend, `phasor` is SR-portable
+out = phasor(note_hz) * 2 - 1
 ```
 
 **Cost.** Audio rate runs one eval **per sample** — tens to hundreds of times

@@ -27,7 +27,7 @@ use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ModuleType, Param,
     PolyModule, PortDescriptor, PortName, ProcessContext,
 };
-use synth_core::{MidiNote, SampleRate, Velocity};
+use synth_core::{MidiNote, Velocity};
 
 /// A per-voice audio-rate scripted DSP node.
 ///
@@ -61,7 +61,6 @@ pub struct AudioScript {
     /// `true` until the first block of the note has been processed — drives the
     /// `first_sample` one-shot. Set by `note_on`, cleared after the first block.
     first_block: bool,
-    sample_rate: SampleRate,
 }
 
 impl AudioScript {
@@ -76,7 +75,6 @@ impl AudioScript {
             out_l: Vec::new(),
             out_r: Vec::new(),
             first_block: true,
-            sample_rate: SampleRate::DVD_QUALITY,
         }
     }
 
@@ -160,7 +158,11 @@ impl PolyModule for AudioScript {
             self.out_l.resize(n, 0.0);
             self.out_r.resize(n, 0.0);
         }
-        let ctx = EvalContext::audio(self.sample_rate.as_f32());
+        // Build the eval context from the live per-call sample rate, never a
+        // cached field: the offline render loader (`arrangement_render.rs`) never
+        // calls `set_sample_rate`, so a stale 48 kHz default would detune every
+        // audio-rate `phasor`/time op whenever the render rate differs (44.1 kHz).
+        let ctx = EvalContext::audio(context.sample_rate.as_f32());
         // Cheap Arc clone (atomic bump, no alloc) so the immutable script borrow
         // does not conflict with the mutable `sources`/`regs`/output borrows.
         let script = self.script.clone();
@@ -228,10 +230,6 @@ impl PolyModule for AudioScript {
 
     fn note_off(&mut self) {}
 
-    fn set_sample_rate(&mut self, sample_rate: SampleRate) {
-        self.sample_rate = sample_rate;
-    }
-
     fn scripts(&self) -> Option<&[Option<Arc<BoundScript>>]> {
         // One program; expose it as a 1-element slice so the voice's slot-0
         // source-resolution path works uniformly with the control Script module.
@@ -296,8 +294,8 @@ fn write_channel(buf: &mut AudioBuffer, scratch: &[f32], ran: bool) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use synth_core::SampleCount;
     use synth_core::script::{Builtin, CompiledScript, Op};
+    use synth_core::{SampleCount, SampleRate};
 
     const N: usize = 16;
 
@@ -462,6 +460,53 @@ mod tests {
             "first_sample fires on the first real sample"
         );
         assert!(l[1..].iter().all(|&v| v == 0.0), "and only there");
+    }
+
+    /// Run an audio-rate `out = phasor(freq)` block at `sr` and return its
+    /// left-channel phase ramp. No audio inputs — a pure scripted oscillator.
+    fn phasor_ramp(freq: f32, sr: SampleRate, n: usize) -> Vec<f32> {
+        let mut m = AudioScript::new();
+        let _ = m.set_script(
+            0,
+            Some(bound(
+                vec![Op::PushConst(0), Op::Phasor(0)],
+                vec![freq],
+                vec![],
+            )),
+        );
+        let mut outs: HashMap<PortName, AudioBuffer> = HashMap::new();
+        outs.insert(PortName::OUT_L, AudioBuffer::new(n));
+        outs.insert(PortName::OUT_R, AudioBuffer::new(n));
+        let ctx = ProcessContext {
+            samples: SampleCount::new(n),
+            sample_rate: sr,
+            ..ProcessContext::default()
+        };
+        m.process(InputPorts::empty(), &mut outs, &ctx);
+        outs[&PortName::OUT_L].as_slice().to_vec()
+    }
+
+    #[test]
+    fn phasor_tracks_live_sample_rate_not_a_stale_default() {
+        // Regression for the offline-render detune bug: `process` must build the
+        // eval context from `ProcessContext.sample_rate`, not a cached field that
+        // defaulted to 48 kHz. A `phasor(freq)` ramps by `freq / sample_rate` per
+        // sample; the slope must match whatever rate the caller passes (the offline
+        // render runs at 44.1 kHz, the device at 48 kHz).
+        let freq = 220.0;
+        for sr in [SampleRate::CD_QUALITY, SampleRate::DVD_QUALITY] {
+            let n = 32;
+            let l = phasor_ramp(freq, sr, n);
+            let expected = freq / sr.as_f32(); // per-sample phase increment
+            for i in 1..n {
+                let delta = l[i] - l[i - 1];
+                assert!(
+                    (delta - expected).abs() < 1e-6,
+                    "sr {}: sample {i} slope {delta} != {expected}",
+                    sr.as_f32()
+                );
+            }
+        }
     }
 
     #[test]
