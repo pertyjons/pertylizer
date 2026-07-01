@@ -650,7 +650,7 @@ impl Default for LadderFilter {
 impl Describable for LadderFilter {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("ladder_filter", "Ladder Filter")
-            .width(synth_core::ModuleWidth::Small)
+            .width(synth_core::ModuleWidth::Medium)
             .description("24dB/oct Moog-style ladder filter")
             .category(ModuleCategory::Filter)
             .tag("filter")

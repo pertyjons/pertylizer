@@ -118,6 +118,7 @@ impl Default for RingMod {
 impl Describable for RingMod {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("ring_mod", "Ring Mod")
+            .width(synth_core::ModuleWidth::Large)
             .description("Ring modulator — multiplies input with internal carrier oscillator")
             .category(ModuleCategory::Oscillator)
             .tag("ring_mod")

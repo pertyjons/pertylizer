@@ -67,7 +67,7 @@ impl Default for VectorMixer {
 impl Describable for VectorMixer {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("vector_mixer", "Vector Mixer")
-            .width(synth_core::ModuleWidth::Small)
+            .width(synth_core::ModuleWidth::Medium)
             .description("4-corner XY vector crossfader for vector synthesis")
             .category(ModuleCategory::Utility)
             .tag("vector")

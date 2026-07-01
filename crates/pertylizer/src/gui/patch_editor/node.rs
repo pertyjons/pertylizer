@@ -134,14 +134,27 @@ impl PatchEditor {
             // Normal modules: three-column layout (IN ports | content | OUT ports)
             let col_w = theme().sizes.port_column_width;
 
-            // Stretch the content column so IN + content + OUT span the header
-            // width, anchoring the OUT column to the right edge. When the content
-            // is naturally wider than this (the common case), `set_min_width` is a
-            // no-op and the layout is unchanged.
-            let spacing_x = ui.spacing().item_spacing.x;
-            let content_min_w = (header_width - 2.0 * col_w - 2.0 * spacing_x).max(0.0);
-
             ui.horizontal(|ui| {
+                // Tighten the gaps between the port columns and the content band.
+                // The default item spacing (8 px) on both sides eats enough width
+                // to drop a Medium module below three knobs per row; 4 px keeps the
+                // content band wide enough for its bucket's intended knob count
+                // while still separating the ports.
+                ui.spacing_mut().item_spacing.x = 4.0;
+                let spacing_x = ui.spacing().item_spacing.x;
+
+                // Size the content column to exactly the space between the two port
+                // columns so IN + content + OUT span the header width, anchoring OUT
+                // to the right edge. `set_width` (not `set_min_width`) is deliberate:
+                // the OUT column is drawn *after* the content, so it isn't reserved
+                // yet — with only a minimum, `available_width()` inside the content
+                // would run all the way to the row's right edge (an extra
+                // `col_w + spacing`), and fill-width widgets (sliders, the knob-grid
+                // column count) would overrun into the OUT port column. Capping the
+                // width keeps them inside the content band; fixed content that is
+                // genuinely wider still overflows and pushes OUT out as before.
+                let content_w = (header_width - 2.0 * col_w - 2.0 * spacing_x).max(0.0);
+
                 // Left port column (IN) - fixed width
                 ui.vertical(|ui| {
                     ui.set_width(col_w);
@@ -156,7 +169,7 @@ impl PatchEditor {
 
                 // Content column - stretched to anchor OUT at the edge
                 ui.vertical(|ui| {
-                    ui.set_min_width(content_min_w);
+                    ui.set_width(content_w);
                     if let Some(panel_state) = self.panels.get_mut(&module_id) {
                         let vis_buffer = handle.get_visualization_buffer(module_id);
                         let panel_result = draw_module_panel_params(
@@ -304,10 +317,13 @@ pub(super) fn draw_module_panel_params(
         // Get envelope playback position (lock-free)
         let envelope_pos = state.envelope_position.as_ref().map(|buf| buf.get());
 
-        // Draw the interactive envelope editor
+        // Draw the interactive envelope editor. Width follows the module's
+        // content band (env is Large, MSEG ExtraLarge — both are Envelope-category
+        // and share this branch), so the graph fills the panel instead of capping
+        // at a fixed 250 px and leaving the wider buckets half-empty.
         ui.add_space(theme().spacing.xs);
-        let width = ui.available_width().clamp(150.0, 250.0);
-        let height = (width * 0.5).clamp(80.0, 120.0);
+        let width = ui.available_width().max(150.0);
+        let height = (width * 0.5).clamp(80.0, 140.0);
 
         let mut editor = EnvelopeEditor::new(&mut attack, &mut decay, &mut sustain, &mut release)
             .accent_color(accent_color)

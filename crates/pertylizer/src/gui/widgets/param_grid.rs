@@ -358,10 +358,15 @@ pub fn draw_knobs<'d>(
     // Wrap to the available width so the grid fits narrow panels (e.g. the
     // mixer's return inserts) instead of overflowing a fixed 5-per-row.
     let spacing = 5.0;
-    let per_row = ((ui.available_width() + spacing) / (cell_size.x + spacing))
+    // Greedy: fill each row to the panel's capacity. With the content band now
+    // sized to its ModuleWidth bucket (see `draw_module_body`), the capacity
+    // matches the intended knobs-per-row (Medium 3, Large 4, …), so filling the
+    // first row reads correctly (e.g. 7 knobs on a Large → 4+3, 4 knobs on a
+    // Medium → 3+1) without a separate balancing pass.
+    let per_row = (((ui.available_width() + spacing) / (cell_size.x + spacing))
         .floor()
-        .max(1.0) as usize;
-    let per_row = per_row.min(MAX_PER_ROW);
+        .max(1.0) as usize)
+        .min(MAX_PER_ROW);
 
     for chunk in params.chunks(per_row) {
         ui.horizontal(|ui| {

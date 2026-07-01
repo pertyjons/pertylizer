@@ -127,6 +127,9 @@ impl<'a> WaveformSelector<'a> {
         let button_size = Vec2::new(40.0, 30.0);
 
         ui.horizontal(|ui| {
+            // A small deliberate gap between the waveform icons, owned by the
+            // widget so it doesn't depend on the surrounding layout's spacing.
+            ui.spacing_mut().item_spacing.x = 6.0;
             for (i, waveform) in self.waveforms.iter().enumerate() {
                 let is_selected = i == *self.selected;
 

@@ -131,7 +131,7 @@ pub use synth_core::{NoiseType, SubOscOctave, SubOscWaveform};
 
 #[cfg(test)]
 mod width_bucket_guards {
-    use crate::{Amplifier, Envelope, Mixer, ModMatrix, Mseg, Sampler, SubOscillator};
+    use crate::{Envelope, Mixer, ModMatrix, Mseg, Sampler};
     use synth_core::{Describable, ModuleWidth};
 
     /// Modules with a bespoke wide body (an interactive editor or a fixed-width
@@ -153,13 +153,5 @@ mod width_bucket_guards {
         }
         // The MSEG editor is the widest body of all.
         assert_eq!(Mseg::new().descriptor().width, ModuleWidth::ExtraLarge);
-    }
-
-    /// Simple low-control modules keep the compact buckets — a regression guard
-    /// the other direction.
-    #[test]
-    fn simple_modules_are_compact() {
-        assert_eq!(Amplifier::new().descriptor().width, ModuleWidth::Small);
-        assert_eq!(SubOscillator::new().descriptor().width, ModuleWidth::Small);
     }
 }

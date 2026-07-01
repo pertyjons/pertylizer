@@ -238,7 +238,7 @@ impl Default for NoiseGenerator {
 impl Describable for NoiseGenerator {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("noise", "Noise")
-            .width(synth_core::ModuleWidth::Small)
+            .width(synth_core::ModuleWidth::Medium)
             .description("Spectrally colored noise generator for textures and percussion")
             .category(ModuleCategory::Oscillator)
             .tag("noise")

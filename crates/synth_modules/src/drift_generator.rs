@@ -69,7 +69,7 @@ impl Default for DriftGenerator {
 impl Describable for DriftGenerator {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("drift_generator", "Drift Generator")
-            .width(synth_core::ModuleWidth::Small)
+            .width(synth_core::ModuleWidth::Medium)
             .description("Smooth random modulation for analog-style drift")
             .category(ModuleCategory::LFO)
             .tag("drift")

@@ -90,6 +90,7 @@ impl Default for KineticModulator {
 impl Describable for KineticModulator {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("kinetic_modulator", "Kinetic Mod")
+            .width(synth_core::ModuleWidth::Large)
             .description("Easing curve modulation generator")
             .category(ModuleCategory::LFO)
             .tag("modulation")

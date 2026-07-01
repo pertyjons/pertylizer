@@ -472,6 +472,7 @@ impl Default for MathOscillator {
 impl Describable for MathOscillator {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("math_oscillator", "Math Oscillator")
+            .width(synth_core::ModuleWidth::Large)
             .description("Advanced oscillator with 19 mathematical synthesis algorithms")
             .category(ModuleCategory::Oscillator)
             .tag("oscillator")

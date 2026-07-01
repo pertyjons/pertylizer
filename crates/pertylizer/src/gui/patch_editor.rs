@@ -2479,6 +2479,10 @@ impl PatchEditor {
             self.draw_macro_source_rail(ui, instrument_id, visible_rect, &analysis);
         }
 
+        // View controls (zoom out / in / fit / 1:1) — a screen-space strip pinned
+        // to the canvas's top-right, mirroring the macro-source rail.
+        self.draw_view_controls(ui, instrument_id, visible_rect);
+
         // Module description / info popups — also screen-space, drawn after the
         // Scene so they float above the canvas at a readable size.
         self.draw_module_popups(ui, &mut result);
@@ -2547,6 +2551,92 @@ impl PatchEditor {
                         });
                     });
             });
+    }
+
+    /// Draw the view-controls overlay (top-right): zoom out / in, fit-to-content,
+    /// and 1:1. A screen-space foreground strip mirroring the macro-source rail,
+    /// pinned to the canvas's top-right so it never pans/zooms with the Scene.
+    /// Clicks retarget `scene_rect`; egui applies the new zoom on the next frame
+    /// (and clamps it to the Scene's zoom range).
+    fn draw_view_controls(&mut self, ui: &Ui, instrument_id: u64, visible_rect: Rect) {
+        let Some(scene_rect) = self.scene_rect else {
+            return;
+        };
+        let t = theme();
+        let inset = Vec2::splat(t.spacing.panel_padding);
+
+        // Collect the clicked action, then resolve it to a target `scene_rect`
+        // afterwards — so the fit bounds (which union every module rect) are only
+        // computed when "Fit" is actually clicked, not every frame.
+        enum ViewAction {
+            ZoomOut,
+            ZoomIn,
+            Fit,
+            OneToOne,
+        }
+        let mut action: Option<ViewAction> = None;
+        egui::Area::new(egui::Id::new(("patch_view_controls", instrument_id)))
+            .order(Order::Foreground)
+            .pivot(egui::Align2::RIGHT_TOP)
+            .fixed_pos(egui::pos2(
+                visible_rect.right() - inset.x,
+                visible_rect.top() + inset.y,
+            ))
+            .constrain_to(visible_rect)
+            .show(ui.ctx(), |ui| {
+                egui::Frame::new()
+                    .fill(t.colors.bg_panel)
+                    .stroke(egui::Stroke::new(1.0, t.colors.border))
+                    .corner_radius(4.0)
+                    .inner_margin(t.spacing.widget_spacing)
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.spacing_mut().item_spacing.x = 8.0;
+                            let chip = |ui: &mut Ui, label: &str, tip: &str| -> bool {
+                                ui.add(
+                                    egui::Button::new(
+                                        egui::RichText::new(label)
+                                            .size(t.fonts.size_small)
+                                            .color(t.colors.text_dim),
+                                    )
+                                    .frame(false),
+                                )
+                                .on_hover_text(tip)
+                                .clicked()
+                            };
+                            if chip(ui, "−", "Zoom out") {
+                                action = Some(ViewAction::ZoomOut);
+                            }
+                            if chip(ui, "+", "Zoom in") {
+                                action = Some(ViewAction::ZoomIn);
+                            }
+                            if chip(ui, "Fit", "Fit all modules in view") {
+                                action = Some(ViewAction::Fit);
+                            }
+                            if chip(ui, "1:1", "Reset zoom to 100%") {
+                                action = Some(ViewAction::OneToOne);
+                            }
+                        });
+                    });
+            });
+
+        // `scene_rect` is the visible WORLD region, so a *smaller* rect = *higher*
+        // zoom. Zoom steps keep the current view centre.
+        let new_rect = action.map(|a| match a {
+            ViewAction::ZoomOut => {
+                Rect::from_center_size(scene_rect.center(), scene_rect.size() * 1.25)
+            }
+            ViewAction::ZoomIn => {
+                Rect::from_center_size(scene_rect.center(), scene_rect.size() * 0.8)
+            }
+            ViewAction::Fit => self.initial_scene_rect(visible_rect),
+            ViewAction::OneToOne => {
+                Rect::from_center_size(scene_rect.center(), visible_rect.size())
+            }
+        });
+        if let Some(r) = new_rect {
+            self.scene_rect = Some(r);
+        }
     }
 
     /// Helper for background context menu items — uses shared palette_label for icon + color.

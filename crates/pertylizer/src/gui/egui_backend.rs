@@ -31,8 +31,7 @@ use crate::gui::patch_editor::{
 };
 use crate::gui::theme::theme;
 use crate::gui::widgets::{
-    CaptionTone, caption, danger_button, dim_label, draw_oscilloscope, draw_stereo_meter,
-    empty_state,
+    danger_button, dim_label, draw_oscilloscope, draw_stereo_meter, empty_state,
 };
 use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
 use crate::io::settings::AppSettings;
@@ -3660,22 +3659,23 @@ impl SynthApp {
                     let t = theme();
 
                     // ── Left side: Octave +/- and Glide slider ──
+                    // Normal font size, matching the CPU/Voices/Latency read-outs
+                    // on the right side of the bar.
                     ui.label(
                         RichText::new(format!("Octave: {:+}", self.keyboard.octave_offset()))
-                            .color(t.colors.text_secondary)
-                            .small(),
+                            .color(t.colors.text_secondary),
                     );
-                    if ui.small_button("-").clicked() {
+                    if ui.button("-").clicked() {
                         let new_offset = self.keyboard.octave_offset() - 1;
                         self.keyboard.set_octave_offset(new_offset);
                     }
-                    if ui.small_button("+").clicked() {
+                    if ui.button("+").clicked() {
                         let new_offset = self.keyboard.octave_offset() + 1;
                         self.keyboard.set_octave_offset(new_offset);
                     }
                     ui.separator();
 
-                    caption(ui, "Glide:", CaptionTone::Dim);
+                    dim_label(ui, "Glide:");
                     let mut glide_val = self.glide_time.as_f32();
                     let glide_response = ui
                         .add(

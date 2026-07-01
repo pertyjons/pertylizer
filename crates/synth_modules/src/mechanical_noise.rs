@@ -157,6 +157,7 @@ impl Default for MechanicalNoise {
 impl Describable for MechanicalNoise {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("mechanical_noise", "Mechanical Noise")
+            .width(synth_core::ModuleWidth::Large)
             .description("Key click and mechanical action sounds")
             .category(ModuleCategory::PhysicalModeling)
             .tag("noise")

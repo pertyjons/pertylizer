@@ -207,7 +207,7 @@ impl Default for Eq {
 impl Describable for Eq {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("eq", "EQ")
-            .width(synth_core::ModuleWidth::Large)
+            .width(synth_core::ModuleWidth::Medium)
             .description("3-band parametric equalizer")
             .category(ModuleCategory::Effect)
             .tag("eq")

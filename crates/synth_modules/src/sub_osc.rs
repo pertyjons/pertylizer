@@ -111,7 +111,7 @@ impl Default for SubOscillator {
 impl Describable for SubOscillator {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("sub_osc", "Sub Osc")
-            .width(synth_core::ModuleWidth::Small)
+            .width(synth_core::ModuleWidth::ExtraLarge)
             .description("Sub-oscillator for bass reinforcement at -1 or -2 octaves")
             .category(ModuleCategory::Oscillator)
             .tag("oscillator")

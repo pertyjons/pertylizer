@@ -82,7 +82,7 @@ impl Default for Amplifier {
 impl Describable for Amplifier {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("amplifier", "VCA")
-            .width(synth_core::ModuleWidth::Small)
+            .width(synth_core::ModuleWidth::Medium)
             .description("Voltage Controlled Amplifier")
             .category(ModuleCategory::Amplifier)
             .tag("amplifier")

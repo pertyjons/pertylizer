@@ -140,6 +140,7 @@ impl Default for Lfo {
 impl Describable for Lfo {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("lfo", "LFO")
+            .width(synth_core::ModuleWidth::Large)
             .description("Low Frequency Oscillator")
             .category(ModuleCategory::LFO)
             .tag("lfo")

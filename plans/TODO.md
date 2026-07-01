@@ -293,6 +293,35 @@ Residual after the shared-widget-helpers work landed — these are the remaining
   or at minimum make the schema/description clearer so the shape is guessable on the first
   call. Surfaced 2026-06-30 while documenting the AudioScript wavefolder example patch.
 
+- [ ] **`list_module_types` response is too large to consume.** The full catalog is ~275 KB
+  / 10 311 lines (72 module types with every port + parameter), which blows past the tool-result
+  token cap — it can't be read inline at all, only dumped to a file and `jq`'d. There's no
+  lightweight variant. Fix: add a `brief`/`keys_only` mode (or make `search_modules` with no
+  filter return a compact `[{type_key, name, category}]` list) so callers can get the catalog
+  without the full port/parameter dump. Surfaced 2026-07-01 building the all-modules reference patch.
+
+- [ ] **The module catalog doesn't expose the `ModuleWidth` bucket / panel width.**
+  `list_module_types` entries have `type_key, name, description, category, input_ports,
+  output_ports, parameters, signal_flow_hint` — but not the module's `ModuleWidth` (ExtraSmall…
+  ExtraLarge) or its px width. That's GUI-layout metadata an agent can't see, which made a
+  desired-vs-actual width audit impossible from MCP alone (had to grep `synth_modules` source).
+  Fix: add `width_bucket` + `width_px` to each catalog entry. Surfaced 2026-07-01.
+
+- [ ] **`add_module` can't add visualizer modules; no way to know in advance.** Adding
+  `scp`/`mtr`/`spa` (Oscilloscope/Meter/Spectrum) fails with *"visualizer modules require GUI
+  (VisualizationBuffer)"*, so "add every module type" is impossible from MCP. Nothing in the
+  catalog flags which types are GUI-only, so the failure is only discoverable by trying. Fix:
+  either let MCP create them with a headless/no-op buffer, or add a `gui_only: true` flag to the
+  catalog entries so callers can filter them out up front. Surfaced 2026-07-01.
+
+- [ ] **No MCP tool to save a single instrument as a patch file.** Only `save_project` exists
+  (whole project → JSON); `load_project` *reads* single patch files, but there's no `save_patch`
+  / `export_instrument` to write one. So an attempt to save one instrument to
+  `assets/examples/patches/` produced a **project** file (had to be moved to
+  `assets/examples/projects/` afterwards) rather than the single-instrument patch format the
+  examples use. Fix: add a `save_patch(instrument_id, path)` that writes patch format.
+  Surfaced 2026-07-01.
+
 - [ ] Tier 3: `compare_to_reference`, `compare_patterns`, `compare_patches`,
   `humanize_notes`, `generate_variation`, `analyze_track`, `get_mix_meters`.
 

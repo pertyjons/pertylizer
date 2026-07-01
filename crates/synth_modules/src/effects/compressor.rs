@@ -111,7 +111,7 @@ impl Default for Compressor {
 impl Describable for Compressor {
     fn descriptor(&self) -> ModuleDescriptor {
         ModuleDescriptor::new("compressor", "Compressor")
-            .width(synth_core::ModuleWidth::Large)
+            .width(synth_core::ModuleWidth::Medium)
             .description("Dynamics compressor with adjustable attack and release")
             .category(ModuleCategory::Effect)
             .tag("compressor")
