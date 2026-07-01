@@ -615,6 +615,12 @@ const TRACK_HEADER_WIDTH: f32 = 150.0;
 const TRACK_ROW_HEIGHT: f32 = 64.0;
 /// Height of the timeline ruler at the top.
 const RULER_HEIGHT: f32 = 24.0;
+/// Height of the tempo-map lane, drawn between the ruler and the track rows.
+const TEMPO_LANE_HEIGHT: f32 = 48.0;
+/// BPM range mapped onto the tempo lane's vertical axis (values outside clamp to
+/// the edges). Typical tempos sit comfortably inside this window.
+const LANE_BPM_MIN: f32 = 40.0;
+const LANE_BPM_MAX: f32 = 240.0;
 /// Pixels per beat at default zoom.
 const PIXELS_PER_BEAT: f32 = 40.0;
 /// Minimum number of bars to show (even if song is shorter).
@@ -720,6 +726,8 @@ struct ArrangementData {
     /// Tempo automation points: (tick, BPM, ramp). `ramp` = linear ramp toward
     /// the next point (accelerando/ritardando) vs a step change. Sorted by tick.
     tempo_changes: Vec<(u64, f32, bool)>,
+    /// Default tempo (BPM) governing the timeline before the first tempo point.
+    default_tempo: f32,
 }
 
 // ============================================================================

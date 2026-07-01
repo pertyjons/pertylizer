@@ -4667,6 +4667,11 @@ impl SynthApp {
                     song_w.remove_tempo_change(*tick);
                 }
             }
+            UndoAction::MoveTempo { old, new } => {
+                let mut song_w = self.song.write();
+                song_w.remove_tempo_change(old.0);
+                song_w.set_tempo_ramp_at(new.0, new.1, new.2);
+            }
             UndoAction::MovePlacement {
                 pattern_id,
                 old_track_id,

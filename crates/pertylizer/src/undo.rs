@@ -171,6 +171,14 @@ pub(crate) enum UndoAction {
         new: Option<(Bpm, bool)>,
     },
 
+    /// A tempo point was dragged in the lane: it moved from `old` to `new`, each
+    /// `(tick, bpm, ramp)`. Applying removes the point at `old.0` and writes
+    /// `new`; the inverse does the reverse.
+    MoveTempo {
+        old: (Tick, Bpm, bool),
+        new: (Tick, Bpm, bool),
+    },
+
     // ── Arrangement ──
     /// A placement was moved or transferred between tracks.
     MovePlacement {
@@ -589,6 +597,10 @@ impl UndoManager {
                 old: *new,
                 new: *old,
             },
+            UndoAction::MoveTempo { old, new } => UndoAction::MoveTempo {
+                old: *new,
+                new: *old,
+            },
             UndoAction::MovePlacement {
                 pattern_id,
                 old_track_id,
@@ -944,6 +956,22 @@ mod tests {
             assert_eq!(new, Some((Bpm::new(96.0), true)));
         } else {
             panic!("Expected SetTempo inverse");
+        }
+    }
+
+    #[test]
+    fn test_inverse_of_move_tempo_swaps_endpoints() {
+        // Dragging a point (tick + bpm change) → inverse must restore the origin.
+        let mv = UndoAction::MoveTempo {
+            old: (Tick(960), Bpm::new(120.0), false),
+            new: (Tick(1440), Bpm::new(150.0), false),
+        };
+        let inv = UndoManager::inverse(&mv);
+        if let UndoAction::MoveTempo { old, new } = inv {
+            assert_eq!(old, (Tick(1440), Bpm::new(150.0), false));
+            assert_eq!(new, (Tick(960), Bpm::new(120.0), false));
+        } else {
+            panic!("Expected MoveTempo inverse");
         }
     }
 
