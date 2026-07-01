@@ -14,8 +14,10 @@ use eframe::egui::{
 
 use crate::gui::theme::theme;
 
-/// Minimum hit-target size for a frameless icon button.
-const ICON_BUTTON_MIN_SIZE: f32 = 20.0;
+/// The single hit-target size for every frameless icon button (and status badge).
+/// Exposed so callers that must build a raw `egui::Button` (e.g. a `MenuButton`)
+/// can match it instead of repeating the literal.
+pub const ICON_BUTTON_SIZE: Vec2 = Vec2::new(18.0, 20.0);
 
 /// A text button that reads as "active" (accent) or "inactive" (dimmed).
 ///
@@ -40,36 +42,26 @@ pub fn toggle_button_colored(
     ui.button(label.into().strong().color(color))
 }
 
-/// A frameless icon button with a square, consistent hit target.
-///
-/// Returns the [`Response`] so callers can chain `.on_hover_text(..)`.
-pub fn icon_button(ui: &mut Ui, icon: &str, color: Color32, icon_size: f32) -> Response {
-    icon_button_sized(
-        ui,
-        icon,
-        color,
-        icon_size,
-        Vec2::splat(ICON_BUTTON_MIN_SIZE),
-    )
-}
-
-/// A frameless icon button with a caller-chosen minimum hit target. Use this for
-/// tightly-packed rows (e.g. narrow status badges) where the default square
-/// target is too wide; otherwise prefer [`icon_button`].
-///
-/// Returns the [`Response`] so callers can chain `.on_hover_text(..)`.
-pub fn icon_button_sized(
-    ui: &mut Ui,
-    icon: &str,
-    color: Color32,
-    icon_size: f32,
-    min_size: Vec2,
-) -> Response {
+/// A frameless icon button — one uniform look for every icon: the
+/// `ICON_BUTTON_SIZE` (18×20) hit target, `size_normal` glyph, the given hover
+/// `tooltip`, and the arrow cursor. Used both for interactive controls (read
+/// `.clicked()`) and for non-interactive status badges (ignore the response).
+/// Returns the [`Response`].
+pub fn icon_button(ui: &mut Ui, icon: &str, color: Color32, tooltip: &str) -> Response {
+    // Force the arrow cursor: icon buttons never use the pointing-hand. This also
+    // overrides any cursor an enclosing draggable container paints over itself
+    // (e.g. the patch-editor module card's `Grab`), since the button draws after.
     ui.add(
-        Button::new(RichText::new(icon).color(color).size(icon_size))
-            .frame(false)
-            .min_size(min_size),
+        Button::new(
+            RichText::new(icon)
+                .color(color)
+                .size(theme().fonts.size_normal),
+        )
+        .frame(false)
+        .min_size(ICON_BUTTON_SIZE),
     )
+    .on_hover_text(tooltip)
+    .on_hover_cursor(egui::CursorIcon::Default)
 }
 
 /// A section heading: a strong, accent-colored label at the theme heading size,
@@ -313,4 +305,14 @@ pub fn labeled_row<R>(
         ui.label(label);
         widget(ui)
     })
+}
+
+/// Pin `content` to the **right edge** of the current row, laying its widgets
+/// out **right-to-left**: the *first* widget added lands rightmost. Callers
+/// therefore add their trailing widgets in reverse reading order (rightmost
+/// first). Use inside a `ui.horizontal` where earlier content (e.g. a title)
+/// takes the left slack.
+pub fn right_aligned_row<R>(ui: &mut Ui, content: impl FnOnce(&mut Ui) -> R) -> R {
+    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), content)
+        .inner
 }

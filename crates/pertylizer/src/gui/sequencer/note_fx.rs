@@ -19,6 +19,7 @@
 use std::sync::Arc;
 
 use eframe::egui::{self, Color32, RichText};
+use egui_remixicon::icons as ri;
 use parking_lot::RwLock;
 use synth_core::NormalizedValue;
 use synth_sequencer::{
@@ -29,8 +30,8 @@ use synth_sequencer::{
 
 use crate::gui::theme::theme;
 use crate::gui::widgets::{
-    Knob, ModuleFrame, dim_label, draw_module_header, enum_combo, labeled_row, strong_label,
-    unit_drag_value,
+    Knob, ModuleFrame, dim_label, draw_module_header, enum_combo, icon_button, labeled_row,
+    strong_label, unit_drag_value,
 };
 use crate::undo::UndoAction;
 
@@ -137,14 +138,13 @@ pub(crate) fn draw_note_fx_panel(
                     ui.vertical(|ui| {
                         ui.set_width(ui.available_width());
                         draw_module_header(ui, accent, processor_name(proc), None, false, |ui| {
-                            if ui
-                                .add(
-                                    egui::Button::new("✖")
-                                        .frame(false)
-                                        .min_size(egui::vec2(18.0, 18.0)),
-                                )
-                                .on_hover_text("Remove processor")
-                                .clicked()
+                            if icon_button(
+                                ui,
+                                ri::CLOSE_LINE,
+                                theme().colors.text_dim,
+                                "Remove processor",
+                            )
+                            .clicked()
                             {
                                 edit = Some(RackEdit::Remove(index));
                             }

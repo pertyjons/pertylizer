@@ -456,26 +456,26 @@ impl PatchEditor {
                         Some(format!("Group ID: {}", group_id.0)),
                         false,
                         |ui| {
-                            ui.separator();
-                            let menu_resp = icon_button(ui, ri::MORE_LINE, t.colors.text_dim, 12.0)
-                                .on_hover_text("Group menu");
-                            if menu_resp.clicked() {
-                                menu_clicked = true;
-                                menu_pos = menu_resp.rect.left_bottom();
+                            // Emitted right-to-left (see `draw_module_header`), so
+                            // reverse reading order: close · add · menu → renders
+                            // menu · add · close.
+                            if icon_button(ui, ri::CLOSE_LINE, t.colors.text_dim, "Delete group")
+                                .clicked()
+                            {
+                                delete_clicked = true;
                             }
 
-                            if icon_button(ui, ri::ADD_LINE, t.colors.text_dim, 12.0)
-                                .on_hover_text("Expand group")
+                            if icon_button(ui, ri::ADD_LINE, t.colors.text_dim, "Expand group")
                                 .clicked()
                             {
                                 toggle_clicked = true;
                             }
 
-                            if icon_button(ui, ri::CLOSE_LINE, t.colors.text_dim, 12.0)
-                                .on_hover_text("Delete group")
-                                .clicked()
-                            {
-                                delete_clicked = true;
+                            let menu_resp =
+                                icon_button(ui, ri::MORE_LINE, t.colors.text_dim, "Group menu");
+                            if menu_resp.clicked() {
+                                menu_clicked = true;
+                                menu_pos = menu_resp.rect.left_bottom();
                             }
                         },
                     );

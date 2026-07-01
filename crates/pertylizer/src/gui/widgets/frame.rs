@@ -134,15 +134,12 @@ where
     );
     let tint = accent_color.gamma_multiply(0.14);
     let transparent = Color32::TRANSPARENT;
-    let painter = ui.painter();
-    let mut mesh = egui::Mesh::default();
-    mesh.colored_vertex(header_rect.left_top(), tint);
-    mesh.colored_vertex(header_rect.right_top(), transparent);
-    mesh.colored_vertex(header_rect.right_bottom(), transparent);
-    mesh.colored_vertex(header_rect.left_bottom(), tint.gamma_multiply(0.35));
-    mesh.add_triangle(0, 1, 2);
-    mesh.add_triangle(0, 2, 3);
-    painter.add(egui::Shape::mesh(mesh));
+    // Strong at the top-left, fading down and to the right.
+    fill_gradient_quad(
+        ui.painter(),
+        header_rect,
+        [tint, transparent, transparent, tint.gamma_multiply(0.35)],
+    );
 
     let title_response = ui
         .horizontal(|ui| {
@@ -156,7 +153,7 @@ where
             let label = egui::Label::new(
                 egui::RichText::new(title)
                     .strong()
-                    .size(13.0)
+                    .size(theme().fonts.size_normal)
                     .color(accent_color),
             );
             let label = if title_clickable {
@@ -169,8 +166,12 @@ where
                 response = response.on_hover_text(hover);
             }
 
-            ui.add_space(theme().spacing.xs);
-            actions(ui);
+            // Interactive controls are pinned to the header's right edge; the
+            // title keeps the left slack. `right_aligned_row` lays them out
+            // right-to-left, so callers emit their actions in reverse reading
+            // order (rightmost widget first) and every module header — patch,
+            // mixer, group — shares one alignment.
+            super::controls::right_aligned_row(ui, actions);
             response
         })
         .inner;
@@ -178,4 +179,33 @@ where
     ui.separator();
     ui.add_space(theme().spacing.xxs);
     title_response
+}
+
+/// Draw a module's bottom **status bar** — the foot mirror of
+/// [`draw_module_header`].
+///
+/// Detaches from the body with a leading separator, then runs `content` in a
+/// horizontal row. Like the header, this owns only the frame chrome; the actual
+/// badges come from the caller (`controls.rs` widgets).
+pub fn draw_module_footer<F>(ui: &mut Ui, content: F)
+where
+    F: FnOnce(&mut Ui),
+{
+    ui.add_space(theme().spacing.xxs);
+    ui.separator();
+    ui.horizontal(content);
+}
+
+/// Paint a four-corner gradient quad into `painter`. Colors are the corner tints
+/// in `[top_left, top_right, bottom_right, bottom_left]` order. Shared by the
+/// module header and footer washes so their mesh construction can't drift.
+fn fill_gradient_quad(painter: &egui::Painter, rect: egui::Rect, [tl, tr, br, bl]: [Color32; 4]) {
+    let mut mesh = egui::Mesh::default();
+    mesh.colored_vertex(rect.left_top(), tl);
+    mesh.colored_vertex(rect.right_top(), tr);
+    mesh.colored_vertex(rect.right_bottom(), br);
+    mesh.colored_vertex(rect.left_bottom(), bl);
+    mesh.add_triangle(0, 1, 2);
+    mesh.add_triangle(0, 2, 3);
+    painter.add(egui::Shape::mesh(mesh));
 }

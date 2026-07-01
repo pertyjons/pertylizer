@@ -34,15 +34,19 @@ use crate::gui::theme::theme;
 #[cfg(test)]
 const CLIP_WARN_ORANGE: Color32 = Color32::from_rgb(200, 120, 40);
 use crate::gui::widgets::{
-    CaptionTone, ModuleFrame, caption, draw_module_header, level_color, strong_label,
+    CaptionTone, ModuleFrame, caption, draw_module_header, icon_button, level_color, strong_label,
 };
 
-/// Width of a single channel strip, in points.
-const STRIP_WIDTH: f32 = 108.0;
+/// Width of a single channel strip, in points. Uses the `ModuleWidth::Small`
+/// bucket (192 px) — the same defined module widths the patch editor uses — so
+/// the shared module header fits its title plus the right-aligned mute/solo/link
+/// icons, with comfortable room for the strip's sends and controls.
+const STRIP_WIDTH: f32 = synth_core::ModuleWidth::Small.module_px();
 /// Width of a return-bus insert module (and thus the return column), in points.
-/// Wider than a strip so the shared Rack parameter widgets — knobs, labelled
-/// sliders, dropdowns — get the room they need.
-const INSERT_WIDTH: f32 = 200.0;
+/// Uses the `ModuleWidth::Medium` bucket (256 px) — one step wider than a strip
+/// so the shared Rack parameter widgets (knobs, labelled sliders, dropdowns) get
+/// room.
+const INSERT_WIDTH: f32 = synth_core::ModuleWidth::Medium.module_px();
 /// Height of the big volume fader (and the level meter beside it), in points.
 const FADER_HEIGHT: f32 = 160.0;
 /// Width of the level-meter bar, in points.
@@ -293,7 +297,7 @@ pub fn draw_mixer_view(
                 }
             });
 
-            egui::ScrollArea::horizontal()
+            egui::ScrollArea::both()
                 .auto_shrink([false, false])
                 .show(ui, |ui| {
                     ui.horizontal_top(|ui| {
@@ -474,13 +478,7 @@ fn header_mute_button(ui: &mut egui::Ui, muted: bool) -> bool {
             "Audible\nChannel is playing.\nClick to mute.",
         )
     };
-    ui.add(
-        egui::Button::new(RichText::new(icon).color(color).size(14.0))
-            .frame(false)
-            .min_size(egui::vec2(20.0, 20.0)),
-    )
-    .on_hover_text(tip)
-    .clicked()
+    icon_button(ui, icon, color, tip).clicked()
 }
 
 /// Solo toggle for a strip header — frameless headphone icon, the DAW
@@ -501,13 +499,7 @@ fn header_solo_button(ui: &mut egui::Ui, soloed: bool) -> bool {
             "Solo\nIsolate this channel.\nClick to solo.",
         )
     };
-    ui.add(
-        egui::Button::new(RichText::new(icon).color(color).size(14.0))
-            .frame(false)
-            .min_size(egui::vec2(20.0, 20.0)),
-    )
-    .on_hover_text(tip)
-    .clicked()
+    icon_button(ui, icon, color, tip).clicked()
 }
 
 /// The styled frame shared by every strip — the same rounded, accent-tinted
@@ -579,34 +571,30 @@ fn draw_channel_strip(
                 // mute/solo toggles living in the header bar the same way the
                 // patch-module "Active" toggle does.
                 draw_module_header(ui, ch.color, &ch.name, None, false, |ui| {
-                    if header_mute_button(ui, ch.mute)
-                        && let Some(tr) = song.write().track_mut(ch.id)
+                    // Emitted right-to-left (see `draw_module_header`), so reverse
+                    // reading order: link · solo · mute → renders mute · solo · link.
+                    // Inserts live on the instrument and are edited in the Rack; the
+                    // external-link icon signals the button jumps to another view
+                    // rather than opening an inline editor.
+                    if icon_button(
+                        ui,
+                        ri::EXTERNAL_LINK_LINE,
+                        t.colors.text_secondary,
+                        "Edit this channel's insert effects in the Rack",
+                    )
+                    .clicked()
                     {
-                        tr.toggle_mute();
+                        edit_fx = true;
                     }
                     if header_solo_button(ui, ch.solo)
                         && let Some(tr) = song.write().track_mut(ch.id)
                     {
                         tr.toggle_solo();
                     }
-                    // Inserts live on the instrument and are edited in the Rack.
-                    // The external-link icon signals the button jumps to another
-                    // view rather than opening an inline editor.
-                    ui.separator();
-                    if ui
-                        .add(
-                            egui::Button::new(
-                                RichText::new(ri::EXTERNAL_LINK_LINE)
-                                    .color(t.colors.text_secondary)
-                                    .size(14.0),
-                            )
-                            .frame(false)
-                            .min_size(egui::vec2(20.0, 20.0)),
-                        )
-                        .on_hover_text("Edit this channel's insert effects in the Rack")
-                        .clicked()
+                    if header_mute_button(ui, ch.mute)
+                        && let Some(tr) = song.write().track_mut(ch.id)
                     {
-                        edit_fx = true;
+                        tr.toggle_mute();
                     }
                 });
 
@@ -935,32 +923,29 @@ fn draw_return_strip(
                                 Some("Click to rename".to_owned()),
                                 true,
                                 |ui| {
-                                    if header_mute_button(ui, rb.mute)
-                                        && let Some(bus) = song.write().return_bus_mut(rb.id)
+                                    // Emitted right-to-left (see `draw_module_header`),
+                                    // so reverse reading order: close · solo · mute →
+                                    // renders mute · solo · close, mirroring the patch
+                                    // module header.
+                                    if icon_button(
+                                        ui,
+                                        ri::CLOSE_LINE,
+                                        t.colors.text_dim,
+                                        "Delete return bus",
+                                    )
+                                    .clicked()
                                     {
-                                        bus.set_mute(!bus.mute);
+                                        delete = true;
                                     }
                                     if header_solo_button(ui, rb.solo)
                                         && let Some(bus) = song.write().return_bus_mut(rb.id)
                                     {
                                         bus.set_solo(!bus.solo);
                                     }
-                                    // Close button, mirroring the patch module's header.
-                                    ui.separator();
-                                    if ui
-                                        .add(
-                                            egui::Button::new(
-                                                RichText::new(ri::CLOSE_LINE)
-                                                    .color(t.colors.text_dim)
-                                                    .size(12.0),
-                                            )
-                                            .frame(false)
-                                            .min_size(egui::vec2(20.0, 20.0)),
-                                        )
-                                        .on_hover_text("Delete return bus")
-                                        .clicked()
+                                    if header_mute_button(ui, rb.mute)
+                                        && let Some(bus) = song.write().return_bus_mut(rb.id)
                                     {
-                                        delete = true;
+                                        bus.set_mute(!bus.mute);
                                     }
                                 },
                             );
@@ -1050,6 +1035,7 @@ fn draw_effect_module(
     fx: &EffectInfo,
     handle: &mut EngineHandle,
 ) {
+    use egui_remixicon::icons as ri;
     let t = theme();
     let descriptor = cached_descriptor(fx.module_type);
     let accent = descriptor
@@ -1066,29 +1052,30 @@ fn draw_effect_module(
             ui.vertical(|ui| {
                 ui.set_width(INSERT_WIDTH - 12.0);
                 draw_module_header(ui, accent, fx.module_type.name(), None, false, |ui| {
-                    let mut enabled = !fx.bypassed;
-                    if ui
-                        .checkbox(&mut enabled, "")
-                        .on_hover_text("Enable / bypass")
-                        .changed()
-                    {
-                        handle.send(target.set_enabled(fx.module_id, enabled));
-                    }
-                    ui.separator();
-                    if ui
-                        .add(
-                            egui::Button::new(
-                                RichText::new("✖")
-                                    .size(t.fonts.size_small)
-                                    .color(t.colors.text_dim),
-                            )
-                            .frame(false)
-                            .min_size(egui::vec2(20.0, 20.0)),
-                        )
-                        .on_hover_text("Remove effect")
-                        .clicked()
+                    // Emitted right-to-left (see `draw_module_header`), so reverse
+                    // reading order: close · power → renders power · close, matching
+                    // the patch module header (same power/bypass button, no checkbox).
+                    if icon_button(ui, ri::CLOSE_LINE, t.colors.text_dim, "Remove effect").clicked()
                     {
                         handle.send(target.remove(fx.module_id));
+                    }
+                    let (power_icon, power_color, power_tip) = if fx.bypassed {
+                        (
+                            ri::VOLUME_MUTE_FILL,
+                            t.colors.text_dim,
+                            "Bypassed\nEffect output is muted.\nClick to activate.",
+                        )
+                    } else {
+                        (
+                            ri::VOLUME_UP_FILL,
+                            t.colors.accent_green,
+                            "Active\nEffect is processing audio.\nClick to bypass.",
+                        )
+                    };
+                    if icon_button(ui, power_icon, power_color, power_tip).clicked() {
+                        // Toggle: the new enabled state is the opposite of the
+                        // current (active) one, i.e. the current bypassed flag.
+                        handle.send(target.set_enabled(fx.module_id, fx.bypassed));
                     }
                 });
 

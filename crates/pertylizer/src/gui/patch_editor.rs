@@ -28,7 +28,7 @@ use super::module_panel::{ModulePanelState, PortPosition, category_color};
 use super::theme::theme;
 use super::widgets::{
     CaptionTone, ModRole, ModuleFrame, WidgetPortDirection, WidgetPortType, cable_color, caption,
-    draw_cable_dragging, draw_module_header,
+    draw_cable_dragging, draw_module_footer, draw_module_header,
 };
 
 mod canvas;
@@ -2346,7 +2346,20 @@ impl PatchEditor {
                                 // widest row. (8 px = ModuleFrame's inner margin/side.)
                                 ui.set_width(module_w - 16.0);
 
-                                // Title bar: name + status icons + close button (single row)
+                                // Built once: the header's interactive controls and
+                                // the bottom status bar's badges read the same flags.
+                                let header_ctx = ModuleHeaderCtx {
+                                    module_id,
+                                    descriptor,
+                                    is_source,
+                                    is_sink,
+                                    is_automated,
+                                    is_bypassed,
+                                    is_global_module,
+                                    connectivity: connectivity_status,
+                                };
+
+                                // Title bar: name + interactive controls (single row)
                                 draw_module_header(
                                     ui,
                                     dimmed_accent,
@@ -2356,17 +2369,7 @@ impl PatchEditor {
                                     |ui| {
                                         self.draw_module_header_actions(
                                             ui,
-                                            ModuleHeaderCtx {
-                                                module_id,
-                                                descriptor,
-                                                is_source,
-                                                is_sink,
-                                                is_automated,
-                                                is_bypassed,
-                                                is_global_module,
-                                                connectivity: connectivity_status,
-                                            },
-                                            &analysis,
+                                            &header_ctx,
                                             effect_chain_order,
                                             &mut result,
                                             &mut open,
@@ -2390,6 +2393,12 @@ impl PatchEditor {
                                     handle,
                                     &mut result,
                                 );
+
+                                // Bottom status bar: the non-interactive badges,
+                                // mirroring the header at the foot of the frame.
+                                draw_module_footer(ui, |ui| {
+                                    Self::draw_module_status_badges(ui, &header_ctx, &analysis);
+                                });
                             });
                         }
                     }

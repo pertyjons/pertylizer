@@ -102,99 +102,19 @@
 
 ### 2.4 Polyphony settings
 
-- [ ] **Unison detune + spread controls.** **Detune SHIPPED** (`268441f9`,
-  configurable end-to-end — see the progress block below). **Spread also
-  SHIPPED** (`eac9b020`, per-instrument unison stereo spread). _History (why the
-  original config was removed before detune re-added it properly):_ the global
-  `AllocationMode::Unison` *mode* always worked, but the detune amount used to be a
-  **fixed 10-cent constant inlined in `allocate_unison`** (`voice_allocator.rs`). The old
-  `AllocatorConfig.unison_detune: Cents` field was a first-commit (v0.12) design stub that never got a
-  setter, `InstrumentParam`, snapshot field, persistence, or GUI — so it was a misleading "config" knob
-  that could never actually change. **It was removed** and replaced by the inline constant, so nothing in
-  the codebase now pretends unison detune is configurable. **`spread` never existed on any layer** — it is
-  a wishlist word from the original §5.4 roadmap stub (commit `181d6c8`), not a half-built feature.
+The actual feature — **unison detune + spread controls** for the voice-allocator's
+global `AllocationMode::Unison` — is **shipped**: detune end-to-end (`268441f9`,
+allocator → command → snapshot → persistence w/ 10 ct backward-compat → GUI slider
+greyed outside Unison mode → tests) and per-voice stereo spread (`eac9b020`). Only
+the MCP surface remains:
 
-  **Distinct from the per-module unison** (`Oscillator` / `VoiceSynth` / `Fof`), which *is* fully
-  implemented with `UnisonDetune` params + MCP + GUI. This item is only about the **voice-allocator's
-  global Unison allocation mode**.
-
-  To actually implement it (full vertical slice, in dependency order):
-    1. **Allocator/DSP** (`voice_allocator.rs`): re-add `unison_detune: Cents` to `AllocatorConfig` +
-       `set_unison_detune()` setter (mirror `set_stealing`); add a **new** `unison_spread` field. Decide
-       what "spread" means — almost certainly **stereo width** (pan voices L↔R). That is *new DSP*, not
-       plumbing: voices currently only carry a pitch detune (`set_oscillator_detune`); there is no
-       per-voice pan, so `Voice`/the voice mixer must gain a per-voice stereo position first.
-    2. **Command** (`commands.rs`): `InstrumentParam::UnisonDetune(Cents)` + `UnisonSpread(NormalizedValue)`.
-    3. **Engine dispatch** (`synth_engine.rs` ~1693): match arms calling the new setters.
-    4. **Snapshot** (`shared_state.rs`): add fields to the instrument snapshot; populate them where
-       `allocator_cfg` is read (`synth_engine.rs` ~2670, next to `allocation_mode`/`stealing_strategy`).
-    5. **Persistence** (`InstrumentState`, `project_apply.rs`, `project.rs`): serde fields + build into
-       `AllocatorConfig` on load + push initial values via `InstrumentParam` (like `AllocationMode` at
-       `project_apply.rs` ~687) + defaults at the ~4 `InstrumentState` construction sites.
-    6. **GUI** (`gui/egui_backend.rs` + `gui/instrument_rack.rs`): UI-struct fields + two sliders + send
-       flags + apply block + dirty (same pattern as the stealing selector), greyed out unless the
-       instrument is in `Unison` mode.
-    7. **MCP + tests**: expose via `set_parameter` / surface on `get_instrument_info`; round-trip tests
-       mirroring the `allocation_mode` ones in `project_load_snapshot.rs`.
-
-  Detune alone (steps 1–7 minus spread) is mostly plumbing and could ship as a small first vertical;
-  **spread is the real feature** because it needs new per-voice stereo DSP. Design separately.
-
-  **Progress — detune vertical (branch `feat/unison-detune`):**
-    - [x] **Step 1 — Allocator/DSP.** Re-added `unison_detune: Cents` to
-      `AllocatorConfig` (default `10.0` = the old inline constant, so behaviour is
-      preserved) + `set_unison_detune()` setter (mirrors `set_stealing`);
-      `allocate_unison` now reads `self.config.unison_detune` instead of the
-      hardcoded `Cents::new(10.0)`. Green (synth_engine tests pass). **Spread is
-      NOT part of this vertical** — it needs new per-voice stereo DSP; deferred.
-    - [x] **Step 2 — Command + dispatch.** Added `InstrumentParam::UnisonDetune(Cents)`
-      + the engine dispatch arm (`synth_engine.rs` ~1777) calling
-      `allocator_mut().set_unison_detune(d)` (mirrors `StealingStrategy`). The
-      `InstrumentParam` dispatch match is exhaustive, so the arm is required. Green.
-    - [x] **Step 3 — Snapshot.** Added `unison_detune: synth_core::Cents` to
-      `InstrumentSnapshot` (shared_state.rs) + populated it from
-      `allocator_cfg.unison_detune` in the snapshot build (synth_engine.rs ~2822,
-      beside `allocation_mode`/`stealing_strategy`). Updated the
-      `tests/instrument_profile.rs` constructor. Green (`--all-targets`).
-    - [x] **Step 4 — Persistence.** `InstrumentState` (patch.rs) gains
-      `unison_detune: Cents` with `#[serde(default = "default_unison_detune")]`
-      (→ `10.0`, so projects saved before the field keep the historical sound) —
-      added to BOTH the real struct and the manual-`Deserialize` `Raw` mirror +
-      the `raw.unison_detune` mapping + a `default_unison_detune()` fn. Load wires
-      it into the `AllocatorConfig` in `install_instrument` (explicitly, *before*
-      `..Default::default()`, so the loaded value isn't dropped) AND pushes
-      `InstrumentParam::UnisonDetune` (mirrors `allocation_mode`); also set in
-      `snapshot_to_instrument_state` + `default_instrument_state`. Regenerated
-      `schemas/project.schema.json`. Agent review `[]` (backward-compat default +
-      drop-trap both verified). Green.
-    - [x] **Step 5 — GUI.** `InstrumentUiState` gains `unison_detune: Cents`
-      (struct + Default + `new()`, default 10.0). Added a `DragValue`
-      (0..=100 ct, suffix " ct") in the patch bar after the stealing combo,
-      `add_enabled(is_unison, …)` so it greys out unless the instrument is in
-      Unison mode; on change sends `InstrumentParam::UnisonDetune` via a
-      `send_unison_detune` dirty flag + apply block; synced from `inst_state` on
-      load (beside allocation_mode/stealing). Agent review `[]` (wiring/greying/
-      sync all mirror the allocation_mode pattern; note: allocator-config fields
-      are intentionally not reconciled from the live snapshot — shared by all
-      siblings, and no MCP path mutates them **yet** → step 6). Green.
-    - [x] **Step 6 — Tests (+ MCP triage).** Added two focused serde tests in
-      `patch.rs`: a round-trip (set 25 ct → save → load → 25 ct) and a
-      backward-compat one (strip the field from the JSON → loads as 10 ct, not 0).
-      Added `unison_detune_cents` to the `project_load_snapshot` golden summary +
-      regenerated all 10 example-project fixtures (each correctly shows `10.0`,
-      proving pre-field projects still load the historical value). **MCP NOT
-      added (deliberate triage):** `synth_mcp` exposes *no* allocator-config param
-      — `allocation_mode`/`stealing_strategy`/`max_voices` have neither a getter on
-      `get_instrument_info` nor a setter. Adding a lone `unison_detune` MCP path
-      would be inconsistent piecemeal scope-creep; MCP exposure belongs to a
-      separate "surface the whole allocator config (mode/stealing/max_voices/
-      detune) via MCP" task. Green.
-
-  **DETUNE VERTICAL COMPLETE** (steps 1–6, merged to `main` as
-  `268441f9`): unison detune is configurable end-to-end (allocator → command →
-  snapshot → persistence w/ 10 ct backward-compat → GUI slider greyed outside
-  Unison mode → tests). **Spread SHIPPED** too (`eac9b020`, per-voice stereo
-  width). **Still open:** **MCP** allocator-config surface (see step 6 triage).
+- [ ] **Surface the whole allocator config via MCP.** `synth_mcp` exposes **no**
+  allocator-config param at all — `allocation_mode`, `stealing_strategy`,
+  `max_voices`, and `unison_detune`/`unison_spread` have neither a getter on
+  `get_instrument_info` nor a setter. Add them as a set (not a lone piecemeal
+  `unison_detune` path, which would be inconsistent scope-creep): read them on
+  `get_instrument_info` and set them via `set_parameter`, with round-trip tests
+  mirroring the `allocation_mode` ones in `project_load_snapshot.rs`.
 
 ### 2.5 Hardening Newtype Invariants
 
@@ -399,142 +319,115 @@ Residual after the shared-widget-helpers work landed — these are the remaining
 
 ---
 
-## 5. Architectural & Performance Hardening (Evaluation Needed)
+## 5. Architectural & Performance Hardening
 
-### 5.1 Real-time safety: metadata deallocation on the audio thread
-- [ ] **Evaluate removing/disposing metadata outside the audio thread.** Some commands like `RenameInstrument` or `SetInstrumentDescription` pass `String` variables by value to the audio thread. When they are dropped, heap deallocation occurs. Evaluate whether metadata should be completely separated from the audio engine's internal structs (e.g. kept only in the GUI state / shared graph, leaving the audio thread to manage purely numeric IDs), or if old metadata must be sent back to the UI thread via a return queue for deallocation.
+> **Ground rule: nothing here gets optimized before it is a *measured* problem.**
+> Readable, well-structured code wins over speculative micro-optimization. The
+> long catalogue of speculative cycle-shaving items (SIMD/alignment, `rem_euclid`
+> tricks, mmap, dashmap, PGO, reciprocal-mult, etc.) was **removed on 2026-06-30**
+> — it traded clarity for unmeasured gains. What remains is split into two tiers:
+>
+> - **Tier A = cheap wins** that raise safety / readability / diagnostics or fix a
+>   *known* bug. Do them whenever; no trigger needed. Ordered cheapest-first.
+> - **Tier B = real problems that need a trigger.** Each is a genuine
+>   correctness/RT-safety issue, but architectural enough that it should be driven
+>   by an *actually observed symptom*, not done pre-emptively. Ordered by impact.
 
-### 5.2 Compiler optimizations: target-cpu native flag
-- [ ] **Evaluate building with `target-cpu=native`.** The current `.cargo/config.toml` only specifies `rustflags = ["-D", "warnings"]`. For locally compiled builds, evaluate enabling `-C target-cpu=native` to allow LLVM to generate SIMD instructions (like AVX2, FMA, etc.) on the target hardware. This can significantly speed up DSP loops for oscillators, filters, and mixers.
+### Tier A — cheap quality/safety wins (do whenever, cheapest first)
 
-### 5.3 Zero-copy optimization: bytemuck/zerocopy integration
-- [ ] **Evaluate using `bytemuck` or `zerocopy` for buffer conversions.** For high-performance transfers of audio buffers (e.g., telemetry spectrum/oscilloscope buffers, OSC packet serialization), evaluate integrating safe zero-copy casting crates to cast slices safely (e.g. `&[f32]` to `&[u8]`) without using manual `unsafe` code or copying elements.
+These are not performance bets; they make the code safer, clearer, or more
+debuggable at low cost.
 
-### 5.4 Invariant checking: debug_assert in new_unchecked constructors
-- [ ] **Evaluate adding `debug_assert!` inside `new_unchecked` newtype constructors.** Performance-critical constructors like `NormalizedValue::new_unchecked(value)` bypass bounds checks. Adding `debug_assert!` checks (e.g. validating `[0.0, 1.0]` bounds) will catch invalid states during testing and debug execution, compiling to zero-cost no-ops in release builds.
+#### A1. Thread diagnostics: named background threads
+- [ ] **Use named threads via `std::thread::Builder` for background tasks.**
+  Background threads spawned in `null_backend.rs`, `gui/analyze.rs`,
+  `synth_osc/src/lib.rs`, and `main.rs` are currently unnamed. Named threads make
+  debugging/profiling (`htop`, `perf`, `gdb`) much more readable. Trivial.
 
-### 5.5 Math optimizations: explicit Fused Multiply-Add (mul_add)
-- [ ] **Evaluate utilizing `f32::mul_add` for hot DSP filter/envelope paths.** In filter calculations (like those in `synth_dsp/src/filters.rs`), replacing `(a * b) + c` structures with explicit `a.mul_add(b, c)` guarantees the compiler uses Fused Multiply-Add (FMA) instructions, improving precision and performance on supported hardware (AVX2/NEON).
+#### A2. Code quality: standardise on to_radians / to_degrees
+- [ ] **Replace custom degree↔radian multipliers.** Conversions multiply by
+  `PI / 180.0` literals; standardise on `f32::to_radians` / `to_degrees` — cleaner
+  and uses the stdlib intrinsics. Pure readability cleanup. Trivial.
 
-### 5.6 Thread diagnostics: named background threads
-- [ ] **Evaluate using named threads via `std::thread::Builder` for background tasks.** Background threads spawned in `null_backend.rs`, `gui/analyze.rs`, `synth_osc/src/lib.rs`, and `main.rs` are currently unnamed. Transitioning to named threads will make debugging/profiling (using `htop`, `perf`, or `gdb`) much more readable.
+#### A3. Invariant checking: debug_assert in new_unchecked constructors
+- [ ] **Add `debug_assert!` inside `new_unchecked` newtype constructors.**
+  Constructors like `NormalizedValue::new_unchecked(value)` bypass bounds checks.
+  A `debug_assert!` on the invariant (e.g. `[0.0, 1.0]`) catches invalid states in
+  test/debug and compiles to a zero-cost no-op in release. This is the right tool
+  for the "unchecked" constructors — note we deliberately do **not** mark them
+  `unsafe` (that keyword is reserved for memory safety, not logical invariants).
 
-### 5.7 Real-time safety: replace HashMap usage on the audio thread
-- [ ] **Evaluate removing `HashMap` lookups/updates in the audio thread.** Structures like `last_automation_values`, `track_auto`, `prev_instrument_outputs`, and `track_controls` are managed via standard `std::collections::HashMap` in `synth_engine.rs` and `sequencer_engine.rs`. Since standard `HashMap` uses the relatively slow `SipHash 1-3` and has a worst-case complexity of $O(n)$ under collisions, it can introduce latency jitter. Evaluate replacing them with flat arrays (`[Option<T>; MAX]`) or linear search over small stack-allocated arrays (e.g. `arrayvec`), which are cache-friendly and have a deterministic $O(n)$ WCET bound.
+#### A4. DSP: prevent CPU denormal spikes via FTZ/DAZ
+- [ ] **Prevent CPU denormal exceptions in DSP filters.** Decaying signals in
+  recursive filters (biquads, comb filters) reach subnormal ranges, triggering CPU
+  microcode exceptions that spike load when instruments fade to silence. This is a
+  **known, real** audio-engine bug, not speculation. Set Flush-to-Zero (FTZ) and
+  Denormals-Are-Zero (DAZ) flags once on the audio thread (or add anti-denormal
+  bias e.g. `1e-24` to feedback states). Cheap, high impact.
 
-### 5.8 Real-time safety: automated allocation testing with assert-no-alloc
-- [ ] **Evaluate integrating `assert-no-alloc` or similar custom allocator guards in tests.** To prevent regression-based heap allocations/deallocations from slipping into the real-time audio thread (such as in `SynthEngine::process()`), evaluate wrapping the audio thread processing tests in a custom allocator tracker. This will fail the test suite immediately if a heap allocation/deallocation occurs in a designated real-time path.
+#### A5. UX: custom panic hook for desktop crash diagnostics
+- [ ] **Implement a custom panic hook.** Today a panic prints a stack trace to
+  stderr and terminates. A custom hook (`std::panic::set_hook`) can show a
+  user-friendly crash dialog or dump diagnostics to a log file, improving desktop
+  supportability. Not perf — pure usability.
 
-### 5.9 Compile-time safety: static assertions for lock-free data structures
-- [ ] **Evaluate using `static_assertions` to verify layouts/bounds of thread-transferred data.** To ensure command, event, and telemetry structs sent over lock-free ring buffers (like `EngineCommand` and `EngineEvent`) remain layout-stable, lock-free, and thread-safe, evaluate using compile-time static asserts (e.g., verifying `Send` bounds or struct sizes).
+#### A6. Compile-time safety: static assertions for lock-free structs
+- [ ] **Use `static_assertions` to verify layouts/bounds of thread-transferred
+  data.** Command, event, and telemetry structs sent over lock-free ring buffers
+  (`EngineCommand`, `EngineEvent`) should stay layout-stable, `Send`, and
+  lock-free. Compile-time static asserts (verifying `Send` bounds / struct sizes)
+  document and lock those invariants at zero runtime cost.
 
-### 5.10 Timing precision: sub-sample event & MIDI scheduling
-- [ ] **Evaluate implementing sub-sample event scheduling.** Currently, all commands and MIDI notes are processed via `process_commands()` at the start of each buffer block (block-rate quantization). For large buffer sizes (e.g. 512 or 1024 samples), this creates audible timing jitter and trigger latency. Evaluate adding sample-offset timestamps to `EngineCommand` and splitting buffer processing into sub-blocks at event offsets to provide microsecond-accurate note and parameter triggers.
+#### A7. Real-time safety: automated allocation testing with assert-no-alloc
+- [ ] **Integrate `assert-no-alloc` (or a custom allocator guard) in tests.** To
+  stop heap alloc/dealloc regressions slipping into the real-time path
+  (`SynthEngine::process()`), wrap the audio-thread processing tests in an
+  allocator tracker that fails the suite immediately on any allocation in a
+  designated RT path. Automates the RT rule the project already enforces by hand.
 
-### 5.11 Performance optimization: memory alignment for SIMD vectorization
-- [ ] **Evaluate enforcing 32-byte (AVX2) or 64-byte (AVX-512) alignment for audio buffers.** The `AudioBuffer` uses a standard `Vec<f32>` which lacks strict alignment guarantees, forcing LLVM to generate unaligned memory loads (`vmovups`). Restructuring it to use custom-aligned allocators or crates like `aligned-vec` will ensure aligned vector operations (`vmovaps`), boosting auto-vectorization efficiency in filter and oscillator hot paths.
+### Tier B — real problems, trigger-based (do when the symptom appears)
 
-### 5.12 Jitter reduction: elevate priority of MIDI threads
-- [ ] **Evaluate elevating scheduling priorities for MIDI threads.** The MIDI threads spawned by `midir` currently run with normal OS priority, unlike the high-priority (`SCHED_FIFO`) audio callback thread promoted by `cpal`. Under high system CPU load, this introduces MIDI processing jitter. Evaluate using OS-specific bindings (e.g. `pthread_setschedparam` or `libc` calls) to bump the MIDI thread priority just below the audio thread.
+Principled correctness/RT-safety issues, not guesses — but each is architectural
+enough to be driven by an actual observed symptom. Ordered by likely impact.
 
-### 5.13 Performance: optimize fast_sin_turns by avoiding redundant floor
-- [ ] **Evaluate introducing `fast_sin_turns_unchecked`.** The `fast_sin_turns` function currently calls `.floor()` to wrap values. However, in many hot paths (such as the sine oscillator), the input phase is already guaranteed to be in `[0.0, 1.0)`. Evaluate adding an unchecked variant `fast_sin_turns_unchecked` that assumes pre-wrapped input (backed by a debug assertion) to eliminate redundant floating-point `.floor()` instructions.
+#### B1. Architectural: RCU / arc-swap to remove RwLock<Song> read locks on the audio thread
+- [ ] **Replace `RwLock<Song>` with an RCU/double-buffering pattern.** The audio
+  thread uses `try_read()` on `Arc<RwLock<Song>>`. When the UI takes a write lock
+  (e.g. a large project mutation), `try_read()` fails and the audio thread skips
+  blocks / plays silence — an **audible dropout during heavy editing**, not a perf
+  nicety. Evaluate RCU pointers (`arc-swap`) or double-buffered pointer swaps for
+  lock-free, contention-free reads. **Trigger: do it if you hear dropouts while
+  editing big projects.**
 
-### 5.14 Reproducibility & Real-time safety: replace fastrand on the audio thread
-- [ ] **Evaluate replacing `fastrand` usage in the audio thread.** While `synth_core/src/hash.rs` notes that the audio path should never call an RNG to preserve reproducibility and avoid thread-local storage (TLS) lookup overhead, several modules (like `noise.rs`, `drift_generator.rs`, and `oscillator.rs`) call `fastrand::f32()`. Evaluate refactoring these modules to use the deterministic SplitMix64-based helpers in `synth_core::hash`.
+#### B2. Reproducibility & RT safety: replace fastrand on the audio thread
+- [ ] **Replace `fastrand` usage on the audio thread.** `synth_core/src/hash.rs`
+  already states the audio path should never call an RNG — to keep renders
+  *deterministic/reproducible* and avoid TLS lookups. Yet `noise.rs`,
+  `drift_generator.rs`, and `oscillator.rs` call `fastrand::f32()`. Refactor them
+  onto the deterministic SplitMix64 helpers in `synth_core::hash`. A
+  correctness/reproducibility fix, not a speed bet.
 
-### 5.15 Architectural: decouple SPSC channels in VisualizationBuffer
-- [ ] **Evaluate decoupling the SPSC channel ends in `VisualizationBuffer`.** Currently, both `Producer` and `Consumer` halves are stored in the shared `VisualizationBuffer` struct, requiring `parking_lot::Mutex` wrappers and `try_lock()` logic to satisfy `Sync`. Evaluate separating the channels: storing `Producer` exclusively inside the audio thread's processors and `Consumer` inside the GUI widgets. This removes the mutex and `try_lock()` overhead entirely, achieving true lock-free synchronization.
+#### B3. Real-time safety: metadata deallocation on the audio thread
+- [ ] **Stop deallocating metadata on the audio thread.** Commands like
+  `RenameInstrument` / `SetInstrumentDescription` move `String`s by value to the
+  audio thread; dropping them heap-deallocates there — a direct violation of the
+  project's own RT rules. Evaluate separating metadata from the audio engine's
+  structs (keep it in GUI state / shared graph; the audio thread holds only numeric
+  IDs), or return old metadata to the UI thread via a queue for disposal. Best
+  folded into the next change to the instrument-state model.
 
-### 5.16 User experience: custom panic hook for desktop crash diagnostics
-- [ ] **Evaluate implementing a custom panic hook.** When a panic occurs, the desktop app prints a stack trace to stderr and terminates. Evaluate setting a custom panic hook (`std::panic::set_hook`) to display a user-friendly crash dialog or dump diagnostics to a log file, improving the supportability of the desktop app.
+#### B4. Real-time safety: replace HashMap usage on the audio thread
+- [ ] **Remove `HashMap` lookups/updates from the audio thread.**
+  `last_automation_values`, `track_auto`, `prev_instrument_outputs`, and
+  `track_controls` use `std::collections::HashMap` (SipHash 1-3, worst-case O(n) on
+  collisions) in `synth_engine.rs` / `sequencer_engine.rs` — a latency-jitter risk.
+  Evaluate flat arrays (`[Option<T>; MAX]`) or linear search over small stack
+  arrays, which are cache-friendly with deterministic WCET, and can read more
+  cleanly. **Trigger: when jitter is actually measured.**
 
-### 5.17 Performance: use dashmap instead of RwLock<HashMap> for concurrent maps
-- [ ] **Evaluate replacing `RwLock<HashMap>` with `dashmap`.** Shared maps in `hub.rs` and `shared_state.rs` (like `clients` and `modules`) are wrapped in a global `RwLock`. Evaluate using `dashmap` to allow concurrent, sharded reads and writes, reducing lock contention between UI and background/MCP threads.
-
-### 5.18 Architectural: eliminate multi-writer Mutex on CommandSender via multiple SPSC queues
-- [ ] **Evaluate replacing the single `Mutex`-wrapped command queue with multiple SPSC queues.** Currently, `CommandSender` wraps a single SPSC `Producer` in a `Mutex` to allow multiple threads (UI, MIDI callback, MCP) to send commands. However, locking this mutex inside the high-priority MIDI callback thread can introduce timing jitter and blocking when other threads are writing. Evaluate creating separate, dedicated SPSC queues for the UI, MIDI, and MCP threads, allowing the audio thread to drain them sequentially without locks.
-
-### 5.19 Performance: memory-mapped sample loading via memmap2
-- [ ] **Evaluate using memory-mapped files (`mmap`) for sample loading.** Currently, the `SampleLibrary` loads sample files entirely into heap-allocated `Vec<f32>` buffers during startup. For large sample libraries, this causes high memory consumption and loading delays. Evaluate integrating `memmap2` to memory-map the sample files, letting the OS load sample data on demand (page-on-demand) and share page cache memory.
-
-### 5.20 Audio compression: support compressed sample formats (FLAC/Ogg Vorbis)
-- [ ] **Evaluate adding support for compressed audio files.** Currently, only uncompressed `.wav` files are supported. For multisampled instruments, this demands large disk spaces. Evaluate adding support for FLAC or Ogg Vorbis (using lightweight, safe libraries like `claxon` or `lewton`) to compress project size and save I/O bandwidth during project load.
-
-### 5.21 Math optimization: factor out Hadamard scale in FDN reverb
-- [ ] **Evaluate factoring out the Hadamard scaling factor in FDN.** Currently, `FdnCore::process_sample` performs 64 multiplications by `HADAMARD_8[i][j]` (containing `+HADAMARD_SCALE` or `-HADAMARD_SCALE`). By factoring out `HADAMARD_SCALE` and performing the matrix mixing using only additions and subtractions of the input values, and then applying a single multiplication per channel at the end, we can reduce multiplications from 64 to 8 per sample.
-
-### 5.22 DSP optimization: polyphase decimation in oversampling half-band FIR
-- [ ] **Evaluate implementing polyphase decimation in `HalfBandFilter`.** Currently, `HalfBandFilter::decimate` calls `self.push()` twice for every pair of input samples, discarding the first output. Although the delay line state must be updated for all samples, calculating the FIR filter sum for the discarded sample is redundant. Evaluate splitting `push` into `push_state_only` (shifts delay line only) and `push` (shifts and calculates output) to reduce FIR filter arithmetic by 50% during decimation.
-
-### 5.23 Performance optimization: power-of-two circular buffer wrapping
-- [ ] **Evaluate enforcing power-of-two sizes for circular buffers.** Currently, circular buffer index wrapping in `BufferIndex` uses the modulo operator `%`, which translates to a slow division instruction on the CPU. Evaluate enforcing power-of-two buffer sizes in delay lines and using bitwise AND `index & (size - 1)` for wrapping to replace division with a single-cycle bitwise operation, speeding up delay lines and reverbs.
-
-### 5.24 Safety: mark new_unchecked newtype constructors as unsafe
-- [ ] **Evaluate marking `new_unchecked` constructors as `unsafe`.** Constructors like `NormalizedValue::new_unchecked(value)` bypass safety invariants but are marked as safe functions. In accordance with Rust safety conventions, evaluate marking them as `unsafe fn` to ensure that call sites must explicitly enclose them in `unsafe` blocks, documenting and guaranteeing that developers have verified the bounds/invariants.
-
-### 5.25 Architectural: RCU / arc-swap to eliminate RwLock<Song> read locks on the audio thread
-- [ ] **Evaluate replacing `RwLock<Song>` with an RCU/double-buffering pattern.** The audio thread uses `try_read()` on an `Arc<RwLock<Song>>` to access sequencer state. If the UI thread acquires a write lock (e.g. during a large project mutation), `try_read()` fails, causing the audio thread to skip blocks or play silence. Evaluate using RCU (Read-Copy-Update) pointers (like the `arc-swap` crate) or double-buffered pointer swaps to provide lock-free, contention-free reads on the audio thread.
-
-### 5.26 Architectural: feature flags to prune unused modules in synth_modules
-- [ ] **Evaluate adding Cargo feature flags to prune unused DSP modules.** The `synth_modules` crate contains 70 modules, which increases compilation times and binary sizes. Evaluate dividing these modules into categories (e.g. `reverb`, `spectral`, `oscillators`) gated behind Cargo features to allow lightweight builds when only a subset of DSP code is needed.
-
-### 5.27 Performance: flatten WavetableBank Vec<Vec<f32>> to contiguous vector
-- [ ] **Evaluate flattening `WavetableBank::frames` structure.** Currently, wavetable frames are stored as a nested `Vec<Vec<f32>>`, causing double indirection and poor CPU cache locality during sample scanning. Evaluate flattening this structure into a single contiguous `Vec<f32>` (of size `num_frames * FRAME_SIZE`) and indexing it mathematically (`frame_idx * FRAME_SIZE + sample_idx`) to improve cache line pre-fetching.
-
-### 5.28 Performance: replace rem_euclid with fast wrapping in Wavetable lookup
-- [ ] **Evaluate avoiding float `rem_euclid` in wavetable sampling.** In `WavetableBank::sample`, the `phase` is wrapped via `phase.rem_euclid(1.0)` which is slow on floats. Since `phase` is often generated by wrapping phase accumulators (already in `[0.0, 1.0)`), evaluate using a fast branch or assuming pre-wrapped inputs (backed by a debug assertion) to bypass `rem_euclid` in the lookup path.
-
-### 5.29 Architectural: share TuningTable via Arc across voices
-- [ ] **Evaluate wrapping `TuningTable` in an `Arc`.** Currently, each `Voice` owns a copy of the entire `TuningTable` struct (512 bytes). In 64-voice polyphony configs, this wastes memory and requires copying the entire table to every voice when the scale changes. Evaluate sharing a single `Arc<TuningTable>` across all voices to achieve zero-copy tuning updates.
-
-### 5.30 Build optimization: Profile-Guided Optimization (PGO)
-- [ ] **Evaluate documenting and supporting Profile-Guided Optimization.** Since Pertylizer is a performance-critical audio engine, evaluate setting up and documenting PGO compiler workflows (using `-C profile-generate` and `-C profile-use` flags) to allow LLVM to optimize hot branch layouts and inline placements based on real-world execution profiles.
-
-### 5.31 Performance optimization: pre-calculate reciprocals to avoid float divisions in hot paths
-- [ ] **Evaluate replacing float divisions with reciprocal multiplications.** The engine performs divisions like `delta_time / glide_time` during processing (e.g. in `GlideState::update`). In DSP hot paths, floating-point division is several times slower than multiplication. Evaluate calculating the reciprocal (`1.0 / value`) during parameter configuration and using multiplication in the real-time processing loop.
-
-### 5.32 Performance: optimize InterpolatedDelayLine read_cubic using power-of-two mask
-- [ ] **Evaluate replacing rem_euclid and modulo operations in `read_cubic`.** Currently, `read_cubic` performs a floating-point `rem_euclid`, one `floor`, and four integer `%` modulo operations per sample. By enforcing power-of-two buffer sizes, evaluate replacing the four integer modulos with bitwise AND operations (`idx & (len - 1)`) and the float `rem_euclid` with a branch or bitwise operations to speed up chorus/pitch-shifting.
-
-### 5.33 Performance: avoid double-precision f64 math in room mode calculations
-- [ ] **Evaluate replacing `f64` casting in `mode_frequency`.** In `room_modes.rs`, `mode_frequency` converts all `f32` parameters to `f64` to calculate frequencies (performing `f64::sqrt` and double-precision divisions). Since the inputs and outputs are all `f32`, evaluate using `f32` operations to avoid double-precision instruction overhead on 32-bit registers.
-
-### 5.34 Performance: pre-multiply WOLA norm in STFT synthesis window
-- [ ] **Evaluate caching normalized window values in `StftProcessor`.** In `StftProcessor::process`, the synthesis overlap-add loop performs two multiplications per sample (`ifft_out[j] * window[j] * norm`). By pre-multiplying `window[j] * norm` when the window is loaded, evaluate reducing the inner loop math to a single multiplication per sample.
-
-### 5.35 Performance: optimize WavetableBank linear interpolation math
-- [ ] **Evaluate optimizing lerp calculation in `WavetableBank::sample`.** The current linear interpolation uses `a * (1.0 - t) + b * t` which requires two float multiplications. Evaluate replacing it with `a + t * (b - a)` to reduce it to a single multiplication, saving up to 50% of the math inside the scanning hot path.
-
-### 5.36 Performance: utilize SIMD in StereoBiquad to process channels in parallel
-- [ ] **Evaluate using SIMD for stereo biquad filtering.** Currently, `StereoBiquad::process` processes left and right channels sequentially. Since both channels share filter coefficients, evaluate using SIMD vectors (`f32x2` or `f32x4` via `std::simd`) to process both channels concurrently, doubling the speed of biquad filters.
-
-### 5.37 Code quality: standardise on to_radians and to_degrees intrinsics
-- [ ] **Evaluate replacing custom degree-to-radian multipliers.** Degree-to-radian conversions are done by multiplying by `PI / 180.0` or similar literals. Standardizing on `f32::to_radians` is cleaner and utilizes optimal compile-time standard library intrinsics.
-
-### 5.38 DSP: implement parameter smoothing for CV/cutoff changes
-- [ ] **Evaluate adding parameter smoothing to hot paths.** Sudden jumps in block-by-block parameter updates can cause audible clicks and "zipper noise". Evaluate adding a lightweight parameter smoothing helper (e.g. 1-pole lowpass filter or a sample-rate linear ramp) inside oscillators, amplifiers, and filters to guarantee smooth transitions.
-
-### 5.39 Performance: replace per-bank OnceLock with a global initialized lazy structure
-- [ ] **Evaluate replacing separate `OnceLock` instances in `get_wavetable`.** Currently, lookup matches on separate static `OnceLock<WavetableBank>` variables, causing atomic synchronization checks on every call. Evaluate using a single global lazy structure (or pre-initialization step) to load all banks at startup and keep them in a contiguous static array, removing lookup overhead.
-
-### 5.40 DSP: support fractional note interpolation in TuningTable
-- [ ] **Evaluate implementing fractional MIDI note support for TuningTable.** The `TuningTable` maps integer MIDI notes (0-127) to frequencies. During pitch bend or microtonal slide execution, custom scales are bypassed or approximated using 12-TET scaling. Evaluate supporting fractional note lookup (`note_to_freq_fractional(note: f32)`) with interpolation between adjacent frequencies to preserve correct custom scale intervals during pitch sweeps.
-
-### 5.41 DSP: prevent CPU denormal performance spikes via FTZ/DAZ or anti-denormal noise
-- [ ] **Evaluate preventing CPU denormal exceptions in DSP filters.** Decaying signals in recursive filters (like biquad filters and comb filters) can reach extremely small subnormal/denormal ranges. This triggers CPU microcode exceptions that spike CPU load when instruments fade to silence. Evaluate setting Flush-to-Zero (FTZ) and Denormals-Are-Zero (DAZ) hardware flags on the audio thread or adding anti-denormal bias/noise (e.g. `1e-24`) to feedback states.
-
-### 5.42 Performance: eliminate rem_euclid in AdditiveOsc phase accumulation
-- [ ] **Evaluate replacing float `rem_euclid` in `AdditiveOsc::process`.** During phase accumulation, `rem_euclid(1.0)` is used to wrap phases. Since the phase increment is positive and small, evaluate replacing it with a simple conditional check `if new_phase >= 1.0 { new_phase -= 1.0; }` to avoid expensive float modulo divisions.
-
-### 5.43 Performance: utilize SIMD in AdditiveOsc for parallel harmonic synthesis
-- [ ] **Evaluate vectorizing additive synthesis.** The additive oscillator sums 32 harmonics per sample, representing a major CPU bottleneck. Evaluate using SIMD vectors (`f32x4` or `f32x8` via `std::simd`) to calculate phase updates and sine approximations for multiple harmonics concurrently to achieve a 3-4x speedup.
-
-### 5.44 Performance: optimize VectorMixer by hoisting gain calculations when CV is unconnected
-- [ ] **Evaluate hoisting bilinear gain calculations in `VectorMixer`.** Currently, `VectorMixer::process` calculates equal-power bilinear crossfade gains (using trigonometric/square root functions) per sample. When `x_cv` and `y_cv` ports are unconnected, XY coordinates are completely constant across the entire block. Evaluate checking for unconnected CV inputs and calculating the gains once per block outside the loop, saving significant CPU overhead.
-
-### 5.45 Performance: control-rate (downsampled) CV evaluation for VectorMixer
-- [ ] **Evaluate downsampling CV calculations in `VectorMixer`.** When CV modulations are connected, they change at control rate rather than audio rate. Evaluate computing equal-power gains at a downsampled rate (e.g., once every 16 samples) and linearly interpolating them between blocks to eliminate 90% of coordinate transform math.
-
-### 5.46 Architectural: use AtomicCell or raw atomics instead of RwLock in shared parameter/modulation telemetry
-- [ ] **Evaluate using lock-free atomics for parameter sharing.** Telemetry and state updates (like OSC, harmony analysis, and GUI updates) query parameters concurrently. Wrapping values in standard `RwLock` structures introduces locks and synchronization overhead. Evaluate using `crossbeam::atomic::AtomicCell` or direct atomic floats to allow lock-free, zero-overhead sharing of float parameter values between threads.
+#### B5. DSP: parameter smoothing for CV/cutoff changes
+- [ ] **Add parameter smoothing to hot paths.** Sudden block-by-block parameter
+  jumps cause audible clicks / "zipper noise". A lightweight smoother (1-pole
+  lowpass or sample-rate linear ramp) in oscillators, amplifiers, and filters
+  guarantees smooth transitions. An **audible-quality** fix (effectively a small
+  feature). **Trigger: when you hear clicks on cutoff/CV moves.**

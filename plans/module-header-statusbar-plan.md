@@ -1,11 +1,15 @@
 # Patch module — bottom status bar + header zoning
 
-> Plan only. No code yet. Goal: declutter the patch-editor module by moving the
-> non-interactive **status badges** out of the header into a dedicated **bottom
-> status bar**, fix their hover cursor (arrow, not hand), and *investigate* —
-> behind the same branch — whether the header should be split into
-> left/right (or center/right) zones so the title sits left and the interactive
-> buttons sit right.
+> Goal: declutter the patch-editor module by moving the non-interactive **status
+> badges** out of the header into a dedicated **bottom status bar**, fix their
+> hover cursor (arrow, not hand), and *investigate* — behind the same branch —
+> whether the header should be split into left/right (or center/right) zones so
+> the title sits left and the interactive buttons sit right.
+>
+> **STATUS (branch `feat/module-status-bar`):** Phase 1 **implemented** — code
+> complete, build/clippy/fmt/test green, high-effort code-review done + fixes
+> applied. Remaining: in-app eyeball (see §1.4) + the colour pass is deferred.
+> Phase 2 (header zoning) **not started**. See the per-section ✅ notes below.
 
 ## Current state (branch `main`)
 
@@ -71,9 +75,27 @@ but every actual widget it draws comes from `controls.rs`.
 
 ---
 
-## Phase 1 — Bottom status bar
+## Phase 1 — Bottom status bar — ✅ DONE (not yet eyeballed)
 
 The substance of the change. Independent of Phase 2.
+
+**What landed (and where it deviated from this plan):**
+- ✅ §1.1 `draw_module_status_badges` extracted; header keeps only interactive controls.
+- ✅ §1.2 Arrow cursor — but solved **globally in the helper**, not per badge. The
+  cursor came from the module card's `Grab`, not the badge widget; forcing
+  `on_hover_cursor(Default)` in `icon_button` fixes every icon (header + bar).
+- ✅ §1.3 `draw_module_footer` chrome in `frame.rs`. **The gradient wash was added
+  then removed** at the user's request — the footer is now just `separator` + row.
+  The `fill_gradient_quad` helper extracted for the header wash stays.
+- ➕ **Beyond plan (user-driven consolidation):** `status_badge`/`status_badge_sized`
+  and `icon_button_sized` were all collapsed into a single
+  `icon_button(ui, icon, color, tooltip)` — one hit target (`ICON_BUTTON_SIZE`
+  18×20), one glyph size (`theme().fonts.size_normal`), arrow cursor, and the
+  tooltip all baked in. `size_module_header` was tried then dropped in favour of
+  `size_normal`. No magic size literals left in the patch-editor icon code.
+- ➕ **Beyond plan:** the three grey header icons (info / overflow / close) recoloured
+  to `accent_primary`. A broader colour pass (group-header icons, close-as-red?) is
+  **deferred** — "kolla vidare på färger senare".
 
 ### 1.1 Extract a status-badge renderer
 
@@ -203,7 +225,7 @@ Edge cases:
 
 ---
 
-## Phase 2 — Header zoning (investigation + likely implementation)
+## Phase 2 — Header zoning (investigation + likely implementation) — ⛔ NOT STARTED
 
 Once the badges leave the header (Phase 1), the header is just `title + interactive
 buttons`. Evaluate splitting it so the title is left and the buttons are right.
