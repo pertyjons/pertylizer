@@ -248,20 +248,41 @@ efficiency/altitude items deliberately left out of that change.
   reach. Confirm the sampler/engine tolerates a missing referenced sample
   gracefully (silent → no sound vs. panic), and consider warning on / blocking
   deletion of an in-use sample, or resetting referencing modules to "no sample".
+
 ### 3.8 Shared widget helpers follow-ups (evaluating Phase 2 residual)
 
 Residual after the shared-widget-helpers work landed — these are the remaining areas to polish the GUI helpers layer:
 
-- [ ] **Global FileDialog memory across kinds.** Refactor `ensure_dialog` in [dialogs.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/dialogs.rs) to reuse a single global `FileDialog` instance across all kinds (Open/Save Patch, templates, etc.) rather than rebuilding it when `file_dialog_kind` changes. Update its `config_mut().file_filters` dynamically on every open. This enables directory memory and highlighting (`retain_selected_entry`) to survive switching between Open and Save actions.
-- [ ] **Unify inline name/description editors.** Create a helper `inline_editable_text(ui, &mut String, &mut bool, multiline)` in [controls.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/widgets/controls.rs) to wrap the focus-grabbing and lost-focus/Enter-key commit logic currently duplicated in [piano_roll.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/sequencer/piano_roll.rs#L2510) and [arrangement.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/sequencer/arrangement.rs#L1580).
-- [ ] **Address inline toggle button variations.** Several inline toggle styles (e.g. M/S muting/soloing badges, custom-colored selections) still bypass `toggle_button_colored`. Create a flexible `toggle_badge` or `selectable_toggle` helper to cover these and keep sizes consistent (preventing drift).
-- [ ] **Perform a visual eyeball check on normalized captions.** Verify that the normalized size shift (~9px to 10px `size_small`) for the 24 migrated `.small()` labels does not cause visual clipping or alignment issues in tight spaces (especially grid cells in [tracker.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/sequencer/tracker.rs) and Vol/Pan knob rows in [arrangement.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/sequencer/arrangement.rs)).
+- [ ] **Global FileDialog memory across kinds.** Refactor `ensure_dialog`
+  in [dialogs.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/dialogs.rs) to reuse a single global
+  `FileDialog` instance across all kinds (Open/Save Patch, templates, etc.) rather than rebuilding it when
+  `file_dialog_kind` changes. Update its `config_mut().file_filters` dynamically on every open. This enables directory
+  memory and highlighting (`retain_selected_entry`) to survive switching between Open and Save actions.
+- [ ] **Unify inline name/description editors.** Create a helper
+  `inline_editable_text(ui, &mut String, &mut bool, multiline)`
+  in [controls.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/widgets/controls.rs) to wrap the
+  focus-grabbing and lost-focus/Enter-key commit logic currently duplicated
+  in [piano_roll.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/sequencer/piano_roll.rs#L2510)
+  and [arrangement.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/sequencer/arrangement.rs#L1580).
+- [ ] **Address inline toggle button variations.** Several inline toggle styles (e.g. M/S muting/soloing badges,
+  custom-colored selections) still bypass `toggle_button_colored`. Create a flexible `toggle_badge` or
+  `selectable_toggle` helper to cover these and keep sizes consistent (preventing drift).
+- [ ] **Perform a visual eyeball check on normalized captions.** Verify that the normalized size shift (~9px to 10px
+  `size_small`) for the 24 migrated `.small()` labels does not cause visual clipping or alignment issues in tight
+  spaces (especially grid cells
+  in [tracker.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/sequencer/tracker.rs) and Vol/Pan knob
+  rows in [arrangement.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/sequencer/arrangement.rs)).
 
 ### 3.9 Drop the vendored egui-0.35 forks once upstream ships 0.35
 
-- [ ] **Replace the vendored `third_party/egui-remixicon` crate with the crates.io version once they publish an egui-0.35-compatible release.** The egui 0.34→0.35 upgrade was blocked because neither `egui-remixicon` nor `egui-file-dialog` had a 0.35 release at the time (egui 0.35 landed 2026-06-25).
-  * Note: `egui-file-dialog` was already successfully upgraded to its official 0.35-native version `0.14.1` on crates.io and its fork was dropped.
-  * For `egui-remixicon`: when upstream releases a 0.35 version, bump `egui-remixicon` in `Cargo.toml`, remove the `[patch.crates-io]` block and the `third_party/egui-remixicon` directory, and verify the build. Watch: https://github.com/get200/egui-remixicon
+- [ ] **Replace the vendored `third_party/egui-remixicon` crate with the crates.io version once they publish an
+  egui-0.35-compatible release.** The egui 0.34→0.35 upgrade was blocked because neither `egui-remixicon` nor
+  `egui-file-dialog` had a 0.35 release at the time (egui 0.35 landed 2026-06-25).
+    * Note: `egui-file-dialog` was already successfully upgraded to its official 0.35-native version `0.14.1` on
+      crates.io and its fork was dropped.
+    * For `egui-remixicon`: when upstream releases a 0.35 version, bump `egui-remixicon` in `Cargo.toml`, remove the
+      `[patch.crates-io]` block and the `third_party/egui-remixicon` directory, and verify the build.
+      Watch: https://github.com/get200/egui-remixicon
 
 ### 3.10 Review the mixer view layout
 
@@ -300,13 +321,6 @@ Residual after the shared-widget-helpers work landed — these are the remaining
   filter return a compact `[{type_key, name, category}]` list) so callers can get the catalog
   without the full port/parameter dump. Surfaced 2026-07-01 building the all-modules reference patch.
 
-- [ ] **The module catalog doesn't expose the `ModuleWidth` bucket / panel width.**
-  `list_module_types` entries have `type_key, name, description, category, input_ports,
-  output_ports, parameters, signal_flow_hint` — but not the module's `ModuleWidth` (ExtraSmall…
-  ExtraLarge) or its px width. That's GUI-layout metadata an agent can't see, which made a
-  desired-vs-actual width audit impossible from MCP alone (had to grep `synth_modules` source).
-  Fix: add `width_bucket` + `width_px` to each catalog entry. Surfaced 2026-07-01.
-
 - [ ] **`add_module` can't add visualizer modules; no way to know in advance.** Adding
   `scp`/`mtr`/`spa` (Oscilloscope/Meter/Spectrum) fails with *"visualizer modules require GUI
   (VisualizationBuffer)"*, so "add every module type" is impossible from MCP. Nothing in the
@@ -321,6 +335,19 @@ Residual after the shared-widget-helpers work landed — these are the remaining
   `assets/examples/projects/` afterwards) rather than the single-instrument patch format the
   examples use. Fix: add a `save_patch(instrument_id, path)` that writes patch format.
   Surfaced 2026-07-01.
+
+- [ ] **`build_instrument`'s description example uses wrong port names, silently
+  producing zero-connection instruments.** The example in the tool description says
+  `from_port:'output'` / `to_port:'input'`, but the very modules in that example
+  (`osc`/`amp`/`out`) expose ports `out` / `in` — so following the example verbatim fails
+  with `osc-1 has no output port 'output', available: ["out", "out_l", "out_r", "phase"]`.
+  Worse, the instrument is still created but with `connection_count: 0` and the errors buried
+  in a per-instrument `errors` array, which is easy to miss. The `connect` schema has the same
+  inconsistency (`from_port` example is correct `'out'`, but `to_port` example says `'input'`).
+  Fix: correct the examples to `out`/`in`; and/or accept `output`→`out` / `input`→`in`
+  aliases; and/or return a hard error when *every* connection in a `build_instrument` call
+  fails instead of a "successful" instrument with no wiring. Surfaced 2026-07-01 smoke-testing
+  the MCP after the rmcp 2.0 upgrade.
 
 - [ ] Tier 3: `compare_to_reference`, `compare_patterns`, `compare_patches`,
   `humanize_notes`, `generate_variation`, `analyze_track`, `get_mix_meters`.
@@ -368,10 +395,10 @@ Residual after the shared-widget-helpers work landed — these are the remaining
 > — it traded clarity for unmeasured gains. What remains is split into two tiers:
 >
 > - **Tier A = cheap wins** that raise safety / readability / diagnostics or fix a
->   *known* bug. Do them whenever; no trigger needed. Ordered cheapest-first.
+    > *known* bug. Do them whenever; no trigger needed. Ordered cheapest-first.
 > - **Tier B = real problems that need a trigger.** Each is a genuine
->   correctness/RT-safety issue, but architectural enough that it should be driven
->   by an *actually observed symptom*, not done pre-emptively. Ordered by impact.
+    > correctness/RT-safety issue, but architectural enough that it should be driven
+    > by an *actually observed symptom*, not done pre-emptively. Ordered by impact.
 
 ### Tier A — cheap quality/safety wins (do whenever, cheapest first)
 
@@ -379,17 +406,20 @@ These are not performance bets; they make the code safer, clearer, or more
 debuggable at low cost.
 
 #### A1. Thread diagnostics: named background threads
+
 - [ ] **Use named threads via `std::thread::Builder` for background tasks.**
   Background threads spawned in `null_backend.rs`, `gui/analyze.rs`,
   `synth_osc/src/lib.rs`, and `main.rs` are currently unnamed. Named threads make
   debugging/profiling (`htop`, `perf`, `gdb`) much more readable. Trivial.
 
 #### A2. Code quality: standardise on to_radians / to_degrees
+
 - [ ] **Replace custom degree↔radian multipliers.** Conversions multiply by
   `PI / 180.0` literals; standardise on `f32::to_radians` / `to_degrees` — cleaner
   and uses the stdlib intrinsics. Pure readability cleanup. Trivial.
 
 #### A3. Invariant checking: debug_assert in new_unchecked constructors
+
 - [ ] **Add `debug_assert!` inside `new_unchecked` newtype constructors.**
   Constructors like `NormalizedValue::new_unchecked(value)` bypass bounds checks.
   A `debug_assert!` on the invariant (e.g. `[0.0, 1.0]`) catches invalid states in
@@ -398,6 +428,7 @@ debuggable at low cost.
   `unsafe` (that keyword is reserved for memory safety, not logical invariants).
 
 #### A4. DSP: prevent CPU denormal spikes via FTZ/DAZ
+
 - [ ] **Prevent CPU denormal exceptions in DSP filters.** Decaying signals in
   recursive filters (biquads, comb filters) reach subnormal ranges, triggering CPU
   microcode exceptions that spike load when instruments fade to silence. This is a
@@ -406,12 +437,14 @@ debuggable at low cost.
   bias e.g. `1e-24` to feedback states). Cheap, high impact.
 
 #### A5. UX: custom panic hook for desktop crash diagnostics
+
 - [ ] **Implement a custom panic hook.** Today a panic prints a stack trace to
   stderr and terminates. A custom hook (`std::panic::set_hook`) can show a
   user-friendly crash dialog or dump diagnostics to a log file, improving desktop
   supportability. Not perf — pure usability.
 
 #### A6. Compile-time safety: static assertions for lock-free structs
+
 - [ ] **Use `static_assertions` to verify layouts/bounds of thread-transferred
   data.** Command, event, and telemetry structs sent over lock-free ring buffers
   (`EngineCommand`, `EngineEvent`) should stay layout-stable, `Send`, and
@@ -419,6 +452,7 @@ debuggable at low cost.
   document and lock those invariants at zero runtime cost.
 
 #### A7. Real-time safety: automated allocation testing with assert-no-alloc
+
 - [ ] **Integrate `assert-no-alloc` (or a custom allocator guard) in tests.** To
   stop heap alloc/dealloc regressions slipping into the real-time path
   (`SynthEngine::process()`), wrap the audio-thread processing tests in an
@@ -431,6 +465,7 @@ Principled correctness/RT-safety issues, not guesses — but each is architectur
 enough to be driven by an actual observed symptom. Ordered by likely impact.
 
 #### B1. Architectural: RCU / arc-swap to remove RwLock<Song> read locks on the audio thread
+
 - [ ] **Replace `RwLock<Song>` with an RCU/double-buffering pattern.** The audio
   thread uses `try_read()` on `Arc<RwLock<Song>>`. When the UI takes a write lock
   (e.g. a large project mutation), `try_read()` fails and the audio thread skips
@@ -440,6 +475,7 @@ enough to be driven by an actual observed symptom. Ordered by likely impact.
   editing big projects.**
 
 #### B2. Reproducibility & RT safety: replace fastrand on the audio thread
+
 - [ ] **Replace `fastrand` usage on the audio thread.** `synth_core/src/hash.rs`
   already states the audio path should never call an RNG — to keep renders
   *deterministic/reproducible* and avoid TLS lookups. Yet `noise.rs`,
@@ -448,6 +484,7 @@ enough to be driven by an actual observed symptom. Ordered by likely impact.
   correctness/reproducibility fix, not a speed bet.
 
 #### B3. Real-time safety: metadata deallocation on the audio thread
+
 - [ ] **Stop deallocating metadata on the audio thread.** Commands like
   `RenameInstrument` / `SetInstrumentDescription` move `String`s by value to the
   audio thread; dropping them heap-deallocates there — a direct violation of the
@@ -457,6 +494,7 @@ enough to be driven by an actual observed symptom. Ordered by likely impact.
   folded into the next change to the instrument-state model.
 
 #### B4. Real-time safety: replace HashMap usage on the audio thread
+
 - [ ] **Remove `HashMap` lookups/updates from the audio thread.**
   `last_automation_values`, `track_auto`, `prev_instrument_outputs`, and
   `track_controls` use `std::collections::HashMap` (SipHash 1-3, worst-case O(n) on
@@ -466,6 +504,7 @@ enough to be driven by an actual observed symptom. Ordered by likely impact.
   cleanly. **Trigger: when jitter is actually measured.**
 
 #### B5. DSP: parameter smoothing for CV/cutoff changes
+
 - [ ] **Add parameter smoothing to hot paths.** Sudden block-by-block parameter
   jumps cause audible clicks / "zipper noise". A lightweight smoother (1-pole
   lowpass or sample-rate linear ramp) in oscillators, amplifiers, and filters

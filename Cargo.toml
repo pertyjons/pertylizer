@@ -102,7 +102,7 @@ dirs = "6.0.0"
 futures-util = { version = "0.3.32", default-features = false, features = ["std"] }
 
 # MCP (Model Context Protocol)
-rmcp = { version = "1.8.0", features = ["server", "transport-io", "transport-streamable-http-server"] }
+rmcp = { version = "2.0.0", features = ["server", "transport-io", "transport-streamable-http-server"] }
 tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "io-std", "net"] }
 schemars = "1.2.1"
 axum = "0.8.9"

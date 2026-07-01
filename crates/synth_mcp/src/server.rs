@@ -11,10 +11,9 @@ use futures_util::FutureExt;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    AnnotateAble, Annotated, CallToolResult, Content, Implementation, ListResourceTemplatesResult,
-    ListResourcesResult, PaginatedRequestParams, RawAudioContent, RawContent, RawResource,
-    RawResourceTemplate, ReadResourceRequestParams, ReadResourceResult, ResourceContents,
-    ServerCapabilities, ServerInfo,
+    CallToolResult, ContentBlock, Implementation, ListResourceTemplatesResult, ListResourcesResult,
+    PaginatedRequestParams, ReadResourceRequestParams, ReadResourceResult, Resource,
+    ResourceContents, ResourceTemplate, ServerCapabilities, ServerInfo,
 };
 use rmcp::service::{NotificationContext, RequestContext};
 use rmcp::{ErrorData, RoleServer, ServerHandler, tool, tool_handler, tool_router};
@@ -4234,12 +4233,12 @@ impl ServerHandler for SynthMcpServer {
         _request: Option<PaginatedRequestParams>,
         _context: RequestContext<RoleServer>,
     ) -> Result<ListResourcesResult, ErrorData> {
-        let mut resources: Vec<Annotated<RawResource>> = Vec::new();
+        let mut resources: Vec<Resource> = Vec::new();
 
         // Module type resources
         if let Ok(types) = self.bridge.list_module_types() {
             for info in &types {
-                let mut r = RawResource::new(
+                let mut r = Resource::new(
                     format!("synth://module-types/{}", info.type_key),
                     info.name.clone(),
                 );
@@ -4251,7 +4250,7 @@ impl ServerHandler for SynthMcpServer {
                     info.parameters.len()
                 ));
                 r.mime_type = Some("application/json".into());
-                resources.push(Annotated::new(r, None));
+                resources.push(r);
             }
         }
 
@@ -4259,13 +4258,13 @@ impl ServerHandler for SynthMcpServer {
         if let Ok(patches) = self.bridge.list_example_patches() {
             for patch in &patches {
                 let slug = patch.name.to_ascii_lowercase().replace(' ', "-");
-                let mut r = RawResource::new(format!("synth://patches/{slug}"), patch.name.clone());
+                let mut r = Resource::new(format!("synth://patches/{slug}"), patch.name.clone());
                 r.description = Some(format!(
                     "{}: {} | {} modules, {} connections",
                     patch.category, patch.description, patch.module_count, patch.connection_count
                 ));
                 r.mime_type = Some("application/json".into());
-                resources.push(Annotated::new(r, None));
+                resources.push(r);
             }
         }
 
@@ -4279,33 +4278,14 @@ impl ServerHandler for SynthMcpServer {
         _context: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, ErrorData> {
         let templates = vec![
-            Annotated::new(
-                RawResourceTemplate {
-                    uri_template: "synth://module-types/{type_key}".into(),
-                    name: "Module Type".into(),
-                    title: None,
-                    description: Some(
-                        "Detailed info about a synth module type (ports, parameters)".into(),
-                    ),
-                    mime_type: Some("application/json".into()),
-                    icons: None,
-                },
-                None,
-            ),
-            Annotated::new(
-                RawResourceTemplate {
-                    uri_template: "synth://patches/{name}".into(),
-                    name: "Example Patch".into(),
-                    title: None,
-                    description: Some(
-                        "Full patch data (modules, connections, parameters) for an example patch"
-                            .into(),
-                    ),
-                    mime_type: Some("application/json".into()),
-                    icons: None,
-                },
-                None,
-            ),
+            ResourceTemplate::new("synth://module-types/{type_key}", "Module Type")
+                .with_description("Detailed info about a synth module type (ports, parameters)")
+                .with_mime_type("application/json"),
+            ResourceTemplate::new("synth://patches/{name}", "Example Patch")
+                .with_description(
+                    "Full patch data (modules, connections, parameters) for an example patch",
+                )
+                .with_mime_type("application/json"),
         ];
 
         Ok(ListResourceTemplatesResult::with_all_items(templates))
@@ -4616,13 +4596,9 @@ impl SynthMcpServer {
         use base64::Engine;
         let encoded = base64::engine::general_purpose::STANDARD.encode(&preview.wav_data);
 
-        let audio = RawContent::Audio(RawAudioContent {
-            data: encoded,
-            mime_type: "audio/wav".to_string(),
-        })
-        .no_annotation();
+        let audio = ContentBlock::audio(encoded, "audio/wav");
 
-        let text = Content::text(format!(
+        let text = ContentBlock::text(format!(
             "Audio preview: note {} vel {} on instrument {} ({:.1}s, {}Hz WAV, {} bytes)",
             params.0.note,
             params.0.velocity,
@@ -4669,7 +4645,7 @@ impl SynthMcpServer {
 
         let json = serde_json::to_string_pretty(&result)
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
+        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
