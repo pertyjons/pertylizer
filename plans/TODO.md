@@ -263,6 +263,17 @@ Residual after the shared-widget-helpers work landed — these are the remaining
   * Note: `egui-file-dialog` was already successfully upgraded to its official 0.35-native version `0.14.1` on crates.io and its fork was dropped.
   * For `egui-remixicon`: when upstream releases a 0.35 version, bump `egui-remixicon` in `Cargo.toml`, remove the `[patch.crates-io]` block and the `third_party/egui-remixicon` directory, and verify the build. Watch: https://github.com/get200/egui-remixicon
 
+### 3.10 Review the mixer view layout
+
+- [ ] **Give the mixer view (`gui/mixer_view.rs`) a proper layout pass.** The module-header
+  consolidation (2026-07-01) shared `draw_module_header`'s right-alignment across the mixer, switched
+  its strips to the shared `icon_button`, and sized channel strips / return columns off the
+  `ModuleWidth` buckets (`Small` 192 / `Medium` 256) instead of hardcoded 108/200 — which fixed the
+  header title/icon overlap but was a spot fix, not a considered layout. Still worth reviewing: overall
+  strip proportions and spacing at the new widths, sends/pan/meter/fader arrangement inside a strip, the
+  master strip, and how it all reads next to the patch editor. Vertical scrolling was just added
+  (`ScrollArea::both`); confirm it behaves with tall strips and many channels.
+
 ---
 
 ## 4. AI & Automation
