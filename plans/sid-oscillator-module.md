@@ -76,22 +76,22 @@ Mirror the `RingMod` (`rng`) / `AudioScript` (`asc`) precedents — both are rec
 single-module additions and touch exactly these seams.
 
 1. **`ModuleType` variant** — `crates/synth_core/src/params/mod.rs` (enum at `:144`):
-   - **append `SidOscillator` at the END of the enum**, not near `Oscillator`. The enum
-     is `#[serde(rename_all)]`-serialized and inserting mid-enum shifts every later
-     variant's discriminant / ordering — append is the safe convention (that's why
-     `RingMod`/`AudioScript` sit late in the list). **[review-2 blocker]**
-   - `display_name` (near `:405`), `prefix() => "sid"` (near `:486`, cf. `rng`/`asc`),
-     `from_prefix()` (near `:569`), the **voice-category** match arms (`:265-322`), and
-     the `with_f32` round-trip arm (near `:1115`).
+    - **append `SidOscillator` at the END of the enum**, not near `Oscillator`. The enum
+      is `#[serde(rename_all)]`-serialized and inserting mid-enum shifts every later
+      variant's discriminant / ordering — append is the safe convention (that's why
+      `RingMod`/`AudioScript` sit late in the list). **[review-2 blocker]**
+    - `display_name` (near `:405`), `prefix() => "sid"` (near `:486`, cf. `rng`/`asc`),
+      `from_prefix()` (near `:569`), the **voice-category** match arms (`:265-322`), and
+      the `with_f32` round-trip arm (near `:1115`).
 2. **Param enum** — new `crates/synth_core/src/params/sid_oscillator.rs` defining
    `SidOscillatorParam` (mirror `OscillatorParam`, `params/oscillators.rs:596`). Then
    **three distinct seams** (the earlier draft conflated them — **[review-2 blocker]**):
-   - add a `SidOscillator(SidOscillatorParam)` variant to the top-level **`Param` enum,
-     which lives in `params/mod.rs:695`** (NOT `module_param.rs`);
-   - add the new type to the **`impl_module_param!` macro list in
-     `params/module_param.rs`** (that file is only the blanket trait-impl aggregation);
-   - add `ScalarParam` impls for its value types in `params/scalar_impls.rs` /
-     `kind_impls.rs`; re-export the enum from `params/mod.rs`.
+    - add a `SidOscillator(SidOscillatorParam)` variant to the top-level **`Param` enum,
+      which lives in `params/mod.rs:695`** (NOT `module_param.rs`);
+    - add the new type to the **`impl_module_param!` macro list in
+      `params/module_param.rs`** (that file is only the blanket trait-impl aggregation);
+    - add `ScalarParam` impls for its value types in `params/scalar_impls.rs` /
+      `kind_impls.rs`; re-export the enum from `params/mod.rs`.
 3. **Factory — the REAL one** — `crates/pertylizer/src/module_factory.rs`
    `create_voice_module`: add a `ModuleType::SidOscillator => { … }` arm
    (cf. `RingMod` at `:72`). **[review-2 blocker]** `synth_engine/src/commands.rs::create_module`
@@ -126,19 +126,19 @@ raw bits. Implement a chip-faithful core per voice:
   (round to 22/23) injects audible low-frequency **phase jitter** and distortion,
   worst at high pitch. A naive host-rate "raw" oscillator also over-brightens (the
   reason our `raw` PoC overshot reSID; measured). Use one of:
-  1. **Fractional cycle stepping + BLEP:** advance the accumulator by a fixed-point
-     fractional number of SID cycles per host sample; when a discontinuity crosses
-     (pulse edge, saw wrap, sync reset), compute its exact fractional position within
-     the sample and insert a band-limited step (PolyBLEP/MinBLEP) there. No 1 MHz loop.
-  2. **True 1 MHz stream + polyphase decimation (reSID method):** run the chip at its
-     exact integer clock and decimate with a high-quality polyphase FIR / sinc
-     resampler that tracks the continuously-shifting fractional ratio. Highest
-     fidelity, highest CPU.
-  3. **Hybrid (recommended MVP):** run the accumulator at host rate with SID pitch
-     quantization and PolyBLEP the *pure* waveforms + sync transients (cheap, no 1 MHz
-     loop); **oversample+decimate only the combined-waveform and noise paths**, whose
-     many small steps / table structure PolyBLEP can't clean. Expose the strategy /
-     oversample factor as a `Quality` param.
+    1. **Fractional cycle stepping + BLEP:** advance the accumulator by a fixed-point
+       fractional number of SID cycles per host sample; when a discontinuity crosses
+       (pulse edge, saw wrap, sync reset), compute its exact fractional position within
+       the sample and insert a band-limited step (PolyBLEP/MinBLEP) there. No 1 MHz loop.
+    2. **True 1 MHz stream + polyphase decimation (reSID method):** run the chip at its
+       exact integer clock and decimate with a high-quality polyphase FIR / sinc
+       resampler that tracks the continuously-shifting fractional ratio. Highest
+       fidelity, highest CPU.
+    3. **Hybrid (recommended MVP):** run the accumulator at host rate with SID pitch
+       quantization and PolyBLEP the *pure* waveforms + sync transients (cheap, no 1 MHz
+       loop); **oversample+decimate only the combined-waveform and noise paths**, whose
+       many small steps / table structure PolyBLEP can't clean. Expose the strategy /
+       oversample factor as a `Quality` param.
 - **Sawtooth:** top 12 bits of the accumulator (`acc >> 12`) as a rising ramp.
 - **Triangle:** MSB (bit 23) XORed across the next 11 bits, then `<< 1`, MSB dropped
   — the classic saw→triangle fold. Half the amplitude resolution of the saw.
@@ -162,22 +162,22 @@ raw bits. Implement a chip-faithful core per voice:
   varies with chip voltage/temperature/production batch; the **8580** is closer to a
   logical AND but still carries DC-offset effects. So per-model handling is mandatory.
   Three implementation options (pick per §7 licensing):
-  - **(A) Measured tables** — per (combination, model) an 8-bit output indexed by the
-    top 12 accumulator bits (the reSID `wave*_PST/PS/PT/ST` arrays). Highest fidelity,
-    but the tables are the GPL-sensitive artifact.
-  - **(B) Algorithmic AND + 6581 leakage** — bitwise-AND with a partial-bit-pulldown;
-    cheap, ~the PoC's 16 dB, adequate-ish for 8580, weak for 6581.
-  - **(C) Parametric resistor-network / threshold model (recommended)** — reSIDfp's
-    approach: a small model (a handful of fitted coefficients, not a big table) trained
-    against measurements reproduces the 6581 non-linearity faithfully. Best fidelity/
-    license trade-off: the *coefficients* are tiny and can be independently derived, so
-    no GPL table is shipped. Pure math for 6581 without full circuit sim was called
-    "nästan omöjligt" in review — the parametric model is the practical answer that
-    isn't a raw table.
-  - **Noise+other = LFSR corruption ("NoiseLock"):** enabling noise together with any
-    other waveform pulls LFSR bits low (NMOS bus conflict) → the LFSR locks into a very
-    short cycle / silence until TEST/reset. Model by forcing the affected LFSR bits to
-    0 while a combination is active. Real, deliberately-used behaviour.
+    - **(A) Measured tables** — per (combination, model) an 8-bit output indexed by the
+      top 12 accumulator bits (the reSID `wave*_PST/PS/PT/ST` arrays). Highest fidelity,
+      but the tables are the GPL-sensitive artifact.
+    - **(B) Algorithmic AND + 6581 leakage** — bitwise-AND with a partial-bit-pulldown;
+      cheap, ~the PoC's 16 dB, adequate-ish for 8580, weak for 6581.
+    - **(C) Parametric resistor-network / threshold model (recommended)** — reSIDfp's
+      approach: a small model (a handful of fitted coefficients, not a big table) trained
+      against measurements reproduces the 6581 non-linearity faithfully. Best fidelity/
+      license trade-off: the *coefficients* are tiny and can be independently derived, so
+      no GPL table is shipped. Pure math for 6581 without full circuit sim was called
+      "nästan omöjligt" in review — the parametric model is the practical answer that
+      isn't a raw table.
+    - **Noise+other = LFSR corruption ("NoiseLock"):** enabling noise together with any
+      other waveform pulls LFSR bits low (NMOS bus conflict) → the LFSR locks into a very
+      short cycle / silence until TEST/reset. Model by forcing the affected LFSR bits to
+      0 while a combination is active. Real, deliberately-used behaviour.
 - **TEST bit:** zeroes and holds the accumulator (silences the oscillator) and
   **reloads the noise LFSR to `0x7F_FFFF`** (expert-review §4), not zero. Used for
   hard-restart / phase alignment; the deterministic `0x7FFFFF` reload is what makes
@@ -190,14 +190,14 @@ raw bits. Implement a chip-faithful core per voice:
 
 Reuse the established audio-rate cross-oscillator pattern (`oscillator.rs`):
 
-| Port | Dir | Type | Purpose |
-|------|-----|------|---------|
-| `out` | out | audio | The DAC'd waveform output. |
-| `msb` | out | audio | The accumulator **MSB as a gate** (0 while bit 23 clear, 1 while set) — the exact signal SID sync/ring read. **Do NOT just reuse the existing `phase` 0→1 ramp** (review-2): SID hard-sync triggers on the MSB **0→1 rising edge**, whereas the current osc's `sync` detects a *wrap* (a negative 1→0 jump, `oscillator.rs`). Either emit a real MSB gate and detect its 0→1 edge, or define exact thresholding `msb = phase >= 0.5` with rising-edge detection — but pick one and state it, don't leave "msb or phase" ambiguous. |
-| `sync` | in | audio | Hard-sync master: reset this accumulator on the source's **MSB 0→1 rising edge** (not on wrap). |
-| `ring` | in | audio | Ring source: the neighbour voice's MSB (same signal as `msb` out). |
-| `fm` / `pwm` | in | control | **Additive** pitch / pulse-width modulation — standard CV convention, like every other module (see *Scriptability* below). |
-| `test` | in | gate | TEST / hard-restart, script- or gate-driven (a trigger input — a normal convention, no divergence). |
+| Port         | Dir | Type    | Purpose                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+|--------------|-----|---------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `out`        | out | audio   | The DAC'd waveform output.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `msb`        | out | audio   | The accumulator **MSB as a gate** (0 while bit 23 clear, 1 while set) — the exact signal SID sync/ring read. **Do NOT just reuse the existing `phase` 0→1 ramp** (review-2): SID hard-sync triggers on the MSB **0→1 rising edge**, whereas the current osc's `sync` detects a *wrap* (a negative 1→0 jump, `oscillator.rs`). Either emit a real MSB gate and detect its 0→1 edge, or define exact thresholding `msb = phase >= 0.5` with rising-edge detection — but pick one and state it, don't leave "msb or phase" ambiguous. |
+| `sync`       | in  | audio   | Hard-sync master: reset this accumulator on the source's **MSB 0→1 rising edge** (not on wrap).                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `ring`       | in  | audio   | Ring source: the neighbour voice's MSB (same signal as `msb` out).                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| `fm` / `pwm` | in  | control | **Additive** pitch / pulse-width modulation — standard CV convention, like every other module (see *Scriptability* below).                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `test`       | in  | gate    | TEST / hard-restart, script- or gate-driven (a trigger input — a normal convention, no divergence).                                                                                                                                                                                                                                                                                                                                                                                                                                |
 
 Ring/sync are fed by a **second `sid` module in the same instrument**, tuned to the
 neighbour SID voice's captured pitch (`ring_source_hz`) via `TrackVoicePitch=false` +
@@ -206,6 +206,7 @@ broadcasts the played frequency to *every* module in the graph (`graph.rs:501`) 
 plain oscillator overwrites its own frequency from it (`oscillator.rs:781`).
 
 Three DSP/topology specifics (review-1 §5–§6, review-2):
+
 - **Ring mod affects ONLY the triangle.** Apply `MSB(this.acc) XOR MSB(ring_src)` to
   the **triangle folding direction** — not to saw/pulse/noise. If triangle isn't
   selected, the RING bit has no audible effect (unless triangle is combined in).
@@ -238,12 +239,12 @@ and emits `target − base` as the CV offset each frame. `pwm`/`fm` therefore be
 exactly like `osc.pwm`/`osc.fm` (additive around the param), driven by a `scr` (`arr`
 table by `age`/frame) or an ordinary automation lane. No new semantics.
 
-| Target | CV input | Type | Convention | Driven by |
-|--------|----------|------|------------|-----------|
-| Pulse width | `pwm` | control | additive around `PulseWidthReg` | `scr`/`asc`/lane, offset-from-base |
-| Pitch | `fm` | control | additive around `FreqReg` | `scr`/`asc`/lane, vibrato/slide/offset |
-| Hard-restart | `test` | gate | trigger | `scr`/gate, per-frame TEST |
-| Ring / sync | `ring` / `sync` | audio | see §3 | a second `sid`, not a script |
+| Target       | CV input        | Type    | Convention                      | Driven by                              |
+|--------------|-----------------|---------|---------------------------------|----------------------------------------|
+| Pulse width  | `pwm`           | control | additive around `PulseWidthReg` | `scr`/`asc`/lane, offset-from-base     |
+| Pitch        | `fm`            | control | additive around `FreqReg`       | `scr`/`asc`/lane, vibrato/slide/offset |
+| Hard-restart | `test`          | gate    | trigger                         | `scr`/gate, per-frame TEST             |
+| Ring / sync  | `ring` / `sync` | audio   | see §3                          | a second `sid`, not a script           |
 
 **Discrete waveform sequences — module-internal program data, NOT a CV.** The one thing
 additive CV can't express is a per-frame *waveform-mask* sequence (an offset on a 4-bit
@@ -271,19 +272,19 @@ forfeits the chip-accurate tables) — a different trade, see the sound-engine p
 
 ## 4. Parameters (`SidOscillatorParam`)
 
-| Param | Kind | Range / choices | Notes |
-|-------|------|-----------------|-------|
-| `Triangle` / `Sawtooth` / `Pulse` / `Noise` | Bool ×4 | on/off | **Combinable waveform mask** — the key departure from `osc`'s exclusive `Waveform` enum (`params/oscillators.rs:596`). **Set `.modulatable(false)`** (review-2): `is_automatable()` requires `ParamKind::Continuous` (`module_traits.rs:899`), so bools are **not** sequencer-automatable anyway — they're register bits for MCP/GUI/register-set, not ramped lanes. Static/base setting; per-frame sequences use `WaveformSequence` below, not automation. |
-| `WaveformSequence` | data (array of u8 nibbles) | 0–15 per step, N steps | **Per-frame waveform-mask program**, owned by the module and clocked by its internal frame counter — the chip-honest home for a waveform sequence (no CV divergence, no automatable-bool path needed). When non-empty it drives the mask each frame; when empty the static mask bits apply. The exporter fills this from the driver's captured waveform table. |
-| `WaveformRate` | Enum/Continuous | frames per step (default 1 = 50 Hz PAL) | Advance rate of `WaveformSequence`; 1 step/frame is the canonical SID case. |
-| `FreqReg` | Integer (u32) | 0–65535 (16-bit) | Raw SID frequency register. **Do not reuse the `PulseWidth`/`Hertz` float newtypes** — they're 0.01–0.99 / Hz-log and don't fit register semantics. `u32` already has a `ScalarParam` impl (`params/scalar_impls.rs`); `u16` does **not** (review-2). Used when `TrackVoicePitch=false` (see below). |
-| `TrackVoicePitch` | Bool | default **true** | **[review-2, the ring/sync-source fix]** When true, `set_voice_pitch` sets `FreqReg` from the played note (normal voice). When false, the module **ignores** `set_voice_pitch` and holds its own `FreqReg` — this is how a ring/sync *source* `sid` stays tuned to the neighbour voice's `ring_source_hz` instead of the played note (`graph.rs:501` broadcasts to all modules). |
-| `PulseWidthReg` | Integer (u32) | 0–4095 (12-bit) | Raw 12-bit PW register. **Not** the `osc` float `PulseWidth` (0.01–0.99). |
-| `Test` / `RingMod` / `HardSync` | Bool ×3 | on/off | Control bits, `.modulatable(false)`. RingMod/HardSync also need the `ring`/`sync` input wired. |
-| `Model` | Enum | `6581` / `8580` | Selects combined-waveform model + DAC curve. |
-| `Clock` | Enum | `PAL` / `NTSC` | Master clock for freq mapping (§5). |
-| `Quality` | Enum/Integer | strategy / oversample factor | §2 clock-domain strategy. |
-| `Level` | Continuous (Gain) | 0–1 | Output trim (cf. `OscillatorParam::Level`); the one genuinely automatable param. |
+| Param                                       | Kind                       | Range / choices                         | Notes                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
+|---------------------------------------------|----------------------------|-----------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `Triangle` / `Sawtooth` / `Pulse` / `Noise` | Bool ×4                    | on/off                                  | **Combinable waveform mask** — the key departure from `osc`'s exclusive `Waveform` enum (`params/oscillators.rs:596`). **Set `.modulatable(false)`** (review-2): `is_automatable()` requires `ParamKind::Continuous` (`module_traits.rs:899`), so bools are **not** sequencer-automatable anyway — they're register bits for MCP/GUI/register-set, not ramped lanes. Static/base setting; per-frame sequences use `WaveformSequence` below, not automation. |
+| `WaveformSequence`                          | data (array of u8 nibbles) | 0–15 per step, N steps                  | **Per-frame waveform-mask program**, owned by the module and clocked by its internal frame counter — the chip-honest home for a waveform sequence (no CV divergence, no automatable-bool path needed). When non-empty it drives the mask each frame; when empty the static mask bits apply. The exporter fills this from the driver's captured waveform table.                                                                                              |
+| `WaveformRate`                              | Enum/Continuous            | frames per step (default 1 = 50 Hz PAL) | Advance rate of `WaveformSequence`; 1 step/frame is the canonical SID case.                                                                                                                                                                                                                                                                                                                                                                                 |
+| `FreqReg`                                   | Integer (u32)              | 0–65535 (16-bit)                        | Raw SID frequency register. **Do not reuse the `PulseWidth`/`Hertz` float newtypes** — they're 0.01–0.99 / Hz-log and don't fit register semantics. `u32` already has a `ScalarParam` impl (`params/scalar_impls.rs`); `u16` does **not** (review-2). Used when `TrackVoicePitch=false` (see below).                                                                                                                                                        |
+| `TrackVoicePitch`                           | Bool                       | default **true**                        | **[review-2, the ring/sync-source fix]** When true, `set_voice_pitch` sets `FreqReg` from the played note (normal voice). When false, the module **ignores** `set_voice_pitch` and holds its own `FreqReg` — this is how a ring/sync *source* `sid` stays tuned to the neighbour voice's `ring_source_hz` instead of the played note (`graph.rs:501` broadcasts to all modules).                                                                            |
+| `PulseWidthReg`                             | Integer (u32)              | 0–4095 (12-bit)                         | Raw 12-bit PW register. **Not** the `osc` float `PulseWidth` (0.01–0.99).                                                                                                                                                                                                                                                                                                                                                                                   |
+| `Test` / `RingMod` / `HardSync`             | Bool ×3                    | on/off                                  | Control bits, `.modulatable(false)`. RingMod/HardSync also need the `ring`/`sync` input wired.                                                                                                                                                                                                                                                                                                                                                              |
+| `Model`                                     | Enum                       | `6581` / `8580`                         | Selects combined-waveform model + DAC curve.                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `Clock`                                     | Enum                       | `PAL` / `NTSC`                          | Master clock for freq mapping (§5).                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `Quality`                                   | Enum/Integer               | strategy / oversample factor            | §2 clock-domain strategy.                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `Level`                                     | Continuous (Gain)          | 0–1                                     | Output trim (cf. `OscillatorParam::Level`); the one genuinely automatable param.                                                                                                                                                                                                                                                                                                                                                                            |
 
 Param plumbing mirrors `OscillatorParam`: `ScalarParam`/`kind()`/`with_f32`/`as_f32`/
 display names (`params/oscillators.rs` + `params/kind_impls.rs` + `params/scalar_impls.rs`).
@@ -386,16 +387,16 @@ soloed MCP render, `compare_spectra` windowed 500–1500 ms. All numbers are
 `log_spectral_distance` in dB (lower = closer); the per-pitch **saw row is the
 method floor**.
 
-| control            | 6581 A1 | A2   | A4    | 8580 A1 | A2   | A4     |
-|--------------------|--------:|-----:|------:|--------:|-----:|-------:|
-| 0x21 saw (floor)   |     2.7 |  6.8 |  10.7 |     4.5 |  9.5 | 26.0 ¹ |
-| 0x31 tri+saw       |  26.1 ² | 23.7 |  13.1 |    13.9 | 12.6 |   16.0 |
-| 0x51 pulse+tri     |     9.3 | 10.2 |  11.6 |     8.4 |  8.1 |    9.9 |
-| 0x61 pulse+saw     |    89.7³| 32.1 |  30.8 |     6.7 |  7.5 |    9.7 |
-| 0x71 saw+tri+pulse |   115 ⁴ | 114 ⁴| 175 ⁴ |    12.7 | 12.1 |   10.4 |
-| 0x81 noise         |       — | 0.76 |     — |       — | 0.77 |      — |
-| ring-mod (B5)      |         | 18.9 |       |         | 18.8 |        |
-| hard sync (C#5)    |         |  6.8 |       |         |  7.0 |        |
+| control            | 6581 A1 |    A2 |    A4 | 8580 A1 |   A2 |     A4 |
+|--------------------|--------:|------:|------:|--------:|-----:|-------:|
+| 0x21 saw (floor)   |     2.7 |   6.8 |  10.7 |     4.5 |  9.5 | 26.0 ¹ |
+| 0x31 tri+saw       |  26.1 ² |  23.7 |  13.1 |    13.9 | 12.6 |   16.0 |
+| 0x51 pulse+tri     |     9.3 |  10.2 |  11.6 |     8.4 |  8.1 |    9.9 |
+| 0x61 pulse+saw     |   89.7³ |  32.1 |  30.8 |     6.7 |  7.5 |    9.7 |
+| 0x71 saw+tri+pulse |   115 ⁴ | 114 ⁴ | 175 ⁴ |    12.7 | 12.1 |   10.4 |
+| 0x81 noise         |       — |  0.76 |     — |       — | 0.77 |      — |
+| ring-mod (B5)      |         |  18.9 |       |         | 18.8 |        |
+| hard sync (C#5)    |         |   6.8 |       |         |  7.0 |        |
 
 **What's already right:** noise LFSR essentially perfect (0.76 dB); hard sync at
 the floor on both models; pulse+tri (the musically dominant combo) at the floor
@@ -404,6 +405,7 @@ the 8580).
 
 **Two real 6581 gaps (both in `combine_bus`, `sid_oscillator.rs:356` — the
 option-C seam):**
+
 1. **0x31 tri+saw:** the real 6581 *kills the fundamental* — reference RMS is
    ~26 dB below saw (124 vs 2567) with energy at high accumulator-bit products
    (strongest partials 8·f0/16·f0); the module keeps a full-level spectrum with

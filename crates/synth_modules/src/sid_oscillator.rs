@@ -543,6 +543,7 @@ impl Describable for SidOscillator {
                  and a per-frame waveform-mask sequence",
             )
             .category(ModuleCategory::Oscillator)
+            .width(synth_core::ModuleWidth::ExtraLarge)
             .tag("oscillator")
             .tag("source")
             .tag("sid")
