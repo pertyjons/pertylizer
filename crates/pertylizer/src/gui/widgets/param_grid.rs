@@ -14,7 +14,7 @@ use egui_remixicon::icons as ri;
 
 use synth_core::{ChoiceOption, ModuleDescriptor, ParamKind, ParameterDescriptor, WidgetHint};
 
-use super::{CaptionTone, Knob, WaveformSelector, WaveformType, caption};
+use super::{CaptionTone, Knob, WaveformSelector, WaveformType, caption, waveform_button};
 use crate::gui::theme::theme;
 
 /// A parameter the user changed this frame: its descriptor plus the new value.
@@ -203,6 +203,9 @@ fn labeled_param(ui: &mut Ui, param: &ParameterDescriptor, markers: ModMarkers) 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RenderGroup {
     Waveform,
+    /// Independent bool waveform-mask bits drawn as one row of
+    /// waveform-preview toggle buttons (multi-select, unlike `Waveform`).
+    WaveformToggle,
     Slider,
     Dropdown,
     Toggle,
@@ -222,6 +225,7 @@ enum RenderGroup {
 fn render_group(hint: WidgetHint) -> Option<RenderGroup> {
     match hint {
         WidgetHint::WaveformSelector => Some(RenderGroup::Waveform),
+        WidgetHint::WaveformToggle => Some(RenderGroup::WaveformToggle),
         WidgetHint::Slider
         | WidgetHint::TimeSlider
         | WidgetHint::PercentSlider
@@ -241,11 +245,13 @@ fn render_group(hint: WidgetHint) -> Option<RenderGroup> {
 
 /// Kind-aware render group for a descriptor (Phase 6). A `Bool`-kind parameter
 /// that renders at all is always a checkbox (Toggle) regardless of its widget hint
-/// — defensive so a bool can never be drawn as a 0–1 slider/knob. A `Hidden`
-/// (custom-UI) bool stays hidden. Otherwise the widget hint decides.
+/// — defensive so a bool can never be drawn as a 0–1 slider/knob. The one
+/// exception is `WaveformToggle`, which is *specifically* a bool widget (a
+/// waveform-mask bit drawn as a preview button). A `Hidden` (custom-UI) bool
+/// stays hidden. Otherwise the widget hint decides.
 fn param_render_group(p: &ParameterDescriptor) -> Option<RenderGroup> {
     let base = render_group(p.widget_hint);
-    if p.kind == ParamKind::Bool && base.is_some() {
+    if p.kind == ParamKind::Bool && base.is_some() && base != Some(RenderGroup::WaveformToggle) {
         return Some(RenderGroup::Toggle);
     }
     base
@@ -277,10 +283,41 @@ pub fn draw_parameter_grid<'d>(
             .collect()
     };
     let waveform_params = by_group(RenderGroup::Waveform);
+    let waveform_toggle_params = by_group(RenderGroup::WaveformToggle);
     let slider_params = by_group(RenderGroup::Slider);
     let dropdown_params = by_group(RenderGroup::Dropdown);
     let toggle_params = by_group(RenderGroup::Toggle);
     let knob_params = by_group(RenderGroup::Knob);
+
+    // Waveform-bit toggles: one row of independently selectable preview
+    // buttons (the SID oscillator's combinable waveform mask), rendered with
+    // the same prominence as the exclusive waveform selector below.
+    if !waveform_toggle_params.is_empty() {
+        ui.label(
+            egui::RichText::new("Waveform")
+                .size(theme().fonts.size_normal)
+                .color(theme().colors.text_secondary),
+        );
+        ui.horizontal(|ui| {
+            ui.spacing_mut().item_spacing.x = 6.0;
+            for param in &waveform_toggle_params {
+                // The type_id names the shape; a bit with no preview shape
+                // falls back to the checkbox group's look via its name.
+                let Some(waveform) = WaveformType::from_id(&param.type_id) else {
+                    let mut checked = get(param) > 0.5;
+                    if ui.checkbox(&mut checked, &param.name).changed() {
+                        changes.push((*param, if checked { 1.0 } else { 0.0 }));
+                    }
+                    continue;
+                };
+                let on = get(param) > 0.5;
+                if waveform_button(ui, waveform, on, accent).clicked() {
+                    changes.push((*param, if on { 0.0 } else { 1.0 }));
+                }
+                draw_mod_markers_inline(ui, markers(param));
+            }
+        });
+    }
 
     // Waveform selectors first (most prominent).
     for param in &waveform_params {
@@ -504,6 +541,18 @@ mod tests {
             ParameterDescriptor::float("loop", Param::Mseg(MsegParam::LoopEnabled(false)), "Loop")
                 .widget(WidgetHint::Knob);
         assert_eq!(param_render_group(&bool_knob), Some(RenderGroup::Toggle));
+        // …except WaveformToggle, which is specifically a bool widget (a
+        // combinable waveform-mask bit drawn as a preview button).
+        let bool_wave = ParameterDescriptor::float(
+            "triangle",
+            Param::Mseg(MsegParam::LoopEnabled(false)),
+            "Tri",
+        )
+        .widget(WidgetHint::WaveformToggle);
+        assert_eq!(
+            param_render_group(&bool_wave),
+            Some(RenderGroup::WaveformToggle)
+        );
         // A Hidden bool (custom UI) stays hidden — not forced visible.
         let bool_hidden =
             ParameterDescriptor::float("loop", Param::Mseg(MsegParam::LoopEnabled(false)), "Loop")

@@ -40,4 +40,5 @@ pub use port::{PortWidget, WidgetPortDirection, WidgetPortType};
 pub use scope::{draw_oscilloscope, draw_oscilloscope_with_trigger};
 pub use spectrum::draw_spectrum_analyzer;
 pub use tooltip::{draw_tooltip_above, draw_tooltip_right_of, draw_value_tooltip};
+pub(crate) use waveform::waveform_button;
 pub use waveform::{WaveformSelector, WaveformType};

@@ -7872,6 +7872,321 @@
           ],
           "title": "Audio Script",
           "type": "object"
+        },
+        {
+          "description": "SID Oscillator (sid_oscillator) — MOS 6581/8580 (SID) waveform generator: combinable waveforms from a 24-bit accumulator, raw frequency/pulse-width registers, MSB-based ring/hard-sync, and a per-frame waveform-mask sequence",
+          "properties": {
+            "id": {
+              "description": "Module instance ID, e.g. `sid-1`.",
+              "pattern": "^sid-\\d+$",
+              "type": "string"
+            },
+            "parameters": {
+              "additionalProperties": false,
+              "default": {},
+              "description": "Parameter values for this module.",
+              "properties": {
+                "clock": {
+                  "description": "Master clock standard for the pitch mapping",
+                  "enum": [
+                    "pal",
+                    "ntsc"
+                  ],
+                  "title": "Clock",
+                  "type": "string"
+                },
+                "freq_reg": {
+                  "default": 0.0,
+                  "description": "Raw 16-bit SID frequency register — used when Track Pitch is off (e.g. a ring/sync source held at a neighbour voice's pitch)",
+                  "maximum": 65535.0,
+                  "minimum": 0.0,
+                  "title": "Freq Reg",
+                  "type": "number"
+                },
+                "hard_sync": {
+                  "default": 0.0,
+                  "description": "SYNC bit: reset the accumulator on the `sync` input's MSB 0→1 rising edge",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Hard Sync",
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
+                },
+                "level": {
+                  "default": 1.0,
+                  "description": "Output level",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Level",
+                  "type": "number"
+                },
+                "model": {
+                  "description": "Chip model: combined-waveform behaviour + DAC curve",
+                  "enum": [
+                    "6581",
+                    "8580"
+                  ],
+                  "title": "Model",
+                  "type": "string"
+                },
+                "noise": {
+                  "default": 0.0,
+                  "description": "Noise waveform bit (23-bit LFSR clocked by the accumulator)",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Noise",
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
+                },
+                "pulse": {
+                  "default": 0.0,
+                  "description": "Pulse waveform bit (combinable, width from PW Reg)",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Pulse",
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
+                },
+                "pw_reg": {
+                  "default": 2048.0,
+                  "description": "Raw 12-bit pulse-width register (2048 = square)",
+                  "maximum": 4095.0,
+                  "minimum": 0.0,
+                  "title": "PW Reg",
+                  "type": "number"
+                },
+                "quality": {
+                  "description": "Clock-domain conversion strategy (CPU vs fidelity)",
+                  "enum": [
+                    "fast",
+                    "high"
+                  ],
+                  "title": "Quality",
+                  "type": "string"
+                },
+                "ring_mod": {
+                  "default": 0.0,
+                  "description": "RING bit: the triangle folding direction XORs with the `ring` input's MSB (triangle only, like the chip)",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Ring Mod",
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
+                },
+                "sawtooth": {
+                  "default": 1.0,
+                  "description": "Sawtooth waveform bit (combinable)",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Sawtooth",
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
+                },
+                "seq_len": {
+                  "default": 0.0,
+                  "description": "Active waveform-sequence steps (0 = off, the static waveform bits apply). Past the last step the sequence holds it",
+                  "maximum": 16.0,
+                  "minimum": 0.0,
+                  "title": "Seq Length",
+                  "type": "number"
+                },
+                "seq_rate": {
+                  "default": 1.0,
+                  "description": "Driver frames (50/60 Hz) per waveform-sequence step",
+                  "maximum": 16.0,
+                  "minimum": 1.0,
+                  "title": "Seq Rate",
+                  "type": "number"
+                },
+                "seq_step_0": {
+                  "default": 0.0,
+                  "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+                  "maximum": 15.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step 0",
+                  "type": "number"
+                },
+                "seq_step_1": {
+                  "default": 0.0,
+                  "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+                  "maximum": 15.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step 1",
+                  "type": "number"
+                },
+                "seq_step_10": {
+                  "default": 0.0,
+                  "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+                  "maximum": 15.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step 10",
+                  "type": "number"
+                },
+                "seq_step_11": {
+                  "default": 0.0,
+                  "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+                  "maximum": 15.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step 11",
+                  "type": "number"
+                },
+                "seq_step_12": {
+                  "default": 0.0,
+                  "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+                  "maximum": 15.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step 12",
+                  "type": "number"
+                },
+                "seq_step_13": {
+                  "default": 0.0,
+                  "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+                  "maximum": 15.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step 13",
+                  "type": "number"
+                },
+                "seq_step_14": {
+                  "default": 0.0,
+                  "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+                  "maximum": 15.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step 14",
+                  "type": "number"
+                },
+                "seq_step_15": {
+                  "default": 0.0,
+                  "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+                  "maximum": 15.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step 15",
+                  "type": "number"
+                },
+                "seq_step_2": {
+                  "default": 0.0,
+                  "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+                  "maximum": 15.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step 2",
+                  "type": "number"
+                },
+                "seq_step_3": {
+                  "default": 0.0,
+                  "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+                  "maximum": 15.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step 3",
+                  "type": "number"
+                },
+                "seq_step_4": {
+                  "default": 0.0,
+                  "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+                  "maximum": 15.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step 4",
+                  "type": "number"
+                },
+                "seq_step_5": {
+                  "default": 0.0,
+                  "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+                  "maximum": 15.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step 5",
+                  "type": "number"
+                },
+                "seq_step_6": {
+                  "default": 0.0,
+                  "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+                  "maximum": 15.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step 6",
+                  "type": "number"
+                },
+                "seq_step_7": {
+                  "default": 0.0,
+                  "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+                  "maximum": 15.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step 7",
+                  "type": "number"
+                },
+                "seq_step_8": {
+                  "default": 0.0,
+                  "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+                  "maximum": 15.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step 8",
+                  "type": "number"
+                },
+                "seq_step_9": {
+                  "default": 0.0,
+                  "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+                  "maximum": 15.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step 9",
+                  "type": "number"
+                },
+                "test": {
+                  "default": 0.0,
+                  "description": "TEST bit: zeroes and holds the accumulator (hard restart) and reloads the noise LFSR",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Test",
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
+                },
+                "track_pitch": {
+                  "default": 1.0,
+                  "description": "Derive Freq Reg from the played note (on) or hold the authored Freq Reg (off — ring/sync-source tuning)",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Track Pitch",
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
+                },
+                "triangle": {
+                  "default": 0.0,
+                  "description": "Triangle waveform bit (combinable)",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Triangle",
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
+                }
+              },
+              "type": "object"
+            },
+            "position": {
+              "$ref": "#/$defs/Position"
+            },
+            "type": {
+              "const": "sid_oscillator",
+              "description": "Module type discriminator."
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "position"
+          ],
+          "title": "SID Oscillator",
+          "type": "object"
         }
       ]
     },
@@ -7957,6 +8272,11 @@
         {
           "const": "audio_script",
           "description": "Per-voice audio-rate scripted DSP (YAMS, one eval per sample): waveshaper,\nbitcrusher, ring-mod, custom IIR/filter. Audio in/out ports.",
+          "type": "string"
+        },
+        {
+          "const": "sid_oscillator",
+          "description": "MOS 6581/8580 (SID) waveform generator: combinable waveforms, noise\nLFSR, ring/hard-sync, TEST, per-model DAC.",
           "type": "string"
         }
       ]

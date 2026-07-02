@@ -2222,6 +2222,72 @@ impl SamplerParam {
     }
 }
 
+impl SidOscillatorParam {
+    /// Value-kind of this parameter, dispatched on the bound value.
+    #[must_use]
+    pub fn kind(&self) -> ParamKind {
+        match self {
+            Self::Triangle(v)
+            | Self::Sawtooth(v)
+            | Self::Pulse(v)
+            | Self::Noise(v)
+            | Self::TrackVoicePitch(v)
+            | Self::Test(v)
+            | Self::RingMod(v)
+            | Self::HardSync(v) => v.scalar_kind(),
+            Self::FreqReg(v) | Self::PulseWidthReg(v) => v.scalar_kind(),
+            Self::Model(v) => v.scalar_kind(),
+            Self::Clock(v) => v.scalar_kind(),
+            Self::Quality(v) => v.scalar_kind(),
+            Self::Level(v) => v.scalar_kind(),
+            Self::SeqLength(v) | Self::SeqRate(v) | Self::SeqStep(_, v) => v.scalar_kind(),
+        }
+    }
+
+    /// Display unit of this parameter, dispatched on the bound value.
+    #[must_use]
+    pub fn unit(&self) -> ParameterUnit {
+        match self {
+            Self::Triangle(v)
+            | Self::Sawtooth(v)
+            | Self::Pulse(v)
+            | Self::Noise(v)
+            | Self::TrackVoicePitch(v)
+            | Self::Test(v)
+            | Self::RingMod(v)
+            | Self::HardSync(v) => v.scalar_unit(),
+            Self::FreqReg(v) | Self::PulseWidthReg(v) => v.scalar_unit(),
+            Self::Model(v) => v.scalar_unit(),
+            Self::Clock(v) => v.scalar_unit(),
+            Self::Quality(v) => v.scalar_unit(),
+            Self::Level(v) => v.scalar_unit(),
+            Self::SeqLength(v) | Self::SeqRate(v) | Self::SeqStep(_, v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Triangle(v)
+            | Self::Sawtooth(v)
+            | Self::Pulse(v)
+            | Self::Noise(v)
+            | Self::TrackVoicePitch(v)
+            | Self::Test(v)
+            | Self::RingMod(v)
+            | Self::HardSync(v) => v.scalar_curve(),
+            Self::FreqReg(v) | Self::PulseWidthReg(v) => v.scalar_curve(),
+            Self::Model(v) => v.scalar_curve(),
+            Self::Clock(v) => v.scalar_curve(),
+            Self::Quality(v) => v.scalar_curve(),
+            Self::Level(v) => v.scalar_curve(),
+            Self::SeqLength(v) | Self::SeqRate(v) | Self::SeqStep(_, v) => v.scalar_curve(),
+        }
+    }
+}
+
 impl SignalMonitorParam {
     /// Value-kind of this parameter, dispatched on the bound value.
     #[must_use]
@@ -2588,6 +2654,7 @@ impl Param {
             Self::VoiceSynth(p) => p.kind(),
             Self::VocalTract(p) => p.kind(),
             Self::Fof(p) => p.kind(),
+            Self::SidOscillator(p) => p.kind(),
         }
     }
 
@@ -2662,6 +2729,7 @@ impl Param {
             Self::VoiceSynth(p) => p.unit(),
             Self::VocalTract(p) => p.unit(),
             Self::Fof(p) => p.unit(),
+            Self::SidOscillator(p) => p.unit(),
         }
     }
 
@@ -2736,6 +2804,7 @@ impl Param {
             Self::VoiceSynth(p) => p.default_curve(),
             Self::VocalTract(p) => p.default_curve(),
             Self::Fof(p) => p.default_curve(),
+            Self::SidOscillator(p) => p.default_curve(),
         }
     }
 }

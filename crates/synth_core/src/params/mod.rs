@@ -45,6 +45,7 @@ mod pitch_tracker;
 mod ring_mod;
 mod sampler;
 mod scalar_impls;
+mod sid_oscillator;
 mod signal_monitor;
 mod spectrum_analyzer;
 mod sub_osc;
@@ -104,6 +105,10 @@ pub use physical::{
 pub use pitch_tracker::PitchTrackerParam;
 pub use ring_mod::RingModParam;
 pub use sampler::{PlayDirection, SampleId, SamplerParam, SamplerPlayMode};
+pub use sid_oscillator::{
+    SID_FREQ_REG_MAX, SID_PW_REG_MAX, SID_SEQ_STEPS, SidClock, SidModel, SidOscillatorParam,
+    SidQuality,
+};
 pub use signal_monitor::SignalMonitorParam;
 pub use spectrum_analyzer::SpectrumAnalyzerParam;
 pub use sub_osc::{SubOscOctave, SubOscParam, SubOscWaveform};
@@ -238,6 +243,9 @@ pub enum ModuleType {
     /// Per-voice audio-rate scripted DSP (YAMS, one eval per sample): waveshaper,
     /// bitcrusher, ring-mod, custom IIR/filter. Audio in/out ports.
     AudioScript,
+    /// MOS 6581/8580 (SID) waveform generator: combinable waveforms, noise
+    /// LFSR, ring/hard-sync, TEST, per-model DAC.
+    SidOscillator,
 }
 
 impl ModuleType {
@@ -320,6 +328,8 @@ impl ModuleType {
                 | Self::Script
                 // Audio-rate scripted DSP (per-voice)
                 | Self::AudioScript
+                // Chip-accurate SID waveform generator
+                | Self::SidOscillator
         )
     }
 
@@ -479,6 +489,7 @@ impl ModuleType {
             Self::Fof => "FOF",
             Self::Script => "Script",
             Self::AudioScript => "Audio Script",
+            Self::SidOscillator => "SID Oscillator",
         }
     }
 
@@ -562,6 +573,7 @@ impl ModuleType {
             Self::Fof => "fof",
             Self::Script => "scr",
             Self::AudioScript => "asc",
+            Self::SidOscillator => "sid",
         }
     }
 
@@ -645,6 +657,7 @@ impl ModuleType {
             "fof" => Some(Self::Fof),
             "scr" => Some(Self::Script),
             "asc" => Some(Self::AudioScript),
+            "sid" => Some(Self::SidOscillator),
             _ => None,
         }
     }
@@ -776,6 +789,8 @@ pub enum Param {
     VoiceSynth(VoiceSynthParam),
     VocalTract(VocalTractParam),
     Fof(FofParam),
+    // Chip-accurate SID waveform generator
+    SidOscillator(SidOscillatorParam),
 }
 
 impl Param {
@@ -871,6 +886,7 @@ impl Param {
             (Self::VoiceSynth(a), Self::VoiceSynth(b)) => a.same_kind(b),
             (Self::VocalTract(a), Self::VocalTract(b)) => a.same_kind(b),
             (Self::Fof(a), Self::Fof(b)) => a.same_kind(b),
+            (Self::SidOscillator(a), Self::SidOscillator(b)) => a.same_kind(b),
             _ => false,
         }
     }
@@ -950,6 +966,7 @@ impl Param {
             Self::VoiceSynth(_) => ModuleType::VoiceSynth,
             Self::VocalTract(_) => ModuleType::VocalTract,
             Self::Fof(_) => ModuleType::Fof,
+            Self::SidOscillator(_) => ModuleType::SidOscillator,
         }
     }
 
@@ -1028,6 +1045,7 @@ impl Param {
             Self::VoiceSynth(p) => p.name(),
             Self::VocalTract(p) => p.name(),
             Self::Fof(p) => p.name(),
+            Self::SidOscillator(p) => p.name(),
         }
     }
 
@@ -1106,6 +1124,7 @@ impl Param {
             Self::VoiceSynth(p) => p.as_f32(),
             Self::VocalTract(p) => p.as_f32(),
             Self::Fof(p) => p.as_f32(),
+            Self::SidOscillator(p) => p.as_f32(),
         }
     }
 
@@ -1184,6 +1203,7 @@ impl Param {
             Self::VoiceSynth(p) => Self::VoiceSynth(p.with_f32(value)),
             Self::VocalTract(p) => Self::VocalTract(p.with_f32(value)),
             Self::Fof(p) => Self::Fof(p.with_f32(value)),
+            Self::SidOscillator(p) => Self::SidOscillator(p.with_f32(value)),
         }
     }
 }

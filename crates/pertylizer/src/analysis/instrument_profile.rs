@@ -320,7 +320,8 @@ pub fn graph_signals(modules: &[ModuleStateSnapshot]) -> GraphSignals {
             | ModuleType::FractalOsc
             | ModuleType::GranularOsc
             | ModuleType::LaSynth
-            | ModuleType::VectorMixer => {
+            | ModuleType::VectorMixer
+            | ModuleType::SidOscillator => {
                 sig.has_oscillator = true;
                 sig.osc_count += 1;
             }

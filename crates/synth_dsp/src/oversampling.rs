@@ -84,6 +84,7 @@ const HALFBAND_LEN: usize = HALFBAND_COEFFS.len();
 /// Single-stage half-band FIR filter for 2x decimation.
 ///
 /// Maintains internal state (delay line) between calls for continuous processing.
+#[derive(Clone)]
 struct HalfBandFilter {
     delay: [f32; HALFBAND_LEN],
 }
@@ -143,6 +144,7 @@ const MAX_INTERMEDIATE: usize = 8192;
 /// 4x → 2x (stage 1) → 1x (stage 2).
 ///
 /// Internal buffers are pre-allocated to avoid real-time allocations.
+#[derive(Clone)]
 pub struct Downsampler {
     stage1: HalfBandFilter,
     stage2: HalfBandFilter,

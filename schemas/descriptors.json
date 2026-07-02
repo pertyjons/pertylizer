@@ -6200,6 +6200,420 @@
         }
       }
     },
+    "sid_oscillator": {
+      "description": "MOS 6581/8580 (SID) waveform generator: combinable waveforms from a 24-bit accumulator, raw frequency/pulse-width registers, MSB-based ring/hard-sync, and a per-frame waveform-mask sequence",
+      "name": "SID Oscillator",
+      "parameters": {
+        "clock": {
+          "choices": [
+            {
+              "description": "PAL C64 master clock (985 248 Hz), 50 Hz driver frames.",
+              "id": "pal",
+              "name": "PAL"
+            },
+            {
+              "description": "NTSC C64 master clock (1 022 727 Hz), 60 Hz driver frames.",
+              "id": "ntsc",
+              "name": "NTSC"
+            }
+          ],
+          "default": "pal",
+          "description": "Master clock standard for the pitch mapping",
+          "modulatable": false,
+          "name": "Clock",
+          "unit": "none",
+          "value_kind": "enum"
+        },
+        "freq_reg": {
+          "default": 0.0,
+          "description": "Raw 16-bit SID frequency register — used when Track Pitch is off (e.g. a ring/sync source held at a neighbour voice's pitch)",
+          "max": 65535.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Freq Reg",
+          "response_curve": "linear",
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
+        },
+        "hard_sync": {
+          "default": 0.0,
+          "description": "SYNC bit: reset the accumulator on the `sync` input's MSB 0→1 rising edge",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Hard Sync",
+          "response_curve": "linear",
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
+        },
+        "level": {
+          "default": 1.0,
+          "description": "Output level",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Level",
+          "response_curve": "linear",
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
+        },
+        "model": {
+          "choices": [
+            {
+              "description": "MOS 6581 — the original chip: non-linear DAC and gritty combined waveforms.",
+              "id": "6581",
+              "name": "6581"
+            },
+            {
+              "description": "MOS 8580 — the revision: near-linear DAC, cleaner combining.",
+              "id": "8580",
+              "name": "8580"
+            }
+          ],
+          "default": "6581",
+          "description": "Chip model: combined-waveform behaviour + DAC curve",
+          "modulatable": false,
+          "name": "Model",
+          "unit": "none",
+          "value_kind": "enum"
+        },
+        "noise": {
+          "default": 0.0,
+          "description": "Noise waveform bit (23-bit LFSR clocked by the accumulator)",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Noise",
+          "response_curve": "linear",
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
+        },
+        "pulse": {
+          "default": 0.0,
+          "description": "Pulse waveform bit (combinable, width from PW Reg)",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Pulse",
+          "response_curve": "linear",
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
+        },
+        "pw_reg": {
+          "default": 2048.0,
+          "description": "Raw 12-bit pulse-width register (2048 = square)",
+          "max": 4095.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "PW Reg",
+          "response_curve": "linear",
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
+        },
+        "quality": {
+          "choices": [
+            {
+              "description": "Hybrid — PolyBLEP at host rate; combined/noise auto-oversample. Lowest CPU.",
+              "id": "fast",
+              "name": "Fast"
+            },
+            {
+              "description": "Always 4x oversampled with half-band decimation — cleanest.",
+              "id": "high",
+              "name": "High"
+            }
+          ],
+          "default": "fast",
+          "description": "Clock-domain conversion strategy (CPU vs fidelity)",
+          "modulatable": false,
+          "name": "Quality",
+          "unit": "none",
+          "value_kind": "enum"
+        },
+        "ring_mod": {
+          "default": 0.0,
+          "description": "RING bit: the triangle folding direction XORs with the `ring` input's MSB (triangle only, like the chip)",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Ring Mod",
+          "response_curve": "linear",
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
+        },
+        "sawtooth": {
+          "default": 1.0,
+          "description": "Sawtooth waveform bit (combinable)",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Sawtooth",
+          "response_curve": "linear",
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
+        },
+        "seq_len": {
+          "default": 0.0,
+          "description": "Active waveform-sequence steps (0 = off, the static waveform bits apply). Past the last step the sequence holds it",
+          "max": 16.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seq Length",
+          "response_curve": "linear",
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
+        },
+        "seq_rate": {
+          "default": 1.0,
+          "description": "Driver frames (50/60 Hz) per waveform-sequence step",
+          "max": 16.0,
+          "min": 1.0,
+          "modulatable": false,
+          "name": "Seq Rate",
+          "response_curve": "linear",
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
+        },
+        "seq_step_0": {
+          "default": 0.0,
+          "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+          "max": 15.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seq Step 0",
+          "response_curve": "linear",
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
+        },
+        "seq_step_1": {
+          "default": 0.0,
+          "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+          "max": 15.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seq Step 1",
+          "response_curve": "linear",
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
+        },
+        "seq_step_10": {
+          "default": 0.0,
+          "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+          "max": 15.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seq Step 10",
+          "response_curve": "linear",
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
+        },
+        "seq_step_11": {
+          "default": 0.0,
+          "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+          "max": 15.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seq Step 11",
+          "response_curve": "linear",
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
+        },
+        "seq_step_12": {
+          "default": 0.0,
+          "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+          "max": 15.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seq Step 12",
+          "response_curve": "linear",
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
+        },
+        "seq_step_13": {
+          "default": 0.0,
+          "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+          "max": 15.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seq Step 13",
+          "response_curve": "linear",
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
+        },
+        "seq_step_14": {
+          "default": 0.0,
+          "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+          "max": 15.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seq Step 14",
+          "response_curve": "linear",
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
+        },
+        "seq_step_15": {
+          "default": 0.0,
+          "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+          "max": 15.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seq Step 15",
+          "response_curve": "linear",
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
+        },
+        "seq_step_2": {
+          "default": 0.0,
+          "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+          "max": 15.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seq Step 2",
+          "response_curve": "linear",
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
+        },
+        "seq_step_3": {
+          "default": 0.0,
+          "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+          "max": 15.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seq Step 3",
+          "response_curve": "linear",
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
+        },
+        "seq_step_4": {
+          "default": 0.0,
+          "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+          "max": 15.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seq Step 4",
+          "response_curve": "linear",
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
+        },
+        "seq_step_5": {
+          "default": 0.0,
+          "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+          "max": 15.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seq Step 5",
+          "response_curve": "linear",
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
+        },
+        "seq_step_6": {
+          "default": 0.0,
+          "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+          "max": 15.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seq Step 6",
+          "response_curve": "linear",
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
+        },
+        "seq_step_7": {
+          "default": 0.0,
+          "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+          "max": 15.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seq Step 7",
+          "response_curve": "linear",
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
+        },
+        "seq_step_8": {
+          "default": 0.0,
+          "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+          "max": 15.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seq Step 8",
+          "response_curve": "linear",
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
+        },
+        "seq_step_9": {
+          "default": 0.0,
+          "description": "Waveform mask for this step (bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise)",
+          "max": 15.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seq Step 9",
+          "response_curve": "linear",
+          "type": "integer",
+          "unit": "none",
+          "value_kind": "integer"
+        },
+        "test": {
+          "default": 0.0,
+          "description": "TEST bit: zeroes and holds the accumulator (hard restart) and reloads the noise LFSR",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Test",
+          "response_curve": "linear",
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
+        },
+        "track_pitch": {
+          "default": 1.0,
+          "description": "Derive Freq Reg from the played note (on) or hold the authored Freq Reg (off — ring/sync-source tuning)",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Track Pitch",
+          "response_curve": "linear",
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
+        },
+        "triangle": {
+          "default": 0.0,
+          "description": "Triangle waveform bit (combinable)",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Triangle",
+          "response_curve": "linear",
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
+        }
+      }
+    },
     "signal_monitor": {
       "description": "Signal Monitor — inline waveform display (pass-through)",
       "name": "Sig Mon",

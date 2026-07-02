@@ -109,6 +109,7 @@ impl_module_param!(
     PitchTrackerParam,
     RingModParam,
     SamplerParam,
+    SidOscillatorParam,
     SignalMonitorParam,
     SpectrumAnalyzerParam,
     SubOscParam,

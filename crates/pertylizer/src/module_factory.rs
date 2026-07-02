@@ -234,6 +234,11 @@ pub fn create_voice_module(
             let d = m.descriptor();
             Some((Box::new(m), d))
         }
+        ModuleType::SidOscillator => {
+            let m = synth_modules::SidOscillator::new();
+            let d = m.descriptor();
+            Some((Box::new(m), d))
+        }
         // Effects and visualizers are not voice modules
         _ => None,
     }

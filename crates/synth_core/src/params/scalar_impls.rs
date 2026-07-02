@@ -11,8 +11,8 @@ use crate::params::{
     AntiAliasMode, ChaoticSystem, DelayMode, DestAddr, DistortionMode, EasingCurve, FftSizeOption,
     FilterMode, FilterModel, FmMode, GrainSource, GrainWindow, ImpulseResponse, KineticLoopMode,
     LfoWaveform, MathAlgo, MechanicalNoiseType, ModMatrixGridSize, NoiseType, PlayDirection,
-    ReverseGateMode, ReverseGateTrigger, SampleId, SamplerPlayMode, SrcAddr, SubOscOctave,
-    SubOscWaveform, TuringScale, Waveform, WaveshaperCurve, WavetableSelect,
+    ReverseGateMode, ReverseGateTrigger, SampleId, SamplerPlayMode, SidClock, SidModel, SidQuality,
+    SrcAddr, SubOscOctave, SubOscWaveform, TuringScale, Waveform, WaveshaperCurve, WavetableSelect,
 };
 use crate::types::{
     BeatDivision, BipolarValue, BitDepth, Cents, DecayTrim, Decibels, Gain, Hertz, MidiNote,
@@ -107,4 +107,7 @@ scalar_enum!(
     WaveshaperCurve,
     WavetableSelect,
     ModMatrixGridSize,
+    SidModel,
+    SidClock,
+    SidQuality,
 );

@@ -403,6 +403,11 @@ pub enum WidgetHint {
     PanKnob,
     /// Not rendered by the auto-renderer — module supplies its own UI.
     Hidden,
+    /// One waveform-preview toggle button per combinable waveform bit — the
+    /// multi-select sibling of `WaveformSelector` for bool mask bits (the SID
+    /// oscillator's waveform register). The parameter's `type_id` names the
+    /// waveform shape to preview.
+    WaveformToggle,
 }
 
 /// Response curve for parameter mapping.
@@ -1694,6 +1699,33 @@ impl ChaoticSystem {
         Self::ALL
             .iter()
             .map(|s| ChoiceOption::new(s.id(), s.name()).with_description(s.description()))
+            .collect()
+    }
+}
+
+impl crate::params::SidModel {
+    pub fn to_choices() -> Vec<ChoiceOption> {
+        Self::ALL
+            .iter()
+            .map(|m| ChoiceOption::new(m.id(), m.name()).with_description(m.description()))
+            .collect()
+    }
+}
+
+impl crate::params::SidClock {
+    pub fn to_choices() -> Vec<ChoiceOption> {
+        Self::ALL
+            .iter()
+            .map(|c| ChoiceOption::new(c.id(), c.name()).with_description(c.description()))
+            .collect()
+    }
+}
+
+impl crate::params::SidQuality {
+    pub fn to_choices() -> Vec<ChoiceOption> {
+        Self::ALL
+            .iter()
+            .map(|q| ChoiceOption::new(q.id(), q.name()).with_description(q.description()))
             .collect()
     }
 }
