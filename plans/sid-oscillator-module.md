@@ -434,3 +434,24 @@ artifact, not a waveform error; check before chasing it. ² ³ see gaps above.
 These measurements are exactly the independently-derived data §7 wants for
 fitting option C without touching reSID arrays: fit the 6581 combine to the
 {0x31, 0x61} references (3 pitches each) and re-run this matrix as the gate.
+
+### §11 addendum (2026-07-02, late) — seq LOOP flag needed by the exporter
+
+The sid-analyzer export now emits `sid` voices end-to-end (combined masks, native
+ring/sync with neighbour sources, chip-noise drums, `pw_reg` lanes — exporter-path
+A/B matches the hand-built matrix: saw 5.4 dB, combined 10.7 dB). Two engine asks
+surfaced:
+
+1. **Waveform-sequence loop mode.** `seq_step` playback HOLDS at the last step
+   (`sid_oscillator.rs:311`, `.min(seq_length-1)`) — a one-shot program. But the
+   canonical SID alternation (Nemesis V2 tri↔noise) REPEATS for the whole note, and
+   detected loop bodies can exceed 16 steps only trivially (Nemesis's is a 22-frame
+   body that is pure period-2 after frame 1). Add a **`seq_loop` bool param**
+   (`idx = pos % len` when set); the exporter then replaces its two-LFO amplifier
+   gate + dual-sid graph with one native sequence. Hold stays the right default for
+   drum-attack programs.
+2. **Is `pw_reg` automatable?** The export writes an automation lane on
+   `sid_oscillator.pw_reg` (398 points on the Nemesis PWM voice). It loads and lists
+   (`module:sid:1:pw_reg`) but the descriptor says `modulatable: false` — confirm the
+   lane actually reaches the register at render time; if not, mark `pw_reg` (and
+   `freq_reg`?) automatable. PWM is a core SID idiom, so this lane must be live.
