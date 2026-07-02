@@ -374,3 +374,63 @@ Once shipped, the SID→Pertylizer export replaces its `asc`-combine, summed-2-o
 internal-carrier `rng` approximations with a direct register mapping onto one `sid`
 module per voice (plus a second `sid` for ring/sync neighbours). Track that in
 `sid-analyzer/docs/pertylizer-sound-engine-plan.md` (Tier-3 becomes native).
+
+## 11. §8 golden A/B — FIRST FULL MATRIX MEASURED (2026-07-02, sid-analyzer session)
+
+The widened fixture matrix now exists in
+`sid-analyzer/assets/fixtures/sound-engine-poc/` (`mk_sid.py` regenerates it:
+controls {0x21,0x31,0x51,0x61,0x71} × pitches {A1 55, A2 110, A4 440 Hz} ×
+{6581, 8580 via header flags — sidplayfp honors them} + noise 0x81, ring-mod
+tri@B5 (osc3 165 Hz), hard-sync saw@C#5 (osc3 110 Hz)). Method: reSID WAV vs
+soloed MCP render, `compare_spectra` windowed 500–1500 ms. All numbers are
+`log_spectral_distance` in dB (lower = closer); the per-pitch **saw row is the
+method floor**.
+
+| control            | 6581 A1 | A2   | A4    | 8580 A1 | A2   | A4     |
+|--------------------|--------:|-----:|------:|--------:|-----:|-------:|
+| 0x21 saw (floor)   |     2.7 |  6.8 |  10.7 |     4.5 |  9.5 | 26.0 ¹ |
+| 0x31 tri+saw       |  26.1 ² | 23.7 |  13.1 |    13.9 | 12.6 |   16.0 |
+| 0x51 pulse+tri     |     9.3 | 10.2 |  11.6 |     8.4 |  8.1 |    9.9 |
+| 0x61 pulse+saw     |    89.7³| 32.1 |  30.8 |     6.7 |  7.5 |    9.7 |
+| 0x71 saw+tri+pulse |   115 ⁴ | 114 ⁴| 175 ⁴ |    12.7 | 12.1 |   10.4 |
+| 0x81 noise         |       — | 0.76 |     — |       — | 0.77 |      — |
+| ring-mod (B5)      |         | 18.9 |       |         | 18.8 |        |
+| hard sync (C#5)    |         |  6.8 |       |         |  7.0 |        |
+
+**What's already right:** noise LFSR essentially perfect (0.76 dB); hard sync at
+the floor on both models; pulse+tri (the musically dominant combo) at the floor
+everywhere; ALL 8580 combos at/near floor (option B ≈ plain AND is enough for
+the 8580).
+
+**Two real 6581 gaps (both in `combine_bus`, `sid_oscillator.rs:356` — the
+option-C seam):**
+1. **0x31 tri+saw:** the real 6581 *kills the fundamental* — reference RMS is
+   ~26 dB below saw (124 vs 2567) with energy at high accumulator-bit products
+   (strongest partials 8·f0/16·f0); the module keeps a full-level spectrum with
+   a strong f0 → 26/24/13 dB.
+2. **0x61 pulse+saw:** the real 6581 pulls the bus to **near-silence**
+   (reference RMS ≈ 6 = noise floor, reads unvoiced); the module renders a loud
+   voiced waveform → 32/31 dB. Note 0x71 *is* modelled near-silent (candidate
+   unvoiced too — rows marked ⁴ are silence-vs-silence, where the metric is
+   meaningless but the **character agrees**); 0x61 should collapse likewise but
+   doesn't.
+
+**Smaller findings:** ring-mod lands the sideband frequencies exactly
+(988±165 → 1152.3/822.8 measured) but is ~1.4–1.5 kHz **too bright** vs the
+chip's ring-modded triangle (18.9 dB both models) — suspects, in order: the
+fold XOR (`waveform_12bit`, `sid_oscillator.rs:437`) switches direction
+instantaneously at the ring source's MSB edge (the analog chip's transition is
+slewed through the DAC, softening the discontinuity's HF), and the ring path's
+oversampling factor. Repro: `ring_b5_{6581,8580}.sid/.wav` fixtures + a
+tri/RingMod/`Track Pitch` off `sid`×`sid` candidate; gate = this matrix row
+< ~10 dB. Also observed: 6581 combined tri+pulse carries **DC ≈ −0.22** at the
+module output (physically plausible for pulled-down combined levels, and reSID
+is AC-coupled downstream) — consider a one-pole DC blocker on the module output
+or a doc note, it eats mix headroom. ¹ the 8580 saw A4 26 dB is anomalous: zero centroid/partial
+error, so the distance lives in the **empty bins between harmonics** (noise
+floor mismatch at sparse-harmonic pitches) — likely a measurement-floor
+artifact, not a waveform error; check before chasing it. ² ³ see gaps above.
+
+These measurements are exactly the independently-derived data §7 wants for
+fitting option C without touching reSID arrays: fit the 6581 combine to the
+{0x31, 0x61} references (3 pitches each) and re-run this matrix as the gate.
