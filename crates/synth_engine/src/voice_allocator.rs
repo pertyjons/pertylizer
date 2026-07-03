@@ -316,14 +316,30 @@ impl VoiceAllocator {
         velocity: Velocity,
         trigger: NoteTrigger,
     ) -> Option<VoiceId> {
-        self.held_notes.retain(|(n, _)| *n != note);
-        self.held_notes.push((note, velocity));
-
         if trigger.legato {
+            // A legato NoteOn glides the active voice ONTO `note`; the pitch it
+            // leaves is no longer sounding. The sequencer's cross-pitch legato
+            // coalesce emits these with NO matching NoteOff (arp/tie figures), so
+            // without dropping the departed pitch it accumulates in `held_notes`
+            // and a later single NoteOff falls back to it instead of releasing —
+            // a stuck +12 octave on a mono arp. Replace, don't stack.
+            if let Some(active_note) = self
+                .voices
+                .iter()
+                .find(|v| v.is_active())
+                .and_then(|v| v.note())
+            {
+                self.held_notes.retain(|(n, _)| *n != active_note);
+            }
+            self.held_notes.retain(|(n, _)| *n != note);
+            self.held_notes.push((note, velocity));
             // Per-note legato: force the no-retrigger glide path on the active
             // voice (or trigger normally if no voice is active yet).
             return self.allocate_mono(note, velocity, false, trigger);
         }
+
+        self.held_notes.retain(|(n, _)| *n != note);
+        self.held_notes.push((note, velocity));
 
         match self.config.mode {
             AllocationMode::Polyphonic => self.allocate_poly(note, velocity, trigger),
@@ -839,6 +855,54 @@ mod tests {
         let active = allocator.voices.iter().find(|v| v.is_active()).unwrap();
         assert_eq!(active.note(), Some(MidiNote::new(64)));
         assert_eq!(active.state.start_time(), Some(SamplePosition::ZERO));
+    }
+
+    #[test]
+    fn mono_legato_arp_figure_fully_releases_after_final_note_off() {
+        use crate::voice::NoteTrigger;
+
+        // Reproduces the SID octave-stab "leftover note": a Custom legato arp
+        // (offsets [0,12]) on a MONO instrument. The sequencer's cross-pitch
+        // legato coalesce emits one legato NoteOn per step with NO matching
+        // NoteOff, then a single NoteOff for the figure's final pitch. Each step
+        // alternates D5 (74) and D6 (86, the +12 octave). Without the fix,
+        // `held_notes` accumulates BOTH pitches, so the final NoteOff(D5) leaves
+        // D6 "held" and mono falls back to it — the octave rings on forever.
+        let config = AllocatorConfig {
+            max_voices: VoiceCount::QUAD,
+            mode: AllocationMode::Mono,
+            ..Default::default()
+        };
+        let mut allocator = VoiceAllocator::new(config);
+        let legato = NoteTrigger {
+            legato: true,
+            glide: None,
+            vibrato: None,
+        };
+        let (d5, d6) = (MidiNote::new(74), MidiNote::new(86));
+        // D5,D6,D5,D6,D5 — the figure ends on D5, so the lone NoteOff is D5.
+        for &n in &[d5, d6, d5, d6, d5] {
+            allocator.note_on_expr(n, Velocity::new(0.8), legato);
+            allocator.advance_time(SampleCount::new(50));
+        }
+        allocator.note_off(d5);
+
+        // After the figure's single NoteOff no voice may still be GATED (Active):
+        // the bug re-gated the voice on the "still-held" D6 (a fresh attack that
+        // rings forever); the fix leaves the voice Releasing, so its envelope
+        // fades out. (`is_active()` is "not Idle", so it also counts a Releasing
+        // voice — hence assert specifically on the gated `Active` state.)
+        let still_gated = allocator
+            .voices
+            .iter()
+            .filter(|v| matches!(v.state, VoiceState::Active { .. }))
+            .collect::<Vec<_>>();
+        assert!(
+            still_gated.is_empty(),
+            "the +12 octave must not linger re-gated after the figure's NoteOff; \
+             still-gated voices: {:?}",
+            still_gated.iter().map(|v| v.note()).collect::<Vec<_>>()
+        );
     }
 
     #[test]

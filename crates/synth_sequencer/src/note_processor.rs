@@ -1660,14 +1660,20 @@ impl Pattern {
         // clear-and-reinsert below. (A lead-in ornament reaches earlier ticks,
         // which the 0-based walk already covers.)
         let note_reach = |n: &Note| {
-            let base = n.start.0.saturating_add(1);
-            match &n.ornament {
+            // Cover the note's whole span: a stream generator (arp) emits steps
+            // up to the note's end, so the walk must reach `end` or a held
+            // note's late steps past `length` are dropped. No duration ⇒ plays
+            // until cut, so `start+1` (the first tick it can emit).
+            let span_end = n.end().map_or(n.start.0.saturating_add(1), |e| e.0);
+            // An on-beat multi-hit ornament staggers hits forward from the onset.
+            let ornament_end = match &n.ornament {
                 Some(o) if ornament_hits(o) >= 2 && o.placement == OrnamentPlacement::OnBeat => {
                     let span = (ornament_hits(o) - 1) * o.spacing.0.max(1);
-                    base.saturating_add(span)
+                    n.start.0.saturating_add(1).saturating_add(span)
                 }
-                _ => base,
-            }
+                _ => 0,
+            };
+            span_end.max(ornament_end)
         };
         // A strumming chord in the rack staggers tones up to its tail past a
         // note's onset, so the walk must reach that far too.
@@ -1895,6 +1901,32 @@ mod tests {
             .map(|n| (n.start.0, n.pitch.as_midi()))
             .collect();
         assert_eq!(pitches, vec![(0, 62), (5000, 67)]);
+    }
+
+    #[test]
+    fn freeze_walk_covers_held_note_arp_steps_past_length() {
+        // A note held past the pattern length, arpeggiated: the freeze walk must
+        // reach the note's *end* so its late steps survive the bake. `note_reach`
+        // used to stop at `start+1`, so every arp step at/after `length` was
+        // dropped by the clear-and-reinsert (the walk never visited those ticks).
+        let mut p = Pattern::new(PatternId(0), Duration(240));
+        let id = p.add_note(PatternTick(0), Pitch::new(60).unwrap(), Velocity::MF);
+        // Held to 480 — well past the 240-tick pattern length.
+        assert!(p.resize_note(id, Duration(480)));
+        let mut a = arp(ArpMode::Up, 1);
+        a.rate = ArpRate::Ticks(120);
+        let _ = p.add_processor(NoteProcessor::Arpeggiator(a));
+
+        // Onsets at 0, 120, 240, 360 — all while the note is held [0,480).
+        let count = p.freeze_processors(Bpm::DEFAULT);
+        assert_eq!(
+            count, 4,
+            "all four arp steps (incl. those past `length`) must be baked"
+        );
+        assert!(
+            p.notes().iter().any(|n| n.start.0 >= 240),
+            "steps at/after the old `start+1` walk boundary must survive"
+        );
     }
 
     #[test]
