@@ -1415,6 +1415,29 @@
       ],
       "type": "object"
     },
+    "LoopRegion": {
+      "description": "A persisted transport loop region: playback wraps from `end` back to `start`\nwhile `enabled`. This is the serialized carrier for the loop the engine's\nsequencer owns at runtime — captured at save time and restored (via a\n`SetLoop` command) at load time, so a saved project keeps its loop instead of\nsilently dropping it.",
+      "properties": {
+        "enabled": {
+          "description": "Whether the loop is active. A region can be stored while disabled so the\nbounds survive a toggle.",
+          "type": "boolean"
+        },
+        "end": {
+          "$ref": "#/$defs/Tick",
+          "description": "Loop end position (exclusive; playback wraps here back to `start`)."
+        },
+        "start": {
+          "$ref": "#/$defs/Tick",
+          "description": "Loop start position."
+        }
+      },
+      "required": [
+        "start",
+        "end",
+        "enabled"
+      ],
+      "type": "object"
+    },
     "Material": {
       "description": "Surface material with frequency-dependent absorption.",
       "examples": [
@@ -9517,6 +9540,17 @@
             "$ref": "#/$defs/SequencerTrack"
           },
           "type": "array"
+        },
+        "transport_loop": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LoopRegion"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Persisted transport loop region. The runtime loop lives in the sequencer\nengine (which the audio thread owns); this is the save/load carrier only,\nsynced engine→here at save and here→engine at load. `None` = no loop set."
         }
       },
       "required": [

@@ -62,6 +62,25 @@ pub fn apply_project(
         *s = project.song.clone();
     }
 
+    // Restore the saved transport loop into the engine's sequencer (runtime
+    // state that isn't part of the shared Song). Sending an explicit disabled
+    // region when none was saved also clears any loop left over from a
+    // previously-loaded project — mirroring the ClearReturnBusses/ClearMasterEffects
+    // resets below.
+    let loop_cmd = project.song.transport_loop().map_or(
+        EngineCommand::SetLoop {
+            start: synth_sequencer::Tick::ZERO,
+            end: synth_sequencer::Tick::ZERO,
+            enabled: false,
+        },
+        |r| EngineCommand::SetLoop {
+            start: r.start,
+            end: r.end,
+            enabled: r.enabled,
+        },
+    );
+    sender.send(loop_cmd);
+
     sender.send(EngineCommand::SetMasterVolume(project.global.master_volume));
     sender.send(EngineCommand::SetGlideTime(project.global.glide_time));
 
@@ -409,7 +428,19 @@ pub fn build_project_from_engine(
         instrument_states.push(snapshot_to_instrument_state(snap, patch));
     }
 
-    let song_clone = { song.read().clone() };
+    let mut song_clone = { song.read().clone() };
+    // Persist the transport loop region. The runtime loop is owned by the
+    // sequencer engine (audio thread) and only mirrored into `TransportState`,
+    // not into the shared Song — so capture it here or it is lost on save. A
+    // non-positive span means "no loop set" and stores as `None`.
+    let (loop_enabled, loop_start, loop_end) = engine_state.transport.loop_state();
+    song_clone.set_transport_loop(
+        (loop_end > loop_start).then_some(synth_sequencer::LoopRegion {
+            start: loop_start,
+            end: loop_end,
+            enabled: loop_enabled,
+        }),
+    );
     let master_volume = synth_core::Gain::new(engine_state.master_volume.load());
     let return_bus_effects = build_return_bus_effects(&engine_state.return_bus_effects.read());
     let master_effects = build_effect_states(&engine_state.master_effects.read());

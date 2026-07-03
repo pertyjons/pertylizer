@@ -24,6 +24,22 @@ pub struct TempoChange {
     pub ramp: bool,
 }
 
+/// A persisted transport loop region: playback wraps from `end` back to `start`
+/// while `enabled`. This is the serialized carrier for the loop the engine's
+/// sequencer owns at runtime — captured at save time and restored (via a
+/// `SetLoop` command) at load time, so a saved project keeps its loop instead of
+/// silently dropping it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct LoopRegion {
+    /// Loop start position.
+    pub start: Tick,
+    /// Loop end position (exclusive; playback wraps here back to `start`).
+    pub end: Tick,
+    /// Whether the loop is active. A region can be stored while disabled so the
+    /// bounds survive a toggle.
+    pub enabled: bool,
+}
+
 /// Seconds to advance from `seg_start` to tick `q` within a tempo segment whose
 /// full extent is `[seg_start, seg_end]`, tempo `b0` at `seg_start` ramping to
 /// `b_end` at `seg_end` when `ramp` (else constant `b0`). `q` must lie in
@@ -187,6 +203,12 @@ pub struct Song {
     #[serde(default)]
     next_return_bus_id: u16,
 
+    /// Persisted transport loop region. The runtime loop lives in the sequencer
+    /// engine (which the audio thread owns); this is the save/load carrier only,
+    /// synced engine→here at save and here→engine at load. `None` = no loop set.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    transport_loop: Option<LoopRegion>,
+
     /// Monotonic counter bumped on every mutation that can change
     /// [`Self::calculate_length`] (arrangement placements or pattern lengths).
     /// Lets the audio engine cache the song length and recompute it only when
@@ -217,8 +239,22 @@ impl Song {
             row_resolution: RowResolution::default(),
             return_busses: Vec::new(),
             next_return_bus_id: 0,
+            transport_loop: None,
             structure_generation: 0,
         }
+    }
+
+    /// The persisted transport loop region, if one was saved. See
+    /// [`LoopRegion`]; the live loop is owned by the sequencer engine.
+    #[must_use]
+    pub fn transport_loop(&self) -> Option<LoopRegion> {
+        self.transport_loop
+    }
+
+    /// Store the transport loop region to persist with the song (`None` clears
+    /// it). Set from the engine's runtime loop state at save time.
+    pub fn set_transport_loop(&mut self, region: Option<LoopRegion>) {
+        self.transport_loop = region;
     }
 
     /// Current structural generation — bumped whenever a mutation may have

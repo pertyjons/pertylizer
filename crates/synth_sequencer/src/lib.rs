@@ -58,7 +58,7 @@ pub use note_processor::{
 };
 pub use pattern::{Pattern, RowResolution};
 pub use pitch::{NoteName, Pitch, Velocity};
-pub use song::{PatternPlacement, Song, TempoChange, TimeSignatureChange};
+pub use song::{LoopRegion, PatternPlacement, Song, TempoChange, TimeSignatureChange};
 pub use time::{Duration, PatternTick, TICKS_PER_QUARTER, Tick, TimeSignature};
 pub use track::{ReturnBus, ReturnSend, SequencerTrack, TrackColor, TrackMode, TrackSend};
 

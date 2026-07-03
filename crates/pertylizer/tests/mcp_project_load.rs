@@ -670,3 +670,95 @@ fn set_instrument_writes_through_to_snapshot_before_audio_tick() {
     );
     assert!(settled.muted, "audio thread should agree on mute");
 }
+
+// ---------------------------------------------------------------------------
+// TODO §1.6 — the transport loop region must survive save/load. It is runtime
+// state owned by the sequencer engine (only mirrored into TransportState), so
+// build_project_from_engine has to capture it into the Song and apply_project
+// has to restore it, or a reloaded project loses its loop.
+// ---------------------------------------------------------------------------
+
+#[test]
+fn transport_loop_persists_through_build_and_apply() {
+    use pertylizer::project_apply::{
+        ProjectBuildOptions, apply_project, build_project_from_engine,
+    };
+    use synth_engine::EngineCommand;
+    use synth_sequencer::{LoopRegion, Tick};
+
+    let mut rig = build_headless_rig();
+
+    // Arm a loop in the engine, then drain so it reaches TransportState (the
+    // off-audio-thread mirror the builder reads).
+    rig._session.command_sender().send(EngineCommand::SetLoop {
+        start: Tick(480),
+        end: Tick(1920),
+        enabled: true,
+    });
+    rig.pump(4);
+
+    // Save half: the built project carries the loop even though the shared Song
+    // never held it directly.
+    let project = build_project_from_engine(
+        &rig._session,
+        &rig.song,
+        &rig._sample_library,
+        ProjectBuildOptions::default(),
+    );
+    assert_eq!(
+        project.song.transport_loop(),
+        Some(LoopRegion {
+            start: Tick(480),
+            end: Tick(1920),
+            enabled: true,
+        }),
+        "build_project_from_engine must capture the engine loop into the Song"
+    );
+
+    // Load half: applying that project into a fresh engine restores the loop
+    // into the sequencer (observable via the TransportState mirror).
+    let mut rig2 = build_headless_rig();
+    apply_project(&project, &rig2._session, &rig2.song, &rig2._sample_library)
+        .expect("apply_project should succeed headless");
+    rig2.pump(4);
+    let (enabled, start, end) = rig2._session.state().transport.loop_state();
+    assert!(enabled, "loop should be re-enabled after load");
+    assert_eq!(start, Tick(480), "loop start should be restored");
+    assert_eq!(end, Tick(1920), "loop end should be restored");
+}
+
+#[test]
+fn absent_transport_loop_clears_stale_loop_on_load() {
+    use pertylizer::project_apply::apply_project;
+    use synth_engine::EngineCommand;
+    use synth_sequencer::{Song, Tick};
+
+    // A fresh engine with a leftover loop from a previous session.
+    let mut rig = build_headless_rig();
+    rig._session.command_sender().send(EngineCommand::SetLoop {
+        start: Tick(240),
+        end: Tick(960),
+        enabled: true,
+    });
+    rig.pump(4);
+    assert!(
+        rig._session.state().transport.loop_state().0,
+        "precondition: loop armed"
+    );
+
+    // Loading a project whose Song carries no transport_loop must clear it.
+    let project = pertylizer::project::ProjectFile::new(
+        Vec::new(),
+        0,
+        None,
+        Song::new("No Loop"),
+        Default::default(),
+    );
+    apply_project(&project, &rig._session, &rig.song, &rig._sample_library)
+        .expect("apply_project should succeed headless");
+    rig.pump(4);
+    assert!(
+        !rig._session.state().transport.loop_state().0,
+        "loading a loop-less project must clear the stale loop"
+    );
+}
