@@ -9,7 +9,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use synth_core::{AudioCallbackContext, AudioProcessor, audio::SampleRate as HwSampleRate};
+use synth_core::{
+    AudioCallbackContext, AudioProcessor, DenormalGuard, audio::SampleRate as HwSampleRate,
+};
 use synth_engine::commands::PortId;
 use synth_engine::instrument::{InstrumentId, MidiChannel};
 use synth_engine::{EngineCommand, SynthEngine};
@@ -233,6 +235,11 @@ fn render_to_wav(
     config: &ExportConfig,
     progress: &ExportProgress,
 ) -> Result<Vec<String>, ExportError> {
+    // Flush denormals (FTZ/DAZ) for the whole export, matching the real-time
+    // audio callback so the rendered WAV agrees with live playback and avoids
+    // denormal slowdowns on decaying filter tails. Restored on return by RAII.
+    let _denormal_guard = DenormalGuard::new();
+
     // 1. Create a fresh engine
     let (mut engine, mut handle) = SynthEngine::new();
 

@@ -27,7 +27,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 
 use synth_core::audio::SampleRate as HwSampleRate;
-use synth_core::{AudioCallbackContext, AudioProcessor};
+use synth_core::{AudioCallbackContext, AudioProcessor, DenormalGuard};
 use synth_engine::commands::{InstrumentParam, PortId};
 use synth_engine::instrument::MidiChannel;
 use synth_engine::{EngineCommand, SynthEngine};
@@ -393,6 +393,13 @@ impl OfflineEngineSession {
         }
 
         fastrand::seed(OFFLINE_RENDER_SEED);
+
+        // Flush denormals (FTZ/DAZ) for the whole offline render, matching the
+        // real-time audio callback. Without this an offline render can diverge
+        // from live playback at the denormal level (recursive-filter tails) and
+        // pay the same denormal-slowdown the live path avoids. Restored on
+        // return by RAII.
+        let _denormal_guard = DenormalGuard::new();
 
         let mut warnings: Vec<String> = Vec::new();
 

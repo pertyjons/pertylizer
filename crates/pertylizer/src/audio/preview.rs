@@ -8,7 +8,7 @@
 use std::sync::Arc;
 
 use synth_core::audio::SampleRate as HwSampleRate;
-use synth_core::{AudioCallbackContext, AudioProcessor, MidiNote, Velocity};
+use synth_core::{AudioCallbackContext, AudioProcessor, DenormalGuard, MidiNote, Velocity};
 use synth_engine::commands::{InstrumentParam, PortId};
 use synth_engine::instrument::{InstrumentId, MidiChannel};
 use synth_engine::{EngineCommand, SynthEngine};
@@ -469,6 +469,10 @@ impl OfflineNoteSession {
     ) -> Result<RenderedNote, McpBridgeError> {
         // Deterministic offline render — see `OFFLINE_RENDER_SEED` docstring.
         fastrand::seed(crate::audio::arrangement_render::OFFLINE_RENDER_SEED);
+
+        // Flush denormals (FTZ/DAZ) for this render, matching the real-time
+        // audio callback so previews agree with live playback. Restored by RAII.
+        let _denormal_guard = DenormalGuard::new();
 
         let mut warnings: Vec<String> = Vec::new();
 
