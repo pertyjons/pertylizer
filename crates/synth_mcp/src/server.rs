@@ -3838,6 +3838,67 @@ fn is_bridge_error(msg: &str) -> bool {
     msg.contains("not found") || msg.contains("failed to send")
 }
 
+/// Character cap for a param summary line.
+const SUMMARY_MAX: usize = 60;
+
+/// Truncate `s` to at most `max` characters, appending an ellipsis when cut.
+fn truncate_chars(s: &str, max: usize) -> String {
+    if s.chars().count() <= max {
+        return s.to_string();
+    }
+    let mut out: String = s.chars().take(max.saturating_sub(1)).collect();
+    out.push('…');
+    out
+}
+
+/// A short, human-readable one-line summary of a tool call's params for the
+/// success log / activity console — never the full JSON. Covers the common
+/// shapes: `batch_execute` reports its op count, other array-shaped tools their
+/// item count, and single-target tools a few `key=value` scalars.
+///
+/// Takes the argument object by reference so the hot `call_tool` path doesn't
+/// clone a (potentially large) params map just to describe it.
+fn summarize_params(obj: &serde_json::Map<String, serde_json::Value>) -> String {
+    // batch_execute: the operation count is the useful summary.
+    if let Some(ops) = obj.get("operations").and_then(|v| v.as_array()) {
+        return format!("{} ops", ops.len());
+    }
+    // Other array-shaped tools (batch_json create_instrument / import_sample
+    // / add_note …): report the first array field's length.
+    if let Some((key, arr)) = obj.iter().find_map(|(k, v)| v.as_array().map(|a| (k, a))) {
+        return truncate_chars(&format!("{key}={}", arr.len()), SUMMARY_MAX);
+    }
+    // Single-target tools: a few scalar fields as `key=value`.
+    let mut parts = Vec::new();
+    for (k, v) in obj {
+        let scalar = match v {
+            serde_json::Value::String(s) => Some(s.clone()),
+            serde_json::Value::Number(n) => Some(n.to_string()),
+            serde_json::Value::Bool(b) => Some(b.to_string()),
+            _ => None,
+        };
+        if let Some(s) = scalar {
+            parts.push(format!("{k}={s}"));
+            if parts.len() >= 3 {
+                break;
+            }
+        }
+    }
+    if !parts.is_empty() {
+        return truncate_chars(&parts.join(", "), SUMMARY_MAX);
+    }
+    truncate_chars(&serde_json::to_string(obj).unwrap_or_default(), SUMMARY_MAX)
+}
+
+/// [`summarize_params`] for a whole params [`serde_json::Value`] (the
+/// `dispatch_tool` path, where params aren't pre-split into an object).
+fn summarize_value(params: &serde_json::Value) -> String {
+    match params.as_object() {
+        Some(obj) => summarize_params(obj),
+        None => truncate_chars(&params.to_string(), SUMMARY_MAX),
+    }
+}
+
 impl SynthMcpServer {
     /// Dispatch a tool call by name with JSON params, returning the result text
     /// and whether it represents a failure.
@@ -3854,6 +3915,10 @@ impl SynthMcpServer {
         validate_only: bool,
     ) -> (String, bool) {
         let started = Instant::now();
+        // Summarize the params before they're moved into the dispatch, so the
+        // failure logs below show what the call did — e.g. `12 ops`,
+        // `flt-1.cutoff=800` — without dumping full JSON.
+        let param_summary = summarize_value(&params);
         // Isolate a panicking sub-op (e.g. a panic inside a `block_in_place`
         // bridge call) so one bad op surfaces as an error instead of killing
         // the tokio worker and dropping the session.
@@ -3908,11 +3973,19 @@ impl SynthMcpServer {
                 (s, true)
             }
             Ok(s) => {
+                // A batch sub-op success. The whole `batch_execute` call is
+                // already logged at info by `call_tool`, so keep the per-op line
+                // at trace: the activity-console capture layer only keeps
+                // `debug`+, so a 1000-op batch's successes don't flood (and evict
+                // the visible history from) the bounded in-memory ring. Sub-op
+                // *failures* below stay at warn/debug and remain captured. Raise
+                // to trace on stderr with `RUST_LOG=synth_mcp=trace` when needed.
                 tracing::trace!(
                     session_id = self.session_id,
                     tool,
                     elapsed_ms,
-                    "MCP tool call succeeded"
+                    params = %param_summary,
+                    "MCP batch sub-op succeeded"
                 );
                 (s, false)
             }
@@ -4237,13 +4310,77 @@ impl ServerHandler for SynthMcpServer {
         context: RequestContext<RoleServer>,
     ) -> Result<CallToolResult, ErrorData> {
         let tool_name = request.name.clone();
+        // Summarize args before `request` is moved into the call context, so the
+        // per-call log line (and the activity-log console) shows what the call
+        // did — e.g. `batch_execute (12 ops)`, `set_parameter (flt-1.cutoff=…)`.
+        let param_summary = request
+            .arguments
+            .as_ref()
+            .map_or_else(String::new, summarize_params);
+        let started = Instant::now();
         let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
-        match run_catching_panic(self.session_id, &tool_name, self.tool_router.call(tcc)).await {
-            Ok(result) => result,
-            Err(msg) => Err(ErrorData::internal_error(
-                format!("tool '{tool_name}' panicked: {msg}"),
-                None,
-            )),
+        let outcome =
+            run_catching_panic(self.session_id, &tool_name, self.tool_router.call(tcc)).await;
+        let elapsed_ms = started.elapsed().as_millis();
+
+        // `call_tool` is the one choke point every top-level tool call passes
+        // through (single calls don't go through `dispatch_tool` — that's the
+        // batch sub-op path). Log each call at info so it lands in the console
+        // at the default level; a tool-reported failure (in-band `Error:` text
+        // or the `is_error` flag) is demoted to warn.
+        match outcome {
+            Ok(Ok(result)) => {
+                let failed = result.is_error.unwrap_or(false)
+                    || result
+                        .content
+                        .iter()
+                        .any(|c| c.as_text().is_some_and(|t| result_is_failure(&t.text)));
+                if failed {
+                    tracing::warn!(
+                        target: "synth_mcp::call",
+                        session_id = self.session_id,
+                        tool = %tool_name,
+                        elapsed_ms,
+                        params = %param_summary,
+                        "MCP tool call failed"
+                    );
+                } else {
+                    tracing::info!(
+                        target: "synth_mcp::call",
+                        session_id = self.session_id,
+                        tool = %tool_name,
+                        elapsed_ms,
+                        params = %param_summary,
+                        "MCP tool call"
+                    );
+                }
+                Ok(result)
+            }
+            Ok(Err(e)) => {
+                tracing::warn!(
+                    target: "synth_mcp::call",
+                    session_id = self.session_id,
+                    tool = %tool_name,
+                    elapsed_ms,
+                    error = %e,
+                    "MCP tool call errored"
+                );
+                Err(e)
+            }
+            Err(msg) => {
+                tracing::warn!(
+                    target: "synth_mcp::call",
+                    session_id = self.session_id,
+                    tool = %tool_name,
+                    elapsed_ms,
+                    error = %msg,
+                    "MCP tool call panicked"
+                );
+                Err(ErrorData::internal_error(
+                    format!("tool '{tool_name}' panicked: {msg}"),
+                    None,
+                ))
+            }
         }
     }
 
@@ -4602,9 +4739,10 @@ impl SynthMcpServer {
 
     #[tool(
         description = "Get build/version info for the running application: version, build \
-                       timestamp (UTC), git commit hash, branch, and whether the working tree \
-                       had uncommitted changes at build time. Git fields are null when the \
-                       binary was built outside a git checkout."
+                       timestamp (ISO 8601 / RFC 3339 UTC, e.g. 2026-07-03T14:30:00Z), git \
+                       commit hash, branch, and whether the working tree had uncommitted \
+                       changes at build time. Git fields are null when the binary was built \
+                       outside a git checkout."
     )]
     async fn get_version(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.get_version() {
@@ -8685,6 +8823,57 @@ mod batch_msg_tests {
 
         // A non-batch JSON blob with an empty errors list is not a failure.
         assert!(!result_is_failure(r#"{"created":[],"errors":[]}"#));
+    }
+}
+
+#[cfg(test)]
+mod summarize_params_tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn batch_execute_reports_op_count() {
+        let p = json!({ "operations": [ {"tool": "a"}, {"tool": "b"}, {"tool": "c"} ] });
+        assert_eq!(summarize_value(&p), "3 ops");
+    }
+
+    #[test]
+    fn array_shaped_tool_reports_field_len() {
+        let p = json!({ "instruments": [ {}, {} ] });
+        assert_eq!(summarize_value(&p), "instruments=2");
+    }
+
+    #[test]
+    fn single_target_reports_scalar_fields() {
+        // BTreeMap key order (default serde_json) is alphabetical.
+        let p = json!({ "parameter": "cutoff", "value": 800 });
+        assert_eq!(summarize_value(&p), "parameter=cutoff, value=800");
+    }
+
+    #[test]
+    fn caps_scalar_fields_at_three() {
+        let p = json!({ "a": 1, "b": 2, "c": 3, "d": 4 });
+        // Alphabetical order, first three only.
+        assert_eq!(summarize_value(&p), "a=1, b=2, c=3");
+    }
+
+    #[test]
+    fn long_summary_is_truncated_with_ellipsis() {
+        let long = "x".repeat(200);
+        let p = json!({ "name": long });
+        let out = summarize_value(&p);
+        assert!(
+            out.chars().count() <= 60,
+            "got {} chars",
+            out.chars().count()
+        );
+        assert!(out.ends_with('…'));
+    }
+
+    #[test]
+    fn non_object_falls_back_to_json() {
+        let p = json!("hello");
+        assert_eq!(summarize_value(&p), "\"hello\"");
     }
 }
 

@@ -51,7 +51,7 @@ async fn get_version_returns_build_info_json() {
         .get("build_timestamp")
         .and_then(|v| v.as_str())
         .expect("build_timestamp present");
-    assert!(ts.ends_with(" UTC"), "timestamp: {ts}");
+    assert!(ts.ends_with('Z'), "timestamp: {ts}"); // ISO 8601 / RFC 3339 UTC
 
     // Dev/CI test runs happen inside the git checkout, so the git fields
     // must be populated and consistent.

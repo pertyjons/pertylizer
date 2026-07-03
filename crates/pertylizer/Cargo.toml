@@ -94,12 +94,19 @@ tracing-log = { workspace = true }
 # OSC telemetry (optional)
 synth_osc = { path = "../synth_osc", optional = true }
 
+# Date/time — local-time timestamps for the activity-log console.
+chrono = { workspace = true }
+
 # Force winit to draw Adwaita-style CSD on Wayland (eframe enables only
 # winit/wayland, which omits any CSD feature — leaving GNOME windows with
 # no title bar). Cargo unifies features across the dep graph, so adding
 # the feature here applies to the same winit crate eframe uses.
 [target.'cfg(target_os = "linux")'.dependencies]
 winit = { workspace = true, features = ["wayland-csd-adwaita"] }
+
+[build-dependencies]
+# UTC build-stamp formatting (replaces the hand-rolled civil-calendar math).
+chrono = { workspace = true }
 
 [dev-dependencies]
 tempfile = { workspace = true }

@@ -78,6 +78,9 @@ pub mod mixer_view;
 pub mod welcome_view;
 
 #[cfg(feature = "gui-egui")]
+pub mod activity_log_view;
+
+#[cfg(feature = "gui-egui")]
 pub mod analyze;
 
 #[cfg(feature = "gui-egui")]
@@ -113,6 +116,9 @@ pub struct SynthGuiConfig {
     pub settings: crate::io::settings::AppSettings,
     /// Shared sample library.
     pub sample_library: Arc<std::sync::RwLock<synth_sampler::SampleLibrary>>,
+    /// Shared in-memory activity log, fed by the tracing capture layer and
+    /// rendered by the Home console.
+    pub activity_log: crate::activity_log::ActivityLog,
 }
 
 /// Trait that all GUI backends must implement.

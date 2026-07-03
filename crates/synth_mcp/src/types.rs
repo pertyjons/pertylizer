@@ -243,7 +243,8 @@ pub struct EngineStatus {
 pub struct VersionInfo {
     /// Application version (from Cargo.toml, e.g. "0.313.0").
     pub version: String,
-    /// When the binary was built, as "YYYY-MM-DD HH:MM:SS UTC".
+    /// When the binary was built, as an ISO 8601 / RFC 3339 UTC instant
+    /// (e.g. "2026-07-03T14:30:00Z").
     pub build_timestamp: String,
     /// Full commit hash of HEAD at build time, or `None` when the binary was
     /// built outside a git checkout.

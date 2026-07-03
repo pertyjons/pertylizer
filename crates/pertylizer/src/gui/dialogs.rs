@@ -41,6 +41,8 @@ pub enum FileDialogMode {
     ImportSample,
     /// Exporting a sample as WAV file.
     ExportSample,
+    /// Exporting the activity log to a text file.
+    ExportActivityLog,
 }
 
 /// State for all application dialogs.
@@ -178,8 +180,15 @@ impl DialogState {
     }
 
     /// Set a status message that will auto-dismiss.
+    ///
+    /// The 3-second toast is transient, so the message is also emitted through
+    /// `tracing` (target `pertylizer::status`) — that lands it permanently in
+    /// the activity-log console and on stderr, where it can be reviewed after
+    /// the toast fades.
     pub fn set_status(&mut self, message: impl Into<String>) {
-        self.status_message = Some((message.into(), std::time::Instant::now()));
+        let message = message.into();
+        tracing::info!(target: "pertylizer::status", "{message}");
+        self.status_message = Some((message, std::time::Instant::now()));
     }
 
     /// Clear expired status message.
@@ -294,6 +303,23 @@ impl DialogState {
                 "WAV files",
                 Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "wav")),
             )
+        });
+        self.file_dialog.config_mut().default_file_name = default_name.to_string();
+        self.file_dialog.save_file();
+    }
+
+    /// Open the file dialog for exporting the activity log to a text file.
+    pub fn open_export_activity_log_dialog(
+        &mut self,
+        default_name: &str,
+        initial_dir: Option<&Path>,
+    ) {
+        self.ensure_dialog(FileDialogMode::ExportActivityLog, initial_dir, |d| {
+            d.add_file_filter(
+                "Text / log files",
+                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "txt" || e == "log")),
+            )
+            .add_file_filter("All files", Filter::new(|_: &Path| true))
         });
         self.file_dialog.config_mut().default_file_name = default_name.to_string();
         self.file_dialog.save_file();

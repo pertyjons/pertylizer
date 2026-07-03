@@ -47,6 +47,11 @@ serde_json = { version = "1.0.150", features = ["raw_value"] }
 # TOML parsing for the runtime config file (pertylizer.toml).
 toml = "1.1.2"
 thiserror = "2.0.18"
+# Date/time. `clock` pulls in `Local`/`Utc::now()` via `iana-time-zone` for
+# correct, multithreaded-safe local time (unlike `time`'s `now_local`); we drop
+# the default `wasmbind`/`oldtime` features. Used for the activity-log console's
+# local HH:MM:SS and the UTC build stamp in build.rs.
+chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 # Enum utilities — `EnumIter` makes `ModuleType` self-enumerating so the MCP /
 # GUI module catalogs can never drift from the enum.
 strum = { version = "0.28", features = ["derive"] }

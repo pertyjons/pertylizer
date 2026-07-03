@@ -362,6 +362,11 @@ struct SynthApp {
     /// Per-project author metadata. Initialized from `settings.author`
     /// for new projects, overridden from disk on load, persisted on save.
     current_project_author: Author,
+
+    /// Shared in-memory activity log, fed by the tracing capture layer.
+    activity_log: crate::activity_log::ActivityLog,
+    /// UI state for the Home activity-log console.
+    activity_log_view: crate::gui::activity_log_view::ActivityLogViewState,
 }
 
 impl SynthApp {
@@ -466,6 +471,8 @@ impl SynthApp {
             pending_instrument_delete: None,
             project_edit_open: false,
             current_project_author: project_author,
+            activity_log: config.activity_log,
+            activity_log_view: crate::gui::activity_log_view::ActivityLogViewState::default(),
         }
     }
 
@@ -522,11 +529,18 @@ impl SynthApp {
     /// to release voices, and switches `active_instrument_id` to a
     /// neighbour when the active one was deleted. No-op for unknown ids.
     fn delete_instrument(&mut self, id: InstrumentId) {
-        if !self.instruments.iter().any(|i| i.id == id) {
+        let Some(name) = self
+            .instruments
+            .iter()
+            .find(|i| i.id == id)
+            .map(|i| i.name.clone())
+        else {
             return;
-        }
+        };
         if let Err(e) = self.session.remove_instrument(id) {
-            eprintln!("Failed to remove instrument {id:?}: {e}");
+            tracing::warn!(target: "pertylizer::instrument", error = %e, "failed to remove instrument '{name}'");
+        } else {
+            tracing::info!(target: "pertylizer::instrument", "deleted instrument '{name}'");
         }
         self.instruments.retain(|i| i.id != id);
         if self.active_instrument_id == Some(id) {
@@ -547,6 +561,7 @@ impl SynthApp {
             MidiChannel::from_one_indexed(instrument_num as u8).unwrap_or(MidiChannel::CH1);
 
         let new_id = self.session.add_instrument(&new_name).ok()?;
+        tracing::info!(target: "pertylizer::instrument", "created instrument '{new_name}'");
 
         self.handle.send(EngineCommand::SetInstrumentMidiChannel {
             instrument_id: new_id,
@@ -791,6 +806,30 @@ impl eframe::App for SynthApp {
         {
             match self.active_view {
                 AppView::Home => {
+                    // Right console: a live activity log (MCP calls, project /
+                    // instrument ops, status messages). Rendered before the
+                    // CentralPanel per the panel-order rule. Self-contained, so
+                    // it can later be promoted to its own tab or bottom console.
+                    let mut log_action = None;
+                    egui::Panel::right("activity_log")
+                        .resizable(true)
+                        .default_size(380.0)
+                        .min_size(240.0)
+                        .show(ui, |ui| {
+                            log_action = crate::gui::activity_log_view::show(
+                                ui,
+                                &self.activity_log,
+                                &mut self.activity_log_view,
+                            );
+                        });
+                    if log_action == Some(crate::gui::activity_log_view::ActivityLogAction::Export)
+                    {
+                        let default_name = "activity-log.txt";
+                        let initial_dir = self.resolve_save_dir();
+                        self.dialog_state
+                            .open_export_activity_log_dialog(default_name, initial_dir.as_deref());
+                    }
+
                     // Welcome / landing view — always available regardless of
                     // whether an instrument exists. Lets the user create an
                     // instrument or open a project/patch without hunting for
@@ -4191,7 +4230,9 @@ impl SynthApp {
         if name_changed {
             let new_name = self.instruments[idx].name.clone();
             if let Err(e) = self.session.rename_instrument(target_id, &new_name) {
-                eprintln!("Failed to rename instrument {target_id:?}: {e}");
+                tracing::warn!(target: "pertylizer::instrument", error = %e, "failed to rename instrument to '{new_name}'");
+            } else {
+                tracing::info!(target: "pertylizer::instrument", "renamed instrument to '{new_name}'");
             }
         }
         if category_changed {
@@ -5353,6 +5394,26 @@ impl SynthApp {
                         }
                     }
                 }
+                FileDialogResult::Saved(path, Some(FileDialogMode::ExportActivityLog)) => {
+                    let save_path = if path.extension().is_none() {
+                        path.with_extension("txt")
+                    } else {
+                        path
+                    };
+                    let text = crate::gui::activity_log_view::format_export(&self.activity_log);
+                    match std::fs::write(&save_path, text) {
+                        Ok(()) => {
+                            self.dialog_state.set_status(format!(
+                                "Activity log exported: {}",
+                                save_path.display()
+                            ));
+                        }
+                        Err(e) => {
+                            self.dialog_state
+                                .set_status(format!("Activity log export failed: {e}"));
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -5507,6 +5568,8 @@ impl SynthApp {
             self.awe_enabled = false;
             self.awe_ui = crate::gui::awe_view::AweUiState::default();
         }
+
+        tracing::info!(target: "pertylizer::patch", "loaded patch '{}'", patch.name);
     }
 
     /// Reconcile GUI state with session: detect modules added/removed by MCP.
@@ -6157,9 +6220,18 @@ impl SynthApp {
             &self.song,
             &self.sample_library,
         ) {
-            eprintln!("apply_project failed during GUI load: {e}");
+            tracing::warn!(target: "pertylizer::project", error = %e, "apply_project failed during GUI load");
         }
         self.refresh_ui_from_project(project);
+        let project_name = {
+            let song = self.song.read();
+            if song.name.is_empty() {
+                "Untitled".to_string()
+            } else {
+                song.name.clone()
+            }
+        };
+        tracing::info!(target: "pertylizer::project", "loaded project '{project_name}'");
         // A loaded project belongs in the rack — don't strand the user on the
         // Home welcome screen. Leave any other explicit view choice intact.
         if self.active_view == AppView::Home {
@@ -6174,8 +6246,9 @@ impl SynthApp {
             &self.song,
             &self.sample_library,
         ) {
-            eprintln!("reset_to_new_project failed: {e}");
+            tracing::warn!(target: "pertylizer::project", error = %e, "reset_to_new_project failed");
         }
+        tracing::info!(target: "pertylizer::project", "new project");
         self.sample_view_state.invalidate_peaks();
         self.refresh_ui_after_reset();
         self.current_project_path = None;

@@ -13621,14 +13621,15 @@ mod mcp_helper_tests {
     }
 
     /// The build-time env vars behind `get_version` are well-formed: the
-    /// timestamp is a full "YYYY-MM-DD HH:MM:SS UTC", and the git fields are
-    /// either absent together or a 40-hex hash with a branch and a 0/1 dirty
-    /// flag (dev builds always run inside the repo, so expect the latter).
+    /// timestamp is a full ISO 8601 / RFC 3339 UTC instant
+    /// ("YYYY-MM-DDTHH:MM:SSZ"), and the git fields are either absent together
+    /// or a 40-hex hash with a branch and a 0/1 dirty flag (dev builds always
+    /// run inside the repo, so expect the latter).
     #[test]
     fn version_info_build_env_is_well_formed() {
         let ts = env!("BUILD_TIMESTAMP");
-        assert_eq!(ts.len(), "YYYY-MM-DD HH:MM:SS UTC".len(), "timestamp: {ts}");
-        assert!(ts.ends_with(" UTC"), "timestamp: {ts}");
+        assert_eq!(ts.len(), "YYYY-MM-DDTHH:MM:SSZ".len(), "timestamp: {ts}");
+        assert!(ts.ends_with('Z'), "timestamp: {ts}");
 
         let hash = env!("GIT_COMMIT_HASH");
         if hash.is_empty() {

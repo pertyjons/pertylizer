@@ -1,24 +1,15 @@
 use std::process::Command;
 
 fn main() {
-    // Embed build date/time as UTC (pure Rust, no shell dependency)
-    let (date, time) = {
-        let duration = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default();
-        let secs = duration.as_secs();
-        // Convert Unix timestamp to date using civil day calculation
-        let days = (secs / 86400) as i64;
-        let (year, month, day) = civil_from_days(days);
-        let tod = secs % 86400;
-        let (h, m, s) = (tod / 3600, (tod % 3600) / 60, tod % 60);
-        (
-            format!("{year}-{month:02}-{day:02}"),
-            format!("{h:02}:{m:02}:{s:02}"),
-        )
-    };
+    // Embed the build date/time as UTC. `BUILD_DATE` is the ISO date for the
+    // window title; `BUILD_TIMESTAMP` is a full ISO 8601 / RFC 3339 instant
+    // (e.g. `2026-07-03T14:30:00Z`) — chrono's `to_rfc3339_opts` gives the
+    // standard form directly, no manual field assembly.
+    let now = chrono::Utc::now();
+    let date = now.format("%Y-%m-%d");
+    let timestamp = now.to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
     println!("cargo:rustc-env=BUILD_DATE={date}");
-    println!("cargo:rustc-env=BUILD_TIMESTAMP={date} {time} UTC");
+    println!("cargo:rustc-env=BUILD_TIMESTAMP={timestamp}");
 
     embed_git_info();
 
@@ -70,20 +61,4 @@ fn git_output(args: &[&str]) -> Option<String> {
         return None;
     }
     String::from_utf8(out.stdout).ok()
-}
-
-/// Convert days since Unix epoch to (year, month, day).
-/// Algorithm from Howard Hinnant's `chrono`-compatible civil calendar.
-fn civil_from_days(days: i64) -> (i64, u32, u32) {
-    let z = days + 719_468;
-    let era = z.div_euclid(146_097);
-    let doe = z.rem_euclid(146_097) as u32;
-    let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
-    let y = (yoe as i64) + era * 400;
-    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
-    let mp = (5 * doy + 2) / 153;
-    let d = doy - (153 * mp + 2) / 5 + 1;
-    let m = if mp < 10 { mp + 3 } else { mp - 9 };
-    let y = if m <= 2 { y + 1 } else { y };
-    (y, m, d)
 }

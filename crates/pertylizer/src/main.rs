@@ -27,7 +27,8 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Default filter keeps our crates at info and silences chatty deps; the
     // RUST_LOG env var overrides if set, e.g.
     //   RUST_LOG=synth_mcp=debug,pertylizer=info
-    init_tracing();
+    // The capture-layer clone flows to the GUI app; headless drops it.
+    let activity_log = init_tracing();
 
     // stderr so stdout stays a clean JSON-RPC channel in --headless mode.
     eprintln!(
@@ -61,13 +62,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(feature = "mcp")]
     if args.iter().any(|a| a == "--headless") {
+        // No GUI to render the log; drop the capture clone.
+        drop(activity_log);
         return run_headless_mcp();
     }
 
-    run_gui()
+    run_gui(activity_log)
 }
 
-fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
+fn run_gui(
+    activity_log: pertylizer::activity_log::ActivityLog,
+) -> Result<(), Box<dyn std::error::Error>> {
     let args: Vec<String> = env::args().collect();
 
     // Load persistent settings
@@ -197,6 +202,7 @@ fn run_gui() -> Result<(), Box<dyn std::error::Error>> {
         osc_shared,
         settings,
         sample_library,
+        activity_log,
     };
 
     let backend = create_backend();
@@ -255,28 +261,59 @@ fn run_headless_mcp() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Install a `tracing` subscriber that writes to stderr.
+/// Install a `tracing` subscriber and return the shared [`ActivityLog`] fed by
+/// its capture layer.
 ///
-/// Headless mode uses stdout for JSON-RPC, so logs MUST go to stderr to avoid
-/// corrupting the MCP protocol stream. Default filter shows `info` for our
-/// crates and silences chatty dependencies; override with `RUST_LOG`.
-fn init_tracing() {
-    use tracing_subscriber::EnvFilter;
+/// Two layers hang off one `Registry`:
+/// - **stderr fmt layer** — the existing behaviour, under the `RUST_LOG`
+///   `EnvFilter` (default `warn,pertylizer=info,…`). Headless mode uses stdout
+///   for JSON-RPC, so logs MUST go to stderr to avoid corrupting the MCP
+///   protocol stream.
+/// - **capture layer** — writes events into the returned [`ActivityLog`] under
+///   its own, deliberately more permissive filter (`…=debug`), so the buffer
+///   holds debug-level detail even when stderr stays at `info`. The Home
+///   console then decides what to *show*; its Debug toggle would reveal nothing
+///   if the capture layer shared the stderr filter.
+///
+/// The caller hands the returned clone to the GUI app; `--headless` drops it.
+fn init_tracing() -> pertylizer::activity_log::ActivityLog {
+    use pertylizer::activity_log::{ActivityLog, CaptureLayer};
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    use tracing_subscriber::{EnvFilter, Layer};
+
     // Forward the `log` crate (used by egui/eframe) into tracing so their
-    // diagnostics — notably egui's id-clash warnings — reach our stderr output
+    // diagnostics — notably egui's id-clash warnings — reach both sinks
     // instead of being silently dropped. Best-effort: ignore if already set.
     let _ = tracing_log::LogTracer::init();
-    let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
-        EnvFilter::new("warn,pertylizer=info,synth_mcp=info,synth_engine=info")
+
+    let stderr_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        // `synth_mcp::call=warn` keeps the per-call success line (emitted at info
+        // by `call_tool` so the activity console shows every MCP call) OFF stderr
+        // — otherwise a busy agent session would spam one line per call. The
+        // capture layer below has no such override, so the console still gets it.
+        EnvFilter::new("warn,pertylizer=info,synth_mcp=info,synth_mcp::call=warn,synth_engine=info")
     });
-    let result = tracing_subscriber::fmt()
-        .with_env_filter(filter)
+    let fmt_layer = tracing_subscriber::fmt::layer()
         .with_writer(std::io::stderr)
         .with_target(true)
+        .with_filter(stderr_filter);
+
+    let activity_log = ActivityLog::new();
+    // Fixed (not env-derived) so the buffer always holds the debug detail the
+    // panel's Debug toggle reveals, regardless of RUST_LOG.
+    let capture_filter = EnvFilter::new("warn,pertylizer=debug,synth_mcp=debug,synth_engine=debug");
+    let capture_layer = CaptureLayer::new(activity_log.clone()).with_filter(capture_filter);
+
+    let result = tracing_subscriber::registry()
+        .with(fmt_layer)
+        .with(capture_layer)
         .try_init();
     if let Err(e) = result {
         eprintln!("warning: failed to install tracing subscriber: {e}");
     }
+
+    activity_log
 }
 
 fn print_help() {
