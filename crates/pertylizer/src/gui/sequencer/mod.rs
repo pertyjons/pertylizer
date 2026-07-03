@@ -22,8 +22,8 @@ use synth_sequencer::{
 use crate::gui::input::KEY_MAP;
 use crate::gui::theme::theme;
 use crate::gui::widgets::{
-    CaptionTone, caption, clickable_label, danger_button, dim_label, labeled_row, strong_label,
-    toggle_button, tree_picker_button, unit_drag_value,
+    CaptionTone, caption, clickable_label, danger_button, dim_label, inline_editable_text,
+    labeled_row, strong_label, toggle_button, tree_picker_button, unit_drag_value,
 };
 
 mod arrangement;

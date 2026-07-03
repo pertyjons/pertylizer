@@ -2510,16 +2510,13 @@ fn draw_piano_roll_toolbar(
             == Some(data.pattern_id)
         {
             if let Some((_, ref mut name_buf)) = view_state.editing_pattern_name {
-                let resp = ui.add(
-                    egui::TextEdit::singleline(name_buf)
-                        .desired_width(120.0)
-                        .font(egui::FontId::proportional(14.0)),
-                );
-                if resp.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                let edit = inline_editable_text(ui, name_buf, false, |te| {
+                    te.desired_width(120.0)
+                        .font(egui::FontId::proportional(14.0))
+                });
+                if edit.ended {
                     commit_pattern_rename(song, undo_manager, data.pattern_id, name_buf.clone());
                     view_state.editing_pattern_name = None;
-                } else if !resp.has_focus() {
-                    resp.request_focus();
                 }
             }
         } else {
@@ -2545,22 +2542,19 @@ fn draw_piano_roll_toolbar(
                 == Some(data.pattern_id)
             {
                 if let Some((_, ref mut desc_buf)) = view_state.editing_pattern_description {
-                    let resp = ui.add(
-                        egui::TextEdit::singleline(desc_buf)
-                            .desired_width(180.0)
-                            .hint_text("Description")
-                            .font(egui::FontId::proportional(12.0)),
-                    );
                     // Commit on every change so switching patterns mid-edit can't
-                    // strand the buffer; lost_focus (incl. Enter on a singleline)
-                    // ends the edit session.
-                    if resp.changed() {
+                    // strand the buffer; `ended` (lost focus, incl. Enter on a
+                    // singleline) closes the edit session.
+                    let edit = inline_editable_text(ui, desc_buf, false, |te| {
+                        te.desired_width(180.0)
+                            .hint_text("Description")
+                            .font(egui::FontId::proportional(12.0))
+                    });
+                    if edit.response.changed() {
                         commit_pattern_description(song, data.pattern_id, desc_buf.clone());
                     }
-                    if resp.lost_focus() {
+                    if edit.ended {
                         view_state.editing_pattern_description = None;
-                    } else if !resp.has_focus() {
-                        resp.request_focus();
                     }
                 }
             } else {

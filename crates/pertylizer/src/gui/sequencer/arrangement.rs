@@ -1962,14 +1962,12 @@ fn draw_arrangement_track_headers(
                                         if let Some((_, ref mut name_buf)) =
                                             view_state.editing_track_name
                                         {
-                                            let resp = ui.add(
-                                                egui::TextEdit::singleline(name_buf)
-                                                    .desired_width(80.0)
-                                                    .font(egui::FontId::proportional(12.0)),
-                                            );
-                                            if resp.lost_focus()
-                                                || ui.input(|i| i.key_pressed(egui::Key::Enter))
-                                            {
+                                            let edit =
+                                                inline_editable_text(ui, name_buf, false, |te| {
+                                                    te.desired_width(80.0)
+                                                        .font(egui::FontId::proportional(12.0))
+                                                });
+                                            if edit.ended {
                                                 let new_name = name_buf.clone();
                                                 let tid = track.id;
                                                 let old_name = track.name.clone();
@@ -1993,12 +1991,6 @@ fn draw_arrangement_track_headers(
                                                     );
                                                 }
                                                 view_state.editing_track_name = None;
-                                            } else if !resp.has_focus() {
-                                                // Grab focus only on the first
-                                                // frame so clicking elsewhere
-                                                // commits naturally via
-                                                // lost_focus.
-                                                resp.request_focus();
                                             }
                                         }
                                     } else {
@@ -2241,17 +2233,21 @@ fn draw_arrangement_track_headers(
                                                     if let Some((_, ref mut desc_buf)) =
                                                         view_state.editing_track_description
                                                     {
-                                                        let resp = ui.add(
-                                                            egui::TextEdit::multiline(desc_buf)
-                                                                .desired_rows(2)
-                                                                .desired_width(f32::INFINITY)
-                                                                .hint_text("Description"),
-                                                        );
                                                         // Commit on every change so a popup
                                                         // dismissal (click-outside) can never
-                                                        // strand an in-progress edit; lost_focus
-                                                        // just ends the edit session.
-                                                        if resp.changed() {
+                                                        // strand an in-progress edit; `ended`
+                                                        // just closes the edit session.
+                                                        let edit = inline_editable_text(
+                                                            ui,
+                                                            desc_buf,
+                                                            true,
+                                                            |te| {
+                                                                te.desired_rows(2)
+                                                                    .desired_width(f32::INFINITY)
+                                                                    .hint_text("Description")
+                                                            },
+                                                        );
+                                                        if edit.response.changed() {
                                                             let new_desc = desc_buf.clone();
                                                             let mut song_w = song.write();
                                                             if let Some(trk) =
@@ -2261,11 +2257,9 @@ fn draw_arrangement_track_headers(
                                                                 trk.description = new_desc;
                                                             }
                                                         }
-                                                        if resp.lost_focus() {
+                                                        if edit.ended {
                                                             view_state.editing_track_description =
                                                                 None;
-                                                        } else if !resp.has_focus() {
-                                                            resp.request_focus();
                                                         }
                                                     }
                                                 } else {

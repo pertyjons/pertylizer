@@ -345,6 +345,49 @@ pub fn clickable_label(ui: &mut Ui, text: impl Into<WidgetText>) -> Response {
     ui.add(egui::Label::new(text).sense(egui::Sense::click()))
 }
 
+/// Outcome of one frame of an [`inline_editable_text`] editor.
+pub struct InlineEdit {
+    /// The underlying widget response — read `.changed()` for live-commit
+    /// callers, or any other field you need.
+    pub response: Response,
+    /// The edit session ended this frame: focus was lost, which for a
+    /// singleline field also covers pressing Enter. Callers finalize the value
+    /// and clear their "currently editing this row" state when this is `true`.
+    pub ended: bool,
+}
+
+/// An auto-focused inline text editor. The field grabs keyboard focus on the
+/// frame it first appears (so the caret lands without a second click) and keeps
+/// it until focus is lost. This folds only the focus-grab + end-of-edit
+/// detection that was copy-pasted across the pattern/track name and description
+/// editors; the caller still owns the "am I editing this row?" state and the
+/// commit policy (commit-on-`ended` for names, commit-on-`response.changed()`
+/// for live-updating descriptions).
+///
+/// `multiline` picks singleline vs multiline; `configure` tweaks the builder
+/// (width, font, hint, rows) for the specific call site.
+pub fn inline_editable_text<'t>(
+    ui: &mut Ui,
+    buf: &'t mut String,
+    multiline: bool,
+    configure: impl FnOnce(egui::TextEdit<'t>) -> egui::TextEdit<'t>,
+) -> InlineEdit {
+    let base = if multiline {
+        egui::TextEdit::multiline(buf)
+    } else {
+        egui::TextEdit::singleline(buf)
+    };
+    let response = ui.add(configure(base));
+    let ended = response.lost_focus();
+    // Grab focus on the first frame (and any frame it isn't yet focused),
+    // except the frame the edit ends — mirroring the original `else if` so a
+    // lost-focus commit isn't cancelled by an immediate re-focus.
+    if !ended && !response.has_focus() {
+        response.request_focus();
+    }
+    InlineEdit { response, ended }
+}
+
 /// A horizontal `label + widget` form row: a plain label, then the caller's
 /// widget(s). Folds `ui.horizontal(|ui| { ui.label(label); … })` so label
 /// styling/column behaviour lives in one place. Returns the closure's
