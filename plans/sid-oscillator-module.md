@@ -1,14 +1,40 @@
 # SID Oscillator module (`sid`) — implementation instruction
 
-> **Status: proposed (2026-07-01).** A new voice-graph module that reproduces the
-> MOS 6581/8580 waveform generator (SID) — combinable waveforms, the noise LFSR,
-> ring/hard-sync, TEST, and the 6581/8580 DAC — instead of a general band-limited
-> musical oscillator. Motivation: the `sid-analyzer` project exports C64 SID tunes
-> to Pertylizer; the timbral core (combined waveforms, ring-mod, `$D418` digi)
-> cannot be reproduced by the general `osc` module. An AudioScript PoC vs a reSID
-> reference reached 47 dB → 16 dB log-spectral distance; a native chip-accurate
-> module is the path to reSID-level fidelity and collapses the export to a near-direct
-> register mapping. See `sid-analyzer/docs/pertylizer-sound-engine-plan.md`.
+> **Status: SHIPPED to `main` (squash `d0d872f3`, 2026-07-03) — one fidelity
+> follow-up (ring bus) + the A/B acceptance re-run still open.** The `sid`
+> voice-graph module reproduces the MOS 6581/8580 waveform generator — combinable
+> waveforms, the noise LFSR, ring/hard-sync, TEST, and the 6581/8580 DAC — instead
+> of a general band-limited oscillator. Built on `feat/sid-oscillator` (all three
+> phases), with the §11 fidelity pass on `feat/sid-fidelity`; both merged to `main`.
+> Motivation: the `sid-analyzer` project exports C64 SID tunes to Pertylizer; the
+> timbral core (combined waveforms, ring-mod, `$D418` digi) cannot be reproduced by
+> the general `osc` module. An AudioScript PoC vs a reSID reference reached
+> 47 dB → 16 dB log-spectral distance; this native module is the reSID-fidelity
+> path and collapses the export to a near-direct register mapping. See
+> `sid-analyzer/docs/pertylizer-sound-engine-plan.md`.
+>
+> **On `main` now:** the module itself + the §11 fidelity work — option-C combine
+> pulldown (0x31/0x61), ring-mod slew + one-sided PolyBLEP fold-flip (replaced the
+> linear crossfade), the `DcBlock` param, `SeqLoop` waveform-sequence mode, and
+> automatable `freq_reg`/`pw_reg` (Integer stepped lanes). The `compare_spectra`
+> floor-guard that §11 leaned on also shipped (its own plan retired).
+>
+> **STILL OPEN (§11):**
+> 1. **Ring-mod broadband residual (~16.9 dB).** The PolyBLEP fold-flip landed, but
+>    the dominant error is now pinned to **host-rate ring-edge jitter (~22.7 µs)**:
+>    the neighbour's `msb` is read once per host sample, outside the oversample
+>    loop, so the fold flip lands on a host-quantised edge, not the true 1 MHz one.
+>    Closing it needs an **oversampled ring/sync bus** — the source `sid` must
+>    expose its MSB at the 4× rate (or the sub-sample crossing fraction) — a
+>    cross-module `msb`-port contract change, out of scope for a local
+>    `sid_oscillator.rs` edit. Secondary (+6 dB @160 Hz difference-freq leakage,
+>    2801 Hz spike): re-check once that bus exists.
+> 2. **Golden A/B acceptance re-run.** Re-run the reSID matrix (§11) as the gate for
+>    the shipped option-C / ring / `DcBlock` changes — the STATUS lines below call
+>    for it and it is the real acceptance signal.
+>
+> Everything below is the original implementation spec plus the two expert reviews,
+> kept as reference for the open ring-bus work.
 >
 > **Expert-reviewed twice 2026-07-02.** Review 1 (DSP / 6581-8580): clock-domain jitter
 > handling (§2), combined-waveform physics + parametric-model option C (§2/§7), TEST →
