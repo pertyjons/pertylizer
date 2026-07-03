@@ -227,7 +227,12 @@ pub fn setup_custom_style(ctx: &egui::Context) {
     // holding a *different*, still-correct id — a false positive. The ids are
     // genuinely stable per instrument; this only silences the misfiring dev
     // overlay (no effect in release, where the check is compiled out).
-    style.debug.warn_if_rect_changes_id = false;
+    // `Style::debug` is itself `#[cfg(debug_assertions)]` in egui, so the field
+    // does not exist in release builds — gate the assignment to match.
+    #[cfg(debug_assertions)]
+    {
+        style.debug.warn_if_rect_changes_id = false;
+    }
 
     ctx.set_global_style(style);
 }
