@@ -12,7 +12,7 @@ use synth_core::ModuleCategory;
 use synth_engine::ModuleId;
 
 use crate::gui::theme::theme;
-use crate::gui::widgets::{ICON_BUTTON_SIZE, icon_button};
+use crate::gui::widgets::{ICON_BUTTON_SIZE, bypass_toggle, icon_button};
 
 use super::{
     DescriptionEditorState, EFFECT_CHAIN_AMBER, ModuleConnectivity, ModuleHeaderCtx, PatchAnalysis,
@@ -236,17 +236,7 @@ impl PatchEditor {
         }
 
         // Power/bypass button (leftmost).
-        let (power_icon, power_color) = if is_bypassed {
-            (ri::VOLUME_MUTE_FILL, t.colors.text_dim)
-        } else {
-            (ri::VOLUME_UP_FILL, t.colors.accent_green)
-        };
-        let power_tooltip = if is_bypassed {
-            "Bypassed\nModule output is muted.\nClick to activate."
-        } else {
-            "Active\nModule is processing audio.\nClick to bypass."
-        };
-        if icon_button(ui, power_icon, power_color, power_tooltip).clicked() {
+        if bypass_toggle(ui, is_bypassed).clicked() {
             let new_bypass_state = !is_bypassed;
             self.bypassed.insert(module_id, new_bypass_state);
             result.bypass_toggles.push((module_id, new_bypass_state));

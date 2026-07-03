@@ -12,6 +12,8 @@ use eframe::egui::{
     WidgetText,
 };
 
+use egui_remixicon::icons as ri;
+
 use super::ModMarkers;
 use crate::gui::theme::theme;
 
@@ -89,6 +91,78 @@ pub fn icon_button(ui: &mut Ui, icon: &str, color: Color32, tooltip: &str) -> Re
     )
     .on_hover_text(tooltip)
     .on_hover_cursor(egui::CursorIcon::Default)
+}
+
+// --- Audible on/off toggles -------------------------------------------------
+//
+// One canonical look per concept, reused everywhere an audible source is
+// silenced, isolated, or bypassed. Each is a frameless [`icon_button`], so the
+// hit target (18×20), glyph size, and cursor match across the mixer, the
+// arrangement, the piano roll, and the patch/effect module headers. Filled glyph
+// + accent color = the "engaged" state; line glyph + `text_secondary` = the
+// neutral resting state. Keeping icon, color, and tooltip here means a mute looks
+// identical wherever it appears, and mute / solo / bypass stay visually distinct.
+
+/// Mute toggle — red `volume-mute` when silenced, neutral `volume-up` when
+/// audible. Returns the [`Response`]; read `.clicked()` to flip the state.
+pub fn mute_toggle(ui: &mut Ui, muted: bool) -> Response {
+    let t = theme();
+    let (icon, color, tip) = if muted {
+        (
+            ri::VOLUME_MUTE_FILL,
+            t.colors.accent_red,
+            "Muted\nOutput is silenced.\nClick to unmute.",
+        )
+    } else {
+        (
+            ri::VOLUME_UP_FILL,
+            t.colors.text_secondary,
+            "Audible\nOutput is playing.\nClick to mute.",
+        )
+    };
+    icon_button(ui, icon, color, tip)
+}
+
+/// Solo toggle — yellow filled headphone when isolating, neutral outline
+/// headphone otherwise. The DAW convention for solo. Returns the [`Response`].
+pub fn solo_toggle(ui: &mut Ui, soloed: bool) -> Response {
+    let t = theme();
+    let (icon, color, tip) = if soloed {
+        (
+            ri::HEADPHONE_FILL,
+            t.colors.accent_yellow,
+            "Soloed\nOnly soloed sources are heard.\nClick to unsolo.",
+        )
+    } else {
+        (
+            ri::HEADPHONE_LINE,
+            t.colors.text_secondary,
+            "Solo\nIsolate this source.\nClick to solo.",
+        )
+    };
+    icon_button(ui, icon, color, tip)
+}
+
+/// Bypass/power toggle for an effect or module — a power glyph that glows green
+/// (`shut-down` filled) while processing and dims to a neutral outline when
+/// bypassed. A distinct glyph from [`mute_toggle`] so "effect off" never reads as
+/// "channel muted". Returns the [`Response`].
+pub fn bypass_toggle(ui: &mut Ui, bypassed: bool) -> Response {
+    let t = theme();
+    let (icon, color, tip) = if bypassed {
+        (
+            ri::SHUT_DOWN_LINE,
+            t.colors.text_secondary,
+            "Bypassed\nSignal passes through unprocessed.\nClick to activate.",
+        )
+    } else {
+        (
+            ri::SHUT_DOWN_FILL,
+            t.colors.accent_green,
+            "Active\nProcessing audio.\nClick to bypass.",
+        )
+    };
+    icon_button(ui, icon, color, tip)
 }
 
 /// A section heading: a strong, accent-colored label at the theme heading size,

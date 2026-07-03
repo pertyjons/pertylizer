@@ -34,7 +34,8 @@ use crate::gui::theme::theme;
 #[cfg(test)]
 const CLIP_WARN_ORANGE: Color32 = Color32::from_rgb(200, 120, 40);
 use crate::gui::widgets::{
-    CaptionTone, ModuleFrame, caption, draw_module_header, icon_button, level_color, strong_label,
+    CaptionTone, ModuleFrame, bypass_toggle, caption, draw_module_header, icon_button, level_color,
+    mute_toggle, solo_toggle, strong_label,
 };
 
 /// Width of a single channel strip, in points. Uses the `ModuleWidth::Small`
@@ -459,49 +460,6 @@ fn vertical_fader(ui: &mut egui::Ui, value: &mut f32) -> egui::Response {
     resp
 }
 
-/// Mute toggle for a strip header — frameless icon button styled like the
-/// patch module's "Active" toggle, but with a red cue when muted. Returns true
-/// if clicked.
-fn header_mute_button(ui: &mut egui::Ui, muted: bool) -> bool {
-    use egui_remixicon::icons as ri;
-    let t = theme();
-    let (icon, color, tip) = if muted {
-        (
-            ri::VOLUME_MUTE_FILL,
-            t.colors.accent_red,
-            "Muted\nChannel output is silenced.\nClick to unmute.",
-        )
-    } else {
-        (
-            ri::VOLUME_UP_FILL,
-            t.colors.text_secondary,
-            "Audible\nChannel is playing.\nClick to mute.",
-        )
-    };
-    icon_button(ui, icon, color, tip).clicked()
-}
-
-/// Solo toggle for a strip header — frameless headphone icon, the DAW
-/// convention for solo. Returns true if clicked.
-fn header_solo_button(ui: &mut egui::Ui, soloed: bool) -> bool {
-    use egui_remixicon::icons as ri;
-    let t = theme();
-    let (icon, color, tip) = if soloed {
-        (
-            ri::HEADPHONE_FILL,
-            t.colors.accent_yellow,
-            "Soloed\nOnly soloed channels are heard.\nClick to unsolo.",
-        )
-    } else {
-        (
-            ri::HEADPHONE_LINE,
-            t.colors.text_secondary,
-            "Solo\nIsolate this channel.\nClick to solo.",
-        )
-    };
-    icon_button(ui, icon, color, tip).clicked()
-}
-
 /// The styled frame shared by every strip — the same rounded, accent-tinted
 /// module look as the patch editor (via [`ModuleFrame`]). `accent` drives the
 /// tint and stroke; `base_fill` is the strip's background tier (track / return
@@ -586,12 +544,12 @@ fn draw_channel_strip(
                     {
                         edit_fx = true;
                     }
-                    if header_solo_button(ui, ch.solo)
+                    if solo_toggle(ui, ch.solo).clicked()
                         && let Some(tr) = song.write().track_mut(ch.id)
                     {
                         tr.toggle_solo();
                     }
-                    if header_mute_button(ui, ch.mute)
+                    if mute_toggle(ui, ch.mute).clicked()
                         && let Some(tr) = song.write().track_mut(ch.id)
                     {
                         tr.toggle_mute();
@@ -937,12 +895,12 @@ fn draw_return_strip(
                                     {
                                         delete = true;
                                     }
-                                    if header_solo_button(ui, rb.solo)
+                                    if solo_toggle(ui, rb.solo).clicked()
                                         && let Some(bus) = song.write().return_bus_mut(rb.id)
                                     {
                                         bus.set_solo(!bus.solo);
                                     }
-                                    if header_mute_button(ui, rb.mute)
+                                    if mute_toggle(ui, rb.mute).clicked()
                                         && let Some(bus) = song.write().return_bus_mut(rb.id)
                                     {
                                         bus.set_mute(!bus.mute);
@@ -1059,20 +1017,7 @@ fn draw_effect_module(
                     {
                         handle.send(target.remove(fx.module_id));
                     }
-                    let (power_icon, power_color, power_tip) = if fx.bypassed {
-                        (
-                            ri::VOLUME_MUTE_FILL,
-                            t.colors.text_dim,
-                            "Bypassed\nEffect output is muted.\nClick to activate.",
-                        )
-                    } else {
-                        (
-                            ri::VOLUME_UP_FILL,
-                            t.colors.accent_green,
-                            "Active\nEffect is processing audio.\nClick to bypass.",
-                        )
-                    };
-                    if icon_button(ui, power_icon, power_color, power_tip).clicked() {
+                    if bypass_toggle(ui, fx.bypassed).clicked() {
                         // Toggle: the new enabled state is the opposite of the
                         // current (active) one, i.e. the current bypassed flag.
                         handle.send(target.set_enabled(fx.module_id, fx.bypassed));

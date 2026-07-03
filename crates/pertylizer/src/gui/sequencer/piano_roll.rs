@@ -6,6 +6,7 @@
 //! (`snap_to_step`, `quantize_tick`) live in the parent module.
 
 use super::*;
+use crate::gui::widgets::{icon_button, solo_toggle};
 
 /// Collect piano roll data from song (short read-lock, then release).
 pub(crate) fn collect_piano_roll_data(
@@ -1100,24 +1101,9 @@ pub(super) fn draw_pattern_instrument_transport(
 
         // Pattern solo toggle — when ON (default), pattern playback
         // isolates the open pattern. When OFF, other tracks/patterns
-        // overlapping the pattern's time range also play.
-        let solo_icon = if view_state.pattern_solo {
-            RichText::new(ri::VOLUME_MUTE_FILL)
-                .size(12.0)
-                .color(t.colors.accent_yellow)
-        } else {
-            RichText::new(ri::VOLUME_UP_LINE)
-                .size(12.0)
-                .color(t.colors.text_dim)
-        };
-        let solo_resp = ui
-            .button(solo_icon)
-            .on_hover_text(if view_state.pattern_solo {
-                "Solo: only this pattern plays — click to also hear other tracks"
-            } else {
-                "Other tracks audible — click to isolate this pattern"
-            });
-        if solo_resp.clicked() {
+        // overlapping the pattern's time range also play. Shared solo
+        // helper (headphone/yellow) so it matches the mixer + arrangement.
+        if solo_toggle(ui, view_state.pattern_solo).clicked() {
             view_state.pattern_solo = !view_state.pattern_solo;
             if is_playing {
                 let solo_target = if view_state.pattern_solo {
@@ -2558,20 +2544,19 @@ fn draw_piano_roll_toolbar(
                     }
                 }
             } else {
-                let desc_text = if data.pattern_description.is_empty() {
-                    RichText::new("+ description")
-                        .size(12.0)
-                        .italics()
-                        .color(t.colors.text_dim)
+                // Collapsed to an info icon so the description doesn't crowd the
+                // toolbar: the text shows in the hover tooltip. Same glyph +
+                // accent as the patch module header's info button. Double-click
+                // still opens the inline editor.
+                use egui_remixicon::icons as ri;
+                let tooltip = if data.pattern_description.is_empty() {
+                    "Double-click to add a pattern description".to_owned()
                 } else {
-                    RichText::new(&data.pattern_description)
-                        .size(12.0)
-                        .color(t.colors.text_secondary)
+                    format!("{}\n\nDouble-click to edit", data.pattern_description)
                 };
-                let desc_resp = ui
-                    .add(egui::Label::new(desc_text).sense(Sense::click()))
-                    .on_hover_text("Double-click to edit pattern description");
-                if desc_resp.double_clicked() {
+                if icon_button(ui, ri::INFORMATION_LINE, t.colors.accent_primary, &tooltip)
+                    .double_clicked()
+                {
                     view_state.editing_pattern_description =
                         Some((data.pattern_id, data.pattern_description.clone()));
                 }

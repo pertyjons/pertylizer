@@ -5,6 +5,7 @@
 //! both this view and `draw_sequencer_view` can read them.
 
 use super::*;
+use crate::gui::widgets::{mute_toggle, solo_toggle};
 
 /// Collect arrangement data from song (short read-lock, then release).
 pub(super) fn collect_arrangement_data(song: &Arc<RwLock<Song>>) -> Option<ArrangementData> {
@@ -2082,35 +2083,18 @@ fn draw_arrangement_track_headers(
                                         }
                                     });
 
-                                    // Mute / Solo row
+                                    // Mute / Solo row — shared icon toggles, so
+                                    // these match the mixer strip's mute/solo.
                                     ui.horizontal(|ui| {
                                         ui.spacing_mut().item_spacing.x = 2.0;
-                                        // Mute button
-                                        let m_color = if track.mute {
-                                            t.colors.accent_red
-                                        } else {
-                                            t.colors.text_dim
-                                        };
-                                        if ui
-                                            .button(RichText::new("M").size(10.0).color(m_color))
-                                            .on_hover_text("Mute")
-                                            .clicked()
+                                        if mute_toggle(ui, track.mute).clicked()
                                             && let mut song_w = song.write()
                                             && let Some(trk) = song_w.track_mut(track.id)
                                         {
                                             trk.toggle_mute();
                                         }
 
-                                        // Solo button
-                                        let s_color = if track.solo {
-                                            t.colors.accent_yellow
-                                        } else {
-                                            t.colors.text_dim
-                                        };
-                                        if ui
-                                            .button(RichText::new("S").size(10.0).color(s_color))
-                                            .on_hover_text("Solo")
-                                            .clicked()
+                                        if solo_toggle(ui, track.solo).clicked()
                                             && let mut song_w = song.write()
                                             && let Some(trk) = song_w.track_mut(track.id)
                                         {
