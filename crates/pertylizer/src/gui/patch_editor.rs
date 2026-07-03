@@ -28,7 +28,7 @@ use super::module_panel::{ModulePanelState, PortPosition, category_color};
 use super::theme::theme;
 use super::widgets::{
     CaptionTone, ModMarkers, ModuleFrame, WidgetPortDirection, WidgetPortType, cable_color,
-    caption, draw_cable_dragging, draw_module_footer, draw_module_header,
+    caption, draw_cable_dragging, draw_module_footer, draw_module_header, tree_picker_button,
 };
 
 mod canvas;
@@ -844,30 +844,6 @@ fn sync_slot_addr(slot_addrs: &mut HashMap<String, String>, name: &str, addr: Op
     }
 }
 
-/// A fixed-width `menu_button` shell for the Mod Matrix source/destination tree
-/// pickers, styled like the Script ƒx "Select input" picker (a plain button that
-/// opens a nested menu) rather than a ComboBox. `label` is the current selection
-/// shown on the button; the justified layout stretches it to `width` so the slot
-/// grid stays aligned; `id_salt` keeps slots with identical labels from colliding.
-/// `contents` builds the dropdown tree (mutating its own captured result).
-fn tree_picker_menu(
-    ui: &mut Ui,
-    id_salt: &str,
-    width: f32,
-    label: String,
-    contents: impl FnOnce(&mut Ui),
-) {
-    ui.push_id(id_salt, |ui| {
-        ui.allocate_ui_with_layout(
-            egui::vec2(width, ui.spacing().interact_size.y),
-            egui::Layout::top_down_justified(egui::Align::Min),
-            |ui| {
-                ui.menu_button(label, contents);
-            },
-        );
-    });
-}
-
 /// Render a Mod Matrix **source** picker. Returns `Some(selection)` only when the
 /// user changed it (`None` inner value = cleared to no source).
 fn mod_source_picker(
@@ -882,7 +858,7 @@ fn mod_source_picker(
     // Parse `current` once and compare structurally, instead of formatting every
     // candidate's address string per item per frame.
     let current_addr = current.and_then(SrcAddr::parse);
-    tree_picker_menu(ui, &id_salt, width, text, |ui| {
+    tree_picker_button(ui, id_salt.as_str(), width, text, |ui| {
         if ui.selectable_label(current.is_none(), "(none)").clicked() {
             result = Some(None);
             ui.close();
@@ -957,7 +933,7 @@ fn mod_dest_picker(
     let text = current.map_or_else(|| "(none)".to_string(), |s| catalog.dest_label(s));
     // Parse `current` once and compare structurally (see `mod_source_picker`).
     let current_addr = current.and_then(DestAddr::parse);
-    tree_picker_menu(ui, &id_salt, width, text, |ui| {
+    tree_picker_button(ui, id_salt.as_str(), width, text, |ui| {
         if ui.selectable_label(current.is_none(), "(none)").clicked() {
             result = Some(None);
             ui.close();

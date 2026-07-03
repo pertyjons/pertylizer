@@ -769,116 +769,81 @@ pub(crate) fn draw_automation_target_selector(
     instruments: &[crate::gui::instrument_rack::InstrumentUiState],
 ) {
     dim_label(ui, "Auto:");
-    // Build label for ComboBox
+    // Button label = current selection (mirrors what a ComboBox's selected_text
+    // would show). The dropdown itself is a nested `menu_button` tree so params
+    // group under their module, like the Script ƒx "Select input" picker.
     let auto_label = view_state
         .selected_automation
         .as_ref()
         .map_or_else(|| "None".to_owned(), AutomationTarget::display_name);
 
-    egui::ComboBox::from_id_salt("auto_lane_select")
-        .selected_text(&auto_label)
-        .width(160.0)
-        .show_ui(ui, |ui| {
-            // "None" option to hide automation zone
-            if ui
-                .selectable_label(view_state.selected_automation.is_none(), "None")
-                .clicked()
-            {
-                view_state.selected_automation = None;
-            }
+    tree_picker_button(ui, "auto_lane_select", 160.0, auto_label, |ui| {
+        egui::ScrollArea::vertical()
+            .max_height(360.0)
+            .show(ui, |ui| {
+                // "None" clears the selection (hides the automation zone).
+                if ui
+                    .selectable_label(view_state.selected_automation.is_none(), "None")
+                    .clicked()
+                {
+                    view_state.selected_automation = None;
+                    ui.close();
+                }
 
-            // 1. Existing lanes with points (any instrument), with a
-            //    badge when they belong to a different instrument.
-            let mut shown_any_existing = false;
-            for lane in &data.automation_lanes {
-                if lane.points.is_empty() {
-                    continue;
-                }
-                let target = &lane.target;
-                let is_foreign = match target {
-                    AutomationTarget::Instrument { instrument, .. }
-                    | AutomationTarget::Module { instrument, .. } => {
-                        *instrument != view_state.selected_instrument
-                    }
-                    _ => false,
-                };
-                let inst_name = match target {
-                    AutomationTarget::Instrument { instrument, .. }
-                    | AutomationTarget::Module { instrument, .. } => instruments
-                        .iter()
-                        .find(|inst| inst.id == (*instrument).into())
-                        .map(|inst| inst.name.clone()),
-                    _ => None,
-                };
-                let base = target.display_name();
-                let arrow = egui_remixicon::icons::ARROW_RIGHT_S_LINE;
-                let label = if is_foreign {
-                    match inst_name {
-                        Some(name) => format!("* {base}  {arrow} {name}"),
-                        None => format!("* {base}"),
-                    }
-                } else {
-                    format!("* {base}")
-                };
-                let is_selected = view_state.selected_automation.as_ref() == Some(target);
-                if ui.selectable_label(is_selected, &label).clicked() {
-                    view_state.selected_automation = Some(target.clone());
-                }
-                shown_any_existing = true;
-            }
-            if shown_any_existing {
-                ui.separator();
-            }
-
-            // 2. All instrument params for the currently selected
-            //    instrument (empty + with-points alike), so the user
-            //    can create new lanes.
-            for param in AutoInstrumentParam::ALL {
-                let target = AutomationTarget::Instrument {
-                    instrument: view_state.selected_instrument,
-                    param: *param,
-                };
-                let already_shown = data
-                    .automation_lanes
-                    .iter()
-                    .any(|l| l.target == target && !l.points.is_empty());
-                if already_shown {
-                    continue;
-                }
-                let label = param.display_name().to_owned();
-                let is_selected = view_state.selected_automation.as_ref() == Some(&target);
-                if ui.selectable_label(is_selected, &label).clicked() {
-                    view_state.selected_automation = Some(target);
-                }
-            }
-
-            // 3. Per-module parameters of the selected instrument
-            //    (generic A2 targets), filtered to the automatable
-            //    allowlist. Lets the user automate any continuous,
-            //    RT-safe module parameter, not just the fixed
-            //    instrument-level set above.
-            if let Some(inst) = instruments
-                .iter()
-                .find(|i| i.id == view_state.selected_instrument.into())
-            {
-                let mut module_ids = inst.patch_editor.module_ids();
-                module_ids.sort_unstable(); // deterministic (type, instance) order
-                let mut shown_module_header = false;
-                for module_id in module_ids {
-                    let Some(desc) = inst.patch_editor.module_descriptor(module_id) else {
+                // 1. Existing lanes with points (any instrument), flat at the top
+                //    so the user can hop between active automations quickly. A
+                //    badge marks lanes that belong to a different instrument.
+                let mut shown_any_existing = false;
+                for lane in &data.automation_lanes {
+                    if lane.points.is_empty() {
                         continue;
-                    };
-                    for param in &desc.parameters {
-                        if !param.is_automatable() {
-                            continue;
+                    }
+                    let target = &lane.target;
+                    let is_foreign = match target {
+                        AutomationTarget::Instrument { instrument, .. }
+                        | AutomationTarget::Module { instrument, .. } => {
+                            *instrument != view_state.selected_instrument
                         }
-                        let target = AutomationTarget::Module {
+                        _ => false,
+                    };
+                    let inst_name = match target {
+                        AutomationTarget::Instrument { instrument, .. }
+                        | AutomationTarget::Module { instrument, .. } => instruments
+                            .iter()
+                            .find(|inst| inst.id == (*instrument).into())
+                            .map(|inst| inst.name.clone()),
+                        _ => None,
+                    };
+                    let base = target.display_name();
+                    let arrow = egui_remixicon::icons::ARROW_RIGHT_S_LINE;
+                    let label = if is_foreign {
+                        match inst_name {
+                            Some(name) => format!("* {base}  {arrow} {name}"),
+                            None => format!("* {base}"),
+                        }
+                    } else {
+                        format!("* {base}")
+                    };
+                    let is_selected = view_state.selected_automation.as_ref() == Some(target);
+                    if ui.selectable_label(is_selected, &label).clicked() {
+                        view_state.selected_automation = Some(target.clone());
+                        ui.close();
+                    }
+                    shown_any_existing = true;
+                }
+                if shown_any_existing {
+                    ui.separator();
+                }
+
+                // 2. All instrument-level params for the selected instrument,
+                //    grouped under an "Instrument" submenu (empty + with-points
+                //    alike), so the user can create new lanes.
+                ui.menu_button("Instrument", |ui| {
+                    for param in AutoInstrumentParam::ALL {
+                        let target = AutomationTarget::Instrument {
                             instrument: view_state.selected_instrument,
-                            module_type: module_id.module_type,
-                            instance: module_id.instance,
-                            param_id: param.type_id.as_str().into(),
+                            param: *param,
                         };
-                        // Skip params already shown as an existing lane above.
                         let already_shown = data
                             .automation_lanes
                             .iter()
@@ -886,20 +851,58 @@ pub(crate) fn draw_automation_target_selector(
                         if already_shown {
                             continue;
                         }
-                        if !shown_module_header {
-                            ui.separator();
-                            shown_module_header = true;
-                        }
-                        let label =
-                            format!("{} {} · {}", desc.name, module_id.instance, param.name);
+                        let label = param.display_name().to_owned();
                         let is_selected = view_state.selected_automation.as_ref() == Some(&target);
                         if ui.selectable_label(is_selected, &label).clicked() {
                             view_state.selected_automation = Some(target);
+                            ui.close();
                         }
                     }
+                });
+
+                // 3. Per-module parameters of the selected instrument (generic A2
+                //    targets), filtered to the automatable allowlist and grouped
+                //    into one submenu per module. Lets the user automate any
+                //    continuous, RT-safe module parameter.
+                if let Some(inst) = instruments
+                    .iter()
+                    .find(|i| i.id == view_state.selected_instrument.into())
+                {
+                    let mut module_ids = inst.patch_editor.module_ids();
+                    module_ids.sort_unstable(); // deterministic (type, instance) order
+                    for module_id in module_ids {
+                        let Some(desc) = inst.patch_editor.module_descriptor(module_id) else {
+                            continue;
+                        };
+                        // Skip a module with no automatable params so it doesn't
+                        // show an empty submenu.
+                        if !desc.parameters.iter().any(|p| p.is_automatable()) {
+                            continue;
+                        }
+                        let module_label = format!("{} {}", desc.name, module_id.instance);
+                        ui.menu_button(module_label, |ui| {
+                            for param in &desc.parameters {
+                                if !param.is_automatable() {
+                                    continue;
+                                }
+                                let target = AutomationTarget::Module {
+                                    instrument: view_state.selected_instrument,
+                                    module_type: module_id.module_type,
+                                    instance: module_id.instance,
+                                    param_id: param.type_id.as_str().into(),
+                                };
+                                let is_selected =
+                                    view_state.selected_automation.as_ref() == Some(&target);
+                                if ui.selectable_label(is_selected, &param.name).clicked() {
+                                    view_state.selected_automation = Some(target);
+                                    ui.close();
+                                }
+                            }
+                        });
+                    }
                 }
-            }
-        });
+            });
+    });
 }
 
 /// Shared pattern-editor controls rendered inline into the caller's toolbar row:

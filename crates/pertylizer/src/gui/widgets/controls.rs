@@ -282,6 +282,32 @@ pub fn enum_combo<T: PartialEq + Copy>(
         .response
 }
 
+/// A `menu_button` styled as a fixed-width dropdown, for **hierarchical** (tree)
+/// pickers built from nested `menu_button`s — the shape used by the Script ƒx
+/// "Select input" picker, the Mod Matrix source/destination pickers, and the
+/// piano-roll "Auto:" selector. Unlike a [`ComboBox`](egui::ComboBox) this lets
+/// the dropdown contents nest submenus. `label` is the current selection shown on
+/// the button; the justified layout stretches it to `width` so adjacent pickers
+/// stay aligned; `id_salt` keeps buttons with identical labels from colliding.
+/// `contents` builds the dropdown tree (typically mutating a captured result).
+pub fn tree_picker_button(
+    ui: &mut Ui,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    width: f32,
+    label: impl Into<WidgetText>,
+    contents: impl FnOnce(&mut Ui),
+) {
+    ui.push_id(id_salt, |ui| {
+        ui.allocate_ui_with_layout(
+            Vec2::new(width, ui.spacing().interact_size.y),
+            egui::Layout::top_down_justified(egui::Align::Min),
+            |ui| {
+                ui.menu_button(label, contents);
+            },
+        );
+    });
+}
+
 /// A destructive text button tinted with the theme's `accent_red` (Delete, Clear,
 /// Remove …). Folds the repeated `ui.button(RichText::new(x).color(accent_red))`
 /// idiom so the destructive colour lives in one place.
