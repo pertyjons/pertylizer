@@ -343,25 +343,30 @@ debuggable at low cost.
 
 #### A1. Thread diagnostics: named background threads
 
-- [ ] **Use named threads via `std::thread::Builder` for background tasks.**
-  Background threads spawned in `null_backend.rs`, `gui/analyze.rs`,
-  `synth_osc/src/lib.rs`, and `main.rs` are currently unnamed. Named threads make
-  debugging/profiling (`htop`, `perf`, `gdb`) much more readable. Trivial.
+- [x] **Use named threads via `std::thread::Builder` for background tasks.**
+  DONE (`b775d290`): named the four long-lived background threads — `mcp-server`
+  (main.rs), `osc-telemetry` (synth_osc), `null-audio` (null backend),
+  `analyze-render` (GUI note analysis). `Builder::spawn`'s `io::Result` is handled
+  without expect/unwrap (log-or-degrade / map to `StreamCreationFailed` / skip).
 
 #### A2. Code quality: standardise on to_radians / to_degrees
 
-- [ ] **Replace custom degree↔radian multipliers.** Conversions multiply by
-  `PI / 180.0` literals; standardise on `f32::to_radians` / `to_degrees` — cleaner
-  and uses the stdlib intrinsics. Pure readability cleanup. Trivial.
+- [x] **N/A — no such conversions exist.** Audited the whole workspace: there are
+  **zero** `PI / 180.0`-style degree↔radian multipliers (and no `to_radians` /
+  `to_degrees` calls). The M/S "rotation" maps a normalized value ×π (not
+  degrees×π/180), and AWE angle math uses `atan2`/geometry in radians directly.
+  Every remaining "degrees" hit is a comment, a graph in-degree, or a musical
+  scale-degree. Nothing to change.
 
 #### A3. Invariant checking: debug_assert in new_unchecked constructors
 
-- [ ] **Add `debug_assert!` inside `new_unchecked` newtype constructors.**
-  Constructors like `NormalizedValue::new_unchecked(value)` bypass bounds checks.
-  A `debug_assert!` on the invariant (e.g. `[0.0, 1.0]`) catches invalid states in
-  test/debug and compiles to a zero-cost no-op in release. This is the right tool
-  for the "unchecked" constructors — note we deliberately do **not** mark them
-  `unsafe` (that keyword is reserved for memory safety, not logical invariants).
+- [x] **Add `debug_assert!` inside `new_unchecked` newtype constructors.** DONE
+  (`6194ecf5`): asserts on the documented bound for `NormalizedValue` [0,1],
+  `BipolarValue` [-1,1], `Phase` [0,1), `VoiceCount` [1,128], `Velocity` [0,1]
+  (bare-condition + static-str so they stay const-fn-safe; not `unsafe`). Surfaced
+  and fixed a real invariant violation: `compare_spectra` stuffed signed
+  candidate−target deltas into `NormalizedValue` — retyped those `SpectrumDistance`
+  fields to `f32` (the MCP type was already `f32`).
 
 #### A4. DSP: prevent CPU denormal spikes via FTZ/DAZ
 
@@ -382,11 +387,14 @@ debuggable at low cost.
 
 #### A6. Compile-time safety: static assertions for lock-free structs
 
-- [ ] **Use `static_assertions` to verify layouts/bounds of thread-transferred
-  data.** Command, event, and telemetry structs sent over lock-free ring buffers
-  (`EngineCommand`, `EngineEvent`) should stay layout-stable, `Send`, and
-  lock-free. Compile-time static asserts (verifying `Send` bounds / struct sizes)
-  document and lock those invariants at zero runtime cost.
+- [x] **Use `static_assertions` to verify bounds of thread-transferred data.**
+  DONE (`91921dfa`): `assert_impl_all!(EngineCommand: Send)` /
+  `assert_impl_all!(EngineEvent: Send)` plus a const `'static` check, pinned at the
+  enum definitions in `commands.rs` (added the `static_assertions` workspace dep).
+  Ringbuf only checks `Send` deep in its generics, so this gives a clear failure
+  site if a variant ever captures a non-`Send`/borrowed payload. Struct-**size**
+  asserts were deliberately skipped — they churn on every field edit for no
+  invariant gain.
 
 #### A7. Real-time safety: automated allocation testing with assert-no-alloc
 
