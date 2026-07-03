@@ -47,15 +47,12 @@ can't be a per-block lane value; that dead code is not coming back.)
 
 ### 1.6 Persist the transport loop region across save/load
 
-- [ ] **`set_transport_loop` is not saved with the project.** The loop region (start/end/enabled) set via
-  the `set_transport_loop` MCP tool (and the arrangement-ruler loop) is live transport state that
-  `save_project` drops: a saved `.json` has no `transport_loop` under `song` or `global`, so on reload the
-  arrangement plays through once and stops, and the loop must be re-enabled by hand. Surfaced while building
-  the `YAMS Script Lab` example (the scr-1 "Rhythm Brain" demo relies on a loop to keep `playing` true).
-  Fix: serialize the loop region with the song (e.g. `Song.transport_loop: Option<LoopRegion { start, end,
-  enabled }>`) and restore it on load. Decide whether `enabled` persists or always loads disabled. If the
-  loop is *intentionally* ephemeral, document that in the `set_transport_loop` / `save_project` tool
-  descriptions instead, so it is not a silent surprise.
+- [x] **`set_transport_loop` is now saved with the project.** DONE (`aa02ea44`): `Song`
+  gained a serialized `transport_loop: Option<LoopRegion { start, end, enabled }>` carrier;
+  `build_project_from_engine` captures the engine loop off the `TransportState` mirror (RT-safe)
+  and `apply_project` restores it via a `SetLoop` command (clearing any stale loop when a loaded
+  project has none). Covers the GUI + MCP save/load paths; `enabled` persists as saved. Headless
+  round-trip tests added; `project.schema.json` regenerated.
 
 ---
 
@@ -271,12 +268,12 @@ Residual after the shared-widget-helpers work landed — these are the remaining
   `FileDialog` instance across all kinds (Open/Save Patch, templates, etc.) rather than rebuilding it when
   `file_dialog_kind` changes. Update its `config_mut().file_filters` dynamically on every open. This enables directory
   memory and highlighting (`retain_selected_entry`) to survive switching between Open and Save actions.
-- [ ] **Unify inline name/description editors.** Create a helper
-  `inline_editable_text(ui, &mut String, &mut bool, multiline)`
-  in [controls.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/widgets/controls.rs) to wrap the
-  focus-grabbing and lost-focus/Enter-key commit logic currently duplicated
-  in [piano_roll.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/sequencer/piano_roll.rs#L2510)
-  and [arrangement.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/sequencer/arrangement.rs#L1580).
+- [x] **Unify inline name/description editors.** DONE (`5b42949b`): added
+  `inline_editable_text` + `InlineEdit` in
+  [controls.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/widgets/controls.rs)
+  (folds the focus-grab + lost-focus/Enter end-of-edit detection); the four inline
+  pattern/track name and description editors in `piano_roll.rs` and `arrangement.rs`
+  now call it, each keeping its own editing-state + commit policy.
 - [ ] **Address inline toggle button variations.** Several inline toggle styles (e.g. M/S muting/soloing badges,
   custom-colored selections) still bypass `toggle_button_colored`. Create a flexible `toggle_badge` or
   `selectable_toggle` helper to cover these and keep sizes consistent (preventing drift).
@@ -368,12 +365,13 @@ debuggable at low cost.
 
 #### A4. DSP: prevent CPU denormal spikes via FTZ/DAZ
 
-- [ ] **Prevent CPU denormal exceptions in DSP filters.** Decaying signals in
-  recursive filters (biquads, comb filters) reach subnormal ranges, triggering CPU
-  microcode exceptions that spike load when instruments fade to silence. This is a
-  **known, real** audio-engine bug, not speculation. Set Flush-to-Zero (FTZ) and
-  Denormals-Are-Zero (DAZ) flags once on the audio thread (or add anti-denormal
-  bias e.g. `1e-24` to feedback states). Cheap, high impact.
+- [x] **Prevent CPU denormal exceptions in DSP filters.** DONE. The real-time
+  path was already covered by `DenormalGuard` (FTZ+DAZ via MXCSR on x86_64, FZ via
+  FPCR on aarch64, RAII restore) installed at the top of the cpal output callback.
+  Extended (`5b02e7f8`) to the offline `engine.process` loops —
+  `arrangement_render::render_range`, `export::render_to_wav`, and the shared
+  `OfflineNoteSession::render` (covers `preview_note`) — so offline renders match
+  live playback at the denormal level and avoid the same slowdown.
 
 #### A5. UX: custom panic hook for desktop crash diagnostics
 
