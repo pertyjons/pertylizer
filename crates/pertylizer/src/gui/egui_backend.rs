@@ -480,6 +480,8 @@ impl SynthApp {
         match action {
             WelcomeAction::NewInstrument => {
                 self.add_new_instrument();
+                // Reveal the freshly created instrument in the rack.
+                self.active_view = AppView::Rack;
             }
             WelcomeAction::OpenProject => {
                 if self.dirty {
@@ -501,6 +503,7 @@ impl SynthApp {
             }
             WelcomeAction::ImportSample => {
                 self.dialog_state.open_import_sample_dialog(None);
+                self.active_view = AppView::Sample;
             }
             WelcomeAction::OpenRecent(path) => {
                 if self.dirty {
@@ -785,35 +788,50 @@ impl eframe::App for SynthApp {
 
         // Main content - CentralPanel rendered LAST (normal egui order)
         // Module Areas are clipped to visible_rect in patch_editor.rs
-        // Wrap in a labeled block so the welcome path can skip the rest of
-        // the Rack arm without `return;` — that would also skip show_dialogs
-        // below and prevent welcome-screen file dialogs from ever appearing.
-        'view: {
+        {
             match self.active_view {
+                AppView::Home => {
+                    // Welcome / landing view — always available regardless of
+                    // whether an instrument exists. Lets the user create an
+                    // instrument or open a project/patch without hunting for
+                    // the "+ New Instrument" button.
+                    let recent = self.settings.recent_projects.clone();
+                    let mut welcome_action = None;
+                    egui::CentralPanel::default().show(ui, |ui| {
+                        let t = theme();
+                        welcome_action = crate::gui::welcome_view::show(ui, &t, &recent);
+                    });
+                    if let Some(action) = welcome_action {
+                        self.handle_welcome_action(action);
+                    }
+                }
                 AppView::Rack => {
-                    // Rack view: show the active instrument's patch editor.
-                    // When no instrument exists yet, render the welcome landing
-                    // screen so the user can create one or open a project/patch
-                    // without first hunting for the "+ New Instrument" button.
-                    let Some(active_id) = self.active_instrument_id else {
-                        let recent = self.settings.recent_projects.clone();
-                        let mut welcome_action = None;
-                        egui::CentralPanel::default().show(ui, |ui| {
-                            let t = theme();
-                            welcome_action = crate::gui::welcome_view::show(ui, &t, &recent);
-                        });
-                        if let Some(action) = welcome_action {
-                            self.handle_welcome_action(action);
-                        }
-                        break 'view;
-                    };
-
+                    // Rack view: always shows the rack. The instrument list panel
+                    // is always present so the user can create/pick an instrument;
+                    // the central area shows the active patch editor, or a hint
+                    // when no instrument exists yet.
                     // Left side panel: instrument list (mirrors sample_view layout).
                     // Acts as a primary picker; the dropdown above the keyboard
                     // stays as a backup.
-                    self.render_instruments_panel(ui, active_id);
+                    self.render_instruments_panel(ui, self.active_instrument_id);
 
-                    self.render_rack_central(ui, active_id, mcp_auto_layout);
+                    if let Some(active_id) = self.active_instrument_id {
+                        self.render_rack_central(ui, active_id, mcp_auto_layout);
+                    } else {
+                        egui::CentralPanel::default().show(ui, |ui| {
+                            let t = theme();
+                            ui.vertical_centered(|ui| {
+                                ui.add_space(48.0);
+                                ui.label(
+                                    egui::RichText::new(
+                                        "No instrument yet — create one to start patching.",
+                                    )
+                                    .size(t.fonts.size_normal)
+                                    .color(t.colors.text_secondary),
+                                );
+                            });
+                        });
+                    }
                 }
                 AppView::AcousticWorld => {
                     // Scan user presets on first view
@@ -998,7 +1016,7 @@ impl eframe::App for SynthApp {
                     }
                 }
             }
-        } // end 'view block
+        } // end view block
 
         // Dialogs
         self.show_dialogs(ctx);
@@ -3079,7 +3097,7 @@ impl SynthApp {
     /// Rack-view left panel: the instrument list (click to activate, double-click
     /// or the kebab menu to edit/delete, `+` in the header to add one). Unused
     /// instruments — those no track plays — render dimmed.
-    fn render_instruments_panel(&mut self, ui: &mut egui::Ui, active_id: InstrumentId) {
+    fn render_instruments_panel(&mut self, ui: &mut egui::Ui, active_id: Option<InstrumentId>) {
         use crate::gui::list_panel;
         use egui_remixicon::icons as ri;
 
@@ -3132,7 +3150,7 @@ impl SynthApp {
                             if !needle.is_empty() && !inst.name.to_lowercase().contains(&needle) {
                                 continue;
                             }
-                            let is_active = inst.id == active_id;
+                            let is_active = Some(inst.id) == active_id;
                             let track_count = usage
                                 .as_ref()
                                 .map_or(1, |m| m.get(&inst.id).copied().unwrap_or(0));
@@ -3538,7 +3556,8 @@ impl SynthApp {
     fn render_view_selector(&mut self, ui: &mut egui::Ui) {
         use egui_remixicon::icons as ri;
         let t = theme();
-        let views: [(AppView, &str); 6] = [
+        let views: [(AppView, &str); 7] = [
+            (AppView::Home, &format!("{} Home", ri::HOME_FILL)),
             (AppView::Rack, &format!("{} Rack", ri::LAYOUT_GRID_FILL)),
             (
                 AppView::AcousticWorld,
@@ -5426,6 +5445,10 @@ impl SynthApp {
     /// patch into a fresh project without first clicking "+ New Instrument".
     fn load_patch_data(&mut self, patch: &Patch) {
         self.mark_dirty();
+        // A loaded patch belongs in the rack — don't strand the user on Home.
+        if self.active_view == AppView::Home {
+            self.active_view = AppView::Rack;
+        }
 
         // Delegate to patch_bridge for the main loading logic
         // Load into the active instrument's patch editor (auto-create if none)
@@ -6137,6 +6160,11 @@ impl SynthApp {
             eprintln!("apply_project failed during GUI load: {e}");
         }
         self.refresh_ui_from_project(project);
+        // A loaded project belongs in the rack — don't strand the user on the
+        // Home welcome screen. Leave any other explicit view choice intact.
+        if self.active_view == AppView::Home {
+            self.active_view = AppView::Rack;
+        }
     }
 
     /// Reset to a new empty project, clearing all instruments and song data.
@@ -6154,6 +6182,8 @@ impl SynthApp {
         self.current_patch_name = "Init".to_string();
         self.current_patch_path = None;
         self.dirty = false;
+        // A fresh, empty project lands on the Home welcome screen.
+        self.active_view = AppView::Home;
     }
 
     /// Load an AWE preset file, applying its state to the engine and UI.

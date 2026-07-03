@@ -11,8 +11,11 @@ use serde::{Deserialize, Serialize};
 /// Main application view (tab-based navigation).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum AppView {
-    /// Instrument rack and patch editor view (default).
+    /// Landing / welcome view (default). Always available, independent of
+    /// whether any instrument exists.
     #[default]
+    Home,
+    /// Instrument rack and patch editor view.
     Rack,
     /// Acoustic World Engine view.
     AcousticWorld,
