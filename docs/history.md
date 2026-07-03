@@ -1,5 +1,115 @@
 # Version History
 
+## [0.315.0] - 2026-07-04
+
+### SID oscillator — a new module (`sid`)
+
+- **MOS 6581/8580 waveform generator.** A new `sid` voice module reproducing the
+  Commodore SID chip's saw/pulse/triangle/noise oscillators, ring mod and hard
+  sync.
+- **Fidelity pass (§11).** Golden A/B-matrix calibration against reSID, an analysis
+  floor guard for `compare_spectra`, GUI polish, an ExtraLarge patch-editor width
+  for the wide SID panel, and a `get_version` MCP tool.
+
+### Continuous voice-pitch tracking
+
+- **Pitch bends now track every source module.** Sampler and oscillator voices
+  follow the continuous voice pitch (bend/glide) instead of snapping per note, via
+  a `set_voice_pitch` trait and a `pitch_cv` port. Rolled out across SubOscillator,
+  MathOscillator, PadSynth, WavetableOsc, RingMod, VoiceSynth, AdditiveOsc,
+  AmFormant, FractalOscillator, VocalTract, Fof and GranularOsc.
+- **Shared AMDF pitch-detection test harness** validates each module's pitch
+  tracking; a critical-review pass fixed DSP/RT bugs surfaced across the rollout.
+
+### Parameter value-kind type system
+
+- **First-class parameter kinds.** A `ParamKind`/`ScalarParam` model gives every
+  parameter an honest value kind (scalar/enum/bool/reference) with derived units,
+  a curve audit, and tightened `is_automatable`. Two enum-as-float params became
+  real `choice()` enums and Reference-kind params are now honest in schema/MCP.
+- **Kind-aware everywhere.** Value display, typed serialization with integer
+  rounding, MCP schema validation, discovery DTOs carrying `value_kind`, and
+  kind-aware GUI widget dispatch with integer slider snapping. Added a shared
+  `ModuleParam` trait; removed the now-unused descriptor `step` field and
+  redundant `.unit()` calls.
+
+### Patch editor rewrite (egui Scene) & GUI unification
+
+- **Patch canvas on `egui::Scene`.** The patch editor canvas was rewritten onto
+  egui's Scene API (kills the manual pan/zoom coordinate math); module headers now
+  show the module id as title with name+category in the tooltip.
+- **AtomLayout & shared widgets.** Adopted egui AtomLayout and atom-tuples across
+  the UI, unified view top bars via a shared toolbar helper, unified the left-hand
+  Instruments/Patterns/Samples list panels (patterns now in natural order), and
+  routed ~120 more call sites through `controls.rs` shared helpers (style helpers,
+  `inline_editable_text`, mute/solo/bypass toggles). Added a module header status
+  bar with right-aligned consolidated controls and general patch-editor polish.
+- **Knob interaction.** Responsive integer-knob dragging plus mouse-wheel/trackpad
+  scroll on knobs, with tuned speed and corrected direction.
+- **Visualizers & layout.** Monitors are separated from the effect chain,
+  visualizer nodes are removable with larger graphs and clipped spectrum, a unified
+  longest-path-to-sink auto-layout, and a toggleable dB scale on the stereo level
+  meter. A piano-roll hierarchical tree menu replaces the flat "Auto:" selector.
+
+### DSP & real-time hardening
+
+- **CV sanitized at the boundary.** CV is sanitized once at the `InputReader`
+  boundary; fixed stale-sample-rate pitch bugs in PadSynth and the vocal_tract
+  glottal increment; Convolver IR is now built off the audio thread; block-size and
+  max-sample-rate are unified as shared consts and `Phase` usage was tightened for
+  type safety.
+- **Module State Sync fixes** plus knob step quantization; audit column added to
+  the module catalog.
+- **RT-safety infrastructure.** Denormals are flushed (FTZ/DAZ) on the
+  render/export/preview paths, background threads are named via `thread::Builder`,
+  `new_unchecked` newtype constructors gained `debug_assert` invariants,
+  thread-transferred `EngineCommand`/`EngineEvent` are guarded by
+  `static_assertions`, and a custom panic hook plus an RT allocation-guard test
+  were added.
+
+### Modules & instruments
+
+- **CV/gate inputs on 9 generators** and unified amp/output stereo port names.
+- **Per-instrument unison** — configurable detune and stereo spread.
+
+### YAMS audio-rate AudioScript (Phase 4)
+
+- **Per-sample scripted DSP.** YAMS gained an audio-rate `AudioScript` dialect for
+  per-sample DSP, with audio-rate sample-rate correctness and `sr`/`note_hz`
+  context vars; the help popup and guard docs are now driven from
+  `CONTEXT_CATALOG`.
+
+### Tempo map
+
+- **Variable tempo.** A tempo map with accelerando/ritardando ramps, MCP tools and
+  ruler editing, a draggable tempo-map lane in the arrangement, and lane polish
+  (dynamic BPM axis, default/map distinction).
+
+### MCP
+
+- **rmcp 2.x.** Upgraded rmcp 1.8 → 2.0 (later 2.1.0). AI & Automation hardening
+  (§4.1) including a batch-save sync barrier with total-failure detection, and the
+  voice-allocator config is now surfaced over MCP.
+- **Mod Matrix routing visibility** — script/audioscript modulation-source markers
+  in the patch editor.
+
+### Home view
+
+- **Dedicated Home tab** for the welcome view with a live activity-log console.
+
+### Fixes
+
+- Mono legato arps no longer leave the +12 octave stuck.
+- Restored playhead-follow scrolling under egui 0.35.
+- LadderFilter reports its own ModuleType; added an all-modules reference project.
+- Schemas accept JSON booleans for bool-kind module params.
+- Block deleting an in-use sample from the list kebab.
+
+### Dependencies
+
+- Bumped toml 1.1.2, strum 0.28, jsonschema 0.46.9, arrayvec 0.7.8,
+  egui-file-dialog 0.14.1 (and tracked the rmcp 2.x upgrade).
+
 ## [0.314.0] - 2026-06-22
 
 ### YAMS — a general real-time scripting module (`scr`)
