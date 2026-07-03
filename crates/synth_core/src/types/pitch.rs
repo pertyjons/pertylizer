@@ -505,6 +505,10 @@ impl Velocity {
     /// Create without clamping (for performance in hot paths).
     #[inline]
     pub const fn new_unchecked(value: f32) -> Self {
+        debug_assert!(
+            value >= 0.0 && value <= 1.0,
+            "Velocity::new_unchecked: value outside [0, 1]"
+        );
         Self(value)
     }
 

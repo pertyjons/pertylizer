@@ -10837,8 +10837,8 @@ pub fn compare_spectra_impl(
     Ok(synth_mcp::types::CompareSpectraResult {
         log_spectral_distance: dist.log_spectral_distance,
         centroid_delta_hz: dist.centroid_delta.0,
-        flatness_delta: dist.flatness_delta.0,
-        inharmonicity_delta: dist.inharmonicity_delta.0,
+        flatness_delta: dist.flatness_delta,
+        inharmonicity_delta: dist.inharmonicity_delta,
         voicing_mismatch: dist.voicing_mismatch,
         floor_coverage: dist.floor_coverage,
         floor_limited: dist.floor_limited,

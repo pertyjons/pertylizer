@@ -721,10 +721,11 @@ pub struct SpectrumDistance {
     pub log_spectral_distance: f32,
     /// Candidate − target centroid.
     pub centroid_delta: Hertz,
-    /// Candidate − target flatness.
-    pub flatness_delta: NormalizedValue,
-    /// Candidate − target aggregate inharmonicity.
-    pub inharmonicity_delta: NormalizedValue,
+    /// Candidate − target flatness (signed; both operands are in [0, 1] so the
+    /// delta is in [-1, 1], hence a plain `f32` rather than `NormalizedValue`).
+    pub flatness_delta: f32,
+    /// Candidate − target aggregate inharmonicity (signed; see `flatness_delta`).
+    pub inharmonicity_delta: f32,
     /// Strong in target, absent in candidate.
     pub missing_partials: Vec<PartialDiff>,
     /// Present in candidate, not in target.
@@ -758,9 +759,8 @@ const VOICING_MISMATCH_PENALTY_DB: f32 = 60.0;
 #[must_use]
 pub fn compare(target: &SpectrumResult, candidate: &SpectrumResult) -> SpectrumDistance {
     let centroid_delta = Hertz::new(candidate.centroid.0 - target.centroid.0);
-    let flatness_delta = NormalizedValue::new_unchecked(candidate.flatness.0 - target.flatness.0);
-    let inharmonicity_delta =
-        NormalizedValue::new_unchecked(candidate.inharmonicity.0 - target.inharmonicity.0);
+    let flatness_delta = candidate.flatness.0 - target.flatness.0;
+    let inharmonicity_delta = candidate.inharmonicity.0 - target.inharmonicity.0;
 
     // Silence guard: peak-normalised log bins amplify a near-silent frame's
     // noise floor to full scale, so two effectively-silent sources would read

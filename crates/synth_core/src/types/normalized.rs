@@ -34,6 +34,10 @@ impl NormalizedValue {
     /// Caller must ensure value is in [0, 1].
     #[inline]
     pub const fn new_unchecked(value: f32) -> Self {
+        debug_assert!(
+            value >= 0.0 && value <= 1.0,
+            "NormalizedValue::new_unchecked: value outside [0, 1]"
+        );
         Self(value)
     }
 
@@ -286,6 +290,10 @@ impl BipolarValue {
     /// Caller must ensure value is in [-1, 1].
     #[inline]
     pub const fn new_unchecked(value: f32) -> Self {
+        debug_assert!(
+            value >= -1.0 && value <= 1.0,
+            "BipolarValue::new_unchecked: value outside [-1, 1]"
+        );
         Self(value)
     }
 
@@ -462,6 +470,10 @@ impl Phase {
     /// Create without wrapping (for performance).
     #[inline]
     pub const fn new_unchecked(value: f32) -> Self {
+        debug_assert!(
+            value >= 0.0 && value < 1.0,
+            "Phase::new_unchecked: value outside [0, 1)"
+        );
         Self(value)
     }
 

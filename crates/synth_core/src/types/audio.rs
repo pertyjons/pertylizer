@@ -444,6 +444,10 @@ impl VoiceCount {
     /// Create without clamping (for performance in hot paths).
     #[inline]
     pub const fn new_unchecked(count: u8) -> Self {
+        debug_assert!(
+            count >= 1 && count <= 128,
+            "VoiceCount::new_unchecked: count outside [1, 128]"
+        );
         Self(count)
     }
 
