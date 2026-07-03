@@ -4691,6 +4691,7 @@ dependencies = [
  "ringbuf",
  "schemars",
  "serde",
+ "static_assertions",
  "synth_awe",
  "synth_core",
  "synth_dsp",

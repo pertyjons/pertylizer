@@ -1456,3 +1456,21 @@ impl std::fmt::Debug for EngineCommand {
         }
     }
 }
+
+// Both enums cross the UI↔audio thread boundary over `ringbuf` lock-free
+// channels (see the command/event ring buffers in `handle`/`lib`). Ringbuf only
+// requires `Send` when the producer and consumer are split across threads, and
+// that bound is checked deep inside its generics — so a variant that
+// accidentally captured a non-`Send` payload (an `Rc`, a `*mut`) would fail with
+// an opaque error far from here. These compile-time asserts pin the invariant at
+// the type definition and give a clear failure site instead. Zero runtime cost.
+static_assertions::assert_impl_all!(EngineCommand: Send);
+static_assertions::assert_impl_all!(EngineEvent: Send);
+// `'static` too (no borrowed data): the channels outlive any single call, so a
+// captured reference would be unsound. `assert_impl_all!` can't express a
+// lifetime bound, so check it with a zero-cost monomorphized helper.
+const _: () = {
+    const fn assert_static<T: 'static>() {}
+    assert_static::<EngineCommand>();
+    assert_static::<EngineEvent>();
+};
