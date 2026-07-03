@@ -142,26 +142,31 @@ fn run_gui(
         let registry = shared.mcp_sessions.clone();
         let shared_for_flag = std::sync::Arc::clone(&shared);
         let mcp_port = config.mcp.port;
-        std::thread::spawn(move || {
-            let rt = match tokio::runtime::Runtime::new() {
-                Ok(rt) => rt,
-                Err(e) => {
-                    tracing::error!(error = %e, "MCP: failed to create tokio runtime; MCP disabled");
-                    return;
-                }
-            };
-            rt.block_on(async {
-                shared_for_flag
-                    .mcp_listening
-                    .store(true, std::sync::atomic::Ordering::Relaxed);
-                if let Err(e) = synth_mcp::serve_http(bridge, mcp_port, Some(registry)).await {
-                    tracing::error!(error = %e, port = mcp_port, "MCP HTTP server stopped");
+        let mcp_thread = std::thread::Builder::new()
+            .name("mcp-server".to_string())
+            .spawn(move || {
+                let rt = match tokio::runtime::Runtime::new() {
+                    Ok(rt) => rt,
+                    Err(e) => {
+                        tracing::error!(error = %e, "MCP: failed to create tokio runtime; MCP disabled");
+                        return;
+                    }
+                };
+                rt.block_on(async {
                     shared_for_flag
                         .mcp_listening
-                        .store(false, std::sync::atomic::Ordering::Relaxed);
-                }
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                    if let Err(e) = synth_mcp::serve_http(bridge, mcp_port, Some(registry)).await {
+                        tracing::error!(error = %e, port = mcp_port, "MCP HTTP server stopped");
+                        shared_for_flag
+                            .mcp_listening
+                            .store(false, std::sync::atomic::Ordering::Relaxed);
+                    }
+                });
             });
-        });
+        if let Err(e) = mcp_thread {
+            tracing::error!(error = %e, "MCP: failed to spawn server thread; MCP disabled");
+        }
         shared
     };
 

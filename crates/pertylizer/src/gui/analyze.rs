@@ -329,27 +329,33 @@ impl AnalyzeWindow {
         }
 
         let params = self.params.clone();
-        let handle = std::thread::spawn(move || -> Result<AnalysisSnapshot, McpBridgeError> {
-            let rendered = render_note_to_buffer(
-                session.as_ref(),
-                &sample_library,
-                target,
-                params.note,
-                params.velocity,
-                params.duration_ms,
-                params.tail_ms,
-            )?;
-            let result = analyze_rendered_buffer(
-                &rendered,
-                params.note.as_u8(),
-                params.velocity.to_midi(),
-                params.duration_ms,
-                params.expected_note.map(MidiNote::as_u8),
-            );
-            Ok(AnalysisSnapshot::new(result, Arc::new(rendered)))
-        });
+        let spawned = std::thread::Builder::new()
+            .name("analyze-render".to_string())
+            .spawn(move || -> Result<AnalysisSnapshot, McpBridgeError> {
+                let rendered = render_note_to_buffer(
+                    session.as_ref(),
+                    &sample_library,
+                    target,
+                    params.note,
+                    params.velocity,
+                    params.duration_ms,
+                    params.tail_ms,
+                )?;
+                let result = analyze_rendered_buffer(
+                    &rendered,
+                    params.note.as_u8(),
+                    params.velocity.to_midi(),
+                    params.duration_ms,
+                    params.expected_note.map(MidiNote::as_u8),
+                );
+                Ok(AnalysisSnapshot::new(result, Arc::new(rendered)))
+            });
 
-        self.pending = Some(PendingRender { handle, target });
+        // If the thread can't be spawned, leave `pending` unset — the next
+        // poll simply tries again rather than the app crashing.
+        if let Ok(handle) = spawned {
+            self.pending = Some(PendingRender { handle, target });
+        }
     }
 
     fn poll_pending(&mut self) {

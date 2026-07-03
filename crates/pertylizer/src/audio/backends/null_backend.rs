@@ -132,35 +132,39 @@ impl AudioStream for NullStream {
             return Err(AudioError::StreamNotRunning);
         };
 
-        let handle = thread::spawn(move || {
-            let mut buffer = vec![0.0f32; buffer_size * channels];
-            let frame_duration = Duration::from_secs_f64(buffer_size as f64 / sample_rate.as_f64());
-            let start_time = Instant::now();
+        let handle = thread::Builder::new()
+            .name("null-audio".to_string())
+            .spawn(move || {
+                let mut buffer = vec![0.0f32; buffer_size * channels];
+                let frame_duration =
+                    Duration::from_secs_f64(buffer_size as f64 / sample_rate.as_f64());
+                let start_time = Instant::now();
 
-            while running.load(Ordering::Relaxed) {
-                let current_position = position.load(Ordering::Relaxed);
+                while running.load(Ordering::Relaxed) {
+                    let current_position = position.load(Ordering::Relaxed);
 
-                let context = AudioCallbackContext {
-                    sample_rate,
-                    frames: buffer_size,
-                    channels: channels as u16,
-                    stream_time: start_time.elapsed().as_secs_f64(),
-                    sample_position: current_position,
-                    output_latency: synth_core::Seconds::new(output_latency.as_secs_f32()),
-                };
+                    let context = AudioCallbackContext {
+                        sample_rate,
+                        frames: buffer_size,
+                        channels: channels as u16,
+                        stream_time: start_time.elapsed().as_secs_f64(),
+                        sample_position: current_position,
+                        output_latency: synth_core::Seconds::new(output_latency.as_secs_f32()),
+                    };
 
-                // Clear buffer and process
-                buffer.fill(0.0);
-                processor.process(&mut buffer, &context);
+                    // Clear buffer and process
+                    buffer.fill(0.0);
+                    processor.process(&mut buffer, &context);
 
-                position.fetch_add(buffer_size as u64, Ordering::Relaxed);
+                    position.fetch_add(buffer_size as u64, Ordering::Relaxed);
 
-                // Sleep to simulate real-time
-                thread::sleep(frame_duration);
-            }
+                    // Sleep to simulate real-time
+                    thread::sleep(frame_duration);
+                }
 
-            processor.on_stream_stop();
-        });
+                processor.on_stream_stop();
+            })
+            .map_err(|e| AudioError::StreamCreationFailed(e.to_string()))?;
 
         self.thread_handle = Some(handle);
         Ok(())

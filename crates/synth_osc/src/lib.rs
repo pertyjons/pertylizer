@@ -96,9 +96,18 @@ impl OscTelemetry {
         let stop_flag = Arc::clone(&self.stop_flag);
         let status = Arc::clone(&self.status);
 
-        self.thread_handle = Some(std::thread::spawn(move || {
-            sender::run(&config, &engine_state, event_consumer, &stop_flag, &status);
-        }));
+        match std::thread::Builder::new()
+            .name("osc-telemetry".to_string())
+            .spawn(move || {
+                sender::run(&config, &engine_state, event_consumer, &stop_flag, &status);
+            }) {
+            Ok(handle) => self.thread_handle = Some(handle),
+            Err(_) => {
+                // Couldn't spawn the sender thread — leave telemetry off rather
+                // than crash; the caller sees status stay `Off`.
+                self.status.store(OscStatus::Off as u8, Ordering::Relaxed);
+            }
+        }
     }
 
     /// Stop the sender thread gracefully.
