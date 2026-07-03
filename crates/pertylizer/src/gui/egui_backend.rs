@@ -975,9 +975,12 @@ impl eframe::App for SynthApp {
                         self.sample_view_state.devices_dirty = false;
                     }
 
-                    // Samples referenced by any sampler module (by raw id) — used
-                    // to dim unused samples in the list.
-                    let used_sample_ids: std::collections::HashSet<u64> = self
+                    // Count how many sampler modules reference each sample (by raw
+                    // id) — drives both dimming unused samples in the list and
+                    // blocking deletion of an in-use sample.
+                    let mut sample_ref_counts: std::collections::HashMap<u64, usize> =
+                        std::collections::HashMap::new();
+                    for id in self
                         .session
                         .state()
                         .shared_graph
@@ -990,13 +993,15 @@ impl eframe::App for SynthApp {
                             ) => Some(id.0),
                             _ => None,
                         })
-                        .collect();
+                    {
+                        *sample_ref_counts.entry(id).or_insert(0) += 1;
+                    }
                     let action = crate::gui::sample_view::draw_sample_view(
                         ui,
                         &self.sample_library,
                         &mut self.sample_view_state,
                         &mut self.audio_input,
-                        &used_sample_ids,
+                        &sample_ref_counts,
                     );
                     match action {
                         crate::gui::sample_view::SampleViewAction::None => {}

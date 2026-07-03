@@ -124,6 +124,18 @@ in `mcp_allocator_config.rs` drive the real engine.
   each sample in `eval_block`, via `AudioBindings`) would make scripted
   oscillators track fast portamento faithfully. Small-to-medium; only matters for
   audible fast glides.
+  **Investigated 2026-07-03 (deferred until someone actually needs it):** the
+  `AudioBindings`/`eval_block` half is trivial (add `note_hz: Option<u16>`, a
+  `bindings_for` arm, and a per-sample `set_source`). The real work is that
+  **there is no per-sample pitch signal in the engine at all** — the whole voice
+  pitch pipeline is block-rate: `glide.update` runs once per block
+  (`instrument.rs:~1277`) and `process_audio` delivers a single scalar
+  `set_voice_pitch(freq)` (`voice.rs:~973`). Pragmatic fix: have the voice expose
+  this block's start→end frequency (remember the previous block's `note_hz`) via a
+  small new module method, and **lerp per sample inside `eval_block`** — glide/bend
+  are piecewise-linear, so a per-block linear ramp reconstructs the trajectory
+  exactly. Bundle the per-sample inputs into a struct rather than growing
+  `eval_block`'s already-`too_many_arguments` signature.
 - [x] **Generate the context-var lists from `CONTEXT_CATALOG` instead of hand
   maintenance.** DONE: the patch-editor help popup's Context line
   (`gui/patch_editor/popups.rs`) is now built by iterating `CONTEXT_CATALOG`
@@ -247,14 +259,17 @@ efficiency/altitude items deliberately left out of that change.
   (`gui/sample_view.rs`). It is only ever read in `if select || rename` and
   `rename` already implies selection; the selection assignment can test the row
   response (and `rename`) directly. Pure cleanup, no behavior change.
-- [ ] **Detach deleted samples from referencing sampler modules.** Deleting a
-  sample from the list kebab (and the old toolbar Delete before it) calls
-  `SampleLibrary::remove(id)` but leaves any `Sampler` module still holding that
-  `SampleSelect(id)` pointing at a now-missing sample. Pre-existing (not a
-  regression from the list-panel work), but the kebab makes deletion easier to
-  reach. Confirm the sampler/engine tolerates a missing referenced sample
-  gracefully (silent → no sound vs. panic), and consider warning on / blocking
-  deletion of an in-use sample, or resetting referencing modules to "no sample".
+- [x] **Detach deleted samples from referencing sampler modules.** DONE: the
+  audit confirmed the runtime path is already panic-safe — `Sampler::note_on`
+  early-returns when `sample_data` is `None`, `process()` emits silence with no
+  `player`, and the offline-render loader already logs a warning and skips a
+  missing id (`preview.rs`). The `Sampler` also holds its own `Arc<[f32]>` clone,
+  so a live voice keeps playing after the library entry is gone; the break only
+  surfaces (silently) on the next save→load. Fix chosen: **block deletion of an
+  in-use sample** in the list kebab — the Delete item is disabled with an
+  `on_disabled_hover_text` naming the referencing-module count
+  (`gui/sample_view.rs`), driven by a per-id reference-count map replacing the old
+  used/unused `HashSet` (`gui/egui_backend.rs`). Unused samples delete as before.
 
 ### 3.8 Shared widget helpers follow-ups (evaluating Phase 2 residual)
 

@@ -173,7 +173,7 @@ pub fn draw_sample_view(
     library: &Arc<RwLock<SampleLibrary>>,
     state: &mut SampleViewState,
     audio_input: &mut AudioInputManager,
-    used_sample_ids: &std::collections::HashSet<u64>,
+    sample_ref_counts: &std::collections::HashMap<u64, usize>,
 ) -> SampleViewAction {
     let ctx = ui.ctx().clone();
     let mut action = SampleViewAction::None;
@@ -231,7 +231,8 @@ pub fn draw_sample_view(
                     }
                     for row in &shown {
                         let is_selected = state.selected_sample == Some(row.id);
-                        let used = used_sample_ids.contains(&row.id.0);
+                        let ref_count = sample_ref_counts.get(&row.id.0).copied().unwrap_or(0);
+                        let used = ref_count > 0;
 
                         let mut select = false;
                         let mut rename = false;
@@ -252,7 +253,17 @@ pub fn draw_sample_view(
                                     ui.close();
                                 }
                                 ui.separator();
-                                if danger_button(ui, "Delete").clicked() {
+                                // Block deleting a sample that sampler modules
+                                // still reference — otherwise those modules would
+                                // silently lose their audio on the next load.
+                                let del =
+                                    ui.add_enabled_ui(!used, |ui| danger_button(ui, "Delete"));
+                                if used {
+                                    del.inner.on_disabled_hover_text(format!(
+                                        "Can't delete — used by {ref_count} sampler module{}",
+                                        if ref_count == 1 { "" } else { "s" }
+                                    ));
+                                } else if del.inner.clicked() {
                                     delete = true;
                                     ui.close();
                                 }
