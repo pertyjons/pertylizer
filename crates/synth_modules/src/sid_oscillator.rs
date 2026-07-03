@@ -60,6 +60,20 @@ const MASK_SAWTOOTH: u8 = 1 << 1;
 const MASK_PULSE: u8 = 1 << 2;
 const MASK_NOISE: u8 = 1 << 3;
 
+// --- 6581 combined-waveform pulldown fit (plan §2 option C, §11 targets) -----
+/// Saw+tri run length: a bus bit needs this many set bits below it (plus one
+/// above) to survive — fitted so the digital AC RMS lands ~26 dB below the
+/// saw's with the fundamental killed, as measured on the chip (§11 gap 1).
+const ST_PULLDOWN_RUN: u32 = 3;
+/// MSB of the 12-bit waveform bus (bit 11 — distinct from the accumulator's
+/// [`ACC_MSB`]).
+const BUS_MSB: u32 = 0x800;
+
+/// DC-blocker corner frequency — the C64's output coupling (§11: combined
+/// 6581 waveforms carry real DC, e.g. ≈ −0.22 for tri+pulse, which eats mix
+/// headroom; reSID's reference path is AC-coupled downstream too).
+const DC_BLOCK_HZ: f32 = 16.0;
+
 // --- Waveform DAC (plan §2 "DAC non-linearity", phase 3) ----------------------
 /// 6581 waveform-DAC 2R/R resistor ratio. The ideal ladder uses exactly 2R;
 /// the 6581's poly-silicon resistors measure ≈ 2.2R, which (together with its
@@ -146,10 +160,12 @@ pub struct SidOscillator {
     model: SidModel,
     clock: SidClock,
     quality: SidQuality,
+    dc_block: bool,
     level: Gain,
     // Waveform-mask sequence program (per-frame, driver-style)
     seq_length: u8,
     seq_rate: u8,
+    seq_loop: bool,
     seq_steps: [u8; SID_SEQ_STEPS],
 
     // Chip state (free-running; note_on must NOT reseed — plan §5)
@@ -175,6 +191,19 @@ pub struct SidOscillator {
     /// Previous sample's combined TEST state (param OR gate input), for the
     /// hard-restart rising edge that reloads the LFSR.
     prev_test_active: bool,
+    /// Previous sample's ring-input MSB state, for fold-flip edge detection.
+    prev_ring_high: bool,
+    /// DC-blocker state: previous input / output sample (host rate).
+    dc_x1: f32,
+    dc_y1: f32,
+    /// Half the height of a just-applied ring fold-flip discontinuity, consumed
+    /// by the next generated sample's PolyBLEP residual (0 = no pending step) —
+    /// the triangle inverts (`tri → -tri`) at the ring source's MSB edge, a step
+    /// the same one-sided BLEP that band-limits the sync reset cleans without
+    /// low-passing the real HF sidebands (§11 shoulder-texture).
+    pending_ring_step: f32,
+    /// Evaluation distance of that residual, in generated samples ∈ [0, 1].
+    pending_ring_d: f32,
 
     // Waveform-sequence playback state (restarted by note_on — program data,
     // not chip state)
@@ -183,8 +212,15 @@ pub struct SidOscillator {
     /// Driver frames elapsed since the sequence (re)started.
     frame_count: u32,
 
-    // Mod matrix offsets (generic store; only `level` is modulatable)
+    // Mod matrix offsets (generic store; `freq_reg`/`pw_reg`/`level`)
     mod_offsets: ParamModOffsets,
+
+    // Transient sequencer-automation overrides (never mutate the base params
+    // — cleared on transport stop). PW automation is a core SID idiom, so the
+    // register lanes must be live (plan §11 addendum ask 2).
+    override_freq_reg: Option<u32>,
+    override_pw_reg: Option<u32>,
+    override_level: Option<Gain>,
 
     // Host-rate state
     sample_rate: SampleRate,
@@ -220,9 +256,11 @@ impl SidOscillator {
             model: SidModel::default(),
             clock: SidClock::default(),
             quality: SidQuality::default(),
+            dc_block: true,
             level: Gain::UNITY,
             seq_length: 0,
             seq_rate: 1,
+            seq_loop: false,
             seq_steps: [0; SID_SEQ_STEPS],
             acc: 0,
             tracked_freq_reg: None,
@@ -232,9 +270,17 @@ impl SidOscillator {
             pending_sync_d: 0.0,
             last_factor: 1,
             prev_test_active: false,
+            prev_ring_high: false,
+            pending_ring_step: 0.0,
+            pending_ring_d: 0.0,
+            dc_x1: 0.0,
+            dc_y1: 0.0,
             frame_pos: 0.0,
             frame_count: 0,
             mod_offsets: ParamModOffsets::new(),
+            override_freq_reg: None,
+            override_pw_reg: None,
+            override_level: None,
             sample_rate: SampleRate::DVD_QUALITY,
             downsampler: Downsampler::new(),
             msb_port: PortName::intern("msb"),
@@ -258,12 +304,14 @@ impl SidOscillator {
     }
 
     /// The frequency register the DSP runs from: the live played-note register
-    /// while `TrackVoicePitch` is on, the authored `FreqReg` param otherwise.
+    /// while `TrackVoicePitch` is on, the authored `FreqReg` param (or its
+    /// transient automation override) otherwise.
     fn effective_freq_reg(&self) -> u32 {
+        let authored = self.override_freq_reg.unwrap_or(self.freq_reg);
         if self.track_voice_pitch {
-            self.tracked_freq_reg.unwrap_or(self.freq_reg)
+            self.tracked_freq_reg.unwrap_or(authored)
         } else {
-            self.freq_reg
+            authored
         }
     }
 
@@ -301,14 +349,19 @@ impl SidOscillator {
     }
 
     /// The waveform mask the current driver frame selects: the sequence step
-    /// while a sequence is programmed (holding its last step once past the
-    /// end), the static bits otherwise.
+    /// while a sequence is programmed (looping when `SeqLoop` is set, holding
+    /// its last step otherwise), the static bits otherwise.
     fn live_mask(&self) -> u8 {
         if self.seq_length == 0 {
             return self.static_mask();
         }
         let rate = u32::from(self.seq_rate.max(1));
-        let idx = (self.frame_count / rate).min(u32::from(self.seq_length - 1));
+        let pos = self.frame_count / rate;
+        let idx = if self.seq_loop {
+            pos % u32::from(self.seq_length)
+        } else {
+            pos.min(u32::from(self.seq_length - 1))
+        };
         self.seq_steps.get(idx as usize).copied().unwrap_or(0) & 0xF
     }
 
@@ -335,10 +388,17 @@ impl SidOscillator {
 
     /// Whether any waveform this block can select needs the oversampled path:
     /// combined masks and noise, whose many small steps PolyBLEP can't clean
-    /// (plan §2 hybrid strategy). With a sequence programmed, every reachable
-    /// step is checked so the factor stays block-constant.
-    fn needs_oversample(&self) -> bool {
-        let needs = |m: u8| m & MASK_NOISE != 0 || m.count_ones() > 1;
+    /// (plan §2 hybrid strategy), and the ring-modulated triangle, whose
+    /// fold flips are un-BLEPped discontinuities (§11 ring-mod brightness) —
+    /// only while a ring source is actually connected (`ring_connected`,
+    /// block-constant), since without one no flip can ever occur. With a
+    /// sequence programmed, every reachable step is checked so the factor
+    /// stays block-constant.
+    fn needs_oversample(&self, ring_connected: bool) -> bool {
+        let ring_live = self.ring_mod && ring_connected;
+        let needs = |m: u8| {
+            m & MASK_NOISE != 0 || m.count_ones() > 1 || (ring_live && m & MASK_TRIANGLE != 0)
+        };
         if self.seq_length > 0 {
             let len = usize::from(self.seq_length).min(SID_SEQ_STEPS);
             self.seq_steps[..len].iter().any(|&m| needs(m & 0xF))
@@ -347,17 +407,72 @@ impl SidOscillator {
         }
     }
 
-    /// Combined-waveform bus model — the plan §2 **option B** baseline, and
-    /// the seam where a parametric option-C model would slot in per
-    /// (mask, model) without touching the waveform derivation. 6581: the
-    /// analog bus conflict lets a cleared bit drag its neighbours down.
-    /// 8580: modelled as the plain AND the caller already produced (its small
-    /// DC-offset effect is a documented deferral).
-    fn combine_bus(&self, v: u32) -> u32 {
+    /// Combined-waveform bus model — the plan §2 **option C** parametric
+    /// pulldown, per (mask, model), on top of the plain AND the caller already
+    /// produced. 6581: the analog bus conflict pulls a line low unless enough
+    /// neighbours drive it high, with a per-combination strength fitted to the
+    /// §11 golden A/B measurements (independently derived — no emulator
+    /// tables, plan §7):
+    ///
+    /// - **saw+tri (0x31):** a bit survives only inside a run of set bits
+    ///   (three below + one above) — kills the fundamental and leaves narrow
+    ///   spikes whose energy sits at high accumulator-bit products
+    ///   (~8/16/32·f0), matching the measured chip (ref RMS ≈ −26 dB vs saw).
+    /// - **pulse+saw (0x61) / all three (0x71):** the conflict collapses the
+    ///   whole bus — only a full run of twelve set bits survives, i.e. the
+    ///   output blips once at the very top of the ramp and otherwise reads as
+    ///   near-silence, like the chip.
+    /// - **pulse+tri (0x51) and noise combinations:** the mild
+    ///   neighbour-support model (measured at the A/B floor — keep).
+    ///
+    /// 8580: modelled as the plain AND (measured at/near the floor for every
+    /// combination; its small DC-offset effect is a documented deferral).
+    fn combine_bus(&self, mask: u8, v: u32) -> u32 {
+        const ST: u8 = MASK_TRIANGLE | MASK_SAWTOOTH;
+        const PS: u8 = MASK_PULSE | MASK_SAWTOOTH;
+        const PST: u8 = PS | MASK_TRIANGLE;
         match self.model {
-            SidModel::Mos6581 => v & ((v << 1) | (v >> 1)) & 0xFFF,
+            SidModel::Mos6581 => {
+                if mask & MASK_NOISE != 0 {
+                    return Self::neighbour_support(v);
+                }
+                match mask & PST {
+                    ST => Self::pulldown_run(v, ST_PULLDOWN_RUN),
+                    PS | PST => Self::bus_collapse(v),
+                    _ => Self::neighbour_support(v),
+                }
+            }
             SidModel::Mos8580 => v,
         }
+    }
+
+    /// Mild 6581 bus conflict: a cleared bit drags a lone neighbour down — a
+    /// bit survives only with at least one set neighbour (the former option-B
+    /// baseline; still the fitted model for pulse+tri and noise combinations).
+    /// `v` is a 12-bit bus value, so the shifts cannot leak past the AND.
+    fn neighbour_support(v: u32) -> u32 {
+        v & ((v << 1) | (v >> 1))
+    }
+
+    /// Strong 6581 bus pulldown: bit `i` survives only when bits
+    /// `i-run_below..=i+1` are all set (the bus MSB counts as externally
+    /// supported). The fitted option-C form: the run length is the pulldown
+    /// strength.
+    fn pulldown_run(v: u32, run_below: u32) -> u32 {
+        let mut r = v & ((v >> 1) | BUS_MSB);
+        for d in 1..=run_below {
+            r &= v << d;
+        }
+        r
+    }
+
+    /// Total 6581 bus collapse (pulse+saw combinations): only a full run of
+    /// twelve set bits keeps the bus up — the MSB line blips once at the very
+    /// top of the ramp, otherwise the output reads as near-silence, like the
+    /// chip (§11 gap 2). Closed form of `pulldown_run(v, 11)` without the
+    /// upper-neighbour term.
+    fn bus_collapse(v: u32) -> u32 {
+        if v == 0xFFF { BUS_MSB } else { 0 }
     }
 
     /// One LFSR shift: `new_bit0 = bit22 XOR bit17`, register shifted left,
@@ -414,9 +529,9 @@ impl SidOscillator {
     /// The 12-bit digital waveform value for the current accumulator + LFSR
     /// state under `mask`. Selected waveforms meet on the shared bus: modelled
     /// as a bitwise AND, with the 6581's analog bus conflict additionally
-    /// pulling bits low unless a set neighbour supports them (the zero-data
-    /// option-B leakage model — plan §2). Returns `None` when no waveform bit
-    /// is set (the DAC input floats — treated as 0).
+    /// pulling bits low per combination (the parametric option-C model in
+    /// [`combine_bus`](Self::combine_bus) — plan §2). Returns `None` when no
+    /// waveform bit is set (the DAC input floats — treated as 0).
     fn waveform_12bit(
         &self,
         mask: u8,
@@ -451,7 +566,7 @@ impl SidOscillator {
             v &= Self::noise_output8(self.lfsr) << 4;
         }
         if mask.count_ones() > 1 {
-            v = self.combine_bus(v);
+            v = self.combine_bus(mask, v);
         }
         Some(v)
     }
@@ -478,9 +593,11 @@ impl SidOscillator {
             SidOscillatorParam::Model(_) => SidOscillatorParam::Model(self.model),
             SidOscillatorParam::Clock(_) => SidOscillatorParam::Clock(self.clock),
             SidOscillatorParam::Quality(_) => SidOscillatorParam::Quality(self.quality),
+            SidOscillatorParam::DcBlock(_) => SidOscillatorParam::DcBlock(self.dc_block),
             SidOscillatorParam::Level(_) => SidOscillatorParam::Level(self.level),
             SidOscillatorParam::SeqLength(_) => SidOscillatorParam::SeqLength(self.seq_length),
             SidOscillatorParam::SeqRate(_) => SidOscillatorParam::SeqRate(self.seq_rate),
+            SidOscillatorParam::SeqLoop(_) => SidOscillatorParam::SeqLoop(self.seq_loop),
             SidOscillatorParam::SeqStep(i, _) => SidOscillatorParam::SeqStep(
                 *i,
                 self.seq_steps.get(usize::from(*i)).copied().unwrap_or(0),
@@ -502,7 +619,9 @@ impl SidOscillator {
     /// Band-limiting residual for the *pure* (single-waveform) shapes at the
     /// current phase: PolyBLEP at saw wrap / pulse edges, PolyBLAMP at the
     /// triangle corners. Combined waveforms are left to the oversample path.
-    fn pure_waveform_residual(pure: PureWave, p: f32, dt: f32, pw: u32) -> f32 {
+    /// `ring_high` inverts the triangle fold (digital `tri_ring = -tri`), so
+    /// its corners swap peak/trough and the residual flips sign with it.
+    fn pure_waveform_residual(pure: PureWave, p: f32, dt: f32, pw: u32, ring_high: bool) -> f32 {
         match pure {
             PureWave::None => 0.0,
             // Rising ramp with a -2 step at the wrap.
@@ -519,9 +638,11 @@ impl SidOscillator {
                 rising - falling
             }
             PureWave::Triangle => {
-                // Trough at p = 0 (slope -4 → +4), peak at p = 0.5 (+4 → -4).
+                // Trough at p = 0 (slope -4 → +4), peak at p = 0.5 (+4 → -4);
+                // exactly mirrored while the ring input holds the fold inverted.
                 let d_trough = if p > 0.5 { p - 1.0 } else { p };
-                poly_blamp(p - 0.5, dt) * 4.0 - poly_blamp(d_trough, dt) * 4.0
+                let r = poly_blamp(p - 0.5, dt) * 4.0 - poly_blamp(d_trough, dt) * 4.0;
+                if ring_high { -r } else { r }
             }
         }
     }
@@ -604,11 +725,11 @@ impl Describable for SidOscillator {
                 )
                 .description(
                     "Raw 16-bit SID frequency register — used when Track Pitch is off \
-                     (e.g. a ring/sync source held at a neighbour voice's pitch)",
+                     (e.g. a ring/sync source held at a neighbour voice's pitch). \
+                     Mod-matrix modulatable",
                 )
                 .range(0.0, SID_FREQ_REG_MAX as f32)
                 .default(0.0)
-                .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -632,10 +753,12 @@ impl Describable for SidOscillator {
                     Param::SidOscillator(SidOscillatorParam::PulseWidthReg(2048)),
                     "PW Reg",
                 )
-                .description("Raw 12-bit pulse-width register (2048 = square)")
+                .description(
+                    "Raw 12-bit pulse-width register (2048 = square). Mod-matrix \
+                     modulatable — PWM is a core SID idiom",
+                )
                 .range(0.0, SID_PW_REG_MAX as f32)
                 .default(2048.0)
-                .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
             .parameter(
@@ -712,6 +835,21 @@ impl Describable for SidOscillator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "dc_block",
+                    Param::SidOscillator(SidOscillatorParam::DcBlock(true)),
+                    "DC Block",
+                )
+                .description(
+                    "One-pole DC blocker (~16 Hz, the C64 output coupling). \
+                     Combined 6581 waveforms carry real DC that eats mix headroom",
+                )
+                .range(0.0, 1.0)
+                .default(1.0)
+                .modulatable(false)
+                .widget(WidgetHint::Toggle),
+            )
+            .parameter(
+                ParameterDescriptor::float(
                     "level",
                     Param::SidOscillator(SidOscillatorParam::Level(Gain::UNITY)),
                     "Level",
@@ -729,7 +867,8 @@ impl Describable for SidOscillator {
                 )
                 .description(
                     "Active waveform-sequence steps (0 = off, the static waveform \
-                     bits apply). Past the last step the sequence holds it",
+                     bits apply). Past the last step the sequence holds it, or \
+                     repeats when Seq Loop is on",
                 )
                 .range(0.0, SID_SEQ_STEPS as f32)
                 .default(0.0)
@@ -747,6 +886,21 @@ impl Describable for SidOscillator {
                 .default(1.0)
                 .modulatable(false)
                 .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
+                    "seq_loop",
+                    Param::SidOscillator(SidOscillatorParam::SeqLoop(false)),
+                    "Seq Loop",
+                )
+                .description(
+                    "Loop the waveform sequence for the whole note (off = hold \
+                     the last step — drum-attack programs)",
+                )
+                .range(0.0, 1.0)
+                .default(0.0)
+                .modulatable(false)
+                .widget(WidgetHint::Toggle),
             );
 
         // Per-step waveform-mask program. Hidden from the auto-renderer but in
@@ -821,13 +975,19 @@ impl PolyModule for SidOscillator {
         self.output_buffer.resize(n_samples);
         self.msb_buffer.resize(n_samples);
 
+        let fm_reader = inputs.reader(PortName::FM, 0.0);
+        let pwm_reader = inputs.reader(PortName::PWM, 0.0);
+        let sync_reader = inputs.reader(PortName::SYNC, 0.0);
+        let ring_reader = inputs.reader(self.ring_port, 0.0);
+        let test_reader = inputs.reader(self.test_port, 0.0);
+
         let os_factor = match self.quality {
             SidQuality::High => OversamplingFactor::X4,
             // Hybrid (plan §2 strategy 3): pure waveforms ride PolyBLEP at
-            // host rate; combined-waveform and noise selections auto-escalate
-            // to the oversampled path their step structure needs.
+            // host rate; combined-waveform, noise, and live ring-mod
+            // selections auto-escalate to the oversampled path they need.
             SidQuality::Fast => {
-                if self.needs_oversample() {
+                if self.needs_oversample(ring_reader.is_connected()) {
                     OversamplingFactor::X4
                 } else {
                     OversamplingFactor::X1
@@ -846,19 +1006,34 @@ impl PolyModule for SidOscillator {
             self.oversample_buffer.resize(n_samples * factor);
         }
 
-        let fm_reader = inputs.reader(PortName::FM, 0.0);
-        let pwm_reader = inputs.reader(PortName::PWM, 0.0);
-        let sync_reader = inputs.reader(PortName::SYNC, 0.0);
-        let ring_reader = inputs.reader(self.ring_port, 0.0);
-        let test_reader = inputs.reader(self.test_port, 0.0);
-
-        let base_freq_reg = f64::from(self.effective_freq_reg());
-        let base_pw = self.pulse_width_reg;
+        // Block-constant register bases: automation override replaces the
+        // base param, then the mod-matrix offset applies on top (the trait's
+        // combine order); the additive `fm`/`pwm` CV rides per sample on top.
+        #[allow(clippy::cast_precision_loss)]
+        let base_freq_reg = f64::from(
+            self.mod_offsets
+                .effective("freq_reg", self.effective_freq_reg() as f32),
+        );
+        #[allow(
+            clippy::cast_precision_loss,
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss
+        )]
+        let base_pw = self
+            .mod_offsets
+            .effective(
+                "pw_reg",
+                self.override_pw_reg.unwrap_or(self.pulse_width_reg) as f32,
+            )
+            .round()
+            .clamp(0.0, SID_PW_REG_MAX as f32) as u32;
         // Block-constant factors, hoisted out of the sample loop.
         let reg_to_inc = self.reg_to_inc(gen_rate);
         let mut inc = Self::acc_increment(base_freq_reg, reg_to_inc);
         let mut dt = Self::inc_to_dt(inc);
-        let level = self.mod_offsets.effective("level", self.level.as_f32());
+        let level = self
+            .mod_offsets
+            .effective("level", self.override_level.unwrap_or(self.level).as_f32());
 
         // Waveform-sequence frame clock (50/60 Hz driver frames). The derived
         // state (pure classification, NoiseLock) is frame-constant.
@@ -901,7 +1076,12 @@ impl PolyModule for SidOscillator {
             };
 
             // Ring source: the neighbour voice's MSB gate (triangle-only XOR).
+            // A fold flip inverts the triangle (`tri → -tri`) — a step the
+            // PolyBLEP below band-limits (computed after `pw` is resolved).
             let ring_high = self.ring_mod && ring_connected && ring_reader.get(i) > 0.5;
+            let ring_flip = ring_high != self.prev_ring_high;
+            let ring_prev = self.prev_ring_high;
+            self.prev_ring_high = ring_high;
 
             // Additive CV in raw register units (offset-from-base — plan §3).
             if fm_reader.is_connected() {
@@ -920,6 +1100,24 @@ impl PolyModule for SidOscillator {
             } else {
                 base_pw
             };
+
+            // Ring fold flip → a one-sided PolyBLEP on the triangle-inversion
+            // step (post − pre fold), the same band-limiting the sync reset
+            // uses. Replaces the old linear crossfade, which low-passed the
+            // real HF sidebands (§11 shoulder-texture). Computed here at the
+            // pre-reset accumulator so a coincident sync reset superposes; void
+            // while TEST holds the output frozen.
+            if ring_flip && !test_active {
+                let acc24_edge = (self.acc >> ACC_FRAC_BITS) as u32;
+                let pre = self.dac_sample(mask, acc24_edge, pw, ring_prev, test_active);
+                let post = self.dac_sample(mask, acc24_edge, pw, ring_high, test_active);
+                // poly_blep is normalized for a ±2 step, hence the h/2 scale.
+                self.pending_ring_step = (post - pre) * 0.5;
+                // 1x: the flip lands mid-sample (gate carries no sub-sample
+                // edge). 4x: on the first generated sub-sample (distance 0),
+                // matching the sync convention.
+                self.pending_ring_d = if factor == 1 { 0.5 } else { 0.0 };
+            }
 
             // Hard sync: the master's MSB gate rising through 0.5. For a ramp-ish
             // master the crossing fraction recovers the sub-sample edge position;
@@ -946,6 +1144,11 @@ impl PolyModule for SidOscillator {
                     #[allow(clippy::cast_precision_loss)]
                     let frac = (1.0 - t) * factor as f32;
                     let acc24_pre = (self.acc >> ACC_FRAC_BITS) as u32;
+                    // Measure the pre/post pair at the post-flip fold (`ring_high`):
+                    // in the canonical SID topology one master gate feeds both
+                    // sync and ring, so a reset and fold flip coincide and their
+                    // BLEP steps superpose (ring: pre_fold→post_fold at acc_pre;
+                    // sync: acc_pre→acc_post at post_fold).
                     let pre = self.dac_sample(mask, acc24_pre, pw, ring_high, test_active);
                     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
                     {
@@ -969,10 +1172,12 @@ impl PolyModule for SidOscillator {
 
             // TEST zeroes and holds the accumulator (plan §2) — applied before
             // the sample is generated, like the chip's immediate register
-            // write. Any pending sync-reset step is void: the output is frozen.
+            // write. Any pending sync-reset / ring-flip step is void: the
+            // output is frozen.
             if test_active {
                 self.acc = 0;
                 self.pending_sync_step = 0.0;
+                self.pending_ring_step = 0.0;
             }
 
             // MSB gate output, sampled at host rate (pre-advance).
@@ -986,7 +1191,7 @@ impl PolyModule for SidOscillator {
 
                 let mut sample = self.dac_sample(mask, acc24, pw, ring_high, test_active);
                 if !test_active {
-                    sample += Self::pure_waveform_residual(pure, p, dt, pw);
+                    sample += Self::pure_waveform_residual(pure, p, dt, pw, ring_high);
                 }
                 if self.pending_sync_step != 0.0 {
                     // After-side PolyBLEP polynomial r(d) = 2d − d² − 1 at the
@@ -997,6 +1202,14 @@ impl PolyModule for SidOscillator {
                     let d = self.pending_sync_d;
                     sample += self.pending_sync_step * (2.0 * d - d * d - 1.0);
                     self.pending_sync_step = 0.0;
+                }
+                if self.pending_ring_step != 0.0 {
+                    // Same after-side PolyBLEP for the fold-flip step. Applied
+                    // on the first generated sub-sample after the flip; a
+                    // coincident sync step (above) superposes.
+                    let d = self.pending_ring_d;
+                    sample += self.pending_ring_step * (2.0 * d - d * d - 1.0);
+                    self.pending_ring_step = 0.0;
                 }
                 if factor == 1 {
                     self.output_buffer[i] = sample * level;
@@ -1027,6 +1240,31 @@ impl PolyModule for SidOscillator {
             for i in 0..n_samples {
                 self.output_buffer[i] *= level;
             }
+        }
+
+        if self.dc_block {
+            // One-pole DC blocker, y[n] = x[n] - x[n-1] + R*y[n-1] (~16 Hz,
+            // the C64 output coupling): combined 6581 waveforms sit on real
+            // DC (§11), and near-silent bus-collapse combos read as -1 DC
+            // through the DAC. R is derived per block from the live rate.
+            // Deliberately the classic two-state form, NOT the shared
+            // FilterState::dc_blocker (a leaky-integrator HP with a different
+            // curve) — this response is what the §11 A/B gate will measure.
+            let r = (1.0 - std::f32::consts::TAU * DC_BLOCK_HZ / self.sample_rate.as_f32())
+                .clamp(0.0, 1.0);
+            let (mut x1, mut y1) = (self.dc_x1, self.dc_y1);
+            for i in 0..n_samples {
+                let x = self.output_buffer[i];
+                let y = x - x1 + r * y1;
+                x1 = x;
+                y1 = y;
+                self.output_buffer[i] = y;
+            }
+            self.dc_x1 = x1;
+            // Flush subnormals: on DC-flat stretches y decays geometrically
+            // forever, and threads without an FTZ/DAZ guard (offline renders)
+            // would pay the denormal penalty every sample (cf. waveguide.rs).
+            self.dc_y1 = if y1.abs() < 1e-20 { 0.0 } else { y1 };
         }
 
         if let Some(out) = outputs.get_mut(&PortName::OUT) {
@@ -1062,11 +1300,21 @@ impl PolyModule for SidOscillator {
                     }
                     self.quality = q;
                 }
+                SidOscillatorParam::DcBlock(b) => {
+                    // Fresh filter state on re-enable: stale x1/y1 from the
+                    // last active stretch would fire a one-shot pop.
+                    if b && !self.dc_block {
+                        self.dc_x1 = 0.0;
+                        self.dc_y1 = 0.0;
+                    }
+                    self.dc_block = b;
+                }
                 SidOscillatorParam::Level(g) => self.level = g,
                 SidOscillatorParam::SeqLength(n) => {
                     self.seq_length = n.min(SID_SEQ_STEPS as u8);
                 }
                 SidOscillatorParam::SeqRate(n) => self.seq_rate = n.clamp(1, 16),
+                SidOscillatorParam::SeqLoop(b) => self.seq_loop = b,
                 SidOscillatorParam::SeqStep(i, mask) => {
                     if let Some(step) = self.seq_steps.get_mut(usize::from(i)) {
                         *step = mask & 0xF;
@@ -1099,9 +1347,11 @@ impl PolyModule for SidOscillator {
             SidOscillatorParam::Model(SidModel::Mos6581),
             SidOscillatorParam::Clock(SidClock::Pal),
             SidOscillatorParam::Quality(SidQuality::Fast),
+            SidOscillatorParam::DcBlock(true),
             SidOscillatorParam::Level(Gain::UNITY),
             SidOscillatorParam::SeqLength(0),
             SidOscillatorParam::SeqRate(1),
+            SidOscillatorParam::SeqLoop(false),
         ];
         #[allow(clippy::cast_possible_truncation)]
         templates.extend((0..SID_SEQ_STEPS as u8).map(|i| SidOscillatorParam::SeqStep(i, 0)));
@@ -1119,6 +1369,31 @@ impl PolyModule for SidOscillator {
         Some(&mut self.mod_offsets)
     }
 
+    fn set_param_override(&mut self, param: Param) {
+        if let Param::SidOscillator(p) = param {
+            match p {
+                SidOscillatorParam::FreqReg(v) => {
+                    self.override_freq_reg = Some(v.min(SID_FREQ_REG_MAX));
+                }
+                SidOscillatorParam::PulseWidthReg(v) => {
+                    self.override_pw_reg = Some(v.min(SID_PW_REG_MAX));
+                }
+                SidOscillatorParam::Level(g) => self.override_level = Some(g),
+                // Remaining params are excluded from automation either by
+                // kind (bool/enum fail is_automatable) or by modulatable(false)
+                // (the u8 sequence params) — extend the arms above if one is
+                // ever opted in.
+                _ => {}
+            }
+        }
+    }
+
+    fn clear_param_overrides(&mut self) {
+        self.override_freq_reg = None;
+        self.override_pw_reg = None;
+        self.override_level = None;
+    }
+
     fn reset(&mut self) {
         // Power-on state. Note this is the *module* reset (graph (re)build),
         // not note_on — the chip state free-runs across notes (plan §5).
@@ -1128,6 +1403,11 @@ impl PolyModule for SidOscillator {
         self.pending_sync_step = 0.0;
         self.pending_sync_d = 0.0;
         self.prev_test_active = false;
+        self.prev_ring_high = false;
+        self.pending_ring_step = 0.0;
+        self.pending_ring_d = 0.0;
+        self.dc_x1 = 0.0;
+        self.dc_y1 = 0.0;
         self.frame_pos = 0.0;
         self.frame_count = 0;
         self.downsampler.reset();
@@ -1178,6 +1458,18 @@ mod tests {
 
     fn render(sid: &mut SidOscillator, n: usize) -> (Vec<f32>, Vec<f32>) {
         render_with_inputs(sid, n, InputPorts::empty())
+    }
+
+    /// Pulse duty cycle: skip one block of BLEP transients, then the share of
+    /// positive samples over a 2048-sample window (the shared measurement all
+    /// duty assertions use, +/- 0.03 tolerance at the call sites).
+    fn measured_duty(sid: &mut SidOscillator) -> f32 {
+        let _ = render(sid, 512);
+        let (out, _) = render(sid, 2048);
+        #[allow(clippy::cast_precision_loss)]
+        {
+            out.iter().filter(|&&v| v > 0.0).count() as f32 / out.len() as f32
+        }
     }
 
     fn render_with_inputs(
@@ -1273,12 +1565,7 @@ mod tests {
         let duty = |pw: u32| {
             let mut sid = sid_with((false, false, true), 7493);
             sid.set_param(Param::SidOscillator(SidOscillatorParam::PulseWidthReg(pw)));
-            // Skip the first block (BLEP transients), measure the second.
-            let _ = render(&mut sid, 512);
-            let (out, _) = render(&mut sid, 2048);
-            #[allow(clippy::cast_precision_loss)]
-            let high = out.iter().filter(|&&v| v > 0.0).count() as f32 / out.len() as f32;
-            high
+            measured_duty(&mut sid)
         };
         assert!((duty(1024) - 0.75).abs() < 0.03, "pw 1024 → 75% high");
         assert!((duty(2048) - 0.5).abs() < 0.03, "pw 2048 → 50% high");
@@ -1322,6 +1609,9 @@ mod tests {
     #[test]
     fn test_bit_zeroes_and_holds_accumulator() {
         let mut sid = sid_with((false, true, false), 7493);
+        // Chip-state test: bypass the output DC blocker (its decay would
+        // read as movement on the frozen value).
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::DcBlock(false)));
         let _ = render(&mut sid, 300);
         sid.set_param(Param::SidOscillator(SidOscillatorParam::Test(true)));
         let (out, msb) = render(&mut sid, 200);
@@ -1458,6 +1748,9 @@ mod tests {
         let noise_sid = || {
             let mut sid = sid_with((false, false, false), 4000);
             sid.set_param(Param::SidOscillator(SidOscillatorParam::Noise(true)));
+            // Bit-exact sequence comparisons: bypass the DC blocker, whose
+            // state depends on each render's history.
+            sid.set_param(Param::SidOscillator(SidOscillatorParam::DcBlock(false)));
             sid
         };
         let n = 2048;
@@ -1473,6 +1766,7 @@ mod tests {
         let changes = |reg: u32| {
             let mut sid = sid_with((false, false, false), reg);
             sid.set_param(Param::SidOscillator(SidOscillatorParam::Noise(true)));
+            sid.set_param(Param::SidOscillator(SidOscillatorParam::DcBlock(false)));
             let (out, _) = render(&mut sid, n);
             out.windows(2).filter(|w| w[0] != w[1]).count()
         };
@@ -1506,6 +1800,7 @@ mod tests {
         let n = 2048;
         let mut sid = sid_with((false, true, false), 4000);
         sid.set_param(Param::SidOscillator(SidOscillatorParam::Noise(true)));
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::DcBlock(false)));
         // saw+noise → bus conflict pulls the tap bits low.
         let _ = render(&mut sid, n);
         assert_eq!(sid.lfsr & LFSR_TAP_MASK, 0, "taps must be pulled low");
@@ -1516,6 +1811,7 @@ mod tests {
         let (corrupted, _) = render(&mut sid, n);
         let mut fresh = sid_with((false, false, false), 4000);
         fresh.set_param(Param::SidOscillator(SidOscillatorParam::Noise(true)));
+        fresh.set_param(Param::SidOscillator(SidOscillatorParam::DcBlock(false)));
         let (clean, _) = render(&mut fresh, n);
         assert_ne!(corrupted, clean, "lock must leave the LFSR corrupted");
 
@@ -1556,6 +1852,116 @@ mod tests {
         let saw_dry = render_ring((false, true, false), false);
         let saw_ring = render_ring((false, true, false), true);
         assert_eq!(saw_dry, saw_ring, "ring must not touch the sawtooth");
+    }
+
+    /// A constantly-high ring input holds the triangle fold inverted — with
+    /// the linear 8580 DAC the digital fold complement makes `tri_ring ≈ -tri`
+    /// (within one bus LSB), and the BLAMP corner residual must flip sign with
+    /// it: a wrong-sign residual doubles the corner error well past the LSB
+    /// bound. Same 4x path (Quality High) for both renders, DC blocker off.
+    #[test]
+    fn ring_high_triangle_is_negation_within_lsb() {
+        let n = 512;
+        let mut high = AudioBuffer::new(n);
+        for i in 0..n {
+            high[i] = 1.0;
+        }
+        let render_tri = |ring_on: bool| {
+            let mut sid = sid_with((true, false, false), 7493);
+            sid.set_param(Param::SidOscillator(SidOscillatorParam::Model(
+                SidModel::Mos8580,
+            )));
+            sid.set_param(Param::SidOscillator(SidOscillatorParam::Quality(
+                SidQuality::High,
+            )));
+            sid.set_param(Param::SidOscillator(SidOscillatorParam::DcBlock(false)));
+            sid.set_param(Param::SidOscillator(SidOscillatorParam::RingMod(ring_on)));
+            let inputs = [(PortName::intern("ring"), &high)];
+            let (out, _) = render_with_inputs(&mut sid, n, InputPorts::new(&inputs));
+            out
+        };
+        let dry = render_tri(false);
+        let rung = render_tri(true);
+        // Skip the initial fold-flip fade (ring goes 0->high at sample 0).
+        // Bound: one 12-bit bus LSB (2/4095 ~ 4.9e-4) + decimation ripple.
+        // With the residual sign correct the deviation sits exactly on the
+        // one-LSB fold-complement bound (2/4095 ~ 4.9e-4, measured 4.88e-4);
+        // a wrong-sign corner residual doubles it (measured 8.9e-4).
+        let max_dev = dry
+            .iter()
+            .zip(&rung)
+            .skip(16)
+            .map(|(a, b)| (a + b).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_dev < 6.5e-4,
+            "ring-high triangle must negate within one bus LSB: {max_dev}"
+        );
+    }
+
+    /// §11 ring-mod brightness: a ring-modulated triangle escalates to the
+    /// oversampled path (its fold flips are un-BLEPped discontinuities), and
+    /// the flip itself is slewed — the output crosses the fold step over
+    /// several samples instead of jumping in one.
+    #[test]
+    fn ring_mod_fold_flip_is_oversampled_and_slewed() {
+        // Escalation: triangle + RingMod + a connected ring source → 4x;
+        // saw + RingMod stays 1x, and so does an unconnected ring (no source
+        // → no flip can ever occur → don't pay the oversample CPU).
+        let gate = AudioBuffer::new(64);
+        let escalated = |mask: (bool, bool, bool), connect: bool| {
+            let mut sid = sid_with(mask, 7493);
+            sid.set_param(Param::SidOscillator(SidOscillatorParam::RingMod(true)));
+            if connect {
+                let inputs = [(PortName::intern("ring"), &gate)];
+                let _ = render_with_inputs(&mut sid, 64, InputPorts::new(&inputs));
+            } else {
+                let _ = render(&mut sid, 64);
+            }
+            sid.last_factor
+        };
+        assert_eq!(escalated((true, false, false), true), 4, "ring tri → 4x");
+        assert_eq!(
+            escalated((false, true, false), true),
+            1,
+            "ring saw stays 1x"
+        );
+        assert_eq!(
+            escalated((true, false, false), false),
+            1,
+            "unconnected ring must not pay 4x"
+        );
+
+        // Slew: a near-static triangle (tiny freq_reg) with one ring edge.
+        // The fold flip inverts the output; the transition must be spread
+        // over multiple samples, never one full-height jump.
+        let n = 256;
+        let edge = 128;
+        let mut ring = AudioBuffer::new(n);
+        for i in edge..n {
+            ring[i] = 1.0;
+        }
+        let mut sid = sid_with((true, false, false), 3);
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::RingMod(true)));
+        // Advance away from the trough so the flip has real height.
+        let _ = render(&mut sid, 20_000);
+        let inputs = [(PortName::intern("ring"), &ring)];
+        let (out, _) = render_with_inputs(&mut sid, n, InputPorts::new(&inputs));
+
+        let step = (out[edge + 16] - out[edge - 16]).abs();
+        assert!(step > 0.05, "the fold flip must actually move: {step}");
+        // PolyBLEP + half-band decimation band-limit the flip: the largest
+        // single-sample move stays well below the full step height (the old
+        // 1x path jumped the whole step in one sample — the §11 brightness).
+        let max_jump = out[edge - 8..edge + 16]
+            .windows(2)
+            .map(|w| (w[1] - w[0]).abs())
+            .fold(0.0f32, f32::max);
+        assert!(
+            max_jump < step * 0.85,
+            "fold flip must be slewed over several samples: \
+             max jump {max_jump} vs step {step}"
+        );
     }
 
     /// The combined-waveform model differs per chip model: the 6581's bus
@@ -1600,6 +2006,140 @@ mod tests {
                 d_saw_6581.waveform_12bit(MASK_SAWTOOTH, acc24, 2048, false, false),
                 d_saw_8580.waveform_12bit(MASK_SAWTOOTH, acc24, 2048, false, false),
             );
+        }
+    }
+
+    /// Digital-domain stats for a full accumulator cycle of a combined
+    /// waveform: (AC RMS relative to the saw's in dB, fundamental magnitude
+    /// relative to the saw's in dB). The waveform depends only on the top 12
+    /// accumulator bits, so 4096 codes cover one exact cycle.
+    fn combined_stats(model: SidModel, mask: u8, pw: u32) -> (f32, f32) {
+        let mut sid = SidOscillator::new();
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::Model(model)));
+        let n = 4096u32;
+        #[allow(clippy::cast_precision_loss)]
+        let series = |mask: u8| -> Vec<f32> {
+            (0..n)
+                .map(|code| {
+                    sid.waveform_12bit(mask, code << 12, pw, false, false)
+                        .unwrap_or(0) as f32
+                })
+                .collect()
+        };
+        // AC RMS + fundamental (DFT bin 1 over the exact full cycle, where the
+        // mean only lands in bin 0 — so no AC-coupling needed for Goertzel).
+        let stats = |x: &[f32]| -> (f32, f32) {
+            #[allow(clippy::cast_precision_loss)]
+            let len = x.len() as f32;
+            let mean = x.iter().sum::<f32>() / len;
+            let rms = (x.iter().map(|v| (v - mean).powi(2)).sum::<f32>() / len).sqrt();
+            let f0 = crate::math::goertzel_magnitude(x, Hertz::new(1.0), SampleRate::new(len));
+            (rms, f0)
+        };
+        let (saw_rms, saw_f0) = stats(&series(MASK_SAWTOOTH));
+        let (rms, f0) = stats(&series(mask));
+        let db = |x: f32, reference: f32| {
+            if x > 0.0 {
+                20.0 * (x / reference).log10()
+            } else {
+                -120.0
+            }
+        };
+        (db(rms, saw_rms), db(f0, saw_f0))
+    }
+
+    /// 6581 saw+tri (0x31) — §11 gap 1: the real chip kills the fundamental
+    /// (ref RMS ≈ −26 dB vs saw) and leaves energy at high accumulator-bit
+    /// products. The option-C pulldown must reproduce that character, where
+    /// the old option-B baseline kept a full-level spectrum with a strong f0.
+    #[test]
+    fn st_6581_kills_fundamental() {
+        let (rms_db, f0_db) = combined_stats(SidModel::Mos6581, MASK_TRIANGLE | MASK_SAWTOOTH, 0);
+        assert!(
+            (-30.0..=-20.0).contains(&rms_db),
+            "6581 ST RMS must sit ~26 dB below saw, got {rms_db:.1} dB"
+        );
+        assert!(
+            f0_db < -35.0,
+            "6581 ST must kill the fundamental, got {f0_db:.1} dB"
+        );
+        // The 8580 keeps a full-level AND — the models must stay distinct.
+        let (rms_8580, _) = combined_stats(SidModel::Mos8580, MASK_TRIANGLE | MASK_SAWTOOTH, 0);
+        assert!(
+            rms_8580 > -15.0,
+            "8580 ST stays near full level, got {rms_8580:.1} dB"
+        );
+    }
+
+    /// 6581 pulse+saw (0x61) — §11 gap 2: the real chip pulls the bus to
+    /// near-silence (reads unvoiced). The bus-collapse model leaves at most a
+    /// blip at the very top of the ramp. Same for all-three (0x71).
+    #[test]
+    fn ps_6581_collapses_to_near_silence() {
+        for mask in [
+            MASK_PULSE | MASK_SAWTOOTH,
+            MASK_PULSE | MASK_SAWTOOTH | MASK_TRIANGLE,
+        ] {
+            let (rms_db, _) = combined_stats(SidModel::Mos6581, mask, 2048);
+            assert!(
+                rms_db < -25.0,
+                "6581 mask {mask:#x} must collapse to near-silence, got {rms_db:.1} dB"
+            );
+            // 8580: plain AND keeps a loud voiced waveform.
+            let (rms_8580, _) = combined_stats(SidModel::Mos8580, mask, 2048);
+            assert!(rms_8580 > rms_db + 10.0, "8580 must stay voiced");
+        }
+    }
+
+    /// §11: 6581 combined tri+pulse carries real DC (~ −0.22 measured) that
+    /// eats mix headroom — the default-on DC blocker (the C64's AC-coupled
+    /// output) must remove it; bypassing the blocker must expose it.
+    #[test]
+    fn dc_blocker_removes_combined_waveform_dc() {
+        let render_mean = |dc_block: bool| {
+            let mut sid = sid_with((true, false, true), 7493);
+            sid.set_param(Param::SidOscillator(SidOscillatorParam::DcBlock(dc_block)));
+            // Settle past the blocker's initial transient (~16 Hz corner).
+            let _ = render(&mut sid, 24_000);
+            let (out, _) = render(&mut sid, 8192);
+            #[allow(clippy::cast_precision_loss)]
+            {
+                out.iter().sum::<f32>() / out.len() as f32
+            }
+        };
+        let raw = render_mean(false);
+        assert!(
+            raw < -0.05,
+            "6581 tri+pulse must carry negative DC without the blocker: {raw}"
+        );
+        let blocked = render_mean(true);
+        assert!(
+            blocked.abs() < 0.01,
+            "the DC blocker must remove it: {blocked}"
+        );
+    }
+
+    /// 6581 pulse+tri (0x51) — measured at the A/B floor with the mild
+    /// neighbour-support model: the option-C split must keep it byte-exact.
+    #[test]
+    fn pt_6581_keeps_neighbour_support_model() {
+        let sid = {
+            let mut s = SidOscillator::new();
+            s.set_param(Param::SidOscillator(SidOscillatorParam::Model(
+                SidModel::Mos6581,
+            )));
+            s
+        };
+        let mask = MASK_PULSE | MASK_TRIANGLE;
+        for code in 0..4096u32 {
+            let acc = code << 12;
+            let got = sid.waveform_12bit(mask, acc, 1024, false, false);
+            // Oracle composed from the already-tested single-waveform paths:
+            // PT combining is neighbour_support of the plain AND.
+            let single = |m: u8| sid.waveform_12bit(m, acc, 1024, false, false).unwrap_or(0);
+            let expected =
+                SidOscillator::neighbour_support(single(MASK_TRIANGLE) & single(MASK_PULSE));
+            assert_eq!(got, Some(expected), "PT mismatch at code {code:#x}");
         }
     }
 
@@ -1708,6 +2248,8 @@ mod tests {
     #[test]
     fn waveform_sequence_steps_per_frame() {
         let mut sid = sid_with((true, false, false), 7493);
+        // Exact-silence assertions: bypass the DC blocker's decay tail.
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::DcBlock(false)));
         // Program: frame 0 = sawtooth, frame 1+ = silence (mask 0).
         sid.set_param(Param::SidOscillator(SidOscillatorParam::SeqLength(2)));
         sid.set_param(Param::SidOscillator(SidOscillatorParam::SeqStep(0, 0b0010)));
@@ -1736,6 +2278,32 @@ mod tests {
         );
     }
 
+    /// With `SeqLoop` on the program repeats (`idx = pos % len`) for the whole
+    /// note — the canonical SID waveform alternation — instead of holding the
+    /// last step (§11 addendum ask 1).
+    #[test]
+    fn waveform_sequence_loops_when_seq_loop_set() {
+        let mut sid = sid_with((false, false, false), 7493);
+        // Near-silence assertions: bypass the DC blocker's decay tail.
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::DcBlock(false)));
+        // Program: saw, silence — looped it must alternate every frame.
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::SeqLength(2)));
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::SeqStep(0, 0b0010)));
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::SeqStep(1, 0)));
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::SeqLoop(true)));
+
+        // PAL frame at the default 48 kHz test rate = 960 samples.
+        let n = 4800; // 5 frames: saw, off, saw, off, saw
+        let (out, _) = render(&mut sid, n);
+        let energy =
+            |range: std::ops::Range<usize>| -> f32 { out[range].iter().map(|v| v.abs()).sum() };
+        assert!(energy(0..940) > 1.0, "frame 0 plays the saw");
+        assert!(energy(1000..1900) < 0.5, "frame 1 is the silent step");
+        assert!(energy(1940..2860) > 1.0, "frame 2 loops back to the saw");
+        assert!(energy(2920..3820) < 0.5, "frame 3 is silent again");
+        assert!(energy(3860..4780) > 1.0, "frame 4 loops back to the saw");
+    }
+
     /// TEST dominates hard sync: a master edge during a TEST hold must not
     /// inject a BLEP step into the frozen output.
     #[test]
@@ -1746,6 +2314,7 @@ mod tests {
             master[i] = if (i / 32) % 2 == 1 { 1.0 } else { 0.0 };
         }
         let mut sid = sid_with((false, true, false), 7493);
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::DcBlock(false)));
         sid.set_param(Param::SidOscillator(SidOscillatorParam::HardSync(true)));
         let _ = render(&mut sid, 300);
         sid.set_param(Param::SidOscillator(SidOscillatorParam::Test(true)));
@@ -1823,13 +2392,84 @@ mod tests {
             sid.get_param(&Param::SidOscillator(SidOscillatorParam::SeqStep(1, 0))),
             Some(4.0)
         );
-        // Only `level` is a continuous automation/modulation target.
+        // The raw registers are automatable as stepped/sample-hold lanes
+        // (integer automation — plan §3's "general alternative", now the
+        // engine rule) and mod-matrix modulatable; `level` is the continuous
+        // target.
         let automatable: Vec<&str> = desc
             .parameters
             .iter()
             .filter(|p| p.is_automatable())
             .map(|p| p.type_id.as_str())
             .collect();
-        assert_eq!(automatable, ["level"]);
+        assert_eq!(automatable, ["freq_reg", "pw_reg", "level"]);
+        let modulatable: Vec<&str> = desc
+            .parameters
+            .iter()
+            .filter(|p| p.modulatable)
+            .map(|p| p.type_id.as_str())
+            .collect();
+        assert_eq!(modulatable, ["freq_reg", "pw_reg", "level"]);
+    }
+
+    /// The transient-override path (§11 addendum ask 2) is honored by the
+    /// module: the override replaces the base without mutating it, and
+    /// `clear_param_overrides` restores it. With integer automation in the
+    /// engine rule, `pw_reg`/`freq_reg` lanes reach these overrides at render
+    /// time (stepped/sample-hold).
+    #[test]
+    fn param_overrides_reach_registers_without_mutating_base() {
+        // PW: base 3072 (25% duty) overridden to 1024 (75% duty).
+        let duty = measured_duty;
+        let mut sid = sid_with((false, false, true), 7493);
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::PulseWidthReg(
+            3072,
+        )));
+        assert!((duty(&mut sid) - 0.25).abs() < 0.03, "base pw 3072");
+        sid.set_param_override(Param::SidOscillator(SidOscillatorParam::PulseWidthReg(
+            1024,
+        )));
+        assert!((duty(&mut sid) - 0.75).abs() < 0.03, "override pw 1024");
+        // The base param is never mutated by automation (save-path rule).
+        assert_eq!(
+            sid.get_param(&Param::SidOscillator(SidOscillatorParam::PulseWidthReg(0))),
+            Some(3072.0)
+        );
+        sid.clear_param_overrides();
+        assert!(
+            (duty(&mut sid) - 0.25).abs() < 0.03,
+            "cleared -> base again"
+        );
+
+        // FreqReg: override honored while Track Pitch is off (ring/sync-source
+        // pitch lanes), outranked by the played note while it is on.
+        let mut sid = sid_with((false, true, false), 1000);
+        sid.set_param_override(Param::SidOscillator(SidOscillatorParam::FreqReg(7493)));
+        assert_eq!(sid.effective_freq_reg(), 7493);
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::TrackVoicePitch(
+            true,
+        )));
+        sid.set_voice_pitch(Hertz::new(880.0));
+        // PAL: 880 * 16777216 / 985248 = 14985.01… → 14985
+        assert_eq!(sid.effective_freq_reg(), 14985, "played note outranks");
+    }
+
+    /// Mod-matrix offsets land on the registers through the generic store
+    /// (normalized through the descriptor range, added on top of the base).
+    #[test]
+    fn mod_offsets_reach_registers() {
+        let mut sid = sid_with((false, false, true), 7493);
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::PulseWidthReg(
+            1024,
+        )));
+        let desc = sid.descriptor();
+        if let Some(offsets) = sid.mod_offsets_mut() {
+            offsets.populate(&desc);
+        }
+        // +0.25 normalized over the 0..4095 range ≈ +1024 register units:
+        // duty drops from 75% (pw 1024) to ~50% (pw 2048).
+        sid.set_mod_offset("pw_reg", 0.25);
+        let high = measured_duty(&mut sid);
+        assert!((high - 0.5).abs() < 0.03, "pw mod offset must land: {high}");
     }
 }

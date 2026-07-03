@@ -343,3 +343,22 @@ pub fn right_aligned_row<R>(ui: &mut Ui, content: impl FnOnce(&mut Ui) -> R) -> 
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), content)
         .inner
 }
+
+/// A `leading  −  +` stepper: the label followed by two square −/+ buttons as
+/// **plain widgets**, so egui centres all three on the row's shared centreline
+/// like any neighbouring label. (An earlier `egui::AtomLayout` version sat the
+/// label a few px above the centreline — the block's text atom does not centre
+/// against the taller button slots.) Returns the net step: −1, 0, or +1.
+pub fn stepper(ui: &mut Ui, leading: RichText) -> i32 {
+    ui.label(leading);
+    // Square buttons the size of a default interactive line.
+    let slot = Vec2::splat(ui.spacing().interact_size.y);
+    let mut delta = 0;
+    if ui.add(Button::new("-").min_size(slot)).clicked() {
+        delta -= 1;
+    }
+    if ui.add(Button::new("+").min_size(slot)).clicked() {
+        delta += 1;
+    }
+    delta
+}

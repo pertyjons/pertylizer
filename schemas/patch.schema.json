@@ -6997,9 +6997,20 @@
                   "title": "Clock",
                   "type": "string"
                 },
+                "dc_block": {
+                  "default": 1.0,
+                  "description": "One-pole DC blocker (~16 Hz, the C64 output coupling). Combined 6581 waveforms carry real DC that eats mix headroom",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "DC Block",
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
+                },
                 "freq_reg": {
                   "default": 0.0,
-                  "description": "Raw 16-bit SID frequency register — used when Track Pitch is off (e.g. a ring/sync source held at a neighbour voice's pitch)",
+                  "description": "Raw 16-bit SID frequency register — used when Track Pitch is off (e.g. a ring/sync source held at a neighbour voice's pitch). Mod-matrix modulatable",
                   "maximum": 65535.0,
                   "minimum": 0.0,
                   "title": "Freq Reg",
@@ -7057,7 +7068,7 @@
                 },
                 "pw_reg": {
                   "default": 2048.0,
-                  "description": "Raw 12-bit pulse-width register (2048 = square)",
+                  "description": "Raw 12-bit pulse-width register (2048 = square). Mod-matrix modulatable — PWM is a core SID idiom",
                   "maximum": 4095.0,
                   "minimum": 0.0,
                   "title": "PW Reg",
@@ -7096,11 +7107,22 @@
                 },
                 "seq_len": {
                   "default": 0.0,
-                  "description": "Active waveform-sequence steps (0 = off, the static waveform bits apply). Past the last step the sequence holds it",
+                  "description": "Active waveform-sequence steps (0 = off, the static waveform bits apply). Past the last step the sequence holds it, or repeats when Seq Loop is on",
                   "maximum": 16.0,
                   "minimum": 0.0,
                   "title": "Seq Length",
                   "type": "number"
+                },
+                "seq_loop": {
+                  "default": 0.0,
+                  "description": "Loop the waveform sequence for the whole note (off = hold the last step — drum-attack programs)",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Seq Loop",
+                  "type": [
+                    "number",
+                    "boolean"
+                  ]
                 },
                 "seq_rate": {
                   "default": 1.0,

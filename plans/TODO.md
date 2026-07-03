@@ -314,15 +314,14 @@ Residual after the shared-widget-helpers work landed — these are the remaining
 
 ### 4.1 MCP & AI Interaction
 
-- [ ] **`compare_spectra`: guard the empty-bin / silence floor.** Two edge cases make
-  the `log_spectral_distance` scalar untrustworthy (found 2026-07-02 running the SID
-  golden A/B matrix, `plans/sid-oscillator-module.md` §11): (1) at sparse-harmonic
-  pitches (saw @ 440 Hz, 8580) the distance read 26 dB with ZERO centroid/partial
-  error — the whole gap sits in noise-floor bins *between* harmonics; (2) comparing
-  two near-silent sources (6581 pulse+saw combos) explodes to 100+ dB of meaningless
-  noise-vs-noise. Fix idea: ignore log bins that are below a floor (e.g. −80 dBFS) in
-  *both* sources, and add a `floor_limited: bool` (or coverage fraction) to the
-  response so callers know the scalar is dominated by floor bins.
+- [x] **`compare_spectra`: guard the empty-bin / silence floor.** DONE on
+  `feat/sid-fidelity` (2026-07-02): (1) log bins are clamped up to −80 dB
+  (peak-normalised) before diffing and bins floored on BOTH sides are excluded
+  from the RMS — the sparse-harmonic empty-bin inflation is gone; (2) both
+  sources under an absolute −80 dBFS broadband RMS (`EnergyBands::total_rms`)
+  compare as distance 0 with `floor_limited: true` (silence agrees with
+  silence). The response now carries `floor_coverage` (fraction of informative
+  bins) + `floor_limited` (no information at all).
 
 ---
 

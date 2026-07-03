@@ -26,7 +26,7 @@ use crate::types::{
     NoteProcessorInfo, OptimizeResult, ParameterInfo, PatchResourceData, PatternInfo,
     PlacementInfo, ProjectLintEntry, ProjectLintReport, ProjectSchemaInfo, ReturnBusInfo,
     ReturnEffectInfo, SampleInfo, SamplerStateInfo, SetSongResult, SongInfo, TempoPoint, TrackInfo,
-    UiSnapshot,
+    UiSnapshot, VersionInfo,
 };
 
 // === Bridge-level data structures for batch operations ===
@@ -511,6 +511,10 @@ pub trait SynthBridge: Send + Sync + 'static {
 
     /// Get engine-wide status (CPU, voices, meters, transport).
     fn get_engine_status(&self) -> Result<EngineStatus, McpBridgeError>;
+
+    /// Get build/version info for the running application (version, build
+    /// timestamp, git commit/branch/dirty state at build time).
+    fn get_version(&self) -> Result<VersionInfo, McpBridgeError>;
 
     /// Run diagnostics on the graph and report issues.
     fn get_graph_diagnostics(

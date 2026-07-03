@@ -403,8 +403,11 @@ the floor on both models; pulse+tri (the musically dominant combo) at the floor
 everywhere; ALL 8580 combos at/near floor (option B ≈ plain AND is enough for
 the 8580).
 
-**Two real 6581 gaps (both in `combine_bus`, `sid_oscillator.rs:356` — the
-option-C seam):**
+**Two real 6581 gaps (both in `combine_bus` — the option-C seam).
+STATUS: option-C parametric pulldown IMPLEMENTED on `feat/sid-fidelity`
+(per-combination run-length model fitted to these measurements: ST run-of-4
+pulldown → RMS −24.9 dB vs saw with f0 −41 dB; PS/PST full-bus collapse →
+near-silence). Gate = re-run this matrix via the sid-analyzer harness.**
 
 1. **0x31 tri+saw:** the real 6581 *kills the fundamental* — reference RMS is
    ~26 dB below saw (124 vs 2567) with energy at high accumulator-bit products
@@ -420,18 +423,89 @@ option-C seam):**
 **Smaller findings:** ring-mod lands the sideband frequencies exactly
 (988±165 → 1152.3/822.8 measured) but is ~1.4–1.5 kHz **too bright** vs the
 chip's ring-modded triangle (18.9 dB both models) — suspects, in order: the
-fold XOR (`waveform_12bit`, `sid_oscillator.rs:437`) switches direction
-instantaneously at the ring source's MSB edge (the analog chip's transition is
-slewed through the DAC, softening the discontinuity's HF), and the ring path's
-oversampling factor. Repro: `ring_b5_{6581,8580}.sid/.wav` fixtures + a
+fold XOR (`waveform_12bit`) switches direction instantaneously at the ring
+source's MSB edge (the analog chip's transition is slewed through the DAC,
+softening the discontinuity's HF), and the ring path's oversampling factor.
+**STATUS: both suspects addressed on `feat/sid-fidelity`** (live ring-mod
+triangle auto-escalates to the 4x path; the flip is slewed ~20 µs, shared
+with the sync BLEP pair). Repro: `ring_b5_{6581,8580}.sid/.wav` fixtures + a
 tri/RingMod/`Track Pitch` off `sid`×`sid` candidate; gate = this matrix row
 < ~10 dB. Also observed: 6581 combined tri+pulse carries **DC ≈ −0.22** at the
 module output (physically plausible for pulled-down combined levels, and reSID
-is AC-coupled downstream) — consider a one-pole DC blocker on the module output
-or a doc note, it eats mix headroom. ¹ the 8580 saw A4 26 dB is anomalous: zero centroid/partial
+is AC-coupled downstream) — **STATUS: shipped as a `DcBlock` param (one-pole
+~16 Hz, default ON) on `feat/sid-fidelity`.** ¹ the 8580 saw A4 26 dB is anomalous: zero centroid/partial
 error, so the distance lives in the **empty bins between harmonics** (noise
 floor mismatch at sparse-harmonic pitches) — likely a measurement-floor
-artifact, not a waveform error; check before chasing it. ² ³ see gaps above.
+artifact, not a waveform error; check before chasing it (the fix belongs in
+`compare_spectra`'s empty-bin/silence floor guard, TODO §4.1 — not in the
+module). ² ³ see gaps above.
+
+### §11 ring-mod SHOULDER TEXTURE — diagnosed 2026-07-02 (the residual 16.9 dB)
+
+After the 20.8 µs slew, the ring row still reads **16.9 dB, `floor_limited:false`**
+(the floor-guard recalibration confirmed it is NOT a metric artifact — the shelf
+dropped the deep nulls, coverage 0.99→0.59, and the distance held; the energy is
+in real content). A 40-partial A/B (reSID `ring_b5_6581.wav` vs a soloed
+`sid×sid` render, 500–1500 ms) locates it precisely — **NOT "too bright":**
+
+| region | candidate − reSID | reading |
+|---|---:|---|
+| 160 Hz (difference freq) | **+6.0 dB** | too much modulator-fundamental leakage |
+| 493 Hz | +2.5 dB | |
+| 822 / 1153 / 1483 / 1814 / 2144 / 2475 Hz | ±1 dB | **main sidebands MATCH** |
+| 2801 Hz | +8 dB | one anomalous partial |
+| **3.1 – 9 kHz (whole HF sideband run)** | **≈ −4 dB, consistently** | HF sidebands under-produced |
+
+The sideband **positions** are exact (both a 330 Hz = 2·165 comb). The error is a
+**spectral tilt**: too much energy at the lowest sidebands, ~4 dB too little across
+the entire 3–9 kHz run. Summed over ~20 HF bins each ~4 dB off, that tilt is the
+bulk of the 16.9 dB.
+
+**Root cause (code-grounded):** the fold flip is band-limited by a **linear
+crossfade** — `slewed_dac_sample` (`sid_oscillator.rs:547-553`) blends pre- and
+post-flip fold values over `ring_fade`, reset on each ring-MSB edge. Two problems:
+1. A linear crossfade is a **triangular smoothing kernel = a low-pass**; it
+   attenuates the *real* HF sidebands (the −4 dB/3–9 kHz tilt), not just aliasing.
+2. The ring edge is detected at **host rate** (`:1110`, outside the `for k in
+   0..factor` oversample loop) — no sub-sample edge timing. Contrast hard sync
+   (`:1139-1181`), which recovers the crossing fraction and injects a **PolyBLEP**
+   residual — and hard sync sits at the floor (6.8 dB) precisely because of it.
+
+**Proposed fix:** replace the ring crossfade with the hard-sync machinery. The
+fold flip is a step of `post_fold − pre_fold` (the triangle inverts); band-limit it
+with a one-sided **PolyBLEP residual** (reuse the `pending_sync_step`/`poly_blep`
+path — ring and sync flips already coincide in the canonical one-MSB topology,
+`:1160-1162`), and recover the sub-sample edge position the same way (degrading to
+the sample midpoint for a pure 0/1 msb gate). A BLEP removes the aliasing images
+**without** low-passing the real sidebands → lifts the 3–9 kHz run back ~4 dB and
+should collapse the residual toward the hard-sync floor. The +6 dB at 160 Hz
+(difference-frequency leakage) and the 2801 Hz spike are secondary; check whether
+they fall out once the flip is BLEP'd, before modelling them separately.
+Gate: this matrix row < ~8 dB (or `floor_limited`). Candidate refit constant:
+`RING_FADE_SECONDS` is retired by the BLEP (no crossfade), not re-tuned.
+
+**IMPLEMENTED + MEASURED (2026-07-02, uncommitted on `feat/sid-fidelity`).** The
+linear crossfade (`slewed_dac_sample`/`ring_fade`/`RING_FADE_SECONDS`) was removed
+and replaced with a one-sided PolyBLEP on the fold-flip step (`pending_ring_step`/
+`pending_ring_d`, superposing with the coincident sync reset). All 40 sid tests
+pass; clippy clean. Result on the ring row: **HF sidebands (3–9 kHz) lifted a
+uniform ~+0.8–1.0 dB, centroid error halved (104→51 Hz) — but the broadband
+distance held at ~17 dB.** So the step *shape* was NOT the dominant error.
+**Deeper root cause, now pinned:** the ring edge is read at **host rate**
+(`ring_reader.get(i)`, `:1080`, once per host sample, outside the oversample loop)
+because the neighbour's `msb` output buffer is written at host rate (`:~1163`).
+That is **22.7 µs of edge-time jitter** even at 4×, which smears the HF sidebands
+~3 dB; reSID computes the ring XOR at 1 MHz so its edge lands exactly. Hard sync
+escapes this (it's at the floor) because a reset *locks* the carrier to the source
+phase, so timing jitter doesn't accumulate — a free-running ring fold has no such
+lock. **The BLEP is a correct, principled improvement worth keeping (it also drops
+the ad-hoc crossfade), but closing the ring row needs an OVERSAMPLED ring/sync bus:
+the source module must expose its MSB at the 4× rate (or the sub-sample crossing
+fraction), so the fold flip lands on the true edge, not a host-quantised one.**
+That is a cross-module contract change (the `msb` port + reader), out of scope for
+a localized `sid_oscillator.rs` edit — filed as the ring row's real next step.
+Secondary: the +6 dB at 160 Hz (difference-frequency leakage) also survives and is
+plausibly the same jitter; re-check after the oversampled bus.
 
 These measurements are exactly the independently-derived data §7 wants for
 fitting option C without touching reSID arrays: fit the 6581 combine to the
@@ -444,16 +518,21 @@ ring/sync with neighbour sources, chip-noise drums, `pw_reg` lanes — exporter-
 A/B matches the hand-built matrix: saw 5.4 dB, combined 10.7 dB). Two engine asks
 surfaced:
 
-1. **Waveform-sequence loop mode.** `seq_step` playback HOLDS at the last step
-   (`sid_oscillator.rs:311`, `.min(seq_length-1)`) — a one-shot program. But the
-   canonical SID alternation (Nemesis V2 tri↔noise) REPEATS for the whole note, and
-   detected loop bodies can exceed 16 steps only trivially (Nemesis's is a 22-frame
-   body that is pure period-2 after frame 1). Add a **`seq_loop` bool param**
-   (`idx = pos % len` when set); the exporter then replaces its two-LFO amplifier
-   gate + dual-sid graph with one native sequence. Hold stays the right default for
-   drum-attack programs.
-2. **Is `pw_reg` automatable?** The export writes an automation lane on
-   `sid_oscillator.pw_reg` (398 points on the Nemesis PWM voice). It loads and lists
-   (`module:sid:1:pw_reg`) but the descriptor says `modulatable: false` — confirm the
-   lane actually reaches the register at render time; if not, mark `pw_reg` (and
-   `freq_reg`?) automatable. PWM is a core SID idiom, so this lane must be live.
+1. **Waveform-sequence loop mode.** ✅ **SHIPPED on `feat/sid-fidelity`:**
+   `SeqLoop` bool param (`idx = pos % len` when set; hold stays the default for
+   drum-attack programs). The canonical SID alternation (Nemesis V2 tri↔noise)
+   now maps to one native sequence — the exporter can drop its two-LFO amplifier
+   gate + dual-sid graph.
+2. **Is `pw_reg` automatable?** ✅ **YES — fully fixed on `feat/sid-fidelity`
+   (was a silent no-op).** Root causes: the render path
+   (`instrument.rs::apply_module_param_override`) gated lanes on
+   `is_automatable()` = `modulatable && Continuous` (the registers are
+   `Integer`-kind u32), and the module had no `set_param_override` impl (even
+   `level` lanes were no-ops). Fixes: `freq_reg`/`pw_reg` are `modulatable`
+   (mod-matrix PWM/pitch destinations, GUI picker included),
+   `set_param_override`/`clear_param_overrides` implemented, **and the §3
+   "optional general alternative" landed as the engine rule:**
+   `is_automatable` now accepts `Integer` kinds as stepped/sample-hold lanes,
+   so `module:sid:N:pw_reg` lanes reach the register at render time
+   (end-to-end test `sid_pw_reg_lane_reaches_register`). The exporter's
+   398-point Nemesis PWM lane works as authored.

@@ -881,27 +881,28 @@ impl ParameterDescriptor {
 
     /// Whether this parameter may be used as a sequencer automation target.
     ///
-    /// A parameter is automatable iff it is **continuous** and **real-time-safe**
-    /// to change per processing block. This requires [`ParamKind::Continuous`] (a
-    /// ramp-able scalar) and the [`modulatable`] flag (the "RT-safe" signal — module
-    /// authors set it `false` for structural/sizing params such as unison voice
-    /// count, pattern length, or step counts). Integer/bool/enum/reference params
-    /// are excluded by kind: they are discrete selections or counts and cannot be
-    /// ramped. (Before the kind model this used `choices.is_none()`, which excluded
-    /// `enum` but not integer/bool — those were already kept out by `modulatable`,
-    /// so the tightening drops nothing; guarded by a regression test.)
+    /// A parameter is automatable iff it is a **numeric scalar** and
+    /// **real-time-safe** to change per processing block. This requires a
+    /// rampable kind — [`ParamKind::Continuous`] or [`ParamKind::Integer`]
+    /// (integer lanes apply as stepped/sample-hold values through the same
+    /// normalized pipeline; `with_f32` rounds — e.g. the SID chip registers,
+    /// where per-frame PWM lanes are the core idiom) — and the [`modulatable`]
+    /// flag (the "RT-safe" signal — module authors set it `false` for
+    /// structural/sizing params such as unison voice count, pattern length,
+    /// or step counts). Bool/enum/reference params are excluded by kind: they
+    /// are discrete selections, not scalars on a range.
     ///
     /// This is a *descriptor-level eligibility* check: it reports whether a param
     /// is the right *kind* to automate, not whether the owning module currently
-    /// honours an override for it. In the A1/A2 first cut the transient override
-    /// is implemented only for a subset of modules (Filter, Envelope, Amplifier,
-    /// Oscillator); automating an eligible param on any other module is a
-    /// documented no-op until its override is implemented.
+    /// honours an override for it. The transient override is implemented per
+    /// module (Filter, Envelope, Amplifier, Oscillator, SidOscillator, …);
+    /// automating an eligible param on any other module is a documented no-op
+    /// until its override is implemented.
     ///
     /// [`modulatable`]: Self::modulatable
     #[must_use]
     pub fn is_automatable(&self) -> bool {
-        self.modulatable && self.kind == ParamKind::Continuous
+        self.modulatable && matches!(self.kind, ParamKind::Continuous | ParamKind::Integer)
     }
 
     /// Map a normalized value (0-1) to the parameter range.

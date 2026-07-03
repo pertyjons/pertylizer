@@ -165,10 +165,17 @@ pub struct ParameterInfo {
     /// automation target — distinct from the human-readable `name`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub type_id: Option<String>,
-    /// Whether this parameter may be a sequencer automation target (continuous
-    /// + RT-safe, non-enum). Mirrors `ParameterDescriptor::is_automatable`.
+    /// Whether this parameter may be a sequencer automation target (a numeric
+    /// scalar — continuous, or integer applied as a stepped/sample-hold lane —
+    /// and RT-safe). Mirrors `ParameterDescriptor::is_automatable`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub is_automatable: Option<bool>,
+    /// Whether this parameter accepts Mod Matrix routing: the engine's
+    /// per-block offset store registers every `modulatable` param — a
+    /// superset of `is_automatable` (kinds a lane can't drive may still take
+    /// offsets). Mirrors `ParameterDescriptor::modulatable`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub modulatable: Option<bool>,
     /// Value-mapping curve (e.g. "Linear", "Logarithmic", "Exponential"),
     /// mirroring `ParameterDescriptor::response_curve`. Tells a client how the
     /// native value maps onto a 0..1 control so it can place sliders/automation
@@ -229,6 +236,23 @@ pub struct EngineStatus {
     pub is_playing: bool,
     /// Number of instruments.
     pub instrument_count: usize,
+}
+
+/// Build/version information for the running application.
+#[derive(Debug, Clone, Serialize)]
+pub struct VersionInfo {
+    /// Application version (from Cargo.toml, e.g. "0.313.0").
+    pub version: String,
+    /// When the binary was built, as "YYYY-MM-DD HH:MM:SS UTC".
+    pub build_timestamp: String,
+    /// Full commit hash of HEAD at build time, or `None` when the binary was
+    /// built outside a git checkout.
+    pub commit_hash: Option<String>,
+    /// Branch the binary was built from, or `None` outside a git checkout.
+    pub branch: Option<String>,
+    /// Whether the working tree had uncommitted changes at build time, or
+    /// `None` when git state was unavailable.
+    pub dirty: Option<bool>,
 }
 
 /// A diagnostic issue found in the graph.
@@ -2043,6 +2067,16 @@ pub struct CompareSpectraResult {
     /// `true` when exactly one spectrum is voiced — a pitched-vs-noise mismatch;
     /// partial matching is skipped and `log_spectral_distance` is penalised.
     pub voicing_mismatch: bool,
+    /// Fraction (0..1) of compared log bins carrying timbral information —
+    /// above a −50 dB peak-relative shelf on at least one side. Shared nulls
+    /// (inter-partial gaps, resampler leakage) are excluded from the distance;
+    /// a sparse or collapsed spectrum reports a low value.
+    pub floor_coverage: f32,
+    /// `true` when `log_spectral_distance` should not be trusted: both sources
+    /// near-floor (distance forced to 0 — the character agrees), or under ~15%
+    /// of the bins carry information. Read `missing/extra_partials` +
+    /// `centroid_delta_hz` instead.
+    pub floor_limited: bool,
     /// Whether the target (a) was voiced.
     pub target_voiced: bool,
     /// Whether the candidate (b) was voiced.

@@ -28,7 +28,7 @@ pub use controls::{
     CaptionTone, DialogButton, ICON_BUTTON_SIZE, caption, clickable_label, danger_button,
     dialog_button_row, dim_label, empty_state, enum_combo, icon_button, labeled_row,
     log_suffix_slider, modal_window, paint_marker_corners, right_aligned_row, section_header,
-    strong_label, suffix_slider, time_drag_value, toggle_button, toggle_button_colored,
+    stepper, strong_label, suffix_slider, time_drag_value, toggle_button, toggle_button_colored,
     unit_drag_value,
 };
 pub use envelope::{EnvelopeChanges, EnvelopeEditor, draw_adsr_curve};

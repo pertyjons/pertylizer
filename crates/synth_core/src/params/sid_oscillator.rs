@@ -244,12 +244,21 @@ pub enum SidOscillatorParam {
     Clock(SidClock),
     /// Clock-domain conversion quality.
     Quality(SidQuality),
+    /// One-pole DC blocker (~16 Hz, the C64's output coupling) on the audio
+    /// output. Default on: combined 6581 waveforms carry real DC (measured
+    /// ≈ −0.22 for tri+pulse) that eats mix headroom; the chip is AC-coupled
+    /// downstream, and so is reSID's reference path.
+    DcBlock(bool),
     /// Output level (0.0 to 1.0) — the one continuously automatable param.
     Level(Gain),
     /// Number of active waveform-sequence steps (0 = sequence off, static mask).
     SeqLength(u8),
     /// Driver frames per sequence step (1 = one step per 50/60 Hz frame).
     SeqRate(u8),
+    /// Loop the waveform-mask sequence (`idx = pos % len`) instead of holding
+    /// the last step — the canonical SID alternation (e.g. tri↔noise) repeats
+    /// for the whole note; hold stays the default for drum-attack programs.
+    SeqLoop(bool),
     /// Waveform-mask sequence step: (step index, 4-bit mask 0-15).
     /// Bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise.
     SeqStep(u8, u8),
@@ -280,9 +289,11 @@ impl SidOscillatorParam {
             Self::Model(_) => "Model",
             Self::Clock(_) => "Clock",
             Self::Quality(_) => "Quality",
+            Self::DcBlock(_) => "DC Block",
             Self::Level(_) => "Level",
             Self::SeqLength(_) => "Seq Length",
             Self::SeqRate(_) => "Seq Rate",
+            Self::SeqLoop(_) => "Seq Loop",
             Self::SeqStep(..) => "Seq Step",
         }
     }
@@ -297,7 +308,9 @@ impl SidOscillatorParam {
             | Self::TrackVoicePitch(b)
             | Self::Test(b)
             | Self::RingMod(b)
-            | Self::HardSync(b) => {
+            | Self::HardSync(b)
+            | Self::DcBlock(b)
+            | Self::SeqLoop(b) => {
                 if *b {
                     1.0
                 } else {
@@ -343,11 +356,13 @@ impl SidOscillatorParam {
             Self::Quality(_) => {
                 Self::Quality(SidQuality::from_index(value.round().max(0.0) as usize))
             }
+            Self::DcBlock(_) => Self::DcBlock(as_bool),
             Self::Level(_) => Self::Level(Gain::new(value)),
             Self::SeqLength(_) => {
                 Self::SeqLength(value.round().clamp(0.0, SID_SEQ_STEPS as f32) as u8)
             }
             Self::SeqRate(_) => Self::SeqRate(value.round().clamp(1.0, 16.0) as u8),
+            Self::SeqLoop(_) => Self::SeqLoop(as_bool),
             Self::SeqStep(i, _) => Self::SeqStep(*i, value.round().clamp(0.0, 15.0) as u8),
         }
     }

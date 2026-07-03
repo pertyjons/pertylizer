@@ -32,7 +32,7 @@ use synth_mcp::types::{
     NoteInfo, NoteProcessorInfo, OptimizeResult, ParamTypeInfo, ParameterInfo, PatchModuleInfo,
     PatchParamInfo, PatchParamValue, PatchResourceData, PatternInfo, PlacementInfo,
     ProjectSchemaInfo, RebuildInstrumentResult, RenderToWavResult, SetSongResult, SongInfo,
-    TempoPoint, TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot,
+    TempoPoint, TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot, VersionInfo,
 };
 
 use crate::mcp_shared::McpSharedState;
@@ -289,6 +289,7 @@ impl AppSynthBridge {
                 .map(|c| c.iter().map(|ch| ch.name.clone()).collect()),
             type_id: Some(pd.type_id.clone()),
             is_automatable: Some(pd.is_automatable()),
+            modulatable: Some(pd.modulatable),
             response_curve: Some(format!("{:?}", pd.response_curve)),
             value_kind: Some(pd.kind),
         };
@@ -598,6 +599,7 @@ impl SynthBridge for AppSynthBridge {
                                 }),
                                 type_id: pd.map(|pd| pd.type_id.clone()),
                                 is_automatable: pd.map(|pd| pd.is_automatable()),
+                                modulatable: pd.map(|pd| pd.modulatable),
                                 response_curve: pd.map(|pd| format!("{:?}", pd.response_curve)),
                                 value_kind: pd.map(|pd| pd.kind),
                             }
@@ -748,6 +750,22 @@ impl SynthBridge for AppSynthBridge {
             tempo: state.transport.get_tempo().as_f32(),
             is_playing: state.transport.is_playing(),
             instrument_count: state.instrument_snapshots.read().len(),
+        })
+    }
+
+    fn get_version(&self) -> Result<VersionInfo, McpBridgeError> {
+        // Empty strings mean "built without git state" (see build.rs).
+        let non_empty = |s: &'static str| (!s.is_empty()).then(|| s.to_string());
+        Ok(VersionInfo {
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            build_timestamp: env!("BUILD_TIMESTAMP").to_string(),
+            commit_hash: non_empty(env!("GIT_COMMIT_HASH")),
+            branch: non_empty(env!("GIT_BRANCH")),
+            dirty: match env!("GIT_DIRTY") {
+                "1" => Some(true),
+                "0" => Some(false),
+                _ => None,
+            },
         })
     }
 
@@ -1295,6 +1313,7 @@ impl SynthBridge for AppSynthBridge {
                     .map(|c| c.iter().map(|ch| ch.name.clone()).collect()),
                 type_id: Some(pd.type_id.clone()),
                 is_automatable: Some(pd.is_automatable()),
+                modulatable: Some(pd.modulatable),
                 response_curve: Some(format!("{:?}", pd.response_curve)),
                 value_kind: Some(pd.kind),
             });
@@ -1309,6 +1328,7 @@ impl SynthBridge for AppSynthBridge {
             choices: None,
             type_id: None,
             is_automatable: None,
+            modulatable: None,
             response_curve: None,
             value_kind: None,
         })
@@ -7462,7 +7482,8 @@ fn build_module_automation_target(
     }
 
     // Validate against the allowlist: the param must exist on this module type
-    // and be automatable (continuous + RT-safe, non-choice).
+    // and be automatable (numeric scalar — continuous or stepped integer —
+    // and RT-safe; non-choice).
     let descriptor = crate::module_factory::get_descriptor(module_type).ok_or_else(|| {
         McpBridgeError::Other(format!("no descriptor for module type '{prefix}'"))
     })?;
@@ -10819,6 +10840,8 @@ pub fn compare_spectra_impl(
         flatness_delta: dist.flatness_delta.0,
         inharmonicity_delta: dist.inharmonicity_delta.0,
         voicing_mismatch: dist.voicing_mismatch,
+        floor_coverage: dist.floor_coverage,
+        floor_limited: dist.floor_limited,
         target_voiced: a.voiced,
         candidate_voiced: b.voiced,
         missing_partials: dist.missing_partials.iter().map(to_diff).collect(),
@@ -13595,6 +13618,28 @@ mod mcp_helper_tests {
         );
         // The build version paired with the schema is non-empty.
         assert!(!env!("CARGO_PKG_VERSION").is_empty());
+    }
+
+    /// The build-time env vars behind `get_version` are well-formed: the
+    /// timestamp is a full "YYYY-MM-DD HH:MM:SS UTC", and the git fields are
+    /// either absent together or a 40-hex hash with a branch and a 0/1 dirty
+    /// flag (dev builds always run inside the repo, so expect the latter).
+    #[test]
+    fn version_info_build_env_is_well_formed() {
+        let ts = env!("BUILD_TIMESTAMP");
+        assert_eq!(ts.len(), "YYYY-MM-DD HH:MM:SS UTC".len(), "timestamp: {ts}");
+        assert!(ts.ends_with(" UTC"), "timestamp: {ts}");
+
+        let hash = env!("GIT_COMMIT_HASH");
+        if hash.is_empty() {
+            assert!(env!("GIT_BRANCH").is_empty());
+            assert!(env!("GIT_DIRTY").is_empty());
+        } else {
+            assert_eq!(hash.len(), 40, "commit hash: {hash}");
+            assert!(hash.chars().all(|c| c.is_ascii_hexdigit()));
+            assert!(!env!("GIT_BRANCH").is_empty());
+            assert!(matches!(env!("GIT_DIRTY"), "0" | "1"));
+        }
     }
 
     #[test]

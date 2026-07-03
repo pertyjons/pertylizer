@@ -3356,6 +3356,11 @@ impl PatchEditor {
         self.prev_mod_matrix_attachments.clear();
         let analysis = PatchAnalysis::from_panels(&self.panels, &mut self.source_ref_cache);
         self.realign_mod_matrix_attachments_if_changed(&analysis);
+
+        // Reframe the camera on the next show() — same as the view controls'
+        // "Fit" — so the freshly laid-out patch is fully in view instead of
+        // the camera lingering wherever the user last panned/zoomed.
+        self.scene_rect = None;
     }
 }
 

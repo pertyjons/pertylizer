@@ -46,6 +46,33 @@ const LOG_BINS_BOTTOM_HZ: f32 = 20.0;
 /// differing sample rates (a 32 kHz reference vs a 44.1 kHz candidate).
 const LOG_BINS_TOP_HZ: f32 = 16_000.0;
 
+/// Digital-floor clamp for `log_spectral_distance`: a bin is clamped *up* to
+/// this before diffing, so a −70 dB reference floor vs a −120 dB digital floor
+/// reads as a 10 dB difference, not 50.
+const LSD_FLOOR_DB: f32 = -80.0;
+/// Peak-relative shelf below which a bin carries no timbral information: bins
+/// this far below BOTH sources' own peaks are shared nulls (inter-partial gaps,
+/// resampler leakage) and are excluded from the RMS and from `floor_coverage`.
+/// −50 dB ≈ "inaudible relative to the loudest partial" — deep enough to keep
+/// real low harmonics, shallow enough to drop the nulls that otherwise dominate
+/// the scalar at sparse-harmonic pitches (calibration plan, TODO §4.1).
+const LSD_SHELF_DB: f32 = -50.0;
+/// Live-bin fraction below which the distance rests on too few informative bins
+/// to trust as a broadband scalar — the caller should read `missing/extra
+/// partials` + `centroid_delta` instead (`floor_limited`).
+const FLOOR_COVERAGE_MIN: f32 = 0.15;
+/// Absolute broadband RMS below which a frame is unconditionally silent for
+/// [`compare`]'s guard (≈ −80 dBFS). Peak-normalising a near-silent frame
+/// amplifies its noise floor to full scale, so silence-vs-silence otherwise
+/// explodes into 100+ dB of meaningless noise-vs-noise distance.
+const SILENCE_RMS: f32 = 1e-4;
+/// Broadband RMS at/below which a voice is *effectively* silent (≈ −50 dBFS):
+/// the DAC/resampler residue a chip leaves when it collapses a voice. Two
+/// sources both under this agree (distance 0, `floor_limited`), and a frame
+/// under it never reads `voiced` (so it can't arm the voicing-mismatch penalty
+/// on near-silence). Must stay below the quietest musically-real sustain.
+const NEAR_FLOOR_RMS: f32 = 3.0e-3;
+
 /// Lowest fundamental the pitch tracker will consider (Hz) when no hint is set.
 const F0_SEARCH_MIN_HZ: f32 = 40.0;
 /// Highest fundamental the pitch tracker will consider (Hz) when no hint is set.
@@ -144,6 +171,10 @@ pub struct SpectrumResult {
     /// Optional log-spaced magnitude bins (dB, peak-normalised); empty when
     /// `opts.log_bins == 0`.
     pub log_bins: Vec<Decibels>,
+    /// Broadband time-domain RMS of the analysed (DC-removed) frame — the
+    /// absolute-level signal [`compare`]'s silence guard needs, since the log
+    /// bins and partials are peak-normalised.
+    pub frame_rms: f32,
 }
 
 impl SpectrumResult {
@@ -160,6 +191,7 @@ impl SpectrumResult {
             odd_even_ratio: 0.0,
             bands,
             log_bins: Vec::new(),
+            frame_rms: 0.0,
         }
     }
 }
@@ -209,6 +241,8 @@ fn analyze_with_workspace(
     if energy <= MAG_FLOOR {
         return SpectrumResult::empty(bands);
     }
+    #[allow(clippy::cast_precision_loss)]
+    let frame_rms = (energy / demeaned.len() as f32).sqrt();
     let signal = &demeaned[..];
 
     let fft_size = workspace.fft_size();
@@ -225,9 +259,14 @@ fn analyze_with_workspace(
     let centroid = spectral_centroid(&mags, bin_hz);
     let rolloff = spectral_rolloff(&mags, bin_hz, 0.85);
 
-    // Pitch via NSDF on the time-domain frame.
+    // Pitch via NSDF on the time-domain frame. A near-silent frame never reads
+    // voiced: NSDF finds a spurious "pitch" in DAC/resampler noise, which would
+    // otherwise arm `compare`'s +60 dB voicing-mismatch penalty against a
+    // collapsed voice (calibration plan, TODO §4.1).
     let (f0, clarity) = detect_f0(signal, sample_rate, opts.f0_hint);
-    let voiced = clarity >= VOICED_NSDF_THRESHOLD && flatness <= VOICED_FLATNESS_THRESHOLD;
+    let voiced = frame_rms > NEAR_FLOOR_RMS
+        && clarity >= VOICED_NSDF_THRESHOLD
+        && flatness <= VOICED_FLATNESS_THRESHOLD;
     let f0 = if voiced { f0 } else { None };
 
     // Peak picking → parabolic refine (log magnitude) → harmonic tagging.
@@ -273,6 +312,7 @@ fn analyze_with_workspace(
         odd_even_ratio,
         bands,
         log_bins,
+        frame_rms,
     }
 }
 
@@ -692,6 +732,17 @@ pub struct SpectrumDistance {
     /// `true` when exactly one frame is voiced — a pitched-vs-noise mismatch;
     /// partial matching is skipped and the distance is penalised.
     pub voicing_mismatch: bool,
+    /// Fraction of compared log bins that carry timbral information — above the
+    /// peak-relative shelf on at least one side (0..1). The distance is computed
+    /// over exactly these bins; a sparse or collapsed spectrum reports a low
+    /// value.
+    pub floor_coverage: f32,
+    /// `true` when the distance scalar should not be trusted: both sources
+    /// near-floor (distance forced to 0 — the *character* agrees), or the
+    /// informative-bin fraction is below [`FLOOR_COVERAGE_MIN`] so the scalar
+    /// rests on a handful of bins. Read `missing/extra_partials` +
+    /// `centroid_delta` instead.
+    pub floor_limited: bool,
 }
 
 /// Tolerance for matching a candidate partial to a target partial.
@@ -701,14 +752,42 @@ const VOICING_MISMATCH_PENALTY_DB: f32 = 60.0;
 
 /// Compare two spectra. Handles the three voicing cases (both voiced → full
 /// partial diff; one voiced → severe penalty, no partial match; both unvoiced →
-/// distance from the log bins only).
+/// distance from the log bins only), and guards the empty-bin / silence floor
+/// (TODO §4.1): near-silent-vs-near-silent reads as distance 0 with
+/// `floor_limited` set, and floor-vs-floor bins never inflate the scalar.
 #[must_use]
 pub fn compare(target: &SpectrumResult, candidate: &SpectrumResult) -> SpectrumDistance {
-    let lsd = log_spectral_distance(&target.log_bins, &candidate.log_bins);
     let centroid_delta = Hertz::new(candidate.centroid.0 - target.centroid.0);
     let flatness_delta = NormalizedValue::new_unchecked(candidate.flatness.0 - target.flatness.0);
     let inharmonicity_delta =
         NormalizedValue::new_unchecked(candidate.inharmonicity.0 - target.inharmonicity.0);
+
+    // Silence guard: peak-normalised log bins amplify a near-silent frame's
+    // noise floor to full scale, so two effectively-silent sources would read
+    // as 100+ dB of noise-vs-noise. Absolute level says they *agree*. The
+    // `NEAR_FLOOR_RMS` net additionally catches a voice a chip has collapsed to
+    // DAC/resampler residue (≈ −50 dBFS), which sits above the −80 dBFS
+    // `SILENCE_RMS` floor but is still perceptually silent (calibration plan,
+    // TODO §4.1). Requiring BOTH sides near-floor keeps a soft-but-real note
+    // vs a loud one out of this early-out.
+    let both_silent = target.frame_rms <= SILENCE_RMS && candidate.frame_rms <= SILENCE_RMS;
+    let both_near_floor =
+        target.frame_rms <= NEAR_FLOOR_RMS && candidate.frame_rms <= NEAR_FLOOR_RMS;
+    if both_silent || both_near_floor {
+        return SpectrumDistance {
+            log_spectral_distance: 0.0,
+            centroid_delta,
+            flatness_delta,
+            inharmonicity_delta,
+            missing_partials: Vec::new(),
+            extra_partials: Vec::new(),
+            voicing_mismatch: false,
+            floor_coverage: 0.0,
+            floor_limited: true,
+        };
+    }
+
+    let (lsd, floor_coverage) = log_spectral_distance(&target.log_bins, &candidate.log_bins);
 
     let voicing_mismatch = target.voiced != candidate.voiced;
 
@@ -734,22 +813,41 @@ pub fn compare(target: &SpectrumResult, candidate: &SpectrumResult) -> SpectrumD
         missing_partials: missing,
         extra_partials: extra,
         voicing_mismatch,
+        floor_coverage,
+        floor_limited: floor_coverage < FLOOR_COVERAGE_MIN,
     }
 }
 
-/// RMS dB difference over the shared (min-length) prefix of two log-bin sets.
-/// 0 when either side is empty.
-fn log_spectral_distance(a: &[Decibels], b: &[Decibels]) -> f32 {
+/// RMS dB difference over the shared (min-length) prefix of two peak-normalised
+/// log-bin sets. Each bin is clamped up to [`LSD_FLOOR_DB`] before diffing (a
+/// −70 dB reference floor vs a −120 dB digital floor is a 10 dB difference, not
+/// 50), and a bin that is below [`LSD_SHELF_DB`] on BOTH sides is a shared null
+/// (inter-partial gap / resampler leakage) — excluded from both the RMS and the
+/// coverage count, since it carries no timbral information. Returns `(distance,
+/// live-bin coverage 0..1)`; `(0, 0)` when either side is empty or no bin is
+/// live.
+fn log_spectral_distance(a: &[Decibels], b: &[Decibels]) -> (f32, f32) {
     let n = a.len().min(b.len());
     if n == 0 {
-        return 0.0;
+        return (0.0, 0.0);
     }
     let mut sum = 0.0f64;
+    let mut live = 0usize;
     for i in 0..n {
-        let d = f64::from(a[i].0 - b[i].0);
+        let av = a[i].0.max(LSD_FLOOR_DB);
+        let bv = b[i].0.max(LSD_FLOOR_DB);
+        if av <= LSD_SHELF_DB && bv <= LSD_SHELF_DB {
+            continue; // shared null: ≥ |LSD_SHELF_DB| below both peaks
+        }
+        live += 1;
+        let d = f64::from(av - bv);
         sum += d * d;
     }
-    (sum / n as f64).sqrt() as f32
+    if live == 0 {
+        return (0.0, 0.0);
+    }
+    #[allow(clippy::cast_precision_loss)]
+    ((sum / live as f64).sqrt() as f32, live as f32 / n as f32)
 }
 
 /// Match each target partial to the nearest candidate partial within
@@ -1068,6 +1166,191 @@ mod tests {
         assert!(
             d.missing_partials.is_empty(),
             "no partial matching across a voicing mismatch"
+        );
+    }
+
+    /// TODO §4.1 case 2: two near-silent sources must compare as distance 0
+    /// with `floor_limited` set — peak-normalising their noise floors would
+    /// otherwise explode into meaningless noise-vs-noise dB.
+    #[test]
+    fn compare_near_silence_is_floor_limited_zero() {
+        let opts = SpectrumOpts {
+            log_bins: 64,
+            ..Default::default()
+        };
+        // Two different, tiny noise floors (~ −90 dBFS).
+        let tiny = |seed: u32| -> Vec<f32> {
+            let mut x = seed;
+            (0..16_384)
+                .map(|_| {
+                    x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                    ((x >> 8) as f32 / (1u32 << 24) as f32 * 2.0 - 1.0) * 3.0e-5
+                })
+                .collect()
+        };
+        let a = analyze_spectrum(&tiny(0xDEAD_BEEF), SR, opts);
+        let b = analyze_spectrum(&tiny(0x1234_5678), SR, opts);
+        let d = compare(&a, &b);
+        assert!(d.floor_limited, "near-silence must be flagged");
+        assert!(
+            d.log_spectral_distance.abs() < f32::EPSILON,
+            "silence-vs-silence must read 0, got {}",
+            d.log_spectral_distance
+        );
+        assert!(!d.voicing_mismatch, "silence agrees with silence");
+    }
+
+    /// TODO §4.1 case 1: bins below both sources' peaks by ≥ the shelf are
+    /// excluded, so a broadband tone against the same tone with a slightly
+    /// different noise floor stays near the true (small) distance instead of
+    /// being dominated by the noise-floor mismatch, and stays *unflagged*
+    /// because its harmonics fill the band.
+    #[test]
+    fn compare_ignores_shared_floor_bins() {
+        let opts = SpectrumOpts {
+            log_bins: 64,
+            ..Default::default()
+        };
+        // A harmonic-rich saw (fills the band up to ~14 kHz), like a real SID
+        // saw — the healthy "broadband tone stays unflagged" reference.
+        let clean = saw(440.0, 16_384, 32);
+        // Same tone + a tiny broadband floor (~ −85 dB below the saw).
+        let mut x = 0xCAFE_F00Du32;
+        let noisy: Vec<f32> = clean
+            .iter()
+            .map(|&v| {
+                x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                v + ((x >> 8) as f32 / (1u32 << 24) as f32 * 2.0 - 1.0) * 5.0e-5
+            })
+            .collect();
+        let a = analyze_spectrum(&clean, SR, opts);
+        let b = analyze_spectrum(&noisy, SR, opts);
+        let d = compare(&a, &b);
+        assert!(
+            d.log_spectral_distance < 6.0,
+            "identical harmonics must stay near the floor-guarded distance, got {}",
+            d.log_spectral_distance
+        );
+        assert!(
+            d.floor_coverage > FLOOR_COVERAGE_MIN,
+            "a broadband tone's harmonics fill the band: coverage {}",
+            d.floor_coverage
+        );
+        assert!(
+            !d.floor_limited,
+            "a real broadband tone is not floor-limited"
+        );
+    }
+
+    /// A minimal voiced, non-silent [`SpectrumResult`] with hand-set log bins
+    /// (dB, peak-normalised) — exercises the floor-guard/shelf logic in
+    /// [`compare`] deterministically, without FFT-level calibration.
+    fn spectrum_from_bins(log_bins_db: &[f32], frame_rms: f32, voiced: bool) -> SpectrumResult {
+        SpectrumResult {
+            f0: voiced.then(|| Hertz::new(1000.0)),
+            voiced,
+            partials: Vec::new(),
+            centroid: Hertz::new(1000.0),
+            flatness: NormalizedValue::new_unchecked(0.2),
+            rolloff: Hertz::new(2000.0),
+            inharmonicity: NormalizedValue::new_unchecked(0.0),
+            odd_even_ratio: 1.0,
+            bands: EnergyBands {
+                sub: 0.0,
+                low: 0.0,
+                mid: 0.0,
+                high: 0.0,
+            },
+            log_bins: log_bins_db.iter().map(|&d| Decibels::new(d)).collect(),
+            frame_rms,
+        }
+    }
+
+    /// Calibration plan case 1 (the ring-mod row): two spectra whose partials
+    /// match but whose inter-partial nulls differ by 15 dB — *below* the
+    /// peak-relative shelf on both sides — collapse toward the matched-partial
+    /// distance and self-report `floor_limited`. Above the shelf the same 15 dB
+    /// difference is audible content and drives a real, unflagged distance.
+    #[test]
+    fn compare_sparse_matching_partials_below_shelf_is_low_distance() {
+        let n = 64;
+        let partial_bins = [10usize, 22, 38];
+        // Sub-shelf nulls (−60 vs −75): a shared, information-free floor.
+        let mut a = vec![-60.0f32; n];
+        let mut b = vec![-75.0f32; n];
+        for &k in &partial_bins {
+            a[k] = 0.0;
+            b[k] = 0.0;
+        }
+        let d = compare(
+            &spectrum_from_bins(&a, 0.08, true),
+            &spectrum_from_bins(&b, 0.08, true),
+        );
+        assert!(
+            d.log_spectral_distance < 6.0,
+            "sub-shelf nulls must not inflate the distance, got {}",
+            d.log_spectral_distance
+        );
+        assert!(
+            d.floor_limited && d.floor_coverage < FLOOR_COVERAGE_MIN,
+            "a 3-partial spectrum is floor-limited: coverage {}",
+            d.floor_coverage
+        );
+
+        // Contrast: lift both floors above the shelf (−30 vs −45). Now the
+        // 15 dB gap is real content — kept, high distance, not flagged.
+        let a2: Vec<f32> = a
+            .iter()
+            .map(|&v| if v < -50.0 { -30.0 } else { v })
+            .collect();
+        let b2: Vec<f32> = b
+            .iter()
+            .map(|&v| if v < -50.0 { -45.0 } else { v })
+            .collect();
+        let d2 = compare(
+            &spectrum_from_bins(&a2, 0.08, true),
+            &spectrum_from_bins(&b2, 0.08, true),
+        );
+        assert!(
+            d2.log_spectral_distance > 10.0,
+            "above-shelf level differences must count, got {}",
+            d2.log_spectral_distance
+        );
+        assert!(!d2.floor_limited, "a filled spectrum is not floor-limited");
+    }
+
+    /// Calibration plan case 2 (the 0x61 collapsed-voice row): two sources both
+    /// below `NEAR_FLOOR_RMS` (but above the absolute `SILENCE_RMS`) agree —
+    /// distance 0, `floor_limited`, and NO voicing-mismatch penalty even when
+    /// one stale-reads voiced.
+    #[test]
+    fn compare_both_near_floor_is_floor_limited_zero() {
+        // frame_rms 2e-3 ∈ (SILENCE_RMS 1e-4, NEAR_FLOOR_RMS 3e-3).
+        let target = spectrum_from_bins(&vec![-40.0; 64], 2.0e-3, true);
+        let candidate = spectrum_from_bins(&vec![-60.0; 64], 2.0e-3, false);
+        let d = compare(&target, &candidate);
+        assert_eq!(d.log_spectral_distance, 0.0, "both near-floor → distance 0");
+        assert!(d.floor_limited, "near-floor pair must be flagged");
+        assert!(
+            !d.voicing_mismatch,
+            "near-floor must not arm the voicing penalty"
+        );
+    }
+
+    /// Calibration plan case 3 (voicing gated on level): a clean sine is voiced
+    /// at full scale, but the same sine near the floor is NOT — otherwise its
+    /// NSDF clarity would arm `compare`'s voicing-mismatch penalty on a
+    /// perceptually-silent frame.
+    #[test]
+    fn near_floor_sine_is_not_voiced() {
+        let loud = analyze_spectrum(&sine(440.0, 16_384, 0.8), SR, SpectrumOpts::default());
+        assert!(loud.voiced, "a full-scale sine is voiced");
+        // amp 1.5e-3 → frame_rms ≈ 1.06e-3 < NEAR_FLOOR_RMS.
+        let quiet = analyze_spectrum(&sine(440.0, 16_384, 1.5e-3), SR, SpectrumOpts::default());
+        assert!(
+            !quiet.voiced,
+            "a near-floor sine must not read voiced (frame_rms {})",
+            quiet.frame_rms
         );
     }
 

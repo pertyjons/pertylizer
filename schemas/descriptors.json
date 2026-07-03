@@ -6224,12 +6224,24 @@
           "unit": "none",
           "value_kind": "enum"
         },
-        "freq_reg": {
-          "default": 0.0,
-          "description": "Raw 16-bit SID frequency register — used when Track Pitch is off (e.g. a ring/sync source held at a neighbour voice's pitch)",
-          "max": 65535.0,
+        "dc_block": {
+          "default": 1.0,
+          "description": "One-pole DC blocker (~16 Hz, the C64 output coupling). Combined 6581 waveforms carry real DC that eats mix headroom",
+          "max": 1.0,
           "min": 0.0,
           "modulatable": false,
+          "name": "DC Block",
+          "response_curve": "linear",
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
+        },
+        "freq_reg": {
+          "default": 0.0,
+          "description": "Raw 16-bit SID frequency register — used when Track Pitch is off (e.g. a ring/sync source held at a neighbour voice's pitch). Mod-matrix modulatable",
+          "max": 65535.0,
+          "min": 0.0,
+          "modulatable": true,
           "name": "Freq Reg",
           "response_curve": "linear",
           "type": "integer",
@@ -6306,10 +6318,10 @@
         },
         "pw_reg": {
           "default": 2048.0,
-          "description": "Raw 12-bit pulse-width register (2048 = square)",
+          "description": "Raw 12-bit pulse-width register (2048 = square). Mod-matrix modulatable — PWM is a core SID idiom",
           "max": 4095.0,
           "min": 0.0,
-          "modulatable": false,
+          "modulatable": true,
           "name": "PW Reg",
           "response_curve": "linear",
           "type": "integer",
@@ -6362,7 +6374,7 @@
         },
         "seq_len": {
           "default": 0.0,
-          "description": "Active waveform-sequence steps (0 = off, the static waveform bits apply). Past the last step the sequence holds it",
+          "description": "Active waveform-sequence steps (0 = off, the static waveform bits apply). Past the last step the sequence holds it, or repeats when Seq Loop is on",
           "max": 16.0,
           "min": 0.0,
           "modulatable": false,
@@ -6371,6 +6383,18 @@
           "type": "integer",
           "unit": "none",
           "value_kind": "integer"
+        },
+        "seq_loop": {
+          "default": 0.0,
+          "description": "Loop the waveform sequence for the whole note (off = hold the last step — drum-attack programs)",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Seq Loop",
+          "response_curve": "linear",
+          "type": "boolean",
+          "unit": "none",
+          "value_kind": "bool"
         },
         "seq_rate": {
           "default": 1.0,

@@ -546,17 +546,19 @@ mod tests {
         );
     }
 
-    /// Phase 2b: tightening `is_automatable` from `modulatable && choices.is_none()`
-    /// to `modulatable && kind == Continuous` removes sequencer-automation
-    /// eligibility from exactly the params below — non-continuous targets
-    /// (`Integer` counts/notes, `Bool` toggles) that the old `choices.is_none()`
-    /// rule let through but that cannot be meaningfully ramped by a normalized
-    /// lane. They keep their **mod-matrix** eligibility
-    /// (which uses `modulatable` directly, unchanged). This guard pins the exact
-    /// set so any change — especially the real regression of dropping a *Continuous*
-    /// param — is surfaced for review.
+    /// `is_automatable` = `modulatable && (Continuous | Integer)`: relative to
+    /// the legacy `modulatable && choices.is_none()` rule, exactly the `Bool`
+    /// toggles below lose sequencer-automation eligibility — two-state params
+    /// that a normalized lane cannot meaningfully ramp. `Integer` params
+    /// (counts/notes/chip registers) are automatable as stepped/sample-hold
+    /// lanes since the SID register work (per-frame PWM lanes are the core SID
+    /// idiom). The bools keep their **engine-side mod-matrix** eligibility
+    /// (the `ParamModOffsets` store populates from `modulatable` directly).
+    /// This guard pins the exact set so any change — especially the real
+    /// regression of dropping a *Continuous* or *Integer* param — is surfaced
+    /// for review.
     #[test]
-    fn is_automatable_tightening_drops_only_non_continuous() {
+    fn is_automatable_excludes_only_bool_toggles() {
         let mut dropped: Vec<String> = Vec::new();
         for mt in ALL_MODULE_TYPES.iter().copied() {
             let Some(desc) = get_descriptor(mt) else {
@@ -571,13 +573,8 @@ mod tests {
         }
         dropped.sort();
         let mut expected = [
-            "Chorus/voices",
             "Compressor/sidechain",
-            "EnsembleChorus/voices",
             "GranularFx/freeze",
-            "KeyboardPanner/center",
-            "ModalResonator/base_note",
-            "ModalResonator/modes",
             "PhaseVocoder/freeze",
             "SpectralBlur/freeze",
         ];
@@ -585,7 +582,7 @@ mod tests {
         assert_eq!(
             dropped, expected,
             "set of params losing automation eligibility changed — review (a \
-             Continuous param here would be a real regression)"
+             Continuous or Integer param here would be a real regression)"
         );
     }
 

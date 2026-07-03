@@ -1173,7 +1173,8 @@ impl Instrument {
         let Some(param) = self.voice_graph.module_descriptor(module_id).and_then(|d| {
             d.parameters
                 .iter()
-                // Only automatable (continuous, RT-safe, non-enum) params: guards
+                // Only automatable (numeric scalar — continuous or stepped
+                // integer — and RT-safe) params: guards
                 // against malformed/legacy targets whose `type_id` names a choice
                 // param, where `with_f32` would synthesize a garbage enum value.
                 .find(|p| p.type_id == param_id && p.is_automatable())
@@ -1795,5 +1796,78 @@ mod tests {
         inst.clear_param_overrides();
         let reverted = settled_energy(inst.voice_graph_mut(), &ctx);
         assert!(reverted > base * 0.5, "reverted {reverted} vs base {base}");
+    }
+
+    /// Integer automation end-to-end: a `pw_reg` lane on the SID oscillator
+    /// passes the `is_automatable` gate (Integer kind is a valid stepped
+    /// lane), denormalizes through the descriptor range, and reaches the
+    /// register at render time — the §11 addendum ask that used to be a
+    /// silent no-op under the Continuous-only rule.
+    #[test]
+    fn sid_pw_reg_lane_reaches_register() {
+        use synth_core::{SampleCount, SampleRate, SidOscillatorParam};
+        use synth_modules::SidOscillator;
+
+        let mut inst = Instrument::new(InstrumentId::new(1), "test");
+        let g = inst.voice_graph_mut();
+        // The graph resolves its output from connected sinks only, so feed an
+        // inert MSB gate into the measured module (HardSync stays off).
+        let feeder_id = g.add_module(Box::new(SidOscillator::new()));
+        let sid_id = g.add_module(Box::new(SidOscillator::new()));
+        g.connect(feeder_id, "msb", sid_id, "sync").unwrap();
+        // Free-running pulse: authored pitch, no note needed.
+        for p in [
+            Param::SidOscillator(SidOscillatorParam::Sawtooth(false)),
+            Param::SidOscillator(SidOscillatorParam::Pulse(true)),
+            Param::SidOscillator(SidOscillatorParam::TrackVoicePitch(false)),
+            Param::SidOscillator(SidOscillatorParam::FreqReg(7493)),
+            Param::SidOscillator(SidOscillatorParam::PulseWidthReg(3072)),
+        ] {
+            g.set_param(sid_id, p);
+        }
+
+        let ctx = ProcessContext {
+            samples: SampleCount::new(2048),
+            sample_rate: SampleRate::DVD_QUALITY,
+            ..ProcessContext::default()
+        };
+        // Positive-sample share = pulse duty (survives the DC blocker: the
+        // high/low levels keep their signs after mean removal).
+        fn duty(graph: &mut ModuleGraph, ctx: &ProcessContext<'_>) -> f32 {
+            let mut out = AudioBuffer::new(2048);
+            graph.process(&mut out, ctx); // settle BLEP/decimator transients
+            graph.process(&mut out, ctx);
+            #[allow(clippy::cast_precision_loss)]
+            {
+                (0..2048).filter(|&i| out[i] > 0.0).count() as f32 / 2048.0
+            }
+        }
+
+        let base = duty(inst.voice_graph_mut(), &ctx);
+        assert!(
+            (base - 0.25).abs() < 0.03,
+            "base pw 3072 → 25% duty: {base}"
+        );
+
+        // Normalized 0.25 over the 0..4095 linear range → register 1024.
+        inst.apply_module_param_override(
+            ModuleType::SidOscillator,
+            sid_id.instance,
+            "pw_reg",
+            NormalizedValue::new(0.25),
+        );
+        let overridden = duty(inst.voice_graph_mut(), &ctx);
+        assert!(
+            (overridden - 0.75).abs() < 0.03,
+            "lane pw 1024 → 75% duty: {overridden}"
+        );
+
+        // Transport stop reverts to the authored register.
+        inst.clear_param_overrides();
+        let reverted = duty(inst.voice_graph_mut(), &ctx);
+        assert!(
+            (reverted - 0.25).abs() < 0.03,
+            "reverted to base duty: {reverted}"
+        );
     }
 }

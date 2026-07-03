@@ -167,6 +167,19 @@ fn draw_mod_markers_inline(ui: &mut Ui, markers: ModMarkers) {
     }
 }
 
+/// Attach the parameter's description as a hover tooltip when it has one.
+/// A checkbox (Toggle) is the one auto-rendered widget with no read-out of its
+/// own — knobs show their value on hover, choice combos show the selected
+/// option's description — so without this a boolean param explains itself
+/// nowhere. Empty descriptions are left untouched (no blank tooltip box).
+fn with_desc_tooltip(resp: egui::Response, param: &ParameterDescriptor) -> egui::Response {
+    if param.description.is_empty() {
+        resp
+    } else {
+        resp.on_hover_text(&param.description)
+    }
+}
+
 /// Draw a parameter's name label with its modulation markers folded into the
 /// *same* widget as trailing atoms. A free-standing `ui.label` + markers leaves
 /// egui to vertically centre separate widgets whose text sizes differ, so a
@@ -305,7 +318,7 @@ pub fn draw_parameter_grid<'d>(
                 // falls back to the checkbox group's look via its name.
                 let Some(waveform) = WaveformType::from_id(&param.type_id) else {
                     let mut checked = get(param) > 0.5;
-                    if ui.checkbox(&mut checked, &param.name).changed() {
+                    if with_desc_tooltip(ui.checkbox(&mut checked, &param.name), param).changed() {
                         changes.push((*param, if checked { 1.0 } else { 0.0 }));
                     }
                     continue;
@@ -446,12 +459,16 @@ pub fn draw_parameter_grid<'d>(
         }
     }
 
-    // Toggles, packed onto one row.
+    // Toggles, packed onto rows, wrapping at the module's width bucket. The
+    // checkboxes must be placed DIRECTLY in the wrapped row: egui only wraps
+    // per allocation using the widget's actual size, and a nested `horizontal`
+    // scope is allocated with the full remaining row width, so it never
+    // triggers a wrap and the row runs past the module edge.
     if !toggle_params.is_empty() {
-        ui.horizontal(|ui| {
+        ui.horizontal_wrapped(|ui| {
             for param in &toggle_params {
                 let mut checked = get(param) > 0.5;
-                if ui.checkbox(&mut checked, &param.name).changed() {
+                if with_desc_tooltip(ui.checkbox(&mut checked, &param.name), param).changed() {
                     changes.push((*param, if checked { 1.0 } else { 0.0 }));
                 }
                 draw_mod_markers_inline(ui, markers(param));

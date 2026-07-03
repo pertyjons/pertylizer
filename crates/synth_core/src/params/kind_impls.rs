@@ -2234,7 +2234,9 @@ impl SidOscillatorParam {
             | Self::TrackVoicePitch(v)
             | Self::Test(v)
             | Self::RingMod(v)
-            | Self::HardSync(v) => v.scalar_kind(),
+            | Self::HardSync(v)
+            | Self::DcBlock(v)
+            | Self::SeqLoop(v) => v.scalar_kind(),
             Self::FreqReg(v) | Self::PulseWidthReg(v) => v.scalar_kind(),
             Self::Model(v) => v.scalar_kind(),
             Self::Clock(v) => v.scalar_kind(),
@@ -2255,7 +2257,9 @@ impl SidOscillatorParam {
             | Self::TrackVoicePitch(v)
             | Self::Test(v)
             | Self::RingMod(v)
-            | Self::HardSync(v) => v.scalar_unit(),
+            | Self::HardSync(v)
+            | Self::DcBlock(v)
+            | Self::SeqLoop(v) => v.scalar_unit(),
             Self::FreqReg(v) | Self::PulseWidthReg(v) => v.scalar_unit(),
             Self::Model(v) => v.scalar_unit(),
             Self::Clock(v) => v.scalar_unit(),
@@ -2277,7 +2281,9 @@ impl SidOscillatorParam {
             | Self::TrackVoicePitch(v)
             | Self::Test(v)
             | Self::RingMod(v)
-            | Self::HardSync(v) => v.scalar_curve(),
+            | Self::HardSync(v)
+            | Self::DcBlock(v)
+            | Self::SeqLoop(v) => v.scalar_curve(),
             Self::FreqReg(v) | Self::PulseWidthReg(v) => v.scalar_curve(),
             Self::Model(v) => v.scalar_curve(),
             Self::Clock(v) => v.scalar_curve(),

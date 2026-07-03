@@ -31,7 +31,7 @@ use crate::gui::patch_editor::{
 };
 use crate::gui::theme::theme;
 use crate::gui::widgets::{
-    danger_button, dim_label, draw_oscilloscope, draw_stereo_meter, empty_state,
+    danger_button, dim_label, draw_oscilloscope, draw_stereo_meter, empty_state, stepper,
 };
 use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
 use crate::io::settings::AppSettings;
@@ -3655,22 +3655,23 @@ impl SynthApp {
         egui::Panel::bottom("status_bar")
             .min_size(22.0)
             .show(ui, |ui| {
-                ui.horizontal(|ui| {
+                // `horizontal_centered`, not `horizontal`: a plain `horizontal`
+                // row starts `interact_size.y` (20 px) tall and centres widgets
+                // as they are added — the first label lands on that band's
+                // centreline, then the taller −/+ buttons grow the row downward
+                // and everything after centres ~3 px lower. Allocating the full
+                // panel height up front gives every widget the same centreline.
+                ui.horizontal_centered(|ui| {
                     let t = theme();
 
                     // ── Left side: Octave +/- and Glide slider ──
-                    // Normal font size, matching the CPU/Voices/Latency read-outs
-                    // on the right side of the bar.
-                    ui.label(
+                    let octave_step = stepper(
+                        ui,
                         RichText::new(format!("Octave: {:+}", self.keyboard.octave_offset()))
                             .color(t.colors.text_secondary),
                     );
-                    if ui.button("-").clicked() {
-                        let new_offset = self.keyboard.octave_offset() - 1;
-                        self.keyboard.set_octave_offset(new_offset);
-                    }
-                    if ui.button("+").clicked() {
-                        let new_offset = self.keyboard.octave_offset() + 1;
+                    if octave_step != 0 {
+                        let new_offset = self.keyboard.octave_offset() + octave_step;
                         self.keyboard.set_octave_offset(new_offset);
                     }
                     ui.separator();

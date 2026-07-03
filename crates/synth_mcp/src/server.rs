@@ -3977,6 +3977,7 @@ impl SynthMcpServer {
             "set_mod_matrix_script" => set_mod_matrix_script(SetModMatrixScriptParam),
             "get_parameter" => get_parameter(GetParameterParam),
             "get_engine_status" => get_engine_status(NoParams),
+            "get_version" => get_version(NoParams),
             "get_graph_diagnostics" => get_graph_diagnostics(InstrumentIdParam),
             "get_project_schema" => get_project_schema(NoParams),
             "lint_project" => lint_project(NoParams),
@@ -4595,6 +4596,19 @@ impl SynthMcpServer {
     async fn get_engine_status(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.get_engine_status() {
             Ok(status) => to_json(&status),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Get build/version info for the running application: version, build \
+                       timestamp (UTC), git commit hash, branch, and whether the working tree \
+                       had uncommitted changes at build time. Git fields are null when the \
+                       binary was built outside a git checkout."
+    )]
+    async fn get_version(&self, _params: Parameters<NoParams>) -> String {
+        match self.bridge.get_version() {
+            Ok(info) => to_json(&info),
             Err(e) => format!("Error: {e}"),
         }
     }
