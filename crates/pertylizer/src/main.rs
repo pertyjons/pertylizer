@@ -30,6 +30,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // The capture-layer clone flows to the GUI app; headless drops it.
     let activity_log = init_tracing();
 
+    // Install the crash-diagnostics panic hook now that tracing is up, so a
+    // panic on any thread is logged and dumped to a crash report file.
+    pertylizer::panic_hook::install();
+
     // stderr so stdout stays a clean JSON-RPC channel in --headless mode.
     eprintln!(
         "Pertylizer v{} ({})",

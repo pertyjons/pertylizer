@@ -377,10 +377,13 @@ debuggable at low cost.
 
 #### A5. UX: custom panic hook for desktop crash diagnostics
 
-- [ ] **Implement a custom panic hook.** Today a panic prints a stack trace to
-  stderr and terminates. A custom hook (`std::panic::set_hook`) can show a
-  user-friendly crash dialog or dump diagnostics to a log file, improving desktop
-  supportability. Not perf — pure usability.
+- [x] **Custom panic hook.** DONE: `pertylizer::panic_hook::install()` (called
+  from `main.rs` right after tracing is up) replaces the hook with one that
+  `force_capture`s a backtrace, logs the report via `tracing::error!`, and dumps a
+  self-contained crash report (version, thread, message, location, backtrace) to
+  `<data_dir>/pertylizer/crashes/crash-<secs>-<pid>.log`. Best-effort file I/O
+  that never panics from inside the hook, and chains to the previous hook so the
+  standard stderr trace still appears. Testable core (`write_report_to`) unit-tested.
 
 #### A6. Compile-time safety: static assertions for lock-free structs
 
@@ -395,11 +398,16 @@ debuggable at low cost.
 
 #### A7. Real-time safety: automated allocation testing with assert-no-alloc
 
-- [ ] **Integrate `assert-no-alloc` (or a custom allocator guard) in tests.** To
-  stop heap alloc/dealloc regressions slipping into the real-time path
-  (`SynthEngine::process()`), wrap the audio-thread processing tests in an
-  allocator tracker that fails the suite immediately on any allocation in a
-  designated RT path. Automates the RT rule the project already enforces by hand.
+- [x] **Custom allocator guard in tests.** DONE: `rt_alloc_guard` (a `#[cfg(test)]`
+  module in `synth_engine.rs`) installs a counting `#[global_allocator]` for the
+  unit-test binary and a thread-local-armed `count_allocs(|| …)` region.
+  `process_does_not_allocate_in_steady_state` warms up a one-voice engine (drains
+  commands + lazy init), then asserts a steady-state `SynthEngine::process()` does
+  **zero** alloc/dealloc/realloc; `guard_actually_detects_an_allocation` is the
+  self-test. Chose a counting guard over `assert-no-alloc` (no new dep, clean
+  test-framework pass/fail instead of `process::abort`, and parallel tests are not
+  disturbed since arming is thread-local). Confirmed the RT path is already
+  allocation-free.
 
 ### Tier B — real problems, trigger-based (do when the symptom appears)
 
