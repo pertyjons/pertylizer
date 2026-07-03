@@ -646,6 +646,44 @@ pub trait SynthBridge: Send + Sync + 'static {
         category: &str,
     ) -> Result<(), McpBridgeError>;
 
+    /// Set the voice allocation mode. Accepts "Polyphonic", "Mono", "Legato",
+    /// or "Unison" (case-sensitive).
+    fn set_instrument_allocation_mode(
+        &self,
+        instrument_id: u64,
+        mode: &str,
+    ) -> Result<(), McpBridgeError>;
+
+    /// Set the voice-stealing strategy. Accepts "None", "Oldest", "Quietest",
+    /// "LowestPriority", or "SameNote" (case-sensitive).
+    fn set_instrument_stealing_strategy(
+        &self,
+        instrument_id: u64,
+        strategy: &str,
+    ) -> Result<(), McpBridgeError>;
+
+    /// Set the unison detune spread in cents (total across `Unison`-mode voices).
+    fn set_instrument_unison_detune(
+        &self,
+        instrument_id: u64,
+        cents: f32,
+    ) -> Result<(), McpBridgeError>;
+
+    /// Set the unison stereo spread (0.0 = centred .. 1.0 = full width).
+    fn set_instrument_unison_spread(
+        &self,
+        instrument_id: u64,
+        spread: f32,
+    ) -> Result<(), McpBridgeError>;
+
+    /// Set the maximum polyphony (1..=128). Takes effect on the next voice-graph
+    /// rebuild (e.g. project load), not live.
+    fn set_instrument_max_voices(
+        &self,
+        instrument_id: u64,
+        max_voices: u32,
+    ) -> Result<(), McpBridgeError>;
+
     // === Write operations ===
 
     /// Set a module parameter by name. The value may be a number, a boolean, or

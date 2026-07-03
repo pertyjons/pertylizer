@@ -48,6 +48,21 @@ pub struct InstrumentInfo {
     pub module_count: usize,
     /// Number of effects in the chain.
     pub effect_count: usize,
+    /// Voice allocation mode: "Polyphonic", "Mono", "Legato", or "Unison".
+    /// Set via `set_allocator_config`.
+    pub allocation_mode: String,
+    /// Voice-stealing strategy when all voices are busy: "None", "Oldest",
+    /// "Quietest", "LowestPriority", or "SameNote". Set via `set_allocator_config`.
+    pub stealing_strategy: String,
+    /// Unison detune spread in cents (total across all `Unison`-mode voices).
+    /// Only audible in "Unison" allocation mode.
+    pub unison_detune: f32,
+    /// Unison stereo spread: 0.0 (centred) .. 1.0 (full L↔R width). Only
+    /// audible in "Unison" allocation mode.
+    pub unison_spread: f32,
+    /// Maximum polyphony (voice count, 1..=128). Changing it via
+    /// `set_allocator_config` takes effect on the next voice-graph rebuild.
+    pub max_voices: u32,
 }
 
 /// Information about a module in the voice graph.

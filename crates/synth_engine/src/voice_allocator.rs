@@ -29,6 +29,33 @@ pub enum AllocationMode {
     Unison,
 }
 
+impl std::fmt::Display for AllocationMode {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::Polyphonic => "Polyphonic",
+            Self::Mono => "Mono",
+            Self::Legato => "Legato",
+            Self::Unison => "Unison",
+        })
+    }
+}
+
+impl std::str::FromStr for AllocationMode {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "Polyphonic" => Ok(Self::Polyphonic),
+            "Mono" => Ok(Self::Mono),
+            "Legato" => Ok(Self::Legato),
+            "Unison" => Ok(Self::Unison),
+            _ => Err(format!(
+                "invalid allocation_mode {s:?}; expected Polyphonic, Mono, Legato, or Unison"
+            )),
+        }
+    }
+}
+
 /// Strategy for stealing voices when all are busy.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
@@ -45,6 +72,36 @@ pub enum StealingStrategy {
     LowestPriority,
     /// Steal the same note if playing.
     SameNote,
+}
+
+impl std::fmt::Display for StealingStrategy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Self::None => "None",
+            Self::Oldest => "Oldest",
+            Self::Quietest => "Quietest",
+            Self::LowestPriority => "LowestPriority",
+            Self::SameNote => "SameNote",
+        })
+    }
+}
+
+impl std::str::FromStr for StealingStrategy {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "None" => Ok(Self::None),
+            "Oldest" => Ok(Self::Oldest),
+            "Quietest" => Ok(Self::Quietest),
+            "LowestPriority" => Ok(Self::LowestPriority),
+            "SameNote" => Ok(Self::SameNote),
+            _ => Err(format!(
+                "invalid stealing_strategy {s:?}; expected None, Oldest, Quietest, \
+                 LowestPriority, or SameNote"
+            )),
+        }
+    }
 }
 
 /// Note priority for mono/legato modes.
@@ -211,6 +268,19 @@ impl VoiceAllocator {
     /// Set the unison stereo spread (0..1) for `Unison`-mode voices.
     pub fn set_unison_spread(&mut self, spread: NormalizedValue) {
         self.config.unison_spread = spread;
+    }
+
+    /// Set the maximum polyphony (voice count).
+    ///
+    /// This updates the stored config **only** — it deliberately does *not*
+    /// resize the live voice pool. A live resize would allocate/deallocate
+    /// voices on the audio thread, which is forbidden in real-time code (see
+    /// [`Self::resize`], which is only safe to call off the audio thread). The
+    /// new count therefore takes effect the next time the instrument's voice
+    /// graph is reconstructed — e.g. on project load, where
+    /// [`AllocatorConfig::max_voices`] drives how many voices are created.
+    pub fn set_max_voices(&mut self, count: VoiceCount) {
+        self.config.max_voices = count;
     }
 
     /// Get number of active voices.
@@ -823,5 +893,53 @@ mod tests {
 
         // Voice 0 (oldest) should now be playing note 67
         // (or be in stealing state)
+    }
+
+    #[test]
+    fn set_max_voices_updates_config_without_resizing_live_pool() {
+        let config = AllocatorConfig {
+            max_voices: VoiceCount::QUAD,
+            ..Default::default()
+        };
+        let mut allocator = VoiceAllocator::new(config);
+        assert_eq!(allocator.voices.len(), 4);
+
+        // The setter must update the stored config but NOT resize the live pool
+        // (resizing would allocate/deallocate on the audio thread). The new
+        // count only takes effect on the next voice-graph reconstruction.
+        allocator.set_max_voices(VoiceCount::SIXTEEN);
+        assert_eq!(
+            allocator.config().max_voices,
+            VoiceCount::SIXTEEN,
+            "config max_voices should reflect the new value"
+        );
+        assert_eq!(
+            allocator.voices.len(),
+            4,
+            "live voice pool must stay at its original size (no live resize)"
+        );
+    }
+
+    #[test]
+    fn allocation_mode_and_stealing_strategy_string_round_trip() {
+        for mode in [
+            AllocationMode::Polyphonic,
+            AllocationMode::Mono,
+            AllocationMode::Legato,
+            AllocationMode::Unison,
+        ] {
+            assert_eq!(mode.to_string().parse::<AllocationMode>(), Ok(mode));
+        }
+        for strat in [
+            StealingStrategy::None,
+            StealingStrategy::Oldest,
+            StealingStrategy::Quietest,
+            StealingStrategy::LowestPriority,
+            StealingStrategy::SameNote,
+        ] {
+            assert_eq!(strat.to_string().parse::<StealingStrategy>(), Ok(strat));
+        }
+        assert!("Duophonic".parse::<AllocationMode>().is_err());
+        assert!("Bogus".parse::<StealingStrategy>().is_err());
     }
 }

@@ -2202,6 +2202,53 @@ pub struct SetInstrumentMixerParam {
     pub items: Vec<InstrumentMixerInput>,
 }
 
+/// One instrument's voice-allocator update for `set_allocator_config`. Every
+/// field except `instrument_id` is optional; only present fields are changed.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AllocatorConfigInput {
+    #[schemars(description = "Instrument ID (0 for the default instrument)")]
+    pub instrument_id: u64,
+    #[serde(default)]
+    #[schemars(
+        description = "Voice allocation mode: Polyphonic, Mono, Legato, or Unison. Omit to leave unchanged."
+    )]
+    pub allocation_mode: Option<String>,
+    #[serde(default)]
+    #[schemars(
+        description = "Voice-stealing strategy when all voices are busy: None, Oldest, Quietest, \
+        LowestPriority, or SameNote. Omit to leave unchanged."
+    )]
+    pub stealing_strategy: Option<String>,
+    #[serde(default)]
+    #[schemars(
+        description = "Unison detune spread in cents (0..100), total across all Unison-mode voices. \
+        Only audible in Unison mode. Omit to leave unchanged."
+    )]
+    pub unison_detune: Option<f32>,
+    #[serde(default)]
+    #[schemars(
+        description = "Unison stereo spread (0.0 = centred .. 1.0 = full L↔R width). Only audible \
+        in Unison mode. Omit to leave unchanged."
+    )]
+    pub unison_spread: Option<f32>,
+    #[serde(default)]
+    #[schemars(
+        description = "Maximum polyphony (1..=128). Applied on the next voice-graph rebuild / project \
+        load, not live. Omit to leave unchanged."
+    )]
+    pub max_voices: Option<u32>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetAllocatorConfigParam {
+    #[schemars(
+        description = "Array of per-instrument voice-allocator updates. Each entry sets any of \
+        allocation_mode / stealing_strategy / unison_detune / unison_spread / max_voices on one \
+        instrument in a single call."
+    )]
+    pub items: Vec<AllocatorConfigInput>,
+}
+
 /// One instrument's MIDI-channel assignment for `set_instrument_midi_channel`.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct InstrumentMidiChannelInput {
@@ -4096,6 +4143,7 @@ impl SynthMcpServer {
             "set_awe_description" => set_awe_description(SetAweDescriptionParam),
             "set_sidechain_source" => set_sidechain_source(SetSidechainSourceParam),
             "set_instrument_mixer" => set_instrument_mixer(SetInstrumentMixerParam),
+            "set_allocator_config" => set_allocator_config(SetAllocatorConfigParam),
             "set_instrument_midi_channel" => set_instrument_midi_channel(SetInstrumentMidiChannelParam),
             "set_instrument_category" => set_instrument_category(SetInstrumentCategoryParam),
 
@@ -6110,6 +6158,90 @@ impl SynthMcpServer {
             }
         }
         batch_msg(ok_count, "instrument mixer updates applied", &[], &errors)
+    }
+
+    #[tool(
+        description = "Set voice-allocator config on one or more instruments in a single call. Each \
+        item carries an instrument_id plus any of: allocation_mode (Polyphonic | Mono | Legato | \
+        Unison), stealing_strategy (None | Oldest | Quietest | LowestPriority | SameNote), \
+        unison_detune (0..100 cents, audible only in Unison mode), unison_spread (0.0..1.0 stereo \
+        width, audible only in Unison mode), and max_voices (1..=128; applied on the next voice-graph \
+        rebuild / project load, not live). Omitted fields are left unchanged. Read the current \
+        values back via get_instrument_info."
+    )]
+    async fn set_allocator_config(&self, params: Parameters<SetAllocatorConfigParam>) -> String {
+        // Validate all numeric ranges up front so a bad value rejects the whole
+        // call (mode/strategy strings are validated per-item by the bridge).
+        for it in &params.0.items {
+            if let Some(d) = it.unison_detune
+                && let Err(e) = validate_range("unison_detune", d, 0.0, 100.0)
+            {
+                return format!("Error: {e}");
+            }
+            if let Some(s) = it.unison_spread
+                && let Err(e) = validate_range("unison_spread", s, 0.0, 1.0)
+            {
+                return format!("Error: {e}");
+            }
+            if let Some(v) = it.max_voices
+                && !(1..=128).contains(&v)
+            {
+                return format!("Error: max_voices must be in 1..=128, got {v}");
+            }
+        }
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in &params.0.items {
+            let id = it.instrument_id;
+            let mut item_err: Option<String> = None;
+            // An item that sets no fields still must name a real instrument,
+            // otherwise it would report a phantom success. The field setters
+            // below validate existence themselves, so only the all-omitted case
+            // needs an explicit check.
+            let sets_nothing = it.allocation_mode.is_none()
+                && it.stealing_strategy.is_none()
+                && it.unison_detune.is_none()
+                && it.unison_spread.is_none()
+                && it.max_voices.is_none();
+            if sets_nothing && let Err(e) = self.bridge.get_instrument_info(id) {
+                errors.push(format!("{id}: {e}"));
+                continue;
+            }
+            if let Some(m) = &it.allocation_mode
+                && let Err(e) = self.bridge.set_instrument_allocation_mode(id, m)
+            {
+                item_err = Some(e.to_string());
+            }
+            if item_err.is_none()
+                && let Some(s) = &it.stealing_strategy
+                && let Err(e) = self.bridge.set_instrument_stealing_strategy(id, s)
+            {
+                item_err = Some(e.to_string());
+            }
+            if item_err.is_none()
+                && let Some(d) = it.unison_detune
+                && let Err(e) = self.bridge.set_instrument_unison_detune(id, d)
+            {
+                item_err = Some(e.to_string());
+            }
+            if item_err.is_none()
+                && let Some(s) = it.unison_spread
+                && let Err(e) = self.bridge.set_instrument_unison_spread(id, s)
+            {
+                item_err = Some(e.to_string());
+            }
+            if item_err.is_none()
+                && let Some(v) = it.max_voices
+                && let Err(e) = self.bridge.set_instrument_max_voices(id, v)
+            {
+                item_err = Some(e.to_string());
+            }
+            match item_err {
+                None => ok_count += 1,
+                Some(e) => errors.push(format!("{id}: {e}")),
+            }
+        }
+        batch_msg(ok_count, "allocator configs updated", &[], &errors)
     }
 
     #[tool(description = "Set the MIDI channel (1-16) for one or more instruments.")]

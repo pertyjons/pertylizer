@@ -1816,8 +1816,11 @@ impl SynthEngine {
             InstrumentParam::UnisonSpread(spread) => {
                 instrument.allocator_mut().set_unison_spread(spread)
             }
-            InstrumentParam::MaxVoices(_) => {
-                // Cannot change max voices at runtime without reallocating
+            InstrumentParam::MaxVoices(count) => {
+                // Stored in config only — no live resize (that would allocate on
+                // the audio thread). Takes effect on the next voice-graph
+                // reconstruction (e.g. project load). See `set_max_voices`.
+                instrument.allocator_mut().set_max_voices(count);
             }
             InstrumentParam::VelocityAmpSensitivity(sens) => {
                 instrument.set_velocity_amp_sensitivity(sens);

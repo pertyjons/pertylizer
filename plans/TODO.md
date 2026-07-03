@@ -89,19 +89,16 @@ can't be a per-block lane value; that dead code is not coming back.)
 
 ### 2.4 Polyphony settings
 
-The actual feature — **unison detune + spread controls** for the voice-allocator's
-global `AllocationMode::Unison` — is **shipped**: detune end-to-end (`268441f9`,
-allocator → command → snapshot → persistence w/ 10 ct backward-compat → GUI slider
-greyed outside Unison mode → tests) and per-voice stereo spread (`eac9b020`). Only
-the MCP surface remains:
-
-- [ ] **Surface the whole allocator config via MCP.** `synth_mcp` exposes **no**
-  allocator-config param at all — `allocation_mode`, `stealing_strategy`,
-  `max_voices`, and `unison_detune`/`unison_spread` have neither a getter on
-  `get_instrument_info` nor a setter. Add them as a set (not a lone piecemeal
-  `unison_detune` path, which would be inconsistent scope-creep): read them on
-  `get_instrument_info` and set them via `set_parameter`, with round-trip tests
-  mirroring the `allocation_mode` ones in `project_load_snapshot.rs`.
+**Done.** The feature — **unison detune + spread controls** for the voice-allocator's
+global `AllocationMode::Unison` — shipped earlier: detune end-to-end (`268441f9`)
+and per-voice stereo spread (`eac9b020`). The remaining **MCP surface** is now
+also shipped: `get_instrument_info` reads the whole allocator config
+(`allocation_mode`, `stealing_strategy`, `unison_detune`, `unison_spread`,
+`max_voices`), and a dedicated array tool `set_allocator_config` sets any subset
+as a group. `max_voices` is stored RT-safely (no live `resize()`) and applies on
+the next voice-graph reconstruct/load; the other four are live. `Display`/`FromStr`
+on the enums make the string round-trip authoritative. End-to-end round-trip tests
+in `mcp_allocator_config.rs` drive the real engine.
 
 ### 2.5 Hardening Newtype Invariants
 

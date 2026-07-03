@@ -493,6 +493,106 @@ impl SynthSession {
         Ok(())
     }
 
+    /// Set the voice allocation mode (Polyphonic / Mono / Legato / Unison).
+    pub fn set_instrument_allocation_mode(
+        &self,
+        instrument_id: InstrumentId,
+        mode: synth_engine::voice_allocator::AllocationMode,
+    ) -> Result<(), SessionError> {
+        if !self
+            .command_sender
+            .send(EngineCommand::SetInstrumentParameter {
+                instrument_id,
+                param: synth_engine::commands::InstrumentParam::AllocationMode(mode),
+            })
+        {
+            return Err(SessionError::SendFailed);
+        }
+        self.patch_instrument_snapshot(instrument_id, |s| s.allocation_mode = mode);
+        Ok(())
+    }
+
+    /// Set the voice-stealing strategy used when all voices are busy.
+    pub fn set_instrument_stealing_strategy(
+        &self,
+        instrument_id: InstrumentId,
+        strategy: synth_engine::voice_allocator::StealingStrategy,
+    ) -> Result<(), SessionError> {
+        if !self
+            .command_sender
+            .send(EngineCommand::SetInstrumentParameter {
+                instrument_id,
+                param: synth_engine::commands::InstrumentParam::StealingStrategy(strategy),
+            })
+        {
+            return Err(SessionError::SendFailed);
+        }
+        self.patch_instrument_snapshot(instrument_id, |s| s.stealing_strategy = strategy);
+        Ok(())
+    }
+
+    /// Set the unison detune spread (total cents across all `Unison`-mode voices).
+    pub fn set_instrument_unison_detune(
+        &self,
+        instrument_id: InstrumentId,
+        detune: synth_core::Cents,
+    ) -> Result<(), SessionError> {
+        if !self
+            .command_sender
+            .send(EngineCommand::SetInstrumentParameter {
+                instrument_id,
+                param: synth_engine::commands::InstrumentParam::UnisonDetune(detune),
+            })
+        {
+            return Err(SessionError::SendFailed);
+        }
+        self.patch_instrument_snapshot(instrument_id, |s| s.unison_detune = detune);
+        Ok(())
+    }
+
+    /// Set the unison stereo spread (0..1) for `Unison`-mode voices.
+    pub fn set_instrument_unison_spread(
+        &self,
+        instrument_id: InstrumentId,
+        spread: synth_core::NormalizedValue,
+    ) -> Result<(), SessionError> {
+        if !self
+            .command_sender
+            .send(EngineCommand::SetInstrumentParameter {
+                instrument_id,
+                param: synth_engine::commands::InstrumentParam::UnisonSpread(spread),
+            })
+        {
+            return Err(SessionError::SendFailed);
+        }
+        self.patch_instrument_snapshot(instrument_id, |s| s.unison_spread = spread);
+        Ok(())
+    }
+
+    /// Set the maximum polyphony (voice count).
+    ///
+    /// Applied to the stored config; the live voice pool is *not* resized (that
+    /// would allocate on the audio thread). The new count takes effect on the
+    /// next voice-graph reconstruction — e.g. on project load. The snapshot is
+    /// patched immediately so readers reflect the requested value.
+    pub fn set_instrument_max_voices(
+        &self,
+        instrument_id: InstrumentId,
+        max_voices: synth_core::VoiceCount,
+    ) -> Result<(), SessionError> {
+        if !self
+            .command_sender
+            .send(EngineCommand::SetInstrumentParameter {
+                instrument_id,
+                param: synth_engine::commands::InstrumentParam::MaxVoices(max_voices),
+            })
+        {
+            return Err(SessionError::SendFailed);
+        }
+        self.patch_instrument_snapshot(instrument_id, |s| s.max_voices = max_voices);
+        Ok(())
+    }
+
     /// Set instrument mute state.
     pub fn set_instrument_mute(
         &self,

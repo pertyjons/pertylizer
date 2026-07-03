@@ -387,6 +387,11 @@ impl AppSynthBridge {
             solo: snap.solo,
             module_count: snap.module_count,
             effect_count: snap.effect_count,
+            allocation_mode: snap.allocation_mode.to_string(),
+            stealing_strategy: snap.stealing_strategy.to_string(),
+            unison_detune: snap.unison_detune.0,
+            unison_spread: snap.unison_spread.as_f32(),
+            max_voices: u32::from(snap.max_voices.as_u8()),
         }
     }
 }
@@ -943,7 +948,10 @@ impl SynthBridge for AppSynthBridge {
                     command: "create_instrument",
                 })?;
 
-        // Return basic info — the engine will update the snapshots asynchronously
+        // Return basic info — the engine will update the snapshots asynchronously.
+        // Allocator fields mirror `AllocatorConfig::default()` (derived, not
+        // hardcoded) since the real values only arrive with the async snapshot.
+        let alloc = synth_engine::voice_allocator::AllocatorConfig::default();
         Ok(InstrumentInfo {
             id: id.as_u64(),
             name: name.to_string(),
@@ -961,6 +969,11 @@ impl SynthBridge for AppSynthBridge {
             module_count: 0,
             effect_count: 0,
             category: "uncategorized".to_owned(),
+            allocation_mode: alloc.mode.to_string(),
+            stealing_strategy: alloc.stealing.to_string(),
+            unison_detune: alloc.unison_detune.0,
+            unison_spread: alloc.unison_spread.as_f32(),
+            max_voices: u32::from(alloc.max_voices.as_u8()),
         })
     }
 
@@ -1187,6 +1200,84 @@ impl SynthBridge for AppSynthBridge {
             .set_instrument_category(InstrumentId::new(instrument_id), cat)
             .map_err(|_| McpBridgeError::CommandSendFailed {
                 command: "set_instrument_category",
+            })
+    }
+
+    fn set_instrument_allocation_mode(
+        &self,
+        instrument_id: u64,
+        mode: &str,
+    ) -> Result<(), McpBridgeError> {
+        self.validate_instrument(instrument_id)?;
+        let parsed: synth_engine::voice_allocator::AllocationMode =
+            mode.parse().map_err(McpBridgeError::Other)?;
+        self.session
+            .set_instrument_allocation_mode(InstrumentId::new(instrument_id), parsed)
+            .map_err(|_| McpBridgeError::CommandSendFailed {
+                command: "set_instrument_allocation_mode",
+            })
+    }
+
+    fn set_instrument_stealing_strategy(
+        &self,
+        instrument_id: u64,
+        strategy: &str,
+    ) -> Result<(), McpBridgeError> {
+        self.validate_instrument(instrument_id)?;
+        let parsed: synth_engine::voice_allocator::StealingStrategy =
+            strategy.parse().map_err(McpBridgeError::Other)?;
+        self.session
+            .set_instrument_stealing_strategy(InstrumentId::new(instrument_id), parsed)
+            .map_err(|_| McpBridgeError::CommandSendFailed {
+                command: "set_instrument_stealing_strategy",
+            })
+    }
+
+    fn set_instrument_unison_detune(
+        &self,
+        instrument_id: u64,
+        cents: f32,
+    ) -> Result<(), McpBridgeError> {
+        self.validate_instrument(instrument_id)?;
+        self.session
+            .set_instrument_unison_detune(
+                InstrumentId::new(instrument_id),
+                synth_core::Cents(cents),
+            )
+            .map_err(|_| McpBridgeError::CommandSendFailed {
+                command: "set_instrument_unison_detune",
+            })
+    }
+
+    fn set_instrument_unison_spread(
+        &self,
+        instrument_id: u64,
+        spread: f32,
+    ) -> Result<(), McpBridgeError> {
+        self.validate_instrument(instrument_id)?;
+        self.session
+            .set_instrument_unison_spread(
+                InstrumentId::new(instrument_id),
+                synth_core::NormalizedValue::new(spread),
+            )
+            .map_err(|_| McpBridgeError::CommandSendFailed {
+                command: "set_instrument_unison_spread",
+            })
+    }
+
+    fn set_instrument_max_voices(
+        &self,
+        instrument_id: u64,
+        max_voices: u32,
+    ) -> Result<(), McpBridgeError> {
+        self.validate_instrument(instrument_id)?;
+        // `VoiceCount` is a u8 domain (1..=128); the server tool already rejects
+        // out-of-range values, and `VoiceCount::new` clamps as a backstop.
+        let count = synth_core::VoiceCount::new(max_voices.min(u32::from(u8::MAX)) as u8);
+        self.session
+            .set_instrument_max_voices(InstrumentId::new(instrument_id), count)
+            .map_err(|_| McpBridgeError::CommandSendFailed {
+                command: "set_instrument_max_voices",
             })
     }
 

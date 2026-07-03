@@ -15,7 +15,7 @@ use super::instrument::{
 };
 use synth_core::{
     Amplitude, BipolarValue, Bpm, CcNumber, Cents, CpuUsage, Gain, MidiNote, NormalizedValue,
-    PortName, Seconds, Semitones, Velocity,
+    PortName, Seconds, Semitones, Velocity, VoiceCount,
 };
 use synth_core::{ModuleType, Param};
 use synth_sequencer::{PatternId, ReturnBusId, SeqInstrumentId, Tick, TrackId};
@@ -873,7 +873,7 @@ pub enum InstrumentParam {
     /// Unison stereo spread (0..1) for `Unison`-mode voices.
     UnisonSpread(NormalizedValue),
     /// Maximum polyphony for this instrument.
-    MaxVoices(usize),
+    MaxVoices(VoiceCount),
     /// Velocity to amplitude sensitivity (0 = constant, 1 = full dynamic).
     VelocityAmpSensitivity(NormalizedValue),
     /// Velocity to filter cutoff sensitivity (0 = none, 1 = full).
