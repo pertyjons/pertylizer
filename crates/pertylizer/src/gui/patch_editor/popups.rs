@@ -580,12 +580,20 @@ pub(super) fn draw_yams_help_window(
                     "- Macros (bare names, 0..1 unless noted): velocity, mod_wheel, \
                      aftertouch, pitch_bend (-1..1), note, poly_at.",
                 );
+                // Generated from CONTEXT_CATALOG so a new context var appears here
+                // automatically — no hand-maintained mirror to drift (TODO 2.6).
+                let context_vars = synth_script::symbols::CONTEXT_CATALOG
+                    .iter()
+                    .map(|(name, label)| format!("{name} ({label})"))
+                    .collect::<Vec<_>>()
+                    .join(", ");
                 body(
                     ui,
-                    "- Context: gate, gate_on, age (s), cr (control rate Hz), \
-                     sr (audio sample rate Hz), note_hz (voice pitch), beat, \
-                     bar_phase (0..1), tempo (BPM), playing. The transport vars are \
-                     shared by all voices - tempo-synced: out = sin(beat * tau).",
+                    &format!(
+                        "- Context: {context_vars}. The transport vars (beat, \
+                         bar_phase, tempo, playing) are shared by all voices - \
+                         tempo-synced: out = sin(beat * tau)."
+                    ),
                 );
                 body(ui, "- Constants: pi, tau (2*pi), e.");
 

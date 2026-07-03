@@ -124,16 +124,16 @@ in `mcp_allocator_config.rs` drive the real engine.
   each sample in `eval_block`, via `AudioBindings`) would make scripted
   oscillators track fast portamento faithfully. Small-to-medium; only matters for
   audible fast glides.
-- [ ] **Generate the context-var lists from `CONTEXT_CATALOG` instead of hand
-  maintenance.** The YAMS context vars now live in *seven* parallel places
-  (`Context` enum, `context_from_name`, `CONTEXT_CATALOG`, `context_to_runtime`,
-  `ScriptContext` + `resolve_script_input`, the patch-editor help popup in
-  `gui/patch_editor/popups.rs`, and the table in `docs/yams.md`). The
-  `every_context_var_declares_catalog_membership` test guards the
-  catalog↔resolver↔enum triangle, but the GUI popup and `yams.md` are still
-  hand-maintained prose and already drifted once (a stale `sr`). Generate the
-  popup line (and ideally the docs table) from `CONTEXT_CATALOG` so there is one
-  source of truth. Cleanup/aesthetics — no behaviour change.
+- [x] **Generate the context-var lists from `CONTEXT_CATALOG` instead of hand
+  maintenance.** DONE: the patch-editor help popup's Context line
+  (`gui/patch_editor/popups.rs`) is now built by iterating `CONTEXT_CATALOG`
+  (`name (label)`) instead of a hardcoded string, so a new context var appears
+  automatically. The rich per-var prose in the `docs/yams.md` `### Context` table
+  is intentionally *not* collapsed into the terse picker labels; instead a new
+  `docs_yams_context_table_matches_catalog` test parses that table and asserts its
+  names match `CONTEXT_CATALOG` (order included) — a drift guard for exactly the
+  stale-`sr` bug class. The `Context` enum / `context_from_name` / resolver
+  triangle was already guarded by `every_context_var_declares_catalog_membership`.
 
 ---
 

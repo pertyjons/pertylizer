@@ -368,4 +368,35 @@ mod tests {
             "CONTEXT_CATALOG has entries not declared in catalog_name"
         );
     }
+
+    /// `docs/yams.md` keeps a rich prose description per context var that we do
+    /// not want to collapse into the terse picker labels, so instead of
+    /// generating the table we guard it: the `### Context` table's names must
+    /// match [`CONTEXT_CATALOG`] exactly (order included). This is the forcing
+    /// function that catches the doc drift the TODO called out (a stale `sr`).
+    #[test]
+    fn docs_yams_context_table_matches_catalog() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/yams.md");
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("read {}: {e}", path.display()));
+
+        let section = text
+            .split("### Context")
+            .nth(1)
+            .expect("yams.md must have a `### Context` section");
+
+        // Table body rows look like `| `name` | meaning |`; stop at the next
+        // heading. The header/separator rows don't start with "| `".
+        let names: Vec<&str> = section
+            .lines()
+            .take_while(|l| !l.starts_with("### "))
+            .filter_map(|l| l.trim().strip_prefix("| `")?.split('`').next())
+            .collect();
+
+        let catalog: Vec<&str> = CONTEXT_CATALOG.iter().map(|(n, _)| *n).collect();
+        assert_eq!(
+            names, catalog,
+            "docs/yams.md `### Context` table drifted from CONTEXT_CATALOG"
+        );
+    }
 }
