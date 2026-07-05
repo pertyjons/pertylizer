@@ -1,5 +1,83 @@
 # TODO - Pertylizer
 
+## 0. HIGHEST PRIORITY — Envelope attack/decay/release is a time-constant, not the documented time
+
+**The `Attack`/`Decay`/`Release` parameters do not mean what their descriptions
+say.** `Attack` is documented as *"Attack time (silence to peak)"*
+(`crates/synth_modules/src/envelope.rs:344`), but the stage is a one-pole
+exponential glide toward `target_level = MAX (1.0)` that only advances to Decay
+once `level >= 0.999` (`envelope.rs:240-259`), with time-constant `τ = Attack`
+seconds (`to_exp_coeff` in `crates/synth_core/src/types/time.rs`,
+`coef = exp(-1/(τ·fs))`). A one-pole toward 1.0 reaches:
+
+- **90 % at `t = ln(10)·τ ≈ 2.3 × Attack`**
+- **99.9 % (stage completes) at `t = ln(1000)·τ ≈ 6.9 × Attack`**
+
+So a "20 ms" attack takes **~138 ms** to reach the peak. Decay/Release use the
+same one-pole-to-threshold pattern (~6× nominal), though perceptually they land
+near nominal because "most of the way" is reached sooner. The amp is **not**
+involved — it reads `cv` raw per sample, no smoothing on the cv input
+(`crates/synth_modules/src/amplifier.rs:194-204`); the de-zipper there is only on
+its own `Level` knob.
+
+**Verified live (2026-07-05)** via `compare_envelopes`/`analyze_note` on a
+saw-pad with Attack=0.02: `attack_ms` reads a stable ~50 ms across window sizes
+(the analyzer's 90 % threshold ≈ 2.3·τ = 46 ms), and the raw `rms_envelope`
+peaks at ~125 ms (≈ 6.9·τ = 138 ms) — both match the math exactly. The
+`envelope_estimate` hardening (`d043187c`) is correct and honest; this is a
+genuine **envelope DSP / parameter-semantics** issue, not an analysis artifact.
+
+Evidence the params are authored *to the number*: 68/69 built-in patches set
+attack, and `patches/velocity_pad.rs:82` sets `.param_f("attack", 0.15)` with the
+comment *"Slow attack (150ms) for pad-like swell"* — the author expected
+0.15 = 150 ms but gets ~1 s to peak. So a fix makes such patches **more** correct.
+
+### Chosen direction — Option 1: overshoot target (analog-style)
+
+- [ ] **Make Attack/Decay/Release mean their nominal time.** Aim the attack
+  glide at a target **> 1.0** (≈ 1.58, since `1.58·(1−e⁻¹) ≈ 0.999`) so the curve
+  crosses the completion threshold at ≈ one time-constant = the nominal Attack.
+  Apply the same fix consistently to Decay and Release (else attack is accurate
+  while decay/release stay ~6× time-constants). Keeps the natural exponential
+  feel while the number becomes meaningful.
+  - **Implementation note:** `target_level` is a `NormalizedValue`, which clamps
+    to [0, 1] — the attack overshoot target needs a raw `f32` (or a dedicated
+    "attack target" constant), so a small refactor of the attack branch in
+    `envelope.rs`, not a one-liner. Decide the exact overshoot from the completion
+    threshold used.
+  - **Spot-check by ear:** A/B `velocity_pad` against its own "150 ms" intent,
+    then retune the handful of built-in patches that sound wrong.
+
+### Loading older projects / instruments (compat)
+
+- **Files still load — no format break.** Attack is stored as a plain number
+  (seconds) in module params; Option 1 changes DSP behavior, not the schema, so
+  `.pertyproj` and patch files parse unchanged (`ProjectFile::FORMAT_VERSION`
+  stays parseable).
+- **But the SOUND changes:** every envelope with a non-tiny attack plays ~7×
+  faster to peak. Impact scales with attack length — plucks (attack≈0) unaffected;
+  pads/swells (0.15–0.5 s) dramatically snappier.
+- **Decision needed — how to treat old user content:**
+  - **A (recommended): break the sound, no migration.** Aligned with the
+    project's "no backward compatibility required" stance; the built-in patches
+    (authored to the number) get *more* correct. Bump `FORMAT_VERSION` "1.0"→"1.1"
+    purely as a marker; retune the few built-ins that sound off. User projects
+    with long deliberate attacks need a manual re-tune.
+  - **B: behavior-preserving migration.** On load of a "1.0" file, scale every
+    Envelope module's Attack (and Decay/Release if fixed) by the conversion factor
+    (~6.9×), gated on `ProjectFile.version` so "1.1" saves aren't re-scaled.
+    Precedent exists: `upgrade_legacy_mod_matrix` (`patch.rs:549`) and
+    `resolve_stereo_out_port` run transforms on load. **Caveats:** the migration
+    preserves only one point on the curve (the completion time) not the whole
+    shape — old is a long-tailed exponential, new is overshoot-truncated (~2.7×
+    for the 90 % point vs ~6.9× for completion), so it's approximate; and it also
+    "un-fixes" patches that were authored to the number (like `velocity_pad`).
+- **Suggested first step:** a small spike — fix only the attack curve and A/B
+  `velocity_pad` against its "150 ms" intent before committing to the full
+  three-stage change + the A-vs-B migration decision.
+
+---
+
 ## 1. Sequencer & Arrangement
 
 ### 1.1 Tempo automation
