@@ -400,6 +400,7 @@ fn compare(
         None,
         None,
         AnalysisScope::default(),
+        synth_mcp::TimeResolvedOptions::default(),
     )
     .expect("compare_spectra should succeed")
 }
@@ -423,6 +424,54 @@ fn compare_spectra_identical_render_is_near_zero() {
     assert!(
         d.missing_partials.is_empty() && d.extra_partials.is_empty(),
         "identical sources have no missing/extra partials"
+    );
+    // Aggregate mode leaves the time-resolved fields unset.
+    assert!(d.time_resolved_lsd.is_none());
+    assert!(d.worst_frames.is_none());
+}
+
+#[test]
+fn compare_spectra_time_resolved_identical_is_near_zero_and_populated() {
+    let (rig, song) = setup();
+    let shared = McpSharedState::with_song(song);
+    let d = compare_spectra_impl(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        render_source(0),
+        render_source(0),
+        None,
+        None,
+        None,
+        None,
+        AnalysisScope::default(),
+        synth_mcp::TimeResolvedOptions {
+            enabled: true,
+            mask_target_energy: true,
+            align_envelope: true,
+            ..Default::default()
+        },
+    )
+    .expect("time-resolved compare should succeed");
+
+    // The framed fields are populated…
+    let tr_lsd = d
+        .time_resolved_lsd
+        .expect("time_resolved_lsd set when enabled");
+    let frames = d.frames_compared.expect("frames_compared set when enabled");
+    assert!(d.alignment_offset_ms.is_some(), "alignment offset reported");
+    assert!(d.worst_frames.is_some(), "worst_frames reported");
+    assert!(frames > 0, "some frames should be compared, got {frames}");
+    // …and an identical source frames to ~0 per-frame distance.
+    assert!(
+        tr_lsd < 1.0,
+        "identical sources should be ~0 apart per frame, got {tr_lsd}"
+    );
+    // A steady 2 s render is not time-sparse, so no honesty warning is added.
+    assert!(
+        d.warnings.iter().all(|w| !w.contains("time-sparse")),
+        "steady render should not trigger the time-sparse warning: {:?}",
+        d.warnings
     );
 }
 

@@ -2065,6 +2065,16 @@ pub struct PartialDiff {
     pub amplitude_db: f32,
 }
 
+/// One diverging frame from the time-resolved comparison: the timestamp to
+/// listen to / re-window, and that frame's per-frame log-spectral distance.
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct WorstFrame {
+    /// Window-centre time of the frame, in seconds from the (aligned) start.
+    pub time_seconds: f32,
+    /// The frame's per-frame log-spectral distance.
+    pub lsd: f32,
+}
+
 /// Result of `compare_spectra`: how far the candidate spectrum is from the
 /// target, and *where*. `log_spectral_distance` is the scalar to minimise;
 /// `missing_partials` is the actionable list ("the target has a strong partial
@@ -2127,6 +2137,36 @@ pub struct CompareSpectraResult {
     pub missing_partials: Vec<PartialDiff>,
     /// Partials present in the candidate but not in the target — extra content.
     pub extra_partials: Vec<PartialDiff>,
+    /// (time_resolved mode) RMS of the per-frame `log_spectral_distance` over the
+    /// compared frames. Unlike the aggregate `log_spectral_distance`, this scores
+    /// each frame on its own (peak-normalised per frame), so it ranks candidates
+    /// on time-sparse/staccato material the aggregate averages flat. `None` when
+    /// `time_resolved` was off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time_resolved_lsd: Option<f32>,
+    /// (time_resolved mode) RMS of the per-frame `mel_l2_distance` over the
+    /// compared frames. `None` when `time_resolved` was off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub time_resolved_mel_l2: Option<f32>,
+    /// (time_resolved mode) how many frame pairs were compared (masked frames
+    /// excluded). `None` when `time_resolved` was off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frames_compared: Option<u32>,
+    /// (time_resolved mode) how many frames the target-energy mask dropped
+    /// (silence/decay on the target side). `None` when `time_resolved` was off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frames_masked: Option<u32>,
+    /// (time_resolved mode) the envelope-alignment shift applied to the candidate
+    /// before framing, in ms (positive = candidate was delayed relative to the
+    /// target). Sanity-check this against how far apart the two onsets should be.
+    /// `None` when `time_resolved` was off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alignment_offset_ms: Option<f32>,
+    /// (time_resolved mode) the most-diverging compared frames (descending
+    /// `lsd`), pointing at the timestamps to listen to / re-window. `None` when
+    /// `time_resolved` was off.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worst_frames: Option<Vec<WorstFrame>>,
     /// Non-fatal warnings from rendering/decoding either source.
     pub warnings: Vec<String>,
 }

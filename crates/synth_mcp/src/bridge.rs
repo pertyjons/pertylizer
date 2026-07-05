@@ -307,6 +307,32 @@ pub struct SpectrumSource {
     pub window_len_ms: Option<f32>,
 }
 
+/// The optional time-resolved (per-frame) mode of
+/// [`McpBridge::compare_spectra`]. When `enabled`, both sources are framed into
+/// spectrograms and compared frame-by-frame with target-energy masking — the
+/// framed distances are *added* to the aggregate result, not a replacement. The
+/// aggregate scalar averages over the whole window, so on time-sparse / staccato
+/// material this per-frame path is what carries the ranking signal. All fields
+/// are ignored when `enabled` is `false` (the default, unchanged behaviour).
+#[derive(Debug, Clone, Default)]
+pub struct TimeResolvedOptions {
+    /// Turn the framed path on. `false` = aggregate-only.
+    pub enabled: bool,
+    /// Frame hop in ms (`None` = the spectrogram default, 20 ms).
+    pub hop_ms: Option<f32>,
+    /// Analysed frame length in ms (`None` = the spectrogram default, 40 ms).
+    pub frame_len_ms: Option<f32>,
+    /// Mask frames on the target's per-frame energy (`true`, the default) or
+    /// compare every paired frame (`false`).
+    pub mask_target_energy: bool,
+    /// Envelope-cross-correlate the two buffers and shift the candidate before
+    /// framing (`true`, the default) or pair frames from sample 0 (`false`).
+    pub align_envelope: bool,
+    /// Maximum alignment search in ms (`None` = 250 ms). Ignored when
+    /// `align_envelope` is `false`.
+    pub align_max_ms: Option<f32>,
+}
+
 impl AnalysisScope {
     /// Build a scope from the optional MCP flags. `all` turns on every effect
     /// stage; the per-stage flags OR in on top of it. Every `None` effect flag
@@ -1891,7 +1917,9 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// guidance for a timbre-matching loop. Both sources are analysed with the
     /// same `f0_hint`/`max_partials`/`log_bins`/`mel_bands`; render sources use
     /// `scope`. `mel_bands` (default 40) sizes the log-mel filterbank behind
-    /// `mel_l2_distance`.
+    /// `mel_l2_distance`. `time_resolved` optionally adds a per-frame masked
+    /// distance (see [`TimeResolvedOptions`]) for time-sparse material the
+    /// aggregate scalar averages flat.
     #[allow(clippy::too_many_arguments)]
     fn compare_spectra(
         &self,
@@ -1902,6 +1930,7 @@ pub trait SynthBridge: Send + Sync + 'static {
         log_bins: Option<u32>,
         mel_bands: Option<u32>,
         scope: AnalysisScope,
+        time_resolved: TimeResolvedOptions,
     ) -> Result<crate::types::CompareSpectraResult, McpBridgeError>;
 
     /// Compare the amplitude *contours* (ADSR shape over time) of two sources —

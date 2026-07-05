@@ -4717,6 +4717,7 @@ impl SynthBridge for AppSynthBridge {
         log_bins: Option<u32>,
         mel_bands: Option<u32>,
         scope: synth_mcp::AnalysisScope,
+        time_resolved: synth_mcp::TimeResolvedOptions,
     ) -> Result<synth_mcp::types::CompareSpectraResult, McpBridgeError> {
         compare_spectra_impl(
             &self.session,
@@ -4729,6 +4730,7 @@ impl SynthBridge for AppSynthBridge {
             log_bins,
             mel_bands,
             scope,
+            time_resolved,
         )
     }
 
@@ -10852,9 +10854,20 @@ const DEFAULT_COMPARE_LOG_BINS: u32 = 128;
 /// MFCC-style filterbank size).
 const DEFAULT_COMPARE_MEL_BANDS: u32 = 40;
 
+/// One analysed `compare_spectra` source: its aggregate spectrum, the exact mono
+/// buffer that spectrum was computed over (the windowed frame for a sample, the
+/// rendered mono for a render) at `sample_rate`, and any render/decode warnings.
+/// The mono buffer + rate feed the `time_resolved` framed path.
+struct AnalyzedSource {
+    result: crate::audio::analysis::spectrum::SpectrumResult,
+    mono: Vec<f32>,
+    sample_rate: u32,
+    warnings: Vec<String>,
+}
+
 /// Analyse one `compare_spectra` source — a render (optionally soloed) or an
-/// imported sample / WAV — into an analysis-layer `SpectrumResult` plus any
-/// render/decode warnings.
+/// imported sample / WAV — into an [`AnalyzedSource`] (aggregate spectrum plus
+/// the mono buffer it was measured over).
 #[allow(clippy::too_many_arguments)]
 fn analyze_spectrum_source(
     session: &SynthSession,
@@ -10866,13 +10879,7 @@ fn analyze_spectrum_source(
     log_bins: Option<u32>,
     mel_bands: Option<u32>,
     scope: synth_mcp::AnalysisScope,
-) -> Result<
-    (
-        crate::audio::analysis::spectrum::SpectrumResult,
-        Vec<String>,
-    ),
-    McpBridgeError,
-> {
+) -> Result<AnalyzedSource, McpBridgeError> {
     let mut opts = spectrum_opts(f0_hint, max_partials, log_bins);
     if let Some(n) = mel_bands {
         opts.mel_bands = n;
@@ -10881,10 +10888,14 @@ fn analyze_spectrum_source(
         let src = resolve_sample_source(sample_library, id_or_path)?;
         let mono = downmix_interleaved(&src.data, src.channels);
         let frame = window_mono(mono, src.sample_rate, source.start_ms, source.window_len_ms)?;
-        Ok((
-            crate::audio::analysis::spectrum::analyze_spectrum(&frame, src.sample_rate, opts),
-            Vec::new(),
-        ))
+        let result =
+            crate::audio::analysis::spectrum::analyze_spectrum(&frame, src.sample_rate, opts);
+        Ok(AnalyzedSource {
+            result,
+            mono: frame,
+            sample_rate: src.sample_rate,
+            warnings: Vec::new(),
+        })
     } else {
         // A render addresses its window in ticks; window_len_ms (if given)
         // overrides the render duration so both sides can frame identically.
@@ -10904,16 +10915,51 @@ fn analyze_spectrum_source(
             scope,
         )?;
         let mono = downmix_interleaved(&rendered.samples, rendered.channels);
-        Ok((
-            crate::audio::analysis::spectrum::analyze_spectrum(&mono, rendered.sample_rate, opts),
+        let result =
+            crate::audio::analysis::spectrum::analyze_spectrum(&mono, rendered.sample_rate, opts);
+        Ok(AnalyzedSource {
+            result,
+            mono,
+            sample_rate: rendered.sample_rate,
             warnings,
-        ))
+        })
+    }
+}
+
+/// Active-time fraction (per [`spectrum::active_time_fraction`]) below which the
+/// aggregate distances are averaging over mostly-silence and the caller should
+/// switch to the time-resolved path — the §2.3 honesty guard's threshold.
+const AGGREGATE_ACTIVE_TIME_MIN: f32 = 0.6;
+
+/// Shift the two mono buffers so their onsets line up, given an envelope lag in
+/// [`spectrum::ENV_ALIGN_WINDOW_MS`] windows (positive = candidate lags target).
+/// Drops samples from the front of whichever side started later, converting the
+/// window lag to samples at that buffer's own rate.
+fn apply_alignment(mono_t: &mut Vec<f32>, sr_t: u32, mono_c: &mut Vec<f32>, sr_c: u32, lag: i64) {
+    use crate::audio::analysis::spectrum::ENV_ALIGN_WINDOW_MS;
+    // Round (not truncate) to match `rms_envelope`'s window sizing, so the drain
+    // and the envelope grid the lag was measured on agree at non-integer rates.
+    let window_samples =
+        |sr: u32| ((ENV_ALIGN_WINDOW_MS * 0.001 * sr as f32).round() as usize).max(1);
+    if lag > 0 {
+        // Candidate lags the target → drop the candidate's leading silence.
+        let drop = (lag as usize)
+            .saturating_mul(window_samples(sr_c))
+            .min(mono_c.len());
+        mono_c.drain(0..drop);
+    } else if lag < 0 {
+        let drop = ((-lag) as usize)
+            .saturating_mul(window_samples(sr_t))
+            .min(mono_t.len());
+        mono_t.drain(0..drop);
     }
 }
 
 /// `compare_spectra` bridge implementation. Analyses both sources with the same
-/// options (log bins forced on so the broadband distance is meaningful) and
-/// runs `analysis::spectrum::compare`.
+/// options (log bins forced on so the broadband distance is meaningful) and runs
+/// `analysis::spectrum::compare`. When `time_resolved.enabled`, it additionally
+/// aligns and frames both mono buffers and fills the per-frame masked distance
+/// fields; otherwise it emits the §2.3 honesty warning on time-sparse material.
 #[doc(hidden)]
 #[allow(clippy::too_many_arguments)]
 pub fn compare_spectra_impl(
@@ -10927,10 +10973,13 @@ pub fn compare_spectra_impl(
     log_bins: Option<u32>,
     mel_bands: Option<u32>,
     scope: synth_mcp::AnalysisScope,
+    time_resolved: synth_mcp::TimeResolvedOptions,
 ) -> Result<synth_mcp::types::CompareSpectraResult, McpBridgeError> {
+    use crate::audio::analysis::spectrum;
+
     let bins = Some(log_bins.unwrap_or(DEFAULT_COMPARE_LOG_BINS).max(1));
     let mel = Some(mel_bands.unwrap_or(DEFAULT_COMPARE_MEL_BANDS).max(1));
-    let (a, mut warnings) = analyze_spectrum_source(
+    let mut a = analyze_spectrum_source(
         session,
         sample_library,
         shared,
@@ -10941,7 +10990,7 @@ pub fn compare_spectra_impl(
         mel,
         scope,
     )?;
-    let (b, b_warnings) = analyze_spectrum_source(
+    let mut b = analyze_spectrum_source(
         session,
         sample_library,
         shared,
@@ -10952,16 +11001,16 @@ pub fn compare_spectra_impl(
         mel,
         scope,
     )?;
-    warnings.extend(b_warnings);
+    let mut warnings = std::mem::take(&mut a.warnings);
+    warnings.append(&mut b.warnings);
 
-    let dist = crate::audio::analysis::spectrum::compare(&a, &b);
-    let to_diff =
-        |pd: &crate::audio::analysis::spectrum::PartialDiff| synth_mcp::types::PartialDiff {
-            frequency_hz: pd.frequency.0,
-            amplitude_db: pd.amplitude.0,
-        };
+    let dist = spectrum::compare(&a.result, &b.result);
+    let to_diff = |pd: &spectrum::PartialDiff| synth_mcp::types::PartialDiff {
+        frequency_hz: pd.frequency.0,
+        amplitude_db: pd.amplitude.0,
+    };
 
-    Ok(synth_mcp::types::CompareSpectraResult {
+    let mut result = synth_mcp::types::CompareSpectraResult {
         log_spectral_distance: dist.log_spectral_distance,
         voicing_penalty_db: dist.voicing_penalty_db,
         mel_l2_distance: dist.mel_l2_distance,
@@ -10973,12 +11022,136 @@ pub fn compare_spectra_impl(
         voicing_mismatch: dist.voicing_mismatch,
         floor_coverage: dist.floor_coverage,
         floor_limited: dist.floor_limited,
-        target_voiced: a.voiced,
-        candidate_voiced: b.voiced,
+        target_voiced: a.result.voiced,
+        candidate_voiced: b.result.voiced,
         missing_partials: dist.missing_partials.iter().map(to_diff).collect(),
         extra_partials: dist.extra_partials.iter().map(to_diff).collect(),
+        time_resolved_lsd: None,
+        time_resolved_mel_l2: None,
+        frames_compared: None,
+        frames_masked: None,
+        alignment_offset_ms: None,
+        worst_frames: None,
         warnings,
-    })
+    };
+
+    if time_resolved.enabled {
+        fill_time_resolved(
+            &mut result,
+            &a,
+            &b,
+            &time_resolved,
+            f0_hint,
+            max_partials,
+            bins,
+            mel,
+        );
+    } else {
+        // §2.3 honesty guard: the aggregate scalars average over the whole
+        // window, so on time-sparse material they average over silence. Warn and
+        // point the caller at the framed path. A window too short to yield enough
+        // envelope hops to assess is skipped (`None`) rather than mislabelled as
+        // 0% active.
+        let assess = |mono: &[f32], sr: u32| -> Option<f32> {
+            // Need at least ~100 ms (≥10 hops) to call something time-sparse.
+            if (mono.len() as f32) < 0.1 * sr as f32 {
+                None
+            } else {
+                Some(spectrum::active_time_fraction(mono, sr))
+            }
+        };
+        let frac_t = assess(&a.mono, a.sample_rate);
+        let frac_c = assess(&b.mono, b.sample_rate);
+        let sparse = |f: Option<f32>| f.is_some_and(|v| v < AGGREGATE_ACTIVE_TIME_MIN);
+        if sparse(frac_t) || sparse(frac_c) {
+            let pct = |f: Option<f32>| {
+                f.map_or_else(|| "n/a".to_string(), |v| format!("{:.0}%", v * 100.0))
+            };
+            result.warnings.push(format!(
+                "time-sparse content (target active {}, candidate active {} of window) — \
+                 aggregate distances average over silence; use time_resolved: true",
+                pct(frac_t),
+                pct(frac_c)
+            ));
+        }
+    }
+
+    Ok(result)
+}
+
+/// Fill the `time_resolved_*` fields of `result` by aligning and framing the two
+/// analysed sources and running `spectrum::compare_time_resolved`. Each source is
+/// framed at its own sample rate with the same hop/frame length (in ms), so the
+/// frames pair by index across differing rates.
+#[allow(clippy::too_many_arguments)]
+fn fill_time_resolved(
+    result: &mut synth_mcp::types::CompareSpectraResult,
+    a: &AnalyzedSource,
+    b: &AnalyzedSource,
+    opts: &synth_mcp::TimeResolvedOptions,
+    f0_hint: Option<f32>,
+    max_partials: Option<u32>,
+    bins: Option<u32>,
+    mel: Option<u32>,
+) {
+    use crate::audio::analysis::spectrum;
+
+    let mut mono_t = a.mono.clone();
+    let mut mono_c = b.mono.clone();
+
+    // 1. Align (envelope cross-correlation) before framing so onsets pair up.
+    let alignment_offset_ms = if opts.align_envelope {
+        let max_lag_ms = opts.align_max_ms.unwrap_or(250.0);
+        let lag =
+            spectrum::envelope_align(&mono_t, a.sample_rate, &mono_c, b.sample_rate, max_lag_ms);
+        apply_alignment(&mut mono_t, a.sample_rate, &mut mono_c, b.sample_rate, lag);
+        lag as f32 * spectrum::ENV_ALIGN_WINDOW_MS
+    } else {
+        0.0
+    };
+
+    // 2. Frame both sources at their own rate with the same hop/frame length.
+    let mut frame_opts = spectrum_opts(f0_hint, max_partials, bins);
+    if let Some(m) = mel {
+        frame_opts.mel_bands = m;
+    }
+    let (hop_t, win_t) = spectrogram_frame_samples(a.sample_rate, opts.hop_ms, opts.frame_len_ms);
+    let (hop_c, win_c) = spectrogram_frame_samples(b.sample_rate, opts.hop_ms, opts.frame_len_ms);
+    let frames_t = spectrum::analyze_spectrogram(&mono_t, a.sample_rate, hop_t, win_t, frame_opts);
+    let frames_c = spectrum::analyze_spectrogram(&mono_c, b.sample_rate, hop_c, win_c, frame_opts);
+
+    for (label, len) in [("target", frames_t.len()), ("candidate", frames_c.len())] {
+        if len >= spectrum::MAX_SPECTROGRAM_FRAMES {
+            result.warnings.push(format!(
+                "time_resolved {label} spectrogram truncated at the {}-frame cap — \
+                 increase hop_ms or shorten the window for full coverage",
+                spectrum::MAX_SPECTROGRAM_FRAMES
+            ));
+        }
+    }
+
+    // 3. Per-frame masked distance.
+    let mask = if opts.mask_target_energy {
+        spectrum::FrameMask::TargetEnergy
+    } else {
+        spectrum::FrameMask::None
+    };
+    let tr = spectrum::compare_time_resolved(&frames_t, &frames_c, mask);
+
+    result.time_resolved_lsd = Some(tr.lsd);
+    result.time_resolved_mel_l2 = Some(tr.mel_l2);
+    result.frames_compared = Some(tr.frames_compared);
+    result.frames_masked = Some(tr.frames_masked);
+    result.alignment_offset_ms = Some(alignment_offset_ms);
+    result.worst_frames = Some(
+        tr.worst_frames
+            .iter()
+            .map(|w| synth_mcp::types::WorstFrame {
+                time_seconds: w.time.0,
+                lsd: w.lsd,
+            })
+            .collect(),
+    );
 }
 
 /// Default RMS-envelope window (ms) for `compare_envelopes` — fine enough to

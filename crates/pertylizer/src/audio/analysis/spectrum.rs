@@ -1053,6 +1053,253 @@ fn diff_partials(
     (missing, extra)
 }
 
+/// Peak-relative share of the loudest target frame's RMS below which a frame is
+/// silence-in-time under [`FrameMask::TargetEnergy`]. Matches the external
+/// ground-truth measure (keep only frames where the target actually has energy).
+/// A frame's release tail is quiet relative to the burst *peak*, but per-frame
+/// peak-normalisation still makes that tail's spectrum visible once it clears
+/// this gate.
+const TARGET_ENERGY_MASK_FRACTION: f32 = 0.05;
+/// How many most-diverging frames [`compare_time_resolved`] reports.
+const WORST_FRAMES: usize = 5;
+
+/// Which frames a time-resolved comparison scores.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FrameMask {
+    /// Compare only frames whose *target* broadband RMS is voiced-relevant —
+    /// above `max(NEAR_FLOOR_RMS, TARGET_ENERGY_MASK_FRACTION · peak_frame_rms)`.
+    /// Frames below the gate (silence/decayed tail on the target side) are
+    /// counted as masked, not compared, so silence never averages into the
+    /// distance.
+    TargetEnergy,
+    /// Compare every paired frame.
+    None,
+}
+
+/// One diverging frame from [`compare_time_resolved`]: its window-centre time
+/// and per-frame log-spectral distance. The worst few point the caller at the
+/// timestamps to listen to / re-window.
+#[derive(Debug, Clone, Copy)]
+pub struct WorstFrame {
+    /// Window-centre time of the frame.
+    pub time: Seconds,
+    /// The frame's per-frame log-spectral distance.
+    pub lsd: f32,
+}
+
+/// Result of [`compare_time_resolved`].
+#[derive(Debug, Clone)]
+pub struct TimeResolvedDistance {
+    /// RMS of the per-frame log-spectral distance over the compared frames.
+    pub lsd: f32,
+    /// RMS of the per-frame mel L2 distance over the compared frames.
+    pub mel_l2: f32,
+    /// Frames actually compared (paired, and above the mask threshold).
+    pub frames_compared: u32,
+    /// Frames dropped by the mask (paired, but the target was below threshold).
+    pub frames_masked: u32,
+    /// The most-diverging compared frames, descending `lsd`, at most
+    /// [`WORST_FRAMES`].
+    pub worst_frames: Vec<WorstFrame>,
+}
+
+/// Per-frame peak-normalised log-spectral + mel L2 distance for one aligned
+/// frame pair. Each frame's bins are already peak-normalised to that frame's own
+/// peak, so quiet-in-time content (a decaying tail) is scored at full contrast.
+///
+/// A silent side carries no bins (its frame fell below the analysis energy
+/// floor); substitute a flat [`LSD_FLOOR_DB`] band the length of the other side
+/// so a candidate that dropped content the target still carries reads as a large
+/// distance rather than a spurious 0 (a missing bin set would otherwise make the
+/// shared-length prefix empty → distance 0, ranking a silenced tail as a perfect
+/// match).
+fn frame_distance(target: &SpectrumResult, candidate: &SpectrumResult) -> (f32, f32) {
+    let lsd = masked_bins_distance(&target.log_bins, &candidate.log_bins, |a, b| {
+        log_spectral_distance(a, b).0
+    });
+    let mel = masked_bins_distance(&target.mel_bins, &candidate.mel_bins, mel_l2_distance);
+    (lsd, mel)
+}
+
+/// Apply `dist` to two peak-normalised bin sets, substituting a flat
+/// [`LSD_FLOOR_DB`] band for a *single* empty (silent) side so dropped content
+/// scores as distance, not a spurious match. Allocates only on that empty-side
+/// path; the common both-present case (and the both-empty case) passes the
+/// slices straight through.
+fn masked_bins_distance(
+    a: &[Decibels],
+    b: &[Decibels],
+    dist: impl Fn(&[Decibels], &[Decibels]) -> f32,
+) -> f32 {
+    match (a.is_empty(), b.is_empty()) {
+        (false, true) => dist(a, &vec![Decibels::new(LSD_FLOOR_DB); a.len()]),
+        (true, false) => dist(&vec![Decibels::new(LSD_FLOOR_DB); b.len()], b),
+        // Both present → compare directly; both empty → `dist` short-circuits to 0.
+        _ => dist(a, b),
+    }
+}
+
+/// Compare two spectrograms frame-by-frame, masking on the target's per-frame
+/// energy, and return the RMS per-frame distance over the compared frames.
+///
+/// The aggregate [`compare`] averages a whole window into one spectrum, so on
+/// silence-dominated / time-sparse material the loud frames drown out the quiet
+/// content that actually distinguishes candidates. This measure instead scores
+/// each frame on its own — with each frame's bins peak-normalised to that
+/// frame's own peak — so a quiet-in-time release tail is compared at full
+/// contrast. Frames are paired by index (the caller frames both sources with the
+/// same `hop_ms`/`frame_len_ms`, at each source's own rate, after aligning the
+/// two buffers), so a shared frame grid is assumed.
+#[must_use]
+pub fn compare_time_resolved(
+    target_frames: &[SpectrogramFrame],
+    candidate_frames: &[SpectrogramFrame],
+    mask: FrameMask,
+) -> TimeResolvedDistance {
+    let n = target_frames.len().min(candidate_frames.len());
+
+    // The mask threshold is relative to the target's own loudest frame: a tail
+    // frame is silence-in-time relative to the burst peak, not to the window.
+    let peak_frame_rms = target_frames
+        .iter()
+        .take(n)
+        .map(|f| f.spectrum.frame_rms)
+        .fold(0.0_f32, f32::max);
+    let threshold = match mask {
+        FrameMask::TargetEnergy => {
+            (TARGET_ENERGY_MASK_FRACTION * peak_frame_rms).max(NEAR_FLOOR_RMS)
+        }
+        FrameMask::None => f32::NEG_INFINITY,
+    };
+
+    let mut sum_lsd = 0.0f64;
+    let mut sum_mel = 0.0f64;
+    let mut compared = 0u32;
+    let mut masked = 0u32;
+    let mut worst: Vec<WorstFrame> = Vec::new();
+
+    for i in 0..n {
+        let target = &target_frames[i].spectrum;
+        if target.frame_rms < threshold {
+            masked += 1;
+            continue;
+        }
+        let candidate = &candidate_frames[i].spectrum;
+        let (lsd, mel) = frame_distance(target, candidate);
+        sum_lsd += f64::from(lsd) * f64::from(lsd);
+        sum_mel += f64::from(mel) * f64::from(mel);
+        compared += 1;
+        worst.push(WorstFrame {
+            time: target_frames[i].time,
+            lsd,
+        });
+    }
+
+    let rms = |sum: f64, count: u32| -> f32 {
+        if count == 0 {
+            0.0
+        } else {
+            (sum / f64::from(count)).sqrt() as f32
+        }
+    };
+    worst.sort_by(|a, b| b.lsd.total_cmp(&a.lsd));
+    worst.truncate(WORST_FRAMES);
+
+    TimeResolvedDistance {
+        lsd: rms(sum_lsd, compared),
+        mel_l2: rms(sum_mel, compared),
+        frames_compared: compared,
+        frames_masked: masked,
+        worst_frames: worst,
+    }
+}
+
+/// RMS-envelope block size (ms) for [`envelope_align`], and the granularity of
+/// the lag it returns. 10 ms is fine enough to align staccato onsets to within
+/// one hop while keeping the cross-correlation cheap.
+pub const ENV_ALIGN_WINDOW_MS: f32 = 10.0;
+
+/// Cross-correlate the [`ENV_ALIGN_WINDOW_MS`] RMS envelopes of two mono buffers
+/// and return the lag, **in whole envelope windows**, that best aligns the
+/// candidate to the target. Positive = the candidate lags the target (shift the
+/// candidate earlier by this many windows to align); negative = it leads; 0 when
+/// either buffer is too short to yield an envelope.
+///
+/// Each envelope is built at its own sample rate but onto the same 10 ms time
+/// grid, so the two sources may differ in rate (a 32 kHz reference vs a 44.1 kHz
+/// render) — the caller converts the returned window lag back to samples at each
+/// buffer's own rate. Both envelopes are mean-removed before correlating, so a
+/// constant level offset between the sources doesn't bias the match. The search
+/// is bounded to ±`max_lag_ms` (converted to windows and rounded).
+#[must_use]
+pub fn envelope_align(
+    target: &[f32],
+    target_sr: u32,
+    candidate: &[f32],
+    candidate_sr: u32,
+    max_lag_ms: f32,
+) -> i64 {
+    let env_t = super::rms_envelope(target, target_sr, ENV_ALIGN_WINDOW_MS);
+    let env_c = super::rms_envelope(candidate, candidate_sr, ENV_ALIGN_WINDOW_MS);
+    if env_t.is_empty() || env_c.is_empty() {
+        return 0;
+    }
+    let demean = |v: &[f32]| -> Vec<f64> {
+        let mean = f64::from(v.iter().sum::<f32>()) / v.len() as f64;
+        v.iter().map(|&x| f64::from(x) - mean).collect()
+    };
+    let env_t = demean(&env_t);
+    let env_c = demean(&env_c);
+
+    let (len_t, len_c) = (env_t.len() as i64, env_c.len() as i64);
+    // Beyond ±max(len_t, len_c) windows the envelopes no longer overlap, so
+    // clamp the search there. This also tames a non-finite or absurd
+    // `max_lag_ms` — the saturating float→int cast (`inf` → `i64::MAX`) would
+    // otherwise make the loop bound overflow and spin ~2^63 times.
+    let overlap_bound = len_t.max(len_c);
+    let max_lag = ((max_lag_ms.max(0.0) / ENV_ALIGN_WINDOW_MS).round() as i64).min(overlap_bound);
+
+    let mut best_lag = 0i64;
+    let mut best_corr = f64::NEG_INFINITY;
+    for lag in -max_lag..=max_lag {
+        // Sum over the indices where both envelopes overlap:
+        // i ∈ [max(0, -lag), min(len_t, len_c - lag)).
+        let i_start = (-lag).max(0);
+        let i_end = len_t.min(len_c - lag);
+        if i_start >= i_end {
+            continue; // no overlap at this lag
+        }
+        let mut corr = 0.0f64;
+        for i in i_start..i_end {
+            let (ti, ci) = (i as usize, (i + lag) as usize);
+            corr += env_t[ti] * env_c[ci];
+        }
+        // Strictly-greater → on an exact tie the first (most-negative) lag wins;
+        // real envelopes have a unique peak, so ties don't arise in practice.
+        if corr > best_corr {
+            best_corr = corr;
+            best_lag = lag;
+        }
+    }
+    best_lag
+}
+
+/// Fraction (0..1) of a buffer's [`ENV_ALIGN_WINDOW_MS`] RMS windows whose level
+/// clears [`NEAR_FLOOR_RMS`] — i.e. how much of the window actually carries
+/// signal rather than silence/decay. The aggregate [`compare`] averages over the
+/// whole window, so a low active-time fraction flags material where that scalar
+/// is averaging over silence and the caller wants the time-resolved path
+/// instead. Returns 0 when the buffer is too short to yield a window.
+#[must_use]
+pub fn active_time_fraction(samples: &[f32], sample_rate: u32) -> f32 {
+    let env = super::rms_envelope(samples, sample_rate, ENV_ALIGN_WINDOW_MS);
+    if env.is_empty() {
+        return 0.0;
+    }
+    let active = env.iter().filter(|&&r| r > NEAR_FLOOR_RMS).count();
+    active as f32 / env.len() as f32
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1710,5 +1957,253 @@ mod tests {
         assert!(analyze_spectrogram(&sig, SR, 0, 512, SpectrumOpts::default()).is_empty());
         assert!(analyze_spectrogram(&sig, SR, 256, 0, SpectrumOpts::default()).is_empty());
         assert!(analyze_spectrogram(&[], SR, 256, 512, SpectrumOpts::default()).is_empty());
+    }
+
+    // --- time-resolved comparison ------------------------------------------
+
+    /// Options that emit the log + mel bins `compare_time_resolved` needs.
+    fn tr_opts() -> SpectrumOpts {
+        SpectrumOpts {
+            log_bins: 128,
+            mel_bands: 40,
+            ..SpectrumOpts::default()
+        }
+    }
+
+    /// 40 ms window / 20 ms hop spectrogram, with bins enabled.
+    fn tr_spectrogram(sig: &[f32]) -> Vec<SpectrogramFrame> {
+        let win = (0.040 * SR as f32) as usize;
+        let hop = (0.020 * SR as f32) as usize;
+        analyze_spectrogram(sig, SR, hop, win, tr_opts())
+    }
+
+    /// One or two summed sines over `len` samples at amplitude `amp`.
+    fn two_tone(f_a: f32, f_b: Option<f32>, len: usize, amp: f32) -> Vec<f32> {
+        (0..len)
+            .map(|i| {
+                let t = i as f32 / SR as f32;
+                let mut s = (TAU * f_a * t).sin();
+                if let Some(fb) = f_b {
+                    s += (TAU * fb * t).sin();
+                }
+                amp * s
+            })
+            .collect()
+    }
+
+    /// Deterministic white noise in [-amp, amp].
+    fn noise(len: usize, amp: f32, seed: u32) -> Vec<f32> {
+        let mut x = seed;
+        (0..len)
+            .map(|_| {
+                x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                ((x >> 8) as f32 / (1u32 << 24) as f32 * 2.0 - 1.0) * amp
+            })
+            .collect()
+    }
+
+    #[test]
+    fn time_resolved_mask_ignores_junk_in_silent_gaps() {
+        // Target: three 440 Hz bursts with silent gaps between them.
+        let burst = sine(440.0, 6000, 0.6);
+        let gap = vec![0.0f32; 6000];
+        let mut target = Vec::new();
+        for _ in 0..3 {
+            target.extend_from_slice(&burst);
+            target.extend_from_slice(&gap);
+        }
+        // Candidate: the same bursts; the junk noise sits in the *middle* of each
+        // gap, guarded by silence so it never overlaps a frame the target burst
+        // still occupies — it is purely gap content.
+        let mut candidate = Vec::new();
+        for k in 0..3 {
+            candidate.extend_from_slice(&burst);
+            candidate.extend_from_slice(&vec![0.0f32; 2000]);
+            candidate.extend_from_slice(&noise(2000, 0.3, 7 + k));
+            candidate.extend_from_slice(&vec![0.0f32; 2000]);
+        }
+
+        let tf = tr_spectrogram(&target);
+        let cf = tr_spectrogram(&candidate);
+
+        let masked = compare_time_resolved(&tf, &cf, FrameMask::TargetEnergy);
+        let unmasked = compare_time_resolved(&tf, &cf, FrameMask::None);
+
+        assert!(
+            masked.frames_masked > 0,
+            "the silent gaps should be masked, got {}",
+            masked.frames_masked
+        );
+        // With the junk masked out, only the (matching) burst frames are scored.
+        assert!(
+            masked.lsd < 2.0,
+            "masked distance should be ≈ 0 (junk ignored), got {}",
+            masked.lsd
+        );
+        // Seeing the junk drives the distance up sharply.
+        assert!(
+            unmasked.lsd > masked.lsd + 10.0,
+            "unmasked distance {} should dwarf masked {}",
+            unmasked.lsd,
+            masked.lsd
+        );
+    }
+
+    #[test]
+    fn time_resolved_ranks_tails_the_aggregate_cannot() {
+        // A loud two-tone burst, then a quiet decaying-tail region that differs
+        // between candidates. The burst is identical across all sources.
+        let burst = two_tone(500.0, Some(1500.0), 8192, 1.0);
+        let tail_full = two_tone(500.0, Some(1500.0), 8192, 0.15); // both partials
+        let tail_partial = two_tone(500.0, None, 8192, 0.15); // 1500 Hz dropped
+        let tail_silent = vec![0.0f32; 8192];
+
+        let cat = |tail: &[f32]| {
+            let mut v = burst.clone();
+            v.extend_from_slice(tail);
+            v
+        };
+        let target = cat(&tail_full);
+        let cand_a = cat(&tail_full); // correct tail
+        let cand_b = cat(&tail_partial); // wrong tail (held-tone-like)
+        let cand_c = cat(&tail_silent); // silenced tail
+
+        let tf = tr_spectrogram(&target);
+        let tr =
+            |c: &[f32]| compare_time_resolved(&tf, &tr_spectrogram(c), FrameMask::TargetEnergy);
+        let (a, b, c) = (tr(&cand_a), tr(&cand_b), tr(&cand_c));
+
+        // The whole point: per-frame distance ranks the three tails.
+        assert!(
+            a.lsd < b.lsd,
+            "correct tail A {} < wrong tail B {}",
+            a.lsd,
+            b.lsd
+        );
+        assert!(
+            b.lsd < c.lsd,
+            "wrong tail B {} < silenced tail C {}",
+            b.lsd,
+            c.lsd
+        );
+
+        // The aggregate (whole-window) distance is dominated by the identical
+        // loud burst, so it separates B from C far less than the framed measure
+        // — the blind spot this plan exists for.
+        let agg = |c: &[f32]| {
+            let ta = analyze_spectrum(&target, SR, tr_opts());
+            let ca = analyze_spectrum(c, SR, tr_opts());
+            compare(&ta, &ca).log_spectral_distance
+        };
+        let (gb, gc) = (agg(&cand_b), agg(&cand_c));
+        let tr_gap = c.lsd - b.lsd;
+        assert!(
+            tr_gap > 3.0,
+            "time-resolved separates B/C clearly, gap {tr_gap}"
+        );
+        assert!(
+            (gc - gb).abs() < 0.3 * tr_gap,
+            "aggregate barely separates B ({gb}) from C ({gc}) vs time-resolved gap {tr_gap}"
+        );
+    }
+
+    // --- envelope alignment ------------------------------------------------
+
+    /// A `total`-sample buffer of silence with a 50 ms 440 Hz tone burst placed
+    /// at `start`.
+    fn burst_at(total: usize, start: usize) -> Vec<f32> {
+        let dur = (0.050 * SR as f32) as usize;
+        let mut v = vec![0.0f32; total];
+        for i in 0..dur {
+            if start + i < total {
+                v[start + i] = 0.8 * (TAU * 440.0 * i as f32 / SR as f32).sin();
+            }
+        }
+        v
+    }
+
+    #[test]
+    fn envelope_align_recovers_known_delay() {
+        let total = SR as usize; // 1 s
+        let delay = (0.150 * SR as f32) as usize; // 150 ms = 15 windows
+        let target = burst_at(total, (0.200 * SR as f32) as usize);
+        let candidate = burst_at(total, (0.200 * SR as f32) as usize + delay);
+
+        // Positive lag = candidate lags the target, in 10 ms windows.
+        let lag = envelope_align(&target, SR, &candidate, SR, 250.0);
+        assert!(
+            (lag - 15).abs() <= 1,
+            "expected +15 windows (150 ms) within one hop, got {lag}"
+        );
+
+        // Aligning a buffer with itself returns 0.
+        assert_eq!(envelope_align(&target, SR, &target, SR, 250.0), 0);
+    }
+
+    #[test]
+    fn envelope_align_respects_max_lag_clamp() {
+        let total = SR as usize;
+        let delay = (0.150 * SR as f32) as usize; // real delay 15 windows
+        let target = burst_at(total, (0.200 * SR as f32) as usize);
+        let candidate = burst_at(total, (0.200 * SR as f32) as usize + delay);
+
+        // Cap the search at 50 ms (5 windows); the true 15-window lag is
+        // unreachable, so the result is clamped inside the search bound rather
+        // than reporting the real +15.
+        let lag = envelope_align(&target, SR, &candidate, SR, 50.0);
+        assert!(
+            lag.abs() <= 5,
+            "lag must stay within the ±5-window bound, got {lag}"
+        );
+        assert_ne!(
+            lag, 15,
+            "the clamp prevents reaching the true 15-window lag"
+        );
+    }
+
+    #[test]
+    fn envelope_align_short_buffers_return_zero() {
+        assert_eq!(envelope_align(&[], SR, &[0.0; 4096], SR, 100.0), 0);
+        assert_eq!(envelope_align(&[0.0; 4096], SR, &[], SR, 100.0), 0);
+    }
+
+    #[test]
+    fn active_time_fraction_low_for_sparse_high_for_sustained() {
+        // Sustained pad: energy nearly everywhere → high active fraction.
+        let pad = sine(220.0, SR as usize, 0.5); // 1 s continuous tone
+        let pad_frac = active_time_fraction(&pad, SR);
+        assert!(
+            pad_frac > 0.9,
+            "sustained pad active fraction {pad_frac} > 0.9"
+        );
+
+        // Staccato: one short 50 ms burst in a 1 s window of silence → sparse.
+        let sparse = burst_at(SR as usize, (0.400 * SR as f32) as usize);
+        let sparse_frac = active_time_fraction(&sparse, SR);
+        assert!(
+            sparse_frac < 0.2,
+            "staccato active fraction {sparse_frac} < 0.2"
+        );
+        // Below the 0.6 guard threshold the aggregate-mode warning uses.
+        assert!(sparse_frac < 0.6);
+    }
+
+    #[test]
+    fn envelope_align_non_finite_max_lag_is_bounded() {
+        // A non-finite / absurd max_lag must not overflow the loop bound or hang;
+        // the search is clamped to the envelope overlap and still finds the delay.
+        let total = SR as usize;
+        let delay = (0.150 * SR as f32) as usize;
+        let target = burst_at(total, (0.200 * SR as f32) as usize);
+        let candidate = burst_at(total, (0.200 * SR as f32) as usize + delay);
+        for max_lag in [f32::INFINITY, 1.0e30, -f32::INFINITY, f32::NAN] {
+            let lag = envelope_align(&target, SR, &candidate, SR, max_lag);
+            assert!(
+                lag.abs() <= total as i64,
+                "bounded lag for max_lag={max_lag}"
+            );
+        }
+        // The unbounded (inf) search still recovers the true +15-window delay.
+        assert!((envelope_align(&target, SR, &candidate, SR, f32::INFINITY) - 15).abs() <= 1);
     }
 }

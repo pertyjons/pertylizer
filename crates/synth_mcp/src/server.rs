@@ -1169,6 +1169,28 @@ pub struct CompareSpectraParam {
         description = "Render resolution for render sources: 'draft' (22.05 kHz) or 'full' (44.1 kHz, default). Use 'full' for spectral work."
     )]
     pub render_quality: Option<String>,
+    #[schemars(
+        description = "Turn on the time-resolved (per-frame) distance. Default false = aggregate only. Set true for staccato / silence-dominated / time-varying material (e.g. a SID release tail): the aggregate distances average over the whole window and go blind to quiet-in-time content, while the framed path scores each frame on its own and ranks candidates. Adds time_resolved_lsd / time_resolved_mel_l2 / frames_compared / frames_masked / alignment_offset_ms / worst_frames to the result."
+    )]
+    pub time_resolved: Option<bool>,
+    #[schemars(
+        description = "(time_resolved only) frame hop in ms (default 20). Smaller = finer time resolution, more frames (capped at 4096 with a truncation warning)."
+    )]
+    pub hop_ms: Option<f32>,
+    #[schemars(description = "(time_resolved only) analysed frame length in ms (default 40).")]
+    pub frame_len_ms: Option<f32>,
+    #[schemars(
+        description = "(time_resolved only) which frames to score: 'target_energy' (default — compare only frames where the TARGET has energy, so silence/decay never averages in) or 'none' (compare every paired frame)."
+    )]
+    pub mask: Option<String>,
+    #[schemars(
+        description = "(time_resolved only) pre-alignment: 'envelope' (default — cross-correlate the two RMS envelopes and shift the candidate so onsets line up before framing; essential for staccato material where a ±60 ms offset flips the ranking) or 'none' (pair frames from sample 0). The chosen shift is reported as alignment_offset_ms."
+    )]
+    pub align: Option<String>,
+    #[schemars(
+        description = "(time_resolved only) maximum envelope-alignment search in ms (default 250). Ignored when align is 'none'."
+    )]
+    pub align_max_ms: Option<f32>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -5153,7 +5175,7 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Compare two spectra and return how far apart they are, and WHERE. Each side (target, candidate) is either a render (optionally soloing one instrument) or an imported sample / WAV file, so you can compare render↔render, render↔sample, or sample↔sample. Returns two distance scalars to minimise: log_spectral_distance (RMS dB difference over log-frequency bins) and mel_l2_distance (true L2 / Euclidean distance over a log-mel filterbank — perceptually weighted, tracks audible timbre change more closely; sized by mel_bands, default 40). Plus per-descriptor deltas (candidate − target): centroid_delta_hz (brightness), rolloff_delta_hz (filter-slope steepness — 12 vs 24 dB/oct), flatness_delta, inharmonicity_delta, and odd_even_ratio_delta_db (odd/even harmonic balance in dB — encodes pulse duty cycle, so use it to match pulse width); voicing_mismatch (a pitched-vs-noise gross mismatch) with its penalty reported separately in voicing_penalty_db (60 dB on a mismatch, else 0) rather than folded into log_spectral_distance — so the spectral scalar keeps ranking candidates even against a silent/unvoiced target window (add the two for the old combined score); and the high-value lists missing_partials (strong in the target, absent in the candidate — what your patch is failing to produce) and extra_partials (present in the candidate, not the target). This closes the timbre-matching loop: fingerprint a reference (analyze_sample_spectrum of a real SID render), measure your candidate, read missing_partials to know which frequencies to add, and watch the distances fall as you adjust parameters. Deterministic and offline."
+        description = "Compare two spectra and return how far apart they are, and WHERE. Each side (target, candidate) is either a render (optionally soloing one instrument) or an imported sample / WAV file, so you can compare render↔render, render↔sample, or sample↔sample. Returns two distance scalars to minimise: log_spectral_distance (RMS dB difference over log-frequency bins) and mel_l2_distance (true L2 / Euclidean distance over a log-mel filterbank — perceptually weighted, tracks audible timbre change more closely; sized by mel_bands, default 40). Plus per-descriptor deltas (candidate − target): centroid_delta_hz (brightness), rolloff_delta_hz (filter-slope steepness — 12 vs 24 dB/oct), flatness_delta, inharmonicity_delta, and odd_even_ratio_delta_db (odd/even harmonic balance in dB — encodes pulse duty cycle, so use it to match pulse width); voicing_mismatch (a pitched-vs-noise gross mismatch) with its penalty reported separately in voicing_penalty_db (60 dB on a mismatch, else 0) rather than folded into log_spectral_distance — so the spectral scalar keeps ranking candidates even against a silent/unvoiced target window (add the two for the old combined score); and the high-value lists missing_partials (strong in the target, absent in the candidate — what your patch is failing to produce) and extra_partials (present in the candidate, not the target). This closes the timbre-matching loop: fingerprint a reference (analyze_sample_spectrum of a real SID render), measure your candidate, read missing_partials to know which frequencies to add, and watch the distances fall as you adjust parameters. NOTE: the default (aggregate) distances average the whole window into one spectrum, so on staccato / silence-dominated / time-varying material they go blind to quiet-in-time content (a decaying release tail) and stop ranking candidates — set time_resolved: true for those, which frames both sources, aligns them, masks on target energy, and returns per-frame time_resolved_lsd / worst_frames instead. Deterministic and offline."
     )]
     async fn compare_spectra(&self, params: Parameters<CompareSpectraParam>) -> String {
         let p = params.0;
@@ -5174,6 +5196,21 @@ impl SynthMcpServer {
         };
         let target = to_source(&p.target);
         let candidate = to_source(&p.candidate);
+        // Mask/align default to on; only the explicit "none" string turns them off.
+        let time_resolved = crate::bridge::TimeResolvedOptions {
+            enabled: p.time_resolved.unwrap_or(false),
+            hop_ms: p.hop_ms,
+            frame_len_ms: p.frame_len_ms,
+            mask_target_energy: p
+                .mask
+                .as_deref()
+                .is_none_or(|m| !m.trim().eq_ignore_ascii_case("none")),
+            align_envelope: p
+                .align
+                .as_deref()
+                .is_none_or(|a| !a.trim().eq_ignore_ascii_case("none")),
+            align_max_ms: p.align_max_ms,
+        };
         run_blocking_json(move || {
             self.bridge.compare_spectra(
                 target,
@@ -5183,6 +5220,7 @@ impl SynthMcpServer {
                 p.log_bins,
                 p.mel_bands,
                 scope,
+                time_resolved,
             )
         })
     }
