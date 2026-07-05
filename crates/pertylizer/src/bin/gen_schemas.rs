@@ -656,11 +656,21 @@ fn module_branch(mt: ModuleType, desc: &ModuleDescriptor) -> Value {
                 "const": type_id
             },
             "position": { "$ref": "#/$defs/Position" },
+            "description": {
+                "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+                "type": "string"
+            },
             "parameters": {
                 "description": "Parameter values for this module.",
                 "type": "object",
                 "properties": param_props,
                 "additionalProperties": false,
+                "default": {}
+            },
+            "scripts": {
+                "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+                "type": "object",
+                "additionalProperties": { "type": "string" },
                 "default": {}
             }
         },

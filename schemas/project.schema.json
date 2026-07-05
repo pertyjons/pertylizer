@@ -1558,6 +1558,10 @@
             }
           ],
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `osc-1`.",
               "pattern": "^osc-\\d+$",
@@ -1702,6 +1706,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "oscillator",
               "description": "Module type discriminator."
@@ -1718,6 +1730,10 @@
         {
           "description": "Math Oscillator (math_oscillator) — Advanced oscillator with 19 mathematical synthesis algorithms",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `mth-1`.",
               "pattern": "^mth-\\d+$",
@@ -1800,6 +1816,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "math_oscillator",
               "description": "Module type discriminator."
@@ -1816,6 +1840,10 @@
         {
           "description": "Sub Osc (sub_oscillator) — Sub-oscillator for bass reinforcement at -1 or -2 octaves",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `sub-1`.",
               "pattern": "^sub-\\d+$",
@@ -1862,6 +1890,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "sub_oscillator",
               "description": "Module type discriminator."
@@ -1878,6 +1914,10 @@
         {
           "description": "Noise (noise) — Spectrally colored noise generator for textures and percussion",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `nse-1`.",
               "pattern": "^nse-\\d+$",
@@ -1916,6 +1956,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "noise",
               "description": "Module type discriminator."
@@ -1947,6 +1995,10 @@
             }
           ],
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `flt-1`.",
               "pattern": "^flt-\\d+$",
@@ -2045,6 +2097,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "filter",
               "description": "Module type discriminator."
@@ -2061,6 +2121,10 @@
         {
           "description": "ADSR (envelope) — ADSR envelope generator",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `env-1`.",
               "pattern": "^env-\\d+$",
@@ -2141,6 +2205,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "envelope",
               "description": "Module type discriminator."
@@ -2157,6 +2229,10 @@
         {
           "description": "LFO (lfo) — Low Frequency Oscillator",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `lfo-1`.",
               "pattern": "^lfo-\\d+$",
@@ -2240,6 +2316,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "lfo",
               "description": "Module type discriminator."
@@ -2256,6 +2340,10 @@
         {
           "description": "VCA (amplifier) — Voltage Controlled Amplifier",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `amp-1`.",
               "pattern": "^amp-\\d+$",
@@ -2299,6 +2387,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "amplifier",
               "description": "Module type discriminator."
@@ -2315,6 +2411,10 @@
         {
           "description": "Mixer (mixer) — 8-channel mixer",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `mix-1`.",
               "pattern": "^mix-\\d+$",
@@ -2425,6 +2525,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "mixer",
               "description": "Module type discriminator."
@@ -2441,6 +2549,10 @@
         {
           "description": "Stereo Output (stereo_output) — Master stereo output with volume, pan, and limiting",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `out-1`.",
               "pattern": "^out-\\d+$",
@@ -2506,6 +2618,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "stereo_output",
               "description": "Module type discriminator."
@@ -2522,6 +2642,10 @@
         {
           "description": "Delay (delay) — Stereo delay with ping-pong mode",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `dly-1`.",
               "pattern": "^dly-\\d+$",
@@ -2615,6 +2739,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "delay",
               "description": "Module type discriminator."
@@ -2646,6 +2778,10 @@
             }
           ],
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `rev-1`.",
               "pattern": "^rev-\\d+$",
@@ -2726,6 +2862,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "reverb",
               "description": "Module type discriminator."
@@ -2742,6 +2886,10 @@
         {
           "description": "Distortion (distortion) — Multi-mode distortion effect",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `dst-1`.",
               "pattern": "^dst-\\d+$",
@@ -2803,6 +2951,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "distortion",
               "description": "Module type discriminator."
@@ -2819,6 +2975,10 @@
         {
           "description": "Chorus (chorus) — Multi-voice chorus effect",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `chr-1`.",
               "pattern": "^chr-\\d+$",
@@ -2867,6 +3027,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "chorus",
               "description": "Module type discriminator."
@@ -2883,6 +3051,10 @@
         {
           "description": "Phaser (phaser) — Classic phaser effect with LFO modulation",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `phs-1`.",
               "pattern": "^phs-\\d+$",
@@ -2939,6 +3111,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "phaser",
               "description": "Module type discriminator."
@@ -2955,6 +3135,10 @@
         {
           "description": "Flanger (flanger) — Classic flanger effect with feedback",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `fln-1`.",
               "pattern": "^fln-\\d+$",
@@ -3011,6 +3195,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "flanger",
               "description": "Module type discriminator."
@@ -3027,6 +3219,10 @@
         {
           "description": "Compressor (compressor) — Dynamics compressor with adjustable attack and release",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `cmp-1`.",
               "pattern": "^cmp-\\d+$",
@@ -3110,6 +3306,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "compressor",
               "description": "Module type discriminator."
@@ -3126,6 +3330,10 @@
         {
           "description": "EQ (eq) — 3-band parametric equalizer",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `equ-1`.",
               "pattern": "^equ-\\d+$",
@@ -3206,6 +3414,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "eq",
               "description": "Module type discriminator."
@@ -3222,6 +3438,10 @@
         {
           "description": "Waveshaper (waveshaper) — Creative waveshaping effect with selectable curves",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `wsh-1`.",
               "pattern": "^wsh-\\d+$",
@@ -3283,6 +3503,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "waveshaper",
               "description": "Module type discriminator."
@@ -3299,6 +3527,10 @@
         {
           "description": "Scope (oscilloscope) — Oscilloscope waveform display",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `scp-1`.",
               "pattern": "^scp-\\d+$",
@@ -3350,6 +3582,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "oscilloscope",
               "description": "Module type discriminator."
@@ -3366,6 +3606,10 @@
         {
           "description": "Meter (level_meter) — Audio level meter with peak hold",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `mtr-1`.",
               "pattern": "^mtr-\\d+$",
@@ -3390,6 +3634,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "level_meter",
               "description": "Module type discriminator."
@@ -3406,6 +3658,10 @@
         {
           "description": "Spectrum (spectrum_analyzer) — FFT spectrum analyzer display",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `spa-1`.",
               "pattern": "^spa-\\d+$",
@@ -3430,6 +3686,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "spectrum_analyzer",
               "description": "Module type discriminator."
@@ -3446,6 +3710,10 @@
         {
           "description": "Mod Matrix (mod_matrix) — Modulation matrix — a list of source → destination routings",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `mmx-1`.",
               "pattern": "^mmx-\\d+$",
@@ -3937,6 +4205,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "mod_matrix",
               "description": "Module type discriminator."
@@ -3953,6 +4229,10 @@
         {
           "description": "Ring Mod (ring_mod) — Ring modulator — multiplies input with internal carrier oscillator",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `rng-1`.",
               "pattern": "^rng-\\d+$",
@@ -4014,6 +4294,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "ring_mod",
               "description": "Module type discriminator."
@@ -4030,6 +4318,10 @@
         {
           "description": "Env Follower (envelope_follower) — Envelope follower — tracks input amplitude as a control signal",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `efl-1`.",
               "pattern": "^efl-\\d+$",
@@ -4070,6 +4362,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "envelope_follower",
               "description": "Module type discriminator."
@@ -4086,6 +4386,10 @@
         {
           "description": "Wavetable (wavetable_osc) — Wavetable oscillator with scannable waveform banks",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `wtb-1`.",
               "pattern": "^wtb-\\d+$",
@@ -4147,6 +4451,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "wavetable_osc",
               "description": "Module type discriminator."
@@ -4163,6 +4475,10 @@
         {
           "description": "MSEG (mseg) — Multi-Stage Envelope Generator with up to 16 segments",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `msg-1`.",
               "pattern": "^msg-\\d+$",
@@ -4614,6 +4930,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "mseg",
               "description": "Module type discriminator."
@@ -4630,6 +4954,10 @@
         {
           "description": "Additive (additive_osc) — Additive synthesis with 32 harmonics",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `add-1`.",
               "pattern": "^add-\\d+$",
@@ -4694,6 +5022,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "additive_osc",
               "description": "Module type discriminator."
@@ -4710,6 +5046,10 @@
         {
           "description": "BBD Delay (bbd_delay) — Analog bucket-brigade delay emulation",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `bbd-1`.",
               "pattern": "^bbd-\\d+$",
@@ -4774,6 +5114,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "bbd_delay",
               "description": "Module type discriminator."
@@ -4790,6 +5138,10 @@
         {
           "description": "Mid/Side (mid_side) — Mid-Side stereo processing with width and gain controls",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `mds-1`.",
               "pattern": "^mds-\\d+$",
@@ -4846,6 +5198,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "mid_side",
               "description": "Module type discriminator."
@@ -4862,6 +5222,10 @@
         {
           "description": "Limiter (limiter) — Brickwall limiter with look-ahead",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `lmt-1`.",
               "pattern": "^lmt-\\d+$",
@@ -4910,6 +5274,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "limiter",
               "description": "Module type discriminator."
@@ -4926,6 +5298,10 @@
         {
           "description": "Euclidean (euclidean) — Euclidean rhythm sequencer — distributes pulses evenly across steps",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `euc-1`.",
               "pattern": "^euc-\\d+$",
@@ -4974,6 +5350,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "euclidean",
               "description": "Module type discriminator."
@@ -4990,6 +5374,10 @@
         {
           "description": "Turing Machine (turing_machine) — Shift-register random melody generator",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `tur-1`.",
               "pattern": "^tur-\\d+$",
@@ -5041,6 +5429,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "turing_machine",
               "description": "Module type discriminator."
@@ -5057,6 +5453,10 @@
         {
           "description": "Random Gates (random_gates) — Probabilistic gate generator with burst mode",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `rgt-1`.",
               "pattern": "^rgt-\\d+$",
@@ -5105,6 +5505,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "random_gates",
               "description": "Module type discriminator."
@@ -5121,6 +5529,10 @@
         {
           "description": "Keyboard Panner (keyboard_panner) — Note-based stereo positioning like a piano",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `kbp-1`.",
               "pattern": "^kbp-\\d+$",
@@ -5170,6 +5582,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "keyboard_panner",
               "description": "Module type discriminator."
@@ -5186,6 +5606,10 @@
         {
           "description": "Body Resonance (body_resonance) — Soundboard resonance simulation",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `bdy-1`.",
               "pattern": "^bdy-\\d+$",
@@ -5242,6 +5666,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "body_resonance",
               "description": "Module type discriminator."
@@ -5258,6 +5690,10 @@
         {
           "description": "Mechanical Noise (mechanical_noise) — Key click and mechanical action sounds",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `mec-1`.",
               "pattern": "^mec-\\d+$",
@@ -5317,6 +5753,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "mechanical_noise",
               "description": "Module type discriminator."
@@ -5333,6 +5777,10 @@
         {
           "description": "Granular (granular_osc) — Granular synthesis with 32 concurrent grains",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `grn-1`.",
               "pattern": "^grn-\\d+$",
@@ -5438,6 +5886,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "granular_osc",
               "description": "Module type discriminator."
@@ -5454,6 +5910,10 @@
         {
           "description": "Convolver (convolver) — Convolution reverb with generated impulse responses",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `cnv-1`.",
               "pattern": "^cnv-\\d+$",
@@ -5521,6 +5981,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "convolver",
               "description": "Module type discriminator."
@@ -5537,6 +6005,10 @@
         {
           "description": "Phase Vocoder (phase_vocoder) — Spectral pitch shifting and freeze",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `pvc-1`.",
               "pattern": "^pvc-\\d+$",
@@ -5591,6 +6063,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "phase_vocoder",
               "description": "Module type discriminator."
@@ -5607,6 +6087,10 @@
         {
           "description": "Kinetic Mod (kinetic_modulator) — Easing curve modulation generator",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `kin-1`.",
               "pattern": "^kin-\\d+$",
@@ -5688,6 +6172,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "kinetic_modulator",
               "description": "Module type discriminator."
@@ -5704,6 +6196,10 @@
         {
           "description": "Sig Mon (signal_monitor) — Signal Monitor — inline waveform display (pass-through)",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `smn-1`.",
               "pattern": "^smn-\\d+$",
@@ -5755,6 +6251,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "signal_monitor",
               "description": "Module type discriminator."
@@ -5771,6 +6275,10 @@
         {
           "description": "Freq Shifter (frequency_shifter) — Bode frequency shifter — shifts all frequencies by a fixed Hz amount",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `fsf-1`.",
               "pattern": "^fsf-\\d+$",
@@ -5811,6 +6319,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "frequency_shifter",
               "description": "Module type discriminator."
@@ -5827,6 +6343,10 @@
         {
           "description": "Vector Mixer (vector_mixer) — 4-corner XY vector crossfader for vector synthesis",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `vec-1`.",
               "pattern": "^vec-\\d+$",
@@ -5859,6 +6379,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "vector_mixer",
               "description": "Module type discriminator."
@@ -5875,6 +6403,10 @@
         {
           "description": "LA Synth (la_synth) — Linear Arithmetic synthesis — attack transient crossfaded to sustain input",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `las-1`.",
               "pattern": "^las-\\d+$",
@@ -5931,6 +6463,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "la_synth",
               "description": "Module type discriminator."
@@ -5947,6 +6487,10 @@
         {
           "description": "Pitch Tracker (pitch_tracker) — Autocorrelation pitch detector — outputs CV and gate from audio input",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `ptr-1`.",
               "pattern": "^ptr-\\d+$",
@@ -5995,6 +6539,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "pitch_tracker",
               "description": "Module type discriminator."
@@ -6011,6 +6563,10 @@
         {
           "description": "Ensemble Chorus (ensemble_chorus) — Juno-style BBD ensemble chorus with stereo width",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `enc-1`.",
               "pattern": "^enc-\\d+$",
@@ -6091,6 +6647,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "ensemble_chorus",
               "description": "Module type discriminator."
@@ -6107,6 +6671,10 @@
         {
           "description": "Shimmer Reverb (shimmer_reverb) — FDN reverb with pitch-shifted feedback",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `shr-1`.",
               "pattern": "^shr-\\d+$",
@@ -6179,6 +6747,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "shimmer_reverb",
               "description": "Module type discriminator."
@@ -6195,6 +6771,10 @@
         {
           "description": "Granular FX (granular_fx) — Input-driven granular cloud processor",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `gfx-1`.",
               "pattern": "^gfx-\\d+$",
@@ -6286,6 +6866,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "granular_fx",
               "description": "Module type discriminator."
@@ -6302,6 +6890,10 @@
         {
           "description": "Spectral Blur (spectral_blur) — STFT-based spectral smearing effect",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `sbl-1`.",
               "pattern": "^sbl-\\d+$",
@@ -6364,6 +6956,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "spectral_blur",
               "description": "Module type discriminator."
@@ -6380,6 +6980,10 @@
         {
           "description": "Modal Resonator (modal_resonator) — Bank of tuned bandpass resonators",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `mdr-1`.",
               "pattern": "^mdr-\\d+$",
@@ -6444,6 +7048,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "modal_resonator",
               "description": "Module type discriminator."
@@ -6460,6 +7072,10 @@
         {
           "description": "Reverse/Gate Reverb (reverse_gate_reverb) — Buffer capture with reverse/gate/stutter playback",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `rgr-1`.",
               "pattern": "^rgr-\\d+$",
@@ -6527,6 +7143,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "reverse_gate_reverb",
               "description": "Module type discriminator."
@@ -6543,6 +7167,10 @@
         {
           "description": "Fractal Osc (fractal_osc) — Weierstrass fractal oscillator with stereo spread",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `frc-1`.",
               "pattern": "^frc-\\d+$",
@@ -6599,6 +7227,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "fractal_osc",
               "description": "Module type discriminator."
@@ -6615,6 +7251,10 @@
         {
           "description": "Sampler (sampler) — Sample playback module — plays WAV samples as instruments",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `sam-1`.",
               "pattern": "^sam-\\d+$",
@@ -6708,6 +7348,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "sampler",
               "description": "Module type discriminator."
@@ -6724,6 +7372,10 @@
         {
           "description": "Audio Input (audio_input) — Live audio input from microphone or line-in",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `ain-1`.",
               "pattern": "^ain-\\d+$",
@@ -6748,6 +7400,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "audio_input",
               "description": "Module type discriminator."
@@ -6764,6 +7424,10 @@
         {
           "description": "Ladder Filter (ladder_filter) — 24dB/oct Moog-style ladder filter",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `ldr-1`.",
               "pattern": "^ldr-\\d+$",
@@ -6804,6 +7468,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "ladder_filter",
               "description": "Module type discriminator."
@@ -6820,6 +7492,10 @@
         {
           "description": "Drift Generator (drift_generator) — Smooth random modulation for analog-style drift",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `drf-1`.",
               "pattern": "^drf-\\d+$",
@@ -6860,6 +7536,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "drift_generator",
               "description": "Module type discriminator."
@@ -6876,6 +7560,10 @@
         {
           "description": "Chaotic Osc (chaotic_osc) — Rössler/Lorenz chaotic systems for complex modulation",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `cha-1`.",
               "pattern": "^cha-\\d+$",
@@ -6925,6 +7613,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "chaotic_osc",
               "description": "Module type discriminator."
@@ -6941,6 +7637,10 @@
         {
           "description": "Formant Filter (formant_filter) — Vowel-shaping filter (A-E-I-O-U morphing)",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `fmt-1`.",
               "pattern": "^fmt-\\d+$",
@@ -6989,6 +7689,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "formant_filter",
               "description": "Module type discriminator."
@@ -7005,6 +7713,10 @@
         {
           "description": "Fooglers (fooglers) — Micro delay-line weird synthesis (physical modeling)",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `fog-1`.",
               "pattern": "^fog-\\d+$",
@@ -7061,6 +7773,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "fooglers",
               "description": "Module type discriminator."
@@ -7077,6 +7797,10 @@
         {
           "description": "Beat Detector (beat_detector) — Envelope-based beat/transient detector with gate output",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `btd-1`.",
               "pattern": "^btd-\\d+$",
@@ -7117,6 +7841,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "beat_detector",
               "description": "Module type discriminator."
@@ -7133,6 +7865,10 @@
         {
           "description": "PADsynth (pad_synth) — Lush pad synthesis using the PADsynth algorithm",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `pad-1`.",
               "pattern": "^pad-\\d+$",
@@ -7189,6 +7925,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "pad_synth",
               "description": "Module type discriminator."
@@ -7205,6 +7949,10 @@
         {
           "description": "AM Formant (am_formant) — AM formantic synthesis (vocal-like tones)",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `amf-1`.",
               "pattern": "^amf-\\d+$",
@@ -7253,6 +8001,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "am_formant",
               "description": "Module type discriminator."
@@ -7269,6 +8025,10 @@
         {
           "description": "Tilt EQ (tilt_eq) — Single-knob spectral tilt equalizer",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `teq-1`.",
               "pattern": "^teq-\\d+$",
@@ -7309,6 +8069,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "tilt_eq",
               "description": "Module type discriminator."
@@ -7325,6 +8093,10 @@
         {
           "description": "Univibe (univibe) — Classic Univox Univibe phaser/vibrato emulation",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `uvb-1`.",
               "pattern": "^uvb-\\d+$",
@@ -7373,6 +8145,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "univibe",
               "description": "Module type discriminator."
@@ -7389,6 +8169,10 @@
         {
           "description": "Crossover Splitter (crossover_splitter) — Phase-coherent frequency band splitter with independent gain",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `cxo-1`.",
               "pattern": "^cxo-\\d+$",
@@ -7437,6 +8221,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "crossover_splitter",
               "description": "Module type discriminator."
@@ -7453,6 +8245,10 @@
         {
           "description": "LPC Vocoder (vocoder) — LPC spectral envelope vocoder effect",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `vcd-1`.",
               "pattern": "^vcd-\\d+$",
@@ -7493,6 +8289,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "vocoder",
               "description": "Module type discriminator."
@@ -7509,6 +8313,10 @@
         {
           "description": "Voice Synth (voice_synth) — Physically-inspired singing voice / choir (glottal source → formants)",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `vox-1`.",
               "pattern": "^vox-\\d+$",
@@ -7613,6 +8421,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "voice_synth",
               "description": "Module type discriminator."
@@ -7629,6 +8445,10 @@
         {
           "description": "Vocal Tract (vocal_tract) — Articulatory Kelly–Lochbaum waveguide voice (speech-grade)",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `vtr-1`.",
               "pattern": "^vtr-\\d+$",
@@ -7701,6 +8521,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "vocal_tract",
               "description": "Module type discriminator."
@@ -7717,6 +8545,10 @@
         {
           "description": "FOF (fof) — CHANT-style granular formant voice / choir (FOF / formant wave functions)",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `fof-1`.",
               "pattern": "^fof-\\d+$",
@@ -7821,6 +8653,14 @@
             "position": {
               "$ref": "#/$defs/Position"
             },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
             "type": {
               "const": "fof",
               "description": "Module type discriminator."
@@ -7837,6 +8677,10 @@
         {
           "description": "Script (script) — Scripted control signals — up to 8 YAMS slots, each on its own output port",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `scr-1`.",
               "pattern": "^scr-\\d+$",
@@ -7851,6 +8695,14 @@
             },
             "position": {
               "$ref": "#/$defs/Position"
+            },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
             },
             "type": {
               "const": "script",
@@ -7868,6 +8720,10 @@
         {
           "description": "Audio Script (audio_script) — Audio-rate scripted DSP (one YAMS eval per sample): waveshaper, bitcrusher, ring-mod, custom IIR. Stereo in/out.",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `asc-1`.",
               "pattern": "^asc-\\d+$",
@@ -7882,6 +8738,14 @@
             },
             "position": {
               "$ref": "#/$defs/Position"
+            },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
             },
             "type": {
               "const": "audio_script",
@@ -7899,6 +8763,10 @@
         {
           "description": "SID Oscillator (sid_oscillator) — MOS 6581/8580 (SID) waveform generator: combinable waveforms from a 24-bit accumulator, raw frequency/pulse-width registers, MSB-based ring/hard-sync, and a per-frame waveform-mask sequence",
           "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
             "id": {
               "description": "Module instance ID, e.g. `sid-1`.",
               "pattern": "^sid-\\d+$",
@@ -8219,6 +9087,14 @@
             },
             "position": {
               "$ref": "#/$defs/Position"
+            },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
             },
             "type": {
               "const": "sid_oscillator",
