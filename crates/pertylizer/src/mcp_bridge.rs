@@ -10963,6 +10963,7 @@ pub fn compare_spectra_impl(
 
     Ok(synth_mcp::types::CompareSpectraResult {
         log_spectral_distance: dist.log_spectral_distance,
+        voicing_penalty_db: dist.voicing_penalty_db,
         mel_l2_distance: dist.mel_l2_distance,
         centroid_delta_hz: dist.centroid_delta.0,
         rolloff_delta_hz: dist.rolloff_delta.0,

@@ -2071,9 +2071,16 @@ pub struct PartialDiff {
 /// at 1153 Hz your candidate lacks").
 #[derive(Debug, Clone, Serialize)]
 pub struct CompareSpectraResult {
-    /// Primary scalar to minimise: RMS dB difference over the shared log-spaced
-    /// bins. Larger = further apart. Requires both spectra to carry log bins.
+    /// Primary spectral scalar to minimise: pure RMS dB difference over the
+    /// shared log-spaced bins. Larger = further apart. Requires both spectra to
+    /// carry log bins. Carries **no** voicing-mismatch penalty (see
+    /// `voicing_penalty_db`), so it keeps ranking candidates even against an
+    /// unvoiced target where the old folded scalar saturated.
     pub log_spectral_distance: f32,
+    /// Voiced-vs-unvoiced mismatch penalty, reported separately instead of being
+    /// folded into `log_spectral_distance`: 60 dB when `voicing_mismatch`, else 0.
+    /// The old single combined score is `log_spectral_distance + voicing_penalty_db`.
+    pub voicing_penalty_db: f32,
     /// Perceptual companion scalar: true L2 (Euclidean) distance over the shared
     /// log-mel bands (dB), `sqrt(Σ (aᵢ − bᵢ)²)`. Weights the spectrum on the
     /// mel (perceptual pitch) axis rather than log-frequency, so it tracks
@@ -2098,7 +2105,8 @@ pub struct CompareSpectraResult {
     /// candidate is more odd-dominant (nearer 50 % duty) than the target.
     pub odd_even_ratio_delta_db: f32,
     /// `true` when exactly one spectrum is voiced — a pitched-vs-noise mismatch;
-    /// partial matching is skipped and `log_spectral_distance` is penalised.
+    /// partial matching is skipped and `voicing_penalty_db` is charged (the
+    /// penalty stays out of `log_spectral_distance`).
     pub voicing_mismatch: bool,
     /// Fraction (0..1) of compared log bins carrying timbral information —
     /// above a −50 dB peak-relative shelf on at least one side. Shared nulls

@@ -458,9 +458,16 @@ fn compare_spectra_voicing_mismatch_is_penalised() {
     let shared = McpSharedState::with_song(song);
     let d = compare(&rig, &shared, render_source(0), render_source(1));
     assert!(d.voicing_mismatch, "voiced vs noise is a voicing mismatch");
+    // The penalty is reported on its own field, not folded into the spectral
+    // scalar. A folded value would be raw_lsd + 60 ≥ 60; observing < 60 proves
+    // the +60 dB penalty is NOT in log_spectral_distance.
+    assert_eq!(
+        d.voicing_penalty_db, 60.0,
+        "a voicing mismatch charges the penalty on voicing_penalty_db"
+    );
     assert!(
-        d.log_spectral_distance >= 60.0,
-        "a voicing mismatch carries the distance penalty, got {}",
+        d.log_spectral_distance < 60.0,
+        "the pure spectral scalar must not carry the +60 dB penalty, got {}",
         d.log_spectral_distance
     );
     assert!(

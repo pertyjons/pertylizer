@@ -796,13 +796,22 @@ pub struct PartialDiff {
     pub amplitude: Decibels,
 }
 
-/// Distance between two spectra. `log_spectral_distance` is the primary scalar
-/// to minimise; `missing_partials` is the actionable list ("the target has a
-/// strong partial at 1153 Hz your patch lacks").
+/// Distance between two spectra. `log_spectral_distance` is the primary spectral
+/// scalar to minimise; `missing_partials` is the actionable list ("the target has
+/// a strong partial at 1153 Hz your patch lacks"). A voiced-vs-unvoiced mismatch
+/// is reported *separately* in `voicing_penalty_db` (not folded into
+/// `log_spectral_distance`), so the pure spectral number still ranks candidates
+/// under a mismatch; a caller wanting the old single combined score adds the two.
 #[derive(Debug, Clone)]
 pub struct SpectrumDistance {
-    /// RMS dB difference over the shared log-spaced bins (dimensionless).
+    /// Pure RMS dB difference over the shared log-spaced bins (dimensionless).
+    /// Carries **no** voicing-mismatch penalty — see `voicing_penalty_db`.
     pub log_spectral_distance: f32,
+    /// The voiced-vs-unvoiced mismatch penalty applied to the *combined* score,
+    /// reported on its own so it never saturates `log_spectral_distance`:
+    /// [`VOICING_MISMATCH_PENALTY_DB`] when `voicing_mismatch`, else 0. The old
+    /// single-scalar behaviour is `log_spectral_distance + voicing_penalty_db`.
+    pub voicing_penalty_db: f32,
     /// True L2 (Euclidean) distance over the shared log-mel bands (dB): the
     /// perceptual counterpart of `log_spectral_distance`. Scales with the band
     /// count (unlike the RMS `log_spectral_distance`); 0 when either side has no
@@ -831,7 +840,7 @@ pub struct SpectrumDistance {
     /// Present in candidate, not in target.
     pub extra_partials: Vec<PartialDiff>,
     /// `true` when exactly one frame is voiced — a pitched-vs-noise mismatch;
-    /// partial matching is skipped and the distance is penalised.
+    /// partial matching is skipped and `voicing_penalty_db` is charged.
     pub voicing_mismatch: bool,
     /// Fraction of compared log bins that carry timbral information — above the
     /// peak-relative shelf on at least one side (0..1). The distance is computed
@@ -848,7 +857,8 @@ pub struct SpectrumDistance {
 
 /// Tolerance for matching a candidate partial to a target partial.
 const PARTIAL_MATCH_CENTS: f32 = 50.0;
-/// Penalty added to `log_spectral_distance` for a voiced-vs-unvoiced mismatch.
+/// Voiced-vs-unvoiced mismatch penalty, reported in `voicing_penalty_db` (kept
+/// out of `log_spectral_distance` so the spectral scalar never saturates).
 const VOICING_MISMATCH_PENALTY_DB: f32 = 60.0;
 
 /// Odd/even harmonic power ratio in dB. The stored ratio is a linear power
@@ -860,8 +870,9 @@ fn odd_even_ratio_db(ratio: f32) -> f32 {
 }
 
 /// Compare two spectra. Handles the three voicing cases (both voiced → full
-/// partial diff; one voiced → severe penalty, no partial match; both unvoiced →
-/// distance from the log bins only), and guards the empty-bin / silence floor
+/// partial diff; one voiced → `voicing_penalty_db` charged separately, no partial
+/// match; both unvoiced → distance from the log bins only), and guards the
+/// empty-bin / silence floor
 /// (TODO §4.1): near-silent-vs-near-silent reads as distance 0 with
 /// `floor_limited` set, and floor-vs-floor bins never inflate the scalar.
 #[must_use]
@@ -887,6 +898,7 @@ pub fn compare(target: &SpectrumResult, candidate: &SpectrumResult) -> SpectrumD
     if both_silent || both_near_floor {
         return SpectrumDistance {
             log_spectral_distance: 0.0,
+            voicing_penalty_db: 0.0,
             mel_l2_distance: 0.0,
             centroid_delta,
             rolloff_delta,
@@ -914,14 +926,18 @@ pub fn compare(target: &SpectrumResult, candidate: &SpectrumResult) -> SpectrumD
         (Vec::new(), Vec::new())
     };
 
-    let log_spectral_distance = if voicing_mismatch {
-        lsd + VOICING_MISMATCH_PENALTY_DB
+    // Keep the penalty out of the spectral scalar: fold it in and two candidates
+    // that both mismatch the target's voicing peg to the same saturated value,
+    // erasing the ranking signal `lsd`/`mel_l2` still carry (feedback §voicing).
+    let voicing_penalty_db = if voicing_mismatch {
+        VOICING_MISMATCH_PENALTY_DB
     } else {
-        lsd
+        0.0
     };
 
     SpectrumDistance {
-        log_spectral_distance,
+        log_spectral_distance: lsd,
+        voicing_penalty_db,
         mel_l2_distance: mel_l2,
         centroid_delta,
         rolloff_delta,
@@ -1405,14 +1421,61 @@ mod tests {
         let unvoiced = analyze_spectrum(&noise, SR, opts);
         let d = compare(&voiced, &unvoiced);
         assert!(d.voicing_mismatch, "voiced vs noise is a mismatch");
-        assert!(
-            d.log_spectral_distance >= VOICING_MISMATCH_PENALTY_DB,
-            "mismatch should carry the penalty, got {}",
-            d.log_spectral_distance
+        // The penalty is reported on its own field, NOT folded into the spectral
+        // scalar. Prove it: the scalar equals the raw log-bin RMS with the penalty
+        // absent, so two mismatched candidates can still be ranked by it.
+        assert_eq!(
+            d.voicing_penalty_db, VOICING_MISMATCH_PENALTY_DB,
+            "mismatch should charge the penalty on its own field"
+        );
+        let (raw_lsd, _) = log_spectral_distance(&voiced.log_bins, &unvoiced.log_bins);
+        assert_eq!(
+            d.log_spectral_distance, raw_lsd,
+            "the spectral scalar must be the pure lsd, penalty not folded in"
         );
         assert!(
             d.missing_partials.is_empty(),
             "no partial matching across a voicing mismatch"
+        );
+    }
+
+    /// The bug this fix targets: against one unvoiced target, two spectrally
+    /// different voiced candidates used to peg to the same saturated scalar
+    /// (`lsd + 60`), erasing the ranking signal. With the penalty on its own
+    /// field, `log_spectral_distance` stays the pure spectral number, so the
+    /// two candidates are distinguishable again.
+    #[test]
+    fn mismatch_scalar_still_ranks_two_candidates() {
+        let opts = SpectrumOpts {
+            log_bins: 64,
+            ..Default::default()
+        };
+        let mut x = 0xC0FF_EE00u32;
+        let noise: Vec<f32> = (0..16_384)
+            .map(|_| {
+                x = x.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                (x >> 8) as f32 / (1u32 << 24) as f32 * 2.0 - 1.0
+            })
+            .collect();
+        let unvoiced = analyze_spectrum(&noise, SR, opts);
+
+        // Two voiced candidates with clearly different spectra (low vs high f0).
+        let low = compare(
+            &analyze_spectrum(&saw(200.0, 16_384, 12), SR, opts),
+            &unvoiced,
+        );
+        let high = compare(
+            &analyze_spectrum(&saw(1500.0, 16_384, 6), SR, opts),
+            &unvoiced,
+        );
+
+        assert!(low.voicing_mismatch && high.voicing_mismatch);
+        assert_eq!(low.voicing_penalty_db, high.voicing_penalty_db);
+        assert!(
+            (low.log_spectral_distance - high.log_spectral_distance).abs() > 1.0,
+            "the pure scalar must separate the two candidates ({} vs {})",
+            low.log_spectral_distance,
+            high.log_spectral_distance
         );
     }
 
