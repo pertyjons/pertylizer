@@ -808,9 +808,39 @@ pub fn harmonic_content(samples: &[f32], sample_rate: u32, fundamental_hz: f32) 
     }
 }
 
+/// Centered moving-average smooth over `taps` samples. Edge windows shrink to
+/// the available range, so the contour is de-rippled without introducing a time
+/// shift (a trailing average would delay the peak and inflate the attack time).
+/// Returns a clone when `taps <= 1`.
+fn smooth_contour(v: &[f32], taps: usize) -> Vec<f32> {
+    if taps <= 1 || v.len() <= 1 {
+        return v.to_vec();
+    }
+    let half = taps / 2;
+    let n = v.len();
+    let mut out = Vec::with_capacity(n);
+    for i in 0..n {
+        let lo = i.saturating_sub(half);
+        let hi = (i + half + 1).min(n);
+        let mut sum = 0.0_f64;
+        for &x in &v[lo..hi] {
+            sum += f64::from(x);
+        }
+        #[allow(clippy::cast_precision_loss)]
+        out.push((sum / (hi - lo) as f64) as f32);
+    }
+    out
+}
+
 /// Estimate ADSR-like values from an RMS envelope. `window_ms` is the
 /// envelope's per-step duration; `note_duration_ms` is the held-note
 /// duration (used to find note-off). All times are returned in ms.
+///
+/// The contour is smoothed before any peak/threshold detection (see
+/// [`smooth_contour`]) so sub-window RMS ripple and a noisy sustain plateau
+/// don't derail the estimate, and `attack_ms` is a threshold crossing (time to
+/// first reach a fraction of the peak on the way up) rather than the exact
+/// argmax window, which wanders on a flat top.
 #[must_use]
 pub fn envelope_estimate(
     rms_envelope: &[f32],
@@ -834,7 +864,15 @@ pub fn envelope_estimate(
     if held_end == 0 {
         return EnvelopeEstimate::zero();
     }
-    let held = &rms_envelope[..held_end];
+    // Smooth the whole contour before any peak / threshold detection so
+    // sub-window RMS ripple (windows narrower than one fundamental period) and a
+    // flat, noisy sustain plateau don't derail the estimate. The span covers
+    // ~ENVELOPE_SMOOTH_MS and is a no-op once window_ms already reaches that.
+    const ENVELOPE_SMOOTH_MS: f32 = 6.0;
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let taps = ((ENVELOPE_SMOOTH_MS / window_ms).round() as usize).clamp(1, len);
+    let smoothed = smooth_contour(rms_envelope, taps);
+    let held = &smoothed[..held_end];
 
     let mut peak = 0.0_f32;
     let mut peak_idx = 0_usize;
@@ -845,7 +883,16 @@ pub fn envelope_estimate(
         }
     }
 
-    let attack_ms = (peak_idx as f32) * window_ms;
+    // Attack = time to first reach a fraction of the peak on the way up (a
+    // threshold crossing), not the exact argmax window. Robust to a flat/noisy
+    // top where the global-max window wanders far past the real attack. Falls
+    // back to the peak index if nothing crosses (a fully silent held portion).
+    const ATTACK_REACH_FRACTION: f32 = 0.9;
+    let attack_idx = held
+        .iter()
+        .position(|&v| v >= ATTACK_REACH_FRACTION * peak)
+        .unwrap_or(peak_idx);
+    let attack_ms = (attack_idx as f32) * window_ms;
 
     let sustain_start = held_end / 2;
     let sustain_slice = &held[sustain_start..];
@@ -882,7 +929,7 @@ pub fn envelope_estimate(
         0.0
     } else {
         let floor = peak * 0.05;
-        let tail = &rms_envelope[note_off_idx..];
+        let tail = &smoothed[note_off_idx..];
         let mut release_idx: Option<usize> = None;
         for (i, v) in tail.iter().enumerate() {
             if *v < floor {
@@ -901,6 +948,130 @@ pub fn envelope_estimate(
         decay_ms,
         sustain_level,
         release_ms,
+    }
+}
+
+/// Attack-transient descriptors, measured over the first `window_ms` of a
+/// signal (the note onset). Captures the "punch" a SID hard-restart or a short
+/// noise click adds at the start of a note — features an aggregate spectrum or
+/// a slow RMS envelope both miss.
+#[derive(Debug, Clone, Copy, serde::Serialize)]
+pub struct TransientMetrics {
+    /// Peak-to-RMS ratio over the transient window, in dB. High = a sharp
+    /// click/spike (punchy attack); ~0 = a smooth swell with no transient.
+    pub crest_factor_db: f32,
+    /// RMS growth across the transient window — second half vs first half, in
+    /// dB. Large positive = energy ramps in fast (steep onset); ≤ 0 = flat or
+    /// already decaying at the window start.
+    pub energy_rise_db: f32,
+    /// Peak absolute sample level in the transient window (linear, 0..1+).
+    pub peak: f32,
+}
+
+impl TransientMetrics {
+    const fn zero() -> Self {
+        Self {
+            crest_factor_db: 0.0,
+            energy_rise_db: 0.0,
+            peak: 0.0,
+        }
+    }
+}
+
+/// RMS over a slice, `0.0` for an empty slice. `f64` accumulation so long
+/// windows don't lose precision.
+fn slice_rms(slice: &[f32]) -> f32 {
+    if slice.is_empty() {
+        return 0.0;
+    }
+    let mut sum = 0.0_f64;
+    for &v in slice {
+        sum += f64::from(v) * f64::from(v);
+    }
+    #[allow(clippy::cast_possible_truncation)]
+    ((sum / slice.len() as f64).sqrt() as f32)
+}
+
+/// Measure the attack transient over the first `window_ms` of `samples`. The
+/// caller aligns the buffer start with the note onset (as the spectrum tools do
+/// via `start_ms` / `start_tick`). Returns zeros for a degenerate window.
+#[must_use]
+pub fn transient_metrics(samples: &[f32], sample_rate: u32, window_ms: f32) -> TransientMetrics {
+    let n = window_samples(window_ms, sample_rate).min(samples.len());
+    if n < 2 {
+        return TransientMetrics::zero();
+    }
+    let win = &samples[..n];
+    let peak = win.iter().fold(0.0_f32, |m, &s| m.max(s.abs()));
+    let rms = slice_rms(win);
+    // peak ≥ rms always, so the ratio is ≥ 1 and the dB is ≥ 0.
+    let crest_factor_db = if rms > 0.0 {
+        20.0 * (peak / rms).max(1.0).log10()
+    } else {
+        0.0
+    };
+    let half = n / 2;
+    let first = slice_rms(&win[..half]).max(MAG_FLOOR);
+    let second = slice_rms(&win[half..]).max(MAG_FLOOR);
+    let energy_rise_db = 20.0 * (second / first).log10();
+    TransientMetrics {
+        crest_factor_db,
+        energy_rise_db,
+        peak,
+    }
+}
+
+/// Peak-normalise a contour to `[0, 1]` (by its maximum absolute value); an
+/// all-zero contour is returned unchanged.
+fn peak_normalize(v: &[f32]) -> Vec<f32> {
+    let peak = v.iter().fold(0.0_f32, |m, &x| m.max(x.abs()));
+    if peak <= 0.0 {
+        return v.to_vec();
+    }
+    v.iter().map(|&x| x / peak).collect()
+}
+
+/// Normalised dynamic-time-warping distance between two envelope contours.
+///
+/// Both contours are peak-normalised to `[0, 1]` first, so the *shape* is
+/// compared independent of absolute level (loudness lives in the RMS/LUFS
+/// tools). The classic DTW recurrence then aligns them with an L1 local cost,
+/// tolerating small differences in timing/tempo. The result is the accumulated
+/// path cost divided by `(len_a + len_b)` — a normalised deviation where 0 =
+/// identical contour and larger = more divergent shape. Returns 0 when either
+/// input is empty. Runs in `O(len_a · len_b)` time and `O(len_b)` memory
+/// (two rolling rows).
+#[must_use]
+pub fn dtw_distance(a: &[f32], b: &[f32]) -> f32 {
+    if a.is_empty() || b.is_empty() {
+        return 0.0;
+    }
+    let na = peak_normalize(a);
+    let nb = peak_normalize(b);
+    let (n, m) = (na.len(), nb.len());
+
+    // Standard DTW DP with two rolling rows. D[0][0] = 0, first row/column = ∞.
+    let inf = f32::INFINITY;
+    let mut prev = vec![inf; m + 1];
+    let mut cur = vec![inf; m + 1];
+    prev[0] = 0.0;
+    for i in 1..=n {
+        cur[0] = inf;
+        for j in 1..=m {
+            let cost = (na[i - 1] - nb[j - 1]).abs();
+            let best = prev[j].min(cur[j - 1]).min(prev[j - 1]);
+            cur[j] = cost + best;
+        }
+        std::mem::swap(&mut prev, &mut cur);
+    }
+    let total = prev[m];
+    if total.is_finite() {
+        #[allow(clippy::cast_precision_loss)]
+        {
+            total / (n + m) as f32
+        }
+    } else {
+        0.0
     }
 }
 
@@ -1260,6 +1431,120 @@ mod tests {
         assert_eq!(r.decay_ms, 0.0);
         assert_eq!(r.sustain_level, 0.0);
         assert_eq!(r.release_ms, 0.0);
+    }
+
+    #[test]
+    fn envelope_attack_is_threshold_not_wandering_argmax() {
+        // A fast rise (peak reached by window 2 = 20 ms) followed by a long,
+        // slightly-rising near-flat top. The raw global-max lands late on the
+        // plateau (index 10 = 100 ms); the 90 %-of-peak threshold crossing must
+        // report the real attack (~20 ms) instead.
+        let mut env = vec![0.05_f32, 0.6, 1.0];
+        for k in 0..10 {
+            env.push(1.0 + k as f32 * 0.001); // plateau drifts up to the true max
+        }
+        // 5 ms windows, held for the whole 65-window-ish note.
+        let r = envelope_estimate(&env, 5.0, 5_000);
+        assert!(
+            r.attack_ms <= 20.0,
+            "attack should track the 90% crossing (~10-15 ms), not the late \
+             plateau argmax; got {}",
+            r.attack_ms
+        );
+    }
+
+    #[test]
+    fn envelope_estimate_survives_subwindow_ripple() {
+        // Simulate tiny-window RMS ripple: a clean ramp-up-then-hold contour
+        // with a large per-sample sawtooth wobble on top. Smoothing must recover
+        // a sane attack (rise ~20 windows) rather than latching onto a wobble
+        // spike. window_ms 0.5 → smoothing spans ~12 windows.
+        let mut env = Vec::new();
+        for i in 0..400 {
+            let base = if i < 20 { i as f32 / 20.0 } else { 0.7 };
+            let ripple = if i % 2 == 0 { 0.25 } else { -0.25 };
+            env.push((base + ripple).max(0.0));
+        }
+        let r = envelope_estimate(&env, 0.5, 200);
+        // Attack should land near the end of the 20-window (10 ms) ramp, not at
+        // some early ripple spike or a late wandering max.
+        assert!(
+            r.attack_ms > 2.0 && r.attack_ms < 20.0,
+            "smoothed attack should track the ~10 ms ramp, got {}",
+            r.attack_ms
+        );
+        assert!(
+            r.sustain_level > 0.5,
+            "sustain should recover ~0.7/peak despite ripple, got {}",
+            r.sustain_level
+        );
+    }
+
+    #[test]
+    fn dtw_identical_is_zero() {
+        let a = [0.0_f32, 0.5, 1.0, 0.7, 0.3, 0.0];
+        assert!(
+            dtw_distance(&a, &a) < 1.0e-6,
+            "identical contours must be 0"
+        );
+    }
+
+    #[test]
+    fn dtw_is_level_invariant_and_ranks_shapes() {
+        // Same shape at half the level → distance ~0 (peak-normalised).
+        let a = [0.0_f32, 0.5, 1.0, 0.6, 0.2];
+        let a_quiet: Vec<f32> = a.iter().map(|v| v * 0.5).collect();
+        let scaled = dtw_distance(&a, &a_quiet);
+        assert!(scaled < 1.0e-6, "level must normalise out, got {scaled}");
+
+        // A time-shifted version of the same contour warps to a small distance;
+        // a genuinely different shape (inverted ramp) is clearly larger.
+        let shifted = [0.0_f32, 0.0, 0.5, 1.0, 0.6, 0.2];
+        let inverted = [1.0_f32, 0.6, 0.2, 0.5, 1.0];
+        let d_shift = dtw_distance(&a, &shifted);
+        let d_diff = dtw_distance(&a, &inverted);
+        assert!(
+            d_shift < d_diff,
+            "a time-shift ({d_shift}) should warp closer than a different shape ({d_diff})"
+        );
+    }
+
+    #[test]
+    fn dtw_empty_is_zero() {
+        assert_eq!(dtw_distance(&[], &[1.0, 2.0]), 0.0);
+        assert_eq!(dtw_distance(&[1.0], &[]), 0.0);
+    }
+
+    #[test]
+    fn transient_click_has_high_crest_swell_has_rising_energy() {
+        let sr = 48_000;
+        // A sharp click: one loud spike then quiet → high peak-to-RMS crest.
+        let mut click = vec![0.0_f32; sr as usize / 10];
+        click[0] = 1.0;
+        let t_click = transient_metrics(&click, sr, 20.0);
+        assert!(
+            t_click.crest_factor_db > 20.0,
+            "an isolated click should have a high crest factor, got {}",
+            t_click.crest_factor_db
+        );
+
+        // A linear swell over the transient window: energy rises second-half vs
+        // first-half → positive energy_rise_db.
+        let n = window_samples(20.0, sr);
+        let swell: Vec<f32> = (0..n).map(|i| i as f32 / n as f32).collect();
+        let t_swell = transient_metrics(&swell, sr, 20.0);
+        assert!(
+            t_swell.energy_rise_db > 3.0,
+            "a rising swell should show positive energy rise, got {}",
+            t_swell.energy_rise_db
+        );
+    }
+
+    #[test]
+    fn transient_degenerate_is_zero() {
+        let t = transient_metrics(&[0.5], 48_000, 20.0);
+        assert_eq!(t.crest_factor_db, 0.0);
+        assert_eq!(t.energy_rise_db, 0.0);
     }
 
     #[test]

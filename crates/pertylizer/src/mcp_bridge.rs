@@ -4715,6 +4715,7 @@ impl SynthBridge for AppSynthBridge {
         f0_hint: Option<f32>,
         max_partials: Option<u32>,
         log_bins: Option<u32>,
+        mel_bands: Option<u32>,
         scope: synth_mcp::AnalysisScope,
     ) -> Result<synth_mcp::types::CompareSpectraResult, McpBridgeError> {
         compare_spectra_impl(
@@ -4726,6 +4727,29 @@ impl SynthBridge for AppSynthBridge {
             f0_hint,
             max_partials,
             log_bins,
+            mel_bands,
+            scope,
+        )
+    }
+
+    fn compare_envelopes(
+        &self,
+        target: synth_mcp::SpectrumSource,
+        candidate: synth_mcp::SpectrumSource,
+        envelope_window_ms: Option<f32>,
+        note_duration_ms: Option<u32>,
+        transient_window_ms: Option<f32>,
+        scope: synth_mcp::AnalysisScope,
+    ) -> Result<synth_mcp::types::CompareEnvelopesResult, McpBridgeError> {
+        compare_envelopes_impl(
+            &self.session,
+            &self.sample_library,
+            &self.shared,
+            target,
+            candidate,
+            envelope_window_ms,
+            note_duration_ms,
+            transient_window_ms,
             scope,
         )
     }
@@ -10823,6 +10847,10 @@ fn downmix_interleaved(data: &[f32], channels: u16) -> Vec<f32> {
 /// Default number of log-spaced bins `compare_spectra` analyses each source
 /// with, so the broadband `log_spectral_distance` is always available.
 const DEFAULT_COMPARE_LOG_BINS: u32 = 128;
+/// Default number of log-mel filterbank bands `compare_spectra` analyses each
+/// source with, so `mel_l2_distance` is always available (40 = the common
+/// MFCC-style filterbank size).
+const DEFAULT_COMPARE_MEL_BANDS: u32 = 40;
 
 /// Analyse one `compare_spectra` source — a render (optionally soloed) or an
 /// imported sample / WAV — into an analysis-layer `SpectrumResult` plus any
@@ -10836,6 +10864,7 @@ fn analyze_spectrum_source(
     f0_hint: Option<f32>,
     max_partials: Option<u32>,
     log_bins: Option<u32>,
+    mel_bands: Option<u32>,
     scope: synth_mcp::AnalysisScope,
 ) -> Result<
     (
@@ -10844,7 +10873,10 @@ fn analyze_spectrum_source(
     ),
     McpBridgeError,
 > {
-    let opts = spectrum_opts(f0_hint, max_partials, log_bins);
+    let mut opts = spectrum_opts(f0_hint, max_partials, log_bins);
+    if let Some(n) = mel_bands {
+        opts.mel_bands = n;
+    }
     if let Some(id_or_path) = &source.sample_id_or_path {
         let src = resolve_sample_source(sample_library, id_or_path)?;
         let mono = downmix_interleaved(&src.data, src.channels);
@@ -10893,9 +10925,11 @@ pub fn compare_spectra_impl(
     f0_hint: Option<f32>,
     max_partials: Option<u32>,
     log_bins: Option<u32>,
+    mel_bands: Option<u32>,
     scope: synth_mcp::AnalysisScope,
 ) -> Result<synth_mcp::types::CompareSpectraResult, McpBridgeError> {
     let bins = Some(log_bins.unwrap_or(DEFAULT_COMPARE_LOG_BINS).max(1));
+    let mel = Some(mel_bands.unwrap_or(DEFAULT_COMPARE_MEL_BANDS).max(1));
     let (a, mut warnings) = analyze_spectrum_source(
         session,
         sample_library,
@@ -10904,6 +10938,7 @@ pub fn compare_spectra_impl(
         f0_hint,
         max_partials,
         bins,
+        mel,
         scope,
     )?;
     let (b, b_warnings) = analyze_spectrum_source(
@@ -10914,6 +10949,7 @@ pub fn compare_spectra_impl(
         f0_hint,
         max_partials,
         bins,
+        mel,
         scope,
     )?;
     warnings.extend(b_warnings);
@@ -10927,9 +10963,12 @@ pub fn compare_spectra_impl(
 
     Ok(synth_mcp::types::CompareSpectraResult {
         log_spectral_distance: dist.log_spectral_distance,
+        mel_l2_distance: dist.mel_l2_distance,
         centroid_delta_hz: dist.centroid_delta.0,
+        rolloff_delta_hz: dist.rolloff_delta.0,
         flatness_delta: dist.flatness_delta,
         inharmonicity_delta: dist.inharmonicity_delta,
+        odd_even_ratio_delta_db: dist.odd_even_ratio_delta_db,
         voicing_mismatch: dist.voicing_mismatch,
         floor_coverage: dist.floor_coverage,
         floor_limited: dist.floor_limited,
@@ -10937,6 +10976,150 @@ pub fn compare_spectra_impl(
         candidate_voiced: b.voiced,
         missing_partials: dist.missing_partials.iter().map(to_diff).collect(),
         extra_partials: dist.extra_partials.iter().map(to_diff).collect(),
+        warnings,
+    })
+}
+
+/// Default RMS-envelope window (ms) for `compare_envelopes` — fine enough to
+/// resolve a fast attack, coarse enough to keep the DTW matrix small.
+const DEFAULT_ENVELOPE_WINDOW_MS: f32 = 5.0;
+/// Default attack-transient span (ms) for `compare_envelopes`.
+const DEFAULT_TRANSIENT_WINDOW_MS: f32 = 20.0;
+/// Cap on the RMS-envelope length fed to DTW (its cost is `O(N·M)`). Longer
+/// contours are strided down to this before warping; the ADSR / transient
+/// estimates still use the full-resolution envelope.
+const MAX_DTW_WINDOWS: usize = 2048;
+
+/// Resolve a `compare_envelopes` source to a mono buffer + its sample rate,
+/// spanning the whole note/region — unlike [`analyze_spectrum_source`], which
+/// frames a single short window for the FFT. A render uses `duration_seconds`
+/// (default 2 s, long enough to cover a note's attack→release); a sample uses
+/// `start_ms`/`window_len_ms` (whole sample when both omitted).
+fn resolve_source_mono(
+    session: &SynthSession,
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
+    shared: &McpSharedState,
+    source: &synth_mcp::SpectrumSource,
+    scope: synth_mcp::AnalysisScope,
+) -> Result<(Vec<f32>, u32, Vec<String>), McpBridgeError> {
+    if let Some(id_or_path) = &source.sample_id_or_path {
+        let src = resolve_sample_source(sample_library, id_or_path)?;
+        let mono = downmix_interleaved(&src.data, src.channels);
+        let frame = window_mono(mono, src.sample_rate, source.start_ms, source.window_len_ms)?;
+        Ok((frame, src.sample_rate, Vec::new()))
+    } else {
+        let dur = source.duration_seconds.unwrap_or(2.0);
+        let (start, end) = resolve_duration_window(shared, dur, source.start_tick)?;
+        let (rendered, warnings) = render_analysis_window(
+            session,
+            sample_library,
+            shared,
+            start,
+            end,
+            source.instrument_id,
+            scope,
+        )?;
+        let mono = downmix_interleaved(&rendered.samples, rendered.channels);
+        Ok((mono, rendered.sample_rate, warnings))
+    }
+}
+
+/// Stride a contour down to at most `max` evenly-spaced samples (clones when
+/// already short enough). Bounds the DTW cost matrix for long envelopes.
+fn stride_to(v: &[f32], max: usize) -> Vec<f32> {
+    if max == 0 || v.len() <= max {
+        return v.to_vec();
+    }
+    (0..max).map(|i| v[i * v.len() / max]).collect()
+}
+
+/// `compare_envelopes` bridge implementation. Extracts an RMS envelope from each
+/// source, estimates ADSR + attack transient per side, and aligns the contours
+/// with DTW for a shape distance.
+#[doc(hidden)]
+#[allow(
+    clippy::too_many_arguments,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss
+)]
+pub fn compare_envelopes_impl(
+    session: &SynthSession,
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
+    shared: &McpSharedState,
+    target: synth_mcp::SpectrumSource,
+    candidate: synth_mcp::SpectrumSource,
+    envelope_window_ms: Option<f32>,
+    note_duration_ms: Option<u32>,
+    transient_window_ms: Option<f32>,
+    scope: synth_mcp::AnalysisScope,
+) -> Result<synth_mcp::types::CompareEnvelopesResult, McpBridgeError> {
+    use crate::audio::analysis;
+
+    let window_ms = envelope_window_ms
+        .unwrap_or(DEFAULT_ENVELOPE_WINDOW_MS)
+        .max(0.1);
+    let transient_ms = transient_window_ms
+        .unwrap_or(DEFAULT_TRANSIENT_WINDOW_MS)
+        .max(0.1);
+
+    let (mono_t, sr_t, mut warnings) =
+        resolve_source_mono(session, sample_library, shared, &target, scope)?;
+    let (mono_c, sr_c, c_warnings) =
+        resolve_source_mono(session, sample_library, shared, &candidate, scope)?;
+    warnings.extend(c_warnings);
+
+    // Build one side's ADSR + transient breakdown and hand back its RMS contour
+    // (for the DTW below). note-off defaults to the whole buffer (release = 0).
+    let side = |mono: &[f32], sr: u32| -> (synth_mcp::types::EnvelopeSide, Vec<f32>) {
+        let env = analysis::rms_envelope(mono, sr, window_ms);
+        let dur_ms = if sr > 0 {
+            (mono.len() as f32 / sr as f32) * 1000.0
+        } else {
+            0.0
+        };
+        let note_dur = note_duration_ms.unwrap_or_else(|| dur_ms.max(0.0) as u32);
+        let est = analysis::envelope_estimate(&env, window_ms, note_dur);
+        let tr = analysis::transient_metrics(mono, sr, transient_ms);
+        let peak_rms = env.iter().copied().fold(0.0_f32, f32::max);
+        let s = synth_mcp::types::EnvelopeSide {
+            attack_ms: est.attack_ms,
+            decay_ms: est.decay_ms,
+            sustain_level: est.sustain_level,
+            release_ms: est.release_ms,
+            crest_factor_db: tr.crest_factor_db,
+            energy_rise_db: tr.energy_rise_db,
+            peak_rms,
+            duration_ms: dur_ms,
+            num_windows: env.len(),
+        };
+        (s, env)
+    };
+
+    let (target_side, env_t) = side(&mono_t, sr_t);
+    let (candidate_side, env_c) = side(&mono_c, sr_c);
+
+    if env_t.len() > MAX_DTW_WINDOWS || env_c.len() > MAX_DTW_WINDOWS {
+        warnings.push(format!(
+            "Envelope longer than {MAX_DTW_WINDOWS} windows was strided down for DTW; \
+             raise envelope_window_ms for full-resolution warping."
+        ));
+    }
+    let dtw_distance = analysis::dtw_distance(
+        &stride_to(&env_t, MAX_DTW_WINDOWS),
+        &stride_to(&env_c, MAX_DTW_WINDOWS),
+    );
+
+    Ok(synth_mcp::types::CompareEnvelopesResult {
+        dtw_distance,
+        attack_delta_ms: candidate_side.attack_ms - target_side.attack_ms,
+        decay_delta_ms: candidate_side.decay_ms - target_side.decay_ms,
+        sustain_delta: candidate_side.sustain_level - target_side.sustain_level,
+        release_delta_ms: candidate_side.release_ms - target_side.release_ms,
+        crest_factor_delta_db: candidate_side.crest_factor_db - target_side.crest_factor_db,
+        energy_rise_delta_db: candidate_side.energy_rise_db - target_side.energy_rise_db,
+        target: target_side,
+        candidate: candidate_side,
         warnings,
     })
 }
@@ -12881,11 +13064,11 @@ fn signal_flow_hint(category: &synth_core::ModuleCategory) -> Option<String> {
                 .to_owned(),
         ),
         ModuleCategory::Amplifier => Some(
-            "Connect audio 'in' from filter, 'out' → output module. Use 'cv_gain' from envelope for volume shaping."
+            "Connect audio 'in' from filter, 'out' → output module. Use 'cv' from envelope for volume shaping."
                 .to_owned(),
         ),
         ModuleCategory::Envelope => Some(
-            "Connect 'out' → amplifier 'cv_gain' or filter 'cutoff_cv'. Needs 'gate' input from note data."
+            "Connect 'out' → amplifier 'cv' or filter 'cutoff_cv'. Needs 'gate' input from note data."
                 .to_owned(),
         ),
         ModuleCategory::LFO => Some(

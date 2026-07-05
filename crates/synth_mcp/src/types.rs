@@ -2074,12 +2074,29 @@ pub struct CompareSpectraResult {
     /// Primary scalar to minimise: RMS dB difference over the shared log-spaced
     /// bins. Larger = further apart. Requires both spectra to carry log bins.
     pub log_spectral_distance: f32,
+    /// Perceptual companion scalar: true L2 (Euclidean) distance over the shared
+    /// log-mel bands (dB), `sqrt(Σ (aᵢ − bᵢ)²)`. Weights the spectrum on the
+    /// mel (perceptual pitch) axis rather than log-frequency, so it tracks
+    /// audible timbre change more closely; also a scalar to minimise. Scales
+    /// with the mel-band count (default 40), so compare values at a fixed
+    /// `mel_bands`. Carries no voicing-mismatch penalty.
+    pub mel_l2_distance: f32,
     /// Candidate − target spectral centroid (Hz).
     pub centroid_delta_hz: f32,
+    /// Candidate − target spectral rolloff (Hz). Rolloff tracks filter-slope
+    /// steepness (12 vs 24 dB/oct), so this is the direct signal for calibrating
+    /// a low-pass model against a reference. Negative = candidate rolls off lower
+    /// (darker / steeper) than the target.
+    pub rolloff_delta_hz: f32,
     /// Candidate − target spectral flatness.
     pub flatness_delta: f32,
     /// Candidate − target aggregate inharmonicity.
     pub inharmonicity_delta: f32,
+    /// Candidate − target odd/even harmonic balance, in dB. Odd/even balance
+    /// encodes pulse duty cycle (a 50 % square has no even harmonics → a very
+    /// high ratio), so this delta drives pulse-width matching. Positive =
+    /// candidate is more odd-dominant (nearer 50 % duty) than the target.
+    pub odd_even_ratio_delta_db: f32,
     /// `true` when exactly one spectrum is voiced — a pitched-vs-noise mismatch;
     /// partial matching is skipped and `log_spectral_distance` is penalised.
     pub voicing_mismatch: bool,
@@ -2102,6 +2119,66 @@ pub struct CompareSpectraResult {
     pub missing_partials: Vec<PartialDiff>,
     /// Partials present in the candidate but not in the target — extra content.
     pub extra_partials: Vec<PartialDiff>,
+    /// Non-fatal warnings from rendering/decoding either source.
+    pub warnings: Vec<String>,
+}
+
+/// One side of a `compare_envelopes` comparison: the amplitude contour's ADSR
+/// estimate and attack transient, derived purely from the rendered/decoded
+/// audio (no access to the synth's actual envelope parameters, so this works
+/// identically for a real WAV reference).
+#[derive(Debug, Clone, Serialize)]
+pub struct EnvelopeSide {
+    /// Time from the start to the RMS peak, ms (attack).
+    pub attack_ms: f32,
+    /// Time from the RMS peak down to ~120 % of the sustain level, ms (decay).
+    pub decay_ms: f32,
+    /// Average sustain RMS ÷ peak RMS, 0..1.
+    pub sustain_level: f32,
+    /// Time from note-off to the 5 %-of-peak floor, ms (release). Meaningful
+    /// only when `note_duration_ms` was supplied; otherwise 0.
+    pub release_ms: f32,
+    /// Attack-transient crest factor (peak ÷ RMS over the transient window), dB.
+    /// High = a sharp click/punch (e.g. a SID hard-restart).
+    pub crest_factor_db: f32,
+    /// RMS growth across the transient window (second half vs first), dB.
+    /// Large positive = a steep onset.
+    pub energy_rise_db: f32,
+    /// Peak RMS of the whole contour (linear).
+    pub peak_rms: f32,
+    /// Analysed duration, ms.
+    pub duration_ms: f32,
+    /// Number of RMS-envelope windows the contour was measured over.
+    pub num_windows: usize,
+}
+
+/// Result of `compare_envelopes`: how far apart two amplitude contours are in
+/// time (their ADSR shape), plus the per-side ADSR / transient breakdown and
+/// the key deltas. `dtw_distance` is the scalar to minimise.
+#[derive(Debug, Clone, Serialize)]
+pub struct CompareEnvelopesResult {
+    /// Primary scalar to minimise: normalised dynamic-time-warping distance
+    /// between the two peak-normalised RMS contours (0 = identical shape, larger
+    /// = more divergent). Shape-only — absolute level is normalised out (use the
+    /// RMS/LUFS tools for level). Tolerant of small timing/tempo differences.
+    pub dtw_distance: f32,
+    /// The reference contour's breakdown.
+    pub target: EnvelopeSide,
+    /// The candidate contour's breakdown.
+    pub candidate: EnvelopeSide,
+    /// Candidate − target attack time (ms). Negative = candidate attacks faster.
+    pub attack_delta_ms: f32,
+    /// Candidate − target decay time (ms).
+    pub decay_delta_ms: f32,
+    /// Candidate − target sustain level (−1..1).
+    pub sustain_delta: f32,
+    /// Candidate − target release time (ms).
+    pub release_delta_ms: f32,
+    /// Candidate − target attack crest factor (dB). Negative = candidate lacks
+    /// the target's attack punch.
+    pub crest_factor_delta_db: f32,
+    /// Candidate − target onset energy rise (dB).
+    pub energy_rise_delta_db: f32,
     /// Non-fatal warnings from rendering/decoding either source.
     pub warnings: Vec<String>,
 }

@@ -113,6 +113,9 @@ pub struct SpectrumOpts {
     /// Number of log-spaced magnitude bins to emit (0 = off). Used by
     /// [`compare`] for the broadband log-spectral distance.
     pub log_bins: u32,
+    /// Number of log-mel filterbank bands to emit (0 = off). Used by [`compare`]
+    /// for the perceptual `mel_l2_distance`.
+    pub mel_bands: u32,
     /// Window function applied before the FFT.
     pub window: WindowFn,
     /// FFT size (zero-pad target); rounded up to a power of two internally.
@@ -125,6 +128,7 @@ impl Default for SpectrumOpts {
             f0_hint: None,
             max_partials: DEFAULT_MAX_PARTIALS,
             log_bins: 0,
+            mel_bands: 0,
             window: WindowFn::BlackmanNuttall,
             fft_size: DEFAULT_FFT_SIZE,
         }
@@ -171,6 +175,9 @@ pub struct SpectrumResult {
     /// Optional log-spaced magnitude bins (dB, peak-normalised); empty when
     /// `opts.log_bins == 0`.
     pub log_bins: Vec<Decibels>,
+    /// Optional log-mel filterbank bands (dB, peak-normalised); empty when
+    /// `opts.mel_bands == 0`. Used by [`compare`] for `mel_l2_distance`.
+    pub mel_bins: Vec<Decibels>,
     /// Broadband time-domain RMS of the analysed (DC-removed) frame — the
     /// absolute-level signal [`compare`]'s silence guard needs, since the log
     /// bins and partials are peak-normalised.
@@ -191,6 +198,7 @@ impl SpectrumResult {
             odd_even_ratio: 0.0,
             bands,
             log_bins: Vec::new(),
+            mel_bins: Vec::new(),
             frame_rms: 0.0,
         }
     }
@@ -301,6 +309,12 @@ fn analyze_with_workspace(
         Vec::new()
     };
 
+    let mel_bins = if opts.mel_bands > 0 {
+        mel_spaced_bins(&mags, bin_hz, opts.mel_bands as usize)
+    } else {
+        Vec::new()
+    };
+
     SpectrumResult {
         f0,
         voiced,
@@ -312,6 +326,7 @@ fn analyze_with_workspace(
         odd_even_ratio,
         bands,
         log_bins,
+        mel_bins,
         frame_rms,
     }
 }
@@ -599,6 +614,75 @@ fn log_spaced_bins(mags: &[f32], bin_hz: f32, n: usize) -> Vec<Decibels> {
     out
 }
 
+/// HTK mel scale: `mel = 2595·log10(1 + f/700)`.
+fn hz_to_mel(hz: f32) -> f32 {
+    2595.0 * (1.0 + hz / 700.0).log10()
+}
+
+/// Inverse HTK mel scale.
+fn mel_to_hz(mel: f32) -> f32 {
+    700.0 * (10.0f32.powf(mel / 2595.0) - 1.0)
+}
+
+/// `n` log-mel filterbank bands (dB, peak-normalised) over the fixed reference
+/// band ([`LOG_BINS_BOTTOM_HZ`] … [`LOG_BINS_TOP_HZ`], clamped to Nyquist). A
+/// triangular mel filterbank is applied to the linear magnitude spectrum — `n+2`
+/// band edges spaced evenly on the mel scale give `n` overlapping triangles, and
+/// each band's weighted magnitude sum is peak-normalised to the loudest band and
+/// converted to dB. Like [`log_spaced_bins`] the edges are fixed (deliberately
+/// NOT this source's Nyquist) so band `i` covers the same mel range at every
+/// sample rate, letting [`compare`]'s `mel_l2_distance` align bands across two
+/// spectra rendered or sampled at different rates. A band above this source's
+/// Nyquist finds no FFT bins and reads as the floor.
+fn mel_spaced_bins(mags: &[f32], bin_hz: f32, n: usize) -> Vec<Decibels> {
+    if n == 0 || mags.len() < 2 || bin_hz <= 0.0 {
+        return Vec::new();
+    }
+    let f_lo = LOG_BINS_BOTTOM_HZ;
+    let f_hi = LOG_BINS_TOP_HZ;
+    if f_hi <= f_lo {
+        return Vec::new();
+    }
+    let mel_lo = hz_to_mel(f_lo);
+    let mel_hi = hz_to_mel(f_hi);
+    // `n+2` mel-spaced edges → `n` triangular filters (left, centre, right).
+    let mut edges_hz = Vec::with_capacity(n + 2);
+    for i in 0..n + 2 {
+        let mel = mel_lo + (mel_hi - mel_lo) * i as f32 / (n + 1) as f32;
+        edges_hz.push(mel_to_hz(mel));
+    }
+
+    let mut out = Vec::with_capacity(n);
+    let mut global_max = MAG_FLOOR;
+    let mut acc = vec![0.0f32; n];
+    for (f, band) in acc.iter_mut().enumerate() {
+        let left = edges_hz[f];
+        let centre = edges_hz[f + 1];
+        let right = edges_hz[f + 2];
+        // FFT bins spanning [left, right); triangular weight peaking at `centre`.
+        let k_lo = (left / bin_hz).floor().max(1.0) as usize;
+        let k_hi = ((right / bin_hz).ceil() as usize).min(mags.len());
+        let mut sum = 0.0f32;
+        for k in k_lo..k_hi {
+            let f_k = k as f32 * bin_hz;
+            let w = if f_k <= centre {
+                (f_k - left) / (centre - left)
+            } else {
+                (right - f_k) / (right - centre)
+            };
+            if w > 0.0 {
+                sum += w * mags[k];
+            }
+        }
+        *band = sum;
+        global_max = global_max.max(sum);
+    }
+    for &band in &acc {
+        out.push(Decibels::from_linear((band / global_max).max(MAG_FLOOR)));
+    }
+    out
+}
+
 /// Detect f0 (Hz) via the normalized square-difference function (NSDF/MPM) on
 /// the time-domain frame. Returns `(Some(f0), clarity)` or `(None, clarity)`
 /// when no lag in range clears the search; `clarity` is the peak NSDF in
@@ -719,13 +803,29 @@ pub struct PartialDiff {
 pub struct SpectrumDistance {
     /// RMS dB difference over the shared log-spaced bins (dimensionless).
     pub log_spectral_distance: f32,
+    /// True L2 (Euclidean) distance over the shared log-mel bands (dB): the
+    /// perceptual counterpart of `log_spectral_distance`. Scales with the band
+    /// count (unlike the RMS `log_spectral_distance`); 0 when either side has no
+    /// mel bands. Carries no voicing-mismatch penalty — a pitched-vs-noise gross
+    /// mismatch already shows up as a large mel envelope difference.
+    pub mel_l2_distance: f32,
     /// Candidate − target centroid.
     pub centroid_delta: Hertz,
+    /// Candidate − target spectral rolloff (Hz). The rolloff frequency tracks
+    /// filter-slope steepness (12 vs 24 dB/oct), so this delta is the direct
+    /// signal for calibrating a low-pass model against a reference.
+    pub rolloff_delta: Hertz,
     /// Candidate − target flatness (signed; both operands are in [0, 1] so the
     /// delta is in [-1, 1], hence a plain `f32` rather than `NormalizedValue`).
     pub flatness_delta: f32,
     /// Candidate − target aggregate inharmonicity (signed; see `flatness_delta`).
     pub inharmonicity_delta: f32,
+    /// Candidate − target odd/even harmonic balance, in dB
+    /// (`10·log10(cand) − 10·log10(target)` over the linear power ratios). Odd/
+    /// even balance encodes pulse duty cycle (a 50 % square has no even
+    /// harmonics → a very high ratio), so this delta drives pulse-width matching.
+    /// Positive = candidate is more odd-dominant than the target.
+    pub odd_even_ratio_delta_db: f32,
     /// Strong in target, absent in candidate.
     pub missing_partials: Vec<PartialDiff>,
     /// Present in candidate, not in target.
@@ -751,6 +851,14 @@ const PARTIAL_MATCH_CENTS: f32 = 50.0;
 /// Penalty added to `log_spectral_distance` for a voiced-vs-unvoiced mismatch.
 const VOICING_MISMATCH_PENALTY_DB: f32 = 60.0;
 
+/// Odd/even harmonic power ratio in dB. The stored ratio is a linear power
+/// quotient (Σ odd / Σ even), so dB is `10·log10`. A small floor keeps a fully
+/// even-dominant frame (ratio 0) and the log finite; the result saturates near
+/// −120 dB there rather than diverging.
+fn odd_even_ratio_db(ratio: f32) -> f32 {
+    10.0 * (ratio.max(1.0e-12)).log10()
+}
+
 /// Compare two spectra. Handles the three voicing cases (both voiced → full
 /// partial diff; one voiced → severe penalty, no partial match; both unvoiced →
 /// distance from the log bins only), and guards the empty-bin / silence floor
@@ -759,8 +867,11 @@ const VOICING_MISMATCH_PENALTY_DB: f32 = 60.0;
 #[must_use]
 pub fn compare(target: &SpectrumResult, candidate: &SpectrumResult) -> SpectrumDistance {
     let centroid_delta = Hertz::new(candidate.centroid.0 - target.centroid.0);
+    let rolloff_delta = Hertz::new(candidate.rolloff.0 - target.rolloff.0);
     let flatness_delta = candidate.flatness.0 - target.flatness.0;
     let inharmonicity_delta = candidate.inharmonicity.0 - target.inharmonicity.0;
+    let odd_even_ratio_delta_db =
+        odd_even_ratio_db(candidate.odd_even_ratio) - odd_even_ratio_db(target.odd_even_ratio);
 
     // Silence guard: peak-normalised log bins amplify a near-silent frame's
     // noise floor to full scale, so two effectively-silent sources would read
@@ -776,9 +887,12 @@ pub fn compare(target: &SpectrumResult, candidate: &SpectrumResult) -> SpectrumD
     if both_silent || both_near_floor {
         return SpectrumDistance {
             log_spectral_distance: 0.0,
+            mel_l2_distance: 0.0,
             centroid_delta,
+            rolloff_delta,
             flatness_delta,
             inharmonicity_delta,
+            odd_even_ratio_delta_db,
             missing_partials: Vec::new(),
             extra_partials: Vec::new(),
             voicing_mismatch: false,
@@ -788,6 +902,7 @@ pub fn compare(target: &SpectrumResult, candidate: &SpectrumResult) -> SpectrumD
     }
 
     let (lsd, floor_coverage) = log_spectral_distance(&target.log_bins, &candidate.log_bins);
+    let mel_l2 = mel_l2_distance(&target.mel_bins, &candidate.mel_bins);
 
     let voicing_mismatch = target.voiced != candidate.voiced;
 
@@ -807,9 +922,12 @@ pub fn compare(target: &SpectrumResult, candidate: &SpectrumResult) -> SpectrumD
 
     SpectrumDistance {
         log_spectral_distance,
+        mel_l2_distance: mel_l2,
         centroid_delta,
+        rolloff_delta,
         flatness_delta,
         inharmonicity_delta,
+        odd_even_ratio_delta_db,
         missing_partials: missing,
         extra_partials: extra,
         voicing_mismatch,
@@ -848,6 +966,28 @@ fn log_spectral_distance(a: &[Decibels], b: &[Decibels]) -> (f32, f32) {
     }
     #[allow(clippy::cast_precision_loss)]
     ((sum / live as f64).sqrt() as f32, live as f32 / n as f32)
+}
+
+/// True L2 (Euclidean) distance over the shared (min-length) prefix of two
+/// peak-normalised log-mel band sets: `sqrt(Σ (aᵢ − bᵢ)²)`. Each band is clamped
+/// up to [`LSD_FLOOR_DB`] first so a digital-silence band (≈ −240 dB) can't swamp
+/// the sum. Unlike [`log_spectral_distance`] every band is kept (no shelf
+/// exclusion): the perceptual mel axis already concentrates resolution in the
+/// informative region, and "L2 over N bands" is the defined quantity. Returns 0
+/// when either side is empty.
+fn mel_l2_distance(a: &[Decibels], b: &[Decibels]) -> f32 {
+    let n = a.len().min(b.len());
+    if n == 0 {
+        return 0.0;
+    }
+    let mut sum = 0.0f64;
+    for i in 0..n {
+        let av = f64::from(a[i].0.max(LSD_FLOOR_DB));
+        let bv = f64::from(b[i].0.max(LSD_FLOOR_DB));
+        let d = av - bv;
+        sum += d * d;
+    }
+    sum.sqrt() as f32
 }
 
 /// Match each target partial to the nearest candidate partial within
@@ -1107,6 +1247,113 @@ mod tests {
     }
 
     #[test]
+    fn mel_bins_emitted_and_l2_separates_timbres() {
+        let opts = SpectrumOpts {
+            log_bins: 64,
+            mel_bands: 40,
+            ..Default::default()
+        };
+        let saw_rich = analyze_spectrum(&saw(500.0, 16_384, 8), SR, opts);
+        let sine_pure = analyze_spectrum(&sine(500.0, 16_384, 0.8), SR, opts);
+        assert_eq!(saw_rich.mel_bins.len(), 40, "mel_bands controls band count");
+        assert_eq!(sine_pure.mel_bins.len(), 40);
+
+        // A rich saw and a bare sine at the same pitch have very different mel
+        // envelopes → a clearly non-zero L2. The same spectrum against itself is 0.
+        let cross = compare(&saw_rich, &sine_pure);
+        let same = compare(&saw_rich, &saw_rich);
+        assert!(
+            cross.mel_l2_distance > 1.0,
+            "saw vs sine should carry real mel-L2, got {}",
+            cross.mel_l2_distance
+        );
+        assert!(
+            same.mel_l2_distance.abs() < f32::EPSILON,
+            "identical spectra must read mel-L2 0, got {}",
+            same.mel_l2_distance
+        );
+    }
+
+    #[test]
+    fn mel_l2_is_euclidean_norm_of_band_differences() {
+        // Hand-set mel bands: a fixed dB offset on 4 of 5 bands → the L2 is the
+        // exact Euclidean norm sqrt(Σ dᵢ²), NOT the RMS the log-spectral distance
+        // uses. Bands are within the LSD floor so no clamping alters the math.
+        let mk = |db: &[f32]| SpectrumResult {
+            mel_bins: db.iter().map(|&d| Decibels::new(d)).collect(),
+            ..spectrum_from_bins(&[], 0.08, true)
+        };
+        let a = mk(&[0.0, -10.0, -20.0, -30.0, -40.0]);
+        let b = mk(&[-3.0, -14.0, -20.0, -34.0, -45.0]);
+        // Differences: 3, 4, 0, 4, 5 → sqrt(9+16+0+16+25) = sqrt(66) ≈ 8.124.
+        let d = compare(&a, &b);
+        assert!(
+            (d.mel_l2_distance - 66.0f32.sqrt()).abs() < 1.0e-3,
+            "expected true L2 sqrt(66) ≈ 8.124, got {}",
+            d.mel_l2_distance
+        );
+    }
+
+    #[test]
+    fn compare_reports_rolloff_and_odd_even_deltas() {
+        let opts = SpectrumOpts {
+            log_bins: 64,
+            ..Default::default()
+        };
+        // Target: bright saw (odd + even harmonics, energy up high). Candidate:
+        // pure sine (all energy at the fundamental, only odd "harmonic").
+        let saw_rich = analyze_spectrum(&saw(300.0, 16_384, 24), SR, opts);
+        let sine_pure = analyze_spectrum(&sine(300.0, 16_384, 0.8), SR, opts);
+        let d = compare(&saw_rich, &sine_pure);
+        // The sine rolls off far lower than the harmonic-rich saw → negative.
+        assert!(
+            d.rolloff_delta.0 < -200.0,
+            "sine candidate should roll off well below the saw, got {} Hz",
+            d.rolloff_delta.0
+        );
+        // A square (odd-only) candidate is more odd-dominant than a saw target.
+        let square_odd = analyze_spectrum(&square(300.0, 16_384, 24), SR, opts);
+        let d2 = compare(&saw_rich, &square_odd);
+        assert!(
+            d2.odd_even_ratio_delta_db > 6.0,
+            "odd-only square vs saw should be markedly more odd-dominant, got {} dB",
+            d2.odd_even_ratio_delta_db
+        );
+        // Same spectrum → both deltas ~0.
+        let same = compare(&saw_rich, &saw_rich);
+        assert!(same.rolloff_delta.0.abs() < f32::EPSILON);
+        assert!(same.odd_even_ratio_delta_db.abs() < 1.0e-3);
+    }
+
+    #[test]
+    fn mel_bins_align_across_sample_rates() {
+        // Same fixed mel grid as the log bins: a 2 kHz tone at 32 kHz and 44.1
+        // kHz must peak in the same mel band, so a cross-rate mel-L2 is meaningful.
+        fn tone(freq: f32, rate: u32, len: usize) -> Vec<f32> {
+            (0..len)
+                .map(|i| 0.8 * (TAU * freq * i as f32 / rate as f32).sin())
+                .collect()
+        }
+        let opts = SpectrumOpts {
+            mel_bands: 40,
+            ..Default::default()
+        };
+        let lo = analyze_spectrum(&tone(2_000.0, 32_000, 16_384), 32_000, opts);
+        let hi = analyze_spectrum(&tone(2_000.0, 44_100, 16_384), 44_100, opts);
+        let argmax = |bins: &[Decibels]| -> usize {
+            bins.iter()
+                .enumerate()
+                .max_by(|a, b| a.1.0.total_cmp(&b.1.0))
+                .map(|(i, _)| i)
+                .unwrap_or(0)
+        };
+        assert!(
+            argmax(&lo.mel_bins).abs_diff(argmax(&hi.mel_bins)) <= 1,
+            "2 kHz tone should land in the same mel band at both rates"
+        );
+    }
+
+    #[test]
     fn log_bins_align_across_sample_rates() {
         // The same 2 kHz tone captured at 32 kHz and 44.1 kHz must land in the
         // SAME log bin — the fixed absolute grid is what makes a cross-rate
@@ -1262,6 +1509,7 @@ mod tests {
                 high: 0.0,
             },
             log_bins: log_bins_db.iter().map(|&d| Decibels::new(d)).collect(),
+            mel_bins: Vec::new(),
             frame_rms,
         }
     }

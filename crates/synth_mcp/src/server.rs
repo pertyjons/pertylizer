@@ -1148,6 +1148,10 @@ pub struct CompareSpectraParam {
     )]
     pub log_bins: Option<u32>,
     #[schemars(
+        description = "Log-mel filterbank bands per source for the perceptual mel_l2_distance (default 40 ≈ the standard MFCC filterbank; forced on so the distance is always available). More bands = finer perceptual resolution and a larger L2 magnitude; keep it fixed across a matching run so values stay comparable."
+    )]
+    pub mel_bands: Option<u32>,
+    #[schemars(
         description = "Include the full signal chain (master + return effects + AWE) in any render source. Shortcut for the include_* flags. Default false = dry instrument sum."
     )]
     pub include_all: Option<bool>,
@@ -1163,6 +1167,48 @@ pub struct CompareSpectraParam {
     pub include_awe: Option<bool>,
     #[schemars(
         description = "Render resolution for render sources: 'draft' (22.05 kHz) or 'full' (44.1 kHz, default). Use 'full' for spectral work."
+    )]
+    pub render_quality: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct CompareEnvelopesParam {
+    #[schemars(
+        description = "The reference contour (e.g. a real SID render imported as a sample, or a WAV path). Deltas are reported as candidate − target."
+    )]
+    pub target: SpectrumSourceParam,
+    #[schemars(
+        description = "The candidate contour being matched against the target (e.g. your patch, as a soloed render)."
+    )]
+    pub candidate: SpectrumSourceParam,
+    #[schemars(
+        description = "RMS-envelope block size in ms (default 5). Smaller resolves a faster attack but grows the DTW matrix; contours over 2048 windows are strided down for the warp (a warning is added)."
+    )]
+    pub envelope_window_ms: Option<f32>,
+    #[schemars(
+        description = "Held-note duration in ms, applied to BOTH sources to mark note-off for the release estimate. Omit if you don't know it (release_ms is then 0 and the whole buffer is treated as held); the DTW shape distance and attack/decay/sustain are unaffected."
+    )]
+    pub note_duration_ms: Option<u32>,
+    #[schemars(
+        description = "Attack-transient span in ms (default 20). The crest factor and energy-rise 'punch' metrics are measured over the first this-many ms of each source, so align the source start with the note onset (via start_tick / start_ms)."
+    )]
+    pub transient_window_ms: Option<f32>,
+    #[schemars(
+        description = "Include the full signal chain (master + return effects + AWE) in any render source. Shortcut for the include_* flags. Default false = dry instrument sum."
+    )]
+    pub include_all: Option<bool>,
+    #[schemars(description = "Load the master effect chain into render sources. Default false.")]
+    pub include_master_effects: Option<bool>,
+    #[schemars(
+        description = "Load each return bus's effect chain into render sources. Default false."
+    )]
+    pub include_return_effects: Option<bool>,
+    #[schemars(
+        description = "Reconstruct AWE in render sources. NOT YET IMPLEMENTED — adds a warning. Default false."
+    )]
+    pub include_awe: Option<bool>,
+    #[schemars(
+        description = "Render resolution for render sources: 'draft' (22.05 kHz) or 'full' (44.1 kHz, default)."
     )]
     pub render_quality: Option<String>,
 }
@@ -4304,6 +4350,7 @@ impl SynthMcpServer {
             "analyze_sample_spectrum" => analyze_sample_spectrum(AnalyzeSampleSpectrumParam),
             "analyze_sample_spectrogram" => analyze_sample_spectrogram(AnalyzeSampleSpectrogramParam),
             "compare_spectra" => compare_spectra(CompareSpectraParam),
+            "compare_envelopes" => compare_envelopes(CompareEnvelopesParam),
             "analyze_master_chain" => analyze_master_chain(AnalyzeMasterChainParam),
             "analyze_return_busses" => analyze_return_busses(AnalyzeReturnBussesParam),
             "compare_mix_before_after" => compare_mix_before_after(CompareMixBeforeAfterParam),
@@ -4456,7 +4503,7 @@ impl ServerHandler for SynthMcpServer {
              (delay, reverb, chorus, etc.).\n\n\
              ## Typical voice signal flow\n\
              `oscillator → filter → amplifier → output`\n\
-             Envelope → amplifier cv_gain (volume shaping), Envelope → filter cutoff_cv (filter sweep).\n\
+             Envelope → amplifier cv (volume shaping), Envelope → filter cutoff_cv (filter sweep).\n\
              LFO → any cv input for modulation.\n\n\
              ## Building instruments\n\
              Use `build_instrument` for one-call instrument creation, or step-by-step: \
@@ -5106,7 +5153,7 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Compare two spectra and return how far apart they are, and WHERE. Each side (target, candidate) is either a render (optionally soloing one instrument) or an imported sample / WAV file, so you can compare render↔render, render↔sample, or sample↔sample. Returns: log_spectral_distance (the scalar to minimise — RMS dB difference over log-spaced bins); centroid/flatness/inharmonicity deltas; voicing_mismatch (a pitched-vs-noise gross mismatch, which also penalises the distance); and the high-value lists missing_partials (strong in the target, absent in the candidate — what your patch is failing to produce) and extra_partials (present in the candidate, not the target). This closes the timbre-matching loop: fingerprint a reference (analyze_sample_spectrum of a real SID render), measure your candidate, read missing_partials to know which frequencies to add, and watch log_spectral_distance fall as you adjust parameters. Deterministic and offline."
+        description = "Compare two spectra and return how far apart they are, and WHERE. Each side (target, candidate) is either a render (optionally soloing one instrument) or an imported sample / WAV file, so you can compare render↔render, render↔sample, or sample↔sample. Returns two distance scalars to minimise: log_spectral_distance (RMS dB difference over log-frequency bins) and mel_l2_distance (true L2 / Euclidean distance over a log-mel filterbank — perceptually weighted, tracks audible timbre change more closely; sized by mel_bands, default 40). Plus per-descriptor deltas (candidate − target): centroid_delta_hz (brightness), rolloff_delta_hz (filter-slope steepness — 12 vs 24 dB/oct), flatness_delta, inharmonicity_delta, and odd_even_ratio_delta_db (odd/even harmonic balance in dB — encodes pulse duty cycle, so use it to match pulse width); voicing_mismatch (a pitched-vs-noise gross mismatch, which also penalises log_spectral_distance); and the high-value lists missing_partials (strong in the target, absent in the candidate — what your patch is failing to produce) and extra_partials (present in the candidate, not the target). This closes the timbre-matching loop: fingerprint a reference (analyze_sample_spectrum of a real SID render), measure your candidate, read missing_partials to know which frequencies to add, and watch the distances fall as you adjust parameters. Deterministic and offline."
     )]
     async fn compare_spectra(&self, params: Parameters<CompareSpectraParam>) -> String {
         let p = params.0;
@@ -5134,6 +5181,41 @@ impl SynthMcpServer {
                 p.f0_hint,
                 p.max_partials,
                 p.log_bins,
+                p.mel_bands,
+                scope,
+            )
+        })
+    }
+
+    #[tool(
+        description = "Compare the amplitude CONTOURS (ADSR shape over time) of two sources — the time-domain counterpart of compare_spectra. FFT-based tools miss how a sound evolves; a SID voice's identity is largely its envelope (attack punch, decay, sustain, hard-restart click). Each side (target, candidate) is a render (optionally soloing one instrument) or an imported sample / WAV. Extracts an RMS envelope from each, peak-normalises them (shape is compared independent of loudness — use analyze_mix_bus for level), and aligns them with dynamic time warping. Returns: dtw_distance (the scalar to minimise — normalised warp distance between the contours, tolerant of small timing differences); a per-side breakdown (attack_ms, decay_ms, sustain_level, release_ms, plus attack-transient crest_factor_db and energy_rise_db — the 'punch' of the onset); and the candidate − target deltas for each. Use it to check your patch's envelope tracks a reference: watch dtw_distance fall as you tune ADSR, and read crest_factor_delta_db to see if you're missing the reference's attack punch. release_ms needs note_duration_ms; omit it and the shape distance still works. Deterministic and offline."
+    )]
+    async fn compare_envelopes(&self, params: Parameters<CompareEnvelopesParam>) -> String {
+        let p = params.0;
+        let scope = crate::bridge::AnalysisScope::from_flags(
+            p.include_all,
+            p.include_master_effects,
+            p.include_return_effects,
+            p.include_awe,
+            crate::bridge::RenderQuality::parse(p.render_quality.as_deref()),
+        );
+        let to_source = |s: &SpectrumSourceParam| crate::bridge::SpectrumSource {
+            sample_id_or_path: s.sample_id_or_path.clone(),
+            instrument_id: s.instrument_id,
+            start_tick: s.start_tick,
+            duration_seconds: s.duration_seconds,
+            start_ms: s.start_ms,
+            window_len_ms: s.window_len_ms,
+        };
+        let target = to_source(&p.target);
+        let candidate = to_source(&p.candidate);
+        run_blocking_json(move || {
+            self.bridge.compare_envelopes(
+                target,
+                candidate,
+                p.envelope_window_ms,
+                p.note_duration_ms,
+                p.transient_window_ms,
                 scope,
             )
         })

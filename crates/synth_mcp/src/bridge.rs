@@ -1889,7 +1889,9 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// `candidate` is the attempt (e.g. your patch). `missing_partials` names the
     /// partials strong in the target that the candidate lacks — the actionable
     /// guidance for a timbre-matching loop. Both sources are analysed with the
-    /// same `f0_hint`/`max_partials`/`log_bins`; render sources use `scope`.
+    /// same `f0_hint`/`max_partials`/`log_bins`/`mel_bands`; render sources use
+    /// `scope`. `mel_bands` (default 40) sizes the log-mel filterbank behind
+    /// `mel_l2_distance`.
     #[allow(clippy::too_many_arguments)]
     fn compare_spectra(
         &self,
@@ -1898,8 +1900,28 @@ pub trait SynthBridge: Send + Sync + 'static {
         f0_hint: Option<f32>,
         max_partials: Option<u32>,
         log_bins: Option<u32>,
+        mel_bands: Option<u32>,
         scope: AnalysisScope,
     ) -> Result<crate::types::CompareSpectraResult, McpBridgeError>;
+
+    /// Compare the amplitude *contours* (ADSR shape over time) of two sources —
+    /// the time-domain counterpart of `compare_spectra`. Extracts an RMS
+    /// envelope from each (render or sample/WAV), aligns them with dynamic time
+    /// warping for a shape distance, and reports the per-side ADSR estimate plus
+    /// attack transient. `envelope_window_ms` sets the RMS block size;
+    /// `note_duration_ms` (applied to both) marks note-off for the release
+    /// estimate; `transient_window_ms` sets the attack-transient span. Render
+    /// sources use `scope`.
+    #[allow(clippy::too_many_arguments)]
+    fn compare_envelopes(
+        &self,
+        target: SpectrumSource,
+        candidate: SpectrumSource,
+        envelope_window_ms: Option<f32>,
+        note_duration_ms: Option<u32>,
+        transient_window_ms: Option<f32>,
+        scope: AnalysisScope,
+    ) -> Result<crate::types::CompareEnvelopesResult, McpBridgeError>;
 
     /// Incremental per-effect breakdown of the master bus. Renders the chain
     /// input (post-return mix, no master effects) once, then re-renders the
@@ -2611,7 +2633,7 @@ mod insert_anchor_tests {
             cable("osc-1", "output", "flt-1", "input"),
             cable("flt-1", "output", "amp-1", "input"),
             cable("amp-1", "output", "out-1", "input"),
-            cable("env-1", "output", "amp-1", "cv_gain"),
+            cable("env-1", "output", "amp-1", "cv"),
         ];
         (modules, conns)
     }
@@ -2644,7 +2666,7 @@ mod insert_anchor_tests {
     #[test]
     fn cable_before_ignores_cv_inputs() {
         let (_, conns) = graph();
-        // amp-1 has an audio input ("input") and a CV input ("cv_gain"); only
+        // amp-1 has an audio input ("input") and a CV input ("cv"); only
         // the audio one is a splice target, so resolution is unambiguous.
         let audio_in = vec!["input".to_string()];
         let c = unique_audio_cable_into("amp-1", &audio_in, &conns).unwrap();

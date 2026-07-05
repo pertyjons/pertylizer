@@ -28,7 +28,7 @@ use synth_sequencer::{
 use pertylizer::audio::preview::SharedSampleLibrary;
 use pertylizer::mcp_bridge::{
     analyze_sample_spectrum_impl, analyze_spectrogram_impl, analyze_spectrum_impl,
-    compare_spectra_impl, render_to_wav_impl,
+    compare_envelopes_impl, compare_spectra_impl, render_to_wav_impl,
 };
 use pertylizer::mcp_shared::McpSharedState;
 use pertylizer::patch::{ModuleBuilder, Patch};
@@ -398,6 +398,7 @@ fn compare(
         None,
         None,
         None,
+        None,
         AnalysisScope::default(),
     )
     .expect("compare_spectra should succeed")
@@ -413,6 +414,11 @@ fn compare_spectra_identical_render_is_near_zero() {
         d.log_spectral_distance < 1.0,
         "identical sources should be ~0 apart, got {}",
         d.log_spectral_distance
+    );
+    assert!(
+        d.mel_l2_distance < 1.0,
+        "identical sources should have ~0 mel-L2, got {}",
+        d.mel_l2_distance
     );
     assert!(
         d.missing_partials.is_empty() && d.extra_partials.is_empty(),
@@ -438,6 +444,11 @@ fn compare_spectra_reports_missing_partial() {
         "a missing partial should be an upper harmonic (> 300 Hz)"
     );
     assert!(d.log_spectral_distance > 0.0);
+    assert!(
+        d.mel_l2_distance > 0.0,
+        "differing timbres should carry a non-zero mel-L2, got {}",
+        d.mel_l2_distance
+    );
 }
 
 #[test]
@@ -455,6 +466,62 @@ fn compare_spectra_voicing_mismatch_is_penalised() {
     assert!(
         d.missing_partials.is_empty() && d.extra_partials.is_empty(),
         "no partial matching across a voicing mismatch"
+    );
+}
+
+fn compare_env(
+    rig: &Rig,
+    shared: &McpSharedState,
+    target: synth_mcp::SpectrumSource,
+    candidate: synth_mcp::SpectrumSource,
+) -> synth_mcp::types::CompareEnvelopesResult {
+    compare_envelopes_impl(
+        &rig.session,
+        &rig.sample_library,
+        shared,
+        target,
+        candidate,
+        None,
+        Some(1500),
+        None,
+        AnalysisScope::default(),
+    )
+    .expect("compare_envelopes should succeed")
+}
+
+#[test]
+fn compare_envelopes_identical_render_is_near_zero() {
+    let (rig, song) = setup();
+    let shared = McpSharedState::with_song(song);
+    let d = compare_env(&rig, &shared, render_source(0), render_source(0));
+    assert!(
+        d.dtw_distance < 1.0e-3,
+        "identical contours should warp to ~0, got {}",
+        d.dtw_distance
+    );
+    assert_eq!(d.attack_delta_ms, 0.0);
+    assert_eq!(d.crest_factor_delta_db, 0.0);
+    assert!(
+        d.target.num_windows > 0,
+        "a 2 s render should yield envelope windows"
+    );
+}
+
+#[test]
+fn compare_envelopes_differing_shapes_have_positive_distance() {
+    // Saw (instrument 0) vs noise (instrument 1) — different amplitude contours
+    // over the note, so the warp distance must be clearly non-zero.
+    let (rig, song) = setup();
+    let shared = McpSharedState::with_song(song);
+    let d = compare_env(&rig, &shared, render_source(0), render_source(1));
+    assert!(
+        d.dtw_distance > 0.0,
+        "different contours should carry a non-zero DTW distance, got {}",
+        d.dtw_distance
+    );
+    assert!(
+        d.candidate.num_windows > 0 && d.target.num_windows > 0,
+        "both sides should have envelope windows"
     );
 }
 
