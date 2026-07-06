@@ -1,6 +1,28 @@
 # TODO - Pertylizer
 
-## 0. HIGHEST PRIORITY — Envelope attack/decay/release is a time-constant, not the documented time
+## 0. ~~HIGHEST PRIORITY~~ — DONE: Envelope attack/decay/release now mean their nominal time
+
+**Shipped (branch `feat/envelope-nominal-time`).** Option 1 (analog-style
+overshoot) applied consistently to attack, decay, **and** release, plus compat
+**A** (break the sound, no migration; `FORMAT_VERSION` bumped `"1.0"`→`"1.1"` as a
+marker only — old files still load since `version` is never compared on load).
+
+Implementation: a single `Envelope::overshoot_target(start, dest)` aims the
+one-pole a fixed fraction `k = e⁻¹/(1−e⁻¹) ≈ 0.582` of the span *past* the
+destination, so each stage *crosses* its destination at exactly `t = τ = nominal
+time`. `target_level: NormalizedValue` (couldn't hold >1 or <0) was replaced by a
+`stage_start_level: f32` captured at each stage entry; the asymptote itself is a
+documented raw `f32` (deliberately outside [0,1], never serialized). The decay
+"sustain modulated above current → glide up" case is preserved via a direction
+guard. Regression test `stages_complete_in_nominal_time` locks all three stages
+to ±4 ms of nominal (cleanly separated from the old ~7× behavior). `velocity_pad`
+and the other built-ins authored *to the number* (e.g. `attack=0.15` = "150 ms")
+are now correct as-is — no blind retune done (needs an in-app ear check).
+
+**Remaining (needs the running app):** A/B the built-ins by ear and retune any
+that now sound off; the change is measurable-correct but not yet audibly reviewed.
+
+<details><summary>Original investigation (kept for reference)</summary>
 
 **The `Attack`/`Decay`/`Release` parameters do not mean what their descriptions
 say.** `Attack` is documented as *"Attack time (silence to peak)"*
@@ -75,6 +97,8 @@ comment *"Slow attack (150ms) for pad-like swell"* — the author expected
 - **Suggested first step:** a small spike — fix only the attack curve and A/B
   `velocity_pad` against its "150 ms" intent before committing to the full
   three-stage change + the A-vs-B migration decision.
+
+</details>
 
 ---
 

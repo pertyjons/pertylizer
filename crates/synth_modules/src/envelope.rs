@@ -134,7 +134,10 @@ pub struct Envelope {
     level: NormalizedValue,
     velocity: NormalizedValue,
     sample_rate: SampleRate,
-    target_level: NormalizedValue,
+    /// Level at the moment the current gliding stage was entered. Used to aim
+    /// the one-pole overshoot target (see [`Envelope::overshoot_target`]) so the
+    /// stage completes in its nominal time.
+    stage_start_level: f32,
     output_buffer: AudioBuffer,
     /// Time elapsed in current stage (seconds).
     time_in_stage: Seconds,
@@ -167,7 +170,7 @@ impl Envelope {
             level: NormalizedValue::MIN,
             velocity: NormalizedValue::MAX,
             sample_rate: SampleRate::DVD_QUALITY,
-            target_level: NormalizedValue::MIN,
+            stage_start_level: 0.0,
             output_buffer: AudioBuffer::new(1024),
             time_in_stage: Seconds::ZERO,
             position_buffer: Arc::new(EnvelopePositionBuffer::new()),
@@ -197,16 +200,26 @@ impl Envelope {
     pub fn trigger(&mut self, velocity: Velocity) {
         self.velocity = NormalizedValue::new(velocity.as_f32());
         self.stage = EnvelopeStage::Attack;
-        self.target_level = NormalizedValue::MAX;
+        // Glide toward the peak from wherever we are (0 for a fresh note, or the
+        // current level on retrigger), so the attack still completes on time.
+        self.stage_start_level = self.level.as_f32();
         self.time_in_stage = Seconds::ZERO;
     }
 
     pub fn release(&mut self) {
         if self.stage != EnvelopeStage::Idle {
             self.stage = EnvelopeStage::Release;
-            self.target_level = NormalizedValue::MIN;
+            self.stage_start_level = self.level.as_f32();
             self.time_in_stage = Seconds::ZERO;
         }
+    }
+
+    /// Enter the Decay stage from the peak. Decay always begins at full level
+    /// (1.0), which is the start point the overshoot target assumes.
+    #[inline]
+    fn enter_decay(&mut self) {
+        self.stage = EnvelopeStage::Decay;
+        self.stage_start_level = NormalizedValue::MAX.as_f32();
     }
 
     /// Apply curve shaping to a base exponential coefficient.
@@ -215,6 +228,25 @@ impl Envelope {
     #[inline]
     fn apply_curve(base_coef: f32, curve: f32) -> f32 {
         crate::math::apply_curve_shaping(base_coef, curve)
+    }
+
+    /// `e⁻¹`, the fraction of the span a one-pole with time-constant τ still has
+    /// left to travel after exactly one τ.
+    const INV_E: f32 = 1.0 / std::f32::consts::E;
+
+    /// One-pole asymptote that makes an exponential glide *cross* its
+    /// `dest` at exactly `t = τ` (the nominal stage time), given the level at
+    /// stage entry (`start`). A plain one-pole aimed straight at `dest` only
+    /// gets within 0.1 % after ~6.9·τ, which is why the Attack/Decay/Release
+    /// times used to play ~7× too slow; aiming *past* the destination fixes the
+    /// number while keeping the natural exponential shape (TODO §0).
+    ///
+    /// Returns a raw `f32` on purpose: the value is intentionally outside the
+    /// `[0, 1]` output range (≈1.582 for a 0→1 attack, negative for a release
+    /// toward 0). It is an internal DSP aiming point, never serialized.
+    #[inline]
+    fn overshoot_target(start: f32, dest: f32) -> f32 {
+        (dest - start * Self::INV_E) / (1.0 - Self::INV_E)
     }
 
     #[inline]
@@ -240,21 +272,20 @@ impl Envelope {
             EnvelopeStage::Attack => {
                 if attack.as_f32() <= 0.001 {
                     self.level = NormalizedValue::MAX;
-                    self.stage = EnvelopeStage::Decay;
-                    self.target_level = sustain;
+                    self.enter_decay();
                 } else {
                     let base_coef = attack.to_exp_coeff(self.sample_rate);
                     let effective_coef = Self::apply_curve(base_coef, self.attack_curve.as_f32());
 
-                    let target = self.target_level.as_f32();
+                    // Aim past the peak so the curve crosses 1.0 at t = attack.
+                    let target = Self::overshoot_target(self.stage_start_level, 1.0);
                     let current = self.level.as_f32();
                     let new_level = target + (current - target) * effective_coef;
                     self.level = NormalizedValue::new(new_level.clamp(0.0, 1.0));
 
                     if self.level.as_f32() >= 0.999 {
                         self.level = NormalizedValue::MAX;
-                        self.stage = EnvelopeStage::Decay;
-                        self.target_level = sustain;
+                        self.enter_decay();
                     }
                 }
             }
@@ -264,22 +295,33 @@ impl Envelope {
                     self.stage = EnvelopeStage::Sustain;
                 } else {
                     let base_coef = decay.to_exp_coeff(self.sample_rate);
+                    let effective_coef = Self::apply_curve(base_coef, self.decay_curve.as_f32());
                     let sustain_level = sustain.as_f32();
                     let current = self.level.as_f32();
-                    let effective_coef = Self::apply_curve(base_coef, self.decay_curve.as_f32());
 
-                    let new_level = sustain_level + (current - sustain_level) * effective_coef;
-                    self.level = NormalizedValue::new(new_level.clamp(0.0, 1.0));
+                    if current > sustain_level {
+                        // Normal decay ramps DOWN from the peak: aim *below*
+                        // sustain so the curve crosses it at t = decay. Start is
+                        // the peak captured on entry (`stage_start_level`).
+                        let target = Self::overshoot_target(self.stage_start_level, sustain_level);
+                        let new_level = target + (current - target) * effective_coef;
+                        self.level = NormalizedValue::new(new_level.clamp(0.0, 1.0));
 
-                    // Only snap to Sustain once the glide has converged from the
-                    // decay side. Normal decay ramps DOWN from peak, so `current`
-                    // sits above `sustain_level` and we finish when it gets close.
-                    // If `sustain` was dynamically raised ABOVE the current level,
-                    // `current` is below the target: glide smoothly UP toward it
-                    // rather than instantly snapping (which would click).
-                    if (self.level.as_f32() - sustain_level).abs() <= 0.001 {
-                        self.level = sustain;
-                        self.stage = EnvelopeStage::Sustain;
+                        if self.level.as_f32() <= sustain_level {
+                            self.level = sustain;
+                            self.stage = EnvelopeStage::Sustain;
+                        }
+                    } else {
+                        // `sustain` was dynamically raised ABOVE the current
+                        // level: glide smoothly UP toward it (no overshoot)
+                        // rather than snapping, which would click.
+                        let new_level = sustain_level + (current - sustain_level) * effective_coef;
+                        self.level = NormalizedValue::new(new_level.clamp(0.0, 1.0));
+
+                        if (self.level.as_f32() - sustain_level).abs() <= 0.001 {
+                            self.level = sustain;
+                            self.stage = EnvelopeStage::Sustain;
+                        }
                     }
                 }
             }
@@ -292,10 +334,13 @@ impl Envelope {
                     self.stage = EnvelopeStage::Idle;
                 } else {
                     let base_coef = release.to_exp_coeff(self.sample_rate);
-                    let current = self.level.as_f32();
                     let effective_coef = Self::apply_curve(base_coef, self.release_curve.as_f32());
 
-                    let new_level = current * effective_coef;
+                    // Aim below zero so the curve crosses 0 at t = release. Start
+                    // is the level captured when the gate was released.
+                    let target = Self::overshoot_target(self.stage_start_level, 0.0);
+                    let current = self.level.as_f32();
+                    let new_level = target + (current - target) * effective_coef;
                     self.level = NormalizedValue::new(new_level.clamp(0.0, 1.0));
 
                     if self.level.as_f32() <= 0.001 {
@@ -692,6 +737,46 @@ mod tests {
         assert!(
             (settled(&mut env, &ctx, n) - base).abs() < 0.05,
             "clearing reverts sustain"
+        );
+    }
+
+    /// Each stage should reach its destination in (roughly) its *nominal* time,
+    /// not the ~6.9× time-constant the old one-pole-to-threshold produced. A
+    /// "20 ms" attack used to peak at ~138 ms; now it peaks at ~20 ms. (TODO §0)
+    #[test]
+    fn stages_complete_in_nominal_time() {
+        let mut env = Envelope::new();
+        env.sample_rate = SampleRate::DVD_QUALITY;
+        let sr = env.sample_rate.as_f32();
+        env.set_param(Param::Envelope(EnvelopeParam::Attack(Seconds::new(0.02))));
+        env.set_param(Param::Envelope(EnvelopeParam::Decay(Seconds::new(0.03))));
+        env.set_param(Param::Envelope(EnvelopeParam::Sustain(
+            NormalizedValue::new(0.5),
+        )));
+        env.set_param(Param::Envelope(EnvelopeParam::Release(Seconds::new(0.04))));
+
+        fn count_stage(env: &mut Envelope, stage: EnvelopeStage) -> usize {
+            let mut n = 0;
+            while env.stage() == stage && n < 480_000 {
+                let _ = env.process_sample();
+                n += 1;
+            }
+            n
+        }
+
+        env.trigger(Velocity::MAX);
+        let attack_s = count_stage(&mut env, EnvelopeStage::Attack) as f32 / sr;
+        let decay_s = count_stage(&mut env, EnvelopeStage::Decay) as f32 / sr;
+        env.release();
+        let release_s = count_stage(&mut env, EnvelopeStage::Release) as f32 / sr;
+
+        // Within ±4 ms of nominal — cleanly separated from the old ~7× behavior
+        // (attack would have been ~138 ms, decay ~130 ms, release ~180 ms).
+        assert!((attack_s - 0.02).abs() < 0.004, "attack took {attack_s}s");
+        assert!((decay_s - 0.03).abs() < 0.004, "decay took {decay_s}s");
+        assert!(
+            (release_s - 0.04).abs() < 0.004,
+            "release took {release_s}s"
         );
     }
 

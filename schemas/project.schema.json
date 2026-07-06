@@ -10758,7 +10758,7 @@
       "description": "Complete sequencer song (patterns, tracks, arrangement)."
     },
     "version": {
-      "description": "Format version (currently `\"1.0\"`).",
+      "description": "Format version (currently `\"1.1\"`).",
       "type": "string"
     }
   },

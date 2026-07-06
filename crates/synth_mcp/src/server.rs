@@ -1877,6 +1877,11 @@ pub struct AnalyzeNoteParam {
         range(min = 0, max = 127)
     )]
     pub expected_note: Option<u8>,
+    #[schemars(
+        description = "RMS/centroid envelope block size in milliseconds (default 50). Lower it (e.g. 2–5 ms) to resolve fast attacks/decays that the default window collapses into one frame (a sub-window attack otherwise reports attack_ms = 0); raise it to smooth noisy contours. Clamped to [1, 5000].",
+        range(min = 1, max = 5000)
+    )]
+    pub envelope_window_ms: Option<f32>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -5021,6 +5026,9 @@ impl SynthMcpServer {
         if let Some(expected) = params.0.expected_note {
             validate_midi_note(expected).map_err(mcp_err)?;
         }
+        if let Some(window) = params.0.envelope_window_ms {
+            validate_range("envelope_window_ms", window, 1.0, 5000.0).map_err(mcp_err)?;
+        }
 
         let result = tokio::task::block_in_place(|| {
             self.bridge.analyze_note(
@@ -5030,6 +5038,7 @@ impl SynthMcpServer {
                 duration_ms,
                 tail_ms,
                 params.0.expected_note,
+                params.0.envelope_window_ms,
             )
         })
         .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
@@ -5889,10 +5898,15 @@ impl SynthMcpServer {
         if velocity > 127 {
             return format!("Error: {}", McpBridgeError::InvalidVelocity(velocity));
         }
-        match self
-            .bridge
-            .analyze_note(p.instrument_id, note, velocity, duration_ms, tail_ms, None)
-        {
+        match self.bridge.analyze_note(
+            p.instrument_id,
+            note,
+            velocity,
+            duration_ms,
+            tail_ms,
+            None,
+            None,
+        ) {
             Ok(r) => to_json(&distill_audio_validation(&r)),
             Err(e) => format!("Error: {e}"),
         }

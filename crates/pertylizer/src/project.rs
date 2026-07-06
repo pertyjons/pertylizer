@@ -19,7 +19,7 @@ use synth_sequencer::Song;
 pub struct ProjectFile {
     /// Always `"project"` — distinguishes from patch files.
     pub file_type: String,
-    /// Format version (currently `"1.0"`).
+    /// Format version (currently `"1.1"`).
     pub version: String,
     /// All instruments with their patches.
     pub instruments: Vec<InstrumentState>,
@@ -104,7 +104,7 @@ impl ProjectFile {
     /// file format itself changes — unlike the app's `CARGO_PKG_VERSION`, which
     /// moves every release. This is the value external tooling should pin to
     /// detect a format change (see `get_project_schema`).
-    pub const FORMAT_VERSION: &'static str = "1.0";
+    pub const FORMAT_VERSION: &'static str = "1.1";
 
     /// Create a new project file with the given instruments and song.
     pub fn new(

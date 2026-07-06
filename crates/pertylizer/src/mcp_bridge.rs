@@ -4314,6 +4314,7 @@ impl SynthBridge for AppSynthBridge {
         )
     }
 
+    #[allow(clippy::too_many_arguments)]
     fn analyze_note(
         &self,
         instrument_id: u64,
@@ -4322,6 +4323,7 @@ impl SynthBridge for AppSynthBridge {
         duration_ms: u32,
         tail_ms: u32,
         expected_note: Option<u8>,
+        envelope_window_ms: Option<f32>,
     ) -> Result<synth_mcp::types::AnalyzeNoteResult, McpBridgeError> {
         let mut result = analyze_rendered_note(
             &self.session,
@@ -4332,6 +4334,7 @@ impl SynthBridge for AppSynthBridge {
             duration_ms,
             tail_ms,
             expected_note,
+            envelope_window_ms,
         )?;
         // Attach the patch's intent so the agent can correlate the measured
         // signal with why each module is there. Done here (not in the shared
@@ -7751,6 +7754,7 @@ fn analyze_rendered_note(
     duration_ms: u32,
     tail_ms: u32,
     expected_note: Option<u8>,
+    envelope_window_ms: Option<f32>,
 ) -> Result<synth_mcp::types::AnalyzeNoteResult, McpBridgeError> {
     let rendered = crate::audio::preview::render_note_to_buffer(
         session,
@@ -7762,12 +7766,13 @@ fn analyze_rendered_note(
         tail_ms,
     )?;
 
-    Ok(analyze_rendered_buffer(
+    Ok(analyze_rendered_buffer_with_window(
         &rendered,
         note,
         velocity,
         duration_ms,
         expected_note,
+        resolve_envelope_window_ms(envelope_window_ms),
     ))
 }
 
@@ -12335,12 +12340,50 @@ fn profile_to_result(
 /// signals (anti-phase tones, clipped tails, etc.) without spinning up the
 /// full audio engine.
 #[doc(hidden)]
+/// Default RMS/centroid envelope block size (ms) for note analysis when the
+/// caller doesn't request a specific resolution.
+pub const DEFAULT_NOTE_ENVELOPE_WINDOW_MS: f32 = 50.0;
+
+/// Resolve an optional `envelope_window_ms` request to a safe value: the
+/// default when absent, else clamped to `[1, 5000]` ms so the envelope block
+/// size stays at least one sample and never overflows the render.
+fn resolve_envelope_window_ms(requested: Option<f32>) -> f32 {
+    match requested {
+        Some(ms) => ms.clamp(1.0, 5000.0),
+        None => DEFAULT_NOTE_ENVELOPE_WINDOW_MS,
+    }
+}
+
+/// Analyze a rendered note with the default envelope window
+/// ([`DEFAULT_ENVELOPE_WINDOW_MS`]). Used by sweeps and the GUI, which don't
+/// expose the resolution knob.
 pub fn analyze_rendered_buffer(
     rendered: &crate::audio::preview::RenderedNote,
     note: u8,
     velocity: u8,
     duration_ms: u32,
     expected_note: Option<u8>,
+) -> synth_mcp::types::AnalyzeNoteResult {
+    analyze_rendered_buffer_with_window(
+        rendered,
+        note,
+        velocity,
+        duration_ms,
+        expected_note,
+        DEFAULT_NOTE_ENVELOPE_WINDOW_MS,
+    )
+}
+
+/// Like [`analyze_rendered_buffer`] but with a caller-chosen RMS/centroid
+/// envelope block size. Pass a small window (e.g. 2–5 ms) to resolve fast
+/// attacks the default 50 ms window collapses into a single frame.
+pub fn analyze_rendered_buffer_with_window(
+    rendered: &crate::audio::preview::RenderedNote,
+    note: u8,
+    velocity: u8,
+    duration_ms: u32,
+    expected_note: Option<u8>,
+    envelope_window_ms: f32,
 ) -> synth_mcp::types::AnalyzeNoteResult {
     use crate::audio::analysis;
     use synth_core::types::StereoSample;
@@ -12579,7 +12622,6 @@ pub fn analyze_rendered_buffer(
         )
     };
 
-    let envelope_window_ms = 50.0;
     let rms_envelope = analysis::rms_envelope(&mono, sample_rate, envelope_window_ms);
     // Centroid envelope tracks brightness motion; use the phase-robust
     // signal so anti-phase content still produces a meaningful spectrum.

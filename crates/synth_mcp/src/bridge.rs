@@ -1616,6 +1616,11 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// MIDI note instead of the actually-played one and narrows the
     /// fundamental search to ±tritone around it. Useful when the loudest
     /// spectral peak isn't the fundamental (sub-octave dominance, wave folding).
+    ///
+    /// `envelope_window_ms` (when `Some`) sets the block size of the RMS /
+    /// centroid envelopes; defaults to 50 ms. Lower it (e.g. to 2–5 ms) to
+    /// resolve fast attacks that a 50 ms window collapses into a single frame.
+    #[allow(clippy::too_many_arguments)]
     fn analyze_note(
         &self,
         instrument_id: u64,
@@ -1624,6 +1629,7 @@ pub trait SynthBridge: Send + Sync + 'static {
         duration_ms: u32,
         tail_ms: u32,
         expected_note: Option<u8>,
+        envelope_window_ms: Option<f32>,
     ) -> Result<crate::types::AnalyzeNoteResult, McpBridgeError>;
 
     /// Symbolic harmonic analysis of a pattern or arrangement range.

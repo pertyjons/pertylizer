@@ -20,7 +20,7 @@ use std::f32::consts::TAU;
 use synth_core::MidiNote;
 
 use pertylizer::audio::preview::RenderedNote;
-use pertylizer::mcp_bridge::analyze_rendered_buffer;
+use pertylizer::mcp_bridge::{analyze_rendered_buffer, analyze_rendered_buffer_with_window};
 use synth_mcp::types::AnalysisSignalMode;
 
 const SAMPLE_RATE: u32 = 44_100;
@@ -76,6 +76,51 @@ fn make_mono_rendered(
         note_off_frame: note_frames,
         warnings: Vec::new(),
     }
+}
+
+// -------------------------------------------------------------------------
+// Configurable envelope window: a fine window resolves a fast attack that the
+// default 50 ms window collapses into its first frame (attack_ms = 0).
+// -------------------------------------------------------------------------
+
+#[test]
+fn fine_envelope_window_resolves_a_fast_attack() {
+    // 220 Hz tone with a 10 ms linear attack, then held. At the default 50 ms
+    // window the whole attack lives inside frame 0; at 2 ms it spans ~5 frames.
+    let total_frames = SAMPLE_RATE as usize; // 1 s
+    let note_frames = (SAMPLE_RATE as f32 * 0.7) as u64;
+    let attack_frames = SAMPLE_RATE as f32 * 0.010; // 10 ms
+    let samples = synth_mono(total_frames, |i| {
+        let t = i as f32 / SAMPLE_RATE as f32;
+        let env = (i as f32 / attack_frames).min(1.0); // 0→1 over 10 ms, then 1
+        (TAU * 220.0 * t).sin() * 0.5 * env
+    });
+    let rendered = make_mono_rendered(samples, note_frames, total_frames, SAMPLE_RATE);
+
+    let coarse = analyze_rendered_buffer(&rendered, 57, 100, 700, None); // default 50 ms
+    let fine = analyze_rendered_buffer_with_window(&rendered, 57, 100, 700, None, 2.0);
+
+    // The chosen resolution is echoed back and drives the envelope length.
+    assert_eq!(coarse.envelope_window_ms, 50.0);
+    assert_eq!(fine.envelope_window_ms, 2.0);
+    assert!(
+        fine.rms_envelope.len() > coarse.rms_envelope.len(),
+        "finer window must yield more frames: fine={} coarse={}",
+        fine.rms_envelope.len(),
+        coarse.rms_envelope.len()
+    );
+
+    // The 50 ms window can't see a 10 ms attack (collapses to 0); the 2 ms one
+    // resolves it to roughly its true length.
+    assert_eq!(
+        coarse.envelope_estimate.attack_ms, 0.0,
+        "default window should collapse the fast attack"
+    );
+    let fine_attack = fine.envelope_estimate.attack_ms;
+    assert!(
+        (2.0..=30.0).contains(&fine_attack),
+        "fine window should resolve the ~10 ms attack, got {fine_attack} ms"
+    );
 }
 
 // -------------------------------------------------------------------------
