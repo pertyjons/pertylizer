@@ -1056,6 +1056,14 @@ fn draw_sound_rings(
 fn draw_floor_plan(ui: &mut egui::Ui, handle: &mut EngineHandle, state: &mut AweUiState) {
     let available = ui.available_size();
     let (response, painter) = ui.allocate_painter(available, egui::Sense::click_and_drag());
+    // Expose the canvas container to AccessKit / the egui-inspection MCP. Per-
+    // element drivability is out of scope for v1 — this makes it locatable.
+    crate::gui::widgets::expose(
+        &response,
+        egui::WidgetType::Other,
+        "acoustic world canvas",
+        None,
+    );
     let rect = response.rect;
 
     let t = theme();

@@ -31,7 +31,8 @@ use crate::gui::patch_editor::{
 };
 use crate::gui::theme::theme;
 use crate::gui::widgets::{
-    danger_button, dim_label, draw_oscilloscope, draw_stereo_meter, empty_state, stepper,
+    danger_button, dim_label, draw_oscilloscope, draw_stereo_meter, empty_state, expose_selected,
+    stepper,
 };
 use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
 use crate::io::settings::AppSettings;
@@ -3695,6 +3696,15 @@ impl SynthApp {
                 seg_rect,
                 ui.id().with(("view_seg", i)),
                 egui::Sense::click(),
+            );
+            // Expose each view tab to AccessKit / the egui-inspection MCP as a
+            // selectable, so a driver can switch views by name (and read which is
+            // active) instead of clicking by pixel. High navigation value.
+            expose_selected(
+                &resp,
+                egui::WidgetType::SelectableLabel,
+                label.to_string(),
+                is_active,
             );
             if resp.clicked() {
                 self.active_view = *view;

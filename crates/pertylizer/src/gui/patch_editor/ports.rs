@@ -14,7 +14,9 @@ use synth_engine::{EngineHandle, ModuleId};
 
 use crate::gui::module_panel::PortPosition;
 use crate::gui::theme::theme;
-use crate::gui::widgets::{PortWidget, WidgetPortDirection, WidgetPortType, draw_oscilloscope};
+use crate::gui::widgets::{
+    PortWidget, WidgetPortDirection, WidgetPortType, draw_oscilloscope, expose,
+};
 
 use super::{
     CLOSE_BUTTON_HOVER_RED, CLOSE_BUTTON_IDLE, PatchEditor, PatchEditorResult, PendingConnection,
@@ -59,6 +61,12 @@ impl PatchEditor {
                         if port.direction == synth_core::PortDirection::Input {
                             let port_rect = egui::Rect::from_center_size(center, Vec2::splat(8.0));
                             let port_resp = ui.allocate_rect(port_rect, Sense::click_and_drag());
+                            expose(
+                                &port_resp,
+                                egui::WidgetType::Other,
+                                format!("{} in", port.name),
+                                None,
+                            );
                             let port_color = if port_resp.hovered() {
                                 theme().colors.accent_cyan
                             } else {
@@ -136,6 +144,12 @@ impl PatchEditor {
                         if port.direction == synth_core::PortDirection::Output {
                             let port_rect = egui::Rect::from_center_size(center, Vec2::splat(8.0));
                             let port_resp = ui.allocate_rect(port_rect, Sense::click_and_drag());
+                            expose(
+                                &port_resp,
+                                egui::WidgetType::Other,
+                                format!("{} out", port.name),
+                                None,
+                            );
                             let port_color = if port_resp.hovered() {
                                 theme().colors.accent_green
                             } else {
@@ -184,6 +198,12 @@ impl PatchEditor {
             );
             let close_rect = Rect::from_min_size(close_pos, close_size);
             let close_resp = ui.allocate_rect(close_rect, Sense::click());
+            expose(
+                &close_resp,
+                egui::WidgetType::Button,
+                format!("close {}", descriptor.name),
+                None,
+            );
             let close_color = if close_resp.hovered() {
                 CLOSE_BUTTON_HOVER_RED
             } else {
@@ -271,18 +291,33 @@ impl PatchEditor {
 
                             store_position(port, center);
 
+                            // Expose to AccessKit / the egui-inspection MCP so a
+                            // driver can locate a port by name+type+direction (the
+                            // node name isn't threaded into this column, so the
+                            // label is port-scoped).
+                            let type_str = match port.port_type {
+                                WidgetPortType::Audio => "audio",
+                                WidgetPortType::Control => "cv",
+                                WidgetPortType::Gate => "gate",
+                                WidgetPortType::Midi => "midi",
+                            };
+                            let dir_str = match direction {
+                                WidgetPortDirection::Input => "in",
+                                WidgetPortDirection::Output => "out",
+                            };
+                            expose(
+                                &response,
+                                egui::WidgetType::Other,
+                                format!("{} {type_str} {dir_str}", port.label),
+                                None,
+                            );
+
                             // Single egui tooltip (positioned correctly inside the
                             // Scene transform): port name + signal type, plus the
                             // longer description when present. Built lazily inside
                             // `on_hover_ui` so we don't format a throwaway String
                             // for every port on every frame — only when hovered.
                             response.on_hover_ui(|ui| {
-                                let type_str = match port.port_type {
-                                    WidgetPortType::Audio => "audio",
-                                    WidgetPortType::Control => "cv",
-                                    WidgetPortType::Gate => "gate",
-                                    WidgetPortType::Midi => "midi",
-                                };
                                 let mut tip = format!("{} ({type_str})", port.label);
                                 if !port.description.is_empty() {
                                     tip.push('\n');

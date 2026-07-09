@@ -34,7 +34,7 @@ use super::{
 use crate::gui::input::KEY_MAP;
 use crate::gui::instrument_rack::InstrumentUiState;
 use crate::gui::theme::theme;
-use crate::gui::widgets::{CaptionTone, caption, strong_label};
+use crate::gui::widgets::{CaptionTone, caption, expose, strong_label};
 use crate::undo::{UndoAction, UndoManager};
 
 /// Row height in pixels at zoom 1.0. Taller than a piano-roll semitone row because
@@ -1458,6 +1458,23 @@ pub(crate) fn draw_tracker(
     {
         view_state.auto_follow_playhead = false;
     }
+
+    // Expose the tracker grid container to AccessKit / the egui-inspection MCP.
+    // A hover-only `interact` over the available rect registers the node without
+    // allocating layout space (so it doesn't shift the table) and, being under the
+    // cells drawn on top, never steals their clicks. Per-cell drivability is out of
+    // scope for v1 — this makes the grid locatable.
+    let tracker_canvas = ui.interact(
+        ui.available_rect_before_wrap(),
+        ui.id().with("tracker_canvas"),
+        egui::Sense::hover(),
+    );
+    expose(
+        &tracker_canvas,
+        egui::WidgetType::Other,
+        "tracker canvas",
+        None,
+    );
 
     let mut builder = TableBuilder::new(ui)
         .striped(true)

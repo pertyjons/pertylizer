@@ -432,8 +432,15 @@ fn smoothed(map: &mut HashMap<u64, f32>, key: u64, target: f32) -> f32 {
 /// Draw a thin vertical post-fader level meter.
 fn draw_meter_bar(ui: &mut egui::Ui, level: f32) {
     let t = theme();
-    let (rect, _) =
+    let (rect, response) =
         ui.allocate_exact_size(egui::vec2(METER_WIDTH, FADER_HEIGHT), egui::Sense::hover());
+    // Read-only channel meter: expose the live level to the egui-inspection MCP.
+    crate::gui::widgets::expose(
+        &response,
+        egui::WidgetType::ProgressIndicator,
+        "channel meter",
+        Some(f64::from(level)),
+    );
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 1.0, t.colors.bg_dark);
     let h = rect.height() * level.clamp(0.0, 1.0);

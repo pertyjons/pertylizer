@@ -43,6 +43,67 @@ pub fn paint_marker_corners(ui: &Ui, rect: Rect, markers: ModMarkers, outside: b
     }
 }
 
+// --- AccessKit exposure -----------------------------------------------------
+//
+// Custom-painted widgets (knobs, ports, node cards, canvases, meters) never fill
+// their AccessKit node, so the egui-inspection MCP (`query_tree`,
+// `content_contains`, `click`, `drag`) sees them as `Unknown` with no label or
+// value. These helpers wrap `Response::widget_info`, which fills the node every
+// frame (present in the tree even without interaction). Call once per frame, right
+// before returning the `Response`.
+//
+// Cost: `widget_info`'s node-fill closure is skipped when AccessKit is off (a
+// release build without the `egui-inspection` feature never runs it), so the
+// per-frame overhead there is near-zero. But the `label` you pass is still built
+// by the caller every frame — a `format!(...)` label allocates whether or not
+// AccessKit is on. Keep labels cheap on hot paths; don't reach for heavier
+// lazy-string machinery, a short `format!` per visible widget is fine on the GUI
+// thread.
+//
+// `WidgetType` convention for full-surface responses: use `Panel` for a
+// background container whose contents are separate AccessKit nodes drawn on top
+// (the patch canvas has node cards, the tempo lane has points, a group box has
+// its module body); use `Other` for a monolithic custom surface with no per-
+// element child nodes in the tree (piano roll, arrangement, tracker, AWE room,
+// sample waveform, keyboard).
+//
+// (An `expose_painted` escape hatch for pure-paint elements with no `Response`,
+// e.g. cables, would need `accesskit::` types that are only linked under the
+// opt-in `egui-inspection` feature; it is deferred with its only consumer.)
+
+/// Expose a custom-painted, `Response`-backed widget to AccessKit with a stable,
+/// meaningful `label` (the human/MCP name — module name, port name+type, tab
+/// name). `value` lands in the node's `value` field (matched by the MCP's
+/// `value_contains`); pass `None` for non-numeric widgets. Prefer the specific
+/// [`egui::WidgetType`] (`Slider`, `Button`, …) over `Other`.
+pub fn expose(
+    response: &Response,
+    typ: egui::WidgetType,
+    label: impl Into<String>,
+    value: Option<f64>,
+) {
+    let label = label.into();
+    response.widget_info(|| {
+        let mut info = egui::WidgetInfo::labeled(typ, response.enabled(), label.clone());
+        info.value = value;
+        info
+    });
+}
+
+/// Variant for on/off / active-tab widgets: reports `selected` state so the MCP
+/// can read which tab/toggle is active.
+pub fn expose_selected(
+    response: &Response,
+    typ: egui::WidgetType,
+    label: impl Into<String>,
+    selected: bool,
+) {
+    let label = label.into();
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(typ, response.enabled(), selected, label.clone())
+    });
+}
+
 /// The single hit-target size for every frameless icon button (and status badge).
 /// Exposed so callers that must build a raw `egui::Button` (e.g. a `MenuButton`)
 /// can match it instead of repeating the literal.
@@ -80,7 +141,7 @@ pub fn icon_button(ui: &mut Ui, icon: &str, color: Color32, tooltip: &str) -> Re
     // Force the arrow cursor: icon buttons never use the pointing-hand. This also
     // overrides any cursor an enclosing draggable container paints over itself
     // (e.g. the patch-editor module card's `Grab`), since the button draws after.
-    ui.add(
+    let response = ui.add(
         Button::new(
             RichText::new(icon)
                 .color(color)
@@ -88,9 +149,17 @@ pub fn icon_button(ui: &mut Ui, icon: &str, color: Color32, tooltip: &str) -> Re
         )
         .frame(false)
         .min_size(ICON_BUTTON_SIZE),
-    )
-    .on_hover_text(tooltip)
-    .on_hover_cursor(egui::CursorIcon::Default)
+    );
+    // The glyph is a raw Remix Icon codepoint (e.g. `\u{EE29}`), which egui would
+    // otherwise register as the AccessKit label — unmatchable by the MCP. Override
+    // it with the tooltip's first line (human-readable, state-aware for toggles:
+    // "Muted"/"Audible"), so every mute/solo/bypass/close/toolbar button is
+    // queryable and clickable by name.
+    let clean_label = tooltip.lines().next().unwrap_or(tooltip);
+    expose(&response, egui::WidgetType::Button, clean_label, None);
+    response
+        .on_hover_text(tooltip)
+        .on_hover_cursor(egui::CursorIcon::Default)
 }
 
 // --- Audible on/off toggles -------------------------------------------------

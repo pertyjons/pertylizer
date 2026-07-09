@@ -1,6 +1,6 @@
 //! Spectrum analyzer display widget.
 
-use eframe::egui::{Color32, Pos2, Sense, Shape, Stroke, Ui, Vec2};
+use eframe::egui::{Color32, Pos2, Sense, Shape, Stroke, Ui, Vec2, WidgetType};
 use eframe::epaint::PathShape;
 
 use crate::gui::theme::theme;
@@ -20,7 +20,9 @@ pub fn draw_spectrum_analyzer(
     color: Color32,
     sample_rate: f32,
 ) {
-    let (rect, _response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    // Read-only visualizer: expose so the egui-inspection MCP can locate it.
+    super::controls::expose(&response, WidgetType::Other, "spectrum analyzer", None);
     let t = theme();
     // Clip to the graph rect so stray/invalid points can never paint outside our
     // bounds. Expand by the border width so the StrokeKind::Outside border below

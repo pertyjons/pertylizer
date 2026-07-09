@@ -16,7 +16,9 @@ pub fn draw_adsr_curve(
     width: f32,
     height: f32,
 ) {
-    let (rect, _response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    // Read-only preview: expose so the egui-inspection MCP can locate it.
+    super::controls::expose(&response, egui::WidgetType::Other, "ADSR curve", None);
     let t = theme();
     let painter = ui.painter();
 
@@ -182,6 +184,11 @@ impl<'a> EnvelopeEditor<'a> {
 
         let (rect, response) =
             ui.allocate_exact_size(Vec2::new(self.width, self.height), Sense::click_and_drag());
+
+        // Expose the editor container to AccessKit / the egui-inspection MCP. Per-
+        // handle drivability (dragging an individual ADSR node) is out of scope
+        // for v1 — this makes the editor locatable in the tree.
+        super::controls::expose(&response, egui::WidgetType::Other, "ADSR editor", None);
 
         let painter = ui.painter();
         let t = theme();

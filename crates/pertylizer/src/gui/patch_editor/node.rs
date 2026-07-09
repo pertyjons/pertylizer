@@ -14,7 +14,7 @@ use synth_engine::{EngineHandle, ModuleId};
 use crate::audio::input::InputState;
 use crate::gui::module_panel::{ModulePanelState, PortPosition};
 use crate::gui::theme::theme;
-use crate::gui::widgets::{CaptionTone, ModMarkers, WidgetPortDirection, caption};
+use crate::gui::widgets::{CaptionTone, ModMarkers, WidgetPortDirection, caption, expose};
 
 use super::{
     AudioInputAction, AudioInputSnapshot, EFFECT_CHAIN_AMBER, ModAddrCatalog, ModuleBodyCtx,
@@ -472,7 +472,15 @@ pub(super) fn draw_module_panel_params(
         if is_monitoring {
             let peak = audio_input_snapshot.peak_level;
             let bar_width = ui.available_width().min(120.0);
-            let (rect, _) = ui.allocate_exact_size(Vec2::new(bar_width, 6.0), egui::Sense::hover());
+            let (rect, response) =
+                ui.allocate_exact_size(Vec2::new(bar_width, 6.0), egui::Sense::hover());
+            // Read-only peak meter: expose the live level so the MCP can read it.
+            expose(
+                &response,
+                egui::WidgetType::ProgressIndicator,
+                "input level",
+                Some(f64::from(peak)),
+            );
             let painter = ui.painter();
             painter.rect_filled(rect, 2.0, t.colors.bg_dark);
             let fill_w = rect.width() * peak.clamp(0.0, 1.0);

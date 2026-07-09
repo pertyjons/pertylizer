@@ -443,8 +443,15 @@ pub fn draw_sample_view(
             let peak = audio_input.peak_level();
             let meter_width = 80.0;
             let meter_height = 12.0;
-            let (meter_rect, _) =
+            let (meter_rect, response) =
                 ui.allocate_exact_size(egui::vec2(meter_width, meter_height), egui::Sense::hover());
+            // Read-only input meter: expose the live peak to the egui-inspection MCP.
+            crate::gui::widgets::expose(
+                &response,
+                egui::WidgetType::ProgressIndicator,
+                "input level",
+                Some(f64::from(peak)),
+            );
             let painter = ui.painter_at(meter_rect);
             painter.rect_filled(meter_rect, 2.0, t.colors.bg_panel);
             let fill_w = (peak.min(1.0) * meter_width).max(0.0);
@@ -695,6 +702,8 @@ fn draw_waveform(ui: &mut egui::Ui, state: &mut SampleViewState, sample: &synth_
 
     let (response, painter) =
         ui.allocate_painter(egui::vec2(width, height), egui::Sense::click_and_drag());
+    // Expose the waveform canvas container to AccessKit / the egui-inspection MCP.
+    crate::gui::widgets::expose(&response, egui::WidgetType::Other, "sample waveform", None);
     let rect = response.rect;
 
     // Background

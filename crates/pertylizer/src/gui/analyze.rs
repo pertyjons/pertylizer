@@ -1458,7 +1458,13 @@ impl PaneTheme {
 }
 
 fn allocate_pane_rect(ui: &mut egui::Ui, height: f32) -> (Rect, egui::Response) {
-    ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover())
+    let (rect, response) =
+        ui.allocate_exact_size(Vec2::new(ui.available_width(), height), Sense::hover());
+    // Read-only analysis pane: expose the container so it is present in the
+    // egui-inspection tree. Per-pane metric labels/values aren't available at this
+    // shared allocator, so the label is generic.
+    crate::gui::widgets::expose(&response, egui::WidgetType::Other, "analyze pane", None);
+    (rect, response)
 }
 
 /// Draw a vertical crosshair at the hover position, clipped to the pane.

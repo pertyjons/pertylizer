@@ -146,6 +146,10 @@ pub(crate) fn waveform_button(
     };
     draw_waveform_preview(ui.painter(), rect.shrink(4.0), waveform, line_color);
 
+    // Expose to AccessKit / the egui-inspection MCP so a driver can pick a
+    // waveform by name instead of by pixel.
+    super::controls::expose(&response, egui::WidgetType::Button, waveform.name(), None);
+
     response.on_hover_text(waveform.name())
 }
 

@@ -6,7 +6,7 @@
 //! (`snap_to_step`, `quantize_tick`) live in the parent module.
 
 use super::*;
-use crate::gui::widgets::{icon_button, solo_toggle};
+use crate::gui::widgets::{expose, icon_button, solo_toggle};
 
 /// Collect piano roll data from song (short read-lock, then release).
 pub(crate) fn collect_piano_roll_data(
@@ -1453,6 +1453,14 @@ fn draw_piano_roll_grid(
     // Use allocate_rect with click_and_drag sense for mouse interaction
     let alloc_rect = Rect::from_min_size(ui.cursor().min, total_size);
     let response = ui.allocate_rect(alloc_rect, Sense::click_and_drag());
+    // Expose the canvas container to AccessKit / the egui-inspection MCP. Per-note
+    // drivability is out of scope for v1 — this makes the canvas locatable.
+    expose(
+        &response,
+        egui::WidgetType::Other,
+        "piano roll canvas",
+        None,
+    );
     let rect = response.rect;
     let painter = ui.painter_at(rect);
 

@@ -26,11 +26,11 @@ pub use cable::{
 };
 pub use controls::{
     CaptionTone, DialogButton, ICON_BUTTON_SIZE, InlineEdit, bypass_toggle, caption,
-    clickable_label, danger_button, dialog_button_row, dim_label, empty_state, enum_combo,
-    icon_button, inline_editable_text, labeled_row, log_suffix_slider, modal_window, mute_toggle,
-    paint_marker_corners, right_aligned_row, section_header, solo_toggle, stepper, strong_label,
-    suffix_slider, time_drag_value, toggle_button, toggle_button_colored, tree_picker_button,
-    unit_drag_value,
+    clickable_label, danger_button, dialog_button_row, dim_label, empty_state, enum_combo, expose,
+    expose_selected, icon_button, inline_editable_text, labeled_row, log_suffix_slider,
+    modal_window, mute_toggle, paint_marker_corners, right_aligned_row, section_header,
+    solo_toggle, stepper, strong_label, suffix_slider, time_drag_value, toggle_button,
+    toggle_button_colored, tree_picker_button, unit_drag_value,
 };
 pub use envelope::{EnvelopeChanges, EnvelopeEditor, draw_adsr_curve};
 pub use frame::{ModuleFrame, blend_rgb, draw_module_footer, draw_module_header};

@@ -14,7 +14,9 @@ use synth_engine::ModuleId;
 
 use crate::gui::module_panel::PortPosition;
 use crate::gui::theme::theme;
-use crate::gui::widgets::{WidgetPortDirection, draw_module_header, icon_button, labeled_row};
+use crate::gui::widgets::{
+    WidgetPortDirection, draw_module_header, expose, icon_button, labeled_row,
+};
 use crate::patch::{GroupId, HexColor};
 
 use super::{
@@ -409,6 +411,14 @@ impl PatchEditor {
             // inside a Scene.
             let box_response =
                 ui.interact(world_rect, area_id.with("box"), Sense::click_and_drag());
+            // Expose the collapsed group box to AccessKit / the egui-inspection MCP
+            // so a driver can locate a group by name.
+            expose(
+                &box_response,
+                egui::WidgetType::Panel,
+                format!("group {}", group.name),
+                None,
+            );
             if box_response.dragged() {
                 let new_pos = group.position + box_response.drag_delta();
                 self.move_collapsed_group(group_id, new_pos);

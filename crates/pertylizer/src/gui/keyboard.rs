@@ -238,6 +238,9 @@ impl PianoKeyboard {
         let (highlight_start, highlight_end) = self.get_highlight_range();
 
         let inner_response = ui.allocate_rect(inner_rect, Sense::click_and_drag());
+        // Expose the keyboard container to AccessKit / the egui-inspection MCP.
+        // Per-key clicking is out of scope for v1 — this makes it locatable.
+        crate::gui::widgets::expose(&inner_response, egui::WidgetType::Other, "keyboard", None);
         let hover_pos = inner_response.hover_pos();
 
         let painter = ui.painter();

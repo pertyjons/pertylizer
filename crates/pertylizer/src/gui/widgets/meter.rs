@@ -65,6 +65,15 @@ impl Meter {
             Stroke::new(t.style.border_width_thick, t.colors.text_primary),
         );
 
+        // Read-only meter: expose the live peak so the egui-inspection MCP can
+        // read the level.
+        super::controls::expose(
+            &response,
+            egui::WidgetType::ProgressIndicator,
+            "level meter",
+            Some(f64::from(self.peak)),
+        );
+
         response
     }
 }
@@ -80,7 +89,14 @@ pub fn draw_level_meter(
     horizontal: bool,
 ) {
     let t = theme();
-    let (rect, _response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    // Read-only meter: expose the live peak level to the egui-inspection MCP.
+    super::controls::expose(
+        &response,
+        egui::WidgetType::ProgressIndicator,
+        "level meter",
+        Some(f64::from(peak)),
+    );
     let painter = ui.painter();
 
     // Background
@@ -173,7 +189,14 @@ pub fn draw_stereo_meter(
 ) {
     let t = theme();
     let height = size.y;
-    let (rect, _response) = ui.allocate_exact_size(size, Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(size, Sense::hover());
+    // Read-only stereo meter: expose the louder channel's peak to the MCP.
+    super::controls::expose(
+        &response,
+        egui::WidgetType::ProgressIndicator,
+        "stereo meter",
+        Some(f64::from(peak_l.max(peak_r))),
+    );
     let painter = ui.painter();
 
     // Background

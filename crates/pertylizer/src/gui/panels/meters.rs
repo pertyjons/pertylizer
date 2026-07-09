@@ -46,7 +46,14 @@ pub fn draw_meter(ui: &mut egui::Ui, peak: f32, rms: f32, width: f32, height: f3
 
 /// Draw a horizontal audio meter.
 pub fn draw_meter_horizontal(ui: &mut egui::Ui, peak: f32, rms: f32, width: f32, height: f32) {
-    let (rect, _response) = ui.allocate_exact_size(Vec2::new(width, height), egui::Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), egui::Sense::hover());
+    // Read-only meter: expose the live peak level to the egui-inspection MCP.
+    crate::gui::widgets::expose(
+        &response,
+        egui::WidgetType::ProgressIndicator,
+        "level meter",
+        Some(f64::from(peak)),
+    );
     let painter = ui.painter();
     let colors = &theme().colors;
 

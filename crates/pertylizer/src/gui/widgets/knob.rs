@@ -297,6 +297,20 @@ impl<'a> Knob<'a> {
             );
         }
 
+        // Expose to AccessKit / the egui-inspection MCP: a `Slider` carrying the
+        // param name and live value, so a driver can locate and read the knob.
+        let label = if self.label.is_empty() {
+            "knob"
+        } else {
+            self.label.as_str()
+        };
+        super::controls::expose(
+            &response,
+            egui::WidgetType::Slider,
+            label,
+            Some(f64::from(*self.value)),
+        );
+
         response
     }
 }

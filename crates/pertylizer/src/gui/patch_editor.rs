@@ -2224,8 +2224,16 @@ impl PatchEditor {
                 // the pointer and starve the Scene's own pan response. Rubber-band
                 // (left-drag) is instead read from the Scene's background response
                 // (`ui.response()`) in `handle_canvas_background_input`.
-                let canvas_response =
-                    Some(ui.interact(world_rect, ui.id().with("canvas_bg"), Sense::click()));
+                let canvas_bg = ui.interact(world_rect, ui.id().with("canvas_bg"), Sense::click());
+                // Expose the canvas background so the MCP can locate the patch
+                // editor surface (and target empty-canvas clicks) by name.
+                crate::gui::widgets::expose(
+                    &canvas_bg,
+                    egui::WidgetType::Panel,
+                    "patch canvas",
+                    None,
+                );
+                let canvas_response = Some(canvas_bg);
 
                 // Draw grid + tinted background zones.
                 self.draw_grid(ui, world_rect);
@@ -2376,8 +2384,10 @@ impl PatchEditor {
                     // Header shows the stable module id (e.g. "nse-1"); the
                     // human name + category live in the hover tooltip below.
                     let title = module_id.to_string();
+                    // Human name, reused by the tooltip and the AccessKit label.
+                    let display_name = analysis.display_name(module_id, &descriptor.name);
                     let tooltip = {
-                        let mut t = analysis.display_name(module_id, &descriptor.name);
+                        let mut t = display_name.clone();
                         t.push_str(&format!(
                             "\n{} · {}",
                             module_id,
@@ -2407,6 +2417,15 @@ impl PatchEditor {
                     // body widget.
                     let node_response =
                         ui.interact(node_rect, window_id.with("card"), Sense::click_and_drag());
+                    // Expose the node card to AccessKit / the egui-inspection MCP:
+                    // the stable id + human name, so a driver can locate a specific
+                    // module card by name. Reused by the Note Grid Scene canvas.
+                    crate::gui::widgets::expose(
+                        &node_response,
+                        egui::WidgetType::Button,
+                        format!("{module_id} {display_name}"),
+                        None,
+                    );
                     // Capture the drag set at drag-start: the whole selection if
                     // this card is part of it, otherwise just this card. Stored in
                     // the interaction FSM so a mid-drag selection change can't

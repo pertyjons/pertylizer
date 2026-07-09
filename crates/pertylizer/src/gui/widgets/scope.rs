@@ -1,6 +1,6 @@
 //! Oscilloscope display widget.
 
-use eframe::egui::{Color32, Pos2, Rect, Sense, Shape, Stroke, Ui, Vec2};
+use eframe::egui::{Color32, Pos2, Rect, Sense, Shape, Stroke, Ui, Vec2, WidgetType};
 
 use crate::gui::theme::theme;
 
@@ -14,7 +14,9 @@ pub fn draw_oscilloscope(
     gain: f32,
     color: Color32,
 ) {
-    let (rect, _response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    // Read-only visualizer: expose so the egui-inspection MCP can locate it.
+    super::controls::expose(&response, WidgetType::Other, "oscilloscope", None);
     let t = theme();
     let painter = ui.painter();
 
@@ -67,7 +69,9 @@ pub fn draw_oscilloscope_with_trigger(
     color: Color32,
     trigger_level: Option<f32>,
 ) {
-    let (rect, _response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::hover());
+    // Read-only visualizer: expose so the egui-inspection MCP can locate it.
+    super::controls::expose(&response, WidgetType::Other, "oscilloscope", None);
     let t = theme();
     let painter = ui.painter();
 

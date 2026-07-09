@@ -5,7 +5,7 @@
 //! both this view and `draw_sequencer_view` can read them.
 
 use super::*;
-use crate::gui::widgets::{mute_toggle, solo_toggle};
+use crate::gui::widgets::{expose, expose_selected, mute_toggle, solo_toggle};
 
 /// Collect arrangement data from song (short read-lock, then release).
 pub(super) fn collect_arrangement_data(song: &Arc<RwLock<Song>>) -> Option<ArrangementData> {
@@ -572,6 +572,14 @@ fn draw_arrangement_timeline(
         RULER_HEIGHT + TEMPO_LANE_HEIGHT + track_count as f32 * TRACK_ROW_HEIGHT,
     );
     let (response, painter) = ui.allocate_painter(total_size, Sense::click_and_drag());
+    // Expose the canvas container to AccessKit / the egui-inspection MCP. Per-clip
+    // drivability is out of scope for v1 — this makes the canvas locatable.
+    expose(
+        &response,
+        egui::WidgetType::Other,
+        "arrangement canvas",
+        None,
+    );
     let painter_rect = response.rect;
 
     let tl_x = painter_rect.min.x;
@@ -1281,6 +1289,9 @@ fn draw_arrangement_timeline(
         // clicked position. `lane_bg` sits above the canvas response, so it owns
         // both gestures here (the per-point handles, added later, sit above it).
         let lane_bg = ui.interact(lane_rect, ui.id().with("tempo_lane_bg"), Sense::click());
+        // Expose the tempo lane background so the MCP can locate it (and target
+        // add-point clicks) by name.
+        expose(&lane_bg, egui::WidgetType::Panel, "tempo lane", None);
         let add_point =
             |song: &Arc<RwLock<Song>>, undo_manager: &mut crate::undo::UndoManager, pos: Pos2| {
                 let tick = snap_tick(x_to_tick(pos.x));
@@ -1363,6 +1374,13 @@ fn draw_arrangement_timeline(
             let handle_rect = Rect::from_center_size(center, Vec2::splat(12.0));
             let id = ui.id().with(("tempo_handle", i));
             let resp = ui.interact(handle_rect, id, Sense::click_and_drag());
+            // Expose each tempo point with its live BPM so the MCP can read/target it.
+            expose(
+                &resp,
+                egui::WidgetType::Slider,
+                format!("tempo point {i}"),
+                Some(f64::from(bpm)),
+            );
 
             if resp.drag_started() {
                 ui.memory_mut(|m| m.data.insert_temp(id.with("old"), (tick, bpm, ramp)));
@@ -2284,6 +2302,18 @@ fn draw_arrangement_track_headers(
                                                         let (rect, resp) = ui.allocate_exact_size(
                                                             Vec2::new(18.0, 18.0),
                                                             Sense::click(),
+                                                        );
+                                                        // Expose each swatch so the MCP can recolor a
+                                                        // track by picking a color by name (hex) and
+                                                        // read which is currently selected.
+                                                        expose_selected(
+                                                            &resp,
+                                                            egui::WidgetType::ColorButton,
+                                                            format!(
+                                                                "track color #{:02X}{:02X}{:02X}",
+                                                                preset.r, preset.g, preset.b
+                                                            ),
+                                                            selected,
                                                         );
                                                         ui.painter().rect_filled(rect, 3.0, c);
                                                         ui.painter().rect_stroke(
