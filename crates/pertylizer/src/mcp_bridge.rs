@@ -4386,33 +4386,23 @@ impl SynthBridge for AppSynthBridge {
         params: &[BridgeParamSet],
     ) -> Result<BatchResult, McpBridgeError> {
         self.validate_instrument(instrument_id)?;
-        let inst_id = InstrumentId::new(instrument_id);
 
         let total = params.len();
         let mut succeeded = 0usize;
         let mut items = Vec::with_capacity(total);
 
         for (i, ps) in params.iter().enumerate() {
-            let mid: ModuleId = match ps.module_id.parse() {
-                Ok(id) => id,
-                Err(_) => {
-                    items.push(BatchItemResult {
-                        index: i,
-                        success: false,
-                        id: None,
-                        error: Some(format!("invalid module ID: {}", ps.module_id)),
-                    });
-                    continue;
-                }
-            };
-
-            match self.session.set_parameter(
-                inst_id,
-                mid,
+            // Delegate to the single-parameter path so each item goes through the
+            // same choice/address resolution and range validation — this is what
+            // lets a batch set an address-based value (e.g. a Mod Matrix
+            // `slot_N_dest` of `"spp-1.x"`), not just a scalar `f32`.
+            match self.set_parameter(
+                instrument_id,
+                &ps.module_id,
                 &ps.param_name,
-                &crate::patch::ParamValue::Float(ps.value),
+                ps.value.clone(),
             ) {
-                Ok(()) => {
+                Ok(_) => {
                     items.push(BatchItemResult {
                         index: i,
                         success: true,
@@ -4426,7 +4416,7 @@ impl SynthBridge for AppSynthBridge {
                         index: i,
                         success: false,
                         id: None,
-                        error: Some(format!("{}", e)),
+                        error: Some(format!("{e}")),
                     });
                 }
             }

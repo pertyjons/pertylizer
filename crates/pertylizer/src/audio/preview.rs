@@ -238,7 +238,13 @@ impl OfflineNoteSession {
                     .iter()
                     .find(|p| p.same_kind(&desc_param.id))
                 {
-                    let param = desc_param.id.with_f32(ep.as_f32());
+                    // Full typed param, not an f32 round-trip: `with_f32(as_f32())`
+                    // collapses the Mod Matrix's address-carrying `SlotSource` /
+                    // `SlotDestination` (a `SrcAddr` / `DestAddr`) to a legacy enum
+                    // index, dropping any address the legacy enum lacks (e.g.
+                    // `spp-1.x`) — the routing would apply to nothing in preview /
+                    // analyze. Matches the arrangement loader + the live load path.
+                    let param = *ep;
                     let sent = if is_effect {
                         handle.send_blocking(EngineCommand::SetEffectParameter {
                             instrument_id: Some(InstrumentId::FIRST),

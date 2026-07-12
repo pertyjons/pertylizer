@@ -102,7 +102,14 @@ impl Describable for ModMatrix {
                     format!("Slot {slot_num} Source"),
                     ModSource::to_choices(),
                 )
-                .description(format!("Modulation source for slot {slot_num}")),
+                .description(format!(
+                    "Modulation source for slot {slot_num}. Accepts a full address string — a \
+                     module output like \"lfo-1.out\"/\"env-2.out\", a macro id (velocity, \
+                     mod_wheel, …), a legacy id, or \"none\". The listed choices are only the \
+                     common legacy shortcuts, NOT the full set; set any address with \
+                     set_parameter (string value) and read the configured routing back with \
+                     get_mod_matrix_routings."
+                )),
             );
 
             desc = desc.parameter(
@@ -112,7 +119,14 @@ impl Describable for ModMatrix {
                     format!("Slot {slot_num} Dest"),
                     ModDestination::to_choices(),
                 )
-                .description(format!("Modulation destination for slot {slot_num}")),
+                .description(format!(
+                    "Modulation destination for slot {slot_num}. Accepts a full address string — \
+                     any modulatable param on any module, e.g. \"flt-1.cutoff\" or \"spp-1.x\", a \
+                     legacy id, or \"none\". The listed choices are only the common legacy \
+                     shortcuts, NOT the full set; discover targets with \
+                     get_instrument_automation_targets, set any address with set_parameter (string \
+                     value), and read the configured routing back with get_mod_matrix_routings."
+                )),
             );
 
             desc = desc.parameter(

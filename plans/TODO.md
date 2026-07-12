@@ -1,14 +1,17 @@
 # TODO - Pertylizer
 
-## ⭐ HIGHEST PRIORITY — SpatialPanner (`spp`): motion smoothness + modulation reach (found live 2026-07-12)
+## ~~⭐ HIGHEST PRIORITY~~ — DONE: SpatialPanner (`spp`) motion smoothness + modulation reach (found live 2026-07-12)
 
-The new `spp` (Spatial Panner) positions sound correctly — verified live on an
-`osc → amp → spp → out` instrument: `X = -0.95` → left RMS `0.137` / right `0.080`
-(≈ +4.6 dB left), `X = +0.95` mirrors it exactly. Its `X`/`Y`/`Z` are `modulatable` +
-`is_automatable`, and the **GUI Mod Matrix reaches them fine** (address-based: a slot →
-`spp-1.x` with a `sin(phasor())` YAMS expression orbits the source per voice — verified
-live). Two real gaps remain: the motion **steps** (early-reflection path), and the
-modulation reach is **awkward outside the GUI**. Ordered by sound-impact.
+**All 8 items shipped** (branch `feat/spp-cv-distance-mcp-gaps`, 2026-07-13). The new `spp`
+positioned sound correctly from the start (verified live: `X = -0.95` → left RMS `0.137` /
+right `0.080`, mirrored at `X = +0.95`); this batch closed the motion-smoothness and
+modulation-reach gaps. Shipped: (1) ER per-sample smoothing + two direct-path artifact fixes
+(head-shadow median discontinuity, ITD delay-seam click); (2) `x_cv`/`y_cv`/`z_cv` position CV
+inputs; (5) `distance` param + `distance_cv`; (8) seam-safe `read_interpolated_newest` primitive;
+(7) offline render preserves address-based mod-matrix routings (was rendering scripted spp motion
+as mono); (3) MCP batch `set_parameter` now accepts string/address values so `slot_N_dest` can be
+set to `spp-1.x` + description/discovery clarified. Design verdict (6) recorded below (keep ER
+unified); ergonomics note (4) still open. Details per item below.
 
 - [x] **1. Smooth the early-reflection path per sample (fixes the audible stepping).** When
   the source moves, the orbit sounds *stepped / grainy* — root cause found in
@@ -37,13 +40,14 @@ modulation reach is **awkward outside the GUI**. Ordered by sound-impact.
     `moving_source_gain_glides_not_steps`, `head_shadow_vanishes_on_the_median_plane`,
     `no_click_at_centre_crossing`.
 
-- [ ] **2. Add `x_cv`/`y_cv`/`z_cv` control-input ports to `spp`.** `spp` has a single input
-  port (`in`, audio) — no CV inputs — so an LFO / Script (`scr`) / AudioScript / Envelope
-  **cable** can't drive the position; today motion only comes via a Mod Matrix slot. Add
-  three `control` inputs summed onto `X`/`Y`/`Z` (and onto the existing `ParamModOffsets`)
-  and clamped to [-1, 1], per the idiom (`amp.cv`/`amp.pan_cv`, `flt.cutoff_cv`). This is
-  what lets a `scr` module drive position **directly** ("script draws the orbit, `spp`
-  renders it") and makes position cable-modulatable/automatable, not only mod-matrix-driven.
+- [x] **2. Add `x_cv`/`y_cv`/`z_cv` control-input ports to `spp`.** DONE. Three `control`
+  inputs, sampled once at block start (matching the control-rate geometry recompute — the
+  per-sample smoothers in both DSP halves glide between block updates so motion stays smooth),
+  summed onto the base + mod-matrix offset per axis and clamped to `[-1, 1]`. Now an LFO /
+  Script (`scr`) / AudioScript / Envelope **cable** can draw the trajectory directly ("script
+  draws the orbit, `spp` renders it"), not only a Mod Matrix slot. Added a compile-time
+  `PortName::Z_CV` constant (`x_cv`/`y_cv` already existed) — interning in `process()` takes a
+  write lock, forbidden on the audio thread. Test `x_cv_input_shifts_stereo_balance`.
   - *Optional secondary CV:* `direct_level_cv` / `er_level_cv` (duck/swell room vs direct
     with an envelope). Lower value — add only if wanted.
   - *Considered and rejected (don't re-litigate):* **stereo input** — mono-in is correct for
@@ -53,15 +57,30 @@ modulation reach is **awkward outside the GUI**. Ordered by sound-impact.
     absorption/diffusion/air** — room character rarely needs live modulation; the params
     suffice.
 
-- [ ] **3. MCP surface misrepresents the Mod Matrix (the GUI is fine).** `get_module_info`
-  reports `Slot N Dest` as a fixed 19-entry legacy enum (`Osc 1–3`, `Filter 1–2`, `Amp 1–2`,
-  `LFO 1–2`) with **no `spp`** — even though the GUI's address-based picker *does* reach
-  `spp` (an mmx slot → `spp-1.x` works). So the MCP view is stale/incomplete, **and** there
-  is no MCP **write** path for an address-based routing: `set_mod_matrix_script` installs the
-  slot expression, but source/destination can only be set via the positional enums (which
-  can't name `spp.x`). Add an address-based `set_mod_matrix_routing` (or source/dest address
-  fields on the script tool) and surface the real address-based dest/source options over MCP.
-  Generalizes beyond `spp`; fold in with §6.6.
+- [x] **3. MCP surface misrepresents the Mod Matrix (the GUI is fine).** DONE. Two real gaps
+  fixed; the readback was already present.
+  - **Write path (the real gap):** the batch `set_parameter` tool carried a plain `f32` value, so
+    a Mod Matrix `slot_N_dest`/`slot_N_source` could only be a legacy `ModDestination`/`ModSource`
+    enum **index** (no `spp`). Upgraded `ParamSetInput.value` (and `BridgeParamSet.value`) from
+    `f32` to `ParamValueInput`/`BridgeParamValue` (`Number|Bool|Choice`, `untagged` — numeric
+    calls stay byte-compatible), and routed the batch `set_parameters` through the **single**
+    `set_parameter` bridge method, which already parses a full `DestAddr`/`SrcAddr` from a string.
+    Now `set_parameter mmx-1 slot_1_dest "spp-1.x"` works — and, as a bonus, any choice param
+    (e.g. a waveform) is settable by name, not only by numeric index. Test
+    `set_parameters_sets_address_based_mod_matrix_destination` (E2E through the bridge; the
+    routing reads back as `spp-1.x`).
+  - **Discovery/misrepresentation:** `get_module_info`'s `slot_N_source`/`slot_N_dest`
+    descriptions now state they accept a **full address string** (`"spp-1.x"`, `"lfo-1.out"`, a
+    macro id, a legacy id, or `"none"`), that the listed choices are only the common legacy
+    shortcuts (not exhaustive), and point at `get_instrument_automation_targets` (targets) +
+    `get_mod_matrix_routings` (readback).
+  - **Readback already existed:** `get_mod_matrix_routings` returns the source/destination as
+    address strings (`to_address_string()`), and the address-string set path in the *single*
+    `set_parameter` bridge method was already there — only the *batch tool* couldn't reach it.
+  - *Remaining nicety (not built):* a dedicated tool that enumerates valid mod-matrix source/dest
+    addresses in `spp-1.x` form (dests are already discoverable via
+    `get_instrument_automation_targets`; sources follow the `<module>-<n>.<port>` / macro
+    convention). Low value — fold into §6.6 if a client needs it.
 
 - [ ] **4. (Minor, ergonomics) `note_on`/`note_off` can't target an instrument.** They route
   only by MIDI channel, and a freshly built instrument silently gets a *different* channel —
@@ -70,16 +89,16 @@ modulation reach is **awkward outside the GUI**. Ordered by sound-impact.
   `preview_note` already has), or return the assigned channel from
   `build_instrument`/`create_instrument`.
 
-- [ ] **5. Add a `distance` param + `distance_cv` input (radial fly-by control).** Today the
-  source's radial distance from the listener is implicit in the *magnitude* of the `x`/`y`/`z`
-  offset. Expose it as a first-class control: a `distance` param (+ a `distance_cv` control
-  input) that scales how far the source sits from the room centre, driving **Doppler** (via the
-  already-interpolated delay lines), **inverse-distance level**, and **air-absorption HF
-  rolloff** together — one musical "swoosh past, near vs. far" gesture. Design decision to make:
-  either keep `x`/`y`/`z` cartesian and let `distance` be an overall radial scale on the offset
-  vector, or reframe `x`/`y`/`z` as pure *direction* with `distance` the magnitude (spherical).
-  The spatializer + ISM geometry already work in meters, so the plumbing is a scale on the
-  computed source position — modest. Pairs naturally with the `x_cv`/`y_cv`/`z_cv` ports in #2.
+- [x] **5. Add a `distance` param + `distance_cv` input (radial fly-by control).** DONE.
+  **Decision: kept `x`/`y`/`z` cartesian; `distance` is a `[0, 1]` radial scale on the offset
+  vector** (default 1.0 = full offset = the previous behaviour, 0 = collapsed onto the listener)
+  — the simplest, non-breaking option. Because it just scales the computed source position, the
+  existing spatializer + ISM geometry deliver **Doppler** (interpolated delay lines),
+  **inverse-distance level** (ISM 1/d tap gains + ILD), and **air-absorption HF rolloff** for
+  free as the source moves. A `distance_cv` control input sums onto it (clamped `[0, 1]`), so an
+  LFO/Envelope swoops the source toward/away. `SpatialPannerParam::Distance(NormalizedValue)`;
+  `PortName::DISTANCE_CV` (id 50). Test `distance_scales_offset_toward_centre`. Pairs with the
+  `x_cv`/`y_cv`/`z_cv` ports from #2.
 
 - [ ] **6. Design question — split the early reflections into their own module?** ER is
   currently *embedded* in `spp` (two parallel DSP halves — `spatializer.rs` direct binaural +
@@ -94,26 +113,40 @@ modulation reach is **awkward outside the GUI**. Ordered by sound-impact.
   send would need to carry each voice's position, which the current bus model doesn't. Record
   the decision here before merge.
 
-- [ ] **7. `render_to_wav` renders scripted spatial modulation as MONO (offline ≠ live).**
-  A `render_to_wav` of an orbiting `spp` (position driven by a Mod Matrix YAMS script) comes
-  back **completely mono** — L≡R at every sample, cross-correlation ITD 0 throughout — i.e. the
-  offline render engine does **not** evaluate the mmx control-scripts, so `spp` stays centred.
-  Live playback applies the modulation (meters swing), so offline and live diverge. This blocks
-  offline analysis / fingerprinting of *any* scripted per-voice modulation (I had to fall back to
-  a deterministic Rust probe to debug the centre-crossing click). Fix: run per-voice control
-  scripts (mmx / `scr` / `asc`) in the offline render path. Same class as §6.6's offline-vs-live
-  gaps; fold in there.
+- [x] **7. `render_to_wav` renders scripted spatial modulation as MONO (offline ≠ live).** DONE.
+  Root cause was **not** that the offline engine skips control-scripts — `replay_module_scripts`
+  already installs mmx/`scr`/`asc` scripts offline. The offline loaders
+  (`arrangement_render::load_instrument_into_offline` and `preview::OfflineNoteSession`) replayed
+  each module parameter through a **lossy `desc_param.id.with_f32(ep.as_f32())` round-trip**. For
+  the Mod Matrix's address-carrying `SlotDestination(Option<DestAddr>)` / `SlotSource`, `as_f32()`
+  returns the **legacy `ModDestination` enum index** (0 for `spp`, which isn't in that enum) and
+  `with_f32()` rebuilds from it — so an address-based dest like `spp-1.x` was silently replaced by
+  a legacy slot. The script was installed but routed to nothing → `spp` stayed centred → mono. Fix:
+  send the snapshot's **full typed `Param`** (`*ep`) in both offline loaders, matching the live/GUI
+  load path (which already uses `ParamValue::to_param`, address-preserving). Regression test
+  `offline_render_preserves_address_based_mod_matrix_destination` (renders `osc → spp → out` with a
+  Mod Matrix slot → `spp-1.x`; without the fix L≡R exactly, with it the source pans right). This is
+  a **general** offline fix for *any* address-based mod-matrix routing (any 2nd filter, any module
+  the legacy enum lacks), not just `spp` — folds in the §6.6 offline-vs-live gap.
 
-- [ ] **8. Latent: `BufferIndex::read_interpolated` blends across the write seam for sub-sample
-  delays.** It reads `buffer[idx0]`/`buffer[idx0+1]` with `idx1` walking *toward* `write_pos`;
-  since `write()` advances **after** writing, a delay `d < 1` puts `idx1` on the wrap seam and
-  blends the newest sample with the **oldest** (a full buffer away → a different phase) → a
-  click. This was the audible `spp` centre-crossing boundary (ITD → 0 at the median plane).
-  **Fixed locally** in `spatializer.rs` via `ITD_READ_FLOOR = 1` (keeps ITD reads ≥ 1 sample,
-  interaural difference untouched). The shared primitive (`synth_core` `BufferIndex`, used by the
-  `synth_dsp` delay lines) is still off-by-one for `d < 1`; no other caller reads sub-sample
-  today, but the proper fix is `read_pos = write_pos − 1 − d` (so `d = 0` = newest and every
-  `d ≥ 0` stays off the seam) — do it as its own change guarded by the delay-line tests.
+- [x] **8. `BufferIndex::read_interpolated` blends across the write seam for sub-sample delays.**
+  It reads `buffer[idx0]`/`buffer[idx0+1]` with `idx1` walking *toward* `write_pos`; since
+  `write()` advances **after** writing, a delay `d < 1` puts `idx1` on the wrap seam and blends
+  the newest sample with the **oldest** (a full buffer away → a different phase) → a click. This
+  was the audible `spp` centre-crossing boundary (ITD → 0 at the median plane).
+  - **DONE — dedicated seam-safe method, not a global convention change.** The originally-noted
+    "proper fix" of `read_pos = write_pos − 1 − d` on the *existing* method would silently shift
+    **every** delay effect (chorus/flanger/FDN reverb/delay) by one sample — the cursor
+    convention (integer `d` = exactly `d` samples) is *correct* for the usual read-before-write
+    callers; only the write-**then**-read pattern (spatializer's sub-sample ITD) needs `d = 0` =
+    newest. So the fix adds a parallel `read_interpolated_newest(delay_from_newest)` on
+    `BufferIndex` + `InterpolatedDelayLine` (anchored at `write_pos − 1`, seam-safe for all
+    `d ≥ 0`) and switches `spatializer.rs` to it, dropping the `ITD_READ_FLOOR = 1` workaround.
+    The read position is bit-identical to the old `read_interpolated(itd + 1)`, so the direct
+    path's sound is unchanged. Early reflections were left on the cursor method: their taps are
+    always clamped `≥ 1` sample, so they never straddle the seam. Primitive test
+    `read_interpolated_newest_is_seam_safe`; the existing `no_click_at_centre_crossing` guards
+    the spatializer.
 
 > Related: §6.6 already tracks other Pertylizer MCP gaps; items 3–4 and 7 generalize beyond
 > `spp` and should fold in with that section once addressed.

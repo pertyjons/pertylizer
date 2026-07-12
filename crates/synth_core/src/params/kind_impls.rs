@@ -2049,7 +2049,8 @@ impl SpatialPannerParam {
             | Self::ErLevel(v)
             | Self::DirectLevel(v)
             | Self::Absorption(v)
-            | Self::AirAbsorption(v) => v.scalar_kind(),
+            | Self::AirAbsorption(v)
+            | Self::Distance(v) => v.scalar_kind(),
         }
     }
 
@@ -2062,7 +2063,8 @@ impl SpatialPannerParam {
             | Self::ErLevel(v)
             | Self::DirectLevel(v)
             | Self::Absorption(v)
-            | Self::AirAbsorption(v) => v.scalar_unit(),
+            | Self::AirAbsorption(v)
+            | Self::Distance(v) => v.scalar_unit(),
         }
     }
 
@@ -2075,7 +2077,8 @@ impl SpatialPannerParam {
             | Self::ErLevel(v)
             | Self::DirectLevel(v)
             | Self::Absorption(v)
-            | Self::AirAbsorption(v) => v.scalar_curve(),
+            | Self::AirAbsorption(v)
+            | Self::Distance(v) => v.scalar_curve(),
         }
     }
 }

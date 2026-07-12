@@ -74,6 +74,8 @@ const ID_PARAM_A: u32 = 45;
 const ID_PARAM_B: u32 = 46;
 const ID_PHASE: u32 = 47;
 const ID_LEVEL_CV: u32 = 48;
+const ID_Z_CV: u32 = 49;
+const ID_DISTANCE_CV: u32 = 50;
 
 /// Global intern pool for port names.
 static INTERN_POOL: LazyLock<RwLock<InternPool>> = LazyLock::new(|| RwLock::new(InternPool::new()));
@@ -144,6 +146,8 @@ impl InternPool {
         pool.intern("param_b"); // 46
         pool.intern("phase"); // 47
         pool.intern("level_cv"); // 48
+        pool.intern("z_cv"); // 49
+        pool.intern("distance_cv"); // 50
         pool
     }
 
@@ -272,6 +276,10 @@ impl PortName {
     pub const X_CV: Self = Self(ID_X_CV);
     /// Y CV port "y_cv".
     pub const Y_CV: Self = Self(ID_Y_CV);
+    /// Z CV port "z_cv".
+    pub const Z_CV: Self = Self(ID_Z_CV);
+    /// Distance CV port "distance_cv".
+    pub const DISTANCE_CV: Self = Self(ID_DISTANCE_CV);
     /// Position CV port "pos_cv".
     pub const POS_CV: Self = Self(ID_POS_CV);
     /// Parameter A modulation port "param_a".
@@ -426,6 +434,8 @@ mod tests {
         assert_eq!(PortName::IN_D.as_str(), "in_d");
         assert_eq!(PortName::X_CV.as_str(), "x_cv");
         assert_eq!(PortName::Y_CV.as_str(), "y_cv");
+        assert_eq!(PortName::Z_CV.as_str(), "z_cv");
+        assert_eq!(PortName::DISTANCE_CV.as_str(), "distance_cv");
         assert_eq!(PortName::POS_CV.as_str(), "pos_cv");
         assert_eq!(PortName::PARAM_A.as_str(), "param_a");
         assert_eq!(PortName::PARAM_B.as_str(), "param_b");

@@ -35,7 +35,7 @@ use pertylizer::patch::{ModuleBuilder, Patch};
 use pertylizer::session::SynthSession;
 
 use common::{
-    TEST_SR, build_arpeggio_song, build_single_pattern_song, left_rms, setup_with_patch,
+    TEST_SR, build_arpeggio_song, build_single_pattern_song, left_rms, right_rms, setup_with_patch,
     sustain_patch,
 };
 
@@ -110,6 +110,74 @@ fn offline_render_script_value_reaches_graph() {
     assert!(
         loud > quiet * 10.0,
         "the script value must drive the CV (loud {loud} vs quiet {quiet})"
+    );
+}
+
+/// `osc → spp → out`, with a Mod Matrix slot routing a constant script
+/// (`out = 0.9`) to the ADDRESS-based destination `spp-1.x`. `spp` is not in the
+/// legacy `ModDestination` enum, so the destination only survives the offline
+/// snapshot→reload if the loader preserves the full `DestAddr`. ER is off so the
+/// binaural direct path gives a clean L/R imbalance when `x` moves right.
+fn spp_address_routed_patch() -> Patch {
+    let mut patch = Patch::new("SppAddrRouted");
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Oscillator)
+            .waveform("sawtooth")
+            .param_f("level", 0.5)
+            .build(),
+    );
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::SpatialPanner)
+            .param_f("er_level", 0.0)
+            .param_f("direct_level", 1.0)
+            .build(),
+    );
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::StereoOutput)
+            .param_f("master", 1.0)
+            .build(),
+    );
+    let mut mmx = ModuleBuilder::new(1, ModuleType::ModMatrix)
+        .param_choice("slot_1_dest", "spp-1.x")
+        .param_b("slot_1_enabled", true)
+        .build();
+    // Slot 1's offset is the script output (constant 0.9) → spp.x hard right.
+    mmx.scripts.insert("1".to_string(), "out = 0.9".to_string());
+    patch.add_module(mmx);
+
+    patch.add_connection("osc-1", "out", "spp-1", "in");
+    patch.add_connection("spp-1", "out_l", "out-1", "in_l");
+    patch.add_connection("spp-1", "out_r", "out-1", "in_r");
+    patch
+}
+
+#[test]
+fn offline_render_preserves_address_based_mod_matrix_destination() {
+    // Regression (§7): the offline loader replayed each module param via an
+    // `f32` round-trip (`with_f32(as_f32())`), which collapses the Mod Matrix
+    // `SlotDestination(DestAddr)` down to a legacy enum index — dropping any
+    // address the legacy `ModDestination` lacks, such as `spp-1.x`. The script
+    // then routed to nothing and the spatial modulation rendered as mono. With
+    // the full param preserved, `spp.x = 0.9` pans the source hard right.
+    let rig = setup_with_patch(&spp_address_routed_patch());
+    let song = build_single_pattern_song("Orbit", &[(PatternTick(0), 60, SeqDuration(3840))]);
+    let shared = McpSharedState::with_song(song);
+    let rendered =
+        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
+            .expect("spp address-routed render should succeed");
+
+    let l = left_rms(&rendered.samples);
+    let r = right_rms(&rendered.samples);
+    assert!(
+        l > 1e-4 && r > 1e-4,
+        "render should be audible (l={l}, r={r})"
+    );
+    // Source hard right → the right channel is clearly louder. If the DestAddr
+    // were dropped, spp.x would stay 0 and the source would sit centred (l ≈ r).
+    assert!(
+        r > l * 1.3,
+        "address-based spp.x modulation should pan the source right (l={l}, r={r}); \
+         the offline loader likely dropped the DestAddr"
     );
 }
 

@@ -100,6 +100,10 @@ pub enum SpatialPannerParam {
     Absorption(NormalizedValue),
     /// Air absorption (high-frequency damping over distance) (0..1).
     AirAbsorption(NormalizedValue),
+    /// Radial distance scale on the `x`/`y`/`z` offset vector (0 = at the
+    /// listener, 1 = the full offset). Drives Doppler, inverse-distance level,
+    /// and air-absorption rolloff together (0..1).
+    Distance(NormalizedValue),
 }
 
 impl SpatialPannerParam {
@@ -117,6 +121,7 @@ impl SpatialPannerParam {
             Self::DirectLevel(_) => "Direct Level",
             Self::Absorption(_) => "Absorption",
             Self::AirAbsorption(_) => "Air Absorption",
+            Self::Distance(_) => "Distance",
         }
     }
 
@@ -127,7 +132,8 @@ impl SpatialPannerParam {
             | Self::ErLevel(v)
             | Self::DirectLevel(v)
             | Self::Absorption(v)
-            | Self::AirAbsorption(v) => v.as_f32(),
+            | Self::AirAbsorption(v)
+            | Self::Distance(v) => v.as_f32(),
         }
     }
 
@@ -141,6 +147,7 @@ impl SpatialPannerParam {
             Self::DirectLevel(_) => Self::DirectLevel(NormalizedValue::new(value)),
             Self::Absorption(_) => Self::Absorption(NormalizedValue::new(value)),
             Self::AirAbsorption(_) => Self::AirAbsorption(NormalizedValue::new(value)),
+            Self::Distance(_) => Self::Distance(NormalizedValue::new(value)),
         }
     }
 }

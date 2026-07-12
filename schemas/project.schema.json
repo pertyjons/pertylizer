@@ -3328,7 +3328,7 @@
                   "type": "number"
                 },
                 "slot_10_dest": {
-                  "description": "Modulation destination for slot 10",
+                  "description": "Modulation destination for slot 10. Accepts a full address string — any modulatable param on any module, e.g. \"flt-1.cutoff\" or \"spp-1.x\", a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; discover targets with get_instrument_automation_targets, set any address with set_parameter (string value), and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 10 Dest",
                   "type": "string"
                 },
@@ -3344,7 +3344,7 @@
                   ]
                 },
                 "slot_10_source": {
-                  "description": "Modulation source for slot 10",
+                  "description": "Modulation source for slot 10. Accepts a full address string — a module output like \"lfo-1.out\"/\"env-2.out\", a macro id (velocity, mod_wheel, …), a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; set any address with set_parameter (string value) and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 10 Source",
                   "type": "string"
                 },
@@ -3357,7 +3357,7 @@
                   "type": "number"
                 },
                 "slot_11_dest": {
-                  "description": "Modulation destination for slot 11",
+                  "description": "Modulation destination for slot 11. Accepts a full address string — any modulatable param on any module, e.g. \"flt-1.cutoff\" or \"spp-1.x\", a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; discover targets with get_instrument_automation_targets, set any address with set_parameter (string value), and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 11 Dest",
                   "type": "string"
                 },
@@ -3373,7 +3373,7 @@
                   ]
                 },
                 "slot_11_source": {
-                  "description": "Modulation source for slot 11",
+                  "description": "Modulation source for slot 11. Accepts a full address string — a module output like \"lfo-1.out\"/\"env-2.out\", a macro id (velocity, mod_wheel, …), a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; set any address with set_parameter (string value) and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 11 Source",
                   "type": "string"
                 },
@@ -3386,7 +3386,7 @@
                   "type": "number"
                 },
                 "slot_12_dest": {
-                  "description": "Modulation destination for slot 12",
+                  "description": "Modulation destination for slot 12. Accepts a full address string — any modulatable param on any module, e.g. \"flt-1.cutoff\" or \"spp-1.x\", a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; discover targets with get_instrument_automation_targets, set any address with set_parameter (string value), and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 12 Dest",
                   "type": "string"
                 },
@@ -3402,7 +3402,7 @@
                   ]
                 },
                 "slot_12_source": {
-                  "description": "Modulation source for slot 12",
+                  "description": "Modulation source for slot 12. Accepts a full address string — a module output like \"lfo-1.out\"/\"env-2.out\", a macro id (velocity, mod_wheel, …), a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; set any address with set_parameter (string value) and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 12 Source",
                   "type": "string"
                 },
@@ -3415,7 +3415,7 @@
                   "type": "number"
                 },
                 "slot_13_dest": {
-                  "description": "Modulation destination for slot 13",
+                  "description": "Modulation destination for slot 13. Accepts a full address string — any modulatable param on any module, e.g. \"flt-1.cutoff\" or \"spp-1.x\", a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; discover targets with get_instrument_automation_targets, set any address with set_parameter (string value), and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 13 Dest",
                   "type": "string"
                 },
@@ -3431,7 +3431,7 @@
                   ]
                 },
                 "slot_13_source": {
-                  "description": "Modulation source for slot 13",
+                  "description": "Modulation source for slot 13. Accepts a full address string — a module output like \"lfo-1.out\"/\"env-2.out\", a macro id (velocity, mod_wheel, …), a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; set any address with set_parameter (string value) and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 13 Source",
                   "type": "string"
                 },
@@ -3444,7 +3444,7 @@
                   "type": "number"
                 },
                 "slot_14_dest": {
-                  "description": "Modulation destination for slot 14",
+                  "description": "Modulation destination for slot 14. Accepts a full address string — any modulatable param on any module, e.g. \"flt-1.cutoff\" or \"spp-1.x\", a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; discover targets with get_instrument_automation_targets, set any address with set_parameter (string value), and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 14 Dest",
                   "type": "string"
                 },
@@ -3460,7 +3460,7 @@
                   ]
                 },
                 "slot_14_source": {
-                  "description": "Modulation source for slot 14",
+                  "description": "Modulation source for slot 14. Accepts a full address string — a module output like \"lfo-1.out\"/\"env-2.out\", a macro id (velocity, mod_wheel, …), a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; set any address with set_parameter (string value) and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 14 Source",
                   "type": "string"
                 },
@@ -3473,7 +3473,7 @@
                   "type": "number"
                 },
                 "slot_15_dest": {
-                  "description": "Modulation destination for slot 15",
+                  "description": "Modulation destination for slot 15. Accepts a full address string — any modulatable param on any module, e.g. \"flt-1.cutoff\" or \"spp-1.x\", a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; discover targets with get_instrument_automation_targets, set any address with set_parameter (string value), and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 15 Dest",
                   "type": "string"
                 },
@@ -3489,7 +3489,7 @@
                   ]
                 },
                 "slot_15_source": {
-                  "description": "Modulation source for slot 15",
+                  "description": "Modulation source for slot 15. Accepts a full address string — a module output like \"lfo-1.out\"/\"env-2.out\", a macro id (velocity, mod_wheel, …), a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; set any address with set_parameter (string value) and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 15 Source",
                   "type": "string"
                 },
@@ -3502,7 +3502,7 @@
                   "type": "number"
                 },
                 "slot_16_dest": {
-                  "description": "Modulation destination for slot 16",
+                  "description": "Modulation destination for slot 16. Accepts a full address string — any modulatable param on any module, e.g. \"flt-1.cutoff\" or \"spp-1.x\", a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; discover targets with get_instrument_automation_targets, set any address with set_parameter (string value), and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 16 Dest",
                   "type": "string"
                 },
@@ -3518,7 +3518,7 @@
                   ]
                 },
                 "slot_16_source": {
-                  "description": "Modulation source for slot 16",
+                  "description": "Modulation source for slot 16. Accepts a full address string — a module output like \"lfo-1.out\"/\"env-2.out\", a macro id (velocity, mod_wheel, …), a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; set any address with set_parameter (string value) and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 16 Source",
                   "type": "string"
                 },
@@ -3531,7 +3531,7 @@
                   "type": "number"
                 },
                 "slot_1_dest": {
-                  "description": "Modulation destination for slot 1",
+                  "description": "Modulation destination for slot 1. Accepts a full address string — any modulatable param on any module, e.g. \"flt-1.cutoff\" or \"spp-1.x\", a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; discover targets with get_instrument_automation_targets, set any address with set_parameter (string value), and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 1 Dest",
                   "type": "string"
                 },
@@ -3547,7 +3547,7 @@
                   ]
                 },
                 "slot_1_source": {
-                  "description": "Modulation source for slot 1",
+                  "description": "Modulation source for slot 1. Accepts a full address string — a module output like \"lfo-1.out\"/\"env-2.out\", a macro id (velocity, mod_wheel, …), a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; set any address with set_parameter (string value) and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 1 Source",
                   "type": "string"
                 },
@@ -3560,7 +3560,7 @@
                   "type": "number"
                 },
                 "slot_2_dest": {
-                  "description": "Modulation destination for slot 2",
+                  "description": "Modulation destination for slot 2. Accepts a full address string — any modulatable param on any module, e.g. \"flt-1.cutoff\" or \"spp-1.x\", a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; discover targets with get_instrument_automation_targets, set any address with set_parameter (string value), and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 2 Dest",
                   "type": "string"
                 },
@@ -3576,7 +3576,7 @@
                   ]
                 },
                 "slot_2_source": {
-                  "description": "Modulation source for slot 2",
+                  "description": "Modulation source for slot 2. Accepts a full address string — a module output like \"lfo-1.out\"/\"env-2.out\", a macro id (velocity, mod_wheel, …), a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; set any address with set_parameter (string value) and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 2 Source",
                   "type": "string"
                 },
@@ -3589,7 +3589,7 @@
                   "type": "number"
                 },
                 "slot_3_dest": {
-                  "description": "Modulation destination for slot 3",
+                  "description": "Modulation destination for slot 3. Accepts a full address string — any modulatable param on any module, e.g. \"flt-1.cutoff\" or \"spp-1.x\", a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; discover targets with get_instrument_automation_targets, set any address with set_parameter (string value), and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 3 Dest",
                   "type": "string"
                 },
@@ -3605,7 +3605,7 @@
                   ]
                 },
                 "slot_3_source": {
-                  "description": "Modulation source for slot 3",
+                  "description": "Modulation source for slot 3. Accepts a full address string — a module output like \"lfo-1.out\"/\"env-2.out\", a macro id (velocity, mod_wheel, …), a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; set any address with set_parameter (string value) and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 3 Source",
                   "type": "string"
                 },
@@ -3618,7 +3618,7 @@
                   "type": "number"
                 },
                 "slot_4_dest": {
-                  "description": "Modulation destination for slot 4",
+                  "description": "Modulation destination for slot 4. Accepts a full address string — any modulatable param on any module, e.g. \"flt-1.cutoff\" or \"spp-1.x\", a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; discover targets with get_instrument_automation_targets, set any address with set_parameter (string value), and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 4 Dest",
                   "type": "string"
                 },
@@ -3634,7 +3634,7 @@
                   ]
                 },
                 "slot_4_source": {
-                  "description": "Modulation source for slot 4",
+                  "description": "Modulation source for slot 4. Accepts a full address string — a module output like \"lfo-1.out\"/\"env-2.out\", a macro id (velocity, mod_wheel, …), a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; set any address with set_parameter (string value) and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 4 Source",
                   "type": "string"
                 },
@@ -3647,7 +3647,7 @@
                   "type": "number"
                 },
                 "slot_5_dest": {
-                  "description": "Modulation destination for slot 5",
+                  "description": "Modulation destination for slot 5. Accepts a full address string — any modulatable param on any module, e.g. \"flt-1.cutoff\" or \"spp-1.x\", a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; discover targets with get_instrument_automation_targets, set any address with set_parameter (string value), and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 5 Dest",
                   "type": "string"
                 },
@@ -3663,7 +3663,7 @@
                   ]
                 },
                 "slot_5_source": {
-                  "description": "Modulation source for slot 5",
+                  "description": "Modulation source for slot 5. Accepts a full address string — a module output like \"lfo-1.out\"/\"env-2.out\", a macro id (velocity, mod_wheel, …), a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; set any address with set_parameter (string value) and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 5 Source",
                   "type": "string"
                 },
@@ -3676,7 +3676,7 @@
                   "type": "number"
                 },
                 "slot_6_dest": {
-                  "description": "Modulation destination for slot 6",
+                  "description": "Modulation destination for slot 6. Accepts a full address string — any modulatable param on any module, e.g. \"flt-1.cutoff\" or \"spp-1.x\", a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; discover targets with get_instrument_automation_targets, set any address with set_parameter (string value), and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 6 Dest",
                   "type": "string"
                 },
@@ -3692,7 +3692,7 @@
                   ]
                 },
                 "slot_6_source": {
-                  "description": "Modulation source for slot 6",
+                  "description": "Modulation source for slot 6. Accepts a full address string — a module output like \"lfo-1.out\"/\"env-2.out\", a macro id (velocity, mod_wheel, …), a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; set any address with set_parameter (string value) and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 6 Source",
                   "type": "string"
                 },
@@ -3705,7 +3705,7 @@
                   "type": "number"
                 },
                 "slot_7_dest": {
-                  "description": "Modulation destination for slot 7",
+                  "description": "Modulation destination for slot 7. Accepts a full address string — any modulatable param on any module, e.g. \"flt-1.cutoff\" or \"spp-1.x\", a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; discover targets with get_instrument_automation_targets, set any address with set_parameter (string value), and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 7 Dest",
                   "type": "string"
                 },
@@ -3721,7 +3721,7 @@
                   ]
                 },
                 "slot_7_source": {
-                  "description": "Modulation source for slot 7",
+                  "description": "Modulation source for slot 7. Accepts a full address string — a module output like \"lfo-1.out\"/\"env-2.out\", a macro id (velocity, mod_wheel, …), a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; set any address with set_parameter (string value) and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 7 Source",
                   "type": "string"
                 },
@@ -3734,7 +3734,7 @@
                   "type": "number"
                 },
                 "slot_8_dest": {
-                  "description": "Modulation destination for slot 8",
+                  "description": "Modulation destination for slot 8. Accepts a full address string — any modulatable param on any module, e.g. \"flt-1.cutoff\" or \"spp-1.x\", a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; discover targets with get_instrument_automation_targets, set any address with set_parameter (string value), and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 8 Dest",
                   "type": "string"
                 },
@@ -3750,7 +3750,7 @@
                   ]
                 },
                 "slot_8_source": {
-                  "description": "Modulation source for slot 8",
+                  "description": "Modulation source for slot 8. Accepts a full address string — a module output like \"lfo-1.out\"/\"env-2.out\", a macro id (velocity, mod_wheel, …), a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; set any address with set_parameter (string value) and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 8 Source",
                   "type": "string"
                 },
@@ -3763,7 +3763,7 @@
                   "type": "number"
                 },
                 "slot_9_dest": {
-                  "description": "Modulation destination for slot 9",
+                  "description": "Modulation destination for slot 9. Accepts a full address string — any modulatable param on any module, e.g. \"flt-1.cutoff\" or \"spp-1.x\", a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; discover targets with get_instrument_automation_targets, set any address with set_parameter (string value), and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 9 Dest",
                   "type": "string"
                 },
@@ -3779,7 +3779,7 @@
                   ]
                 },
                 "slot_9_source": {
-                  "description": "Modulation source for slot 9",
+                  "description": "Modulation source for slot 9. Accepts a full address string — a module output like \"lfo-1.out\"/\"env-2.out\", a macro id (velocity, mod_wheel, …), a legacy id, or \"none\". The listed choices are only the common legacy shortcuts, NOT the full set; set any address with set_parameter (string value) and read the configured routing back with get_mod_matrix_routings.",
                   "title": "Slot 9 Source",
                   "type": "string"
                 }
@@ -8740,6 +8740,14 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Direct Level",
+                  "type": "number"
+                },
+                "distance": {
+                  "default": 1.0,
+                  "description": "Radial distance of the source (1 = full X/Y/Z offset, 0 = at the listener) — unit: %",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Distance",
                   "type": "number"
                 },
                 "er_level": {

@@ -160,6 +160,7 @@ pub struct BridgeModuleDef {
 }
 
 /// Parameter value for bridge-level batch operations.
+#[derive(Debug, Clone)]
 pub enum BridgeParamValue {
     /// Numeric value (f32).
     Number(f64),
@@ -2527,8 +2528,9 @@ pub struct BridgeParamSet {
     pub module_id: String,
     /// Parameter name.
     pub param_name: String,
-    /// New value.
-    pub value: f32,
+    /// New value — a number, a boolean, or a string choice/address (e.g. a Mod
+    /// Matrix `slot_N_dest` of `"spp-1.x"`).
+    pub value: BridgeParamValue,
 }
 
 /// Aggregate per-instrument diagnostics into a project-wide lint report: tally

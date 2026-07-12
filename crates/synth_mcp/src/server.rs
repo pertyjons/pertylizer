@@ -3376,9 +3376,9 @@ pub struct ParamSetInput {
     #[schemars(description = "Parameter name (e.g. 'frequency', 'level')")]
     pub param_name: String,
     #[schemars(
-        description = "New value in the parameter's native range (e.g. 440.0 for frequency in Hz). Use list_module_types for valid ranges."
+        description = "New value: a number in the parameter's native range (440.0), a boolean for on/off, or a string for a choice/enum or an address (e.g. a waveform 'sawtooth', or a Mod Matrix slot_N_dest / slot_N_source address like 'spp-1.x' / 'lfo-1.out'). Use get_module_info / get_instrument_automation_targets to discover names and targets."
     )]
-    pub value: f32,
+    pub value: ParamValueInput,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -7796,12 +7796,14 @@ impl SynthMcpServer {
     // === Batch parameter set ===
 
     #[tool(
-        description = "Set one or more module parameters in one call. Each entry is {module_id, param_name, value}; value is a number in the parameter's native range."
+        description = "Set one or more module parameters in one call. Each entry is {module_id, param_name, value}; value is a number in the parameter's native range, a boolean, or a string for a choice/enum or an address (e.g. a Mod Matrix slot_N_dest of 'spp-1.x')."
     )]
     async fn set_parameter(&self, params: Parameters<SetParametersParam>) -> String {
         let p = params.0;
         for ps in &p.params {
-            if ps.value.is_nan() {
+            if let ParamValueInput::Number(n) = &ps.value
+                && n.is_nan()
+            {
                 return format!(
                     "Error: NaN is not a valid value for parameter '{}' on module '{}'",
                     ps.param_name, ps.module_id
@@ -7814,7 +7816,11 @@ impl SynthMcpServer {
             .map(|ps| crate::bridge::BridgeParamSet {
                 module_id: ps.module_id,
                 param_name: ps.param_name,
-                value: ps.value,
+                value: match ps.value {
+                    ParamValueInput::Number(n) => crate::bridge::BridgeParamValue::Number(n),
+                    ParamValueInput::Bool(b) => crate::bridge::BridgeParamValue::Bool(b),
+                    ParamValueInput::Choice(s) => crate::bridge::BridgeParamValue::Choice(s),
+                },
             })
             .collect();
         match self.bridge.set_parameters(p.instrument_id, &param_sets) {

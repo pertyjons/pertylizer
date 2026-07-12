@@ -70,6 +70,34 @@ impl BufferIndex {
         let frac = read_pos - read_pos.floor();
         buffer[idx0] * (1.0 - frac) + buffer[idx1] * frac
     }
+
+    /// Read with linear interpolation for a **write-then-read** caller, where
+    /// `delay_from_newest` counts back from the most recently written sample
+    /// (`0.0` = newest, `1.0` = the sample before it, …).
+    ///
+    /// [`Self::read_interpolated`] measures the delay from the write *cursor*,
+    /// which sits one slot *past* the newest sample (`write()` advances after
+    /// writing). That convention is correct for the usual read-before-write
+    /// delay effects (integer delay `d` = exactly `d` samples), but a caller
+    /// that writes the current sample *then* reads it back — e.g. the binaural
+    /// spatializer's sub-sample ITD — needs the newest sample at delay `0`. With
+    /// the cursor convention a delay `< 1` straddles the circular-buffer write
+    /// seam and blends the newest sample with the **oldest** (a full buffer away
+    /// → a different phase), an audible click. Offsetting the read by one keeps
+    /// every `delay_from_newest >= 0` between two adjacent, in-order samples.
+    #[inline]
+    pub fn read_interpolated_newest(self, buffer: &[f32], delay_from_newest: f32) -> f32 {
+        if buffer.is_empty() {
+            return 0.0;
+        }
+        let len = buffer.len();
+        // The newest sample sits at `self - 1`; anchor the read there.
+        let read_pos = (self.0 as f32 - 1.0 - delay_from_newest).rem_euclid(len as f32);
+        let idx0 = (read_pos as usize) % len;
+        let idx1 = (idx0 + 1) % len;
+        let frac = read_pos - read_pos.floor();
+        buffer[idx0] * (1.0 - frac) + buffer[idx1] * frac
+    }
 }
 
 impl Add<usize> for BufferIndex {

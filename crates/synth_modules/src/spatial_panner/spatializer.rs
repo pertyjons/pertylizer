@@ -12,9 +12,11 @@
 //! envelope at note-on); applying the recomputed gains as block-constant values
 //! would produce audible zipper noise at block boundaries. The ITD is applied
 //! block-constant (its per-block change is sub-sample at any sane movement
-//! speed, and the interpolated delay carries a natural Doppler); the one caveat
-//! is that the read must stay off the delay buffer's write seam — see
-//! [`ITD_READ_FLOOR`].
+//! speed, and the interpolated delay carries a natural Doppler). The ITD reaches
+//! 0 at the median plane, so the read uses
+//! [`InterpolatedDelayLine::read_interpolated_newest`] (delay counted back from
+//! the newest sample) to stay off the delay buffer's write seam for sub-sample
+//! reads.
 
 use synth_core::{FilterState, OnePoleSmooth, SampleCount, SampleRate, Seconds};
 use synth_core::{MetersPerSecond, Position3, SampleOffset};
@@ -33,18 +35,6 @@ const SMOOTH_SECONDS: Seconds = Seconds::new(0.005);
 /// Maximum head-shadow low-pass coefficient, applied to the far ear at the
 /// sides; scaled by the lateral component so it vanishes straight ahead/behind.
 const MAX_SHADOW: f32 = 0.6;
-
-/// Constant delay (in samples) added to both ears' ITD reads.
-///
-/// `InterpolatedDelayLine::read_interpolated` blends `buffer[idx0]` with
-/// `buffer[idx0 + 1]`, and `write()` advances *after* writing — so a read of
-/// **less than one sample** straddles the circular-buffer write seam and mixes
-/// the newest sample with the oldest (a full buffer away → a different phase).
-/// The ITD reaches 0 at the median plane (source straight ahead/behind), so
-/// without this floor the direct path clicks every time the source crosses
-/// centre. Adding 1 sample to *both* ears keeps every read ≥ 1 (off the seam)
-/// while leaving the interaural *difference* — the actual ITD cue — untouched.
-const ITD_READ_FLOOR: f32 = 1.0;
 
 /// Build a gain smoother initialised at unity (centred, no attenuation).
 fn unity_gain_smoother() -> OnePoleSmooth {
@@ -173,14 +163,17 @@ impl Spatializer {
         let shadow_right = self.shadow_right_smooth.process(self.target_shadow_right);
 
         // Write mono input to both delay lines, read back with per-ear ITD.
+        // `read_interpolated_newest` counts the delay back from the just-written
+        // sample, so a sub-sample ITD (→ 0 at the median plane) stays off the
+        // circular-buffer write seam.
         self.delay_left.write(input);
         self.delay_right.write(input);
         let left_raw = self
             .delay_left
-            .read_interpolated(self.itd_left.as_f32() + ITD_READ_FLOOR);
+            .read_interpolated_newest(self.itd_left.as_f32());
         let right_raw = self
             .delay_right
-            .read_interpolated(self.itd_right.as_f32() + ITD_READ_FLOOR);
+            .read_interpolated_newest(self.itd_right.as_f32());
 
         // Head shadow (one-pole LP) per ear, then ILD gain.
         let left_filtered = self.shadow_state_left.one_pole(left_raw, shadow_left);

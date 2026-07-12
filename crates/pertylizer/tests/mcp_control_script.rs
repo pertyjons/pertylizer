@@ -212,6 +212,112 @@ fn script_module_readback_via_get_module_info() {
     );
 }
 
+#[test]
+fn set_parameters_sets_address_based_mod_matrix_destination() {
+    // §3: the batch set_parameter tool used to carry a plain `f32` value, so a Mod
+    // Matrix slot destination could only be a legacy `ModDestination` enum index
+    // (which has no `spp`). With a string value it now routes through the
+    // address-aware single-parameter path, so the routing reads back as the full
+    // address `spp-1.x` instead of collapsing to a legacy slot.
+    use pertylizer::mcp_bridge::AppSynthBridge;
+    use pertylizer::patch::{ModuleBuilder, Patch};
+    use synth_core::audio::SampleRate as HwSampleRate;
+    use synth_core::{AudioCallbackContext, AudioProcessor, ModuleType};
+    use synth_engine::instrument::InstrumentId;
+    use synth_mcp::SynthBridge;
+    use synth_mcp::bridge::{BridgeParamSet, BridgeParamValue};
+
+    let (mut engine, handle) = SynthEngine::new();
+    let song = Arc::new(PlRwLock::new(Song::new("AddrRoute")));
+    let _ = handle
+        .command_sender()
+        .send(synth_engine::EngineCommand::SetSong {
+            song: Arc::clone(&song),
+        });
+    let session = Arc::new(SynthSession::new(
+        handle.command_sender(),
+        Arc::clone(&handle.state),
+    ));
+    session
+        .add_instrument_with_id(InstrumentId::FIRST, "Test")
+        .expect("add instrument");
+
+    let stream_info = synth_core::StreamInfo {
+        sample_rate: HwSampleRate(44_100),
+        buffer_size: synth_core::BufferSize(256),
+        channels: synth_core::ChannelCount::Stereo,
+        output_latency: std::time::Duration::ZERO,
+        input_latency: None,
+    };
+    engine.on_stream_start(&stream_info);
+    let ctx = AudioCallbackContext {
+        sample_rate: HwSampleRate(44_100),
+        frames: 256,
+        channels: 2,
+        stream_time: 0.0,
+        sample_position: 0,
+        output_latency: synth_core::Seconds::ZERO,
+    };
+    let mut block = vec![0.0f32; 256 * 2];
+    let pump = |engine: &mut SynthEngine, block: &mut Vec<f32>| {
+        for _ in 0..16 {
+            block.fill(0.0);
+            engine.process(block, &ctx);
+        }
+    };
+    pump(&mut engine, &mut block);
+
+    // Instrument with a Mod Matrix + a Spatial Panner (the address target).
+    let mut patch = Patch::new("AddrRoute");
+    patch.add_module(ModuleBuilder::new(1, ModuleType::ModMatrix).build());
+    patch.add_module(ModuleBuilder::new(1, ModuleType::SpatialPanner).build());
+    let _ = session.apply_patch(InstrumentId::FIRST, &patch);
+    pump(&mut engine, &mut block);
+
+    let sample_library = Arc::new(std::sync::RwLock::new(
+        synth_sampler::SampleLibrary::default(),
+    ));
+    let shared = Arc::new(McpSharedState::with_song(Arc::clone(&song)));
+    let bridge = AppSynthBridge::new(Arc::clone(&session), shared, sample_library);
+
+    // Batch set: an address destination (string) + enable (bool) in one call.
+    let result = bridge
+        .set_parameters(
+            InstrumentId::FIRST.as_u64(),
+            &[
+                BridgeParamSet {
+                    module_id: "mmx-1".to_string(),
+                    param_name: "slot_1_dest".to_string(),
+                    value: BridgeParamValue::Choice("spp-1.x".to_string()),
+                },
+                BridgeParamSet {
+                    module_id: "mmx-1".to_string(),
+                    param_name: "slot_1_enabled".to_string(),
+                    value: BridgeParamValue::Bool(true),
+                },
+            ],
+        )
+        .expect("set_parameters");
+    assert_eq!(
+        result.succeeded, 2,
+        "both param sets should succeed: {result:?}"
+    );
+    pump(&mut engine, &mut block);
+
+    let routings = bridge
+        .get_mod_matrix_routings(InstrumentId::FIRST.as_u64())
+        .expect("get_mod_matrix_routings");
+    let slot1 = routings
+        .iter()
+        .find(|r| r.slot == 1)
+        .expect("slot 1 should be present after routing it");
+    assert_eq!(
+        slot1.destination, "spp-1.x",
+        "the address destination must round-trip, not collapse to a legacy slot"
+    );
+    assert!(slot1.enabled, "slot 1 should be enabled");
+}
+
 #[tokio::test]
 async fn get_yams_reference_returns_language_docs() {
     // §3.3: the YAMS language reference must be reachable over MCP, not just on

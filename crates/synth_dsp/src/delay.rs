@@ -151,6 +151,20 @@ impl InterpolatedDelayLine {
             .read_interpolated(&self.buffer, delay_clamped)
     }
 
+    /// Read with linear interpolation, counting the delay back from the most
+    /// recently written sample (`0.0` = newest). Use this from a
+    /// **write-then-read** caller (write the current sample, then tap it back)
+    /// so a sub-sample delay stays off the circular-buffer write seam. See
+    /// [`BufferIndex::read_interpolated_newest`].
+    #[inline]
+    #[must_use]
+    pub fn read_interpolated_newest(&self, delay_from_newest: f32) -> f32 {
+        let len = self.buffer.len();
+        let delay_clamped = delay_from_newest.clamp(0.0, (len - 1) as f32);
+        self.write_pos
+            .read_interpolated_newest(&self.buffer, delay_clamped)
+    }
+
     /// Read with cubic (Hermite) interpolation for higher quality.
     ///
     /// Provides smoother results than linear interpolation, especially
@@ -263,6 +277,32 @@ mod tests {
         // Interpolated value should be between the two integer delays
         assert!(val_at_1_5 > val_at_2.min(val_at_1));
         assert!(val_at_1_5 < val_at_1.max(val_at_2));
+    }
+
+    #[test]
+    fn read_interpolated_newest_is_seam_safe() {
+        // Fill an 8-slot line exactly once so the write cursor wraps to 0 and
+        // sits on the seam next to the oldest sample.
+        let mut delay = InterpolatedDelayLine::new(8);
+        for i in 1..=8 {
+            delay.write(i as f32);
+        }
+        // delay-from-newest 0 = the last sample written, 1 = the one before it.
+        assert!((delay.read_interpolated_newest(0.0) - 8.0).abs() < 1e-4);
+        assert!((delay.read_interpolated_newest(1.0) - 7.0).abs() < 1e-4);
+        // A sub-sample read must interpolate the two NEWEST samples (7↔8 → 7.5),
+        // never blend the newest with the oldest across the write seam. The
+        // cursor-based `read_interpolated(0.5)` does exactly that (→ 4.5), which
+        // is the click this method exists to avoid.
+        let half = delay.read_interpolated_newest(0.5);
+        assert!(
+            (half - 7.5).abs() < 1e-4,
+            "sub-sample read must stay in-order (7↔8), got {half}"
+        );
+        assert!(
+            delay.read_interpolated(0.5) < 6.0,
+            "cursor read straddles the seam"
+        );
     }
 
     #[test]

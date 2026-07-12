@@ -694,7 +694,15 @@ fn load_instrument_into_offline(
                 .iter()
                 .find(|p| p.same_kind(&desc_param.id))
             {
-                let param = desc_param.id.with_f32(ep.as_f32());
+                // Send the snapshot's full typed param, NOT an f32 round-trip.
+                // `with_f32(as_f32())` collapses address-carrying params — the
+                // Mod Matrix `SlotSource`/`SlotDestination` hold a `SrcAddr` /
+                // `DestAddr` — down to a legacy enum index, silently dropping
+                // any address the legacy `ModSource`/`ModDestination` enum lacks
+                // (e.g. `spp-1.x`). The modulation would then route nowhere in
+                // the offline render (scripted spp motion rendered as mono). The
+                // live/GUI load path already sends the full param.
+                let param = *ep;
                 let sent = if is_effect {
                     handle.send_blocking(EngineCommand::SetEffectParameter {
                         instrument_id: Some(instrument_id),

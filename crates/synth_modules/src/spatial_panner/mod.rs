@@ -13,7 +13,12 @@
 //! position (`x`/`y`/`z`) is Mod-Matrix / YAMS modulatable per voice.
 //!
 //! The room dimensions are fixed; `x`/`y`/`z` are bipolar offsets of the source
-//! from the room centre (the listener position).
+//! from the room centre (the listener position). The `x_cv`/`y_cv`/`z_cv`
+//! control inputs sum onto those offsets (block-rate), so an LFO, Script, or
+//! Envelope **cable** can draw the trajectory directly — not only a Mod Matrix
+//! slot. `distance` (with its own `distance_cv`) scales the whole offset vector
+//! radially, so modulating it swoops the source toward and away from the
+//! listener — Doppler, inverse-distance level, and air rolloff move together.
 
 mod early_reflections;
 mod spatializer;
@@ -70,6 +75,9 @@ pub struct SpatialPanner {
     direct_level: NormalizedValue,
     absorption: NormalizedValue,
     air_absorption: NormalizedValue,
+    /// Radial scale on the `x`/`y`/`z` offset vector (1 = full offset, 0 = at
+    /// the listener). See [`SpatialPannerParam::Distance`].
+    distance: NormalizedValue,
 
     // DSP (kept as two independent halves per the AWE-decomposition design).
     early: EarlyReflections,
@@ -106,6 +114,7 @@ impl SpatialPanner {
             direct_level: direct_default,
             absorption: NormalizedValue::new(0.4),
             air_absorption: NormalizedValue::new(0.1),
+            distance: NormalizedValue::new(1.0),
 
             early: EarlyReflections::with_max_delay(PER_VOICE_MAX_DELAY),
             spatializer: Spatializer::new(),
@@ -122,10 +131,22 @@ impl SpatialPanner {
 
     /// Recompute the source position and update both DSP halves from the
     /// (possibly modulated) parameters. Runs once per block (control rate).
-    fn update_geometry(&mut self) {
-        let ex = self.mod_offsets.effective("x", self.x.as_f32());
-        let ey = self.mod_offsets.effective("y", self.y.as_f32());
-        let ez = self.mod_offsets.effective("z", self.z.as_f32());
+    ///
+    /// `x_cv`/`y_cv`/`z_cv`/`distance_cv` are the block-start values of the CV
+    /// inputs (0.0 when unconnected); the position CVs sum onto the base +
+    /// mod-matrix offset (clamped to the documented `[-1, 1]` per axis) and
+    /// `distance` (`[0, 1]`) scales the whole offset vector radially — 1 = the
+    /// full offset, 0 = collapsed onto the listener.
+    fn update_geometry(&mut self, x_cv: f32, y_cv: f32, z_cv: f32, distance_cv: f32) {
+        let ex = (self.mod_offsets.effective("x", self.x.as_f32()) + x_cv).clamp(-1.0, 1.0);
+        let ey = (self.mod_offsets.effective("y", self.y.as_f32()) + y_cv).clamp(-1.0, 1.0);
+        let ez = (self.mod_offsets.effective("z", self.z.as_f32()) + z_cv).clamp(-1.0, 1.0);
+        let distance = (self
+            .mod_offsets
+            .effective("distance", self.distance.as_f32())
+            + distance_cv)
+            .clamp(0.0, 1.0);
+        let (ex, ey, ez) = (ex * distance, ey * distance, ez * distance);
         let diffusion = self
             .mod_offsets
             .effective("diffusion", self.diffusion.as_f32());
@@ -277,7 +298,39 @@ impl Describable for SpatialPanner {
                 .unit(ParameterUnit::Percent)
                 .widget(WidgetHint::Knob),
             )
+            .parameter(
+                ParameterDescriptor::float(
+                    "distance",
+                    Param::SpatialPanner(SpatialPannerParam::Distance(NormalizedValue::new(1.0))),
+                    "Distance",
+                )
+                .description(
+                    "Radial distance of the source (1 = full X/Y/Z offset, 0 = at the listener)",
+                )
+                .range(0.0, 1.0)
+                .default(1.0)
+                .unit(ParameterUnit::Percent)
+                .widget(WidgetHint::Knob),
+            )
             .port(PortDescriptor::audio_input("in", "In").description("Mono input"))
+            .port(
+                PortDescriptor::control_input("x_cv", "X CV").description(
+                    "Left/right position modulation, summed onto X (-1..+1). Connect: LFO, Script, Envelope",
+                ),
+            )
+            .port(
+                PortDescriptor::control_input("y_cv", "Y CV")
+                    .description("Front/back position modulation, summed onto Y (-1..+1)"),
+            )
+            .port(
+                PortDescriptor::control_input("z_cv", "Z CV")
+                    .description("Down/up position modulation, summed onto Z (-1..+1)"),
+            )
+            .port(
+                PortDescriptor::control_input("distance_cv", "Distance CV").description(
+                    "Radial distance modulation, summed onto Distance (fly-by). Connect: LFO, Envelope",
+                ),
+            )
             .port(PortDescriptor::audio_output("out_l", "Out L").description("Left output"))
             .port(PortDescriptor::audio_output("out_r", "Out R").description("Right output"))
     }
@@ -299,8 +352,22 @@ impl PolyModule for SpatialPanner {
         self.output_left.resize(frames);
         self.output_right.resize(frames);
 
+        // Position CV inputs are sampled once at block start (block-rate, matching
+        // the control-rate geometry recompute); the per-sample smoothers in both
+        // DSP halves glide between block updates so motion stays continuous.
+        let (x_cv, y_cv, z_cv, distance_cv) = if frames > 0 {
+            (
+                inputs.reader(PortName::X_CV, 0.0).get(0),
+                inputs.reader(PortName::Y_CV, 0.0).get(0),
+                inputs.reader(PortName::Z_CV, 0.0).get(0),
+                inputs.reader(PortName::DISTANCE_CV, 0.0).get(0),
+            )
+        } else {
+            (0.0, 0.0, 0.0, 0.0)
+        };
+
         // Control-rate: recompute source geometry and per-ear targets once.
-        self.update_geometry();
+        self.update_geometry(x_cv, y_cv, z_cv, distance_cv);
         let target_er = self
             .mod_offsets
             .effective("er_level", self.er_level.as_f32());
@@ -344,6 +411,7 @@ impl PolyModule for SpatialPanner {
                 SpatialPannerParam::DirectLevel(v) => self.direct_level = v,
                 SpatialPannerParam::Absorption(v) => self.absorption = v,
                 SpatialPannerParam::AirAbsorption(v) => self.air_absorption = v,
+                SpatialPannerParam::Distance(v) => self.distance = v,
             }
         }
     }
@@ -359,6 +427,7 @@ impl PolyModule for SpatialPanner {
                 SpatialPannerParam::DirectLevel(_) => self.direct_level.as_f32(),
                 SpatialPannerParam::Absorption(_) => self.absorption.as_f32(),
                 SpatialPannerParam::AirAbsorption(_) => self.air_absorption.as_f32(),
+                SpatialPannerParam::Distance(_) => self.distance.as_f32(),
             })
         } else {
             None
@@ -375,6 +444,7 @@ impl PolyModule for SpatialPanner {
             Param::SpatialPanner(SpatialPannerParam::DirectLevel(self.direct_level)),
             Param::SpatialPanner(SpatialPannerParam::Absorption(self.absorption)),
             Param::SpatialPanner(SpatialPannerParam::AirAbsorption(self.air_absorption)),
+            Param::SpatialPanner(SpatialPannerParam::Distance(self.distance)),
         ]
     }
 
@@ -478,6 +548,91 @@ mod tests {
         let (right_l, right_r) = energy(1.0);
         assert!(left_l > left_r, "x=-1 should favor the left channel");
         assert!(right_r > right_l, "x=+1 should favor the right channel");
+    }
+
+    #[test]
+    fn x_cv_input_shifts_stereo_balance() {
+        // Same balance shift as `x_modulation_shifts_stereo_balance`, but driven
+        // by the `x_cv` cable (summed onto the X base of 0.0) instead of a param.
+        let energy = |x_cv: f32| -> (f32, f32) {
+            let mut sp = SpatialPanner::new();
+            let desc = sp.descriptor();
+            sp.mod_offsets_mut().expect("offsets").populate(&desc);
+            // Direct path only, so the balance reflects the binaural cue.
+            sp.set_param(Param::SpatialPanner(SpatialPannerParam::ErLevel(
+                NormalizedValue::MIN,
+            )));
+
+            let frames = 4096;
+            let mut in_buf = AudioBuffer::new(frames);
+            let mut cv_buf = AudioBuffer::new(frames);
+            for i in 0..frames {
+                in_buf[i] = if i % 2 == 0 { 0.5 } else { -0.5 };
+                cv_buf[i] = x_cv;
+            }
+            let in_ports = [(PortName::IN, &in_buf), (PortName::X_CV, &cv_buf)];
+            let inputs = InputPorts::new(&in_ports);
+            let mut outputs: HashMap<PortName, AudioBuffer> = HashMap::new();
+            outputs.insert(PortName::OUT_L, AudioBuffer::new(frames));
+            outputs.insert(PortName::OUT_R, AudioBuffer::new(frames));
+            let context = ProcessContext {
+                sample_rate: SampleRate::DVD_QUALITY,
+                samples: SampleCount::new(frames),
+                ..ProcessContext::default()
+            };
+            sp.process(inputs, &mut outputs, &context);
+            let l = &outputs[&PortName::OUT_L];
+            let r = &outputs[&PortName::OUT_R];
+            let el: f32 = (0..l.len()).map(|i| l[i] * l[i]).sum();
+            let er: f32 = (0..r.len()).map(|i| r[i] * r[i]).sum();
+            (el, er)
+        };
+
+        let (left_l, left_r) = energy(-1.0);
+        let (right_l, right_r) = energy(1.0);
+        assert!(left_l > left_r, "x_cv=-1 should favor the left channel");
+        assert!(right_r > right_l, "x_cv=+1 should favor the right channel");
+    }
+
+    #[test]
+    fn distance_scales_offset_toward_centre() {
+        // A hard-right source (direct path only). At distance = 1 it keeps its
+        // full offset (strong L/R imbalance); at distance = 0 the offset vector
+        // collapses onto the listener, so the channels balance.
+        let imbalance = |distance: f32| -> f32 {
+            let mut sp = SpatialPanner::new();
+            let desc = sp.descriptor();
+            sp.mod_offsets_mut().expect("offsets").populate(&desc);
+            sp.set_param(Param::SpatialPanner(SpatialPannerParam::X(
+                BipolarValue::new(1.0),
+            )));
+            sp.set_param(Param::SpatialPanner(SpatialPannerParam::ErLevel(
+                NormalizedValue::MIN,
+            )));
+            sp.set_param(Param::SpatialPanner(SpatialPannerParam::Distance(
+                NormalizedValue::new(distance),
+            )));
+
+            let mut input = vec![0.0_f32; 4096];
+            for (i, s) in input.iter_mut().enumerate() {
+                *s = if i % 2 == 0 { 0.5 } else { -0.5 };
+            }
+            let (l, r) = ctx_and_run(&mut sp, &input);
+            let el: f32 = (0..l.len()).map(|i| l[i] * l[i]).sum();
+            let er: f32 = (0..r.len()).map(|i| r[i] * r[i]).sum();
+            (er - el).abs() / (er + el + 1e-9)
+        };
+
+        let full = imbalance(1.0);
+        let none = imbalance(0.0);
+        assert!(
+            full > none,
+            "distance=1 keeps the source off-centre ({full}) vs distance=0 ({none})"
+        );
+        assert!(
+            none < 0.05,
+            "distance=0 should nearly centre the source, got imbalance {none}"
+        );
     }
 
     #[test]
