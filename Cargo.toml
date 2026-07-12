@@ -28,7 +28,7 @@ egui-remixicon = { path = "third_party/egui-remixicon" }
 
 [workspace.package]
 edition = "2024"
-rust-version = "1.96"
+rust-version = "1.97"
 authors = ["Per Jonsson"]
 license = "MIT"
 repository = "https://github.com/pertyjons/pertylizer"

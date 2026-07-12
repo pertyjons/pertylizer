@@ -210,7 +210,9 @@ Non-realtime composition.
 **Per-note expression (`add_note`).** Each note in `add_note` accepts two
 optional fields beyond pitch/start/duration/velocity:
 
-- `legato` (bool) — tie into the next note without retriggering the envelope.
+- `legato` (bool) — mark this note as a continuation of the *previous* note: it
+  glides onto the still-active voice without retriggering the envelope (the flag
+  sits on the later note of the tie).
 - `glide` — portamento/glissando *into* the note:
   - `from_semitones` (f32) — source as a semitone offset relative to the note
     (negative = below), **or** `from_pitch` (0–127) for an absolute source

@@ -604,14 +604,17 @@ enough to be driven by an actual observed symptom. Ordered by likely impact.
   real-time telemetry-driven flow particles (CV speed/direction, audio RMS density,
   gate burst). Touches `theme.rs`, `cable.rs`, `wiring.rs` + an `AtomicF32`
   port-level feed from the audio thread.
-- [ ] **SID seq per-step frequency + `Note.legato` doc fix.**
-  `plans/sid-seq-legato-and-step-freq.md` (revised draft). (a) **Doc fix:** reword
-  `Note.legato` (`synth_sequencer/src/note.rs:274`) to *continuation-of-predecessor*
-  semantics — the engine ties on the successor (shipped + tested); the doc is the
-  odd one out and a client mis-exported by following it. (b) **Feature:** per-step
-  frequency for the SID waveform sequence (16 `seq_step_freq_i` params + a
-  `seq_freq_mask` enable bitmask, all-0 = track pitch) so far-from-pitch noise/drum
-  steps (Hubbard) render correctly.
+- [ ] **SID seq per-step frequency.** (Design was in
+  `plans/sid-seq-legato-and-step-freq.md`, now deleted — full text in git history
+  via `git log --follow`.) **Feature:** per-step frequency for the SID waveform
+  sequence (16 `seq_step_freq_i` params + a `seq_freq_mask` enable bitmask, all-0
+  = track pitch) so far-from-pitch noise/drum steps (Hubbard) render correctly.
+  - [x] **`Note.legato` doc fix — DONE.** Reworded to *continuation-of-predecessor*
+    (successor-flag) semantics everywhere: `note.rs` + regenerated
+    `project.schema.json` (`44bddcd7`), and the client-facing MCP surfaces — the
+    `add_note` `legato` arg (`server.rs`), `BridgeNoteData` (`bridge.rs`), and
+    `docs/README_MCP.md` — which had kept the old, misleading "connect to the *next*
+    note" wording that made a client mis-export.
 
 ### 6.2 Note Grid — deferred earned-escalation
 *(from `plans/note-grid.md`; Note Grid shipped + squash-merged to main 2026-07-13 @`65f12900`. Full plan in git history.)*

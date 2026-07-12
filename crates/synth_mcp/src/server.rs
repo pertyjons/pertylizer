@@ -2507,7 +2507,9 @@ pub struct NoteInput {
     )]
     pub velocity: Option<u8>,
     #[schemars(
-        description = "Tie/legato: connect to the next note without retriggering. Default false."
+        description = "Tie/legato: mark THIS note as a continuation of its predecessor — it \
+                       glides onto the still-active voice without retriggering (the flag sits on \
+                       the later note of the tie). Default false."
     )]
     pub legato: Option<bool>,
     #[schemars(description = "Optional per-note glide (portamento/glissando) into this note.")]

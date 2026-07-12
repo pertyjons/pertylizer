@@ -1,2 +1,4 @@
 [build]
-rustflags = ["-D", "warnings"]
+# Deny warnings in local workspace crates (dedicated Cargo mechanism, stabilized
+# in Rust 1.97 — replaces the blanket `rustflags = ["-D", "warnings"]`).
+warnings = "deny"

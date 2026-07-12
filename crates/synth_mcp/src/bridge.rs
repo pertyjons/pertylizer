@@ -86,7 +86,8 @@ pub struct BridgeNoteData {
     pub duration_beats: f32,
     /// Velocity (0-127).
     pub velocity: u8,
-    /// Per-note tie/legato (no retrigger onto the successor).
+    /// Per-note tie/legato: this note continues from its predecessor without
+    /// retriggering (the flag sits on the successor, the later note of the tie).
     pub legato: bool,
     /// Optional per-note glide.
     pub glide: Option<BridgeGlide>,

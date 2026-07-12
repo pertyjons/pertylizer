@@ -36,35 +36,34 @@ impl DenormalGuard {
     /// Create a new denormal guard, setting flush-to-zero flags.
     #[inline]
     pub fn new() -> Self {
-        #[cfg(target_arch = "x86_64")]
-        {
-            let mut previous: u32 = 0;
-            // Safety: reading/writing MXCSR is safe on x86_64 — thread-local,
-            // no side effects beyond FP behavior. RAII guarantees restore.
-            unsafe { core::arch::asm!("stmxcsr [{}]", in(reg) &mut previous, options(nostack)) };
-            let new_val = previous | (1 << 15) | (1 << 6); // FTZ + DAZ
-            unsafe {
-                core::arch::asm!("ldmxcsr [{}]", in(reg) &new_val, options(nostack, readonly))
-            };
-            Self {
-                previous_mxcsr: previous,
+        core::cfg_select! {
+            target_arch = "x86_64" => {
+                let mut previous: u32 = 0;
+                // Safety: reading/writing MXCSR is safe on x86_64 — thread-local,
+                // no side effects beyond FP behavior. RAII guarantees restore.
+                unsafe { core::arch::asm!("stmxcsr [{}]", in(reg) &mut previous, options(nostack)) };
+                let new_val = previous | (1 << 15) | (1 << 6); // FTZ + DAZ
+                unsafe {
+                    core::arch::asm!("ldmxcsr [{}]", in(reg) &new_val, options(nostack, readonly))
+                };
+                Self {
+                    previous_mxcsr: previous,
+                }
             }
-        }
-        #[cfg(target_arch = "aarch64")]
-        {
-            let previous: u64;
-            // Safety: reading/writing FPCR is safe on aarch64 — thread-local,
-            // no side effects beyond FP behavior. RAII guarantees restore.
-            unsafe { core::arch::asm!("mrs {}, fpcr", out(reg) previous) };
-            // FZ = bit 24
-            unsafe { core::arch::asm!("msr fpcr, {}", in(reg) previous | (1 << 24)) };
-            Self {
-                previous_fpcr: previous,
+            target_arch = "aarch64" => {
+                let previous: u64;
+                // Safety: reading/writing FPCR is safe on aarch64 — thread-local,
+                // no side effects beyond FP behavior. RAII guarantees restore.
+                unsafe { core::arch::asm!("mrs {}, fpcr", out(reg) previous) };
+                // FZ = bit 24
+                unsafe { core::arch::asm!("msr fpcr, {}", in(reg) previous | (1 << 24)) };
+                Self {
+                    previous_fpcr: previous,
+                }
             }
-        }
-        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
-        {
-            Self { _phantom: () }
+            _ => {
+                Self { _phantom: () }
+            }
         }
     }
 }
@@ -72,17 +71,18 @@ impl DenormalGuard {
 impl Drop for DenormalGuard {
     #[inline]
     fn drop(&mut self) {
-        #[cfg(target_arch = "x86_64")]
-        {
-            // Safety: restoring previously saved MXCSR value.
-            unsafe {
-                core::arch::asm!("ldmxcsr [{}]", in(reg) &self.previous_mxcsr, options(nostack, readonly))
-            };
-        }
-        #[cfg(target_arch = "aarch64")]
-        {
-            // Safety: restoring previously saved FPCR value.
-            unsafe { core::arch::asm!("msr fpcr, {}", in(reg) self.previous_fpcr) };
+        core::cfg_select! {
+            target_arch = "x86_64" => {
+                // Safety: restoring previously saved MXCSR value.
+                unsafe {
+                    core::arch::asm!("ldmxcsr [{}]", in(reg) &self.previous_mxcsr, options(nostack, readonly))
+                };
+            }
+            target_arch = "aarch64" => {
+                // Safety: restoring previously saved FPCR value.
+                unsafe { core::arch::asm!("msr fpcr, {}", in(reg) self.previous_fpcr) };
+            }
+            _ => {}
         }
     }
 }
