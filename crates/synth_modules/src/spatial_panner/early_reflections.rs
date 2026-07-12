@@ -4,9 +4,18 @@
 //! Computes first-order reflections from the six walls of a box-shaped room.
 //! Each wall produces one mirror source; the delay and gain of each tap are
 //! derived from the distance between the listener and the mirror source.
+//!
+//! Because `x`/`y`/`z` are per-voice modulation targets in `SpatialPanner`, the
+//! source can move continuously (e.g. an orbiting LFO/script). `update_geometry`
+//! recomputes each tap's delay + gains once per block; applying those as
+//! block-constant values makes a *moving* source **step** at block boundaries
+//! (gain zipper + delay jumps across all six taps). So — mirroring the direct
+//! path in [`super::spatializer`] — each tap's delay and gains are **smoothed
+//! per sample** toward their block targets. A static source converges and the
+//! smoothers go inert, so a fixed placement costs a single MAC per tap.
 
 use synth_core::{
-    BipolarValue, FilterState, Gain, NormalizedValue, SampleCount, SampleRate, Seconds,
+    BipolarValue, FilterState, NormalizedValue, OnePoleSmooth, SampleCount, SampleRate, Seconds,
 };
 use synth_core::{Meters, MetersPerSecond, Position3, SampleOffset};
 use synth_dsp::InterpolatedDelayLine;
@@ -20,6 +29,10 @@ const MAX_DELAY_SECONDS: Seconds = Seconds::new(1.0);
 /// Maximum per-tap jitter in seconds for diffusion.
 const MAX_JITTER_SECONDS: Seconds = Seconds::from_millis(3.0);
 
+/// Time constant for smoothing per-tap delay + gains (~5 ms), matching the
+/// direct-path spatializer so both halves glide at the same rate on movement.
+const SMOOTH_SECONDS: Seconds = Seconds::new(0.005);
+
 /// Deterministic jitter pattern per tap (scaled by diffusion).
 const JITTER_PATTERN: [f32; MAX_EARLY_TAPS] = [-0.9, 0.7, -0.4, 1.0, -0.6, 0.3];
 
@@ -29,18 +42,29 @@ const MIN_DISTANCE: Meters = Meters::new(0.1);
 
 /// A single early reflection tap with per-wall delay, stereo gain, and
 /// frequency-dependent absorption filters (LP for HF, HP for LF).
+///
+/// `target_*` are recomputed per block by [`EarlyReflections::update_geometry`];
+/// the `*_smooth` one-poles glide the actually-applied values toward them each
+/// sample so a moving source does not step at block boundaries.
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct EarlyTap {
-    /// Fractional delay in samples for this reflection.
-    delay_samples: SampleOffset,
-    /// Left channel gain (distance attenuation, absorption, and pan).
-    gain_left: Gain,
-    /// Right channel gain.
-    gain_right: Gain,
+    /// Target fractional delay in samples for this reflection.
+    target_delay: SampleOffset,
+    /// Target left-channel gain (distance attenuation, absorption, and pan).
+    target_gain_left: f32,
+    /// Target right-channel gain.
+    target_gain_right: f32,
     /// One-pole lowpass coefficient for high-frequency damping (0..1).
     lp_coeff: NormalizedValue,
     /// One-pole highpass coefficient for low-frequency absorption.
     hp_coeff: NormalizedValue,
+    /// Per-sample smoother for the fractional read delay (also yields a natural
+    /// Doppler on movement).
+    delay_smooth: OnePoleSmooth,
+    /// Per-sample smoother for the left-channel gain (kills block zipper).
+    gain_left_smooth: OnePoleSmooth,
+    /// Per-sample smoother for the right-channel gain.
+    gain_right_smooth: OnePoleSmooth,
     /// Filter state for the one-pole lowpass.
     lp_state: FilterState,
     /// Filter state for the one-pole highpass.
@@ -48,15 +72,24 @@ pub(crate) struct EarlyTap {
 }
 
 impl EarlyTap {
-    const SILENT: Self = Self {
-        delay_samples: SampleOffset::new(1.0),
-        gain_left: Gain::MUTE,
-        gain_right: Gain::MUTE,
-        lp_coeff: NormalizedValue::new_unchecked(0.3),
-        hp_coeff: NormalizedValue::new_unchecked(0.997),
-        lp_state: FilterState::ZERO,
-        hp_state: FilterState::ZERO,
-    };
+    /// A silent tap: unit read delay, zero gain, smoothers pre-seeded to match.
+    fn silent() -> Self {
+        let mut delay_smooth = OnePoleSmooth::new(SMOOTH_SECONDS, SampleRate::DVD_QUALITY);
+        delay_smooth.set(1.0);
+        Self {
+            target_delay: SampleOffset::new(1.0),
+            target_gain_left: 0.0,
+            target_gain_right: 0.0,
+            lp_coeff: NormalizedValue::new(0.3),
+            hp_coeff: NormalizedValue::new(0.997),
+            delay_smooth,
+            // OnePoleSmooth defaults to state 0.0, matching the zero gains.
+            gain_left_smooth: OnePoleSmooth::new(SMOOTH_SECONDS, SampleRate::DVD_QUALITY),
+            gain_right_smooth: OnePoleSmooth::new(SMOOTH_SECONDS, SampleRate::DVD_QUALITY),
+            lp_state: FilterState::ZERO,
+            hp_state: FilterState::ZERO,
+        }
+    }
 }
 
 /// ISM early reflections processor.
@@ -69,21 +102,28 @@ impl EarlyTap {
 pub(crate) struct EarlyReflections {
     taps: [EarlyTap; MAX_EARLY_TAPS],
     delay_line: InterpolatedDelayLine,
+    /// Snap (instead of glide) the tap smoothers on the first `update_geometry`
+    /// after construction / a reset, so note-on lands at the right geometry
+    /// without a startup Doppler swoop. Cleared by [`Self::clear`].
+    initialized: bool,
 }
 
 impl EarlyReflections {
     /// Create with a given maximum delay-line size (in samples).
     pub(crate) fn with_max_delay(max_samples: SampleCount) -> Self {
         Self {
-            taps: [EarlyTap::SILENT; MAX_EARLY_TAPS],
+            taps: [EarlyTap::silent(); MAX_EARLY_TAPS],
             delay_line: InterpolatedDelayLine::new(max_samples.as_usize()),
+            initialized: false,
         }
     }
 
     /// Recalculate tap parameters from room geometry and positions.
     ///
     /// Call when room dimensions, source/listener positions, or material
-    /// absorption change — not per sample.
+    /// absorption change — not per sample. Writes each tap's *targets*; the
+    /// per-sample smoothers in [`Self::process`] glide toward them (or snap, on
+    /// the first update after a reset).
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn update_geometry(
         &mut self,
@@ -132,6 +172,9 @@ impl EarlyReflections {
         let lp_damping = NormalizedValue::new((0.15 + abs_high_eff * 0.75).clamp(0.0, 0.999));
         let hp_damping = NormalizedValue::new((0.997 - abs_low_eff * 0.40).clamp(0.0, 0.999));
 
+        // Snap (not glide) on the first update after construction / reset.
+        let snap = !self.initialized;
+
         for i in 0..MAX_EARLY_TAPS {
             let [mx, my, mz] = mirrors[i];
             let dx = lx - mx;
@@ -160,16 +203,35 @@ impl EarlyReflections {
             let tap_lp =
                 NormalizedValue::new((lp_damping.as_f32() + air_lp_boost).clamp(0.0, 0.999));
 
-            self.taps[i].delay_samples = SampleOffset::new(delay_clamped);
-            self.taps[i].gain_left = Gain::new((1.0 - pan.as_f32()) * 0.5 * total_gain);
-            self.taps[i].gain_right = Gain::new((1.0 + pan.as_f32()) * 0.5 * total_gain);
-            self.taps[i].lp_coeff = tap_lp;
-            self.taps[i].hp_coeff = hp_damping;
+            let tap = &mut self.taps[i];
+            tap.target_delay = SampleOffset::new(delay_clamped);
+            tap.target_gain_left = (1.0 - pan.as_f32()) * 0.5 * total_gain;
+            tap.target_gain_right = (1.0 + pan.as_f32()) * 0.5 * total_gain;
+            tap.lp_coeff = tap_lp;
+            tap.hp_coeff = hp_damping;
             // Filter states are preserved across updates for smooth transitions.
+
+            // Keep the smoothing time correct if the sample rate changed.
+            tap.delay_smooth.set_time(SMOOTH_SECONDS, sample_rate);
+            tap.gain_left_smooth.set_time(SMOOTH_SECONDS, sample_rate);
+            tap.gain_right_smooth.set_time(SMOOTH_SECONDS, sample_rate);
+
+            // First update after a reset: snap so note-on lands at the right
+            // geometry; afterwards the per-sample smoothers glide.
+            if snap {
+                tap.delay_smooth.set(tap.target_delay.as_f32());
+                tap.gain_left_smooth.set(tap.target_gain_left);
+                tap.gain_right_smooth.set(tap.target_gain_right);
+            }
         }
+        self.initialized = true;
     }
 
     /// Process a single mono input sample and return stereo early reflections.
+    ///
+    /// Each tap glides its delay and gains one step toward the block targets
+    /// (via [`OnePoleSmooth`]) before reading, so a moving source produces
+    /// continuous motion instead of block-boundary steps.
     #[inline]
     pub(crate) fn process(&mut self, input: f32) -> (f32, f32) {
         self.delay_line.write(input);
@@ -178,14 +240,16 @@ impl EarlyReflections {
         let mut right = 0.0_f32;
 
         for tap in &mut self.taps {
-            let raw = self
-                .delay_line
-                .read_interpolated(tap.delay_samples.as_f32());
+            let delay = tap.delay_smooth.process(tap.target_delay.as_f32());
+            let gain_left = tap.gain_left_smooth.process(tap.target_gain_left);
+            let gain_right = tap.gain_right_smooth.process(tap.target_gain_right);
+
+            let raw = self.delay_line.read_interpolated(delay);
             // LP removes highs (material HF absorption); HP removes lows (LF absorption).
             let lp_out = tap.lp_state.one_pole(raw, tap.lp_coeff.as_f32());
             let filtered = tap.hp_state.one_pole_hp(lp_out, tap.hp_coeff.as_f32());
-            left += tap.gain_left.apply(filtered);
-            right += tap.gain_right.apply(filtered);
+            left += gain_left * filtered;
+            right += gain_right * filtered;
         }
 
         (left, right)
@@ -198,6 +262,8 @@ impl EarlyReflections {
             tap.lp_state.reset();
             tap.hp_state.reset();
         }
+        // Next update_geometry snaps the tap smoothers instead of gliding.
+        self.initialized = false;
     }
 }
 
@@ -282,8 +348,41 @@ mod tests {
             SampleRate::new(48000.0),
         );
         for tap in &er.taps {
-            assert!(tap.gain_left.as_f32().is_finite());
-            assert!(tap.gain_right.as_f32().is_finite());
+            assert!(tap.target_gain_left.is_finite());
+            assert!(tap.target_gain_right.is_finite());
         }
+    }
+
+    #[test]
+    fn moving_source_gain_glides_not_steps() {
+        // A large jump in source position must not land the applied gain on its
+        // new target in a single sample — proves per-sample smoothing.
+        let mut er = EarlyReflections::with_max_delay(MAX_DELAY);
+        geo(&mut er, pos(1.0, 2.5, 1.5), pos(4.0, 2.5, 1.5));
+        // Settle the smoothers at the first position.
+        for _ in 0..4096 {
+            er.process(0.0);
+        }
+        let before: Vec<f32> = er
+            .taps
+            .iter()
+            .map(|t| t.gain_left_smooth.current())
+            .collect();
+        // Jump the source to the opposite side and advance a single sample.
+        geo(&mut er, pos(7.0, 2.5, 1.5), pos(4.0, 2.5, 1.5));
+        er.process(1.0);
+        let mut glided = false;
+        for (i, tap) in er.taps.iter().enumerate() {
+            let target = tap.target_gain_left;
+            let now = tap.gain_left_smooth.current();
+            // Still short of target after one step, and it moved from `before`.
+            if (now - target).abs() > 1e-4 && (now - before[i]).abs() > 1e-6 {
+                glided = true;
+            }
+        }
+        assert!(
+            glided,
+            "tap gains should glide toward the new target, not snap"
+        );
     }
 }

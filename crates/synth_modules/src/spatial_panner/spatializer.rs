@@ -10,13 +10,13 @@
 //! computed by [`Spatializer::update`]. Because `x`/`y`/`z` are per-voice
 //! modulation targets in `SpatialPanner`, the source can move fast (e.g. an
 //! envelope at note-on); applying the recomputed gains as block-constant values
-//! would produce audible zipper noise at block boundaries. The ITD needs no
-//! smoothing — the interpolated delay already makes delay changes continuous
-//! (and yields a natural Doppler on movement).
+//! would produce audible zipper noise at block boundaries. The ITD is applied
+//! block-constant (its per-block change is sub-sample at any sane movement
+//! speed, and the interpolated delay carries a natural Doppler); the one caveat
+//! is that the read must stay off the delay buffer's write seam — see
+//! [`ITD_READ_FLOOR`].
 
-use synth_core::{
-    BipolarValue, FilterState, NormalizedValue, OnePoleSmooth, SampleCount, SampleRate, Seconds,
-};
+use synth_core::{FilterState, OnePoleSmooth, SampleCount, SampleRate, Seconds};
 use synth_core::{MetersPerSecond, Position3, SampleOffset};
 use synth_dsp::InterpolatedDelayLine;
 
@@ -29,6 +29,22 @@ const MAX_ITD_SAMPLES: SampleCount = SampleCount::new(64);
 
 /// Time constant for smoothing ILD gains and head-shadow coefficients (~5 ms).
 const SMOOTH_SECONDS: Seconds = Seconds::new(0.005);
+
+/// Maximum head-shadow low-pass coefficient, applied to the far ear at the
+/// sides; scaled by the lateral component so it vanishes straight ahead/behind.
+const MAX_SHADOW: f32 = 0.6;
+
+/// Constant delay (in samples) added to both ears' ITD reads.
+///
+/// `InterpolatedDelayLine::read_interpolated` blends `buffer[idx0]` with
+/// `buffer[idx0 + 1]`, and `write()` advances *after* writing — so a read of
+/// **less than one sample** straddles the circular-buffer write seam and mixes
+/// the newest sample with the oldest (a full buffer away → a different phase).
+/// The ITD reaches 0 at the median plane (source straight ahead/behind), so
+/// without this floor the direct path clicks every time the source crosses
+/// centre. Adding 1 sample to *both* ears keeps every read ≥ 1 (off the seam)
+/// while leaving the interaural *difference* — the actual ITD cue — untouched.
+const ITD_READ_FLOOR: f32 = 1.0;
 
 /// Build a gain smoother initialised at unity (centred, no attenuation).
 fn unity_gain_smoother() -> OnePoleSmooth {
@@ -117,16 +133,24 @@ impl Spatializer {
         self.itd_left = SampleOffset::new(itd_seconds.max(0.0) * sample_rate.as_f32());
         self.itd_right = SampleOffset::new((-itd_seconds).max(0.0) * sample_rate.as_f32());
 
-        // --- ILD --- equal-power panning based on angle.
-        let pan = BipolarValue::new(angle.sin());
-        self.target_gain_left = (1.0 - pan.as_f32() * 0.5).sqrt();
-        self.target_gain_right = (1.0 + pan.as_f32() * 0.5).sqrt();
+        // Lateral component: -1 (hard left) .. +1 (hard right), and 0 both
+        // straight ahead AND straight behind. Driving the ILD pan and the head
+        // shadow from it keeps them continuous through the median plane.
+        let lateral = angle.sin();
 
-        // --- Head shadow --- more HF attenuation on the far ear.
-        let shadow_amount =
-            NormalizedValue::new(0.3 + 0.5 * angle.abs() / std::f32::consts::PI).as_f32();
-        if angle >= 0.0 {
-            // Source to the right: left ear is shadowed.
+        // --- ILD --- equal-power panning from the lateral component.
+        self.target_gain_left = (1.0 - lateral * 0.5).sqrt();
+        self.target_gain_right = (1.0 + lateral * 0.5).sqrt();
+
+        // --- Head shadow --- HF attenuation on the far ear, scaled by the
+        // lateral component so it vanishes at the median plane. The previous
+        // `0.3 + 0.5·|angle|/π` amount was nonzero there (0.3 ahead, 0.8 behind),
+        // so the shadowed ear swapped a strong filter *discontinuously* each time
+        // the source crossed front/back centre — an audible boundary. Scaling by
+        // `|lateral|` sends both ears to 0 at the crossing, so the swap is smooth.
+        let shadow_amount = MAX_SHADOW * lateral.abs();
+        if lateral >= 0.0 {
+            // Source to the right: the left (far) ear is shadowed.
             self.target_shadow_left = shadow_amount;
             self.target_shadow_right = 0.0;
         } else {
@@ -151,8 +175,12 @@ impl Spatializer {
         // Write mono input to both delay lines, read back with per-ear ITD.
         self.delay_left.write(input);
         self.delay_right.write(input);
-        let left_raw = self.delay_left.read_interpolated(self.itd_left.as_f32());
-        let right_raw = self.delay_right.read_interpolated(self.itd_right.as_f32());
+        let left_raw = self
+            .delay_left
+            .read_interpolated(self.itd_left.as_f32() + ITD_READ_FLOOR);
+        let right_raw = self
+            .delay_right
+            .read_interpolated(self.itd_right.as_f32() + ITD_READ_FLOOR);
 
         // Head shadow (one-pole LP) per ear, then ILD gain.
         let left_filtered = self.shadow_state_left.one_pole(left_raw, shadow_left);
@@ -273,5 +301,78 @@ mod tests {
             SAMPLE_RATE,
         );
         assert!(spat.target_shadow_left > spat.target_shadow_right);
+    }
+
+    #[test]
+    fn no_click_at_centre_crossing() {
+        // Sweep the source X from +2 m to -2 m (Y = +2 m front) past centre in
+        // 64-sample blocks while a smooth 200 Hz sine plays. The ITD passes
+        // through 0 at centre; a per-block position update must not inject a
+        // jump larger than the sine's own per-sample slope. Regression for the
+        // delay-line seam click: a sub-sample ITD read (delay < 1) straddled the
+        // circular-buffer wrap and blended the newest sample with the oldest,
+        // producing an audible discontinuity every time the source crossed the
+        // median plane (worst-jump / natural-step ratio was ~5.3 before the fix).
+        let sr = SAMPLE_RATE.as_f32();
+        let block = 64usize;
+        let nblocks = (0.5 * sr) as usize / block;
+
+        let mut spat = Spatializer::new();
+        let mut phase = 0.0f32;
+        let f = 200.0f32;
+        let mut prev = 0.0f32;
+        let mut worst_boundary = 0.0f32;
+        let mut natural_step = 0.0f32;
+
+        for b in 0..nblocks {
+            let x = 2.0 - 4.0 * (b as f32 / nblocks as f32); // +2 -> -2
+            spat.update(
+                pos(x, 2.0, 0.0),
+                pos(0.0, 0.0, 0.0),
+                SPEED_OF_SOUND,
+                SAMPLE_RATE,
+            );
+            for s in 0..block {
+                let inp = (phase * std::f32::consts::TAU).sin();
+                phase = (phase + f / sr).fract();
+                let (l, _r) = spat.process(inp);
+                let step = (l - prev).abs();
+                if b > 2 {
+                    if s == 0 {
+                        worst_boundary = worst_boundary.max(step);
+                    } else {
+                        natural_step = natural_step.max(step);
+                    }
+                }
+                prev = l;
+            }
+        }
+        assert!(
+            worst_boundary < 2.0 * natural_step,
+            "block-boundary jump {worst_boundary:.4} should stay near the sine's own \
+             step {natural_step:.4} (no centre-crossing click)"
+        );
+    }
+
+    #[test]
+    fn head_shadow_vanishes_on_the_median_plane() {
+        // Straight ahead AND straight behind must shadow neither ear, so the
+        // shadowed-ear swap is continuous as the source crosses front/back
+        // centre (the fix for the audible boundary at those crossings).
+        let mut spat = Spatializer::new();
+        for &y in &[5.0_f32, -5.0_f32] {
+            spat.update(
+                pos(0.0, y, 0.0),
+                pos(0.0, 0.0, 0.0),
+                SPEED_OF_SOUND,
+                SAMPLE_RATE,
+            );
+            assert!(
+                spat.target_shadow_left.abs() < 1e-6 && spat.target_shadow_right.abs() < 1e-6,
+                "shadow should vanish on the median plane (y = {y}): l={}, r={}",
+                spat.target_shadow_left,
+                spat.target_shadow_right,
+            );
+        }
     }
 }

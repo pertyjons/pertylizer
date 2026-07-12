@@ -1,39 +1,67 @@
 # TODO - Pertylizer
 
-## ⭐ HIGHEST PRIORITY — SpatialPanner position can't be modulated (found live 2026-07-12)
+## ⭐ HIGHEST PRIORITY — SpatialPanner (`spp`): motion smoothness + modulation reach (found live 2026-07-12)
 
-The new `spp` (Spatial Panner) module positions sound correctly — verified live on an
+The new `spp` (Spatial Panner) positions sound correctly — verified live on an
 `osc → amp → spp → out` instrument: `X = -0.95` → left RMS `0.137` / right `0.080`
-(≈ +4.6 dB left), and `X = +0.95` mirrors it exactly. Its `X`/`Y`/`Z` params report
-`modulatable: true` **and** `is_automatable: true` — **but no modulation source can
-actually reach them.** So "make the sound orbit the room" is impossible today except by
-poking the params from outside (MCP `set_parameter`). Four gaps, most-scoped first.
+(≈ +4.6 dB left), `X = +0.95` mirrors it exactly. Its `X`/`Y`/`Z` are `modulatable` +
+`is_automatable`, and the **GUI Mod Matrix reaches them fine** (address-based: a slot →
+`spp-1.x` with a `sin(phasor())` YAMS expression orbits the source per voice — verified
+live). Two real gaps remain: the motion **steps** (early-reflection path), and the
+modulation reach is **awkward outside the GUI**. Ordered by sound-impact.
 
-- [ ] **1. Add `x_cv`/`y_cv`/`z_cv` control-input ports to `spp`.** `spp` currently has a
-  single input port (`in`, audio) — no CV inputs — so an LFO / Script / AudioScript /
-  Envelope cable can't drive its position. Add three `control` input ports summed onto the
-  `X`/`Y`/`Z` params and clamped to [-1, 1], following the existing idiom (`amp` has
-  `cv`/`pan_cv`, `flt` has `cutoff_cv`). This is the direct enabler for "the script draws
-  the orbit, `spp` renders it": `lfo → x_cv` + `lfo (90° phase) → y_cv` = a smooth per-voice
-  circle; `env → z_cv` = rise on attack. Best done on `feat/awe-to-spatial-panner` before
-  it merges (branch is unmerged + not yet eyeballed).
+- [x] **1. Smooth the early-reflection path per sample (fixes the audible stepping).** When
+  the source moves, the orbit sounds *stepped / grainy* — root cause found in
+  `crates/synth_modules/src/spatial_panner/early_reflections.rs`: `update_geometry()` runs
+  once per block and writes all six taps' `delay_samples` + `gain_left/right` **directly**
+  (~lines 163–167), block-constant, so every block the 6 reflection delays and gains
+  **jump**. The direct binaural path (`spatializer.rs`) already smooths its ILD gains +
+  head-shadow per sample (`OnePoleSmooth`) and interpolates the ITD, so it glides — the ER
+  path never got the same treatment. Fix: ramp each tap gain per sample toward its target (a
+  `OnePoleSmooth` per tap) and crossfade / glide the tap-delay read instead of snapping it.
+  Then ER Level can go back up (it's usable now only because I dropped it to 0.12 to mask the
+  steps) with *both* full room tone and smooth movement. Well-scoped, on
+  `feat/awe-to-spatial-panner` before merge.
+  - **Decision (2026-07-12): always-on, no checkbox.** Zipper/stepping is never musically
+    wanted, and the direct path (`spatializer.rs`) already smooths unconditionally — ER should
+    match. Make the smoother **self-disabling** (skip when the target equals the current value)
+    so a *static* placement pays ≈0 CPU without a user toggle. If anything is ever exposed it is
+    a smoothing/Doppler **time**, not an on/off.
+  - **SHIPPED on branch `feat/spatial-panner-er-smoothing` (2026-07-12), gate green; pending
+    merge + in-app eyeball.** Per-tap `OnePoleSmooth` on delay + gains, snapping on the first
+    update after a reset (no note-on swoop). Live-debugging this *also* surfaced and fixed two
+    more direct-path artifacts at the median plane: (a) the head-shadow ear-swap was
+    discontinuous (`0.3`/`0.8` `|angle|` amount) → rescaled to `MAX_SHADOW · |sin angle|` so it
+    vanishes dead ahead/behind; (b) **the actual audible "boundary in the middle"** was a
+    delay-line seam click on the sub-sample ITD read — see #8. Regression tests:
+    `moving_source_gain_glides_not_steps`, `head_shadow_vanishes_on_the_median_plane`,
+    `no_click_at_centre_crossing`.
 
-- [ ] **2. Mod Matrix destination list is a hardcoded legacy roster.** `Slot N Dest` offers
-  a fixed 19-entry enum — `Osc 1–3`, `Filter 1–2`, `Amp 1–2`, `LFO 1–2` — that is **not**
-  derived from the instrument's actual voice graph (verified: an instrument containing an
-  `spp` still shows no `spp` in the destination list). So every `modulatable: true` param on
-  any module outside that roster (`spp`, and anything newer) is unreachable via the Mod
-  Matrix **and** YAMS. `Slot N Source` is a fixed enum too. Make both pickers address-based
-  from the live graph (enumerate the actual `modulatable` params / available sources) so
-  they reflect what's really patched.
+- [ ] **2. Add `x_cv`/`y_cv`/`z_cv` control-input ports to `spp`.** `spp` has a single input
+  port (`in`, audio) — no CV inputs — so an LFO / Script (`scr`) / AudioScript / Envelope
+  **cable** can't drive the position; today motion only comes via a Mod Matrix slot. Add
+  three `control` inputs summed onto `X`/`Y`/`Z` (and onto the existing `ParamModOffsets`)
+  and clamped to [-1, 1], per the idiom (`amp.cv`/`amp.pan_cv`, `flt.cutoff_cv`). This is
+  what lets a `scr` module drive position **directly** ("script draws the orbit, `spp`
+  renders it") and makes position cable-modulatable/automatable, not only mod-matrix-driven.
+  - *Optional secondary CV:* `direct_level_cv` / `er_level_cv` (duck/swell room vs direct
+    with an envelope). Lower value — add only if wanted.
+  - *Considered and rejected (don't re-litigate):* **stereo input** — mono-in is correct for
+    a point-source spatializer; a stereo source has no single position, downmix first.
+    **Split `direct`/`er` outputs** (route reflections to their own reverb bus) — nice but
+    +2 ports and complexity; defer until a patch needs it. **CV on
+    absorption/diffusion/air** — room character rarely needs live modulation; the params
+    suffice.
 
-- [ ] **3. No MCP write path for address-based Mod Matrix routings.** The read side
-  (`get_mod_matrix_routings`) already reports dotted `module.param` addresses, and
-  `set_mod_matrix_script` installs the slot *expression* — but there is no symmetric tool to
-  *set a slot's source/destination by address* (only the positional `Slot N Source/Dest`
-  enums via `set_parameter`, which can't name `spp.X`). Add an address-based
-  `set_mod_matrix_routing` (or extend the script tool with source/dest address fields) so a
-  routing to an arbitrary `module.param` can be created headlessly. Unblocks #2 over MCP.
+- [ ] **3. MCP surface misrepresents the Mod Matrix (the GUI is fine).** `get_module_info`
+  reports `Slot N Dest` as a fixed 19-entry legacy enum (`Osc 1–3`, `Filter 1–2`, `Amp 1–2`,
+  `LFO 1–2`) with **no `spp`** — even though the GUI's address-based picker *does* reach
+  `spp` (an mmx slot → `spp-1.x` works). So the MCP view is stale/incomplete, **and** there
+  is no MCP **write** path for an address-based routing: `set_mod_matrix_script` installs the
+  slot expression, but source/destination can only be set via the positional enums (which
+  can't name `spp.x`). Add an address-based `set_mod_matrix_routing` (or source/dest address
+  fields on the script tool) and surface the real address-based dest/source options over MCP.
+  Generalizes beyond `spp`; fold in with §6.6.
 
 - [ ] **4. (Minor, ergonomics) `note_on`/`note_off` can't target an instrument.** They route
   only by MIDI channel, and a freshly built instrument silently gets a *different* channel —
@@ -42,8 +70,53 @@ poking the params from outside (MCP `set_parameter`). Four gaps, most-scoped fir
   `preview_note` already has), or return the assigned channel from
   `build_instrument`/`create_instrument`.
 
-> Related: §6.6 already tracks other Pertylizer MCP gaps; items 2–3 generalize beyond `spp`
-> and should probably fold in with that section once addressed.
+- [ ] **5. Add a `distance` param + `distance_cv` input (radial fly-by control).** Today the
+  source's radial distance from the listener is implicit in the *magnitude* of the `x`/`y`/`z`
+  offset. Expose it as a first-class control: a `distance` param (+ a `distance_cv` control
+  input) that scales how far the source sits from the room centre, driving **Doppler** (via the
+  already-interpolated delay lines), **inverse-distance level**, and **air-absorption HF
+  rolloff** together — one musical "swoosh past, near vs. far" gesture. Design decision to make:
+  either keep `x`/`y`/`z` cartesian and let `distance` be an overall radial scale on the offset
+  vector, or reframe `x`/`y`/`z` as pure *direction* with `distance` the magnitude (spherical).
+  The spatializer + ISM geometry already work in meters, so the plumbing is a scale on the
+  computed source position — modest. Pairs naturally with the `x_cv`/`y_cv`/`z_cv` ports in #2.
+
+- [ ] **6. Design question — split the early reflections into their own module?** ER is
+  currently *embedded* in `spp` (two parallel DSP halves — `spatializer.rs` direct binaural +
+  `early_reflections.rs` ISM — already clean separate structs, summed in `mod.rs::process`).
+  Splitting into a standalone ER module would let the reflections be routed independently (e.g.
+  to their own reverb bus) — but both halves must share the *same* source position, so a split
+  forces the user to wire and modulate `x`/`y`/`z` **twice** and keep them in sync. Verdict lean:
+  **keep unified** for position-coherence; solve independent routing with the optional
+  split `direct`/`er` **outputs** from #2 instead. The genuinely different architecture (bigger,
+  separate effort) is a **shared, send-based room** rather than per-voice ER — physically a
+  room is one shared space, and 6 delay taps × polyphony is a lot of duplication; but a shared
+  send would need to carry each voice's position, which the current bus model doesn't. Record
+  the decision here before merge.
+
+- [ ] **7. `render_to_wav` renders scripted spatial modulation as MONO (offline ≠ live).**
+  A `render_to_wav` of an orbiting `spp` (position driven by a Mod Matrix YAMS script) comes
+  back **completely mono** — L≡R at every sample, cross-correlation ITD 0 throughout — i.e. the
+  offline render engine does **not** evaluate the mmx control-scripts, so `spp` stays centred.
+  Live playback applies the modulation (meters swing), so offline and live diverge. This blocks
+  offline analysis / fingerprinting of *any* scripted per-voice modulation (I had to fall back to
+  a deterministic Rust probe to debug the centre-crossing click). Fix: run per-voice control
+  scripts (mmx / `scr` / `asc`) in the offline render path. Same class as §6.6's offline-vs-live
+  gaps; fold in there.
+
+- [ ] **8. Latent: `BufferIndex::read_interpolated` blends across the write seam for sub-sample
+  delays.** It reads `buffer[idx0]`/`buffer[idx0+1]` with `idx1` walking *toward* `write_pos`;
+  since `write()` advances **after** writing, a delay `d < 1` puts `idx1` on the wrap seam and
+  blends the newest sample with the **oldest** (a full buffer away → a different phase) → a
+  click. This was the audible `spp` centre-crossing boundary (ITD → 0 at the median plane).
+  **Fixed locally** in `spatializer.rs` via `ITD_READ_FLOOR = 1` (keeps ITD reads ≥ 1 sample,
+  interaural difference untouched). The shared primitive (`synth_core` `BufferIndex`, used by the
+  `synth_dsp` delay lines) is still off-by-one for `d < 1`; no other caller reads sub-sample
+  today, but the proper fix is `read_pos = write_pos − 1 − d` (so `d = 0` = newest and every
+  `d ≥ 0` stays off the seam) — do it as its own change guarded by the delay-line tests.
+
+> Related: §6.6 already tracks other Pertylizer MCP gaps; items 3–4 and 7 generalize beyond
+> `spp` and should fold in with that section once addressed.
 
 ---
 
