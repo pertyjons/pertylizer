@@ -278,6 +278,23 @@ impl EuclideanGenerator {
 /// It rolls its **own** draw rather than writing `NoteExpression::probability`,
 /// which the engine resolves on *source* notes only — a generated note's field
 /// would never be re-gated (plan §5.D).
+///
+/// **Not redundant with [`Note::probability`](crate::Note) — they are different
+/// layers, do not fold one into the other:**
+/// - *This gate* holds **one** probability for its whole scope (optionally
+///   modulated per-tick by a `threshold_mod` Value input); it cannot carry a
+///   distinct value per note. Its roll keys on *position* (`PatternTick ^ pitch
+///   ^ slot`, see [`fallback_note_seed`]) with no loop nonce, so it produces the
+///   **same** keep/drop mask every loop pass — a fixed, host-decorrelated
+///   pattern.
+/// - *Per-note `NoteExpression::probability`* is an authored value carried on
+///   each individual note; the engine keys its roll on note **identity** +
+///   absolute tick + a loop nonce (`note_passes_probability`), so it **re-rolls
+///   each loop pass** and needs no graph. Use it for hand-marked per-note odds.
+///
+/// Making the gate subsume the per-note field would just move the roll into the
+/// graph while keeping the field as its data source — no simplification, and it
+/// loses the "works without a graph" property. Keep both.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default)]
 pub struct ProbabilityGate {

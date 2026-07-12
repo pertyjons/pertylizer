@@ -138,6 +138,12 @@ pub struct NoteExpression {
     pub ghost: bool,
     /// Trigger probability (0.0–1.0). Resolved sequencer-side at emission
     /// (Phase C2), never with RNG on the audio thread. `None` = always plays.
+    /// The roll keys on note **identity** + absolute tick + a loop nonce
+    /// (`note_passes_probability`), so it **re-rolls each loop pass** and needs
+    /// no note-graph. This is the authored per-note layer and is *not* made
+    /// redundant by the graph's `ProbabilityGate`, which holds one
+    /// position-keyed probability per scope with no loop re-roll — see that
+    /// type's doc for why the two coexist.
     #[serde(default)]
     pub probability: Option<NormalizedValue>,
 }
@@ -271,8 +277,10 @@ pub struct Note {
     pub velocity: Velocity,
     /// Track/channel for mono-per-track behavior.
     pub track: Option<TrackId>,
-    /// Tie / legato intent: when set, this note connects to its successor without
-    /// re-gating (taxonomy primitive 2). Additive; defaults to `false`.
+    /// Tie / legato intent: when set, this note is a legato continuation of its
+    /// predecessor — it glides onto the active voice without re-gating (taxonomy
+    /// primitive 2). The flag sits on the *successor* (the later note of the
+    /// tie), matching the engine's coalesce path. Additive; defaults to `false`.
     #[serde(default)]
     pub legato: bool,
     /// Per-note glide (portamento/glissando). Additive; defaults to `None`.

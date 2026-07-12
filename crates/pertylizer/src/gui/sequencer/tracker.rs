@@ -55,6 +55,10 @@ enum CtxAction {
     SetGlide(NoteId, Option<Glide>),
     EditOrnament(NoteId),
     ClearOrnament(NoteId),
+    /// Open the per-note note-graph picker popup for this note.
+    EditNoteGraph(NoteId),
+    /// Clear a note's per-note graph binding (fall back to the pattern's graph).
+    ClearNoteGraph(NoteId),
     ClearExprField(NoteId, ExprField),
     ClearAutoPoint {
         target: AutomationTarget,
@@ -88,6 +92,10 @@ pub(crate) struct TrackerViewState {
     pub voice_columns: usize,
     /// Whether the per-note expression sub-columns are interleaved ("Expr").
     pub show_expression: bool,
+    /// Whether the per-note note-graph binding column is shown ("Graph"). Off by
+    /// default: most notes inherit the pattern's graph, so the column is blank
+    /// unless a note carries its own `note_graph` override.
+    pub show_graph: bool,
     /// Row under the mouse last frame, tinted this frame as a hover highlight.
     pub hovered_row: Option<usize>,
 }
@@ -99,6 +107,7 @@ impl Default for TrackerViewState {
             value_buffer: None,
             voice_columns: 0,
             show_expression: true,
+            show_graph: false,
             hovered_row: None,
         }
     }
@@ -347,6 +356,32 @@ fn np_cell_text(pitches: &[Pitch]) -> String {
     s
 }
 
+/// Snapshot the project's note-graph pool as `(id, name)` pairs — the Graph
+/// column's picker option list and its per-cell name lookup. `None` on a
+/// contended lock (distinct from `Some(empty)` = a project with no graphs): the
+/// column then renders blank rather than mislabeling live bindings as deleted.
+fn snapshot_graph_pool(
+    song: &Arc<RwLock<Song>>,
+) -> Option<Vec<(synth_sequencer::NoteGraphId, String)>> {
+    song.try_read()
+        .map(|s| s.note_graphs().map(|g| (g.id, g.name.clone())).collect())
+}
+
+/// Display name for a note-graph id against the frame's pool snapshot. `None` id
+/// → empty (the note inherits the pattern's graph); an unresolvable id (a stale
+/// binding to a deleted graph) → a visible sentinel rather than a silent blank.
+fn graph_binding_name(
+    pool: &[(synth_sequencer::NoteGraphId, String)],
+    id: Option<synth_sequencer::NoteGraphId>,
+) -> Option<&str> {
+    let id = id?;
+    Some(
+        pool.iter()
+            .find(|(gid, _)| *gid == id)
+            .map_or("<deleted>", |(_, name)| name.as_str()),
+    )
+}
+
 /// Palette for the tracker grid, snapshotted once per frame from the active
 /// theme so the per-cell render path takes no theme-lock. `Color32` is `Copy`,
 /// so the whole struct is cheap to capture into the row/cell closures.
@@ -530,8 +565,30 @@ pub(crate) enum TrackerColumn {
     Voice(usize),
     /// Per-note ornament cell for a voice lane (edited via the shared popup).
     Ornament(usize),
+    /// Per-note note-graph binding cell for a voice lane (edited via the shared
+    /// picker popup). Optional column, gated on the "Graph" toggle.
+    Graph(usize),
     Expr(usize, ExprField),
     Automation(usize),
+}
+
+/// Sub-column offset, within a voice group, where the expression fields begin —
+/// after the voice cell (0), the ornament cell (1), and the optional graph cell.
+/// The one place the graph column's presence shifts the expression indices, so
+/// the layout math and the render/edit paths can't disagree.
+const fn expr_sub_base(show_graph: bool) -> usize {
+    2 + if show_graph { 1 } else { 0 }
+}
+
+/// An in-progress per-note note-graph binding edit: which note, the pre-edit
+/// baseline (for one coalesced undo entry per popup session), and the live
+/// working binding. Lives on `SequencerViewState` while the picker is open.
+#[derive(Clone)]
+pub(crate) struct NoteGraphEdit {
+    pub pattern_id: PatternId,
+    pub note_id: synth_sequencer::NoteId,
+    pub before: Option<synth_sequencer::NoteGraphId>,
+    pub current: Option<synth_sequencer::NoteGraphId>,
 }
 
 /// Flat selectable-column index where voice lane `lane`'s group begins (its voice
@@ -581,17 +638,20 @@ impl TrackerCursor {
 
     /// Resolve the flat column index into a typed column for the frame's layout.
     /// Each voice lane owns a contiguous group of `cols_per_voice`: sub-column 0 is
-    /// the voice cell, 1 is the always-present ornament cell, and 2.. are the
-    /// optional expression sub-columns; the automation lanes follow the groups.
-    fn resolved(&self, n_lanes: usize, cols_per_voice: usize) -> TrackerColumn {
+    /// the voice cell, 1 is the always-present ornament cell, 2 is the optional
+    /// graph cell (when `show_graph`), and the rest are the optional expression
+    /// sub-columns; the automation lanes follow the groups.
+    fn resolved(&self, n_lanes: usize, cols_per_voice: usize, show_graph: bool) -> TrackerColumn {
         let n_voice_cols = voice_group_base(n_lanes, cols_per_voice);
         if self.col < n_voice_cols {
             let lane = self.col / cols_per_voice;
             let sub = self.col % cols_per_voice;
+            let expr_base = expr_sub_base(show_graph);
             match sub {
                 0 => TrackerColumn::Voice(lane),
                 1 => TrackerColumn::Ornament(lane),
-                _ => TrackerColumn::Expr(lane, ExprField::ALL[sub - 2]),
+                2 if show_graph => TrackerColumn::Graph(lane),
+                _ => TrackerColumn::Expr(lane, ExprField::ALL[sub - expr_base]),
             }
         } else {
             TrackerColumn::Automation(self.col - n_voice_cols)
@@ -683,6 +743,7 @@ fn handle_tracker_edit_keys(
     view_state: &mut SequencerViewState,
     n_lanes: usize,
     cols_per_voice: usize,
+    show_graph: bool,
     n_rows: usize,
     tpr: u32,
     lane_of_note: &[usize],
@@ -692,7 +753,7 @@ fn handle_tracker_edit_keys(
         return false;
     }
     let cursor = view_state.tracker.cursor;
-    match cursor.resolved(n_lanes, cols_per_voice) {
+    match cursor.resolved(n_lanes, cols_per_voice, show_graph) {
         TrackerColumn::Voice(lane) => {
             // Leaving an automation cell drops any half-typed value.
             view_state.tracker.value_buffer = None;
@@ -714,6 +775,20 @@ fn handle_tracker_edit_keys(
         TrackerColumn::Ornament(lane) => {
             view_state.tracker.value_buffer = None;
             edit_ornament_cell(
+                ui,
+                data,
+                song,
+                undo_manager,
+                view_state,
+                lane,
+                cursor.row,
+                lane_of_note,
+                notes_by_start_row,
+            )
+        }
+        TrackerColumn::Graph(lane) => {
+            view_state.tracker.value_buffer = None;
+            edit_graph_cell(
                 ui,
                 data,
                 song,
@@ -809,6 +884,66 @@ fn edit_ornament_cell(
             note_id,
             old: current,
             new: None,
+        });
+    }
+    false
+}
+
+/// Per-note note-graph cell: Enter opens the shared graph-picker popup for the
+/// note under the cursor (baseline = its current binding); Delete/Backspace
+/// clears the per-note binding (the note falls back to the pattern's graph). The
+/// popup window itself is rendered once per frame by `draw_tracker`. Returns
+/// false (never moves the cursor).
+#[allow(clippy::too_many_arguments)]
+fn edit_graph_cell(
+    ui: &egui::Ui,
+    data: &PianoRollData,
+    song: &Arc<RwLock<Song>>,
+    undo_manager: &mut UndoManager,
+    view_state: &mut SequencerViewState,
+    lane: usize,
+    row: usize,
+    lane_of_note: &[usize],
+    notes_by_start_row: &HashMap<usize, Vec<usize>>,
+) -> bool {
+    let Some(idx) = notes_by_start_row
+        .get(&row)
+        .into_iter()
+        .flatten()
+        .find(|&&i| lane_of_note[i] == lane)
+        .copied()
+    else {
+        return false;
+    };
+    let note_id = data.notes[idx].note_id;
+    let current = data.notes[idx].note_graph;
+
+    let (enter, delete, backspace) = ui.input_mut(|i| {
+        (
+            i.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
+            i.consume_key(egui::Modifiers::NONE, egui::Key::Delete),
+            i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace),
+        )
+    });
+
+    if enter {
+        // Open the shared picker; baseline = the note's current binding.
+        view_state.editing_note_graph = Some(NoteGraphEdit {
+            pattern_id: data.pattern_id,
+            note_id,
+            before: current,
+            current,
+        });
+    } else if (delete || backspace) && current.is_some() {
+        {
+            let mut song_w = song.write();
+            if let Some(p) = song_w.pattern_mut(data.pattern_id) {
+                p.set_note_note_graph(note_id, None);
+            }
+        }
+        undo_manager.push(UndoAction::SetNoteGraphBindingBatch {
+            pattern_id: data.pattern_id,
+            changes: vec![(note_id, current, None)],
         });
     }
     false
@@ -1338,6 +1473,10 @@ pub(crate) fn draw_tracker(
                 .on_hover_text(
                     "Show per-note expression sub-columns (accent / gate / ghost / probability)",
                 );
+            ui.toggle_value(&mut view_state.tracker.show_graph, "Graph")
+                .on_hover_text(
+                    "Show the per-note note-graph binding column (blank = inherits the pattern's graph)",
+                );
             ui.separator();
             ui.menu_button("?", |ui| {
                 ui.style_mut().wrap_mode = Some(egui::TextWrapMode::Extend);
@@ -1348,6 +1487,7 @@ pub(crate) fn draw_tracker(
                 ui.label("Expression (Acc/Gat/Prb): type digits + Enter (×100; 120 = 1.2×); Delete clears.");
                 ui.label("Ghost (Gho): Enter/Space toggles; Delete clears.");
                 ui.label("Ornament (Orn): Enter opens the editor; Delete clears.");
+                ui.label("Graph (Grf): Enter picks the note's note-graph; Delete clears (blank = inherits the pattern's).");
                 ui.label("Automation: type a value 0–1 + Enter to set a point at the cursor row; Delete removes it.");
                 ui.label("Right-click a cell or column header for more actions (delete, clear, legato/glide…).");
                 ui.label("Zoom: the + / 1x / - buttons (also scales the cell text).");
@@ -1416,6 +1556,14 @@ pub(crate) fn draw_tracker(
     // precedence). Empty — and so no columns — when there is neither.
     let np_stages = compute_np_stages(song, data.pattern_id, tpr, n_rows);
 
+    // Note-graph pool snapshot for the optional Graph column (per-note binding
+    // name + the picker's option list). Only taken when the column is visible or
+    // the picker is open — skips the per-frame name-clone in the common
+    // Graph-off case. `None` = not needed, or the song lock was contended.
+    let graph_pool = (view_state.tracker.show_graph || view_state.editing_note_graph.is_some())
+        .then(|| snapshot_graph_pool(song))
+        .flatten();
+
     // Assign each note to a voice lane and index notes by their start row so each
     // cell lookup is cheap. The shown column count honors the user's requested
     // minimum (Add voice column) on top of what the notes need.
@@ -1457,8 +1605,10 @@ pub(crate) fn draw_tracker(
     // optional expression sub-cells) followed by the automation lanes (the row/time
     // gutter is not selectable). `cols_per_voice` is the width of one voice group.
     let show_expr = view_state.tracker.show_expression;
-    // Voice + always-present ornament cell, plus the optional expression fields.
-    let cols_per_voice = 2 + if show_expr { EXPR_FIELDS } else { 0 };
+    let show_graph = view_state.tracker.show_graph;
+    // Voice + always-present ornament cell, plus the optional graph binding cell
+    // and expression fields.
+    let cols_per_voice = expr_sub_base(show_graph) + if show_expr { EXPR_FIELDS } else { 0 };
     let n_auto = data.automation_lanes.len();
     let n_cols = n_lanes * cols_per_voice + n_auto;
     let cursor_before_nav = view_state.tracker.cursor;
@@ -1479,6 +1629,7 @@ pub(crate) fn draw_tracker(
         view_state,
         n_lanes,
         cols_per_voice,
+        show_graph,
         n_rows,
         tpr,
         &lane_of_note,
@@ -1486,7 +1637,7 @@ pub(crate) fn draw_tracker(
     );
     let cursor_moved = nav_moved || edit_moved;
     let cursor = view_state.tracker.cursor;
-    let cursor_kind = cursor.resolved(n_lanes, cols_per_voice);
+    let cursor_kind = cursor.resolved(n_lanes, cols_per_voice, show_graph);
     // In-progress automation value entry, snapshotted for the (immutable) cell
     // closures so they can show it in the cursor cell without borrowing view_state.
     let entry_buffer = view_state.tracker.value_buffer.clone();
@@ -1550,6 +1701,9 @@ pub(crate) fn draw_tracker(
     for _ in 0..n_lanes {
         builder = builder.column(Column::initial(72.0).at_least(40.0)); // voice
         builder = builder.column(Column::initial(40.0).at_least(30.0)); // ornament
+        if show_graph {
+            builder = builder.column(Column::initial(80.0).at_least(48.0)); // graph binding
+        }
         if show_expr {
             for _ in 0..EXPR_FIELDS {
                 builder = builder.column(Column::initial(34.0).at_least(26.0)); // expr field
@@ -1620,6 +1774,14 @@ pub(crate) fn draw_tracker(
                             "Per-note ornament — Enter edits (flam/drag/ruff/roll/grace), Delete clears",
                         );
                 });
+                if show_graph {
+                    header.col(|ui| {
+                        header_label(ui, "Grf".to_string(), cursor_kind == TrackerColumn::Graph(lane))
+                            .on_hover_text(
+                                "Per-note note-graph binding — Enter picks a graph, Delete clears. Blank = the note inherits the pattern's graph.",
+                            );
+                    });
+                }
                 if show_expr {
                     for field in ExprField::ALL {
                         header.col(|ui| {
@@ -1806,11 +1968,64 @@ pub(crate) fn draw_tracker(
                         }
                     }
 
+                    // Graph cell (optional, sub-column 2): the note's per-note
+                    // note-graph binding name; blank when it inherits the pattern's
+                    // graph. Enter picks via the shared popup; Delete clears.
+                    if show_graph {
+                        let graph_col = voice_col + 2;
+                        let is_graph_cursor = is_cursor_row && cursor.col == graph_col;
+                        let bound = first_note.and_then(|idx| data.notes[idx].note_graph);
+                        // Resolved once, shared by the cell label and the hover. A
+                        // contended pool (`None`) renders blank rather than
+                        // mislabeling a live binding as deleted.
+                        let name = graph_pool
+                            .as_deref()
+                            .and_then(|pool| graph_binding_name(pool, bound));
+                        let (_, g_resp) = row.col(|ui| {
+                            colors.paint_cell_chrome(ui, CellChrome { cursor_row: is_cursor_row, cursor_cell: is_graph_cursor, bar_start: is_bar_start, hovered: is_hovered_row, active: cursor_active });
+                            match name {
+                                Some(name) => {
+                                    ui.label(RichText::new(name).color(colors.glide).monospace());
+                                }
+                                None => {
+                                    ui.label(
+                                        RichText::new(EXPR_UNSET).color(colors.empty).monospace(),
+                                    );
+                                }
+                            }
+                        });
+                        if g_resp.clicked() {
+                            click_target.set(Some((r, graph_col)));
+                        }
+                        if g_resp.contains_pointer() {
+                            hovered_row.set(Some(r));
+                        }
+                        if let Some(idx) = first_note {
+                            let note_id = data.notes[idx].note_id;
+                            g_resp.context_menu(|ui| {
+                                if ui.button("Pick graph…").clicked() {
+                                    ctx_action.set(Some(CtxAction::EditNoteGraph(note_id)));
+                                    ui.close();
+                                }
+                                if bound.is_some() && ui.button("Clear binding").clicked() {
+                                    ctx_action.set(Some(CtxAction::ClearNoteGraph(note_id)));
+                                    ui.close();
+                                }
+                            });
+                            g_resp.on_hover_text(match name {
+                                Some(name) => format!("Bound to note graph: {name}"),
+                                None => {
+                                    "No per-note graph — inherits the pattern's graph".to_owned()
+                                }
+                            });
+                        }
+                    }
+
                     // Expression sub-columns: the note's scalar fields, read-only
                     // (T3.1a). Blank when no note carries this (row, lane).
                     if show_expr {
                         for (fi, field) in ExprField::ALL.into_iter().enumerate() {
-                            let flat = voice_col + 2 + fi;
+                            let flat = voice_col + expr_sub_base(show_graph) + fi;
                             let is_cc = is_cursor_row && cursor.col == flat;
                             let (_, resp) = row.col(|ui| {
                                 colors.paint_cell_chrome(ui, CellChrome { cursor_row: is_cursor_row, cursor_cell: is_cc, bar_start: is_bar_start, hovered: is_hovered_row, active: cursor_active });
@@ -1972,6 +2187,82 @@ pub(crate) fn draw_tracker(
     // Shared per-note ornament popup (open while `editing_ornament` is set —
     // e.g. Enter on an ornament cell above).
     draw_ornament_popup(ui, song, view_state, undo_manager);
+
+    // Per-note note-graph picker popup (open while `editing_note_graph` is set —
+    // e.g. Enter on a Graph cell above).
+    draw_note_graph_popup(
+        ui,
+        song,
+        view_state,
+        undo_manager,
+        graph_pool.as_deref().unwrap_or(&[]),
+    );
+}
+
+/// The per-note note-graph picker popup, driven by the tracker's Graph column.
+/// Shown while `view_state.editing_note_graph` is set; applies the chosen binding
+/// live to the note and pushes one coalesced `SetNoteGraphBindingBatch` undo entry
+/// when the picker closes (on a selection or the window's close button). `pool` is
+/// the frame's `(id, name)` snapshot — the option list.
+fn draw_note_graph_popup(
+    ui: &mut egui::Ui,
+    song: &Arc<RwLock<Song>>,
+    view_state: &mut SequencerViewState,
+    undo_manager: &mut UndoManager,
+    pool: &[(synth_sequencer::NoteGraphId, String)],
+) {
+    let mut finalize = false;
+    if let Some(edit) = view_state.editing_note_graph.as_mut() {
+        let mut open = true;
+        let mut picked = false;
+        egui::Window::new("Note graph")
+            .collapsible(false)
+            .resizable(false)
+            .open(&mut open)
+            .show(ui.ctx(), |ui| {
+                // "(none)" clears the per-note binding — the note inherits the
+                // pattern's graph.
+                if ui
+                    .selectable_label(edit.current.is_none(), "(none) — inherit pattern")
+                    .clicked()
+                {
+                    picked = edit.current.is_some();
+                    edit.current = None;
+                }
+                for (gid, name) in pool {
+                    if ui
+                        .selectable_label(edit.current == Some(*gid), name.as_str())
+                        .clicked()
+                    {
+                        picked = edit.current != Some(*gid);
+                        edit.current = Some(*gid);
+                    }
+                }
+                if pool.is_empty() {
+                    ui.weak("No note graphs in this project yet.");
+                }
+            });
+        if picked {
+            {
+                let mut song_w = song.write();
+                if let Some(p) = song_w.pattern_mut(edit.pattern_id) {
+                    p.set_note_note_graph(edit.note_id, edit.current);
+                }
+            }
+            // A discrete pick closes the picker this frame.
+            open = false;
+        }
+        finalize = !open;
+    }
+    if finalize
+        && let Some(edit) = view_state.editing_note_graph.take()
+        && edit.before != edit.current
+    {
+        undo_manager.push(UndoAction::SetNoteGraphBindingBatch {
+            pattern_id: edit.pattern_id,
+            changes: vec![(edit.note_id, edit.before, edit.current)],
+        });
+    }
 }
 
 /// Apply a tracker cell context-menu action: mutate the song and push the
@@ -2051,6 +2342,39 @@ fn apply_ctx_action(
                     note_id: id,
                     old,
                     new: None,
+                });
+            }
+        }
+        Some(CtxAction::EditNoteGraph(id)) => {
+            if let Some(s) = song.try_read() {
+                let current = s
+                    .pattern(pattern_id)
+                    .and_then(|p| p.note(id))
+                    .and_then(|n| n.note_graph);
+                drop(s);
+                view_state.editing_note_graph = Some(NoteGraphEdit {
+                    pattern_id,
+                    note_id: id,
+                    before: current,
+                    current,
+                });
+            }
+        }
+        Some(CtxAction::ClearNoteGraph(id)) => {
+            let mut old = None;
+            {
+                let mut song_w = song.write();
+                if let Some(p) = song_w.pattern_mut(pattern_id) {
+                    old = p.note(id).and_then(|n| n.note_graph);
+                    if old.is_some() {
+                        p.set_note_note_graph(id, None);
+                    }
+                }
+            }
+            if old.is_some() {
+                undo_manager.push(UndoAction::SetNoteGraphBindingBatch {
+                    pattern_id,
+                    changes: vec![(id, old, None)],
                 });
             }
         }
@@ -2234,4 +2558,74 @@ fn sample_at(points: &[AutomationPointSnapshot], tick: PatternTick) -> Option<No
         (tick.0 - before.tick.0) as f32 / (after.tick.0 - before.tick.0) as f32,
     );
     Some(before.curve.interpolate(before.value, after.value, t))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{EXPR_FIELDS, ExprField, TrackerColumn, TrackerCursor, expr_sub_base};
+
+    /// The per-voice column layout must be identical across the three places that
+    /// walk it — the builder's column pre-allocation, the header, and the body —
+    /// or `egui_extras::Table` panics with "Added more columns than pre-allocated"
+    /// (the exact regression this locks down). This asserts, for every
+    /// `(show_graph, show_expr)` combo, that `cols_per_voice` equals the number of
+    /// sub-columns rendered and that `resolved` maps each flat sub-index to the
+    /// column rendered at that position, in order: Voice, Ornament, [Graph], [Expr…].
+    #[test]
+    fn resolved_matches_per_voice_column_layout() {
+        for &show_graph in &[false, true] {
+            for &show_expr in &[false, true] {
+                let cols_per_voice =
+                    expr_sub_base(show_graph) + if show_expr { EXPR_FIELDS } else { 0 };
+
+                let mut expected = vec![TrackerColumn::Voice(0), TrackerColumn::Ornament(0)];
+                if show_graph {
+                    expected.push(TrackerColumn::Graph(0));
+                }
+                if show_expr {
+                    for field in ExprField::ALL {
+                        expected.push(TrackerColumn::Expr(0, field));
+                    }
+                }
+
+                assert_eq!(
+                    cols_per_voice,
+                    expected.len(),
+                    "cols_per_voice must match the rendered column count \
+                     (show_graph={show_graph}, show_expr={show_expr})"
+                );
+                for (sub, want) in expected.iter().enumerate() {
+                    let cursor = TrackerCursor { row: 0, col: sub };
+                    assert_eq!(
+                        cursor.resolved(1, cols_per_voice, show_graph),
+                        *want,
+                        "sub-column {sub} (show_graph={show_graph}, show_expr={show_expr})"
+                    );
+                }
+            }
+        }
+    }
+
+    /// A second voice lane's group must resolve to that lane's columns — the
+    /// `col / cols_per_voice` / `col % cols_per_voice` split, with the graph cell
+    /// included in the stride.
+    #[test]
+    fn resolved_addresses_second_lane_with_graph_column() {
+        let show_graph = true;
+        let cols_per_voice = expr_sub_base(show_graph); // Graph on, Expr off → 3
+        assert_eq!(cols_per_voice, 3);
+        // Lane 1's group starts at flat index 3.
+        let base = cols_per_voice;
+        for (offset, want) in [
+            (0, TrackerColumn::Voice(1)),
+            (1, TrackerColumn::Ornament(1)),
+            (2, TrackerColumn::Graph(1)),
+        ] {
+            let cursor = TrackerCursor {
+                row: 0,
+                col: base + offset,
+            };
+            assert_eq!(cursor.resolved(2, cols_per_voice, show_graph), want);
+        }
+    }
 }

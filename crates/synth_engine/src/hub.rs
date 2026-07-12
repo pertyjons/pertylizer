@@ -248,7 +248,7 @@ impl EngineHub {
     pub fn broadcast_event(&self, event: TimestampedEvent) {
         let clients = self.clients.read();
 
-        for (_, client) in clients.iter() {
+        for client in clients.values() {
             if !client.connected.load(Ordering::Acquire) {
                 continue;
             }

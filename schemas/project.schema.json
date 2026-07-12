@@ -9368,7 +9368,7 @@
         },
         "legato": {
           "default": false,
-          "description": "Tie / legato intent: when set, this note connects to its successor without\nre-gating (taxonomy primitive 2). Additive; defaults to `false`.",
+          "description": "Tie / legato intent: when set, this note is a legato continuation of its\npredecessor — it glides onto the active voice without re-gating (taxonomy\nprimitive 2). The flag sits on the *successor* (the later note of the\ntie), matching the engine's coalesce path. Additive; defaults to `false`.",
           "type": "boolean"
         },
         "note_graph": {
@@ -9546,7 +9546,7 @@
             }
           ],
           "default": null,
-          "description": "Trigger probability (0.0–1.0). Resolved sequencer-side at emission\n(Phase C2), never with RNG on the audio thread. `None` = always plays."
+          "description": "Trigger probability (0.0–1.0). Resolved sequencer-side at emission\n(Phase C2), never with RNG on the audio thread. `None` = always plays.\nThe roll keys on note **identity** + absolute tick + a loop nonce\n(`note_passes_probability`), so it **re-rolls each loop pass** and needs\nno note-graph. This is the authored per-note layer and is *not* made\nredundant by the graph's `ProbabilityGate`, which holds one\nposition-keyed probability per scope with no loop re-roll — see that\ntype's doc for why the two coexist."
         },
         "vibrato": {
           "anyOf": [
@@ -10363,7 +10363,7 @@
       "type": "array"
     },
     "ProbabilityGate": {
-      "description": "A pass/block stream filter: each note survives with probability\n`probability`, decided by a seeded hash (reproducible, host-decorrelated).\nIt rolls its **own** draw rather than writing `NoteExpression::probability`,\nwhich the engine resolves on *source* notes only — a generated note's field\nwould never be re-gated (plan §5.D).",
+      "description": "A pass/block stream filter: each note survives with probability\n`probability`, decided by a seeded hash (reproducible, host-decorrelated).\nIt rolls its **own** draw rather than writing `NoteExpression::probability`,\nwhich the engine resolves on *source* notes only — a generated note's field\nwould never be re-gated (plan §5.D).\n\n**Not redundant with [`Note::probability`](crate::Note) — they are different\nlayers, do not fold one into the other:**\n- *This gate* holds **one** probability for its whole scope (optionally\n  modulated per-tick by a `threshold_mod` Value input); it cannot carry a\n  distinct value per note. Its roll keys on *position* (`PatternTick ^ pitch\n  ^ slot`, see [`fallback_note_seed`]) with no loop nonce, so it produces the\n  **same** keep/drop mask every loop pass — a fixed, host-decorrelated\n  pattern.\n- *Per-note `NoteExpression::probability`* is an authored value carried on\n  each individual note; the engine keys its roll on note **identity** +\n  absolute tick + a loop nonce (`note_passes_probability`), so it **re-rolls\n  each loop pass** and needs no graph. Use it for hand-marked per-note odds.\n\nMaking the gate subsume the per-note field would just move the roll into the\ngraph while keeping the field as its data source — no simplification, and it\nloses the \"works without a graph\" property. Keep both.",
       "properties": {
         "probability": {
           "$ref": "#/$defs/NormalizedValue",

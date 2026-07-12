@@ -41,7 +41,7 @@ pub(crate) use ornament::{
 };
 pub(crate) use piano_roll::{collect_piano_roll_data, draw_piano_roll};
 use piano_roll::{draw_automation_target_selector, draw_pattern_instrument_transport};
-pub(crate) use tracker::draw_tracker;
+pub(crate) use tracker::{NoteGraphEdit, draw_tracker};
 use transport::{draw_ruler_labels, draw_transport_bar};
 
 // ============================================================================
@@ -299,6 +299,10 @@ pub struct SequencerViewState {
     /// copy). `None` when the popup is closed; one coalesced undo entry is pushed
     /// when it closes.
     editing_ornament: Option<OrnamentEdit>,
+    /// Open per-note note-graph picker popup (target note + baseline + working
+    /// binding), driven by the tracker's Graph column. `None` when closed; one
+    /// coalesced `SetNoteGraphBindingBatch` undo entry is pushed on close.
+    editing_note_graph: Option<NoteGraphEdit>,
     /// Whether the piano roll paints the note-processor expansion as faint ghost
     /// notes behind the source notes ("Ghosts" toggle).
     show_note_fx_ghosts: bool,
@@ -360,6 +364,7 @@ impl SequencerViewState {
             note_fx_panel_open: false,
             jump_to_note_graph: None,
             editing_ornament: None,
+            editing_note_graph: None,
             show_note_fx_ghosts: false,
             ghost_cache: None,
         }
