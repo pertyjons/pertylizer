@@ -56,10 +56,40 @@ pub(crate) fn compile_mod_script(
     source: &str,
     audio_rate: bool,
 ) -> Result<Arc<synth_core::script::BoundScript>, String> {
-    let opts = synth_script::CompileOptions {
-        audio_rate,
-        ..synth_script::CompileOptions::default()
-    };
+    compile_script_with(
+        source,
+        synth_script::CompileOptions {
+            audio_rate,
+            ..synth_script::CompileOptions::default()
+        },
+    )
+}
+
+/// Compile a YAMS `note_event` (`NoteScriptTransform`) script to a shared
+/// [`BoundScript`], **off the audio thread**. Same failure contract as
+/// [`compile_mod_script`] — the joined error diagnostics on failure — but for
+/// the note-event dialect (`note_pitch`/`note_vel`/`note_dur`/`tick` reads,
+/// `in1..in4` value inputs, `out.pitch`/`out.vel`/`out.dur`/`out.gate` writes).
+/// Shared by the Note Grid GUI editor, the MCP script tool, and the load-time
+/// recompile so all three report compile errors identically.
+pub(crate) fn compile_note_event_script(
+    source: &str,
+) -> Result<Arc<synth_core::script::BoundScript>, String> {
+    compile_script_with(
+        source,
+        synth_script::CompileOptions {
+            note_event: true,
+            ..synth_script::CompileOptions::default()
+        },
+    )
+}
+
+/// Compile `source` under `opts`, returning the bound program or the joined
+/// error diagnostics. The single implementation behind the per-dialect helpers.
+fn compile_script_with(
+    source: &str,
+    opts: synth_script::CompileOptions,
+) -> Result<Arc<synth_core::script::BoundScript>, String> {
     let (program, diags) = synth_script::compile(source, &opts);
     let Some(program) = program else {
         let msg = diags

@@ -24,6 +24,18 @@ pub mod module_panel;
 pub mod patch_editor;
 
 #[cfg(feature = "gui-egui")]
+pub(crate) mod scene_canvas;
+
+#[cfg(feature = "gui-egui")]
+pub(crate) mod node_canvas;
+
+#[cfg(feature = "gui-egui")]
+pub(crate) mod script_editor;
+
+#[cfg(feature = "gui-egui")]
+pub(crate) mod note_grid_view;
+
+#[cfg(feature = "gui-egui")]
 pub mod theme;
 
 #[cfg(feature = "gui-egui")]

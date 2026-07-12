@@ -38,6 +38,7 @@ pub(crate) fn collect_piano_roll_data(
                 legato: n.legato,
                 glide: n.glide,
                 expression: n.expression,
+                note_graph: n.note_graph,
                 ornament: n.ornament,
                 lane: n.lane,
             }
@@ -719,6 +720,91 @@ fn draw_piano_roll_selection_inspector(
                 }
             });
             ui.separator();
+
+            // ── Per-note note-scope graph (plan §2.1): an articulation graph
+            // bound to this note (strum / flam / arp of this one note), the
+            // generalization of the ornament. Applies to the whole selection
+            // like velocity; decorrelated per note by host key at playback. ──
+            {
+                let pid = data.pattern_id;
+                let bindings_equal = selected.iter().all(|n| n.note_graph == first.note_graph);
+                let common = bindings_equal.then_some(first.note_graph).flatten();
+                let pool: Vec<(synth_sequencer::NoteGraphId, String)> = song
+                    .try_read()
+                    .map(|s| s.note_graphs().map(|g| (g.id, g.name.clone())).collect())
+                    .unwrap_or_default();
+                ui.horizontal(|ui| {
+                    ui.spacing_mut().item_spacing.x = 8.0;
+                    caption(ui, "Graph", CaptionTone::Dim);
+                    let selected_label = if !bindings_equal {
+                        "— (mixed)".to_owned()
+                    } else {
+                        match common {
+                            Some(gid) => pool.iter().find(|(id, _)| *id == gid).map_or_else(
+                                || format!("missing graph {}", gid.0),
+                                |(_, n)| n.clone(),
+                            ),
+                            None => "None".to_owned(),
+                        }
+                    };
+                    let mut chosen: Option<Option<synth_sequencer::NoteGraphId>> = None;
+                    egui::ComboBox::from_id_salt("piano_note_graph_binding")
+                        .selected_text(selected_label)
+                        .show_ui(ui, |ui| {
+                            if ui
+                                .selectable_label(bindings_equal && common.is_none(), "None")
+                                .clicked()
+                            {
+                                chosen = Some(None);
+                            }
+                            for (gid, name) in &pool {
+                                if ui.selectable_label(common == Some(*gid), name).clicked() {
+                                    chosen = Some(Some(*gid));
+                                }
+                            }
+                        })
+                        .response
+                        .on_hover_text(
+                            "Per-note articulation graph — strum / flam / arp of this one note",
+                        );
+                    if let Some(new_graph) = chosen {
+                        let changes: Vec<(
+                            NoteId,
+                            Option<synth_sequencer::NoteGraphId>,
+                            Option<synth_sequencer::NoteGraphId>,
+                        )> = selected
+                            .iter()
+                            .filter(|n| n.note_graph != new_graph)
+                            .map(|n| (n.note_id, n.note_graph, new_graph))
+                            .collect();
+                        if !changes.is_empty() {
+                            {
+                                let mut song_w = song.write();
+                                if let Some(pattern) = song_w.pattern_mut(pid) {
+                                    for (nid, _, new) in &changes {
+                                        pattern.set_note_note_graph(*nid, *new);
+                                    }
+                                }
+                            }
+                            undo_manager.push(crate::undo::UndoAction::SetNoteGraphBindingBatch {
+                                pattern_id: pid,
+                                changes,
+                            });
+                        }
+                    }
+                    // Jump into the Note Grid view for a single resolved binding.
+                    if let Some(gid) = common
+                        && pool.iter().any(|(id, _)| *id == gid)
+                        && ui
+                            .small_button("Edit…")
+                            .on_hover_text("Open this graph in the Note Grid view")
+                            .clicked()
+                    {
+                        view_state.jump_to_note_graph = Some(gid);
+                    }
+                });
+                ui.separator();
+            }
 
             // ── Per-note ornament (single selection) ──
             if selected.len() == 1 {
@@ -2613,24 +2699,22 @@ fn draw_piano_roll_toolbar(
         );
         ui.separator();
 
-        // Note FX rack toggle (badge = processor count for this pattern).
-        let np_count = song
+        // Note FX toggle (badge = a dot when a note graph is bound to this pattern).
+        let has_graph = song
             .try_read()
-            .and_then(|s| s.pattern(data.pattern_id).map(|p| p.processors().len()))
-            .unwrap_or(0);
+            .and_then(|s| s.pattern(data.pattern_id).map(|p| p.note_graph().is_some()))
+            .unwrap_or(false);
+        let note_fx_label = if has_graph { "Note FX ●" } else { "Note FX" };
         if ui
-            .selectable_label(
-                view_state.note_fx_panel_open,
-                format!("Note FX ({np_count})"),
-            )
-            .on_hover_text("Show/hide the note-processor rack for this pattern")
+            .selectable_label(view_state.note_fx_panel_open, note_fx_label)
+            .on_hover_text("Show/hide the Note FX panel (bind a note graph to this pattern)")
             .clicked()
         {
             view_state.note_fx_panel_open = !view_state.note_fx_panel_open;
         }
         if ui
             .selectable_label(view_state.show_note_fx_ghosts, "Ghosts")
-            .on_hover_text("Preview the note-processor expansion as faint ghost notes")
+            .on_hover_text("Preview the note-graph / ornament expansion as faint ghost notes")
             .clicked()
         {
             view_state.show_note_fx_ghosts = !view_state.show_note_fx_ghosts;

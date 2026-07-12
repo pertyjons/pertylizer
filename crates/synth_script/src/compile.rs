@@ -18,12 +18,12 @@ use crate::parser::parse;
 use crate::span::Span;
 use crate::symbols::{
     self, Context, FnKind, Macro, Stateful, audio_in_channel, constant_value, context_from_name,
-    macro_from_name, resolve_fn,
+    macro_from_name, note_field, note_input, resolve_fn,
 };
 use synth_core::script::{
     AudioInputChannel, BoundScript, Builtin, CompiledScript, MAX_ARRAY_STORAGE, MAX_ARRAYS,
-    MAX_INSTRUCTIONS, MAX_LOCALS, MAX_NESTING_DEPTH, MAX_SOURCE_LEN, MAX_SOURCES, MAX_STATE, Op,
-    ScriptContext, ScriptInput, safe_div,
+    MAX_INSTRUCTIONS, MAX_LOCALS, MAX_NESTING_DEPTH, MAX_SOURCE_LEN, MAX_SOURCES, MAX_STATE,
+    NoteField, Op, ScriptContext, ScriptInput, safe_div,
 };
 use synth_core::{MacroSource, SrcAddr};
 
@@ -35,6 +35,12 @@ pub enum SourceInput {
     /// A per-sample audio input (`in` / `in_l` / `in_r`) — audio-rate scripts
     /// only; the engine overwrites this register each sample.
     AudioIn(AudioInputChannel),
+    /// An incoming-note field (`note_pitch` / `note_vel` / `note_dur` / `tick`) —
+    /// `note_event` scripts only; the consumer fills it from the note event.
+    NoteField(NoteField),
+    /// A note-event `Value` modulation input `in1..in4` — `note_event` scripts
+    /// only, indexed `0..3`.
+    NoteInput(u8),
     /// A module member address, e.g. `lfo-1.out`. `instance` defaults to 1.
     Module {
         module: String,
@@ -71,6 +77,8 @@ fn input_to_runtime(input: &SourceInput) -> ScriptInput {
         SourceInput::Macro(m) => ScriptInput::Source(SrcAddr::Macro(macro_to_runtime(*m))),
         SourceInput::Context(c) => ScriptInput::Context(context_to_runtime(*c)),
         SourceInput::AudioIn(ch) => ScriptInput::AudioIn(*ch),
+        SourceInput::NoteField(field) => ScriptInput::NoteField(*field),
+        SourceInput::NoteInput(idx) => ScriptInput::NoteInput(*idx),
         SourceInput::Module {
             module,
             instance,
@@ -124,6 +132,13 @@ pub struct CompileOptions {
     /// `first_sample` one-shot, and `out.left`/`out.right` multi-out — which are
     /// compile errors in a control-rate (Mod Matrix / Script module) script.
     pub audio_rate: bool,
+    /// Compile for the `note_event` (NoteScriptTransform) dialect. Enables the
+    /// note-event grammar — the note-field reads (`note_pitch`/`note_vel`/
+    /// `note_dur`/`tick`) and `Value` inputs (`in1..in4`), and the `out.pitch`/
+    /// `out.vel`/`out.dur`/`out.gate` field writes — which are compile errors in
+    /// any other dialect. Mutually exclusive with [`Self::audio_rate`] in
+    /// practice (a script targets exactly one module kind).
+    pub note_event: bool,
 }
 
 impl Default for CompileOptions {
@@ -132,6 +147,7 @@ impl Default for CompileOptions {
         Self {
             control_rate: 750.0,
             audio_rate: false,
+            note_event: false,
         }
     }
 }
@@ -143,6 +159,7 @@ pub fn compile(src: &str, opts: &CompileOptions) -> (Option<CompiledProgram>, Ve
     let mut compiler = Compiler {
         control_rate: opts.control_rate,
         audio_rate: opts.audio_rate,
+        note_event: opts.note_event,
         code: Vec::new(),
         constants: Vec::new(),
         inputs: Vec::new(),
@@ -192,6 +209,7 @@ struct StateEntry {
 struct Compiler {
     control_rate: f32,
     audio_rate: bool,
+    note_event: bool,
     code: Vec<Op>,
     constants: Vec<f32>,
     inputs: Vec<SourceInput>,
@@ -277,7 +295,8 @@ impl Compiler {
     /// existing declaration. The single guard shared by every declaration site
     /// (`src` / `arr` / `state` / `let`), so the rules and wording stay in lockstep.
     fn check_unique_name(&mut self, name: &str, span: Span) {
-        if symbols::is_reserved(name) {
+        if symbols::is_reserved(name) || (self.note_event && symbols::is_note_event_reserved(name))
+        {
             self.error(span, format!("cannot shadow built-in `{name}`"));
         } else if self.name_taken(name) {
             self.error(span, format!("duplicate name `{name}`"));
@@ -308,6 +327,16 @@ impl Compiler {
     fn register_binding(&mut self, b: &Binding) {
         let name = &b.alias.name;
         self.check_unique_name(name, b.alias.span);
+        if self.note_event {
+            // A note-event script transforms one note event; it has no module
+            // graph to sample, so a `src x = module.member` binding would read 0
+            // at runtime. Reject it at the source rather than silently zero it.
+            self.error(
+                b.alias.span,
+                "module references are not available in a note-event script",
+            );
+            return;
+        }
         self.bindings.push(BindingEntry {
             alias: name.clone(),
             module: b.address.module.clone(),
@@ -372,7 +401,9 @@ impl Compiler {
     fn compile_assign(&mut self, a: &Assign) {
         let name = &a.name.name;
         let Some(cell) = self.states.iter().find(|s| s.name == *name).map(|s| s.cell) else {
-            if symbols::is_reserved(name) {
+            if symbols::is_reserved(name)
+                || (self.note_event && symbols::is_note_event_reserved(name))
+            {
                 self.error(a.name.span, format!("cannot assign to built-in `{name}`"));
             } else if self.name_taken(name) {
                 self.error(
@@ -402,8 +433,10 @@ impl Compiler {
     /// is an error). Audio-rate: either one mono `out` (the
     /// [`eval_block`](synth_core) fallback duplicates it to both channels) or up
     /// to two channel outputs `out.left`/`out.right` (no duplicate channel, not
-    /// mixed with a mono `out`). A mono `out` leaves its value on the value stack;
-    /// a channel `out` emits `Op::StoreAudioOut(0|1)`.
+    /// mixed with a mono `out`). `note_event`: one or more of `out.pitch`/
+    /// `out.vel`/`out.dur`/`out.gate` (no mono, no stereo). A mono `out` leaves
+    /// its value on the value stack; every other output emits `Op::StoreAudioOut`
+    /// into its slot (`0..3`).
     fn compile_outputs(&mut self, outputs: &[Output]) {
         self.validate_output_channels(outputs);
         for o in outputs {
@@ -412,36 +445,63 @@ impl Compiler {
                 // A bare `out` leaves its value on the stack (the VM reads the top
                 // as the mono result and duplicates it to both channels).
                 OutChannel::Mono => {}
-                OutChannel::Left => self.code.push(Op::StoreAudioOut(0)),
-                OutChannel::Right => self.code.push(Op::StoreAudioOut(1)),
+                // Audio left / note pitch share output slot 0; right / vel slot 1.
+                // A script is a single dialect, so the slot is unambiguous.
+                OutChannel::Left | OutChannel::Pitch => self.code.push(Op::StoreAudioOut(0)),
+                OutChannel::Right | OutChannel::Vel => self.code.push(Op::StoreAudioOut(1)),
+                OutChannel::Dur => self.code.push(Op::StoreAudioOut(2)),
+                OutChannel::Gate => self.code.push(Op::StoreAudioOut(3)),
             }
         }
     }
 
-    /// Validate the set of output statements for the current rate, emitting a
+    /// Validate the set of output statements for the active dialect, emitting a
     /// diagnostic per violation (the emission itself stays simple).
     fn validate_output_channels(&mut self, outputs: &[Output]) {
-        if !self.audio_rate {
-            // Control-rate: a single mono `out`, nothing stereo.
-            for o in outputs.iter().filter(|o| o.channel != OutChannel::Mono) {
-                self.error(
-                    o.span,
-                    "`out.left`/`out.right` (stereo output) is only available in an audio-rate script",
-                );
-            }
-        } else if outputs.iter().any(|o| o.channel == OutChannel::Mono) {
-            // Audio-rate: a mono `out` and a channel `out` cannot be mixed.
-            if let Some(o) = outputs.iter().find(|o| o.channel != OutChannel::Mono) {
-                self.error(
-                    o.span,
-                    "use a single `out` OR `out.left`/`out.right`, not both",
-                );
+        // Reject any output member that does not belong to the active dialect.
+        for o in outputs {
+            if !self.channel_allowed(o.channel) {
+                self.error(o.span, channel_reject_msg(o.channel));
             }
         }
-        // Each channel may appear at most once (the second one would silently win).
-        self.dup_channel_error(outputs, OutChannel::Mono, "out");
-        self.dup_channel_error(outputs, OutChannel::Left, "out.left");
-        self.dup_channel_error(outputs, OutChannel::Right, "out.right");
+        // Audio-rate: a mono `out` and a stereo channel `out` cannot be mixed.
+        if self.audio_rate
+            && outputs.iter().any(|o| o.channel == OutChannel::Mono)
+            && let Some(o) = outputs
+                .iter()
+                .find(|o| matches!(o.channel, OutChannel::Left | OutChannel::Right))
+        {
+            self.error(
+                o.span,
+                "use a single `out` OR `out.left`/`out.right`, not both",
+            );
+        }
+        // Each channel may appear at most once (a later one would silently win).
+        for (channel, label) in [
+            (OutChannel::Mono, "out"),
+            (OutChannel::Left, "out.left"),
+            (OutChannel::Right, "out.right"),
+            (OutChannel::Pitch, "out.pitch"),
+            (OutChannel::Vel, "out.vel"),
+            (OutChannel::Dur, "out.dur"),
+            (OutChannel::Gate, "out.gate"),
+        ] {
+            self.dup_channel_error(outputs, channel, label);
+        }
+    }
+
+    /// Whether an output member is legal in the active dialect. A bare mono `out`
+    /// is the control/audio result but is *not* a `note_event` output (that
+    /// dialect must name a field); stereo channels are audio-only; note fields
+    /// are `note_event`-only.
+    fn channel_allowed(&self, channel: OutChannel) -> bool {
+        match channel {
+            OutChannel::Mono => !self.note_event,
+            OutChannel::Left | OutChannel::Right => self.audio_rate,
+            OutChannel::Pitch | OutChannel::Vel | OutChannel::Dur | OutChannel::Gate => {
+                self.note_event
+            }
+        }
     }
 
     /// Report the second (and later) occurrence of a duplicated output channel.
@@ -520,11 +580,22 @@ impl Compiler {
             return;
         }
         if let Some(m) = macro_from_name(name) {
-            self.push_source(SourceInput::Macro(m));
+            // Macros and context vars are engine-graph modulation sources with no
+            // meaning inside a per-event note script — reject rather than resolve
+            // to a runtime 0 (the `note_event` mirror of the audio-only gate).
+            if self.note_event {
+                self.reject_in_note_event(name, span);
+            } else {
+                self.push_source(SourceInput::Macro(m));
+            }
             return;
         }
         if let Some(ctx) = context_from_name(name) {
-            self.push_source(SourceInput::Context(ctx));
+            if self.note_event {
+                self.reject_in_note_event(name, span);
+            } else {
+                self.push_source(SourceInput::Context(ctx));
+            }
             return;
         }
         // Audio-only identifiers (`in`/`in_l`/`in_r`, `first_sample`) resolve only
@@ -536,6 +607,16 @@ impl Compiler {
         }
         if name == "first_sample" {
             self.resolve_audio_only(name, span, SourceInput::Context(Context::FirstSample));
+            return;
+        }
+        // Note-event identifiers (`note_pitch`/…, `in1..in4`) resolve only in a
+        // `note_event` script; reserved-but-erroring elsewhere (like the audio ones).
+        if let Some(field) = note_field(name) {
+            self.resolve_note_only(name, span, SourceInput::NoteField(field));
+            return;
+        }
+        if let Some(idx) = note_input(name) {
+            self.resolve_note_only(name, span, SourceInput::NoteInput(idx));
             return;
         }
         if self.arrays.iter().any(|a| a.name == name) {
@@ -564,6 +645,34 @@ impl Compiler {
             );
             self.emit_const(0.0);
         }
+    }
+
+    /// Resolve a note-event-only identifier, gating it behind `note_event`: push
+    /// its source register in a `note_event` script, or emit a clear error (and a
+    /// placeholder `0`) in any other dialect. Shared by the note-field and
+    /// `in1..in4` resolution paths (the `note_event` mirror of
+    /// [`resolve_audio_only`](Self::resolve_audio_only)).
+    fn resolve_note_only(&mut self, name: &str, span: Span, src: SourceInput) {
+        if self.note_event {
+            self.push_source(src);
+        } else {
+            self.error(
+                span,
+                format!("`{name}` is only available in a note-event script"),
+            );
+            self.emit_const(0.0);
+        }
+    }
+
+    /// Reject an engine-graph modulation source (macro / context var) used inside
+    /// a `note_event` script, where it has no meaning and would otherwise resolve
+    /// to a runtime `0` with a green "compiled" status. Emits a placeholder `0`.
+    fn reject_in_note_event(&mut self, name: &str, span: Span) {
+        self.error(
+            span,
+            format!("`{name}` is not available in a note-event script"),
+        );
+        self.emit_const(0.0);
     }
 
     /// Resolve an array name to its `(base, len)` in the constant pool, if any.
@@ -998,10 +1107,29 @@ fn b2f(cond: bool) -> f32 {
     if cond { 1.0 } else { 0.0 }
 }
 
+/// The diagnostic for an output member used in the wrong dialect. A bare mono
+/// `out` only reaches here in `note_event` mode (it is allowed everywhere else).
+fn channel_reject_msg(channel: OutChannel) -> String {
+    match channel {
+        OutChannel::Left | OutChannel::Right => {
+            "`out.left`/`out.right` (stereo output) is only available in an audio-rate script"
+                .to_string()
+        }
+        OutChannel::Pitch | OutChannel::Vel | OutChannel::Dur | OutChannel::Gate => {
+            "`out.pitch`/`out.vel`/`out.dur`/`out.gate` is only available in a note-event script"
+                .to_string()
+        }
+        OutChannel::Mono => {
+            "a note-event script writes `out.pitch`/`out.vel`/`out.dur`/`out.gate`, not a bare `out`"
+                .to_string()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use synth_core::script::{EvalContext, RegisterFile};
+    use synth_core::script::{EvalContext, NoteOutputs, RegisterFile};
 
     const CR: f32 = 750.0;
     const SEED: u64 = 0x5EED;
@@ -1180,7 +1308,10 @@ mod tests {
         let out = eval(&prog, |inp| match inp {
             SourceInput::Module { .. } => 0.8,
             SourceInput::Macro(_) => 0.5,
-            SourceInput::Context(_) | SourceInput::AudioIn(_) => 0.0,
+            SourceInput::Context(_)
+            | SourceInput::AudioIn(_)
+            | SourceInput::NoteField(_)
+            | SourceInput::NoteInput(_) => 0.0,
         });
         assert!(approx(out, 0.4));
     }
@@ -1937,5 +2068,190 @@ mod tests {
             assert!(approx(l[i], expected), "sample {i}: {} != {expected}", l[i]);
             assert!(approx(r[i], expected), "mono duplicated to right");
         }
+    }
+
+    // ---- Phase 7 B1: `note_event` dialect ---------------------------------
+
+    fn note_opts() -> CompileOptions {
+        CompileOptions {
+            note_event: true,
+            ..CompileOptions::default()
+        }
+    }
+
+    fn compile_note_ok(src: &str) -> CompiledProgram {
+        let (prog, diags) = compile(src, &note_opts());
+        let errs: Vec<_> = diags.iter().filter(|d| d.is_error()).collect();
+        assert!(errs.is_empty(), "unexpected errors: {errs:?}");
+        prog.expect("a compiled note-event program")
+    }
+
+    fn note_errors(src: &str) -> Vec<String> {
+        compile(src, &note_opts())
+            .1
+            .into_iter()
+            .filter(Diagnostic::is_error)
+            .map(|d| d.message)
+            .collect()
+    }
+
+    /// Compile+run a note-event program, filling each source via `fill`.
+    fn eval_note(prog: &CompiledProgram, fill: impl Fn(&SourceInput) -> f32) -> NoteOutputs {
+        let sources: Vec<f32> = prog.inputs.iter().map(fill).collect();
+        let mut regs = RegisterFile::new(0, SEED);
+        prog.script.eval_note(&sources, &mut regs)
+    }
+
+    #[test]
+    fn note_event_transposes_pitch_and_passes_the_rest_through() {
+        // (a) `out.pitch = note_pitch + 12` → pitch Some(+12), others None.
+        let prog = compile_note_ok("out.pitch = note_pitch + 12");
+        assert_eq!(prog.inputs, vec![SourceInput::NoteField(NoteField::Pitch)]);
+        let outs = eval_note(&prog, |inp| match inp {
+            SourceInput::NoteField(NoteField::Pitch) => 60.0,
+            _ => 0.0,
+        });
+        assert_eq!(outs.pitch, Some(72.0));
+        assert_eq!(outs.vel, None);
+        assert_eq!(outs.dur, None);
+        assert_eq!(outs.gate, None);
+    }
+
+    #[test]
+    fn note_event_reads_note_vel_and_a_value_input() {
+        // (b) `out.vel = note_vel * (0.5 + 0.5 * in1)` reads note_vel and in1.
+        let prog = compile_note_ok("out.vel = note_vel * (0.5 + 0.5 * in1)");
+        assert!(
+            prog.inputs
+                .contains(&SourceInput::NoteField(NoteField::Vel))
+        );
+        assert!(prog.inputs.contains(&SourceInput::NoteInput(0)));
+        // note_vel = 0.8, in1 = 1.0 → 0.8 * (0.5 + 0.5) = 0.8.
+        let outs = eval_note(&prog, |inp| match inp {
+            SourceInput::NoteField(NoteField::Vel) => 0.8,
+            SourceInput::NoteInput(0) => 1.0,
+            _ => 0.0,
+        });
+        assert!(outs.vel.is_some_and(|v| approx(v, 0.8)));
+        // in1 = -1 → 0.8 * (0.5 - 0.5) = 0.
+        let muted = eval_note(&prog, |inp| match inp {
+            SourceInput::NoteField(NoteField::Vel) => 0.8,
+            SourceInput::NoteInput(0) => -1.0,
+            _ => 0.0,
+        });
+        assert!(muted.vel.is_some_and(|v| approx(v, 0.0)));
+        assert_eq!(muted.pitch, None);
+    }
+
+    #[test]
+    fn note_event_in1_through_in4_map_to_indices_0_through_3() {
+        let prog = compile_note_ok("out.pitch = in1 + in2 + in3 + in4");
+        for idx in 0u8..4 {
+            assert!(
+                prog.inputs.contains(&SourceInput::NoteInput(idx)),
+                "missing in{}",
+                idx + 1
+            );
+        }
+    }
+
+    #[test]
+    fn note_event_unwritten_fields_are_none() {
+        // (c) pass-through: writing only `out.gate` leaves the rest None.
+        let prog = compile_note_ok("out.gate = 1");
+        let outs = eval_note(&prog, |_| 0.0);
+        assert_eq!(outs.gate, Some(1.0));
+        assert_eq!(outs.pitch, None);
+        assert_eq!(outs.vel, None);
+        assert_eq!(outs.dur, None);
+    }
+
+    #[test]
+    fn note_event_identifiers_error_without_the_dialect() {
+        // (d) note_event reads/writes are errors when note_event = false.
+        for name in ["note_pitch", "note_vel", "note_dur", "tick", "in1", "in4"] {
+            assert!(
+                errors(&format!("out = {name}"))
+                    .iter()
+                    .any(|e| e.contains("note-event")),
+                "`{name}` should be rejected in a control-rate script"
+            );
+        }
+        assert!(
+            errors("out.pitch = 60")
+                .iter()
+                .any(|e| e.contains("note-event")),
+            "`out.pitch` should be rejected in a control-rate script"
+        );
+    }
+
+    #[test]
+    fn note_event_rejects_audio_channels_and_bare_out() {
+        // (e) `out.left` is a compile error in a note_event (non-audio) script.
+        assert!(
+            note_errors("out.left = 1")
+                .iter()
+                .any(|e| e.contains("audio-rate")),
+            "`out.left` must be rejected in a note-event script"
+        );
+        // A bare mono `out` has no meaning in the note-event dialect.
+        assert!(
+            note_errors("out = note_pitch")
+                .iter()
+                .any(|e| e.contains("not a bare")),
+            "a bare `out` must be rejected in a note-event script"
+        );
+    }
+
+    #[test]
+    fn note_event_names_reserved_only_in_note_event_dialect() {
+        // In a note-event script the note identifiers cannot be shadowed…
+        for name in ["note_pitch", "note_vel", "note_dur", "tick", "in1"] {
+            assert!(
+                note_errors(&format!("let {name} = 1\nout.pitch = 0"))
+                    .iter()
+                    .any(|e| e.contains("shadow")),
+                "`{name}` must be reserved inside a note-event script"
+            );
+            // …but in every OTHER dialect they are ordinary bindable identifiers,
+            // so pre-existing mod-matrix/audio scripts using them keep compiling
+            // (regression fix: they were briefly reserved in all dialects).
+            assert!(
+                errors(&format!("let {name} = 1\nout = {name}")).is_empty(),
+                "`{name}` must be bindable in a control-rate script"
+            );
+        }
+    }
+
+    #[test]
+    fn note_event_rejects_engine_graph_sources() {
+        // Macros, context vars, and module references are engine-graph modulation
+        // sources with no meaning in a per-event note script — they must be a
+        // compile error, not a silent runtime 0.
+        for (src, kind) in [
+            ("out.vel = note_vel * velocity", "macro"),
+            ("out.vel = note_vel * tempo", "context var"),
+            (
+                "src x = lfo-1.out\nout.pitch = note_pitch + x",
+                "module ref",
+            ),
+        ] {
+            assert!(
+                note_errors(src)
+                    .iter()
+                    .any(|e| e.contains("not available in a note-event")
+                        || e.contains("module references are not available")),
+                "note-event {kind} must be rejected: {src}"
+            );
+        }
+    }
+
+    #[test]
+    fn note_event_duplicate_field_is_an_error() {
+        assert!(
+            note_errors("out.pitch = 1\nout.pitch = 2")
+                .iter()
+                .any(|e| e.contains("duplicate"))
+        );
     }
 }

@@ -1043,6 +1043,66 @@
       "minimum": 0,
       "type": "integer"
     },
+    "EnvelopeTrigger": {
+      "description": "What retriggers a [`NoteEnvelope`].",
+      "oneOf": [
+        {
+          "const": "SourceOnset",
+          "description": "Raw source-note onsets — a bounded, pure scan of the pattern notes\n(cheap; the default and back-compatible behavior).",
+          "type": "string"
+        },
+        {
+          "const": "StreamOnset",
+          "description": "Onsets in the *transformed* terminal stream (e.g. one retrigger per\narpeggiator step). Evaluated by a bounded backward look-back through the\nspine ([`NoteGraph::eval_prefix_at_tick`]) — more expensive than\n`SourceOnset` (each probe re-runs the spine), so it is opt-in **and its\nlook-back is capped at 1 beat** (`MAX_ENV_STREAM_WINDOW`): more than a\nbeat after the last transformed onset the level reads `0.0`, even when\n`attack + decay` is longer. Retriggers on **dry** transformed onsets\nonly — a delay's echoes do not retrigger it (RT protection: probing\nechoes would compound each in-spine delay's own look-back into an\naudio-thread stall). See `note-grid.md` §11.",
+          "type": "string"
+        }
+      ]
+    },
+    "EuclideanGenerator": {
+      "description": "A source-independent generator that emits a note on each Euclidean onset —\n`pulses` hits distributed as evenly as possible over `steps`, offset by\n`rotation`, one step every `step_len` ticks. Pure tick arithmetic, no state.",
+      "properties": {
+        "pitch": {
+          "$ref": "#/$defs/Pitch",
+          "default": 60,
+          "description": "Pitch of each emitted hit."
+        },
+        "pulses": {
+          "default": 4,
+          "description": "Onsets distributed over the steps (clamped to `steps`).",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "rotation": {
+          "default": 0,
+          "description": "Rotation of the onset pattern, in steps.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "step_len": {
+          "$ref": "#/$defs/Duration",
+          "default": 240,
+          "description": "Ticks per step."
+        },
+        "steps": {
+          "default": 16,
+          "description": "Total steps in the cycle (0 = silent).",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "velocity": {
+          "$ref": "#/$defs/Velocity",
+          "default": 0.6299212574958801,
+          "description": "Velocity of each emitted hit."
+        }
+      },
+      "type": "object"
+    },
     "ExposedPortState": {
       "description": "A port exposed on a group boundary.",
       "properties": {
@@ -1414,6 +1474,31 @@
         "patch"
       ],
       "type": "object"
+    },
+    "LfoShape": {
+      "description": "Shape of a [`NoteLfo`]'s unipolar (`0.0..1.0`) waveform over one cycle.",
+      "oneOf": [
+        {
+          "const": "Sine",
+          "description": "Raised sine: `0.5 + 0.5·sin`.",
+          "type": "string"
+        },
+        {
+          "const": "Triangle",
+          "description": "Rising-then-falling triangle.",
+          "type": "string"
+        },
+        {
+          "const": "Saw",
+          "description": "Rising ramp (`= phase`).",
+          "type": "string"
+        },
+        {
+          "const": "Square",
+          "description": "High for the first half of the cycle, low for the second.",
+          "type": "string"
+        }
+      ]
     },
     "LoopRegion": {
       "description": "A persisted transport loop region: playback wraps from `end` back to `start`\nwhile `enabled`. This is the serialized carrier for the loop the engine's\nsequencer owns at runtime — captured at save time and restored (via a\n`SetLoop` command) at load time, so a saved project keeps its loop instead of\nsilently dropping it.",
@@ -9202,6 +9287,24 @@
         }
       ]
     },
+    "NodePosition": {
+      "description": "A node's canvas position in the Note Grid editor (world coordinates).\nLayout metadata only — evaluation ignores it; a node without one gets\nauto-layout.",
+      "properties": {
+        "x": {
+          "format": "float",
+          "type": "number"
+        },
+        "y": {
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "x",
+        "y"
+      ],
+      "type": "object"
+    },
     "NormalizedValue": {
       "description": "A value normalized to the range [0.0, 1.0].\n\nUsed for:\n- Knob positions\n- Envelope levels\n- Mix amounts\n- Pulse width\n- Any parameter where 0 = min and 1 = max",
       "format": "float",
@@ -9268,6 +9371,17 @@
           "description": "Tie / legato intent: when set, this note connects to its successor without\nre-gating (taxonomy primitive 2). Additive; defaults to `false`.",
           "type": "boolean"
         },
+        "note_graph": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NoteGraphId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Per-note Note Grid graph (the note scope, plan §2.1) — the generalization\nof `ornament`: this note's material runs through the referenced pooled\ngraph during source collection, before the pattern-scope graph. Additive;\ndefaults to `None` (no note-scope processing)."
+        },
         "ornament": {
           "anyOf": [
             {
@@ -9310,6 +9424,87 @@
         "pitch",
         "velocity"
       ],
+      "type": "object"
+    },
+    "NoteConnection": {
+      "description": "A directed connection between two nodes' ports of a given signal type.\n\nv1 stores only `NoteStream` links (the linear spine). The type is carried so\nthe DAG escalation can add `Value`/`Gate` edges without a format change.",
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/NoteModuleId",
+          "description": "Source node (output side)."
+        },
+        "port": {
+          "$ref": "#/$defs/NotePortType",
+          "description": "Signal type carried by this edge."
+        },
+        "to": {
+          "$ref": "#/$defs/NoteModuleId",
+          "description": "Destination node (input side)."
+        },
+        "to_input": {
+          "default": 0,
+          "description": "For `Value`/`Gate` edges, which of the target's value input ports this\nfeeds (`0..value_input_count`). Ignored for `NoteStream` edges.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "from",
+        "to",
+        "port"
+      ],
+      "type": "object"
+    },
+    "NoteDelay": {
+      "description": "A decaying echo (plan §5.A): at tick `t` it\nkeeps the dry stream and appends copies of the onsets that entered this node\nat ticks `t − k·delay_ticks` (`k = 1..=repeats`), each scaled by `feedback^k`\nin velocity. Pure look-back — no queue, no cross-tick state. On the spine\nhead the scan reads the seeded source directly; downstream of a transform it\nre-runs the upstream prefix at each probed tick via\n[`NoteGraph::eval_prefix_at_tick`]. RT-safe: bounded by `repeats`,\n[`MAX_NOTE_DELAY_TICKS`], and the buffer cap.",
+      "properties": {
+        "delay_ticks": {
+          "$ref": "#/$defs/Duration",
+          "default": 480,
+          "description": "Ticks between successive echoes."
+        },
+        "feedback": {
+          "$ref": "#/$defs/NormalizedValue",
+          "default": 0.6000000238418579,
+          "description": "Per-echo velocity multiplier (`0.0` = instant silence, `1.0` = no decay)."
+        },
+        "repeats": {
+          "default": 3,
+          "description": "Echoes after the dry note (clamped to [`MAX_DELAY_REPEATS`]).",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "NoteEnvelope": {
+      "description": "An attack/decay envelope `Value` source. Level rises to `peak` over `attack`,\nfalls to zero over `decay`, then holds at zero, retriggered per `trigger`\n(plan §5.C).",
+      "properties": {
+        "attack": {
+          "$ref": "#/$defs/Duration",
+          "default": 0,
+          "description": "Ticks from onset to `peak`."
+        },
+        "decay": {
+          "$ref": "#/$defs/Duration",
+          "default": 480,
+          "description": "Ticks from `peak` back to zero."
+        },
+        "peak": {
+          "$ref": "#/$defs/NormalizedValue",
+          "default": 1.0,
+          "description": "Peak level (`0.0..1.0`)."
+        },
+        "trigger": {
+          "$ref": "#/$defs/EnvelopeTrigger",
+          "default": "SourceOnset",
+          "description": "What restarts the envelope (source onsets vs. transformed-stream onsets)."
+        }
+      },
       "type": "object"
     },
     "NoteExpression": {
@@ -9368,6 +9563,75 @@
       },
       "type": "object"
     },
+    "NoteGraph": {
+      "description": "Static note-graph configuration — a pooled project asset.",
+      "properties": {
+        "color": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TrackColor"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Sequencer-side color (RGB), never egui's `Color32` — this crate has no\negui dependency."
+        },
+        "connections": {
+          "default": [],
+          "description": "Connections, kept as a sorted `Vec` for deterministic serialization and\niteration. v1: `NoteStream` axis validated linear; `Value`/`Gate` edges\npermitted once modulators exist.",
+          "items": {
+            "$ref": "#/$defs/NoteConnection"
+          },
+          "type": "array"
+        },
+        "description": {
+          "default": "",
+          "description": "Free-text description.",
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/NoteGraphId",
+          "description": "Pool-unique id."
+        },
+        "name": {
+          "description": "User-facing name, shown in the pool view.",
+          "type": "string"
+        },
+        "node_positions": {
+          "additionalProperties": false,
+          "description": "Editor canvas positions per node (layout metadata; nodes without one\nare auto-laid-out). Persisted so an arranged canvas survives reload.",
+          "patternProperties": {
+            "^\\d+$": {
+              "$ref": "#/$defs/NodePosition"
+            }
+          },
+          "type": "object"
+        },
+        "nodes": {
+          "additionalProperties": false,
+          "default": {},
+          "description": "Nodes keyed by graph-local id.",
+          "patternProperties": {
+            "^\\d+$": {
+              "$ref": "#/$defs/NoteModuleConfig"
+            }
+          },
+          "type": "object"
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "NoteGraphId": {
+      "description": "Unique identifier for a Note Grid graph in the project pool.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
     "NoteId": {
       "description": "Unique identifier for a note within a pattern.\nUsed for selection, undo/redo, and editing operations.",
       "format": "uint64",
@@ -9380,6 +9644,180 @@
       "maximum": 255,
       "minimum": 0,
       "type": "integer"
+    },
+    "NoteLfo": {
+      "description": "A tempo-synced control LFO producing a unipolar `Value` (`0.0..1.0`) from\npure tick arithmetic — phase = `f(tick)`, no cross-tick state (plan §5.C).\nFeeds a downstream node's `Value` input (e.g. a script's `in1`, or a\n[`ProbabilityGate`] threshold).",
+      "properties": {
+        "depth": {
+          "$ref": "#/$defs/NormalizedValue",
+          "default": 1.0,
+          "description": "Output depth — scales the `0.0..1.0` level (1.0 = full range)."
+        },
+        "period": {
+          "$ref": "#/$defs/Duration",
+          "default": 960,
+          "description": "Ticks per cycle (0 = frozen at the phase offset)."
+        },
+        "phase": {
+          "$ref": "#/$defs/NormalizedValue",
+          "default": 0.0,
+          "description": "Phase offset, `0.0..1.0` of a cycle."
+        },
+        "shape": {
+          "$ref": "#/$defs/LfoShape",
+          "default": "Sine",
+          "description": "Waveform shape."
+        }
+      },
+      "type": "object"
+    },
+    "NoteModuleConfig": {
+      "description": "Static configuration of one graph node — the pattern-rack DSP or a native\nNote Grid module.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "A stream transform/generator reusing the pattern rack's DSP.",
+          "properties": {
+            "Processor": {
+              "$ref": "#/$defs/NoteProcessor"
+            }
+          },
+          "required": [
+            "Processor"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A Euclidean rhythm generator (source-independent).",
+          "properties": {
+            "Euclidean": {
+              "$ref": "#/$defs/EuclideanGenerator"
+            }
+          },
+          "required": [
+            "Euclidean"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A seeded pass/block probability filter.",
+          "properties": {
+            "ProbabilityGate": {
+              "$ref": "#/$defs/ProbabilityGate"
+            }
+          },
+          "required": [
+            "ProbabilityGate"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A tempo-synced control LFO (`Value` source).",
+          "properties": {
+            "NoteLfo": {
+              "$ref": "#/$defs/NoteLfo"
+            }
+          },
+          "required": [
+            "NoteLfo"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A step-sequenced control LFO (`Value` source).",
+          "properties": {
+            "StepLfo": {
+              "$ref": "#/$defs/StepLfo"
+            }
+          },
+          "required": [
+            "StepLfo"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "An attack/decay envelope retriggered by source onsets (`Value` source).",
+          "properties": {
+            "NoteEnvelope": {
+              "$ref": "#/$defs/NoteEnvelope"
+            }
+          },
+          "required": [
+            "NoteEnvelope"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A per-event YAMS `note_event` script (1-in/1-out stream transform).",
+          "properties": {
+            "NoteScriptTransform": {
+              "$ref": "#/$defs/NoteScriptTransform"
+            }
+          },
+          "required": [
+            "NoteScriptTransform"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A decaying echo (timing node with bounded look-back, plan §5.A).",
+          "properties": {
+            "NoteDelay": {
+              "$ref": "#/$defs/NoteDelay"
+            }
+          },
+          "required": [
+            "NoteDelay"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A ratchet / roll: subdivides each note into fast retriggers (timing node).",
+          "properties": {
+            "Ratchet": {
+              "$ref": "#/$defs/Ratchet"
+            }
+          },
+          "required": [
+            "Ratchet"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "NoteModuleId": {
+      "description": "Unique identifier for a module (node) within a single [`NoteGraphId`] graph.\n\nOnly unique within its owning graph — different graphs reuse the same small\nid space.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "NotePortType": {
+      "description": "The three signal types that flow through Note Grid connections, all\nevaluated at tick rate. `NoteStream` is the linear spine; `Value`/`Gate`\nare side-input modulation edges from a source node to a downstream node's\nvalue input (they do not branch the stream, plan §3).",
+      "oneOf": [
+        {
+          "const": "NoteStream",
+          "description": "The per-tick set of expanded notes (the spine).",
+          "type": "string"
+        },
+        {
+          "const": "Value",
+          "description": "A continuous control scalar, recomputed per tick.",
+          "type": "string"
+        },
+        {
+          "const": "Gate",
+          "description": "A trigger high on specific ticks.",
+          "type": "string"
+        }
+      ]
     },
     "NotePositionMapping": {
       "description": "How MIDI notes map to positions in the room.",
@@ -9407,7 +9845,7 @@
       ]
     },
     "NoteProcessor": {
-      "description": "One processor in a pattern's rack — pure *config* (Model B), never baked\noutput. Serialized with the pattern, so it round-trips save/load with the\nsame path as notes and automation.",
+      "description": "One processor in a pattern's rack — pure *config* (Model B), never baked\noutput. Serialized with the pattern, so it round-trips save/load with the\nsame path as notes and automation.\n\n`Copy` (every variant's config is `Copy`): the Note Grid collects a spine's\nupstream processors into a fixed stack array to reuse the arp / strummed-chord\nheld-pitch view (`expand_held_pitch`) — no allocation on the audio thread.",
       "oneOf": [
         {
           "additionalProperties": false,
@@ -9462,6 +9900,19 @@
           "type": "object"
         }
       ]
+    },
+    "NoteScriptTransform": {
+      "description": "A per-event YAMS `note_event` script transforming the stream 1:1 (plan §6.1).\n\nHolds the canonical `source` (serialized) and a compiled `BoundScript`\n(`#[serde(skip)]` — rebuilt from `source` on load / edit by a non-RT sync\nstep, never on the audio thread). With no compiled program the node is\npass-through. Pure by construction: the VM is deterministic and per-event\nstate resets.",
+      "properties": {
+        "source": {
+          "description": "The YAMS `note_event` source text.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "type": "object"
     },
     "Ornament": {
       "additionalProperties": false,
@@ -9776,6 +10227,17 @@
           "minimum": 0,
           "type": "integer"
         },
+        "note_graph": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/NoteGraphId"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Optional pooled Note Grid graph this pattern expands through. When set,\nit takes precedence over the linear rack. A dangling id (graph removed\nfrom the pool) is treated as pass-through at expansion time."
+        },
         "notes": {
           "description": "All notes, sorted by start tick.",
           "items": {
@@ -9785,7 +10247,7 @@
         },
         "processors": {
           "default": [],
-          "description": "Note-processor rack (Model B generative articulation), in execution\norder. Accessors live in [`crate::note_processor`].",
+          "description": "Legacy note-processor rack (Model B generative articulation), in\nexecution order. Retired in favour of the Note Grid: there is no product\nauthoring path anymore, and a loaded rack migrates to a pooled graph\n([`crate::Song::migrate_processor_racks_to_graphs`]). Kept `#[serde(default)]`\nso pre-migration projects still deserialize; the expansion + freeze\naccessors live in [`crate::note_processor`].",
           "items": {
             "$ref": "#/$defs/NoteProcessor"
           },
@@ -9899,6 +10361,48 @@
       "maxItems": 3,
       "minItems": 3,
       "type": "array"
+    },
+    "ProbabilityGate": {
+      "description": "A pass/block stream filter: each note survives with probability\n`probability`, decided by a seeded hash (reproducible, host-decorrelated).\nIt rolls its **own** draw rather than writing `NoteExpression::probability`,\nwhich the engine resolves on *source* notes only — a generated note's field\nwould never be re-gated (plan §5.D).",
+      "properties": {
+        "probability": {
+          "$ref": "#/$defs/NormalizedValue",
+          "default": 1.0,
+          "description": "Pass probability, 0.0 (block all) .. 1.0 (pass all)."
+        },
+        "seed": {
+          "default": 0,
+          "description": "Roll seed — same seed → identical keep/drop decisions.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "Ratchet": {
+      "description": "A ratchet / roll (timing node, plan §5.A): subdivides each incoming note into\n`count` fast retriggers spaced `sub_ticks` apart, for as long as the note\nsounds. Like [`NoteDelay`] it is pure look-back — at tick `t` it re-derives\nthe onsets that entered it at `t − m·sub_ticks` and re-emits those still\nsounding — but the dry onset is shortened to one subdivision so the note is\n*replaced* by its stutter rather than layered under it. RT-safe: bounded by\n`count`, [`MAX_NOTE_DELAY_TICKS`], and the buffer cap.",
+      "properties": {
+        "count": {
+          "default": 4,
+          "description": "Retriggers per note, including the first (clamped to\n[`MAX_RATCHET_SUBDIVISIONS`]). `1` is a no-op passthrough.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "decay": {
+          "$ref": "#/$defs/NormalizedValue",
+          "default": 1.0,
+          "description": "Per-retrigger velocity multiplier (`1.0` = no decay)."
+        },
+        "sub_ticks": {
+          "$ref": "#/$defs/Duration",
+          "default": 120,
+          "description": "Ticks between retriggers (the subdivision length)."
+        }
+      },
+      "type": "object"
     },
     "ReturnBus": {
       "description": "Definition of a return bus (effect-send destination) as stored in the song.\n\nThis is the persistent, source-of-truth description — id, name, and fader\n(volume/pan/mute). The engine owns the runtime channel (the effect chain and\naudio buffers) keyed by `id`, and reads this fader live each block, exactly\nas it reads per-track controls (Model C: the song owns channel/routing\ndata). The effect-chain *contents* on a return are engine-side runtime state\nand are not yet persisted here (a follow-up, matching master effects).",
@@ -10359,6 +10863,12 @@
           "description": "Song name.",
           "type": "string"
         },
+        "next_note_graph_id": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "next_pattern_id": {
           "format": "uint32",
           "minimum": 0,
@@ -10376,6 +10886,13 @@
           "maximum": 65535,
           "minimum": 0,
           "type": "integer"
+        },
+        "note_graphs": {
+          "description": "Pooled Note Grid graphs — project assets referenced by [`NoteGraphId`].\nA pattern binds one; editing a graph affects every binder. Their derived\n`processing_order` is not serialized; [`Self::rebuild_note_graphs`]\nrecomputes it after load.",
+          "items": {
+            "$ref": "#/$defs/NoteGraph"
+          },
+          "type": "array"
         },
         "patterns": {
           "items": {
@@ -10473,6 +10990,30 @@
           "type": "string"
         }
       ]
+    },
+    "StepLfo": {
+      "description": "A step-sequenced control `Value` source: the output is the current step's\nlevel, `step = (tick / step_len) % steps.len()`. Pure tick arithmetic, no\ncross-tick state (plan §5.C).",
+      "properties": {
+        "step_len": {
+          "$ref": "#/$defs/Duration",
+          "default": 240,
+          "description": "Ticks per step (0 = frozen on the first step)."
+        },
+        "steps": {
+          "default": [
+            1.0,
+            0.5,
+            0.75,
+            0.25
+          ],
+          "description": "Per-step output levels (`0.0..1.0`); cycles when exhausted. Empty = 0.",
+          "items": {
+            "$ref": "#/$defs/NormalizedValue"
+          },
+          "type": "array"
+        }
+      },
+      "type": "object"
     },
     "StretchFactor": {
       "description": "Tail stretch factor for late reverb (dimensionless).",

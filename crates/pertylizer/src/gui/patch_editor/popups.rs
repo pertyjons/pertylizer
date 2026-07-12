@@ -173,27 +173,17 @@ pub(super) fn draw_slot_expression_editor(
         .min_width(320.0)
         .open(&mut keep_open)
         .show(&ctx, |ui| {
-            ui.horizontal(|ui| {
-                let hint = if editor.audio_rate {
-                    "YAMS audio program - per-sample DSP, e.g. `out = tanh(in * 4)` (stereo: `out.left`/`out.right`)"
-                } else {
-                    "YAMS expression - assign `out`, e.g. `out = lfo-1.out * velocity`"
-                };
-                caption(ui, hint, CaptionTone::Secondary);
-                // Help toggle: opens the YAMS reference panel beside the editor.
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    let help = ui
-                        .selectable_label(
-                            editor.show_help,
-                            egui::RichText::new(format!("{}  Help", ri::QUESTION_LINE))
-                                .size(theme().fonts.size_small),
-                        )
-                        .on_hover_text("YAMS reference: how it runs, sources, functions");
-                    if help.clicked() {
-                        editor.show_help = !editor.show_help;
-                    }
-                });
-            });
+            let hint = if editor.audio_rate {
+                "YAMS audio program - per-sample DSP, e.g. `out = tanh(in * 4)` (stereo: `out.left`/`out.right`)"
+            } else {
+                "YAMS expression - assign `out`, e.g. `out = lfo-1.out * velocity`"
+            };
+            crate::gui::script_editor::script_editor_header(
+                ui,
+                hint,
+                "YAMS reference: how it runs, sources, functions",
+                &mut editor.show_help,
+            );
             // Fixed ~16-row editor: sizing it from `available_height` would feed
             // back into egui's auto-growing window (which never shrinks), so the
             // window crept taller whenever the warning line toggled. A constant
@@ -201,14 +191,12 @@ pub(super) fn draw_slot_expression_editor(
             // inside the editor instead of growing the window. The stable id lets
             // the "Select input" picker move the caret, read back below.
             const EDITOR_ROWS: usize = 16;
-            let row_h = ui.text_style_height(&egui::TextStyle::Monospace);
             let te_id = egui::Id::new(("mm_expr_text", module_id, editor.slot));
-            ui.add_sized(
-                egui::vec2(ui.available_width(), EDITOR_ROWS as f32 * row_h),
-                egui::TextEdit::multiline(&mut editor.draft)
-                    .id(te_id)
-                    .code_editor()
-                    .desired_rows(EDITOR_ROWS),
+            crate::gui::script_editor::script_code_editor(
+                ui,
+                te_id,
+                &mut editor.draft,
+                EDITOR_ROWS,
             );
             // Read the selection from the text edit's stored state: its live
             // `cursor_range` is only populated while focused, but opening the
@@ -274,22 +262,7 @@ pub(super) fn draw_slot_expression_editor(
                     }
                 }
             };
-            match &status {
-                Ok(()) => {
-                    ui.label(
-                        egui::RichText::new(format!("{}  compiled", ri::CHECKBOX_CIRCLE_LINE))
-                            .size(theme().fonts.size_small)
-                            .color(theme().colors.accent_green),
-                    );
-                }
-                Err(e) => {
-                    ui.label(
-                        egui::RichText::new(format!("{}  {e}", ri::ERROR_WARNING_LINE))
-                            .size(theme().fonts.size_small)
-                            .color(theme().colors.accent_orange),
-                    );
-                }
-            }
+            crate::gui::script_editor::script_status_line(ui, &status);
 
             // Live CPU-cost indicator (audio-rate only). YAMS runs every branch
             // every sample (eager evaluation), so the compiled instruction count

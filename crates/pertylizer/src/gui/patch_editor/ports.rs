@@ -18,8 +18,10 @@ use crate::gui::widgets::{
     PortWidget, WidgetPortDirection, WidgetPortType, draw_oscilloscope, expose,
 };
 
+use crate::gui::node_canvas;
+
 use super::{
-    CLOSE_BUTTON_HOVER_RED, CLOSE_BUTTON_IDLE, PatchEditor, PatchEditorResult, PendingConnection,
+    CLOSE_BUTTON_HOVER_RED, CLOSE_BUTTON_IDLE, PatchEditor, PatchEditorResult, PatchPort,
     PortRenderInfo, trim_sweep_to_complete_cycles,
 };
 
@@ -92,17 +94,19 @@ impl PatchEditor {
                                 },
                             );
 
-                            // Handle port interaction for cable dragging
-                            if port_resp.drag_started() {
-                                self.start_wire_drag(PendingConnection {
-                                    from_module: module_id,
-                                    from_port: port.name,
-                                    from_direction: WidgetPortDirection::Input,
-                                    from_type: in_port_type,
-                                    from_position: screen_pos,
-                                    current_pos: screen_pos,
-                                });
-                            }
+                            // Feed the shared wire FSM (drag-to-connect / click-click).
+                            let pp = PatchPort {
+                                module: module_id,
+                                port: port.name,
+                                direction: WidgetPortDirection::Input,
+                                port_type: in_port_type,
+                            };
+                            node_canvas::push_port_event(
+                                &mut self.wire_events,
+                                &port_resp,
+                                pp,
+                                screen_pos,
+                            );
                         }
                     }
                 });
@@ -174,16 +178,18 @@ impl PatchEditor {
                                 },
                             );
 
-                            if port_resp.drag_started() {
-                                self.start_wire_drag(PendingConnection {
-                                    from_module: module_id,
-                                    from_port: port.name,
-                                    from_direction: WidgetPortDirection::Output,
-                                    from_type: out_port_type,
-                                    from_position: screen_pos,
-                                    current_pos: screen_pos,
-                                });
-                            }
+                            let pp = PatchPort {
+                                module: module_id,
+                                port: port.name,
+                                direction: WidgetPortDirection::Output,
+                                port_type: out_port_type,
+                            };
+                            node_canvas::push_port_event(
+                                &mut self.wire_events,
+                                &port_resp,
+                                pp,
+                                screen_pos,
+                            );
                         }
                     }
                 });
@@ -234,7 +240,7 @@ impl PatchEditor {
         cycle_blocked: &HashSet<ModuleId>,
         mut store_position: F,
     ) where
-        F: FnMut(&PortRenderInfo, Pos2),
+        F: FnMut(&PortRenderInfo, Pos2, &egui::Response),
     {
         let t = theme();
         let col_width = t.sizes.port_column_width;
@@ -289,7 +295,7 @@ impl PatchEditor {
                                 .markers(port.markers)
                                 .show(ui);
 
-                            store_position(port, center);
+                            store_position(port, center, &response);
 
                             // Expose to AccessKit / the egui-inspection MCP so a
                             // driver can locate a port by name+type+direction (the
@@ -300,6 +306,7 @@ impl PatchEditor {
                                 WidgetPortType::Control => "cv",
                                 WidgetPortType::Gate => "gate",
                                 WidgetPortType::Midi => "midi",
+                                WidgetPortType::NoteStream => "notes",
                             };
                             let dir_str = match direction {
                                 WidgetPortDirection::Input => "in",

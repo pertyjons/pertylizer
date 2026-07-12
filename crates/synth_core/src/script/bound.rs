@@ -58,6 +58,24 @@ pub enum AudioInputChannel {
     Right,
 }
 
+/// One incoming-note field a `note_event`-dialect script reads. The note-graph
+/// consumer fills the matching source register from the note event before
+/// [`CompiledScript::eval_note`](super::CompiledScript::eval_note); the mirror of
+/// the compiler's `note_field` resolution.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum NoteField {
+    /// `note_pitch` — the raw MIDI note number (0–127) of the source note,
+    /// matching `mtof`'s convention.
+    Pitch,
+    /// `note_vel` — the source note's velocity, `0..1`.
+    Vel,
+    /// `note_dur` — the source note's duration in ticks. The consumer passes a
+    /// `-1` sentinel for a note with no fixed duration ("plays until cut").
+    Dur,
+    /// `tick` — the current transport position in ticks.
+    Tick,
+}
+
 /// One source register a [`BoundScript`] reads, in register order: the voice
 /// resolves `inputs[i]` into the script's `sources[i]` before each `eval`.
 #[derive(Debug, Clone, PartialEq)]
@@ -72,6 +90,15 @@ pub enum ScriptInput {
     /// register each sample from its input port (see
     /// [`AudioBindings`](super::AudioBindings)).
     AudioIn(AudioInputChannel),
+    /// An incoming-note field (`note_event` scripts only): the source note's
+    /// pitch/velocity/duration or the transport tick. Resolves to `0.0` as a
+    /// placeholder; the note-graph consumer fills this register from the note
+    /// event before [`eval_note`](super::CompiledScript::eval_note).
+    NoteField(NoteField),
+    /// A note-event `Value` modulation input `in1..in4` (`note_event` scripts
+    /// only), indexed `0..3`. The consumer fills it from the module's matching
+    /// `Value` input port.
+    NoteInput(u8),
     /// An unresolvable binding (e.g. an unknown module prefix) — always `0.0`.
     /// Keeps the register slot so later indices stay aligned with the bytecode.
     Zero,

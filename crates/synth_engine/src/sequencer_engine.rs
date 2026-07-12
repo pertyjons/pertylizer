@@ -11,9 +11,9 @@ use ringbuf::traits::Producer;
 
 use synth_core::{BipolarValue, Bpm, NormalizedValue, SampleCount, SampleRate, Semitones};
 use synth_sequencer::{
-    AutomationTarget, ExpandedNote, ExpansionBuffer, Glide, GlideFrom, NoteExpression, PatternId,
-    PatternTick, Pitch, SeqInstrumentId, SequencerEvent, Song, TICKS_PER_QUARTER, Tick, TrackId,
-    TrackParam, Velocity,
+    AutomationTarget, ExpandedNote, ExpansionBuffer, Glide, GlideFrom, HostKey, NoteExpression,
+    NoteScopeCtx, PatternId, PatternTick, Pitch, SeqInstrumentId, SequencerEvent, Song,
+    TICKS_PER_QUARTER, Tick, TrackId, TrackParam, Velocity,
 };
 
 /// Minimum change threshold for automation value deduplication.
@@ -268,6 +268,16 @@ pub struct SequencerEngine {
     /// is a single collection path. Hard-capped; see the overflow policy on
     /// `synth_sequencer::ExpansionBuffer`.
     scratch_expansion: ExpansionBuffer,
+    /// Pre-allocated scratch for a note-scope graph's single-note inner
+    /// expansion (plan §2.1). Separate from `scratch_expansion` (the outer
+    /// stream) because seeding a note's articulation must not clobber the notes
+    /// already collected for this tick. Same hard-capped overflow policy.
+    scratch_note_scope: ExpansionBuffer,
+    /// Pre-allocated scratch + recursion budget for timing modules' bounded
+    /// look-back (delay/echo re-running the upstream prefix at earlier ticks,
+    /// plan `note-grid.md` §11). One buffer per look-back depth;
+    /// disjoint from the two scratch buffers above. Same hard-capped overflow.
+    scratch_lookback: [ExpansionBuffer; synth_sequencer::MAX_LOOKBACK_DEPTH],
     /// Total expanded note events dropped by the overflow cap since the last
     /// transport reset. The audio thread only counts (it must not log);
     /// diagnostics layers read this via `expansion_drops()`.
@@ -316,6 +326,8 @@ impl SequencerEngine {
             scratch_notes: Vec::with_capacity(synth_sequencer::MAX_EXPANSION_EVENTS_PER_TICK),
             scratch_automation: Vec::with_capacity(16),
             scratch_expansion: ExpansionBuffer::new(),
+            scratch_note_scope: ExpansionBuffer::new(),
+            scratch_lookback: synth_sequencer::lookback_pool(),
             expansion_drops: 0,
             solo_pattern: None,
             preview_pattern: None,
@@ -355,6 +367,8 @@ impl SequencerEngine {
             scratch_notes: Vec::with_capacity(synth_sequencer::MAX_EXPANSION_EVENTS_PER_TICK),
             scratch_automation: Vec::with_capacity(16),
             scratch_expansion: ExpansionBuffer::new(),
+            scratch_note_scope: ExpansionBuffer::new(),
+            scratch_lookback: synth_sequencer::lookback_pool(),
             expansion_drops: 0,
             solo_pattern: None,
             preview_pattern: None,
@@ -690,12 +704,36 @@ impl SequencerEngine {
                 // probability is a performance feature, applied only in
                 // arrangement playback. The processor rack DOES apply, so the
                 // preview sounds like playback will.
-                pattern.expand_at_tick(
-                    PatternTick(pattern_tick),
-                    |_| true,
-                    self.cached_tempo,
-                    &mut self.scratch_expansion,
-                );
+                // A bound Note Grid graph takes precedence over the rack; a
+                // dangling id (graph removed from the pool) falls back to the
+                // rack — never a panic or silence. Preview never gates
+                // probability (gate `|_| true`).
+                // Each note's own note-scope graph (plan §2.1) resolves during
+                // source seeding, decorrelated by NoteId. Disjoint self-field
+                // borrows: the note-scope scratch vs. the outer expansion buffer.
+                let mut ns_ctx = NoteScopeCtx {
+                    pool: song.note_graph_pool(),
+                    scratch: &mut self.scratch_note_scope,
+                };
+                match pattern.note_graph().and_then(|gid| song.note_graph(gid)) {
+                    Some(graph) => graph.expand_at_tick(
+                        pattern.notes(),
+                        PatternTick(pattern_tick),
+                        HostKey::from(pattern.id),
+                        self.cached_tempo,
+                        |_| true,
+                        Some(&mut ns_ctx),
+                        Some(&mut self.scratch_lookback),
+                        &mut self.scratch_expansion,
+                    ),
+                    None => pattern.expand_at_tick(
+                        PatternTick(pattern_tick),
+                        |_| true,
+                        self.cached_tempo,
+                        Some(&mut ns_ctx),
+                        &mut self.scratch_expansion,
+                    ),
+                }
                 self.expansion_drops += u64::from(self.scratch_expansion.dropped());
                 // Preview has no placement, so transpose is zero (a no-op for
                 // pitch and glide alike).
@@ -767,20 +805,45 @@ impl SequencerEngine {
                 // pattern space (placement transpose applies after).
                 let placement_start = placement.start.0;
                 let roll_nonce = self.roll_nonce;
-                pattern.expand_at_tick(
-                    PatternTick(pattern_tick),
-                    // Seed the roll by the note's *own* absolute start, not the
-                    // expansion tick. For a plain note (gated only at its start)
-                    // this is identical to the current tick; for a multi-tick
-                    // ornament it keeps the figure's roll consistent across all
-                    // the ticks it spans.
-                    |note| {
-                        let note_start = Tick(placement_start + u64::from(note.start.0));
-                        note_passes_probability(note, note_start, roll_nonce)
-                    },
-                    self.cached_tempo,
-                    &mut self.scratch_expansion,
-                );
+                // Seed the roll by the note's *own* absolute start, not the
+                // expansion tick. For a plain note (gated only at its start) this
+                // is identical to the current tick; for a multi-tick ornament it
+                // keeps the figure's roll consistent across all the ticks it
+                // spans. The closure captures only Copy values, so it is reused
+                // across the graph / rack branch below.
+                let gate = |note: &synth_sequencer::Note| {
+                    let note_start = Tick(placement_start + u64::from(note.start.0));
+                    note_passes_probability(note, note_start, roll_nonce)
+                };
+                // A bound Note Grid graph takes precedence over the rack; a
+                // dangling id falls back to the rack (pass-through).
+                // Each note's own note-scope graph (plan §2.1) resolves during
+                // source seeding, decorrelated by NoteId, then the pattern-scope
+                // graph / rack processes the articulated stream. Disjoint
+                // self-field borrows: note-scope scratch vs. the outer buffer.
+                let mut ns_ctx = NoteScopeCtx {
+                    pool: song.note_graph_pool(),
+                    scratch: &mut self.scratch_note_scope,
+                };
+                match pattern.note_graph().and_then(|gid| song.note_graph(gid)) {
+                    Some(graph) => graph.expand_at_tick(
+                        pattern.notes(),
+                        PatternTick(pattern_tick),
+                        HostKey::from(pattern.id),
+                        self.cached_tempo,
+                        gate,
+                        Some(&mut ns_ctx),
+                        Some(&mut self.scratch_lookback),
+                        &mut self.scratch_expansion,
+                    ),
+                    None => pattern.expand_at_tick(
+                        PatternTick(pattern_tick),
+                        gate,
+                        self.cached_tempo,
+                        Some(&mut ns_ctx),
+                        &mut self.scratch_expansion,
+                    ),
+                }
                 self.expansion_drops += u64::from(self.scratch_expansion.dropped());
 
                 for i in 0..self.scratch_expansion.notes().len() {
@@ -982,6 +1045,9 @@ impl SequencerEngine {
         self.current_tick = Tick::ZERO;
         self.cursor_tick = Tick::ZERO;
         self.song = song;
+        // A freshly loaded song has empty (skipped-in-serde) Note Grid derived
+        // orders; rebuild them before the audio thread expands through a graph.
+        self.song.write().rebuild_note_graphs();
         // A swapped-in song carries its own generation counter unrelated to the
         // previous song's, so the generation gate could miss a recompute when
         // the two counters happen to coincide. Force the cache to match.
@@ -1492,6 +1558,142 @@ mod tests {
             "C#4 must be snapped to D4 by the rack: {events:?}"
         );
         assert_eq!(seq.expansion_drops(), 0);
+    }
+
+    #[test]
+    fn note_graph_expands_in_arrangement_playback() {
+        use synth_sequencer::{
+            NoteModuleConfig, NoteModuleId, NoteProcessor, PitchClass, ScaleMask, ScaleQuantize,
+        };
+        // Same C#4 -> D4 snap, but through a bound Note Grid graph. A bound
+        // graph takes precedence over the (here empty) rack.
+        let mut song = Song::new("Graph").with_tempo(Bpm::new(120.0));
+        let pattern_id = song.create_pattern(Duration::WHOLE);
+        let gid = song.create_note_graph("snap");
+        if let Some(g) = song.note_graph_mut(gid) {
+            g.try_insert_node(
+                NoteModuleId::new(1),
+                NoteModuleConfig::Processor(NoteProcessor::ScaleQuantize(ScaleQuantize {
+                    root: PitchClass::new(0),
+                    mask: ScaleMask::MAJOR,
+                })),
+            )
+            .unwrap();
+        }
+        if let Some(pattern) = song.pattern_mut(pattern_id) {
+            let _ = pattern.add_note(PatternTick(0), Pitch::new(61).unwrap(), Velocity::MF);
+            pattern.set_note_graph(Some(gid));
+        }
+        let track_id = song.create_track("T");
+        song.place_pattern(pattern_id, track_id, Tick::ZERO);
+
+        let mut seq =
+            SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
+        seq.play();
+        let mut events = Vec::new();
+        seq.process(SampleCount::new(1000), &mut events);
+        assert_eq!(
+            note_on_pitches(&events),
+            vec![62],
+            "C#4 must snap to D4 via the bound graph: {events:?}"
+        );
+    }
+
+    #[test]
+    fn dangling_note_graph_falls_back_to_plain_expansion() {
+        use synth_sequencer::NoteGraphId;
+        // A pattern bound to a removed / never-existing graph id must fall back
+        // to plain expansion (pass-through) — never panic or go silent.
+        let mut song = Song::new("Dangling").with_tempo(Bpm::new(120.0));
+        let pattern_id = song.create_pattern(Duration::WHOLE);
+        if let Some(pattern) = song.pattern_mut(pattern_id) {
+            let _ = pattern.add_note(PatternTick(0), Pitch::new(61).unwrap(), Velocity::MF);
+            pattern.set_note_graph(Some(NoteGraphId::new(99)));
+        }
+        let track_id = song.create_track("T");
+        song.place_pattern(pattern_id, track_id, Tick::ZERO);
+
+        let mut seq =
+            SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
+        seq.play();
+        let mut events = Vec::new();
+        seq.process(SampleCount::new(1000), &mut events);
+        assert_eq!(
+            note_on_pitches(&events),
+            vec![61],
+            "dangling graph id must pass the note through unchanged: {events:?}"
+        );
+    }
+
+    #[test]
+    fn note_scope_articulates_a_note_in_arrangement_playback() {
+        use synth_sequencer::{Chord, NoteModuleConfig, NoteModuleId, NoteProcessor};
+        // A single C bound to a note-scope major-triad graph plays as three tones
+        // — per-note articulation resolved during source collection (plan §2.1),
+        // with no pattern-scope graph or rack.
+        let mut song = Song::new("NoteScope").with_tempo(Bpm::new(120.0));
+        let pattern_id = song.create_pattern(Duration::WHOLE);
+        let gid = song.create_note_graph("triad");
+        if let Some(g) = song.note_graph_mut(gid) {
+            g.try_insert_node(
+                NoteModuleId::new(1),
+                NoteModuleConfig::Processor(NoteProcessor::Chord(Chord::major())),
+            )
+            .unwrap();
+        }
+        if let Some(pattern) = song.pattern_mut(pattern_id) {
+            let nid = pattern.add_note(PatternTick(0), Pitch::new(60).unwrap(), Velocity::MF);
+            pattern.note_mut(nid).unwrap().note_graph = Some(gid);
+        }
+        let track_id = song.create_track("T");
+        song.place_pattern(pattern_id, track_id, Tick::ZERO);
+
+        let mut seq =
+            SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
+        seq.play();
+        let mut events = Vec::new();
+        seq.process(SampleCount::new(1000), &mut events);
+        let mut pitches = note_on_pitches(&events);
+        pitches.sort_unstable();
+        assert_eq!(
+            pitches,
+            vec![60, 64, 67],
+            "note-scope graph must articulate the note into a triad: {events:?}"
+        );
+        assert_eq!(seq.expansion_drops(), 0);
+    }
+
+    #[test]
+    fn note_scope_articulates_a_note_in_preview() {
+        use synth_sequencer::{Chord, NoteModuleConfig, NoteModuleId, NoteProcessor};
+        // The preview branch resolves note scope too (it must sound like playback).
+        let (mut song, pattern_id) = create_orphan_song();
+        let gid = song.create_note_graph("triad");
+        if let Some(g) = song.note_graph_mut(gid) {
+            g.try_insert_node(
+                NoteModuleId::new(1),
+                NoteModuleConfig::Processor(NoteProcessor::Chord(Chord::major())),
+            )
+            .unwrap();
+        }
+        if let Some(pattern) = song.pattern_mut(pattern_id) {
+            pattern.clear_notes();
+            let nid = pattern.add_note(PatternTick(0), Pitch::new(60).unwrap(), Velocity::MF);
+            pattern.note_mut(nid).unwrap().note_graph = Some(gid);
+        }
+        let mut seq =
+            SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
+        seq.set_preview_pattern(Some((pattern_id, SeqInstrumentId(1))));
+        seq.play();
+        let mut events = Vec::new();
+        seq.process(SampleCount::new(1000), &mut events);
+        let mut pitches = note_on_pitches(&events);
+        pitches.sort_unstable();
+        pitches.dedup();
+        assert!(
+            pitches.contains(&64) && pitches.contains(&67),
+            "note-scope triad (E and G) must sound in preview: {events:?}"
+        );
     }
 
     #[test]

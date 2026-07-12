@@ -16,9 +16,9 @@ use crate::gui::module_panel::category_color;
 use crate::gui::theme::theme;
 
 use super::{
-    BgContextMenuState, CanvasInteraction, GRID_LINE_COLOR, GRID_SIZE, GroupTemplateAction,
-    PaletteSelection, PatchAnalysis, PatchEditor, PatchEditorResult, category_icon,
-    draw_module_zone, module_catalog, screen_to_world,
+    BgContextMenuState, CanvasInteraction, GroupTemplateAction, PaletteSelection, PatchAnalysis,
+    PatchEditor, PatchEditorResult, category_icon, draw_module_zone, module_catalog,
+    screen_to_world,
 };
 
 impl PatchEditor {
@@ -57,7 +57,7 @@ impl PatchEditor {
             // Start: primary press on empty grid (and not mid wire-drag).
             if primary_pressed
                 && on_empty_grid
-                && self.pending_connection().is_none()
+                && self.pending_wire.is_none()
                 && let Some(p) = world_pointer
             {
                 self.canvas_interaction = CanvasInteraction::RubberBand {
@@ -162,6 +162,7 @@ impl PatchEditor {
         // Cancel any interaction (wire/rubber-band/node drag) + context menus with escape
         if ui.input(|i| i.key_pressed(egui::Key::Escape)) {
             self.canvas_interaction = CanvasInteraction::Idle;
+            self.pending_wire = None;
             self.port_context_menu = None;
             self.bg_context_menu = None;
         }
@@ -173,42 +174,15 @@ impl PatchEditor {
             CanvasInteraction::DraggingNodes { .. } => {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
             }
-            CanvasInteraction::DraggingWire(_) | CanvasInteraction::RubberBand { .. } => {
+            CanvasInteraction::RubberBand { .. } => {
                 ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
             }
             CanvasInteraction::Idle => {}
         }
-    }
-
-    pub(super) fn draw_grid(&self, ui: &mut Ui, rect: Rect) {
-        let painter = ui.painter();
-
-        // Background
-        painter.rect_filled(rect, 0.0, theme().colors.bg_dark);
-
-        // Grid lines
-        let grid_size = GRID_SIZE;
-
-        let grid_color = GRID_LINE_COLOR;
-
-        // Vertical lines
-        let mut x = rect.left();
-        while x < rect.right() {
-            painter.line_segment(
-                [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],
-                egui::Stroke::new(1.0, grid_color),
-            );
-            x += grid_size;
-        }
-
-        // Horizontal lines
-        let mut y = rect.top();
-        while y < rect.bottom() {
-            painter.line_segment(
-                [Pos2::new(rect.left(), y), Pos2::new(rect.right(), y)],
-                egui::Stroke::new(1.0, grid_color),
-            );
-            y += grid_size;
+        // A cable drag lives outside `canvas_interaction` (shared wire FSM), so
+        // its crosshair is set separately — it can only coincide with `Idle`.
+        if self.pending_wire.is_some() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Crosshair);
         }
     }
 

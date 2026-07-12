@@ -559,6 +559,64 @@ feedback loop can still run away in amplitude.
 
 ---
 
+## Note-event scripts (the NoteScriptTransform module)
+
+The **`note_event`** dialect runs the same language **once per note event**, as a
+1-in/1-out note transform (a node in the Note Grid). Instead of a modulation
+offset or audio, it reads the incoming note's fields and writes the outgoing
+note's fields. It is stateless per event (the register file resets each event),
+so a transpose or velocity curve is pure by construction.
+
+It unlocks a distinct set of grammar (compile errors in any other dialect):
+
+- **Note-field reads** — `note_pitch` (raw MIDI note 0–127, matching `mtof`'s
+  convention), `note_vel` (velocity `0..1`), `note_dur` (duration in ticks; the
+  engine passes `-1` when the note has no fixed duration — "plays until cut"),
+  and `tick` (the current transport position in ticks).
+- **`Value` inputs** — `in1`, `in2`, `in3`, `in4` read the module's four `Value`
+  modulation input ports (e.g. an LFO shaping velocity).
+- **Field writes** — `out.pitch`, `out.vel`, `out.dur`, `out.gate` (statements,
+  like the audio dialect's `out.left`/`out.right`). At least one field write is
+  required; a bare `out = …` and the stereo `out.left`/`out.right` are errors here.
+
+**Pass-through.** A field the script does **not** write passes the source note's
+value through unchanged (the runtime reports it as unwritten). So a script that
+only writes `out.pitch` transposes while leaving velocity, duration, and gate
+exactly as they came in.
+
+**Sentinels and clamping are the consumer's job.** The script layer only
+sanitizes NaN/Inf to 0 on each write; it does **not** clamp or interpret
+sentinels. The note-graph module that runs the script applies those rules to the
+written fields, **sentinel checks first, then clamping**: a negative `out.vel`
+**drops** the note; a negative `out.dur` restores `None` ("plays until cut");
+surviving positive values are then clamped to legal ranges (`out.pitch` rounds to
+nearest and clamps to `0..=127`, `out.vel` to `0.0..=1.0`, `out.dur` to `≥ 0`,
+`out.gate` to the gate-fraction range). There is **no `out_prob`** — probability
+is not a writable field; roll a seeded drop into `out.vel = -1` instead.
+
+**Limits.** A note-event script sees only the note event, so engine-graph
+modulation sources — macros, `module.member` references, and context vars like
+`tempo`/`beat` — are **compile errors** (feed such signals through `in1..in4`
+instead). `rand()` is seeded per note (it varies across notes and ticks); other
+time-based ops (`lag`, `slew`, `accum`, …) do not integrate here (there is no
+inter-event time), so prefer stateless expressions. `out.gate` scales the note's
+duration, so it has no effect on an until-cut note (one with `note_dur == -1`);
+write `out.dur` for those.
+
+```
+# Transpose up an octave; leave everything else untouched.
+out.pitch = note_pitch + 12
+
+# Velocity shaped by an LFO on the first Value input.
+out.vel = note_vel * (0.5 + 0.5 * in1)
+
+# Halve the duration and force a staccato gate.
+out.dur  = note_dur * 0.5
+out.gate = 0.5
+```
+
+---
+
 ## Reference
 
 - Toolchain crate (lexer/parser/compiler/`yamsfmt`): `crates/synth_script`

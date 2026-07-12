@@ -134,8 +134,8 @@ pub(crate) fn prepare_layout_inputs(
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
-/// Grid cell size — re-exported from `patch_editor::GRID_SIZE`.
-const GRID: f32 = super::patch_editor::GRID_SIZE;
+/// Grid cell size — the shared canvas layer's `GRID_SIZE`.
+const GRID: f32 = super::scene_canvas::GRID_SIZE;
 
 /// Extra gap between modules (1 grid cell).
 const GAP: f32 = GRID;

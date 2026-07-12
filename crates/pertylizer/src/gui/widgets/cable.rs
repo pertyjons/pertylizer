@@ -37,6 +37,7 @@ pub fn cable_color(port_type: WidgetPortType, alpha: u8) -> Color32 {
         WidgetPortType::Control => theme().colors.cable_control,
         WidgetPortType::Gate => theme().colors.cable_gate,
         WidgetPortType::Midi => theme().colors.port_midi,
+        WidgetPortType::NoteStream => theme().colors.accent_purple,
     };
     Color32::from_rgba_unmultiplied(base.r(), base.g(), base.b(), alpha)
 }
@@ -297,7 +298,7 @@ pub fn draw_flow_particles(
         WidgetPortType::Audio => (120.0_f64, 30.0_f64, 1.8_f32),
         WidgetPortType::Control => (60.0, 50.0, 1.8),
         WidgetPortType::Gate => (80.0, 60.0, 2.0),
-        WidgetPortType::Midi => (70.0, 45.0, 1.8),
+        WidgetPortType::Midi | WidgetPortType::NoteStream => (70.0, 45.0, 1.8),
     };
 
     let particle_color = Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), 220);

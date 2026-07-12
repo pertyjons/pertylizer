@@ -15,7 +15,9 @@ use eframe::egui::{
 use egui_remixicon::icons as ri;
 
 use super::ModMarkers;
+use super::knob::Knob;
 use crate::gui::theme::theme;
+use synth_core::NormalizedValue;
 
 /// Paint each active modulation marker in its fixed corner of `rect`, each with its
 /// own hover tooltip. Painter-based so the glyphs never change the widget's
@@ -375,6 +377,20 @@ pub fn unit_drag_value<T: egui::emath::Numeric>(
     )
 }
 
+/// A `×`-prefixed bounded count `DragValue` (repeat/subdivision counts), ORing
+/// `any_dragged` while held so the caller's undo gesture coalesces — the prefix
+/// counterpart of [`unit_drag_value`].
+pub fn count_drag_value<T: egui::emath::Numeric>(
+    ui: &mut Ui,
+    value: &mut T,
+    range: RangeInclusive<T>,
+    any_dragged: &mut bool,
+) -> Response {
+    let resp = ui.add(DragValue::new(value).range(range).prefix("×"));
+    *any_dragged |= resp.dragged();
+    resp
+}
+
 /// A `Slider` carrying a unit suffix (e.g. `" Hz"`, `"m"`). Generic over any
 /// numeric type so it also covers `i32`/`usize` state. Pass `""` for no suffix.
 pub fn suffix_slider<T: egui::emath::Numeric>(
@@ -486,6 +502,33 @@ pub fn empty_state(ui: &mut Ui, text: &str) {
 /// `.double_clicked()`.
 pub fn clickable_label(ui: &mut Ui, text: impl Into<WidgetText>) -> Response {
     ui.add(egui::Label::new(text).sense(egui::Sense::click()))
+}
+
+/// A 0–1 [`Knob`] bound to a `NormalizedValue` field; ORs `any_dragged` while
+/// held (the drag-coalesced-undo idiom shared by the Note FX rack and the
+/// Note Grid node editors).
+pub fn knob_normalized(
+    ui: &mut Ui,
+    label: &str,
+    value: &mut NormalizedValue,
+    any_dragged: &mut bool,
+) -> Response {
+    let mut v = value.as_f32();
+    let resp = Knob::new(&mut v, 0.0, 1.0).label(label).show(ui);
+    *any_dragged |= resp.dragged();
+    *value = NormalizedValue::new(v);
+    resp
+}
+
+/// A seed editor: a `DragValue` plus a 🎲 reroll button (golden-ratio step, so
+/// each click lands on a fresh, well-distributed seed). ORs `any_dragged`
+/// while the value is dragged. The caller supplies the surrounding label row.
+pub fn seed_reroll(ui: &mut Ui, seed: &mut u64, any_dragged: &mut bool) {
+    let resp = ui.add(DragValue::new(seed).speed(1.0));
+    *any_dragged |= resp.dragged();
+    if ui.button("🎲").on_hover_text("Reroll seed").clicked() {
+        *seed = seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
+    }
 }
 
 /// Outcome of one frame of an [`inline_editable_text`] editor.

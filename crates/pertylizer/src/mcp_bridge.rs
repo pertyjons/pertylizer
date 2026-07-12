@@ -29,10 +29,11 @@ use synth_mcp::types::{
     DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic, HarmonyChordEvent,
     HarmonyKeyEstimate, HarmonyScope, HarmonyStats, InstrumentInfo, MaskingPair, MatrixRoutingInfo,
     MixBusMetrics, MixDelta, ModuleInfo, ModuleSearchResult, ModuleTypeBrief, ModuleTypeInfo,
-    NoteInfo, NoteProcessorInfo, OptimizeResult, ParamTypeInfo, ParameterInfo, PatchModuleInfo,
-    PatchParamInfo, PatchParamValue, PatchResourceData, PatternInfo, PlacementInfo,
-    ProjectSchemaInfo, RebuildInstrumentResult, RenderToWavResult, SetSongResult, SongInfo,
-    TempoPoint, TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap, UiSnapshot, VersionInfo,
+    NoteGraphConnectionInfo, NoteGraphDetail, NoteGraphInfo, NoteGraphModuleInfo, NoteInfo,
+    OptimizeResult, ParamTypeInfo, ParameterInfo, PatchModuleInfo, PatchParamInfo, PatchParamValue,
+    PatchResourceData, PatternInfo, PlacementInfo, ProjectSchemaInfo, RebuildInstrumentResult,
+    RenderToWavResult, SetSongResult, SongInfo, TempoPoint, TrackInfo, UiConnectionInfo,
+    UiModuleInfo, UiOverlap, UiSnapshot, VersionInfo,
 };
 
 use crate::mcp_shared::McpSharedState;
@@ -1872,7 +1873,6 @@ impl SynthBridge for AppSynthBridge {
                 description: p.description.clone(),
                 length_beats: ticks_to_beats(p.length.0),
                 note_count: p.note_count(),
-                processor_count: p.processors().len(),
             })
             .collect();
         patterns.sort_by_key(|p| p.id);
@@ -1961,6 +1961,7 @@ impl SynthBridge for AppSynthBridge {
             duration_beats,
             velocity,
             ornament: None,
+            note_graph: None,
         }))
     }
 
@@ -2032,107 +2033,314 @@ impl SynthBridge for AppSynthBridge {
         Ok(note_to_info(note))
     }
 
-    // === Sequencer: Note processors ===
+    // === Sequencer: pattern freeze ===
 
-    fn list_note_processors(
-        &self,
-        pattern_id: u32,
-    ) -> Result<Vec<NoteProcessorInfo>, McpBridgeError> {
-        let song = self.shared.song.read();
-        let pid = synth_sequencer::PatternId::new(pattern_id);
-        let pattern = song
-            .pattern(pid)
-            .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
-        pattern
-            .processors()
-            .iter()
-            .enumerate()
-            .map(|(index, proc)| {
-                Ok(NoteProcessorInfo {
-                    index,
-                    kind: proc.kind().to_string(),
-                    stage: proc.chain_stage(),
-                    config: serde_json::to_value(proc)
-                        .map_err(|e| McpBridgeError::Other(e.to_string()))?,
-                })
-            })
-            .collect()
-    }
-
-    fn add_note_processor(
-        &self,
-        pattern_id: u32,
-        processor: serde_json::Value,
-    ) -> Result<usize, McpBridgeError> {
-        let proc = parse_note_processor(processor)?;
-        let mut song = self.shared.song.write();
-        let pid = synth_sequencer::PatternId::new(pattern_id);
-        let pattern = song
-            .pattern_mut(pid)
-            .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
-        Ok(pattern.add_processor(proc))
-    }
-
-    fn set_note_processor(
-        &self,
-        pattern_id: u32,
-        index: usize,
-        processor: serde_json::Value,
-    ) -> Result<(), McpBridgeError> {
-        let proc = parse_note_processor(processor)?;
-        let mut song = self.shared.song.write();
-        let pid = synth_sequencer::PatternId::new(pattern_id);
-        let pattern = song
-            .pattern_mut(pid)
-            .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
-        let existing = pattern
-            .processors()
-            .get(index)
-            .ok_or(McpBridgeError::IndexOutOfBounds {
-                name: "note processor",
-                index,
-                count: pattern.processors().len(),
-            })?;
-        // Replacing a processor with a different chain stage would reorder the
-        // rack out of its locked execution order; require an explicit
-        // remove + add for that rather than silently breaking the chain.
-        if existing.chain_stage() != proc.chain_stage() {
-            return Err(McpBridgeError::Other(format!(
-                "cannot replace a '{}' processor with a '{}' (different chain stage); \
-                 remove it and add the new processor instead",
-                existing.kind(),
-                proc.kind()
-            )));
-        }
-        pattern.set_processor(index, proc);
-        Ok(())
-    }
-
-    fn remove_note_processor(&self, pattern_id: u32, index: usize) -> Result<(), McpBridgeError> {
-        let mut song = self.shared.song.write();
-        let pid = synth_sequencer::PatternId::new(pattern_id);
-        let pattern = song
-            .pattern_mut(pid)
-            .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
-        let count = pattern.processors().len();
-        pattern
-            .remove_processor(index)
-            .map(|_| ())
-            .ok_or(McpBridgeError::IndexOutOfBounds {
-                name: "note processor",
-                index,
-                count,
-            })
-    }
-
-    fn freeze_note_processors(&self, pattern_id: u32) -> Result<usize, McpBridgeError> {
+    fn freeze_pattern(&self, pattern_id: u32) -> Result<(usize, u32), McpBridgeError> {
         let mut song = self.shared.song.write();
         let bpm = song.tempo_at(synth_sequencer::Tick(0));
         let pid = synth_sequencer::PatternId::new(pattern_id);
+        if song.pattern(pid).is_none() {
+            return Err(McpBridgeError::PatternNotFound(pattern_id));
+        }
+        // Song::freeze_pattern bakes a bound note graph first (graph-over-rack
+        // precedence), else per-note ornaments + note-scope articulation.
+        let stats = song.freeze_pattern(pid, bpm);
+        Ok((stats.notes, stats.dropped))
+    }
+
+    // === Sequencer: Note Grid (pooled note-processing graphs) ===
+
+    fn list_note_graphs(&self) -> Result<Vec<NoteGraphInfo>, McpBridgeError> {
+        let song = self.shared.song.read();
+        Ok(song
+            .note_graphs()
+            .map(|g| note_graph_info(&song, g))
+            .collect())
+    }
+
+    fn get_note_graph(&self, graph_id: u32) -> Result<NoteGraphDetail, McpBridgeError> {
+        let song = self.shared.song.read();
+        let gid = synth_sequencer::NoteGraphId::new(graph_id);
+        let graph = song
+            .note_graph(gid)
+            .ok_or(McpBridgeError::NoteGraphNotFound(graph_id))?;
+        // Modules in processing (topological) order, falling back to id order if
+        // the derived order is empty (e.g. a freshly loaded, un-rebuilt graph).
+        let ordered: Vec<synth_sequencer::NoteModuleId> = if graph.processing_order.is_empty() {
+            graph.nodes.keys().copied().collect()
+        } else {
+            graph.processing_order.clone()
+        };
+        let modules = ordered
+            .iter()
+            .filter_map(|id| graph.nodes.get(id).map(|cfg| (id, cfg)))
+            .map(|(id, cfg)| {
+                Ok(NoteGraphModuleInfo {
+                    id: id.0,
+                    kind: cfg.kind().to_string(),
+                    config: serde_json::to_value(cfg)
+                        .map_err(|e| McpBridgeError::Other(e.to_string()))?,
+                })
+            })
+            .collect::<Result<Vec<_>, McpBridgeError>>()?;
+        let connections = graph
+            .connections
+            .iter()
+            .map(|c| NoteGraphConnectionInfo {
+                from: c.from.0,
+                to: c.to.0,
+                port: note_port_to_str(c.port).to_string(),
+                to_input: c.to_input,
+            })
+            .collect();
+        Ok(NoteGraphDetail {
+            info: note_graph_info(&song, graph),
+            modules,
+            connections,
+        })
+    }
+
+    fn create_note_graph(
+        &self,
+        name: String,
+        description: Option<String>,
+        color: Option<String>,
+    ) -> Result<u32, McpBridgeError> {
+        if name.trim().is_empty() {
+            return Err(McpBridgeError::EmptyName { kind: "note graph" });
+        }
+        let description = description.unwrap_or_default();
+        let len = description.chars().count();
+        if len > MAX_MODULE_DESCRIPTION_LEN {
+            return Err(McpBridgeError::DescriptionTooLong {
+                len,
+                max: MAX_MODULE_DESCRIPTION_LEN,
+            });
+        }
+        let color = match color {
+            Some(hex) => Some(synth_sequencer::TrackColor::from_hex(&hex).ok_or_else(|| {
+                McpBridgeError::Other(format!("invalid color '{hex}' (expected #rrggbb)"))
+            })?),
+            None => None,
+        };
+        let mut song = self.shared.song.write();
+        let gid = song.create_note_graph(name);
+        if let Some(graph) = song.note_graph_mut(gid) {
+            graph.description = description;
+            graph.color = color;
+        }
+        Ok(gid.0)
+    }
+
+    fn duplicate_note_graph(&self, graph_id: u32) -> Result<u32, McpBridgeError> {
+        let mut song = self.shared.song.write();
+        let gid = synth_sequencer::NoteGraphId::new(graph_id);
+        song.duplicate_note_graph(gid)
+            .map(|graph| graph.id.0)
+            .ok_or(McpBridgeError::NoteGraphNotFound(graph_id))
+    }
+
+    fn delete_note_graph(&self, graph_id: u32) -> Result<usize, McpBridgeError> {
+        let mut song = self.shared.song.write();
+        let gid = synth_sequencer::NoteGraphId::new(graph_id);
+        let usage = song.note_graph_usage(gid);
+        song.remove_note_graph(gid)
+            .ok_or(McpBridgeError::NoteGraphNotFound(graph_id))?;
+        Ok(usage)
+    }
+
+    fn add_note_graph_module(
+        &self,
+        graph_id: u32,
+        module: serde_json::Value,
+    ) -> Result<u32, McpBridgeError> {
+        let config = parse_note_module(module)?;
+        let mut song = self.shared.song.write();
+        let gid = synth_sequencer::NoteGraphId::new(graph_id);
+        let graph = song
+            .note_graph_mut(gid)
+            .ok_or(McpBridgeError::NoteGraphNotFound(graph_id))?;
+        let module_id = graph.next_module_id();
+        graph
+            .try_insert_node(module_id, config)
+            .map_err(|e| McpBridgeError::Other(e.to_string()))?;
+        // A serde-built `NoteScriptTransform` carries only its `source` (the
+        // compiled program is `#[serde(skip)]`), so compile it now or the node
+        // would be silently pass-through.
+        crate::project_apply::recompile_graph_scripts(graph);
+        Ok(module_id.0)
+    }
+
+    fn set_note_graph_module(
+        &self,
+        graph_id: u32,
+        module_id: u32,
+        module: serde_json::Value,
+    ) -> Result<(), McpBridgeError> {
+        let config = parse_note_module(module)?;
+        let mut song = self.shared.song.write();
+        let gid = synth_sequencer::NoteGraphId::new(graph_id);
+        let graph = song
+            .note_graph_mut(gid)
+            .ok_or(McpBridgeError::NoteGraphNotFound(graph_id))?;
+        let mid = synth_sequencer::NoteModuleId::new(module_id);
+        if !graph.nodes.contains_key(&mid) {
+            return Err(McpBridgeError::NoteGraphModuleNotFound {
+                graph_id,
+                module_id,
+            });
+        }
+        // Replacing keeps the id and its connections; validation rolls back on
+        // an edit that would orphan an existing edge.
+        graph
+            .try_insert_node(mid, config)
+            .map_err(|e| McpBridgeError::Other(e.to_string()))?;
+        // Compile a replaced `NoteScriptTransform`'s program (serde drops it).
+        crate::project_apply::recompile_graph_scripts(graph);
+        Ok(())
+    }
+
+    fn set_note_graph_script(
+        &self,
+        graph_id: u32,
+        module_id: u32,
+        source: String,
+    ) -> Result<String, McpBridgeError> {
+        let mut song = self.shared.song.write();
+        let gid = synth_sequencer::NoteGraphId::new(graph_id);
+        let graph = song
+            .note_graph_mut(gid)
+            .ok_or(McpBridgeError::NoteGraphNotFound(graph_id))?;
+        let mid = synth_sequencer::NoteModuleId::new(module_id);
+        let node = graph
+            .nodes
+            .get_mut(&mid)
+            .ok_or(McpBridgeError::NoteGraphModuleNotFound {
+                graph_id,
+                module_id,
+            })?;
+        let synth_sequencer::NoteModuleConfig::NoteScriptTransform(transform) = node else {
+            return Err(McpBridgeError::Other(format!(
+                "module {module_id} on graph {graph_id} is not a NoteScriptTransform"
+            )));
+        };
+        // The source is always persisted; the compile result only decides whether
+        // a program is installed (empty / failing sources are valid pass-through).
+        transform.source = source;
+        if transform.source().trim().is_empty() {
+            transform.set_compiled(None);
+            return Ok(format!(
+                "Script cleared on module {module_id} (graph {graph_id}) — passes notes through"
+            ));
+        }
+        match crate::session::compile_note_event_script(transform.source()) {
+            Ok(program) => {
+                transform.set_compiled(Some(program));
+                Ok(format!(
+                    "Script compiled and installed on module {module_id} (graph {graph_id})"
+                ))
+            }
+            Err(e) => {
+                transform.set_compiled(None);
+                Ok(format!(
+                    "Script saved on module {module_id} (graph {graph_id}) but did not compile \
+                     (passes notes through): {e}"
+                ))
+            }
+        }
+    }
+
+    fn remove_note_graph_module(
+        &self,
+        graph_id: u32,
+        module_id: u32,
+    ) -> Result<(), McpBridgeError> {
+        let mut song = self.shared.song.write();
+        let gid = synth_sequencer::NoteGraphId::new(graph_id);
+        let graph = song
+            .note_graph_mut(gid)
+            .ok_or(McpBridgeError::NoteGraphNotFound(graph_id))?;
+        let mid = synth_sequencer::NoteModuleId::new(module_id);
+        graph
+            .remove_node(mid)
+            .map(|_| ())
+            .ok_or(McpBridgeError::NoteGraphModuleNotFound {
+                graph_id,
+                module_id,
+            })
+    }
+
+    fn connect_note_graph(
+        &self,
+        graph_id: u32,
+        from: u32,
+        to: u32,
+        port: String,
+        to_input: u8,
+    ) -> Result<(), McpBridgeError> {
+        let port = parse_note_port(&port)?;
+        let mut song = self.shared.song.write();
+        let gid = synth_sequencer::NoteGraphId::new(graph_id);
+        let graph = song
+            .note_graph_mut(gid)
+            .ok_or(McpBridgeError::NoteGraphNotFound(graph_id))?;
+        let from = synth_sequencer::NoteModuleId::new(from);
+        let to = synth_sequencer::NoteModuleId::new(to);
+        let connection = synth_sequencer::NoteConnection {
+            from,
+            to,
+            port,
+            to_input,
+        };
+        graph
+            .try_connect(connection)
+            .map_err(|e| McpBridgeError::Other(e.to_string()))
+    }
+
+    fn set_pattern_note_graph(
+        &self,
+        pattern_id: u32,
+        graph_id: Option<u32>,
+    ) -> Result<(), McpBridgeError> {
+        let mut song = self.shared.song.write();
+        // Reject a dangling reference up-front so binding is never silently dry.
+        if let Some(id) = graph_id {
+            let gid = synth_sequencer::NoteGraphId::new(id);
+            if song.note_graph(gid).is_none() {
+                return Err(McpBridgeError::NoteGraphNotFound(id));
+            }
+        }
+        let pid = synth_sequencer::PatternId::new(pattern_id);
         let pattern = song
             .pattern_mut(pid)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
-        Ok(pattern.freeze_processors(bpm))
+        pattern.set_note_graph(graph_id.map(synth_sequencer::NoteGraphId::new));
+        Ok(())
+    }
+
+    fn set_note_note_graph(
+        &self,
+        pattern_id: u32,
+        note_id: u64,
+        graph_id: Option<u32>,
+    ) -> Result<(), McpBridgeError> {
+        let mut song = self.shared.song.write();
+        // Reject a dangling reference up-front so the binding is never silently dry.
+        if let Some(id) = graph_id {
+            let gid = synth_sequencer::NoteGraphId::new(id);
+            if song.note_graph(gid).is_none() {
+                return Err(McpBridgeError::NoteGraphNotFound(id));
+            }
+        }
+        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pattern = song
+            .pattern_mut(pid)
+            .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
+        let note = pattern
+            .note_mut(synth_sequencer::NoteId(note_id))
+            .ok_or(McpBridgeError::NoteNotFound(note_id))?;
+        note.note_graph = graph_id.map(synth_sequencer::NoteGraphId::new);
+        Ok(())
     }
 
     fn set_note_ornament(
@@ -7426,18 +7634,11 @@ fn collect_mod_matrix_routings(
         .collect()
 }
 
-/// Convert a sequencer `Note` to MCP `NoteInfo`.
-/// Deserialize a `NoteProcessor` from MCP-supplied JSON (externally tagged,
-/// e.g. `{"Chord": {...}}`). The single source of truth for note-processor
-/// parsing, shared by `add_note_processor` and `set_note_processor`.
-fn parse_note_processor(
+/// Parse an externally-tagged `NoteModuleConfig` (accepting a stringified-JSON
+/// payload for LLM clients that send the config as a string).
+fn parse_note_module(
     value: serde_json::Value,
-) -> Result<synth_sequencer::NoteProcessor, McpBridgeError> {
-    // LLM clients commonly send the processor as a stringified-JSON blob rather
-    // than a raw object (the tool description says "processor as JSON"). Without
-    // this the externally-tagged enum reads the whole string as the variant tag
-    // and fails with `unknown variant`. Re-parse a string payload as JSON; fall
-    // back to the original value so a genuine string still surfaces a clear error.
+) -> Result<synth_sequencer::NoteModuleConfig, McpBridgeError> {
     let value = match value {
         serde_json::Value::String(s) => {
             serde_json::from_str(&s).unwrap_or(serde_json::Value::String(s))
@@ -7445,7 +7646,44 @@ fn parse_note_processor(
         other => other,
     };
     serde_json::from_value(value)
-        .map_err(|e| McpBridgeError::Other(format!("invalid note processor: {e}")))
+        .map_err(|e| McpBridgeError::Other(format!("invalid note graph module: {e}")))
+}
+
+/// Parse a connection port name (`note_stream` / `value` / `gate`).
+fn parse_note_port(port: &str) -> Result<synth_sequencer::NotePortType, McpBridgeError> {
+    match port {
+        "note_stream" => Ok(synth_sequencer::NotePortType::NoteStream),
+        "value" => Ok(synth_sequencer::NotePortType::Value),
+        "gate" => Ok(synth_sequencer::NotePortType::Gate),
+        other => Err(McpBridgeError::Other(format!(
+            "invalid port '{other}' (expected one of: note_stream, value, gate)"
+        ))),
+    }
+}
+
+/// Snake_case name of a connection port, for MCP readers.
+fn note_port_to_str(port: synth_sequencer::NotePortType) -> &'static str {
+    match port {
+        synth_sequencer::NotePortType::NoteStream => "note_stream",
+        synth_sequencer::NotePortType::Value => "value",
+        synth_sequencer::NotePortType::Gate => "gate",
+    }
+}
+
+/// Build the summary `NoteGraphInfo` for a pooled graph.
+fn note_graph_info(
+    song: &synth_sequencer::Song,
+    graph: &synth_sequencer::NoteGraph,
+) -> NoteGraphInfo {
+    NoteGraphInfo {
+        id: graph.id.0,
+        name: graph.name.clone(),
+        description: graph.description.clone(),
+        color: graph.color.map(|c| c.to_hex()),
+        node_count: graph.node_count(),
+        connection_count: graph.connections.len(),
+        used_by_patterns: song.note_graph_usage(graph.id),
+    }
 }
 
 fn note_to_info(n: &synth_sequencer::Note) -> NoteInfo {
@@ -7460,6 +7698,7 @@ fn note_to_info(n: &synth_sequencer::Note) -> NoteInfo {
             .ornament
             .as_ref()
             .and_then(|o| serde_json::to_value(o).ok()),
+        note_graph: n.note_graph.map(|g| g.0),
     }
 }
 
@@ -8125,6 +8364,10 @@ pub fn analyze_song_harmony(
         _ => default_ts,
     };
 
+    // Analyze the played stream: expand each pattern through its bound note graph
+    // (plan §7), not just the authored source.
+    let bpm = song.tempo_at(synth_sequencer::Tick(0));
+
     let (scope, notes, range_start, range_end) = match query {
         HarmonyQuery::Pattern { pattern_id: pid } => {
             let pid_typed = PatternId(pid);
@@ -8132,8 +8375,9 @@ pub fn analyze_song_harmony(
                 return Err(McpBridgeError::Other(format!("Pattern {pid} not found")));
             };
             let length_ticks = pattern.length.0;
-            let mut notes = Vec::with_capacity(pattern.notes().len());
-            for n in pattern.notes() {
+            let expanded = song.expanded_pattern_notes(pid_typed, bpm);
+            let mut notes = Vec::with_capacity(expanded.len());
+            for n in &expanded {
                 let start_pt = n.start.0;
                 let end_pt = match n.duration {
                     Some(d) => start_pt.saturating_add(d.0),
@@ -8233,17 +8477,24 @@ pub fn analyze_song_harmony(
             }
 
             let mut notes: Vec<crate::harmony::AnalysisNote> = Vec::new();
+            // A pattern's expansion is identical across all its placements (the
+            // bake keys on PatternId, not the placement), so cache it per pattern
+            // rather than re-baking the graph for every placement.
+            let mut expanded_cache: HashMap<PatternId, Vec<synth_sequencer::Note>> = HashMap::new();
             for placement in
                 song.placements_in_range(synth_sequencer::Tick(start), synth_sequencer::Tick(end))
             {
                 if excluded_tracks.contains(&placement.track_id) {
                     continue;
                 }
-                let Some(pattern) = song.pattern(placement.pattern_id) else {
-                    continue;
-                };
                 let placement_start = placement.start.0;
-                for n in pattern.notes() {
+                // Expanded (graph-processed) notes are pattern-local, like the
+                // source, so the placement offset + transpose apply unchanged.
+                let pid = placement.pattern_id;
+                let expanded = expanded_cache
+                    .entry(pid)
+                    .or_insert_with(|| song.expanded_pattern_notes(pid, bpm));
+                for n in expanded.iter() {
                     let n_start = n.start.0;
                     let n_end_pt = match n.duration {
                         Some(d) => n_start.saturating_add(d.0),
@@ -8397,7 +8648,10 @@ fn analyze_pattern_impl(
     };
     let length_ticks = pattern.length.0;
     let pattern_name = pattern.name.clone();
-    let notes: Vec<synth_sequencer::Note> = pattern.notes().to_vec();
+    // Analyze the played stream: expand through a bound note graph (plan §7), not
+    // just the authored source. No binding ⇒ the source notes, unchanged.
+    let bpm = song.tempo_at(synth_sequencer::Tick(0));
+    let notes: Vec<synth_sequencer::Note> = song.expanded_pattern_notes(pid, bpm);
     let time_sig = song.default_time_signature;
     drop(song);
 
@@ -9068,6 +9322,9 @@ fn collect_form_scope(
 
     let song = shared.song.read();
     let mut warnings: Vec<String> = Vec::new();
+    // Analyze the played stream: expand each pattern through its bound note graph
+    // (plan §7), not just the authored source.
+    let bpm = song.tempo_at(synth_sequencer::Tick(0));
 
     match pattern_id {
         Some(pid) => {
@@ -9079,8 +9336,8 @@ fn collect_form_scope(
             let ts = song.default_time_signature;
             let ticks_per_bar = ts.ticks_per_bar().max(1);
             let total_bars = length_ticks.div_ceil(ticks_per_bar).max(1);
-            let notes: Vec<MelodicNote> = pattern
-                .notes()
+            let notes: Vec<MelodicNote> = song
+                .expanded_pattern_notes(pid_typed, bpm)
                 .iter()
                 .map(|n| MelodicNote {
                     track_id: 0,
@@ -9134,17 +9391,23 @@ fn collect_form_scope(
             }
 
             let mut notes: Vec<MelodicNote> = Vec::new();
+            // Cache each pattern's expansion — it's identical across placements
+            // (the bake keys on PatternId), so re-baking per placement is waste.
+            let mut expanded_cache: HashMap<PatternId, Vec<synth_sequencer::Note>> = HashMap::new();
             for placement in
                 song.placements_in_range(synth_sequencer::Tick(start), synth_sequencer::Tick(end))
             {
                 if excluded.contains(&placement.track_id) {
                     continue;
                 }
-                let Some(pattern) = song.pattern(placement.pattern_id) else {
-                    continue;
-                };
                 let placement_start = placement.start.0;
-                for n in pattern.notes() {
+                // Expanded (graph-processed) notes are pattern-local, so the
+                // placement offset + transpose apply the same as the source.
+                let pid = placement.pattern_id;
+                let expanded = expanded_cache
+                    .entry(pid)
+                    .or_insert_with(|| song.expanded_pattern_notes(pid, bpm));
+                for n in expanded.iter() {
                     let abs_start = placement_start.saturating_add(u64::from(n.start.0));
                     if abs_start < start || abs_start >= end {
                         continue;

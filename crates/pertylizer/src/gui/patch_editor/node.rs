@@ -16,9 +16,11 @@ use crate::gui::module_panel::{ModulePanelState, PortPosition};
 use crate::gui::theme::theme;
 use crate::gui::widgets::{CaptionTone, ModMarkers, WidgetPortDirection, caption, expose};
 
+use crate::gui::node_canvas;
+
 use super::{
     AudioInputAction, AudioInputSnapshot, EFFECT_CHAIN_AMBER, ModAddrCatalog, ModuleBodyCtx,
-    PanelParamsResult, PatchAnalysis, PatchEditor, PatchEditorResult, PortRenderInfo,
+    PanelParamsResult, PatchAnalysis, PatchEditor, PatchEditorResult, PatchPort, PortRenderInfo,
     ScriptDepGraph, convert_port_type, draw_audio_script_module_grid, draw_mod_matrix_grid,
     draw_script_module_grid, draw_visualizer_display, trim_sweep_to_complete_cycles,
 };
@@ -250,20 +252,19 @@ impl PatchEditor {
             })
             .collect();
 
-        let pending_info = self
-            .pending_connection()
-            .map(|p| (p.from_module, p.from_type, p.from_direction));
+        let pending_info = self.pending_wire_source();
         // Cycle-blocked targets were computed once for this frame; the highlight
         // just looks each module up.
         let cycle_blocked = &self.drag_cycle_blocked;
         let port_positions = &mut self.port_positions;
+        let wire_events = &mut self.wire_events;
         Self::draw_port_column_with(
             ui,
             direction,
             &ports,
             pending_info,
             cycle_blocked,
-            |port, center| {
+            |port, center, response| {
                 port_positions.insert(
                     (module_id, port.port_name),
                     PortPosition {
@@ -274,6 +275,14 @@ impl PatchEditor {
                         direction,
                     },
                 );
+                // Feed the shared wire FSM (drag-to-connect / click-click).
+                let pp = PatchPort {
+                    module: module_id,
+                    port: port.port_name,
+                    direction,
+                    port_type: port.port_type,
+                };
+                node_canvas::push_port_event(wire_events, response, pp, center);
             },
         );
     }

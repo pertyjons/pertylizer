@@ -17,6 +17,8 @@ pub enum AppView {
     Home,
     /// Instrument rack and patch editor view.
     Rack,
+    /// Note Grid view (pooled note-processing graphs: pool list + node canvas).
+    NoteGraph,
     /// Acoustic World Engine view.
     AcousticWorld,
     /// Pattern browser and editor view (orphan patterns + full-window piano roll).

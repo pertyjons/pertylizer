@@ -19,10 +19,12 @@ use crate::gui::widgets::{
 };
 use crate::patch::{GroupId, HexColor};
 
+use crate::gui::node_canvas;
+
 use super::{
     GROUP_HEADER_HEIGHT, GROUP_PADDING, GROUP_PORT_MARGIN, GroupContextMenuState, GroupLayout,
-    GroupPortKey, GroupTemplateAction, ModuleGroup, PatchEditor, PatchEditorResult, PortRenderInfo,
-    color32_to_hex, parse_hex_color, screen_to_world, snap_to_grid,
+    GroupPortKey, GroupTemplateAction, ModuleGroup, PatchEditor, PatchEditorResult, PatchPort,
+    PortRenderInfo, color32_to_hex, parse_hex_color, screen_to_world, snap_to_grid,
 };
 
 pub(super) fn collapsed_group_size(group: &ModuleGroup) -> Vec2 {
@@ -265,19 +267,18 @@ impl PatchEditor {
             })
             .collect();
 
-        let pending_info = self
-            .pending_connection()
-            .map(|p| (p.from_module, p.from_type, p.from_direction));
+        let pending_info = self.pending_wire_source();
         // Group columns expose ports from several member modules; the shared
         // per-frame set already covers them all.
         let cycle_blocked = &self.drag_cycle_blocked;
+        let wire_events = &mut self.wire_events;
         Self::draw_port_column_with(
             ui,
             direction,
             &ports,
             pending_info,
             cycle_blocked,
-            |port, center| {
+            |port, center, response| {
                 new_positions.insert(
                     GroupPortKey {
                         group_id: group.id,
@@ -293,6 +294,15 @@ impl PatchEditor {
                         direction,
                     },
                 );
+                // A collapsed-group exposed port wires like any other port; the
+                // connection uses its underlying (module, port) endpoint.
+                let pp = PatchPort {
+                    module: port.module_id,
+                    port: port.port_name,
+                    direction,
+                    port_type: port.port_type,
+                };
+                node_canvas::push_port_event(wire_events, response, pp, center);
             },
         );
     }

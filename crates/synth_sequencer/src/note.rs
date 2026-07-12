@@ -5,7 +5,7 @@
 use serde::{Deserialize, Serialize};
 use synth_core::{Hertz, Milliseconds, NormalizedValue, Semitones};
 
-use super::ids::{NoteId, NoteLane, TrackId};
+use super::ids::{NoteGraphId, NoteId, NoteLane, TrackId};
 use super::pitch::{Pitch, Velocity};
 use super::time::{Duration, PatternTick};
 
@@ -292,6 +292,12 @@ pub struct Note {
     /// to lane 0, so pre-lane projects load with every note in the first column.
     #[serde(default)]
     pub lane: NoteLane,
+    /// Per-note Note Grid graph (the note scope, plan §2.1) — the generalization
+    /// of `ornament`: this note's material runs through the referenced pooled
+    /// graph during source collection, before the pattern-scope graph. Additive;
+    /// defaults to `None` (no note-scope processing).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note_graph: Option<NoteGraphId>,
 }
 
 impl Note {
@@ -310,6 +316,7 @@ impl Note {
             expression: None,
             ornament: None,
             lane: NoteLane::ZERO,
+            note_graph: None,
         }
     }
 

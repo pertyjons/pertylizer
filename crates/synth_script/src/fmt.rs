@@ -181,6 +181,10 @@ fn render(program: &Program, comments: &[Comment], lines: &LineMap) -> String {
             OutChannel::Mono => "out",
             OutChannel::Left => "out.left",
             OutChannel::Right => "out.right",
+            OutChannel::Pitch => "out.pitch",
+            OutChannel::Vel => "out.vel",
+            OutChannel::Dur => "out.dur",
+            OutChannel::Gate => "out.gate",
         };
         stmts.push(Stmt::Body {
             sline: lines.line_of(o.span.start),
@@ -551,5 +555,16 @@ mod tests {
             "let x = in_l * 0.5\n\nout.left = x\nout.right = in_r\n"
         );
         idempotent("out.left = tanh(in_l)\nout.right = tanh(in_r)");
+    }
+
+    #[test]
+    fn note_event_outputs_format_and_round_trip() {
+        // The `note_event` field writes render with their `out.<field>` keyword
+        // and format stably; the parser is dialect-agnostic so this is pure text.
+        assert_eq!(
+            fmt("out.pitch=note_pitch+12\nout.vel=note_vel*in1"),
+            "out.pitch = note_pitch + 12\nout.vel = note_vel * in1\n"
+        );
+        idempotent("out.pitch = note_pitch + 12\nout.dur = note_dur\nout.gate = 1");
     }
 }

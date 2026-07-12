@@ -67,15 +67,38 @@ pub struct AudioBindings {
     pub first_sample: Option<u16>,
 }
 
-/// Per-sample audio output captured while running one evaluation. Each channel
-/// is `Some(v)` once the `out.left` / `out.right` multi-out grammar has written
-/// it (`Op::StoreAudioOut`), and `None` otherwise — a bare `out = expr` writes
-/// nothing here and leaves its value on the value stack, so `eval_block` falls
-/// back to duplicating the stack top to both unwritten channels.
+/// Number of addressable output slots captured during one evaluation. The
+/// dialect decides what each slot means: the audio dialect uses `0 = left`,
+/// `1 = right`; the `note_event` dialect uses `0 = pitch`, `1 = vel`,
+/// `2 = dur`, `3 = gate`.
+const OUT_SLOTS: usize = 4;
+
+/// Output slots captured while running one evaluation. Each slot is `Some(v)`
+/// once an `out.<member>` statement has written it (`Op::StoreAudioOut`), and
+/// `None` otherwise — a bare `out = expr` writes nothing here and leaves its
+/// value on the value stack, so `eval_block` falls back to duplicating the stack
+/// top to both unwritten audio channels, and `eval_note` reports unwritten note
+/// fields as `None` (pass-through).
 #[derive(Debug, Clone, Copy, Default)]
-struct ChannelOut {
-    left: Option<f32>,
-    right: Option<f32>,
+struct OutCapture {
+    slots: [Option<f32>; OUT_SLOTS],
+}
+
+/// The four note-event outputs a `note_event`-dialect script may write, produced
+/// by [`CompiledScript::eval_note`]. Each field is `Some(v)` iff the script wrote
+/// that `out.<field>` statement, and `None` otherwise — an unwritten field means
+/// the note-graph consumer should pass the source note's value through unchanged.
+///
+/// No clamping or sentinel interpretation is applied here (the store only
+/// sanitizes NaN/Inf to 0); the consumer interprets the raw values — e.g. a
+/// negative `vel` to drop a note, or a negative `dur` to restore "plays until
+/// cut" — before clamping the survivors into legal ranges.
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
+pub struct NoteOutputs {
+    pub pitch: Option<f32>,
+    pub vel: Option<f32>,
+    pub dur: Option<f32>,
+    pub gate: Option<f32>,
 }
 
 /// Per-voice mutable state for a running script: persistent state cells plus the
@@ -138,9 +161,33 @@ impl CompiledScript {
     pub fn eval(&self, sources: &[f32], regs: &mut RegisterFile, ctx: &EvalContext) -> f32 {
         let mut stack = Stack::new();
         let mut locals = [0.0f32; MAX_LOCALS];
-        let mut out = ChannelOut::default();
+        let mut out = OutCapture::default();
         self.run(sources, regs, ctx.dt(), &mut stack, &mut locals, &mut out);
         finite_or_zero(stack.top())
+    }
+
+    /// Evaluate a `note_event`-dialect script once for one note event. `sources`
+    /// holds the note-field / `in1..in4` values indexed by source register (the
+    /// caller builds it from the compiled input list); `regs` is a caller-owned
+    /// [`RegisterFile`] (a `note_event` transform is stateless per event, so the
+    /// caller resets or discards it between events). Returns the four
+    /// [`NoteOutputs`]: `Some(v)` for each `out.<field>` the script wrote, `None`
+    /// for an unwritten (pass-through) field. Real-time safe.
+    #[must_use]
+    pub fn eval_note(&self, sources: &[f32], regs: &mut RegisterFile) -> NoteOutputs {
+        let mut stack = Stack::new();
+        let mut locals = [0.0f32; MAX_LOCALS];
+        let mut out = OutCapture::default();
+        // A note_event script runs once per event with no per-block/per-sample
+        // time integration, so `dt` is 0 (time-based stateful ops simply hold).
+        // The transport position is available to the script via the `tick` field.
+        self.run(sources, regs, 0.0, &mut stack, &mut locals, &mut out);
+        NoteOutputs {
+            pitch: out.slots[0],
+            vel: out.slots[1],
+            dur: out.slots[2],
+            gate: out.slots[3],
+        }
     }
 
     /// Run the straight-line program once over `sources`, leaving the result on
@@ -156,7 +203,7 @@ impl CompiledScript {
         dt: f32,
         stack: &mut Stack,
         locals: &mut [f32; MAX_LOCALS],
-        out: &mut ChannelOut,
+        out: &mut OutCapture,
     ) {
         for op in &self.code {
             match *op {
@@ -408,12 +455,10 @@ impl CompiledScript {
                     let v = stack.pop();
                     regs.state_set(i, v); // layer-2 sanitize: NaN/Inf → 0
                 }
-                Op::StoreAudioOut(chan) => {
+                Op::StoreAudioOut(slot) => {
                     let v = finite_or_zero(stack.pop());
-                    if chan == 0 {
-                        out.left = Some(v);
-                    } else {
-                        out.right = Some(v);
+                    if let Some(cell) = out.slots.get_mut(slot as usize) {
+                        *cell = Some(v);
                     }
                 }
             }
@@ -468,14 +513,14 @@ impl CompiledScript {
             }
 
             stack.clear(); // reset sp only — keep the warm buffer
-            let mut out = ChannelOut::default();
+            let mut out = OutCapture::default();
             self.run(sources, regs, dt, &mut stack, &mut locals, &mut out);
 
             // Mono fallback: a bare `out = expr` leaves its value on the stack;
             // an unwritten channel (no `out.left`/`out.right`) duplicates it.
             let mono = finite_or_zero(stack.top());
-            out_left[i] = out.left.unwrap_or(mono);
-            out_right[i] = out.right.unwrap_or(mono);
+            out_left[i] = out.slots[0].unwrap_or(mono);
+            out_right[i] = out.slots[1].unwrap_or(mono);
         }
     }
 }
@@ -1030,6 +1075,59 @@ mod tests {
             false,
         );
         assert!(l1.iter().all(|&v| approx(v, 0.0)));
+    }
+
+    // ---- note_event dialect: `eval_note` ----------------------------------
+
+    #[test]
+    fn eval_note_captures_written_fields_only() {
+        // out.pitch (slot 0) = source[0] + 12; no other slot written → None.
+        let code = [
+            Op::PushSource(0),
+            Op::PushConst(0),
+            Op::Add,
+            Op::StoreAudioOut(0),
+        ];
+        let script = CompiledScript::new(code.to_vec(), vec![12.0], 1, 0);
+        let mut regs = RegisterFile::new(0, SEED);
+        let outs = script.eval_note(&[60.0], &mut regs);
+        assert_eq!(outs.pitch, Some(72.0));
+        assert_eq!(outs.vel, None);
+        assert_eq!(outs.dur, None);
+        assert_eq!(outs.gate, None);
+    }
+
+    #[test]
+    fn eval_note_writes_every_slot_independently() {
+        // Write all four slots from four distinct constants.
+        let code = [
+            Op::PushConst(0),
+            Op::StoreAudioOut(0), // pitch
+            Op::PushConst(1),
+            Op::StoreAudioOut(1), // vel
+            Op::PushConst(2),
+            Op::StoreAudioOut(2), // dur
+            Op::PushConst(3),
+            Op::StoreAudioOut(3), // gate
+        ];
+        let script = CompiledScript::new(code.to_vec(), vec![64.0, 0.5, 120.0, 0.9], 0, 0);
+        let mut regs = RegisterFile::new(0, SEED);
+        let outs = script.eval_note(&[], &mut regs);
+        assert_eq!(outs.pitch, Some(64.0));
+        assert_eq!(outs.vel, Some(0.5));
+        assert_eq!(outs.dur, Some(120.0));
+        assert_eq!(outs.gate, Some(0.9));
+    }
+
+    #[test]
+    fn eval_note_sanitizes_nan_to_zero_on_store() {
+        // A NaN written to a field is stored as 0 (never leaks NaN to the consumer).
+        let code = [Op::PushConst(0), Op::StoreAudioOut(1)];
+        let script = CompiledScript::new(code.to_vec(), vec![f32::NAN], 0, 0);
+        let mut regs = RegisterFile::new(0, SEED);
+        let outs = script.eval_note(&[], &mut regs);
+        assert_eq!(outs.vel, Some(0.0));
+        assert_eq!(outs.pitch, None);
     }
 
     #[test]

@@ -730,31 +730,62 @@ pub struct PatternInfo {
     pub length_beats: f32,
     /// Number of notes.
     pub note_count: usize,
-    /// Number of note processors in the pattern's rack (0 = none). Read the
-    /// rack itself with `list_note_processors`.
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub processor_count: usize,
 }
 
-#[allow(clippy::trivially_copy_pass_by_ref)]
-fn is_zero(n: &usize) -> bool {
-    *n == 0
-}
-
-/// One note processor in a pattern's rack, as surfaced to MCP readers.
+/// A pooled Note Grid graph in summary form (pool-list view).
 #[derive(Debug, Clone, Serialize)]
-pub struct NoteProcessorInfo {
-    /// Position in the rack (execution order; address for set/remove).
-    pub index: usize,
-    /// Kind tag (`scale_quantize`, `chord`, `arpeggiator`, `humanize`).
+pub struct NoteGraphInfo {
+    /// Pool-unique graph id (address for every note-graph tool).
+    pub id: u32,
+    /// User-facing name.
+    pub name: String,
+    /// Free-text description.
+    pub description: String,
+    /// RGB color as `#rrggbb`, or `None` if unset.
+    pub color: Option<String>,
+    /// Number of modules (nodes) in the graph.
+    pub node_count: usize,
+    /// Number of connections.
+    pub connection_count: usize,
+    /// How many patterns currently bind this graph.
+    pub used_by_patterns: usize,
+}
+
+/// One module (node) in a note graph, as surfaced to MCP readers.
+#[derive(Debug, Clone, Serialize)]
+pub struct NoteGraphModuleInfo {
+    /// Graph-local module id (address for connect / set / remove).
+    pub id: u32,
+    /// Kind tag (`scale_quantize`, `euclidean`, `note_lfo`, …).
     pub kind: String,
-    /// Canonical chain stage: 0 = scale-quantize, 1 = chord, 2 = arpeggiator,
-    /// 4 = humanize. (Stage 3 is per-note ornaments/strum, which live on the
-    /// note rather than in this rack, so it never appears here.)
-    pub stage: u8,
-    /// Full config as JSON — the same externally-tagged shape
-    /// `add_note_processor` / `set_note_processor` accept, so it round-trips.
+    /// Full config as externally-tagged JSON — the shape
+    /// `add_note_graph_module` / `set_note_graph_module` accept, so it
+    /// round-trips.
     pub config: serde_json::Value,
+}
+
+/// One connection in a note graph, as surfaced to MCP readers.
+#[derive(Debug, Clone, Serialize)]
+pub struct NoteGraphConnectionInfo {
+    /// Source (output-side) module id.
+    pub from: u32,
+    /// Destination (input-side) module id.
+    pub to: u32,
+    /// Signal type: `note_stream`, `value`, or `gate`.
+    pub port: String,
+    /// For `value`/`gate` edges, which value-input port of the target it feeds.
+    pub to_input: u8,
+}
+
+/// A note graph in full detail (nodes + connections), for `get_note_graph`.
+#[derive(Debug, Clone, Serialize)]
+pub struct NoteGraphDetail {
+    /// Summary metadata.
+    pub info: NoteGraphInfo,
+    /// Modules in processing (topological) order.
+    pub modules: Vec<NoteGraphModuleInfo>,
+    /// Connections.
+    pub connections: Vec<NoteGraphConnectionInfo>,
 }
 
 /// Information about a note in a pattern.
@@ -777,6 +808,11 @@ pub struct NoteInfo {
     /// has no ornament.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ornament: Option<serde_json::Value>,
+    /// Note-scope graph bound to this note for per-note articulation, if any —
+    /// the id `set_note_note_graph` accepts (so it round-trips). Omitted when the
+    /// note has no note-scope binding.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note_graph: Option<u32>,
 }
 
 /// Information about a sequencer track.

@@ -27,6 +27,59 @@ impl PatternId {
     }
 }
 
+/// Unique identifier for a Note Grid graph in the project pool.
+#[must_use]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
+pub struct NoteGraphId(pub u32);
+
+impl NoteGraphId {
+    /// Create a new note-graph ID.
+    #[inline]
+    pub const fn new(id: u32) -> Self {
+        Self(id)
+    }
+}
+
+/// Unique identifier for a module (node) within a single [`NoteGraphId`] graph.
+///
+/// Only unique within its owning graph — different graphs reuse the same small
+/// id space.
+#[must_use]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
+pub struct NoteModuleId(pub u32);
+
+impl NoteModuleId {
+    /// Create a new note-module ID.
+    #[inline]
+    pub const fn new(id: u32) -> Self {
+        Self(id)
+    }
+}
+
 // ============================================================================
 // INDEX TYPES
 // ============================================================================

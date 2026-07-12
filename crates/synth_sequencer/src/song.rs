@@ -2,7 +2,12 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::ids::{PatternId, ReturnBusId, SeqInstrumentId, TrackId};
+use super::ids::{
+    NoteGraphId, NoteId, NoteModuleId, PatternId, ReturnBusId, SeqInstrumentId, TrackId,
+};
+use super::note::Note;
+use super::note_graph::{HostKey, NoteConnection, NoteGraph, NoteModuleConfig, NoteScopeCtx};
+use super::note_processor::{ExpansionBuffer, NoteProcessor, note_scope_strum_tail};
 use super::pattern::{Pattern, RowResolution};
 use super::time::{Duration, PatternTick, TICKS_PER_QUARTER, Tick, TimeSignature};
 use super::track::{ReturnBus, SequencerTrack};
@@ -163,6 +168,19 @@ impl PatternPlacement {
     }
 }
 
+/// Outcome of [`Song::freeze_pattern`]: the pattern's note count after the bake,
+/// plus how many events were **dropped** during it (a graph node hitting the
+/// 128-event expansion cap — reported so an overflowing graph is surfaced, not
+/// silently truncated, plan §7). The retired rack path reports `dropped: 0` (its
+/// per-tick output is bounded).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct FreezeStats {
+    /// The pattern's note count after the bake.
+    pub notes: usize,
+    /// Events dropped during the bake (128-event cap overflow).
+    pub dropped: u32,
+}
+
 /// A complete song with patterns, tracks, and arrangement.
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Song {
@@ -203,6 +221,15 @@ pub struct Song {
     #[serde(default)]
     next_return_bus_id: u16,
 
+    /// Pooled Note Grid graphs — project assets referenced by [`NoteGraphId`].
+    /// A pattern binds one; editing a graph affects every binder. Their derived
+    /// `processing_order` is not serialized; [`Self::rebuild_note_graphs`]
+    /// recomputes it after load.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    note_graphs: Vec<NoteGraph>,
+    #[serde(default)]
+    next_note_graph_id: u32,
+
     /// Persisted transport loop region. The runtime loop lives in the sequencer
     /// engine (which the audio thread owns); this is the save/load carrier only,
     /// synced engine→here at save and here→engine at load. `None` = no loop set.
@@ -239,6 +266,8 @@ impl Song {
             row_resolution: RowResolution::default(),
             return_busses: Vec::new(),
             next_return_bus_id: 0,
+            note_graphs: Vec::new(),
+            next_note_graph_id: 0,
             transport_loop: None,
             structure_generation: 0,
         }
@@ -303,6 +332,327 @@ impl Song {
         self.patterns.push(Pattern::new(id, length));
         self.bump_structure();
         id
+    }
+
+    // === Note Grid pool ===
+
+    /// Create a new empty Note Grid graph in the pool, returning its id.
+    pub fn create_note_graph(&mut self, name: impl Into<String>) -> NoteGraphId {
+        let id = NoteGraphId(self.next_note_graph_id);
+        self.next_note_graph_id = self.next_note_graph_id.saturating_add(1);
+        self.note_graphs.push(NoteGraph::new(id, name));
+        id
+    }
+
+    /// Insert a pre-built graph, keeping `next_note_graph_id` ahead of restored
+    /// ids. Returns false if a graph with that id already exists.
+    pub fn insert_note_graph(&mut self, graph: NoteGraph) -> bool {
+        if self.note_graphs.iter().any(|g| g.id == graph.id) {
+            return false;
+        }
+        if graph.id.0 >= self.next_note_graph_id {
+            self.next_note_graph_id = graph.id.0.saturating_add(1);
+        }
+        self.note_graphs.push(graph);
+        true
+    }
+
+    /// Get a pooled graph by id.
+    #[must_use]
+    pub fn note_graph(&self, id: NoteGraphId) -> Option<&NoteGraph> {
+        self.note_graphs.iter().find(|g| g.id == id)
+    }
+
+    /// Get a pooled graph mutably by id. After mutating nodes/connections the
+    /// caller must call [`NoteGraph::rebuild_derived`] (the `try_*` editors do).
+    pub fn note_graph_mut(&mut self, id: NoteGraphId) -> Option<&mut NoteGraph> {
+        self.note_graphs.iter_mut().find(|g| g.id == id)
+    }
+
+    /// All pooled graphs, in insertion order.
+    pub fn note_graphs(&self) -> impl Iterator<Item = &NoteGraph> {
+        self.note_graphs.iter()
+    }
+
+    /// The pooled graphs as a slice — the note-scope resolution pool threaded
+    /// into per-tick source seeding ([`NoteScopeCtx`]) so each note's
+    /// `Note::note_graph` can be resolved during expansion.
+    #[must_use]
+    pub fn note_graph_pool(&self) -> &[NoteGraph] {
+        &self.note_graphs
+    }
+
+    /// All pooled graphs, mutably — for a non-RT resync step that rebuilds
+    /// derived, non-serialized per-node state after a load (e.g. recompiling
+    /// each [`NoteGraph`]'s `NoteScriptTransform` programs).
+    pub fn note_graphs_mut(&mut self) -> impl Iterator<Item = &mut NoteGraph> {
+        self.note_graphs.iter_mut()
+    }
+
+    /// How many patterns currently bind `id` — the pool-view usage count.
+    #[must_use]
+    pub fn note_graph_usage(&self, id: NoteGraphId) -> usize {
+        self.patterns
+            .iter()
+            .filter(|p| p.note_graph() == Some(id))
+            .count()
+    }
+
+    /// Remove a graph from the pool and clear every pattern reference to it
+    /// (bound patterns fall back to their rack). Returns the removed graph, or
+    /// `None` if absent.
+    pub fn remove_note_graph(&mut self, id: NoteGraphId) -> Option<NoteGraph> {
+        let idx = self.note_graphs.iter().position(|g| g.id == id)?;
+        for pattern in &mut self.patterns {
+            if pattern.note_graph() == Some(id) {
+                pattern.set_note_graph(None);
+            }
+        }
+        Some(self.note_graphs.remove(idx))
+    }
+
+    /// Recompute the derived `processing_order` of every pooled graph — call on
+    /// every non-RT load path (the order is not serialized, §1.2). Connection
+    /// sets are sanitized first so files saved before a validation rule was
+    /// added (duplicate edges, double-fed value inputs) load playable instead
+    /// of silently degrading to pass-through. A graph that still fails (e.g. a
+    /// corrupt saved cycle) keeps an empty order and is treated as
+    /// pass-through, never a load failure.
+    pub fn rebuild_note_graphs(&mut self) {
+        for graph in &mut self.note_graphs {
+            graph.sanitize_connections();
+            let _ = graph.rebuild_derived();
+        }
+    }
+
+    /// Convert a pattern's linear `NoteProcessor` rack into a new pooled Note
+    /// Grid graph — one `Processor` node per rack stage, chained in the rack's
+    /// (canonical) order — then bind the pattern to it and clear the rack.
+    /// Returns the new graph id, or `None` if the pattern is missing, already
+    /// graph-bound, or has an empty rack. The graph is a plain linear chain that
+    /// reproduces the rack's output for this pattern — including seeded Humanize
+    /// (its seed is pre-compensated for the host key); the only residual is a
+    /// `Random`-mode arpeggiator, whose step order re-seeds per host. This is
+    /// both the one-click UI action and the primitive the load migration reuses.
+    pub fn convert_rack_to_graph(&mut self, pattern_id: PatternId) -> Option<NoteGraphId> {
+        let pattern = self.pattern(pattern_id)?;
+        if pattern.note_graph().is_some() || pattern.processors().is_empty() {
+            return None;
+        }
+        let procs: Vec<NoteProcessor> = pattern.processors().to_vec();
+        let name = if pattern.name.is_empty() {
+            "Rack".to_owned()
+        } else {
+            format!("{} FX", pattern.name)
+        };
+        // The rack evaluated with host salt 0; the graph evaluates with this
+        // pattern's host key. Pre-compensate seeded stages so the migrated graph
+        // reproduces the rack's rendered output for the pattern it came from.
+        let host_salt = HostKey::from(pattern_id).get();
+        let id = self.create_note_graph(name);
+        if let Some(graph) = self.note_graph_mut(id) {
+            let mut prev: Option<NoteModuleId> = None;
+            for (i, proc) in procs.iter().enumerate() {
+                let nid = NoteModuleId::new((i + 1) as u32);
+                // Humanize XORs host_salt into its seed at eval, so pre-XORing it
+                // here cancels out and the draws match the rack byte-for-byte. Arp
+                // Random has no seed field to compensate, so its step order
+                // re-seeds per host (uncommon; the only residual difference).
+                let proc = match *proc {
+                    NoteProcessor::Humanize(mut h) => {
+                        h.seed ^= host_salt;
+                        NoteProcessor::Humanize(h)
+                    }
+                    other => other,
+                };
+                // Cap-guard: a rack longer than MAX_NOTE_GRID_NODES stops here,
+                // silently dropping the excess stages (racks are effectively never
+                // that long; a hard error would block the load).
+                if graph
+                    .try_insert_node(nid, NoteModuleConfig::Processor(proc))
+                    .is_err()
+                {
+                    break;
+                }
+                if let Some(p) = prev {
+                    let _ = graph.try_connect(NoteConnection::stream(p, nid));
+                }
+                prev = Some(nid);
+            }
+            let _ = graph.rebuild_derived();
+        }
+        if let Some(pattern) = self.pattern_mut(pattern_id) {
+            pattern.set_note_graph(Some(id));
+            pattern.clear_processors();
+        }
+        Some(id)
+    }
+
+    /// Migrate every pattern's legacy `NoteProcessor` rack into a pooled Note
+    /// Grid graph (via [`Self::convert_rack_to_graph`]), so projects saved before
+    /// the Note Grid load as graphs. Patterns already bound to a graph, or with
+    /// an empty rack, are untouched. Returns the number of patterns migrated.
+    /// Call on load **before** [`Self::rebuild_note_graphs`] — each conversion
+    /// builds its own graph's order, and the later rebuild covers the rest.
+    pub fn migrate_processor_racks_to_graphs(&mut self) -> usize {
+        // Collect ids first: `convert_rack_to_graph` takes `&mut self` and
+        // mutates both the pool and the pattern, so a live patterns borrow can't
+        // span the calls.
+        let ids: Vec<PatternId> = self.patterns.iter().map(|p| p.id).collect();
+        ids.into_iter()
+            .filter(|&pid| self.convert_rack_to_graph(pid).is_some())
+            .count()
+    }
+
+    /// Clone a pooled graph into a fresh id (`"<name> copy"`), copying content
+    /// and metadata — the "duplicate" / "make unique" primitive. Returns the
+    /// new graph's snapshot (callers use it for undo), or `None` if `src`
+    /// does not exist.
+    pub fn duplicate_note_graph(&mut self, src: NoteGraphId) -> Option<NoteGraph> {
+        let src = self.note_graph(src)?.clone();
+        let id = self.create_note_graph(format!("{} copy", src.name));
+        if let Some(dst) = self.note_graph_mut(id) {
+            dst.description = src.description;
+            dst.color = src.color;
+            dst.nodes = src.nodes;
+            dst.connections = src.connections;
+            dst.node_positions = src.node_positions;
+            // A copy of a valid graph revalidates identically.
+            let _ = dst.rebuild_derived();
+        }
+        self.note_graph(id).cloned()
+    }
+
+    /// Freeze a pattern's note processing into plain notes, honoring playback
+    /// precedence (plan §7): a bound, resolvable note graph bakes; otherwise
+    /// the processor rack + per-note ornaments bake. A dangling graph id is
+    /// cleared by the graph path and falls back to the rack — matching the
+    /// engine's dangling-id fallback, so freeze always bakes what playback
+    /// plays. Returns the post-bake note count plus any dropped-event count
+    /// ([`FreezeStats`]).
+    pub fn freeze_pattern(&mut self, pattern_id: PatternId, bpm: synth_core::Bpm) -> FreezeStats {
+        if let Some(dropped) = self.freeze_pattern_note_graph(pattern_id, bpm) {
+            let notes = self.pattern(pattern_id).map_or(0, |p| p.notes().len());
+            return FreezeStats { notes, dropped };
+        }
+        // Rack fallback. Disjoint field borrow: the note-scope pool
+        // (`note_graphs`, shared) alongside the mutable pattern (`patterns`) —
+        // `pattern_mut` would borrow all of `self` and conflict with the pool
+        // borrow. The rack bake resolves each note's own note-scope graph so
+        // freeze matches playback (plan §2.1, §7). The retired rack's per-tick
+        // output is bounded, so its drop count is reported as 0.
+        let graphs = &self.note_graphs;
+        if let Some(pattern) = self.patterns.iter_mut().find(|p| p.id == pattern_id) {
+            return FreezeStats {
+                notes: pattern.freeze_processors(bpm, graphs),
+                dropped: 0,
+            };
+        }
+        FreezeStats {
+            notes: self.pattern(pattern_id).map_or(0, |p| p.notes().len()),
+            dropped: 0,
+        }
+    }
+
+    /// Bake a pattern's bound Note Grid graph into plain notes and clear the
+    /// binding — the pooled graph itself survives for other patterns. Purity
+    /// makes the bake identical to playback (plan §7). Returns `Some(dropped)`
+    /// with the events dropped during the bake if a graph was baked; a pattern
+    /// with no binding is a no-op and a dangling id has its stale reference
+    /// cleared, both returning `None`.
+    pub fn freeze_pattern_note_graph(
+        &mut self,
+        pattern_id: PatternId,
+        bpm: synth_core::Bpm,
+    ) -> Option<u32> {
+        let gid = self.pattern(pattern_id).and_then(Pattern::note_graph)?;
+        let Some(graph) = self.note_graph(gid) else {
+            // Dangling id — clear the stale reference, nothing to bake.
+            if let Some(pattern) = self.pattern_mut(pattern_id) {
+                pattern.set_note_graph(None);
+            }
+            return None;
+        };
+        let pattern = self.pattern(pattern_id)?;
+        // Extend the walk past the source span by any strummed chord's tail and
+        // any timing node's echo tail — the pattern-scope graph's own, plus the
+        // widest note-scope articulation tail of any note bound to a graph — so a
+        // strum or echo near the pattern end bakes in full (mirrors the rack's
+        // `freeze_processors`; plan `note-grid.md` §11).
+        let note_scope_tail = note_scope_strum_tail(pattern.notes(), &self.note_graphs);
+        let walk_end = pattern
+            .source_walk_end()
+            .saturating_add(graph.max_walk_tail())
+            .saturating_add(note_scope_tail);
+        let mut ns_scratch = ExpansionBuffer::new();
+        let mut ns_ctx = NoteScopeCtx {
+            pool: &self.note_graphs,
+            scratch: &mut ns_scratch,
+        };
+        let (baked, dropped) = graph.bake_counted(
+            pattern.notes(),
+            PatternTick(walk_end),
+            HostKey::from(pattern_id),
+            bpm,
+            Some(&mut ns_ctx),
+        );
+        if let Some(pattern) = self.pattern_mut(pattern_id) {
+            pattern.replace_with_baked(baked);
+            pattern.set_note_graph(None);
+            // The bound graph suppressed the rack at playback; leaving the
+            // rack alive would re-process the baked notes, so playback would
+            // change right after the freeze. Retire it with the binding.
+            pattern.clear_processors();
+        }
+        Some(dropped)
+    }
+
+    /// The pattern's notes **as they play**: expanded through the bound Note Grid
+    /// graph (and any per-note note-scope graphs) if one is set, else the raw
+    /// authored notes. Non-mutating — offline note analyzers use this so they
+    /// reflect the played stream, not just the source (plan §7; resolves the
+    /// "analyzers read source not expansion" debt for the pattern-graph case).
+    /// A dangling/absent graph binding falls back to the authored notes.
+    #[must_use]
+    pub fn expanded_pattern_notes(&self, pattern_id: PatternId, bpm: synth_core::Bpm) -> Vec<Note> {
+        let Some(pattern) = self.pattern(pattern_id) else {
+            return Vec::new();
+        };
+        let Some(graph) = pattern.note_graph().and_then(|gid| self.note_graph(gid)) else {
+            return pattern.notes().to_vec();
+        };
+        // Walk the whole source span plus any strum/echo/note-scope tail, exactly
+        // like freeze — so the analysis sees the full played figure.
+        let note_scope_tail = note_scope_strum_tail(pattern.notes(), &self.note_graphs);
+        let walk_end = pattern
+            .source_walk_end()
+            .saturating_add(graph.max_walk_tail())
+            .saturating_add(note_scope_tail);
+        let mut ns_scratch = ExpansionBuffer::new();
+        let mut ns_ctx = NoteScopeCtx {
+            pool: &self.note_graphs,
+            scratch: &mut ns_scratch,
+        };
+        graph
+            .bake(
+                pattern.notes(),
+                PatternTick(walk_end),
+                HostKey::from(pattern_id),
+                bpm,
+                Some(&mut ns_ctx),
+            )
+            .into_iter()
+            .enumerate()
+            .map(|(i, (tick, en))| {
+                // Synthesize a plain Note from the expanded event; ids are
+                // positional (analyzers key on pitch/timing/velocity, not id).
+                let mut note = Note::new(NoteId(i as u64), tick, en.pitch, en.velocity);
+                if let Some(d) = en.duration {
+                    note = note.with_duration(d);
+                }
+                note
+            })
+            .collect()
     }
 
     /// Get a pattern by ID.
@@ -442,9 +792,12 @@ impl Song {
             let _ = new_pattern.insert_note(note.clone());
         }
 
-        // Copy automation lanes and the note-processor rack
+        // Copy automation lanes and the (legacy) note-processor rack
         new_pattern.automation = source.automation.clone();
         new_pattern.processors = source.processors.clone();
+        // Copy the Note Grid binding — a duplicate must play like its source
+        // (the pooled graph is shared by reference, like an instrument).
+        new_pattern.set_note_graph(source.note_graph());
 
         self.patterns.push(new_pattern);
         self.bump_structure();
@@ -1420,5 +1773,628 @@ mod tests {
             .get(&(SeqInstrumentId::new(2), ModuleType::Filter, 1))
             .expect("filter instance 1 must be indexed");
         assert!(params.contains("cutoff"));
+    }
+
+    // --- Note Grid pool -----------------------------------------------------
+
+    use crate::ids::NoteModuleId;
+    use crate::note_graph::{NoteConnection, NoteModuleConfig};
+    use crate::note_processor::{Humanize, NoteProcessor};
+
+    fn humanize_node() -> NoteModuleConfig {
+        NoteModuleConfig::Processor(NoteProcessor::Humanize(Humanize::default()))
+    }
+
+    /// Add a 1->2 chain to the pooled graph `gid`.
+    fn build_chain(song: &mut Song, gid: NoteGraphId) {
+        let g = song.note_graph_mut(gid).expect("graph");
+        g.try_insert_node(NoteModuleId::new(1), humanize_node())
+            .unwrap();
+        g.try_insert_node(NoteModuleId::new(2), humanize_node())
+            .unwrap();
+        g.try_connect(NoteConnection::stream(
+            NoteModuleId::new(1),
+            NoteModuleId::new(2),
+        ))
+        .unwrap();
+    }
+
+    #[test]
+    fn note_graph_pool_crud_and_usage() {
+        let mut song = Song::new("t");
+        let gid = song.create_note_graph("arp");
+        assert_eq!(song.note_graphs().count(), 1);
+        assert!(song.note_graph(gid).is_some());
+        build_chain(&mut song, gid);
+
+        let pid = song.create_pattern(Duration(960));
+        song.pattern_mut(pid).unwrap().set_note_graph(Some(gid));
+        assert_eq!(song.note_graph_usage(gid), 1);
+
+        // Removing the graph clears the pattern reference.
+        let removed = song.remove_note_graph(gid).expect("removed");
+        assert_eq!(removed.id, gid);
+        assert_eq!(song.note_graph_usage(gid), 0);
+        assert_eq!(song.pattern(pid).unwrap().note_graph(), None);
+        assert!(song.note_graph(gid).is_none());
+    }
+
+    #[test]
+    fn note_graph_survives_round_trip_and_rebuilds_order() {
+        let mut song = Song::new("t");
+        let gid = song.create_note_graph("chain");
+        build_chain(&mut song, gid);
+        let pid = song.create_pattern(Duration(960));
+        song.pattern_mut(pid).unwrap().set_note_graph(Some(gid));
+
+        let json = serde_json::to_string(&song).unwrap();
+        let mut back: Song = serde_json::from_str(&json).unwrap();
+
+        // processing_order is not serialized → empty until rebuilt.
+        assert!(back.note_graph(gid).unwrap().processing_order.is_empty());
+        back.rebuild_note_graphs();
+        assert_eq!(
+            back.note_graph(gid).unwrap().processing_order,
+            vec![NoteModuleId::new(1), NoteModuleId::new(2)]
+        );
+        // Binding survived, and next_note_graph_id stayed ahead of restored ids.
+        assert_eq!(back.pattern(pid).unwrap().note_graph(), Some(gid));
+        assert_ne!(back.create_note_graph("second"), gid);
+    }
+
+    #[test]
+    fn dangling_note_graph_reference_resolves_to_none() {
+        let mut song = Song::new("t");
+        let pid = song.create_pattern(Duration(960));
+        // Bind a non-existent graph id (e.g. after an out-of-band removal).
+        song.pattern_mut(pid)
+            .unwrap()
+            .set_note_graph(Some(NoteGraphId::new(99)));
+        // The pool has no such graph (pass-through is decided at expansion)…
+        assert!(song.note_graph(NoteGraphId::new(99)).is_none());
+        // …but the binding itself persists.
+        assert_eq!(
+            song.pattern(pid).unwrap().note_graph(),
+            Some(NoteGraphId::new(99))
+        );
+    }
+
+    #[test]
+    fn convert_rack_to_graph_matches_rack_playback() {
+        use crate::note_processor::{
+            Chord, ExpandedNote, ExpansionBuffer, Humanize, ScaleQuantize,
+        };
+        use crate::pitch::{Pitch, Velocity};
+        use synth_core::NormalizedValue;
+
+        let mut song = Song::new("t");
+        let pid = song.create_pattern(Duration(960));
+        {
+            let p = song.pattern_mut(pid).unwrap();
+            let _ = p.add_note(PatternTick(0), Pitch::new(61).unwrap(), Velocity::MF);
+            let _ = p.add_note(PatternTick(240), Pitch::new(66).unwrap(), Velocity::MF);
+            p.add_processor(NoteProcessor::ScaleQuantize(ScaleQuantize::default()));
+            p.add_processor(NoteProcessor::Chord(Chord::major()));
+            // A SEEDED Humanize: byte-identical only because convert pre-compensates
+            // its seed for the host key (the fix — without it the graph re-seeds).
+            p.add_processor(NoteProcessor::Humanize(Humanize {
+                velocity: NormalizedValue::new(0.3),
+                gate: NormalizedValue::new(0.2),
+                seed: 0x9E37_79B9,
+            }));
+        }
+        let bpm = Bpm::DEFAULT;
+        let expand = |song: &Song, use_graph: bool| -> Vec<(u32, ExpandedNote)> {
+            let p = song.pattern(pid).unwrap();
+            let mut buf = ExpansionBuffer::new();
+            let mut out = Vec::new();
+            for t in 0..960 {
+                if use_graph {
+                    let g = song.note_graph(p.note_graph().unwrap()).unwrap();
+                    g.expand_at_tick(
+                        p.notes(),
+                        PatternTick(t),
+                        HostKey::from(pid),
+                        bpm,
+                        |_| true,
+                        None,
+                        None,
+                        &mut buf,
+                    );
+                } else {
+                    p.expand_at_tick(PatternTick(t), |_| true, bpm, None, &mut buf);
+                }
+                out.extend(buf.notes().iter().map(|n| (t, *n)));
+            }
+            out
+        };
+        let rack_out = expand(&song, false);
+        let gid = song.convert_rack_to_graph(pid).expect("rack converts");
+        assert_eq!(song.pattern(pid).unwrap().note_graph(), Some(gid));
+        assert!(song.pattern(pid).unwrap().processors().is_empty());
+        assert_eq!(rack_out, expand(&song, true), "graph plays like the rack");
+        // Idempotent: an already-bound / empty-rack pattern does not re-convert.
+        assert_eq!(song.convert_rack_to_graph(pid), None);
+    }
+
+    /// Full playback expansion of a pattern over `[0, walk_end)`, resolving each
+    /// note's note-scope graph from the pool — the reference for freeze equality.
+    fn note_scope_playback(
+        song: &Song,
+        pid: PatternId,
+        bpm: Bpm,
+    ) -> Vec<(u32, u8, u32, Option<u32>)> {
+        use crate::note_processor::{ExpansionBuffer, note_scope_strum_tail};
+        let p = song.pattern(pid).unwrap();
+        let mut scratch = ExpansionBuffer::new();
+        let mut buf = ExpansionBuffer::new();
+        let mut lookback = crate::lookback_pool();
+        let mut out = Vec::new();
+        // Mirror `freeze_pattern`'s walk exactly (the bound pattern-scope graph's
+        // own strum tail + echo tail, plus the widest note-scope articulation
+        // tail) so this reference can't drift from freeze if a strumming or
+        // echoing pattern-scope graph is used. (These tests carry no rack, so the
+        // rack strum tail is 0.)
+        let pattern_scope_tail = p
+            .note_graph()
+            .and_then(|gid| song.note_graph(gid))
+            .map_or(0, NoteGraph::max_walk_tail);
+        let walk_end = p
+            .source_walk_end()
+            .saturating_add(pattern_scope_tail)
+            .saturating_add(note_scope_strum_tail(p.notes(), song.note_graph_pool()));
+        for t in 0..walk_end {
+            let mut ctx = NoteScopeCtx {
+                pool: song.note_graph_pool(),
+                scratch: &mut scratch,
+            };
+            match p.note_graph().and_then(|gid| song.note_graph(gid)) {
+                Some(g) => g.expand_at_tick(
+                    p.notes(),
+                    PatternTick(t),
+                    HostKey::from(pid),
+                    bpm,
+                    |_| true,
+                    Some(&mut ctx),
+                    Some(&mut lookback),
+                    &mut buf,
+                ),
+                None => p.expand_at_tick(PatternTick(t), |_| true, bpm, Some(&mut ctx), &mut buf),
+            }
+            out.extend(buf.notes().iter().map(|n| {
+                (
+                    t,
+                    n.pitch.as_midi(),
+                    n.velocity.as_f32().to_bits(),
+                    n.duration.map(|d| d.0),
+                )
+            }));
+        }
+        out.sort_unstable();
+        out
+    }
+
+    #[test]
+    fn note_scope_freeze_equals_playback_no_rack() {
+        use crate::note_processor::{Chord, NoteProcessor};
+        use crate::pitch::{Pitch, Velocity};
+        // One note bound to a note-scope triad graph, no rack, no pattern graph:
+        // freeze goes through `freeze_processors` (the `has_note_scope` guard).
+        let mut song = Song::new("t");
+        let pid = song.create_pattern(Duration(960));
+        let gid = song.create_note_graph("triad");
+        song.note_graph_mut(gid)
+            .unwrap()
+            .try_insert_node(
+                NoteModuleId::new(1),
+                NoteModuleConfig::Processor(NoteProcessor::Chord(Chord::major())),
+            )
+            .unwrap();
+        {
+            let p = song.pattern_mut(pid).unwrap();
+            let nid = p.add_note(PatternTick(0), Pitch::new(60).unwrap(), Velocity::MF);
+            p.note_mut(nid).unwrap().note_graph = Some(gid);
+        }
+        song.rebuild_note_graphs();
+
+        let bpm = Bpm::DEFAULT;
+        let expected = note_scope_playback(&song, pid, bpm);
+        assert_eq!(expected.len(), 3, "triad, three tones");
+
+        song.freeze_pattern(pid, bpm);
+        let p = song.pattern(pid).unwrap();
+        let mut baked: Vec<(u32, u8, u32, Option<u32>)> = p
+            .notes()
+            .iter()
+            .map(|n| {
+                (
+                    n.start.0,
+                    n.pitch.as_midi(),
+                    n.velocity.as_f32().to_bits(),
+                    n.duration.map(|d| d.0),
+                )
+            })
+            .collect();
+        baked.sort_unstable();
+        assert_eq!(baked, expected, "note-scope freeze must equal playback");
+        assert!(
+            p.notes().iter().all(|n| n.note_graph.is_none()),
+            "baked notes are plain (the note-scope binding is retired)"
+        );
+    }
+
+    #[test]
+    fn note_scope_freeze_equals_playback_through_pattern_graph() {
+        use crate::note_processor::{Chord, NoteProcessor, PitchClass, ScaleMask, ScaleQuantize};
+        use crate::pitch::{Pitch, Velocity};
+        // Note scope articulates a triad; a bound *pattern-scope* graph then
+        // quantizes it — so freeze runs the bake path (`freeze_pattern_note_graph`)
+        // and must still equal playback.
+        let mut song = Song::new("t");
+        let pid = song.create_pattern(Duration(960));
+        let ns_gid = song.create_note_graph("triad");
+        song.note_graph_mut(ns_gid)
+            .unwrap()
+            .try_insert_node(
+                NoteModuleId::new(1),
+                NoteModuleConfig::Processor(NoteProcessor::Chord(Chord::major())),
+            )
+            .unwrap();
+        let pat_gid = song.create_note_graph("quantize");
+        song.note_graph_mut(pat_gid)
+            .unwrap()
+            .try_insert_node(
+                NoteModuleId::new(1),
+                NoteModuleConfig::Processor(NoteProcessor::ScaleQuantize(ScaleQuantize {
+                    root: PitchClass::new(0),
+                    mask: ScaleMask::from_intervals(&[0, 2, 3, 5, 7, 9, 10]),
+                })),
+            )
+            .unwrap();
+        {
+            let p = song.pattern_mut(pid).unwrap();
+            let nid = p.add_note(PatternTick(0), Pitch::new(60).unwrap(), Velocity::MF);
+            p.note_mut(nid).unwrap().note_graph = Some(ns_gid);
+            p.set_note_graph(Some(pat_gid));
+        }
+        song.rebuild_note_graphs();
+
+        let bpm = Bpm::DEFAULT;
+        let expected = note_scope_playback(&song, pid, bpm);
+        assert!(!expected.is_empty(), "the articulated, quantized triad");
+
+        song.freeze_pattern(pid, bpm);
+        let p = song.pattern(pid).unwrap();
+        let mut baked: Vec<(u32, u8, u32, Option<u32>)> = p
+            .notes()
+            .iter()
+            .map(|n| {
+                (
+                    n.start.0,
+                    n.pitch.as_midi(),
+                    n.velocity.as_f32().to_bits(),
+                    n.duration.map(|d| d.0),
+                )
+            })
+            .collect();
+        baked.sort_unstable();
+        assert_eq!(baked, expected, "bake-path freeze must equal playback");
+        assert_eq!(
+            p.note_graph(),
+            None,
+            "the pattern-scope binding is retired by the bake"
+        );
+    }
+
+    #[test]
+    fn migrate_processor_racks_converts_only_unbound_racks() {
+        use crate::note_processor::ScaleQuantize;
+
+        let mut song = Song::new("t");
+        // Pattern A: a legacy rack, no binding → migrates.
+        let a = song.create_pattern(Duration(960));
+        song.pattern_mut(a)
+            .unwrap()
+            .add_processor(NoteProcessor::ScaleQuantize(ScaleQuantize::default()));
+        // Pattern B: already graph-bound → untouched.
+        let gid = song.create_note_graph("existing");
+        let b = song.create_pattern(Duration(960));
+        song.pattern_mut(b).unwrap().set_note_graph(Some(gid));
+        // Pattern C: empty rack, no binding → untouched.
+        let c = song.create_pattern(Duration(960));
+
+        assert_eq!(song.migrate_processor_racks_to_graphs(), 1);
+
+        // A converted: bound to a fresh graph, rack drained.
+        assert!(song.pattern(a).unwrap().note_graph().is_some());
+        assert!(song.pattern(a).unwrap().processors().is_empty());
+        assert_ne!(song.pattern(a).unwrap().note_graph(), Some(gid));
+        // B kept its existing binding; C stays unbound.
+        assert_eq!(song.pattern(b).unwrap().note_graph(), Some(gid));
+        assert_eq!(song.pattern(c).unwrap().note_graph(), None);
+        // Idempotent: a second pass migrates nothing.
+        assert_eq!(song.migrate_processor_racks_to_graphs(), 0);
+    }
+
+    #[test]
+    fn freeze_pattern_note_graph_bakes_and_clears_binding() {
+        use crate::note_processor::{PitchClass, ScaleMask, ScaleQuantize};
+        use crate::pitch::{Pitch, Velocity};
+
+        let mut song = Song::new("t");
+        let gid = song.create_note_graph("snap");
+        {
+            let g = song.note_graph_mut(gid).unwrap();
+            g.try_insert_node(
+                NoteModuleId::new(1),
+                NoteModuleConfig::Processor(NoteProcessor::ScaleQuantize(ScaleQuantize {
+                    root: PitchClass::new(0),
+                    mask: ScaleMask::MAJOR,
+                })),
+            )
+            .unwrap();
+        }
+        let pid = song.create_pattern(Duration(960));
+        {
+            let p = song.pattern_mut(pid).unwrap();
+            let _ = p.add_note(PatternTick(0), Pitch::new(61).unwrap(), Velocity::MF);
+            p.set_note_graph(Some(gid));
+        }
+
+        assert!(
+            song.freeze_pattern_note_graph(pid, synth_core::Bpm::DEFAULT)
+                .is_some()
+        );
+        // Binding cleared; the pooled graph survives for other patterns.
+        assert_eq!(song.pattern(pid).unwrap().note_graph(), None);
+        assert!(song.note_graph(gid).is_some());
+        // The baked note is the graph output: C#4 (61) snapped to D4 (62).
+        let pitches: Vec<u8> = song
+            .pattern(pid)
+            .unwrap()
+            .notes()
+            .iter()
+            .map(|n| n.pitch.as_midi())
+            .collect();
+        assert_eq!(pitches, vec![62]);
+    }
+
+    /// Offline note analyzers expand a pattern through its bound graph (plan §7):
+    /// a C4 through a `[0,4,7]` Chord node reads as the full triad, not one note —
+    /// and the authored source is left untouched (unlike freeze). Regression for
+    /// the "analyzers read source not expansion" gap.
+    #[test]
+    fn expanded_pattern_notes_expands_through_bound_graph() {
+        use crate::note_processor::Chord;
+        use crate::pitch::{Pitch, Velocity};
+
+        let mut song = Song::new("t");
+        let gid = song.create_note_graph("triad");
+        {
+            let g = song.note_graph_mut(gid).unwrap();
+            g.try_insert_node(
+                NoteModuleId::new(1),
+                NoteModuleConfig::Processor(NoteProcessor::Chord(Chord::new(&[0, 4, 7]))),
+            )
+            .unwrap();
+        }
+        let pid = song.create_pattern(Duration(960));
+        {
+            let p = song.pattern_mut(pid).unwrap();
+            let _ = p.add_note(PatternTick(0), Pitch::new(60).unwrap(), Velocity::MF);
+            p.set_note_graph(Some(gid));
+        }
+
+        let expanded = song.expanded_pattern_notes(pid, synth_core::Bpm::DEFAULT);
+        let mut pitches: Vec<u8> = expanded.iter().map(|n| n.pitch.as_midi()).collect();
+        pitches.sort_unstable();
+        assert_eq!(
+            pitches,
+            vec![60, 64, 67],
+            "the analyzer sees the played triad"
+        );
+        // Non-mutating: the authored source is untouched (unlike freeze).
+        assert_eq!(song.pattern(pid).unwrap().notes().len(), 1);
+
+        // No binding ⇒ the raw authored notes.
+        let plain = song.create_pattern(Duration(960));
+        let _ = song.pattern_mut(plain).unwrap().add_note(
+            PatternTick(0),
+            Pitch::new(72).unwrap(),
+            Velocity::MF,
+        );
+        let unbound = song.expanded_pattern_notes(plain, synth_core::Bpm::DEFAULT);
+        assert_eq!(unbound.len(), 1);
+        assert_eq!(unbound[0].pitch.as_midi(), 72);
+    }
+
+    #[test]
+    fn duplicate_pattern_keeps_the_note_graph_binding() {
+        // Found in-app (2026-07-12): the duplicate dropped the pattern's Note
+        // Grid binding, so a copy silently played dry. A duplicate must play
+        // like its source — the pooled graph is shared by reference.
+        let mut song = Song::new("t");
+        let gid = song.create_note_graph("shared");
+        let pid = song.create_pattern(Duration(960));
+        song.pattern_mut(pid).unwrap().set_note_graph(Some(gid));
+        let copy = song.duplicate_pattern(pid).expect("duplicates");
+        assert_eq!(
+            song.pattern(copy).unwrap().note_graph(),
+            Some(gid),
+            "the copy keeps the binding"
+        );
+        assert_eq!(song.note_graph_usage(gid), 2, "usage counts both patterns");
+    }
+
+    #[test]
+    fn freeze_of_generator_headed_graph_bakes_nothing_past_the_pattern_end() {
+        use crate::note_graph::{EuclideanGenerator, NoteConnection, NoteDelay};
+        use crate::pitch::{Pitch, Velocity};
+        use synth_core::NormalizedValue;
+
+        // Euclid → Delay: the delay has real reach, but a generator-headed spine
+        // must not extend the freeze walk — it would bake phantom generator hits
+        // (and their echoes) past the pattern end, inert at the current length
+        // and surfacing as stale material if the pattern is later lengthened.
+        let mut song = Song::new("t");
+        let gid = song.create_note_graph("euclid-delay");
+        {
+            let g = song.note_graph_mut(gid).unwrap();
+            g.try_insert_node(
+                NoteModuleId::new(1),
+                NoteModuleConfig::Euclidean(EuclideanGenerator {
+                    steps: 4,
+                    pulses: 4,
+                    rotation: 0,
+                    step_len: Duration(240),
+                    pitch: Pitch::new(60).unwrap(),
+                    velocity: Velocity::MF,
+                }),
+            )
+            .unwrap();
+            g.try_insert_node(
+                NoteModuleId::new(2),
+                NoteModuleConfig::NoteDelay(NoteDelay {
+                    delay_ticks: Duration(480),
+                    repeats: 3,
+                    feedback: NormalizedValue::new(0.6),
+                }),
+            )
+            .unwrap();
+            g.try_connect(NoteConnection::stream(
+                NoteModuleId::new(1),
+                NoteModuleId::new(2),
+            ))
+            .unwrap();
+        }
+        let pid = song.create_pattern(Duration(960));
+        song.pattern_mut(pid).unwrap().set_note_graph(Some(gid));
+
+        assert!(
+            song.freeze_pattern_note_graph(pid, synth_core::Bpm::DEFAULT)
+                .is_some()
+        );
+        let notes = song.pattern(pid).unwrap().notes().to_vec();
+        assert!(
+            !notes.is_empty(),
+            "the generator's in-range hits and echoes bake"
+        );
+        assert!(
+            notes.iter().all(|n| n.start.0 < 960),
+            "nothing baked at or past the pattern end, got starts {:?}",
+            notes.iter().map(|n| n.start.0).collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn freeze_pattern_honors_graph_precedence_and_retires_rack() {
+        use crate::note_processor::{PitchClass, ScaleMask, ScaleQuantize};
+        use crate::pitch::{Pitch, Velocity};
+
+        let mut song = Song::new("t");
+        let gid = song.create_note_graph("snap");
+        song.note_graph_mut(gid)
+            .unwrap()
+            .try_insert_node(
+                NoteModuleId::new(1),
+                NoteModuleConfig::Processor(NoteProcessor::ScaleQuantize(ScaleQuantize {
+                    root: PitchClass::new(0),
+                    mask: ScaleMask::MAJOR,
+                })),
+            )
+            .unwrap();
+        let pid = song.create_pattern(Duration(960));
+        {
+            let p = song.pattern_mut(pid).unwrap();
+            let _ = p.add_note(PatternTick(0), Pitch::new(61).unwrap(), Velocity::MF);
+            // A rack that playback IGNORES while the graph is bound: a chord
+            // would fan the note out if it were (wrongly) applied.
+            p.add_processor(NoteProcessor::Chord(crate::note_processor::Chord::new(&[
+                0, 4, 7,
+            ])));
+            p.set_note_graph(Some(gid));
+        }
+
+        let bpm = song.tempo_at(crate::time::Tick(0));
+        let count = song.freeze_pattern(pid, bpm).notes;
+
+        // The GRAPH baked (one snapped note, no chord fan-out), and the
+        // suppressed rack is retired — leaving it would re-process the baked
+        // notes and change playback right after the freeze.
+        assert_eq!(count, 1);
+        let p = song.pattern(pid).unwrap();
+        assert_eq!(p.note_graph(), None);
+        assert!(p.processors().is_empty());
+        assert_eq!(p.notes()[0].pitch.as_midi(), 62);
+    }
+
+    #[test]
+    fn freeze_pattern_dangling_graph_falls_back_to_rack() {
+        use crate::pitch::{Pitch, Velocity};
+
+        let mut song = Song::new("t");
+        let pid = song.create_pattern(Duration(960));
+        {
+            let p = song.pattern_mut(pid).unwrap();
+            let _ = p.add_note(PatternTick(0), Pitch::new(60).unwrap(), Velocity::MF);
+            p.add_processor(NoteProcessor::Chord(crate::note_processor::Chord::new(&[
+                0, 4, 7,
+            ])));
+            // Dangling binding: no such graph in the pool — playback falls
+            // back to the rack, so freeze must too.
+            p.set_note_graph(Some(NoteGraphId::new(99)));
+        }
+
+        let bpm = song.tempo_at(crate::time::Tick(0));
+        let count = song.freeze_pattern(pid, bpm).notes;
+
+        // The RACK baked (chord fan-out), the stale binding is cleared.
+        assert_eq!(count, 3);
+        let p = song.pattern(pid).unwrap();
+        assert_eq!(p.note_graph(), None);
+        assert!(p.processors().is_empty());
+    }
+
+    #[test]
+    fn duplicate_note_graph_copies_everything_but_identity() {
+        let mut song = Song::new("t");
+        let gid = song.create_note_graph("src");
+        {
+            let g = song.note_graph_mut(gid).unwrap();
+            g.description = "desc".to_owned();
+            g.color = Some(crate::track::TrackColor::CYAN);
+            g.try_insert_node(
+                NoteModuleId::new(1),
+                NoteModuleConfig::Euclidean(crate::note_graph::EuclideanGenerator::default()),
+            )
+            .unwrap();
+            g.try_insert_node(
+                NoteModuleId::new(2),
+                NoteModuleConfig::ProbabilityGate(crate::note_graph::ProbabilityGate::default()),
+            )
+            .unwrap();
+            g.try_connect(crate::note_graph::NoteConnection::stream(
+                NoteModuleId::new(1),
+                NoteModuleId::new(2),
+            ))
+            .unwrap();
+            g.node_positions.insert(
+                NoteModuleId::new(1),
+                crate::note_graph::NodePosition { x: 64.0, y: 32.0 },
+            );
+        }
+
+        let clone = song.duplicate_note_graph(gid).expect("source exists");
+        let src = song.note_graph(gid).unwrap();
+
+        assert_ne!(clone.id, src.id);
+        assert_eq!(clone.name, "src copy");
+        assert_eq!(clone.description, src.description);
+        assert_eq!(clone.color, src.color);
+        assert_eq!(clone.nodes, src.nodes);
+        assert_eq!(clone.connections, src.connections);
+        assert_eq!(clone.node_positions, src.node_positions);
+        assert_eq!(clone.processing_order, src.processing_order);
+        assert!(song.duplicate_note_graph(NoteGraphId::new(999)).is_none());
     }
 }

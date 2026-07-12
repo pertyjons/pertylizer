@@ -128,9 +128,9 @@ pub(crate) fn draw_pattern_view(
     draw_pattern_browser(ui, song, seq_view_state, pattern_view_state, undo_manager);
     draw_pattern_edit_window(&ui.ctx().clone(), song, pattern_view_state, undo_manager);
 
-    // Note FX rack inspector (right-docked; declared before the central panel so
-    // it spans the full height to the right of both editors). Shown for the
-    // opened pattern when toggled on — works for both the tracker and piano-roll
+    // Note FX panel (right-docked; declared before the central panel so it spans
+    // the full height to the right of both editors). Shown for the opened
+    // pattern when toggled on — works for both the tracker and piano-roll
     // editor modes.
     if seq_view_state.note_fx_panel_open
         && let Some(pattern_id) = seq_view_state.opened_pattern
@@ -196,16 +196,16 @@ pub(crate) fn draw_pattern_view(
                             "Tracker",
                         );
                         ui.separator();
-                        let np_count = song
+                        let has_graph = song
                             .try_read()
-                            .and_then(|s| s.pattern(pattern_id).map(|p| p.processors().len()))
-                            .unwrap_or(0);
+                            .and_then(|s| s.pattern(pattern_id).map(|p| p.note_graph().is_some()))
+                            .unwrap_or(false);
+                        let label = if has_graph { "Note FX ●" } else { "Note FX" };
                         if ui
-                            .selectable_label(
-                                seq_view_state.note_fx_panel_open,
-                                format!("Note FX ({np_count})"),
+                            .selectable_label(seq_view_state.note_fx_panel_open, label)
+                            .on_hover_text(
+                                "Show/hide the Note FX panel (bind a note graph to this pattern)",
                             )
-                            .on_hover_text("Show/hide the note-processor rack for this pattern")
                             .clicked()
                         {
                             seq_view_state.note_fx_panel_open = !seq_view_state.note_fx_panel_open;

@@ -214,7 +214,7 @@ fn set_frequency(freq: Hertz) { ... }
 | Crate             | Examples                                                                                                                                                                                                      | 
 |-------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
 | `synth_core`      | `Hertz`, `SampleRate`, `Cents`, `Semitones`, `MidiNote`, `Velocity`, `Gain`, `Decibels`, `Seconds`, `Milliseconds`, `Bpm`, `NormalizedValue`, `BipolarValue`, `Phase`, `SampleCount`, `BlockSize`, `PortName` |
-| `synth_sequencer` | `PatternId`, `TrackId`, `NoteId`, `Tick`, `PatternTick`, `Duration`, `Pitch`, `TrackIndex`, `RowIndex`, `SeqInstrumentId`                                                                                     |
+| `synth_sequencer` | `PatternId`, `TrackId`, `NoteId`, `Tick`, `PatternTick`, `Duration`, `Pitch`, `TrackIndex`, `RowIndex`, `SeqInstrumentId`, `NoteGraphId`, `NoteModuleId`                                                          |
 | `synth_engine`    | `TransactionId`, `ClientId`, `InstrumentId`, `MidiChannel`, `ConnectionCount`, `ModuleId`                                                                                                                     |
 | `synth_awe`       | `Meters`, `SquareMeters`, `CubicMeters`, `SampleOffset`, `StretchFactor`                                                                                                                                      |
 

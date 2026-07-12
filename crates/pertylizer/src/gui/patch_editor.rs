@@ -19,6 +19,7 @@ use synth_engine::graph::Connection;
 use synth_engine::{EngineHandle, ModuleId};
 
 use crate::audio::input::InputState;
+use crate::gui::node_canvas;
 use crate::patch::{
     ConnectionState, ExposedPortState, GroupCategory, GroupId, GroupTemplate, HexColor,
     ModuleGroupState, ModuleState, ParamValue, Position,
@@ -46,8 +47,12 @@ mod node;
 mod ports;
 mod selection;
 
-/// Grid cell size in pixels. Used for grid drawing and snap-to-grid.
-pub(crate) const GRID_SIZE: f32 = 32.0;
+// The generic canvas layer (grid, snapping, camera framing, view controls)
+// lives in `gui::scene_canvas`, shared with the Note Grid editor. The names
+// used across the patch-editor submodules are re-exported so they keep their
+// `super::` paths.
+use crate::gui::scene_canvas;
+pub(crate) use crate::gui::scene_canvas::{GRID_SIZE, screen_to_world, snap_to_grid};
 const GROUP_HEADER_HEIGHT: f32 = 24.0;
 const GROUP_PORT_MARGIN: f32 = 12.0;
 const GROUP_PADDING: f32 = 16.0;
@@ -71,8 +76,6 @@ const EFFECT_CHAIN_AMBER: Color32 = Color32::from_rgb(230, 160, 50);
 const CLOSE_BUTTON_HOVER_RED: Color32 = Color32::from_rgb(255, 100, 100);
 /// Close button at rest (translucent light gray).
 const CLOSE_BUTTON_IDLE: Color32 = Color32::from_rgba_premultiplied(200, 200, 200, 150);
-/// Background grid line color (faint blue-gray).
-const GRID_LINE_COLOR: Color32 = Color32::from_rgba_unmultiplied_const(60, 65, 75, 50);
 
 /// Trim sweep data to the last rising-edge crossing so the display
 /// always shows complete waveform cycles (no visual gap at the end).
@@ -89,26 +92,6 @@ fn trim_sweep_to_complete_cycles(samples: &[f32], threshold: f32) -> &[f32] {
         }
     }
     samples
-}
-
-/// Snap a position to the nearest grid point.
-fn snap_to_grid(pos: Pos2) -> Pos2 {
-    Pos2::new(
-        (pos.x / GRID_SIZE).round() * GRID_SIZE,
-        (pos.y / GRID_SIZE).round() * GRID_SIZE,
-    )
-}
-
-/// Convert a screen-space position to scene/world coordinates. Inside the
-/// `egui::Scene` closure the raw `ui.input` pointer is global/screen, but the
-/// manual cable / port / group / background hit-tests compare against world
-/// coordinates — egui only transforms the pointer for real widget interactions
-/// (knobs, buttons), not for these lookups. Returns `screen` unchanged when the
-/// layer has no transform (e.g. before the first Scene frame).
-fn screen_to_world(ui: &Ui, screen: Pos2) -> Pos2 {
-    ui.ctx()
-        .layer_transform_to_global(ui.layer_id())
-        .map_or(screen, |t| t.inverse() * screen)
 }
 
 pub(crate) fn parse_hex_color(hex: &str) -> Option<Color32> {
@@ -1016,18 +999,22 @@ struct PortRenderInfo {
     markers: ModMarkers,
 }
 
-/// State for a pending connection being drawn.
-#[derive(Clone, Debug)]
-pub struct PendingConnection {
-    /// Starting port info.
-    pub from_module: ModuleId,
-    pub from_port: PortName,
-    pub from_position: Pos2,
-    pub from_type: WidgetPortType,
-    pub from_direction: WidgetPortDirection,
-    /// Current mouse position.
-    pub current_pos: Pos2,
+/// One endpoint on the patch canvas — a module's port, self-describing so the
+/// shared wire FSM ([`node_canvas::wiring`]) and its validation closure never
+/// need to look a port back up. `(module, port)` alone identifies it (a port is
+/// input xor output, visible xor collapsed); the direction/type ride along so
+/// the drop validator, cycle check, and drag-cable colour read them directly.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub(crate) struct PatchPort {
+    pub(crate) module: ModuleId,
+    pub(crate) port: PortName,
+    pub(crate) direction: WidgetPortDirection,
+    pub(crate) port_type: WidgetPortType,
 }
+
+/// A port interaction gathered while drawing the nodes, resolved afterwards by
+/// [`node_canvas::resolve_wire_events`].
+pub(crate) type PatchWireEvent = node_canvas::WireEvent<PatchPort>;
 
 /// State for a right-click context menu on a port.
 #[derive(Clone)]
@@ -1084,10 +1071,12 @@ struct BgContextMenuState {
 
 /// Explicit canvas interaction state — one mutually-exclusive mode at a time.
 ///
-/// This is the patch-editor interaction FSM: marquee selection, multi-node drag,
-/// and cable drag are now all variants here instead of being spread across a
-/// `pending_connection: Option<…>` field plus ad-hoc booleans, so "two modes at
-/// once" states are unrepresentable.
+/// This is the patch-editor interaction FSM: marquee selection and multi-node
+/// drag are variants here instead of being spread across ad-hoc booleans, so
+/// "two modes at once" states are unrepresentable. Cable dragging lives in the
+/// separate `pending_wire` field (the shared [`node_canvas::wiring`] FSM) — it
+/// is naturally exclusive with these because a drag that starts on a port is
+/// consumed by the port widget, never reaching the card/canvas drag paths.
 #[derive(Debug, Clone, Default)]
 enum CanvasInteraction {
     #[default]
@@ -1100,11 +1089,6 @@ enum CanvasInteraction {
     /// card moves by the same per-frame `drag_delta`, which preserves their
     /// relative layout without tracking per-card grab offsets.
     DraggingNodes { ids: Vec<ModuleId> },
-    /// Dragging a cable out from a port. Holds the in-progress connection
-    /// (source port + live cursor pos). Mutually exclusive with the other
-    /// interactions by construction — that is the point of folding the old
-    /// `pending_connection` field into this state machine.
-    DraggingWire(PendingConnection),
 }
 
 /// The main rack view state.
@@ -1183,6 +1167,14 @@ pub struct PatchEditor {
     /// for the modulation markers (§3.4). `PatchAnalysis::from_panels` runs every
     /// frame, so this skips recompiling a slot whose script text is unchanged.
     source_ref_cache: ScriptSourceCache,
+    /// The in-progress cable drag/click, driven by the shared node-canvas wire
+    /// FSM ([`node_canvas::wiring`]). Held outside `canvas_interaction` because a
+    /// port drag is consumed by the port widget, so it can never coincide with a
+    /// card/marquee drag. `None` when no wire is being drawn.
+    pending_wire: Option<node_canvas::WireDrag<PatchPort>>,
+    /// Port interactions collected while the nodes are drawn (drag-from / click),
+    /// drained once per frame by `handle_port_interactions`. Cleared each frame.
+    wire_events: Vec<PatchWireEvent>,
     /// Modules that the in-progress cable drag must NOT connect to because the
     /// edge would form a cycle. Recomputed once per frame from a single graph
     /// traversal (see `recompute_drag_cycle_blocked`); empty when not dragging.
@@ -1251,6 +1243,8 @@ impl PatchEditor {
             selected_module: None,
             selected_modules: HashSet::new(),
             canvas_interaction: CanvasInteraction::Idle,
+            pending_wire: None,
+            wire_events: Vec::new(),
             selected_group: None,
             group_name_edit: None,
             descriptors: HashMap::new(),
@@ -1361,48 +1355,23 @@ impl PatchEditor {
         self.scene_rect = None;
     }
 
-    /// The in-progress cable drag, if the canvas is currently dragging a wire.
-    /// (Wire drag lives in the `CanvasInteraction` FSM; these accessors keep the
-    /// call sites reading the way the old `pending_connection` field did.)
-    fn pending_connection(&self) -> Option<&PendingConnection> {
-        match &self.canvas_interaction {
-            CanvasInteraction::DraggingWire(p) => Some(p),
-            _ => None,
-        }
-    }
-
-    /// Mutable view of the in-progress cable drag (e.g. to update the live cursor).
-    fn pending_connection_mut(&mut self) -> Option<&mut PendingConnection> {
-        match &mut self.canvas_interaction {
-            CanvasInteraction::DraggingWire(p) => Some(p),
-            _ => None,
-        }
-    }
-
-    /// Begin (or replace) a cable drag.
-    fn start_wire_drag(&mut self, pending: PendingConnection) {
-        self.canvas_interaction = CanvasInteraction::DraggingWire(pending);
-    }
-
-    /// Cancel a cable drag, leaving other interaction states untouched.
-    fn cancel_wire_drag(&mut self) {
-        if matches!(self.canvas_interaction, CanvasInteraction::DraggingWire(_)) {
-            self.canvas_interaction = CanvasInteraction::Idle;
-        }
+    /// The source-port metadata of the in-progress cable drag, in the shape the
+    /// port-column highlight and cycle recompute want: `(module, type, direction)`.
+    fn pending_wire_source(&self) -> Option<(ModuleId, WidgetPortType, WidgetPortDirection)> {
+        self.pending_wire
+            .as_ref()
+            .map(|w| (w.from.module, w.from.port_type, w.from.direction))
     }
 
     /// Frame the existing modules (padded) for the first `Scene` frame, honoring
     /// the `scene_rect` doc contract ("frames the existing modules"). Falls back
     /// to the viewport at the world origin when there are no modules yet.
     fn initial_scene_rect(&self, visible_rect: Rect) -> Rect {
-        let mut bounds: Option<Rect> = None;
-        for panel in self.panels.values() {
-            let r = Rect::from_min_size(panel.position, panel.size);
-            bounds = Some(bounds.map_or(r, |b| b.union(r)));
-        }
-        bounds.map_or_else(
-            || Rect::from_min_size(Pos2::ZERO, visible_rect.size()),
-            |b| b.expand(80.0),
+        scene_canvas::initial_scene_rect(
+            self.panels
+                .values()
+                .map(|panel| Rect::from_min_size(panel.position, panel.size)),
+            visible_rect,
         )
     }
 
@@ -1466,10 +1435,11 @@ impl PatchEditor {
         }
         // Cancel a cable drag if it started from this module
         if self
-            .pending_connection()
-            .is_some_and(|p| p.from_module == id)
+            .pending_wire
+            .as_ref()
+            .is_some_and(|w| w.from.module == id)
         {
-            self.cancel_wire_drag();
+            self.pending_wire = None;
         }
         // Remove from any group
         if let Some(group_id) = self.module_to_group.remove(&id)
@@ -2208,446 +2178,429 @@ impl PatchEditor {
             None => self.initial_scene_rect(visible_rect),
         };
 
-        let _scene_output = egui::Scene::new()
-            .zoom_range(egui::Rangef::new(0.2, 2.0))
-            // Plan 4c: only RIGHT-drag pans the canvas, freeing LEFT-drag on the
-            // empty grid for rubber-band selection. Pan is still also available via
-            // scroll / trackpad, so no pan path is lost. Right-CLICK (no movement)
-            // still opens the rack/cable context menu — egui distinguishes a
-            // secondary click from a secondary drag.
-            .drag_pan_buttons(egui::containers::DragPanButtons::SECONDARY)
-            .show(ui, &mut scene_rect, |ui| {
-                // Everything below draws in WORLD coordinates on the scene layer.
-                let world_rect = ui.clip_rect();
-                // Background response for deselect + the right-click rack menu.
-                // CLICK-only on purpose: a drag-sensing widget here would capture
-                // the pointer and starve the Scene's own pan response. Rubber-band
-                // (left-drag) is instead read from the Scene's background response
-                // (`ui.response()`) in `handle_canvas_background_input`.
-                let canvas_bg = ui.interact(world_rect, ui.id().with("canvas_bg"), Sense::click());
-                // Expose the canvas background so the MCP can locate the patch
-                // editor surface (and target empty-canvas clicks) by name.
+        // Right-CLICK (no movement) still opens the rack/cable context menu —
+        // egui distinguishes a secondary click from a secondary drag pan.
+        let _scene_output = scene_canvas::scene().show(ui, &mut scene_rect, |ui| {
+            // Everything below draws in WORLD coordinates on the scene layer.
+            let world_rect = ui.clip_rect();
+            // Background response for deselect + the right-click rack menu.
+            // CLICK-only on purpose: a drag-sensing widget here would capture
+            // the pointer and starve the Scene's own pan response. Rubber-band
+            // (left-drag) is instead read from the Scene's background response
+            // (`ui.response()`) in `handle_canvas_background_input`.
+            let canvas_bg = ui.interact(world_rect, ui.id().with("canvas_bg"), Sense::click());
+            // Expose the canvas background so the MCP can locate the patch
+            // editor surface (and target empty-canvas clicks) by name.
+            crate::gui::widgets::expose(&canvas_bg, egui::WidgetType::Panel, "patch canvas", None);
+            let canvas_response = Some(canvas_bg);
+
+            // Draw grid + tinted background zones.
+            scene_canvas::draw_grid(ui, world_rect);
+            self.draw_effect_zone(ui);
+            self.draw_monitors_zone(ui);
+            self.draw_mod_matrix_zone(ui, &analysis);
+
+            // The scene layer carries the pan/zoom transform; painting cables and
+            // group frames on it puts them behind the nodes (drawn later).
+            let scene_layer_id = ui.layer_id();
+            let scene_clip_rect = ui.clip_rect();
+
+            // Compute group layout (bounds + hidden modules) before drawing cables
+            let group_layout = self.compute_group_layout();
+            let mut new_group_port_positions: HashMap<GroupPortKey, PortPosition> = HashMap::new();
+
+            // Module world rects, straight from each panel's stored position + size
+            // (no more reading egui Area memory back).
+            let module_rects: Vec<Rect> = self
+                .panels
+                .values()
+                .filter_map(|p| {
+                    if group_layout.hidden_modules.contains(&p.id) {
+                        return None;
+                    }
+                    Some(Rect::from_min_size(p.position, p.size))
+                })
+                .collect();
+
+            // Draw group frames on the scene layer BEFORE cables.
+            self.draw_group_frames(ui, &group_layout, scene_layer_id, scene_clip_rect);
+
+            // Handle interactions for expanded group frames.
+            self.handle_group_interactions(ui, &group_layout, &module_rects);
+
+            // Draw cables on the scene layer BEFORE the nodes. This uses the
+            // previous frame's port_positions — one frame delay is imperceptible.
+            let time = ui.input(|i| i.time);
+            self.draw_connections(ui, time, scene_layer_id, scene_clip_rect, &module_rects);
+            // Draw effect chain cables (signal flow between effects)
+            self.draw_effect_chain_cables(ui, scene_layer_id, scene_clip_rect, effect_chain_order);
+
+            // Draw collapsed group boxes (movable) after cables so they sit above.
+            self.draw_collapsed_groups(
+                ui,
+                instrument_id,
+                &mut result,
+                &mut new_group_port_positions,
+            );
+            self.group_port_positions = new_group_port_positions;
+
+            // Draw context menus (Foreground) — must happen after hover detection above
+            self.draw_port_context_menu(ui, &mut result);
+            self.draw_group_context_menu(ui, &mut result);
+            if let Some(ref response) = canvas_response {
+                self.draw_bg_context_menu(response, &mut result);
+            }
+
+            // Now clear port positions so modules can repopulate them for next frame
+            self.port_positions.clear();
+
+            // Collect data before mutable iteration
+            let module_ids: Vec<_> = self.z_order.clone();
+
+            // Track which module to bring to front
+            let mut bring_to_front: Option<ModuleId> = None;
+
+            // Temporarily take descriptors out of self to allow immutable access
+            // while self is mutably borrowed in the loop body.
+            let descriptors = std::mem::take(&mut self.descriptors);
+
+            // Draw modules as windows (in z-order)
+            for module_id in &module_ids {
+                let module_id = *module_id;
+                if group_layout.hidden_modules.contains(&module_id) {
+                    continue;
+                }
+                let connected_ports = self
+                    .connected_ports_cache
+                    .get(&module_id)
+                    .cloned()
+                    .unwrap_or_default();
+
+                let descriptor = match descriptors.get(&module_id) {
+                    Some(d) => d,
+                    None => continue,
+                };
+
+                // Get panel position before mutable borrow
+                let (panel_position, panel_size) = match self.panels.get(&module_id) {
+                    Some(s) => (s.position, s.size),
+                    None => continue,
+                };
+
+                let accent_color = category_color(descriptor.category);
+                let is_selected = self.selected_modules.contains(&module_id);
+                let connectivity_status = self.get_connectivity(module_id);
+                let is_bypassed = self.bypassed.get(&module_id).copied().unwrap_or(false);
+
+                // Global modules (effects, visualizers) and internal routing modules (Utility
+                // like Mod Matrix) are always "connected" — they work automatically without cables.
+                let is_global_module = matches!(
+                    descriptor.category,
+                    ModuleCategory::Effect | ModuleCategory::Visualizer | ModuleCategory::Utility
+                );
+
+                // Dim modules that aren't connected to output, or are bypassed.
+                // A module read/written by any modulation routing (Mod Matrix,
+                // Script, or AudioScript) counts as connected — it participates
+                // via a slot/script instead of a cable, so it must not look
+                // orphaned.
+                let opacity = if is_bypassed {
+                    0.4
+                } else if is_global_module || !analysis.markers_for_module(module_id).is_empty() {
+                    1.0
+                } else {
+                    match connectivity_status {
+                        ModuleConnectivity::Connected => 1.0,
+                        ModuleConnectivity::Orphaned => 0.6,
+                        ModuleConnectivity::Disconnected => 0.4,
+                    }
+                };
+
+                let dimmed_accent = accent_color.gamma_multiply(opacity);
+
+                let mut open = true;
+                // Include instrument_id in the hash to prevent ID collisions across instruments
+                let window_id =
+                    egui::Id::new((instrument_id, "module_window", module_id.to_string()));
+                // Create frame with dimming for disconnected modules
+                let frame = ModuleFrame::new(dimmed_accent)
+                    .selected(is_selected)
+                    .opacity(opacity)
+                    .build(&ui.global_style());
+
+                // Check if this module needs repositioning (after auto-layout)
+                let needs_reposition = self.needs_reposition.contains(&module_id);
+
+                // Header shows the stable module id (e.g. "nse-1"); the
+                // human name + category live in the hover tooltip below.
+                let title = module_id.to_string();
+                // Human name, reused by the tooltip and the AccessKit label.
+                let display_name = analysis.display_name(module_id, &descriptor.name);
+                let tooltip = {
+                    let mut t = display_name.clone();
+                    t.push_str(&format!(
+                        "\n{} · {}",
+                        module_id,
+                        category_label(descriptor.category)
+                    ));
+                    if !descriptor.description.is_empty() {
+                        t.push_str("\n\n");
+                        t.push_str(&descriptor.description);
+                    }
+                    t
+                };
+
+                // Get processing info for this module
+                let is_source = self.is_source(module_id);
+                let is_sink = self.is_sink(module_id);
+                let is_automated = automated_modules.contains(&module_id);
+                let is_inline_monitor = descriptor.type_id.0 == "inline_signal_monitor";
+
+                // Place the module at its WORLD position — no egui::Area (an Area
+                // inside a Scene would not inherit the layer transform). Own the drag
+                // with a click_and_drag interact over the card, registered BEFORE the
+                // body so the body's buttons/knobs (drawn on top) keep their own
+                // clicks/drags. `drag_delta()` is already world-space inside a Scene.
+                let node_rect = Rect::from_min_size(panel_position, panel_size);
+                // Distinct id from the child Ui's id-space (which is seeded with
+                // window_id below) so the card drag handle never collides with a
+                // body widget.
+                let node_response =
+                    ui.interact(node_rect, window_id.with("card"), Sense::click_and_drag());
+                // Expose the node card to AccessKit / the egui-inspection MCP:
+                // the stable id + human name, so a driver can locate a specific
+                // module card by name. Reused by the Note Grid Scene canvas.
                 crate::gui::widgets::expose(
-                    &canvas_bg,
-                    egui::WidgetType::Panel,
-                    "patch canvas",
+                    &node_response,
+                    egui::WidgetType::Button,
+                    format!("{module_id} {display_name}"),
                     None,
                 );
-                let canvas_response = Some(canvas_bg);
-
-                // Draw grid + tinted background zones.
-                self.draw_grid(ui, world_rect);
-                self.draw_effect_zone(ui);
-                self.draw_monitors_zone(ui);
-                self.draw_mod_matrix_zone(ui, &analysis);
-
-                // The scene layer carries the pan/zoom transform; painting cables and
-                // group frames on it puts them behind the nodes (drawn later).
-                let scene_layer_id = ui.layer_id();
-                let scene_clip_rect = ui.clip_rect();
-
-                // Compute group layout (bounds + hidden modules) before drawing cables
-                let group_layout = self.compute_group_layout();
-                let mut new_group_port_positions: HashMap<GroupPortKey, PortPosition> =
-                    HashMap::new();
-
-                // Module world rects, straight from each panel's stored position + size
-                // (no more reading egui Area memory back).
-                let module_rects: Vec<Rect> = self
-                    .panels
-                    .values()
-                    .filter_map(|p| {
-                        if group_layout.hidden_modules.contains(&p.id) {
-                            return None;
-                        }
-                        Some(Rect::from_min_size(p.position, p.size))
-                    })
-                    .collect();
-
-                // Draw group frames on the scene layer BEFORE cables.
-                self.draw_group_frames(ui, &group_layout, scene_layer_id, scene_clip_rect);
-
-                // Handle interactions for expanded group frames.
-                self.handle_group_interactions(ui, &group_layout, &module_rects);
-
-                // Draw cables on the scene layer BEFORE the nodes. This uses the
-                // previous frame's port_positions — one frame delay is imperceptible.
-                let time = ui.input(|i| i.time);
-                self.draw_connections(ui, time, scene_layer_id, scene_clip_rect, &module_rects);
-                // Draw effect chain cables (signal flow between effects)
-                self.draw_effect_chain_cables(
-                    ui,
-                    scene_layer_id,
-                    scene_clip_rect,
-                    effect_chain_order,
-                );
-
-                // Draw collapsed group boxes (movable) after cables so they sit above.
-                self.draw_collapsed_groups(
-                    ui,
-                    instrument_id,
-                    &mut result,
-                    &mut new_group_port_positions,
-                );
-                self.group_port_positions = new_group_port_positions;
-
-                // Draw context menus (Foreground) — must happen after hover detection above
-                self.draw_port_context_menu(ui, &mut result);
-                self.draw_group_context_menu(ui, &mut result);
-                if let Some(ref response) = canvas_response {
-                    self.draw_bg_context_menu(response, &mut result);
-                }
-
-                // Now clear port positions so modules can repopulate them for next frame
-                self.port_positions.clear();
-
-                // Collect data before mutable iteration
-                let module_ids: Vec<_> = self.z_order.clone();
-
-                // Track which module to bring to front
-                let mut bring_to_front: Option<ModuleId> = None;
-
-                // Temporarily take descriptors out of self to allow immutable access
-                // while self is mutably borrowed in the loop body.
-                let descriptors = std::mem::take(&mut self.descriptors);
-
-                // Draw modules as windows (in z-order)
-                for module_id in &module_ids {
-                    let module_id = *module_id;
-                    if group_layout.hidden_modules.contains(&module_id) {
-                        continue;
-                    }
-                    let connected_ports = self
-                        .connected_ports_cache
-                        .get(&module_id)
-                        .cloned()
-                        .unwrap_or_default();
-
-                    let descriptor = match descriptors.get(&module_id) {
-                        Some(d) => d,
-                        None => continue,
-                    };
-
-                    // Get panel position before mutable borrow
-                    let (panel_position, panel_size) = match self.panels.get(&module_id) {
-                        Some(s) => (s.position, s.size),
-                        None => continue,
-                    };
-
-                    let accent_color = category_color(descriptor.category);
-                    let is_selected = self.selected_modules.contains(&module_id);
-                    let connectivity_status = self.get_connectivity(module_id);
-                    let is_bypassed = self.bypassed.get(&module_id).copied().unwrap_or(false);
-
-                    // Global modules (effects, visualizers) and internal routing modules (Utility
-                    // like Mod Matrix) are always "connected" — they work automatically without cables.
-                    let is_global_module = matches!(
-                        descriptor.category,
-                        ModuleCategory::Effect
-                            | ModuleCategory::Visualizer
-                            | ModuleCategory::Utility
-                    );
-
-                    // Dim modules that aren't connected to output, or are bypassed.
-                    // A module read/written by any modulation routing (Mod Matrix,
-                    // Script, or AudioScript) counts as connected — it participates
-                    // via a slot/script instead of a cable, so it must not look
-                    // orphaned.
-                    let opacity = if is_bypassed {
-                        0.4
-                    } else if is_global_module || !analysis.markers_for_module(module_id).is_empty()
-                    {
-                        1.0
+                // Capture the drag set at drag-start: the whole selection if
+                // this card is part of it, otherwise just this card. Stored in
+                // the interaction FSM so a mid-drag selection change can't
+                // affect it.
+                if node_response.drag_started() {
+                    let ids = if self.selected_modules.contains(&module_id) {
+                        self.selected_modules.iter().copied().collect()
                     } else {
-                        match connectivity_status {
-                            ModuleConnectivity::Connected => 1.0,
-                            ModuleConnectivity::Orphaned => 0.6,
-                            ModuleConnectivity::Disconnected => 0.4,
-                        }
+                        vec![module_id]
                     };
-
-                    let dimmed_accent = accent_color.gamma_multiply(opacity);
-
-                    let mut open = true;
-                    // Include instrument_id in the hash to prevent ID collisions across instruments
-                    let window_id =
-                        egui::Id::new((instrument_id, "module_window", module_id.to_string()));
-                    // Create frame with dimming for disconnected modules
-                    let frame = ModuleFrame::new(dimmed_accent)
-                        .selected(is_selected)
-                        .opacity(opacity)
-                        .build(&ui.global_style());
-
-                    // Check if this module needs repositioning (after auto-layout)
-                    let needs_reposition = self.needs_reposition.contains(&module_id);
-
-                    // Header shows the stable module id (e.g. "nse-1"); the
-                    // human name + category live in the hover tooltip below.
-                    let title = module_id.to_string();
-                    // Human name, reused by the tooltip and the AccessKit label.
-                    let display_name = analysis.display_name(module_id, &descriptor.name);
-                    let tooltip = {
-                        let mut t = display_name.clone();
-                        t.push_str(&format!(
-                            "\n{} · {}",
-                            module_id,
-                            category_label(descriptor.category)
-                        ));
-                        if !descriptor.description.is_empty() {
-                            t.push_str("\n\n");
-                            t.push_str(&descriptor.description);
-                        }
-                        t
+                    self.canvas_interaction = CanvasInteraction::DraggingNodes { ids };
+                }
+                if node_response.dragged() {
+                    let delta = node_response.drag_delta();
+                    // Move every card in the drag set by the same delta
+                    // (preserves relative layout). Falls back to this card if
+                    // the FSM state was lost for any reason.
+                    let ids: Vec<ModuleId> = match &self.canvas_interaction {
+                        CanvasInteraction::DraggingNodes { ids } => ids.clone(),
+                        _ => vec![module_id],
                     };
-
-                    // Get processing info for this module
-                    let is_source = self.is_source(module_id);
-                    let is_sink = self.is_sink(module_id);
-                    let is_automated = automated_modules.contains(&module_id);
-                    let is_inline_monitor = descriptor.type_id.0 == "inline_signal_monitor";
-
-                    // Place the module at its WORLD position — no egui::Area (an Area
-                    // inside a Scene would not inherit the layer transform). Own the drag
-                    // with a click_and_drag interact over the card, registered BEFORE the
-                    // body so the body's buttons/knobs (drawn on top) keep their own
-                    // clicks/drags. `drag_delta()` is already world-space inside a Scene.
-                    let node_rect = Rect::from_min_size(panel_position, panel_size);
-                    // Distinct id from the child Ui's id-space (which is seeded with
-                    // window_id below) so the card drag handle never collides with a
-                    // body widget.
-                    let node_response =
-                        ui.interact(node_rect, window_id.with("card"), Sense::click_and_drag());
-                    // Expose the node card to AccessKit / the egui-inspection MCP:
-                    // the stable id + human name, so a driver can locate a specific
-                    // module card by name. Reused by the Note Grid Scene canvas.
-                    crate::gui::widgets::expose(
-                        &node_response,
-                        egui::WidgetType::Button,
-                        format!("{module_id} {display_name}"),
-                        None,
-                    );
-                    // Capture the drag set at drag-start: the whole selection if
-                    // this card is part of it, otherwise just this card. Stored in
-                    // the interaction FSM so a mid-drag selection change can't
-                    // affect it.
-                    if node_response.drag_started() {
-                        let ids = if self.selected_modules.contains(&module_id) {
-                            self.selected_modules.iter().copied().collect()
-                        } else {
-                            vec![module_id]
-                        };
-                        self.canvas_interaction = CanvasInteraction::DraggingNodes { ids };
+                    for id in ids {
+                        if let Some(p) = self.panels.get_mut(&id) {
+                            p.position += delta;
+                        }
                     }
-                    if node_response.dragged() {
-                        let delta = node_response.drag_delta();
-                        // Move every card in the drag set by the same delta
-                        // (preserves relative layout). Falls back to this card if
-                        // the FSM state was lost for any reason.
-                        let ids: Vec<ModuleId> = match &self.canvas_interaction {
-                            CanvasInteraction::DraggingNodes { ids } => ids.clone(),
-                            _ => vec![module_id],
-                        };
+                }
+                if node_response.drag_stopped() {
+                    // Snap the grabbed card to the grid, then shift the rest of
+                    // the set by the same correction so the layout stays intact.
+                    let ids: Vec<ModuleId> = match &self.canvas_interaction {
+                        CanvasInteraction::DraggingNodes { ids } => ids.clone(),
+                        _ => vec![module_id],
+                    };
+                    if let Some(before) = self.panels.get(&module_id).map(|p| p.position) {
+                        let correction = snap_to_grid(before) - before;
                         for id in ids {
                             if let Some(p) = self.panels.get_mut(&id) {
-                                p.position += delta;
+                                p.position += correction;
                             }
                         }
                     }
-                    if node_response.drag_stopped() {
-                        // Snap the grabbed card to the grid, then shift the rest of
-                        // the set by the same correction so the layout stays intact.
-                        let ids: Vec<ModuleId> = match &self.canvas_interaction {
-                            CanvasInteraction::DraggingNodes { ids } => ids.clone(),
-                            _ => vec![module_id],
-                        };
-                        if let Some(before) = self.panels.get(&module_id).map(|p| p.position) {
-                            let correction = snap_to_grid(before) - before;
-                            for id in ids {
-                                if let Some(p) = self.panels.get_mut(&id) {
-                                    p.position += correction;
-                                }
-                            }
-                        }
-                        self.canvas_interaction = CanvasInteraction::Idle;
-                    }
-                    // Cursor affordance: a grab hand over a draggable card when
-                    // idle. `hovered()` is false over inner widgets (knobs/buttons,
-                    // drawn on top), so they keep their own cursors; the active-drag
-                    // cursors (Grabbing/Crosshair) are set later from the FSM state.
-                    if node_response.hovered()
-                        && matches!(self.canvas_interaction, CanvasInteraction::Idle)
-                    {
-                        ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-                    }
-                    let node_pos = self
-                        .panels
-                        .get(&module_id)
-                        .map_or(panel_position, |p| p.position);
+                    self.canvas_interaction = CanvasInteraction::Idle;
+                }
+                // Cursor affordance: a grab hand over a draggable card when
+                // idle. `hovered()` is false over inner widgets (knobs/buttons,
+                // drawn on top), so they keep their own cursors; the active-drag
+                // cursors (Grabbing/Crosshair) are set later from the FSM state.
+                if node_response.hovered()
+                    && matches!(self.canvas_interaction, CanvasInteraction::Idle)
+                {
+                    ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+                }
+                let node_pos = self
+                    .panels
+                    .get(&module_id)
+                    .map_or(panel_position, |p| p.position);
 
-                    // Card content in a child Ui sized to the module's fixed-width
-                    // bucket (`ModuleWidth::module_px`); the frame body is pinned to
-                    // the bucket below. `min_rect()` is read back as the actual size.
-                    let module_w = descriptor.width.module_px();
-                    let mut child = ui.new_child(
-                        egui::UiBuilder::new()
-                            // Seed the child Ui's id with the module's window_id as a
-                            // GLOBAL scope so the id is `Id::new(window_id)` — stable per
-                            // module and INDEPENDENT of draw order. A plain `id_salt`
-                            // (non-global) folds in the parent's `next_auto_id_salt` (a
-                            // draw-order counter), so every module's inner widget ids
-                            // shift whenever the z-order changes (bring-to-front), which
-                            // is what triggered the red egui id-clash overlay. The old
-                            // egui::Area's window_id was effectively a stable global id
-                            // too. egui 0.35: `.id(id)` is the shortcut for the old
-                            // `.id_salt(id).global_scope(true)`.
-                            .id(window_id)
-                            .max_rect(Rect::from_min_size(node_pos, Vec2::new(module_w, 600.0)))
-                            .layout(egui::Layout::top_down(egui::Align::Min)),
-                    );
-                    {
-                        let ui = &mut child;
-                        if is_inline_monitor {
-                            self.draw_inline_monitor(
-                                ui,
+                // Card content in a child Ui sized to the module's fixed-width
+                // bucket (`ModuleWidth::module_px`); the frame body is pinned to
+                // the bucket below. `min_rect()` is read back as the actual size.
+                let module_w = descriptor.width.module_px();
+                let mut child = ui.new_child(
+                    egui::UiBuilder::new()
+                        // Seed the child Ui's id with the module's window_id as a
+                        // GLOBAL scope so the id is `Id::new(window_id)` — stable per
+                        // module and INDEPENDENT of draw order. A plain `id_salt`
+                        // (non-global) folds in the parent's `next_auto_id_salt` (a
+                        // draw-order counter), so every module's inner widget ids
+                        // shift whenever the z-order changes (bring-to-front), which
+                        // is what triggered the red egui id-clash overlay. The old
+                        // egui::Area's window_id was effectively a stable global id
+                        // too. egui 0.35: `.id(id)` is the shortcut for the old
+                        // `.id_salt(id).global_scope(true)`.
+                        .id(window_id)
+                        .max_rect(Rect::from_min_size(node_pos, Vec2::new(module_w, 600.0)))
+                        .layout(egui::Layout::top_down(egui::Align::Min)),
+                );
+                {
+                    let ui = &mut child;
+                    if is_inline_monitor {
+                        self.draw_inline_monitor(
+                            ui,
+                            module_id,
+                            descriptor,
+                            dimmed_accent,
+                            handle,
+                            &mut result,
+                        );
+                    } else {
+                        frame.show(ui, |ui| {
+                            // Pin the body to the fixed width bucket up front, so
+                            // the header and 3-column body lay out at a deliberate,
+                            // grid-aligned width instead of stretching to their
+                            // widest row. (8 px = ModuleFrame's inner margin/side.)
+                            ui.set_width(module_w - 16.0);
+
+                            // Built once: the header's interactive controls and
+                            // the bottom status bar's badges read the same flags.
+                            let header_ctx = ModuleHeaderCtx {
                                 module_id,
                                 descriptor,
+                                is_source,
+                                is_sink,
+                                is_automated,
+                                is_bypassed,
+                                is_global_module,
+                                connectivity: connectivity_status,
+                            };
+
+                            // Title bar: name + interactive controls (single row)
+                            draw_module_header(
+                                ui,
                                 dimmed_accent,
+                                &title,
+                                Some(tooltip),
+                                false,
+                                |ui| {
+                                    self.draw_module_header_actions(
+                                        ui,
+                                        &header_ctx,
+                                        effect_chain_order,
+                                        &mut result,
+                                        &mut open,
+                                    );
+                                },
+                            );
+
+                            self.draw_module_body(
+                                ui,
+                                ModuleBodyCtx {
+                                    module_id,
+                                    descriptor,
+                                    accent_color,
+                                    connected_ports: &connected_ports,
+                                    analysis: &analysis,
+                                    mod_catalog: &mod_catalog,
+                                    script_graph: script_graph.as_ref(),
+                                    effect_chain_order,
+                                    audio_input_snapshot,
+                                },
                                 handle,
                                 &mut result,
                             );
-                        } else {
-                            frame.show(ui, |ui| {
-                                // Pin the body to the fixed width bucket up front, so
-                                // the header and 3-column body lay out at a deliberate,
-                                // grid-aligned width instead of stretching to their
-                                // widest row. (8 px = ModuleFrame's inner margin/side.)
-                                ui.set_width(module_w - 16.0);
 
-                                // Built once: the header's interactive controls and
-                                // the bottom status bar's badges read the same flags.
-                                let header_ctx = ModuleHeaderCtx {
-                                    module_id,
-                                    descriptor,
-                                    is_source,
-                                    is_sink,
-                                    is_automated,
-                                    is_bypassed,
-                                    is_global_module,
-                                    connectivity: connectivity_status,
-                                };
-
-                                // Title bar: name + interactive controls (single row)
-                                draw_module_header(
-                                    ui,
-                                    dimmed_accent,
-                                    &title,
-                                    Some(tooltip),
-                                    false,
-                                    |ui| {
-                                        self.draw_module_header_actions(
-                                            ui,
-                                            &header_ctx,
-                                            effect_chain_order,
-                                            &mut result,
-                                            &mut open,
-                                        );
-                                    },
-                                );
-
-                                self.draw_module_body(
-                                    ui,
-                                    ModuleBodyCtx {
-                                        module_id,
-                                        descriptor,
-                                        accent_color,
-                                        connected_ports: &connected_ports,
-                                        analysis: &analysis,
-                                        mod_catalog: &mod_catalog,
-                                        script_graph: script_graph.as_ref(),
-                                        effect_chain_order,
-                                        audio_input_snapshot,
-                                    },
-                                    handle,
-                                    &mut result,
-                                );
-
-                                // Bottom status bar: the non-interactive badges,
-                                // mirroring the header at the foot of the frame.
-                                draw_module_footer(ui, |ui| {
-                                    Self::draw_module_status_badges(ui, &header_ctx, &analysis);
-                                });
+                            // Bottom status bar: the non-interactive badges,
+                            // mirroring the header at the foot of the frame.
+                            draw_module_footer(ui, |ui| {
+                                Self::draw_module_status_badges(ui, &header_ctx, &analysis);
                             });
-                        }
-                    }
-
-                    // Read the frame's actual (world) size back.
-                    let actual_rect = child.min_rect();
-                    if let Some(p) = self.panels.get_mut(&module_id) {
-                        p.size = actual_rect.size();
-                    }
-                    // Store the SCREEN rect (world → screen) so the screen-space
-                    // info / description popups, drawn after the Scene, anchor
-                    // beside the module instead of at the raw world position.
-                    let screen_rect = ui
-                        .ctx()
-                        .layer_transform_to_global(ui.layer_id())
-                        .map_or(actual_rect, |t| t * actual_rect);
-                    self.module_rects.insert(module_id, screen_rect);
-
-                    self.handle_module_interaction(
-                        ui,
-                        &node_response,
-                        module_id,
-                        &group_layout,
-                        &mut bring_to_front,
-                    );
-
-                    // Right-click on a module's empty body opens the rack context menu.
-                    node_response.context_menu(|ui| {
-                        let (selected, _) =
-                            self.bg_context_menu_contents(ui, &mut result, panel_position, None);
-                        if let Some(sel) = selected {
-                            result.context_add = Some((sel, panel_position, None));
-                        }
-                    });
-
-                    // Handle close (delete module) — triggered by close button.
-                    // If the module is in a signal chain, bypass it (reconnect around it).
-                    if !open {
-                        self.bypass_and_remove(module_id, &mut result);
-                    }
-
-                    // Clear reposition flag after this module has been drawn
-                    if needs_reposition {
-                        self.needs_reposition.remove(&module_id);
+                        });
                     }
                 }
 
-                // Restore descriptors after the render loop
-                self.descriptors = descriptors;
+                // Read the frame's actual (world) size back.
+                let actual_rect = child.min_rect();
+                if let Some(p) = self.panels.get_mut(&module_id) {
+                    p.size = actual_rect.size();
+                }
+                // Store the SCREEN rect (world → screen) so the screen-space
+                // info / description popups, drawn after the Scene, anchor
+                // beside the module instead of at the raw world position.
+                let screen_rect = ui
+                    .ctx()
+                    .layer_transform_to_global(ui.layer_id())
+                    .map_or(actual_rect, |t| t * actual_rect);
+                self.module_rects.insert(module_id, screen_rect);
 
-                // Apply z-order change
-                if let Some(id) = bring_to_front {
-                    self.bring_to_front(id);
+                self.handle_module_interaction(
+                    ui,
+                    &node_response,
+                    module_id,
+                    &group_layout,
+                    &mut bring_to_front,
+                );
+
+                // Right-click on a module's empty body opens the rack context menu.
+                node_response.context_menu(|ui| {
+                    let (selected, _) =
+                        self.bg_context_menu_contents(ui, &mut result, panel_position, None);
+                    if let Some(sel) = selected {
+                        result.context_add = Some((sel, panel_position, None));
+                    }
+                });
+
+                // Handle close (delete module) — triggered by close button.
+                // If the module is in a signal chain, bypass it (reconnect around it).
+                if !open {
+                    self.bypass_and_remove(module_id, &mut result);
                 }
 
-                // Handle port interactions for connections
-                self.handle_port_interactions(ui, &mut result);
-
-                // Draw the in-progress cable on the scene layer so it tracks the
-                // world-space ports under pan/zoom.
-                if let Some(pending) = self.pending_connection() {
-                    let color = cable_color(pending.from_type, 180);
-                    draw_cable_dragging(
-                        ui.painter(),
-                        pending.from_position,
-                        pending.current_pos,
-                        color,
-                    );
+                // Clear reposition flag after this module has been drawn
+                if needs_reposition {
+                    self.needs_reposition.remove(&module_id);
                 }
+            }
 
-                self.handle_canvas_background_input(ui, &canvas_response);
-            });
+            // Restore descriptors after the render loop
+            self.descriptors = descriptors;
+
+            // Apply z-order change
+            if let Some(id) = bring_to_front {
+                self.bring_to_front(id);
+            }
+
+            // Handle port interactions for connections
+            self.handle_port_interactions(ui, &mut result);
+
+            // Draw the in-progress cable on the scene layer so it tracks the
+            // world-space ports under pan/zoom. The head follows the live cursor
+            // (world coords); the tail is the fixed source-port anchor.
+            if let Some(pending) = &self.pending_wire
+                && let Some(cursor) = ui.input(|i| i.pointer.interact_pos())
+            {
+                let color = cable_color(pending.from.port_type, 180);
+                draw_cable_dragging(
+                    ui.painter(),
+                    pending.from_pos,
+                    screen_to_world(ui, cursor),
+                    color,
+                );
+            }
+
+            self.handle_canvas_background_input(ui, &canvas_response);
+        });
         self.scene_rect = Some(scene_rect);
 
         // Macro-source rail (S1.5b): a fixed SCREEN-space strip — drawn OUTSIDE the
@@ -2740,80 +2693,17 @@ impl PatchEditor {
         let Some(scene_rect) = self.scene_rect else {
             return;
         };
-        let t = theme();
-        let inset = Vec2::splat(t.spacing.panel_padding);
-
-        // Collect the clicked action, then resolve it to a target `scene_rect`
-        // afterwards — so the fit bounds (which union every module rect) are only
-        // computed when "Fit" is actually clicked, not every frame.
-        enum ViewAction {
-            ZoomOut,
-            ZoomIn,
-            Fit,
-            OneToOne,
-        }
-        let mut action: Option<ViewAction> = None;
-        egui::Area::new(egui::Id::new(("patch_view_controls", instrument_id)))
-            .order(Order::Foreground)
-            .pivot(egui::Align2::RIGHT_TOP)
-            .fixed_pos(egui::pos2(
-                visible_rect.right() - inset.x,
-                visible_rect.top() + inset.y,
-            ))
-            .constrain_to(visible_rect)
-            .show(ui.ctx(), |ui| {
-                egui::Frame::new()
-                    .fill(t.colors.bg_panel)
-                    .stroke(egui::Stroke::new(1.0, t.colors.border))
-                    .corner_radius(4.0)
-                    .inner_margin(t.spacing.widget_spacing)
-                    .show(ui, |ui| {
-                        ui.horizontal(|ui| {
-                            ui.spacing_mut().item_spacing.x = 8.0;
-                            let chip = |ui: &mut Ui, label: &str, tip: &str| -> bool {
-                                ui.add(
-                                    egui::Button::new(
-                                        egui::RichText::new(label)
-                                            .size(t.fonts.size_small)
-                                            .color(t.colors.text_dim),
-                                    )
-                                    .frame(false),
-                                )
-                                .on_hover_text(tip)
-                                .clicked()
-                            };
-                            if chip(ui, "−", "Zoom out") {
-                                action = Some(ViewAction::ZoomOut);
-                            }
-                            if chip(ui, "+", "Zoom in") {
-                                action = Some(ViewAction::ZoomIn);
-                            }
-                            if chip(ui, "Fit", "Fit all modules in view") {
-                                action = Some(ViewAction::Fit);
-                            }
-                            if chip(ui, "1:1", "Reset zoom to 100%") {
-                                action = Some(ViewAction::OneToOne);
-                            }
-                        });
-                    });
-            });
-
-        // `scene_rect` is the visible WORLD region, so a *smaller* rect = *higher*
-        // zoom. Zoom steps keep the current view centre.
-        let new_rect = action.map(|a| match a {
-            ViewAction::ZoomOut => {
-                Rect::from_center_size(scene_rect.center(), scene_rect.size() * 1.25)
-            }
-            ViewAction::ZoomIn => {
-                Rect::from_center_size(scene_rect.center(), scene_rect.size() * 0.8)
-            }
-            ViewAction::Fit => self.initial_scene_rect(visible_rect),
-            ViewAction::OneToOne => {
-                Rect::from_center_size(scene_rect.center(), visible_rect.size())
-            }
-        });
-        if let Some(r) = new_rect {
-            self.scene_rect = Some(r);
+        if let Some(action) = scene_canvas::view_controls(
+            ui,
+            egui::Id::new(("patch_view_controls", instrument_id)),
+            visible_rect,
+        ) {
+            self.scene_rect = Some(scene_canvas::apply_view_action(
+                action,
+                scene_rect,
+                visible_rect,
+                || self.initial_scene_rect(visible_rect),
+            ));
         }
     }
 
@@ -2855,49 +2745,45 @@ impl PatchEditor {
         }
     }
 
-    fn can_connect(&self, pending: &PendingConnection, target: &PortPosition) -> bool {
-        // Can't connect to same module
-        if pending.from_module == target.module_id {
-            return false;
+    /// The connection a drop from `from` onto `to` would create, or `None` when
+    /// the pair is invalid — the [`node_canvas::wiring`] FSM's `open_connection`
+    /// predicate. Mirrors the engine's rules (distinct modules, opposite
+    /// directions, type-compatible output→input, no cycle) so the GUI never
+    /// offers an edge the engine would silently drop. Takes `connections`
+    /// explicitly (not `&self`) so the FSM closure can hold it while the pending
+    /// wire is borrowed mutably.
+    fn open_patch_connection(
+        connections: &[Connection],
+        from: PatchPort,
+        to: PatchPort,
+    ) -> Option<Connection> {
+        if from.module == to.module {
+            return None;
         }
-
-        // Must connect output to input or input to output
-        if pending.from_direction == target.direction {
-            return false;
+        if from.direction == to.direction {
+            return None;
         }
-
-        // Port types must be compatible in the direction the signal flows
-        // (output → input). Mirrors the engine's compatibility matrix so the
-        // GUI never rejects a connection the engine would accept.
-        let (out_type, in_type) = if pending.from_direction == WidgetPortDirection::Output {
-            (pending.from_type, target.port_type)
+        // Orient output → input; both endpoints carry their own type/direction.
+        let (out, inp) = if from.direction == WidgetPortDirection::Output {
+            (from, to)
         } else {
-            (target.port_type, pending.from_type)
+            (to, from)
         };
-        if !out_type.can_drive(in_type) {
-            return false;
+        if !out.port_type.can_drive(inp.port_type) {
+            return None;
         }
-
-        // Reject connections that would form a cycle — the engine silently drops
-        // them (see Graph::would_create_cycle), so the GUI must not offer them.
-        let (out_module, in_module) = if pending.from_direction == WidgetPortDirection::Output {
-            (pending.from_module, target.module_id)
-        } else {
-            (target.module_id, pending.from_module)
-        };
-        if self.would_create_cycle(out_module, in_module) {
-            return false;
+        if Self::would_create_cycle(connections, out.module, inp.module) {
+            return None;
         }
-
-        true
+        Some(Connection::new(out.module, out.port, inp.module, inp.port))
     }
 
     /// Whether adding an edge `from → to` would create a cycle in the current
     /// connection graph. Mirrors `synth_engine::graph::Graph::would_create_cycle`
-    /// (the engine silently rejects such edges). Used by `can_connect` at
-    /// drop time; the per-frame highlight uses the precomputed
+    /// (the engine silently rejects such edges). Used by `open_patch_connection`
+    /// at drop time; the per-frame highlight uses the precomputed
     /// `drag_cycle_blocked` set instead, which encodes the same rule in bulk.
-    fn would_create_cycle(&self, from: ModuleId, to: ModuleId) -> bool {
+    fn would_create_cycle(connections: &[Connection], from: ModuleId, to: ModuleId) -> bool {
         if from == to {
             return true; // Self-loop
         }
@@ -2909,7 +2795,7 @@ impl PatchEditor {
                 return true; // Path to → from exists; the new edge closes a loop
             }
             if visited.insert(current) {
-                for conn in &self.connections {
+                for conn in connections {
                     if conn.from_module == current {
                         stack.push(conn.to_module);
                     }
@@ -4147,18 +4033,6 @@ fn draw_select_input_menu(ui: &mut Ui, catalog: &ModAddrCatalog) -> Option<Picke
     picked
 }
 
-/// A one-line, truncated preview of a slot's YAMS source for the panel row.
-fn script_preview(src: &str) -> String {
-    const MAX: usize = 24;
-    let line = src.lines().next().unwrap_or("").trim();
-    if line.chars().count() > MAX {
-        let head: String = line.chars().take(MAX).collect();
-        format!("{head}…")
-    } else {
-        line.to_string()
-    }
-}
-
 /// Draw the Script module body: one row per output port (`out1`..`out8`), each
 /// showing the installed YAMS source (truncated) and an ƒx button that opens the
 /// shared expression editor for that slot. The output-port nipples themselves are
@@ -4182,7 +4056,10 @@ fn draw_script_slot_row(
         caption(ui, label, CaptionTone::Color(accent_color));
         let installed = state.slot_scripts.get(&slot);
         let (preview, color) = match installed {
-            Some(src) => (script_preview(src), t.colors.text_secondary),
+            Some(src) => (
+                crate::gui::script_editor::script_preview(src),
+                t.colors.text_secondary,
+            ),
             None => ("— empty —".to_string(), t.colors.text_dim),
         };
         caption(ui, preview, CaptionTone::Color(color));
@@ -4936,13 +4813,33 @@ mod patch_analysis_tests {
             .push(Connection::new(amp, "out_l", out, "in_l"));
 
         // Closing the loop back to an upstream module is a cycle.
-        assert!(editor.would_create_cycle(out, osc));
-        assert!(editor.would_create_cycle(amp, osc));
+        assert!(PatchEditor::would_create_cycle(
+            &editor.connections,
+            out,
+            osc
+        ));
+        assert!(PatchEditor::would_create_cycle(
+            &editor.connections,
+            amp,
+            osc
+        ));
         // Self-loop.
-        assert!(editor.would_create_cycle(amp, amp));
+        assert!(PatchEditor::would_create_cycle(
+            &editor.connections,
+            amp,
+            amp
+        ));
         // A normal downstream edge is fine (parallel edge, no loop).
-        assert!(!editor.would_create_cycle(osc, out));
-        assert!(!editor.would_create_cycle(osc, amp));
+        assert!(!PatchEditor::would_create_cycle(
+            &editor.connections,
+            osc,
+            out
+        ));
+        assert!(!PatchEditor::would_create_cycle(
+            &editor.connections,
+            osc,
+            amp
+        ));
     }
 
     /// S2.4: the panel script mirror is snapshot-driven. `sync_module_scripts`
@@ -5024,17 +4921,21 @@ mod patch_analysis_tests {
             .connections
             .push(Connection::new(amp, "out_l", out, "in_l"));
 
-        let pending = |module, direction| PendingConnection {
-            from_module: module,
-            from_port: "p".into(),
-            from_position: Pos2::ZERO,
-            from_type: WidgetPortType::Audio,
-            from_direction: direction,
-            current_pos: Pos2::ZERO,
+        let pending = |module, direction| {
+            Some(node_canvas::WireDrag {
+                from: PatchPort {
+                    module,
+                    port: "p".into(),
+                    direction,
+                    port_type: WidgetPortType::Audio,
+                },
+                from_pos: Pos2::ZERO,
+                armed_by_drag: true,
+            })
         };
 
         // Dragging from `out`'s OUTPUT blocks its ancestors (amp, osc) + itself.
-        editor.start_wire_drag(pending(out, WidgetPortDirection::Output));
+        editor.pending_wire = pending(out, WidgetPortDirection::Output);
         editor.recompute_drag_cycle_blocked();
         assert_eq!(
             editor.drag_cycle_blocked,
@@ -5043,7 +4944,7 @@ mod patch_analysis_tests {
         );
 
         // Dragging from `osc`'s INPUT blocks its descendants (amp, out) + itself.
-        editor.start_wire_drag(pending(osc, WidgetPortDirection::Input));
+        editor.pending_wire = pending(osc, WidgetPortDirection::Input);
         editor.recompute_drag_cycle_blocked();
         assert_eq!(
             editor.drag_cycle_blocked,
@@ -5052,12 +4953,12 @@ mod patch_analysis_tests {
         );
 
         // Dragging from `osc`'s OUTPUT has no ancestors — only the self-loop.
-        editor.start_wire_drag(pending(osc, WidgetPortDirection::Output));
+        editor.pending_wire = pending(osc, WidgetPortDirection::Output);
         editor.recompute_drag_cycle_blocked();
         assert_eq!(editor.drag_cycle_blocked, HashSet::from([osc]));
 
         // No drag → empty.
-        editor.canvas_interaction = CanvasInteraction::Idle;
+        editor.pending_wire = None;
         editor.recompute_drag_cycle_blocked();
         assert!(editor.drag_cycle_blocked.is_empty());
     }

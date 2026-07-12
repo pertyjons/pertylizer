@@ -306,10 +306,13 @@ pub enum Op {
     /// `StoreState(i)`). NaN/Inf is sanitized to 0 (layer-2), so a poisoned
     /// feedback value can never persist across samples.
     StoreState(u16),
-    /// Pop a value and write it to audio output channel `chan` (0 = left, 1 =
-    /// right) for the current sample. Emitted by the `out.left` / `out.right`
-    /// multi-out grammar; a mono `out = expr` leaves its value on the stack
-    /// instead (the `eval_block` fallback duplicates it to both channels).
+    /// Pop a value and write it to output slot `slot`, sanitizing NaN/Inf to 0.
+    /// A generic multi-out store whose slot meaning is set by the dialect: the
+    /// audio grammar uses `0 = left`, `1 = right` (`out.left`/`out.right`); the
+    /// `note_event` grammar uses `0 = pitch`, `1 = vel`, `2 = dur`, `3 = gate`
+    /// (`out.pitch`/…). A bare mono `out = expr` emits no store and leaves its
+    /// value on the value stack instead (the `eval_block` fallback duplicates it
+    /// to both audio channels). An unwritten slot stays `None` (pass-through).
     StoreAudioOut(u8),
 }
 

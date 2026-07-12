@@ -9,8 +9,8 @@ use synth_engine::ModuleId;
 use synth_engine::graph::Connection;
 use synth_engine::instrument::InstrumentId;
 use synth_sequencer::{
-    Duration as SeqDuration, Glide, NoteExpression, NoteId, NoteLane, NoteProcessor, Ornament,
-    PatternId, PatternTick, Pitch, Tick, TrackId, Velocity,
+    Duration as SeqDuration, Glide, NoteExpression, NoteId, NoteLane, Ornament, PatternId,
+    PatternTick, Pitch, Tick, TrackId, Velocity,
 };
 
 use crate::patch::{ConnectionState, ModuleState, ParamValue};
@@ -94,29 +94,20 @@ pub(crate) enum UndoAction {
         pattern_id: PatternId,
         changes: Vec<(NoteId, NoteLane, NoteLane)>,
     },
+    /// Batch per-note note-scope graph binding change (multi-edit, plan §2.1).
+    /// Each tuple is `(note_id, old_graph, new_graph)`.
+    SetNoteGraphBindingBatch {
+        pattern_id: PatternId,
+        changes: Vec<(
+            NoteId,
+            Option<synth_sequencer::NoteGraphId>,
+            Option<synth_sequencer::NoteGraphId>,
+        )>,
+    },
 
-    // ── Note processors (pattern rack) ──
-    /// A note processor was added to a pattern's rack at `index`.
-    AddNoteProcessor {
-        pattern_id: PatternId,
-        index: usize,
-        processor: NoteProcessor,
-    },
-    /// A note processor was removed from `index` of a pattern's rack.
-    RemoveNoteProcessor {
-        pattern_id: PatternId,
-        index: usize,
-        processor: NoteProcessor,
-    },
-    /// A note processor's config was edited in place at `index`.
-    SetNoteProcessorConfig {
-        pattern_id: PatternId,
-        index: usize,
-        old: NoteProcessor,
-        new: NoteProcessor,
-    },
-    /// A pattern's processor rack (+ per-note ornaments) was frozen — baked into
-    /// plain notes and the rack cleared. Carries the full pre-freeze pattern so
+    /// A pattern's note graph (or legacy per-note ornaments) was frozen — baked
+    /// into plain notes and the source cleared. Carries the full pre-freeze
+    /// pattern so
     /// the inverse restores notes + rack losslessly; applying it re-runs the
     /// (deterministic) freeze for redo.
     FreezePattern {
@@ -310,6 +301,24 @@ pub(crate) enum UndoAction {
         connection: Connection,
     },
 
+    // ── Note Grid (pooled note graphs) ──
+    /// A pooled note graph was created (`old: None`), edited, or deleted
+    /// (`new: None`) — full-snapshot on each side, like [`Self::FreezePattern`].
+    /// Applying writes the `new` side into the `Song` pool. NB: like every
+    /// snapshot action here, applying overwrites concurrent external (MCP)
+    /// edits to the same object — the app-wide undo trade-off.
+    SetNoteGraph {
+        graph_id: synth_sequencer::NoteGraphId,
+        old: Option<synth_sequencer::NoteGraph>,
+        new: Option<synth_sequencer::NoteGraph>,
+    },
+    /// A pattern's note-graph binding changed.
+    SetPatternNoteGraph {
+        pattern_id: PatternId,
+        old: Option<synth_sequencer::NoteGraphId>,
+        new: Option<synth_sequencer::NoteGraphId>,
+    },
+
     // ── Composite ──
     /// Multiple actions grouped as a single undo step.
     Composite(Vec<UndoAction>),
@@ -419,35 +428,6 @@ impl UndoManager {
             UndoAction::RemoveNote { pattern_id, note } => UndoAction::AddNote {
                 pattern_id: *pattern_id,
                 note: note.clone(),
-            },
-            UndoAction::AddNoteProcessor {
-                pattern_id,
-                index,
-                processor,
-            } => UndoAction::RemoveNoteProcessor {
-                pattern_id: *pattern_id,
-                index: *index,
-                processor: processor.clone(),
-            },
-            UndoAction::RemoveNoteProcessor {
-                pattern_id,
-                index,
-                processor,
-            } => UndoAction::AddNoteProcessor {
-                pattern_id: *pattern_id,
-                index: *index,
-                processor: processor.clone(),
-            },
-            UndoAction::SetNoteProcessorConfig {
-                pattern_id,
-                index,
-                old,
-                new,
-            } => UndoAction::SetNoteProcessorConfig {
-                pattern_id: *pattern_id,
-                index: *index,
-                old: new.clone(),
-                new: old.clone(),
             },
             UndoAction::FreezePattern { pattern_id, before } => UndoAction::RestorePattern {
                 pattern_id: *pattern_id,
@@ -559,6 +539,16 @@ impl UndoManager {
                 pattern_id,
                 changes,
             } => UndoAction::SetLaneBatch {
+                pattern_id: *pattern_id,
+                changes: changes
+                    .iter()
+                    .map(|(id, old, new)| (*id, *new, *old))
+                    .collect(),
+            },
+            UndoAction::SetNoteGraphBindingBatch {
+                pattern_id,
+                changes,
+            } => UndoAction::SetNoteGraphBindingBatch {
                 pattern_id: *pattern_id,
                 changes: changes
                     .iter()
@@ -773,6 +763,20 @@ impl UndoManager {
             } => UndoAction::AddConnection {
                 instrument_id: *instrument_id,
                 connection: *connection,
+            },
+            UndoAction::SetNoteGraph { graph_id, old, new } => UndoAction::SetNoteGraph {
+                graph_id: *graph_id,
+                old: new.clone(),
+                new: old.clone(),
+            },
+            UndoAction::SetPatternNoteGraph {
+                pattern_id,
+                old,
+                new,
+            } => UndoAction::SetPatternNoteGraph {
+                pattern_id: *pattern_id,
+                old: *new,
+                new: *old,
             },
             UndoAction::Composite(actions) => {
                 // Reverse the order and invert each action.

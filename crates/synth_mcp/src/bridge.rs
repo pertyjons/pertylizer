@@ -22,11 +22,11 @@ use crate::types::{
     ChordProgressionStep, ConnectionCheckResult, ConnectionInfo, CreateChordProgressionResult,
     DetailedSampleInfo, DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic,
     InputDeviceInfo, InputStateInfo, InsertModuleResult, InstrumentInfo, InstrumentProfileResult,
-    MatrixRoutingInfo, ModuleInfo, ModuleSearchResult, ModuleTypeBrief, ModuleTypeInfo, NoteInfo,
-    NoteProcessorInfo, OptimizeResult, ParameterInfo, PatchResourceData, PatternInfo,
-    PlacementInfo, ProjectLintEntry, ProjectLintReport, ProjectSchemaInfo, ReturnBusInfo,
-    ReturnEffectInfo, SampleInfo, SamplerStateInfo, SetSongResult, SongInfo, TempoPoint, TrackInfo,
-    UiSnapshot, VersionInfo,
+    MatrixRoutingInfo, ModuleInfo, ModuleSearchResult, ModuleTypeBrief, ModuleTypeInfo,
+    NoteGraphDetail, NoteGraphInfo, NoteInfo, OptimizeResult, ParameterInfo, PatchResourceData,
+    PatternInfo, PlacementInfo, ProjectLintEntry, ProjectLintReport, ProjectSchemaInfo,
+    ReturnBusInfo, ReturnEffectInfo, SampleInfo, SamplerStateInfo, SetSongResult, SongInfo,
+    TempoPoint, TrackInfo, UiSnapshot, VersionInfo,
 };
 
 // === Bridge-level data structures for batch operations ===
@@ -1034,39 +1034,107 @@ pub trait SynthBridge: Send + Sync + 'static {
         velocity: Option<u8>,
     ) -> Result<NoteInfo, McpBridgeError>;
 
-    // === Sequencer: Note processors (generative articulation rack) ===
+    // === Sequencer: pattern freeze ===
 
-    /// List a pattern's note-processor rack in execution order.
-    fn list_note_processors(
-        &self,
-        pattern_id: u32,
-    ) -> Result<Vec<NoteProcessorInfo>, McpBridgeError>;
+    /// Bake the pattern's note processing into concrete notes (Model-A freeze):
+    /// a bound note graph bakes (binding cleared, pooled graph survives),
+    /// otherwise per-note ornaments and note-scope articulation bake. Returns
+    /// the resulting note count.
+    /// Freeze a pattern's note processing to plain notes. Returns
+    /// `(note_count, dropped_events)` — `dropped_events > 0` means a graph node
+    /// hit the 128-event expansion cap during the bake (plan §7).
+    fn freeze_pattern(&self, pattern_id: u32) -> Result<(usize, u32), McpBridgeError>;
 
-    /// Add a note processor to a pattern's rack. `processor` is the
-    /// externally-tagged `NoteProcessor` JSON (e.g.
-    /// `{"Arpeggiator": {...}}`, `{"Chord": {...}}`); it is inserted at its
-    /// canonical chain position. Returns the insertion index.
-    fn add_note_processor(
-        &self,
-        pattern_id: u32,
-        processor: serde_json::Value,
-    ) -> Result<usize, McpBridgeError>;
+    // === Sequencer: Note Grid (pooled note-processing graphs) ===
 
-    /// Replace the processor at `index` in place (config edit). `processor` is
-    /// the same JSON shape `add_note_processor` accepts.
-    fn set_note_processor(
+    /// List every pooled note graph in summary form (id, name, counts, usage).
+    fn list_note_graphs(&self) -> Result<Vec<NoteGraphInfo>, McpBridgeError>;
+
+    /// Full detail of one note graph — its modules (in processing order) and
+    /// connections.
+    fn get_note_graph(&self, graph_id: u32) -> Result<NoteGraphDetail, McpBridgeError>;
+
+    /// Create an empty pooled note graph. Returns the new graph id.
+    fn create_note_graph(
         &self,
-        pattern_id: u32,
-        index: usize,
-        processor: serde_json::Value,
+        name: String,
+        description: Option<String>,
+        color: Option<String>,
+    ) -> Result<u32, McpBridgeError>;
+
+    /// Duplicate a pooled note graph — nodes, connections, metadata, and
+    /// editor layout — as `"<name> copy"`. Returns the new graph's id.
+    fn duplicate_note_graph(&self, graph_id: u32) -> Result<u32, McpBridgeError>;
+
+    /// Delete a pooled note graph, clearing every pattern reference to it (those
+    /// patterns fall back to dry playback). Returns how many patterns were
+    /// unbound.
+    fn delete_note_graph(&self, graph_id: u32) -> Result<usize, McpBridgeError>;
+
+    /// Add a module to a graph. `module` is externally-tagged `NoteModuleConfig`
+    /// JSON (e.g. `{"Euclidean": {...}}`, `{"NoteLfo": {...}}`). Returns the new
+    /// module id.
+    fn add_note_graph_module(
+        &self,
+        graph_id: u32,
+        module: serde_json::Value,
+    ) -> Result<u32, McpBridgeError>;
+
+    /// Replace a module's config in place (same JSON shape as
+    /// `add_note_graph_module`), keeping its id and connections.
+    fn set_note_graph_module(
+        &self,
+        graph_id: u32,
+        module_id: u32,
+        module: serde_json::Value,
     ) -> Result<(), McpBridgeError>;
 
-    /// Remove the processor at `index` from a pattern's rack.
-    fn remove_note_processor(&self, pattern_id: u32, index: usize) -> Result<(), McpBridgeError>;
+    /// Set a `NoteScriptTransform` node's YAMS `note_event` source, compile it,
+    /// and install the program. Returns a human-readable compile status: the
+    /// source is always saved, and an empty source or a compile error leaves the
+    /// node pass-through (the diagnostic is returned in the status string, not as
+    /// an error). Errors only for an unknown graph/module or a non-script node.
+    fn set_note_graph_script(
+        &self,
+        graph_id: u32,
+        module_id: u32,
+        source: String,
+    ) -> Result<String, McpBridgeError>;
 
-    /// Bake the whole rack into concrete notes (Model-A freeze) and clear it.
-    /// Returns the resulting note count.
-    fn freeze_note_processors(&self, pattern_id: u32) -> Result<usize, McpBridgeError>;
+    /// Remove a module and every connection touching it.
+    fn remove_note_graph_module(&self, graph_id: u32, module_id: u32)
+    -> Result<(), McpBridgeError>;
+
+    /// Connect two modules. `port` is `note_stream` (the linear spine),
+    /// `value`, or `gate`; `to_input` selects the target's value-input port for
+    /// modulation edges. Validated (linearity, acyclicity, endpoint types).
+    fn connect_note_graph(
+        &self,
+        graph_id: u32,
+        from: u32,
+        to: u32,
+        port: String,
+        to_input: u8,
+    ) -> Result<(), McpBridgeError>;
+
+    /// Bind a pattern to a note graph (or clear the binding with `None`, so the
+    /// pattern's raw notes + per-note ornaments play).
+    fn set_pattern_note_graph(
+        &self,
+        pattern_id: u32,
+        graph_id: Option<u32>,
+    ) -> Result<(), McpBridgeError>;
+
+    /// Bind a single note to a note graph (or clear the binding with `None`) for
+    /// per-note articulation (plan §2.1): the graph runs on that note's material
+    /// during source collection, before the pattern-scope graph / rack. A
+    /// dangling `graph_id` is rejected.
+    fn set_note_note_graph(
+        &self,
+        pattern_id: u32,
+        note_id: u64,
+        graph_id: Option<u32>,
+    ) -> Result<(), McpBridgeError>;
 
     /// Set or clear a note's per-note timed-repeat ornament
     /// (flam/drag/ruff/roll/grace). `ornament` is the `Ornament` JSON to set,

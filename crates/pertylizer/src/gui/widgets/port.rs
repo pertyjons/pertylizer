@@ -20,34 +20,53 @@ pub struct PortWidget {
 
 /// Port type for widget rendering.
 ///
-/// For signal routing definitions, see `modules::core::PortType`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+/// For audio-graph signal routing definitions, see `modules::core::PortType`.
+/// `NoteStream` belongs to the Note Grid domain (tick-rate note events, never
+/// on an audio canvas); the Note Grid's `Value`/`Gate` edges reuse `Control`/
+/// `Gate` — a Note Grid `Value` *is* a control scalar, so the diamond/square
+/// vocabulary carries over between the two editors.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WidgetPortType {
     Audio,
     Control,
     Gate,
     Midi,
+    /// The Note Grid's per-tick note-stream spine.
+    NoteStream,
 }
 
 impl WidgetPortType {
     /// The matching `synth_core::PortType` for routing-rule queries.
-    fn to_core(self) -> synth_core::PortType {
+    /// `None` for port types outside the audio graph (`NoteStream`).
+    fn to_core(self) -> Option<synth_core::PortType> {
         match self {
-            Self::Audio => synth_core::PortType::Audio,
-            Self::Control => synth_core::PortType::Control,
-            Self::Gate => synth_core::PortType::Gate,
-            Self::Midi => synth_core::PortType::Midi,
+            Self::Audio => Some(synth_core::PortType::Audio),
+            Self::Control => Some(synth_core::PortType::Control),
+            Self::Gate => Some(synth_core::PortType::Gate),
+            Self::Midi => Some(synth_core::PortType::Midi),
+            Self::NoteStream => None,
         }
     }
 
     /// Whether a signal from an output port of `self` may drive an input port
-    /// of type `dest`. Delegates to the canonical
+    /// of type `dest`. Audio-domain pairs delegate to the canonical
     /// [`synth_core::PortType::can_drive`] contract (shared with the MCP
     /// `check_connection` validator) so the patch editor and the engine-facing
-    /// path never disagree about which connections are legal.
+    /// path never disagree about which connections are legal. A note stream
+    /// only chains to a note stream (the Note Grid's linear spine); its
+    /// `Value`/`Gate` modulation edges ride the audio `Control`/`Gate` rules.
     #[must_use]
     pub fn can_drive(self, dest: Self) -> bool {
-        self.to_core().can_drive(dest.to_core())
+        // Explicit NoteStream arms (not a `(None, None)` catch-all) so a future
+        // second non-core port type can't silently become cross-drivable.
+        match (self, dest) {
+            (Self::NoteStream, Self::NoteStream) => true,
+            (Self::NoteStream, _) | (_, Self::NoteStream) => false,
+            _ => match (self.to_core(), dest.to_core()) {
+                (Some(from), Some(to)) => from.can_drive(to),
+                _ => false,
+            },
+        }
     }
 }
 
@@ -95,6 +114,10 @@ impl PortWidget {
             WidgetPortType::Control => colors.port_control,
             WidgetPortType::Gate => colors.port_gate,
             WidgetPortType::Midi => colors.port_midi,
+            // Each preset's purple accent — distinct from the four audio port
+            // colors in every theme, and the Note Grid canvas shows no
+            // mod-matrix purple to clash with.
+            WidgetPortType::NoteStream => colors.accent_purple,
         }
     }
 
@@ -170,8 +193,10 @@ impl PortWidget {
         let stroke = stroke.unwrap_or(Stroke::NONE);
 
         match self.port_type {
-            WidgetPortType::Audio => {
-                // Circle
+            // Circle — the "main signal" of each domain. Audio and NoteStream
+            // never share a canvas, and within the Note Grid the circle is
+            // unique (Value = diamond, Gate = square).
+            WidgetPortType::Audio | WidgetPortType::NoteStream => {
                 if fill != Color32::TRANSPARENT {
                     painter.circle_filled(center, radius, fill);
                 }
@@ -251,7 +276,7 @@ fn draw_convex(painter: &egui::Painter, points: &[Pos2], fill: Color32, stroke: 
 
 #[cfg(test)]
 mod tests {
-    use super::WidgetPortType::{Audio, Control, Gate, Midi};
+    use super::WidgetPortType::{Audio, Control, Gate, Midi, NoteStream};
 
     #[test]
     fn audio_and_control_are_interchangeable() {
@@ -278,5 +303,16 @@ mod tests {
         assert!(!Midi.can_drive(Audio));
         assert!(!Midi.can_drive(Control));
         assert!(!Audio.can_drive(Midi));
+    }
+
+    #[test]
+    fn note_stream_is_isolated() {
+        // The Note Grid spine only chains to itself — the one rule set with no
+        // synth_core backstop, so it gets its own coverage.
+        assert!(NoteStream.can_drive(NoteStream));
+        for other in [Audio, Control, Gate, Midi] {
+            assert!(!NoteStream.can_drive(other));
+            assert!(!other.can_drive(NoteStream));
+        }
     }
 }

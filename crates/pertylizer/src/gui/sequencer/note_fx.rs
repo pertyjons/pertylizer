@@ -1,60 +1,59 @@
-//! The Note FX rack inspector — a right-docked panel listing a pattern's
-//! note-processor rack (NP6.1). Add / remove / configure the processors that
-//! expand the pattern's source notes at playback time.
+//! The Note FX panel — a right-docked panel binding a pooled note graph to a
+//! pattern. Pick a graph (or "None"), fork a shared one ("make unique"), jump
+//! into the Note Grid view to edit its nodes, or freeze the result into plain
+//! notes. Node/processor editing lives in the Note Grid view (`note_grid_view`),
+//! which reuses this module's per-type editor bodies ([`edit_scale_quantize`]
+//! and friends).
 //!
-//! The rack lives on the shared `Song` (`Pattern.processors`); the audio thread
-//! re-reads it each tick, so edits go through `song.write()` + the undo manager,
-//! never an `EngineCommand`.
-//!
-//! ## Undo coalescing
-//!
-//! A processor's config is edited as a `cfg` working copy; when it differs from
-//! the stored config the change is applied live (no undo) and a pre-edit baseline
-//! is captured in [`SequencerViewState::note_fx_edit_drag_start`]. The single
-//! `SetNoteProcessorConfig` undo entry is pushed once **no widget is being
-//! dragged** — so a knob/slider drag collapses to one entry, while a discrete
-//! combo/toggle change (never "dragged") captures and finalizes in the same
-//! frame. Add/remove are discrete and push their own undo immediately.
+//! The binding lives on the shared `Song` (`Pattern.note_graph`); the audio
+//! thread re-reads it each tick, so edits go through `song.write()` + the undo
+//! manager, never an `EngineCommand`.
 
 use std::sync::Arc;
 
 use eframe::egui::{self, Color32, RichText};
 use egui_remixicon::icons as ri;
 use parking_lot::RwLock;
-use synth_core::NormalizedValue;
 use synth_sequencer::{
     ArpMode, ArpRate, ArpVelocity, Arpeggiator, Chord, Duration as SeqDuration, Humanize,
-    MAX_ARP_OFFSETS, NoteName, NoteProcessor, PatternId, PitchClass, ScaleMask, ScaleQuantize,
-    Song, StrumDirection,
+    MAX_ARP_OFFSETS, NoteGraphId, NoteName, NoteProcessor, PatternId, PitchClass, ScaleMask,
+    ScaleQuantize, Song, StrumDirection,
 };
 
 use crate::gui::theme::theme;
 use crate::gui::widgets::{
-    Knob, ModuleFrame, dim_label, draw_module_header, enum_combo, icon_button, labeled_row,
-    strong_label, unit_drag_value,
+    dim_label, enum_combo, icon_button, knob_normalized, labeled_row, seed_reroll, strong_label,
+    unit_drag_value,
 };
 use crate::undo::UndoAction;
 
 use super::SequencerViewState;
 
-/// A rack edit deferred until after the snapshot has been drawn, so we never
-/// mutate the rack while iterating the cloned snapshot.
-enum RackEdit {
-    Add(NoteProcessor),
-    Remove(usize),
-    /// Live config edit at `index` — applied immediately; undo is coalesced
-    /// separately (see the module docs).
-    Set {
-        index: usize,
-        cfg: NoteProcessor,
-    },
-    /// Bake the rack (+ per-note ornaments) into plain notes and clear it.
+/// A panel edit deferred until after the snapshot has been drawn, so we never
+/// mutate the `Song` while reading the cloned snapshot.
+enum PanelEdit {
+    /// Bake the bound note graph — or, with no binding, per-note ornaments —
+    /// into plain notes and clear the source.
     Freeze,
+    /// Bind (or clear) the pattern's pooled note graph.
+    BindGraph(Option<NoteGraphId>),
+    /// Fork the bound shared graph into a copy and repoint this pattern
+    /// (plan §1.2 "make unique" — the instrument-duplication move).
+    MakeUnique,
 }
 
-/// Draw the note-processor rack for `pattern_id`. Reads a cloned snapshot of the
-/// rack, renders one editable card per processor, applies at most one edit, and
-/// finalizes a coalesced config-edit undo entry when no widget is being dragged.
+/// Snapshot of the pattern's bound note graph for the binding row.
+struct BoundGraph {
+    id: NoteGraphId,
+    /// `None` = the binding dangles (graph deleted elsewhere).
+    name: Option<String>,
+    /// How many patterns bind this graph (drives "make unique").
+    usage: usize,
+}
+
+/// Draw the Note FX panel for `pattern_id`: bind a pooled note graph (or clear
+/// it), fork a shared graph, jump into the Note Grid view to edit it, or freeze
+/// the result into plain notes. Applies at most one edit per frame.
 pub(crate) fn draw_note_fx_panel(
     ui: &mut egui::Ui,
     song: &Arc<RwLock<Song>>,
@@ -79,22 +78,29 @@ pub(crate) fn draw_note_fx_panel(
     });
     ui.separator();
 
-    let mut edit: Option<RackEdit> = None;
-    // Set true by any continuous widget (knob/slider/DragValue) currently dragged;
-    // gates undo finalization so a drag yields one entry, not one per frame.
-    let mut any_dragged = false;
+    let mut edit: Option<PanelEdit> = None;
 
-    // Snapshot the rack (and whether any note has an ornament) so the lock is
-    // held only briefly.
-    let Some((rack, has_ornament)) = song.try_read().and_then(|s| {
+    // Snapshot ornament presence, the graph binding, and the graph pool so the
+    // lock is held only briefly.
+    let Some((has_bakeable_notes, bound_graph, graph_pool)) = song.try_read().and_then(|s| {
         s.pattern(pattern_id).map(|p| {
+            let bound = p.note_graph().map(|gid| BoundGraph {
+                id: gid,
+                name: s.note_graph(gid).map(|g| g.name.clone()),
+                usage: s.note_graph_usage(gid),
+            });
             (
-                p.processors().to_vec(),
                 // Match the freeze condition: a count < 2 ornament is a no-op the
-                // bake skips, so it must not enable the button.
+                // bake skips, so it must not enable the button. Note-scope
+                // bindings also bake (plan §2.1), so they count too.
                 p.notes()
                     .iter()
-                    .any(|n| n.ornament.is_some_and(|o| o.count >= 2)),
+                    .any(|n| n.ornament.is_some_and(|o| o.count >= 2))
+                    || p.notes().iter().any(|n| n.note_graph.is_some()),
+                bound,
+                s.note_graphs()
+                    .map(|g| (g.id, g.name.clone()))
+                    .collect::<Vec<_>>(),
             )
         })
     }) else {
@@ -102,190 +108,180 @@ pub(crate) fn draw_note_fx_panel(
         return;
     };
 
-    // Freeze: bake the rack + per-note ornaments into plain notes. Enabled when
-    // there is anything to bake (a rack or any ornament).
-    ui.add_enabled_ui(!rack.is_empty() || has_ornament, |ui| {
-        ui.menu_button("Freeze", |ui| {
-            ui.label(
-                RichText::new(
-                    "Bakes the processor rack and per-note ornaments into plain notes, then clears the rack. Undoable.",
+    // ── Note graph binding (plan §8.2): one pooled graph per pattern. A bound
+    // graph processes the pattern's notes at playback; with none, the raw notes
+    // (+ ornaments) play. ──
+    labeled_row(ui, "Graph", |ui| {
+        let selected_label = match &bound_graph {
+            Some(bg) => bg
+                .name
+                .clone()
+                .unwrap_or_else(|| format!("missing graph {}", bg.id.0)),
+            None => "None".to_owned(),
+        };
+        egui::ComboBox::from_id_salt("note_fx_graph_binding")
+            .selected_text(selected_label)
+            .show_ui(ui, |ui| {
+                let bound_id = bound_graph.as_ref().map(|bg| bg.id);
+                if ui.selectable_label(bound_id.is_none(), "None").clicked() && bound_id.is_some() {
+                    edit = Some(PanelEdit::BindGraph(None));
+                }
+                for (gid, name) in &graph_pool {
+                    if ui.selectable_label(bound_id == Some(*gid), name).clicked()
+                        && bound_id != Some(*gid)
+                    {
+                        edit = Some(PanelEdit::BindGraph(Some(*gid)));
+                    }
+                }
+            });
+        if let Some(bg) = &bound_graph {
+            if bg.name.is_none() {
+                // Dangling binding: the graph is gone from the pool, so the
+                // edit/fork affordances would act on nothing (playback falls
+                // back to the rack). Offer only the way out.
+                dim_label(ui, "graph missing — playback uses the rack");
+            } else {
+                if icon_button(
+                    ui,
+                    ri::EDIT_LINE,
+                    t.colors.text_secondary,
+                    "Edit in the Note Grid view",
                 )
-                .color(t.colors.text_dim),
-            );
+                .clicked()
+                {
+                    view_state.jump_to_note_graph = Some(bg.id);
+                }
+                if bg.usage > 1 {
+                    if ui
+                        .small_button("Make unique")
+                        .on_hover_text(format!(
+                            "Shared by {} patterns — clone the graph and point only this pattern at the copy.",
+                            bg.usage
+                        ))
+                        .clicked()
+                    {
+                        edit = Some(PanelEdit::MakeUnique);
+                    }
+                } else {
+                    dim_label(ui, "only user");
+                }
+            }
+        }
+    });
+    // A dangling binding resolves to nothing at playback, so it counts as "no
+    // graph". With a graph bound the pattern is processed by that graph (plan
+    // §2.2); with none, its raw notes play (plus any per-note ornaments).
+    let graph_resolves = bound_graph.as_ref().is_some_and(|bg| bg.name.is_some());
+    ui.add_space(4.0);
+
+    // Freeze: bake the bound graph (or per-note ornaments / note-scope
+    // articulation) into plain notes. Enabled when there is anything to bake.
+    ui.add_enabled_ui(graph_resolves || has_bakeable_notes, |ui| {
+        ui.menu_button("Freeze", |ui| {
+            let what = if graph_resolves {
+                "Bakes the bound note graph into plain notes, then clears the binding (the pooled graph survives). Undoable."
+            } else {
+                "Bakes per-note ornaments and note-scope articulation into plain notes. Undoable."
+            };
+            ui.label(RichText::new(what).color(t.colors.text_dim));
             if ui.button("Freeze now").clicked() {
-                edit = Some(RackEdit::Freeze);
+                edit = Some(PanelEdit::Freeze);
                 ui.close();
             }
         });
     });
-    ui.add_space(4.0);
+    ui.add_space(6.0);
 
-    egui::ScrollArea::vertical().show(ui, |ui| {
-        if rack.is_empty() {
-            ui.label(
-                RichText::new("No note processors. Add one below to arpeggiate, build chords, snap to a scale, or humanize this pattern.")
-                    .color(t.colors.text_dim),
-            );
-        }
+    // Node editing lives in the Note Grid view; this panel only binds a pooled
+    // graph to the pattern.
+    if !graph_resolves {
+        ui.label(
+            RichText::new(
+                "Bind a note graph above to arpeggiate, build chords, snap to a \
+                 scale, or humanize this pattern. Create and edit graphs in the \
+                 Note Grid view.",
+            )
+            .color(t.colors.text_dim),
+        );
+    }
 
-        for (index, proc) in rack.iter().enumerate() {
-            let accent = processor_accent(proc);
-            let frame = ModuleFrame::new(accent)
-                .inner_margin(6.0)
-                .build(&ui.global_style());
-            frame.show(ui, |ui| {
-                ui.push_id(index, |ui| {
-                    ui.vertical(|ui| {
-                        ui.set_width(ui.available_width());
-                        draw_module_header(ui, accent, processor_name(proc), None, false, |ui| {
-                            if icon_button(
-                                ui,
-                                ri::CLOSE_LINE,
-                                theme().colors.text_dim,
-                                "Remove processor",
-                            )
-                            .clicked()
-                            {
-                                edit = Some(RackEdit::Remove(index));
-                            }
-                        });
-
-                        // Render widgets into a working copy; a diff against the
-                        // stored config drives the live apply + undo capture.
-                        let mut cfg = proc.clone();
-                        match &mut cfg {
-                            NoteProcessor::ScaleQuantize(q) => edit_scale_quantize(ui, index, q),
-                            NoteProcessor::Chord(c) => edit_chord(ui, index, c, &mut any_dragged),
-                            NoteProcessor::Arpeggiator(a) => {
-                                edit_arpeggiator(ui, index, a, &mut any_dragged);
-                            }
-                            NoteProcessor::Humanize(h) => edit_humanize(ui, h, &mut any_dragged),
-                        }
-                        if cfg != *proc {
-                            // Capture the pre-edit baseline for this (pattern,
-                            // index). Replace any stale baseline left by an
-                            // interrupted gesture on a different processor/pattern
-                            // (e.g. the pattern was switched or removed mid-edit),
-                            // so the current edit's undo is never keyed to the
-                            // wrong slot.
-                            let matches = view_state
-                                .note_fx_edit_drag_start
-                                .as_ref()
-                                .is_some_and(|(p, i, _)| *p == pattern_id && *i == index);
-                            if !matches {
-                                view_state.note_fx_edit_drag_start =
-                                    Some((pattern_id, index, proc.clone()));
-                            }
-                            edit = Some(RackEdit::Set { index, cfg });
-                        }
-                    });
-                });
-            });
-            ui.add_space(4.0);
-        }
-
-        // ── Add menu: only stages not already present (≤1 per stage) ──
-        let present: Vec<u8> = rack.iter().map(NoteProcessor::chain_stage).collect();
-        let candidates = default_processors();
-        let all_present = candidates
-            .iter()
-            .all(|p| present.contains(&p.chain_stage()));
-        ui.add_enabled_ui(!all_present, |ui| {
-            ui.menu_button("+ Add", |ui| {
-                for candidate in candidates {
-                    if present.contains(&candidate.chain_stage()) {
-                        continue;
-                    }
-                    if ui.button(processor_name(&candidate)).clicked() {
-                        edit = Some(RackEdit::Add(candidate));
-                        ui.close();
-                    }
-                }
-            });
-        });
-    });
-
-    // Apply the deferred edit. Add/Remove push undo immediately (discrete);
-    // Set applies live and leaves undo to the finalize step below.
+    // Apply the deferred edit.
     match edit {
-        Some(RackEdit::Add(proc)) => {
-            let mut index = None;
-            {
-                let mut song_w = song.write();
-                if let Some(pattern) = song_w.pattern_mut(pattern_id) {
-                    index = Some(pattern.add_processor(proc.clone()));
-                }
-            }
-            if let Some(index) = index {
-                undo_manager.push(UndoAction::AddNoteProcessor {
-                    pattern_id,
-                    index,
-                    processor: proc,
-                });
-            }
-        }
-        Some(RackEdit::Remove(index)) => {
-            let mut removed = None;
-            {
-                let mut song_w = song.write();
-                if let Some(pattern) = song_w.pattern_mut(pattern_id) {
-                    removed = pattern.remove_processor(index);
-                }
-            }
-            if let Some(processor) = removed {
-                undo_manager.push(UndoAction::RemoveNoteProcessor {
-                    pattern_id,
-                    index,
-                    processor,
-                });
-            }
-        }
-        Some(RackEdit::Set { index, cfg }) => {
-            let mut song_w = song.write();
-            if let Some(pattern) = song_w.pattern_mut(pattern_id) {
-                pattern.set_processor(index, cfg);
-            }
-        }
-        Some(RackEdit::Freeze) => {
-            let mut before = None;
+        Some(PanelEdit::Freeze) => {
+            let before;
             {
                 let mut song_w = song.write();
                 let bpm = song_w.tempo_at(synth_sequencer::Tick(0));
-                if let Some(pattern) = song_w.pattern_mut(pattern_id) {
-                    before = Some(pattern.clone());
-                    pattern.freeze_processors(bpm);
+                before = song_w.pattern(pattern_id).cloned();
+                // Song::freeze_pattern owns the graph-over-rack precedence, so
+                // freeze always bakes what playback plays.
+                let stats = song_w.freeze_pattern(pattern_id, bpm);
+                // Surface an overflow (a graph node hit the 128-event cap) to the
+                // activity log — the non-RT drop report (plan §7).
+                if stats.dropped > 0 {
+                    tracing::warn!(
+                        target: "pertylizer::note_grid",
+                        dropped = stats.dropped,
+                        "Freeze dropped {} events — a note-graph node hit the 128-event cap",
+                        stats.dropped
+                    );
                 }
             }
             if let Some(before) = before {
                 undo_manager.push(UndoAction::FreezePattern { pattern_id, before });
             }
         }
-        None => {}
-    }
-
-    // Finalize a coalesced config edit once no widget is being dragged. Clear the
-    // baseline whenever the lock is acquired (the gesture is over) — even if the
-    // processor is gone (pattern removed/closed mid-edit) — so a stale baseline
-    // can never wedge future edits. A transient lock miss keeps it for a retry.
-    if !any_dragged
-        && let Some((pid, idx, old)) = view_state.note_fx_edit_drag_start.clone()
-        && let Some(song_r) = song.try_read()
-    {
-        let new = song_r
-            .pattern(pid)
-            .and_then(|p| p.processors().get(idx).cloned());
-        drop(song_r);
-        if let Some(new) = new
-            && new != old
-        {
-            undo_manager.push(UndoAction::SetNoteProcessorConfig {
-                pattern_id: pid,
-                index: idx,
-                old,
-                new,
-            });
+        Some(PanelEdit::BindGraph(new)) => {
+            let mut old = None;
+            {
+                let mut song_w = song.write();
+                if let Some(pattern) = song_w.pattern_mut(pattern_id) {
+                    old = Some(pattern.note_graph());
+                    pattern.set_note_graph(new);
+                }
+            }
+            if let Some(old) = old
+                && old != new
+            {
+                undo_manager.push(UndoAction::SetPatternNoteGraph {
+                    pattern_id,
+                    old,
+                    new,
+                });
+            }
         }
-        view_state.note_fx_edit_drag_start = None;
+        Some(PanelEdit::MakeUnique) => {
+            // Clone the shared graph, repoint this pattern at the copy; one
+            // Composite so undo removes the clone and restores the binding.
+            let mut result = None;
+            {
+                let mut song_w = song.write();
+                let old_gid = song_w.pattern(pattern_id).and_then(|p| p.note_graph());
+                if let Some(old_gid) = old_gid
+                    && let Some(clone) = song_w.duplicate_note_graph(old_gid)
+                {
+                    if let Some(pattern) = song_w.pattern_mut(pattern_id) {
+                        pattern.set_note_graph(Some(clone.id));
+                    }
+                    result = Some((old_gid, clone.id, clone));
+                }
+            }
+            if let Some((old_gid, new_gid, clone)) = result {
+                undo_manager.push(UndoAction::Composite(vec![
+                    UndoAction::SetNoteGraph {
+                        graph_id: new_gid,
+                        old: None,
+                        new: Some(clone),
+                    },
+                    UndoAction::SetPatternNoteGraph {
+                        pattern_id,
+                        old: Some(old_gid),
+                        new: Some(new_gid),
+                    },
+                ]));
+            }
+        }
+        None => {}
     }
 }
 
@@ -293,7 +289,7 @@ pub(crate) fn draw_note_fx_panel(
 // Per-type editors
 // ============================================================================
 
-fn edit_scale_quantize(ui: &mut egui::Ui, index: usize, q: &mut ScaleQuantize) {
+pub(crate) fn edit_scale_quantize(ui: &mut egui::Ui, index: usize, q: &mut ScaleQuantize) {
     labeled_row(ui, "Root", |ui| {
         let cur = q.root.as_u8();
         egui::ComboBox::from_id_salt((index, "root"))
@@ -307,7 +303,9 @@ fn edit_scale_quantize(ui: &mut egui::Ui, index: usize, q: &mut ScaleQuantize) {
                         q.root = PitchClass::new(i);
                     }
                 }
-            });
+            })
+            .response
+            .on_hover_text("Tonic the scale is built on.");
         ui.label("Scale");
         egui::ComboBox::from_id_salt((index, "scale"))
             .selected_text(scale_mask_name(q.mask))
@@ -317,7 +315,9 @@ fn edit_scale_quantize(ui: &mut egui::Ui, index: usize, q: &mut ScaleQuantize) {
                         q.mask = mask;
                     }
                 }
-            });
+            })
+            .response
+            .on_hover_text("Scale the incoming pitches are snapped to.");
     });
     // Custom 12-pill mask row — toggle individual pitch classes.
     ui.horizontal_wrapped(|ui| {
@@ -325,6 +325,7 @@ fn edit_scale_quantize(ui: &mut egui::Ui, index: usize, q: &mut ScaleQuantize) {
             let on = q.mask.contains_interval(i);
             if ui
                 .selectable_label(on, NoteName::from_midi(i).to_string())
+                .on_hover_text("Toggle this pitch class in/out of the scale.")
                 .clicked()
             {
                 let mut ivs: Vec<u8> = (0..12u8).filter(|&j| q.mask.contains_interval(j)).collect();
@@ -339,7 +340,7 @@ fn edit_scale_quantize(ui: &mut egui::Ui, index: usize, q: &mut ScaleQuantize) {
     });
 }
 
-fn edit_chord(ui: &mut egui::Ui, index: usize, c: &mut Chord, any_dragged: &mut bool) {
+pub(crate) fn edit_chord(ui: &mut egui::Ui, index: usize, c: &mut Chord, any_dragged: &mut bool) {
     labeled_row(ui, "Type", |ui| {
         egui::ComboBox::from_id_salt((index, "chordtype"))
             .selected_text(chord_preset_name(c))
@@ -352,7 +353,9 @@ fn edit_chord(ui: &mut egui::Ui, index: usize, c: &mut Chord, any_dragged: &mut 
                         *c = rebuild_chord(intervals, c.strum(), c.direction());
                     }
                 }
-            });
+            })
+            .response
+            .on_hover_text("Chord preset — sets the intervals stacked on each note.");
     });
 
     // Interval chips (click to remove) + a menu to append common intervals.
@@ -390,7 +393,9 @@ fn edit_chord(ui: &mut egui::Ui, index: usize, c: &mut Chord, any_dragged: &mut 
     // Strum spread + direction (direction only meaningful while strumming).
     ui.horizontal(|ui| {
         let mut spread = c.strum().0;
-        let resp = ui.add(egui::Slider::new(&mut spread, 0..=480).text("Strum"));
+        let resp = ui
+            .add(egui::Slider::new(&mut spread, 0..=480).text("Strum"))
+            .on_hover_text("Spread between chord tones, in ticks (0 = block chord).");
         *any_dragged |= resp.dragged();
         if spread != c.strum().0 {
             let ivs: Vec<i8> = c.intervals().to_vec();
@@ -403,7 +408,8 @@ fn edit_chord(ui: &mut egui::Ui, index: usize, c: &mut Chord, any_dragged: &mut 
                 (index, "dir"),
                 &mut dir,
                 &[(StrumDirection::Up, "Up"), (StrumDirection::Down, "Down")],
-            );
+            )
+            .on_hover_text("Strum direction (low→high or high→low).");
             if dir != c.direction() {
                 let ivs: Vec<i8> = c.intervals().to_vec();
                 *c = rebuild_chord(&ivs, c.strum(), dir);
@@ -412,18 +418,28 @@ fn edit_chord(ui: &mut egui::Ui, index: usize, c: &mut Chord, any_dragged: &mut 
     });
 }
 
-fn edit_arpeggiator(ui: &mut egui::Ui, index: usize, a: &mut Arpeggiator, any_dragged: &mut bool) {
+pub(crate) fn edit_arpeggiator(
+    ui: &mut egui::Ui,
+    index: usize,
+    a: &mut Arpeggiator,
+    any_dragged: &mut bool,
+) {
     labeled_row(ui, "Mode", |ui| {
-        enum_combo(ui, (index, "mode"), &mut a.mode, &ARP_MODES);
+        enum_combo(ui, (index, "mode"), &mut a.mode, &ARP_MODES)
+            .on_hover_text("Order the held notes are cycled in.");
         ui.label("Rate");
         arp_rate_widget(ui, index, a, any_dragged);
     });
     labeled_row(ui, "Octaves", |ui| {
-        let resp = ui.add(egui::DragValue::new(&mut a.octaves).range(1..=4));
+        let resp = ui
+            .add(egui::DragValue::new(&mut a.octaves).range(1..=4))
+            .on_hover_text("How many octaves the figure spans.");
         *any_dragged |= resp.dragged();
         ui.label("Vel");
-        enum_combo(ui, (index, "vel"), &mut a.velocity, &ARP_VELS);
-        ui.checkbox(&mut a.latch, "Latch");
+        enum_combo(ui, (index, "vel"), &mut a.velocity, &ARP_VELS)
+            .on_hover_text("Velocity profile across the arp steps.");
+        ui.checkbox(&mut a.latch, "Latch")
+            .on_hover_text("Keep arpeggiating held notes after they are released.");
         ui.checkbox(&mut a.legato, "Legato").on_hover_text(
             "Hold one envelope across the figure (glide between steps). Use a high Gate.",
         );
@@ -432,8 +448,10 @@ fn edit_arpeggiator(ui: &mut egui::Ui, index: usize, a: &mut Arpeggiator, any_dr
         edit_arp_offsets(ui, &mut a.custom, any_dragged);
     }
     ui.horizontal(|ui| {
-        knob_normalized(ui, "Gate", &mut a.gate, any_dragged);
-        knob_normalized(ui, "Swing", &mut a.swing, any_dragged);
+        knob_normalized(ui, "Gate", &mut a.gate, any_dragged)
+            .on_hover_text("Note length as a fraction of the step (0..1).");
+        knob_normalized(ui, "Swing", &mut a.swing, any_dragged)
+            .on_hover_text("Delay every other step for a shuffle feel (0..1).");
     });
 }
 
@@ -498,7 +516,10 @@ fn edit_arp_offsets(
     custom: &mut synth_sequencer::ArpOffsets,
     any_dragged: &mut bool,
 ) {
-    labeled_row(ui, "Offsets", |ui| {
+    // Wrap so a full 16-offset cycle fits any card width instead of forcing the
+    // panel/node wider (a `labeled_row` is a single non-wrapping horizontal).
+    ui.horizontal_wrapped(|ui| {
+        dim_label(ui, "Offsets");
         let len = custom.len();
         for i in 0..len {
             let resp = ui.add(
@@ -522,36 +543,18 @@ fn edit_arp_offsets(
     });
 }
 
-fn edit_humanize(ui: &mut egui::Ui, h: &mut Humanize, any_dragged: &mut bool) {
+pub(crate) fn edit_humanize(ui: &mut egui::Ui, h: &mut Humanize, any_dragged: &mut bool) {
     ui.horizontal(|ui| {
-        knob_normalized(ui, "Vel ±", &mut h.velocity, any_dragged);
-        knob_normalized(ui, "Gate ±", &mut h.gate, any_dragged);
+        knob_normalized(ui, "Vel ±", &mut h.velocity, any_dragged)
+            .on_hover_text("Random velocity variation per note (0..1).");
+        knob_normalized(ui, "Gate ±", &mut h.gate, any_dragged)
+            .on_hover_text("Random note-length variation per note (0..1).");
     });
     labeled_row(ui, "Seed", |ui| {
-        let resp = ui.add(egui::DragValue::new(&mut h.seed).speed(1.0));
-        *any_dragged |= resp.dragged();
-        if ui.button("🎲").on_hover_text("Reroll seed").clicked() {
-            // Golden-ratio step: a fresh, well-distributed seed each click.
-            h.seed = h.seed.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        }
-    });
-}
-
-// ============================================================================
-// Widget + label helpers
-// ============================================================================
-
-/// A 0–1 knob bound to a `NormalizedValue` field; ORs `any_dragged` while held.
-fn knob_normalized(
-    ui: &mut egui::Ui,
-    label: &str,
-    value: &mut NormalizedValue,
-    any_dragged: &mut bool,
-) {
-    let mut v = value.as_f32();
-    let resp = Knob::new(&mut v, 0.0, 1.0).label(label).show(ui);
-    *any_dragged |= resp.dragged();
-    *value = NormalizedValue::new(v);
+        seed_reroll(ui, &mut h.seed, any_dragged);
+    })
+    .response
+    .on_hover_text("Seed for the reproducible variation — reroll for a fresh feel.");
 }
 
 const ARP_MODES: [(ArpMode, &str); 8] = [
@@ -626,22 +629,11 @@ fn chord_preset_name(c: &Chord) -> &'static str {
 }
 
 // ============================================================================
-// Rack-level helpers
+// Processor-kind helpers (shared with the Note Grid node bodies)
 // ============================================================================
 
-/// One default-configured instance of each processor kind, in chain order — the
-/// "+ Add" menu source and the stage-coverage check.
-fn default_processors() -> [NoteProcessor; 4] {
-    [
-        NoteProcessor::ScaleQuantize(ScaleQuantize::default()),
-        NoteProcessor::Chord(Chord::default()),
-        NoteProcessor::Arpeggiator(Arpeggiator::default()),
-        NoteProcessor::Humanize(Humanize::default()),
-    ]
-}
-
 /// Human-facing card title for a processor kind.
-fn processor_name(proc: &NoteProcessor) -> &'static str {
+pub(crate) fn processor_name(proc: &NoteProcessor) -> &'static str {
     match proc {
         NoteProcessor::ScaleQuantize(_) => "Scale Quantize",
         NoteProcessor::Chord(_) => "Chord",
@@ -650,14 +642,18 @@ fn processor_name(proc: &NoteProcessor) -> &'static str {
     }
 }
 
-/// Per-kind accent colour so the rack is scannable at a glance.
-fn processor_accent(proc: &NoteProcessor) -> Color32 {
+/// Per-kind accent colour, keyed to the same rack module-category meanings as
+/// [`node_accent`](crate::gui::note_grid_view): `ScaleQuantize` shapes pitch like
+/// a **filter** (cyan); `Chord` is a note **generator/source** (orange);
+/// `Arpeggiator` turns held notes into a timed run like a **sequencer** (red);
+/// `Humanize` is a **utility** modifier (grey).
+pub(crate) fn processor_accent(proc: &NoteProcessor) -> Color32 {
     let t = theme();
     match proc {
         NoteProcessor::ScaleQuantize(_) => t.colors.accent_cyan,
-        NoteProcessor::Chord(_) => t.colors.accent_green,
-        NoteProcessor::Arpeggiator(_) => t.colors.accent_purple,
-        NoteProcessor::Humanize(_) => t.colors.accent_orange,
+        NoteProcessor::Chord(_) => t.colors.accent_orange,
+        NoteProcessor::Arpeggiator(_) => t.colors.accent_red,
+        NoteProcessor::Humanize(_) => t.colors.text_secondary,
     }
 }
 

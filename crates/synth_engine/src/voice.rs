@@ -1399,6 +1399,10 @@ impl Voice {
             // Per-sample audio inputs are block-constant placeholders here; the
             // AudioScript module overwrites these registers each sample.
             ScriptInput::AudioIn(_) => 0.0,
+            // Note-event source fields (`note_pitch`/…, `in1..in4`) are filled by
+            // the note-graph consumer of a `note_event` script, not the voice's
+            // control-rate resolution; here they are inert placeholders.
+            ScriptInput::NoteField(_) | ScriptInput::NoteInput(_) => 0.0,
             ScriptInput::Zero => 0.0,
         }
     }

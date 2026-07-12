@@ -100,16 +100,24 @@ pub enum BodyStmt {
 
 /// Which output a statement writes. A bare `out` is `Mono` (duplicated to both
 /// channels of a stereo audio script); `out.left` / `out.right` (audio-rate only)
-/// are the stereo multi-out grammar.
+/// are the stereo multi-out grammar; `out.pitch` / `out.vel` / `out.dur` /
+/// `out.gate` (`note_event` only) are the note-event field grammar. The parser
+/// accepts every member spelling regardless of dialect; the compiler validates
+/// which are legal for the active dialect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutChannel {
     Mono,
     Left,
     Right,
+    Pitch,
+    Vel,
+    Dur,
+    Gate,
 }
 
-/// `out[.left|.right] = <expr>` — one output statement. A program has one mono
-/// `out`, or the `out.left`/`out.right` pair (audio-rate only).
+/// `out[.left|.right|.pitch|.vel|.dur|.gate] = <expr>` — one output statement. A
+/// program has one mono `out`, or the `out.left`/`out.right` pair (audio-rate),
+/// or one or more `out.<field>` note-event writes.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Output {
     pub channel: OutChannel,

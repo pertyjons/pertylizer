@@ -2603,42 +2603,138 @@ pub struct ReplaceNotesParam {
     pub notes: Vec<NoteInput>,
 }
 
+// === Note Grid (pooled note-processing graphs) ===
+
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct AddNoteProcessorInput {
-    #[schemars(description = "Pattern ID whose rack to add to")]
-    pub pattern_id: u32,
-    #[schemars(
-        description = "Note processor as externally-tagged JSON: one of {\"ScaleQuantize\":{...}}, {\"Chord\":{...}}, {\"Arpeggiator\":{...}}, {\"Humanize\":{...}}. Inserted at its canonical chain position (quantize→chord→arp→humanize). Read existing processors with list_note_processors to see the exact shape."
-    )]
-    pub processor: serde_json::Value,
+pub struct NoteGraphIdParam {
+    #[schemars(description = "Note graph id (from list_note_graphs)")]
+    pub graph_id: u32,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct AddNoteProcessorParam {
-    #[schemars(
-        description = "Note processors to add (one or many). Each is inserted into its pattern's rack at the processor's canonical chain position."
-    )]
-    pub items: Vec<AddNoteProcessorInput>,
+pub struct CreateNoteGraphParam {
+    #[schemars(description = "Name for the new note graph")]
+    pub name: String,
+    #[schemars(description = "Optional free-text description")]
+    pub description: Option<String>,
+    #[schemars(description = "Optional color as #rrggbb")]
+    pub color: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetNoteProcessorParam {
-    #[schemars(description = "Pattern ID")]
-    pub pattern_id: u32,
-    #[schemars(description = "Rack index to replace (from list_note_processors)")]
-    pub index: usize,
+pub struct DeleteNoteGraphParam {
     #[schemars(
-        description = "Replacement note processor as externally-tagged JSON (same shape as add_note_processor). Position is preserved."
+        description = "Note graph ids to delete (one or many). Each delete clears every pattern reference to that graph."
     )]
-    pub processor: serde_json::Value,
+    pub graph_ids: Vec<u32>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct RemoveNoteProcessorParam {
-    #[schemars(description = "Pattern ID")]
+pub struct AddNoteGraphModuleInput {
+    #[schemars(description = "Note graph id to add the module to")]
+    pub graph_id: u32,
+    #[schemars(
+        description = "Module as externally-tagged NoteModuleConfig JSON: one of {\"Processor\":{...}} (ScaleQuantize/Chord/Arpeggiator/Humanize), {\"Euclidean\":{...}}, {\"ProbabilityGate\":{...}}, {\"NoteLfo\":{...}}, {\"StepLfo\":{...}}, {\"NoteEnvelope\":{...}} (optional \"trigger\": \"SourceOnset\"|\"StreamOnset\"), {\"NoteScriptTransform\":{\"source\":\"...\"}} (a YAMS note_event script — set/compile the source afterwards with set_note_graph_script), {\"NoteDelay\":{...}} (decaying echoes; repeats clamp to 16 at playback), or {\"Ratchet\":{...}} (subdivides notes into retriggers; count clamps to 16). Read existing modules with get_note_graph to see the exact shape."
+    )]
+    pub module: serde_json::Value,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AddNoteGraphModuleParam {
+    #[schemars(description = "Modules to add (one or many). Returns each new module id.")]
+    pub items: Vec<AddNoteGraphModuleInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetNoteGraphModuleParam {
+    #[schemars(description = "Note graph id")]
+    pub graph_id: u32,
+    #[schemars(description = "Module id to replace (from get_note_graph)")]
+    pub module_id: u32,
+    #[schemars(
+        description = "Replacement module as externally-tagged NoteModuleConfig JSON (same shape as add_note_graph_module). The id and its connections are preserved."
+    )]
+    pub module: serde_json::Value,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetNoteGraphScriptParam {
+    #[schemars(description = "Note graph id")]
+    pub graph_id: u32,
+    #[schemars(description = "NoteScriptTransform module id (from get_note_graph)")]
+    pub module_id: u32,
+    #[schemars(
+        description = "YAMS note_event source. Runs per note (1:1). Read note_pitch/note_vel/note_dur/tick and value inputs in1..in4; assign out.pitch/out.vel/out.dur/out.gate. A negative out.vel drops the note; a negative out.dur restores 'plays until cut'. Empty source = pass-through. Example: `out.pitch = note_pitch + 12`."
+    )]
+    pub source: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RemoveNoteGraphModuleParam {
+    #[schemars(description = "Note graph id")]
+    pub graph_id: u32,
+    #[schemars(description = "Module id to remove (from get_note_graph)")]
+    pub module_id: u32,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ConnectNoteGraphInput {
+    #[schemars(description = "Note graph id")]
+    pub graph_id: u32,
+    #[schemars(description = "Source (output-side) module id")]
+    pub from: u32,
+    #[schemars(description = "Destination (input-side) module id")]
+    pub to: u32,
+    #[schemars(
+        description = "Port: 'note_stream' (the linear spine — one input and one output per node), 'value', or 'gate' (modulation into a value input port). Defaults to 'note_stream'."
+    )]
+    pub port: Option<String>,
+    #[schemars(
+        description = "For value/gate edges, which value-input port of the target to feed (0-based). Defaults to 0."
+    )]
+    pub to_input: Option<u8>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ConnectNoteGraphParam {
+    #[schemars(
+        description = "Connections to add (one or many). Each is validated for linearity, acyclicity, and endpoint types."
+    )]
+    pub items: Vec<ConnectNoteGraphInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetPatternNoteGraphInput {
+    #[schemars(description = "Pattern id to bind")]
     pub pattern_id: u32,
-    #[schemars(description = "Rack index to remove (from list_note_processors)")]
-    pub index: usize,
+    #[schemars(
+        description = "Note graph id to bind, or null/omitted to clear the binding (the pattern's raw notes + per-note ornaments then play)."
+    )]
+    pub graph_id: Option<u32>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetPatternNoteGraphParam {
+    #[schemars(description = "Pattern→graph bindings to set or clear (one or many).")]
+    pub items: Vec<SetPatternNoteGraphInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetNoteNoteGraphInput {
+    #[schemars(description = "Pattern id containing the note")]
+    pub pattern_id: u32,
+    #[schemars(description = "Note id (from list_notes)")]
+    pub note_id: u64,
+    #[schemars(
+        description = "Note graph id to bind for per-note articulation, or null/omitted to clear the binding."
+    )]
+    pub graph_id: Option<u32>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetNoteNoteGraphParam {
+    #[schemars(description = "Per-note graph bindings to set or clear (one or many).")]
+    pub items: Vec<SetNoteNoteGraphInput>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -4250,13 +4346,24 @@ impl SynthMcpServer {
             "replace_notes" => replace_notes(ReplaceNotesParam),
             "clear_pattern" => clear_pattern(ClearPatternParam),
 
-            // Note processors (generative articulation rack)
-            "list_note_processors" => list_note_processors(PatternIdParam),
-            "add_note_processor" => add_note_processor(AddNoteProcessorParam),
-            "set_note_processor" => set_note_processor(SetNoteProcessorParam),
-            "remove_note_processor" => remove_note_processor(RemoveNoteProcessorParam),
-            "freeze_note_processors" => freeze_note_processors(PatternIdParam),
+            // Bake a pattern's bound note graph (or per-note ornaments) into
+            // plain notes.
+            "freeze_pattern" => freeze_pattern(PatternIdParam),
             "set_note_ornament" => set_note_ornament(SetNoteOrnamentParam),
+
+            // Note Grid (pooled note-processing graphs)
+            "list_note_graphs" => list_note_graphs(NoParams),
+            "get_note_graph" => get_note_graph(NoteGraphIdParam),
+            "create_note_graph" => create_note_graph(CreateNoteGraphParam),
+            "duplicate_note_graph" => duplicate_note_graph(NoteGraphIdParam),
+            "delete_note_graph" => delete_note_graph(DeleteNoteGraphParam),
+            "add_note_graph_module" => add_note_graph_module(AddNoteGraphModuleParam),
+            "set_note_graph_module" => set_note_graph_module(SetNoteGraphModuleParam),
+            "set_note_graph_script" => set_note_graph_script(SetNoteGraphScriptParam),
+            "remove_note_graph_module" => remove_note_graph_module(RemoveNoteGraphModuleParam),
+            "connect_note_graph" => connect_note_graph(ConnectNoteGraphParam),
+            "set_pattern_note_graph" => set_pattern_note_graph(SetPatternNoteGraphParam),
+            "set_note_note_graph" => set_note_note_graph(SetNoteNoteGraphParam),
 
             // Tracks
             "list_tracks" => list_tracks(NoParams),
@@ -6619,72 +6726,29 @@ impl SynthMcpServer {
         batch_msg(ok_count, "notes removed", &[], &errors)
     }
 
-    // === Sequencer: Note processors (generative articulation rack) ===
+    // === Sequencer: pattern freeze ===
 
     #[tool(
-        description = "List a pattern's note-processor rack in execution order. Each entry has its index, kind, chain stage, and full config JSON (the same shape add_note_processor/set_note_processor accept)."
+        description = "Bake a pattern's note processing into concrete notes (Model-A freeze), for hand-editing. A bound note graph bakes (the binding is cleared; the pooled graph survives); otherwise per-note ornaments and note-scope articulation bake. DESTRUCTIVE: the generative setup cannot be un-baked — re-bind the graph to restore it. Returns the resulting note count."
     )]
-    async fn list_note_processors(&self, params: Parameters<PatternIdParam>) -> String {
-        match self.bridge.list_note_processors(params.0.pattern_id) {
-            Ok(procs) => to_json(&procs),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(
-        description = "Add one or more note processors (scale-quantize, chord, arpeggiator, or humanize) to patterns' racks, each at its canonical chain position. These expand the patterns' notes at playback time. Returns the per-item insertion indices."
-    )]
-    async fn add_note_processor(&self, params: Parameters<AddNoteProcessorParam>) -> String {
-        let mut oks = Vec::new();
-        let mut errors = Vec::new();
-        for it in params.0.items {
-            let pattern_id = it.pattern_id;
-            match self.bridge.add_note_processor(pattern_id, it.processor) {
-                Ok(index) => oks.push(format!("pattern {pattern_id} @ index {index}")),
-                Err(e) => errors.push(format!("{pattern_id}: {e}")),
+    async fn freeze_pattern(&self, params: Parameters<PatternIdParam>) -> String {
+        match self.bridge.freeze_pattern(params.0.pattern_id) {
+            Ok((note_count, dropped)) => {
+                // `dropped > 0` = a graph node hit the 128-event cap during the
+                // bake; surface it so the overflow isn't silently swallowed.
+                let warning = (dropped > 0).then(|| {
+                    format!(
+                        "{dropped} events dropped during freeze (a graph node hit the \
+                         128-event cap)"
+                    )
+                });
+                to_json(&serde_json::json!({
+                    "pattern_id": params.0.pattern_id,
+                    "note_count": note_count,
+                    "dropped_events": dropped,
+                    "warning": warning,
+                }))
             }
-        }
-        batch_msg(oks.len(), "note processors added", &oks, &errors)
-    }
-
-    #[tool(
-        description = "Replace the note processor at a rack index in place (config edit), preserving its position."
-    )]
-    async fn set_note_processor(&self, params: Parameters<SetNoteProcessorParam>) -> String {
-        let p = params.0;
-        match self
-            .bridge
-            .set_note_processor(p.pattern_id, p.index, p.processor)
-        {
-            Ok(()) => format!(
-                "Note processor {} updated on pattern {}",
-                p.index, p.pattern_id
-            ),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(description = "Remove the note processor at a rack index from a pattern.")]
-    async fn remove_note_processor(&self, params: Parameters<RemoveNoteProcessorParam>) -> String {
-        let p = params.0;
-        match self.bridge.remove_note_processor(p.pattern_id, p.index) {
-            Ok(()) => format!(
-                "Note processor {} removed from pattern {}",
-                p.index, p.pattern_id
-            ),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(
-        description = "Bake a pattern's whole note-processor rack into concrete notes (Model-A freeze) and clear the rack, for hand-editing. DESTRUCTIVE: the generative rack is removed and cannot be un-baked — re-add the processors to restore it. Returns the resulting note count."
-    )]
-    async fn freeze_note_processors(&self, params: Parameters<PatternIdParam>) -> String {
-        match self.bridge.freeze_note_processors(params.0.pattern_id) {
-            Ok(note_count) => to_json(&serde_json::json!({
-                "pattern_id": params.0.pattern_id,
-                "note_count": note_count
-            })),
             Err(e) => format!("Error: {e}"),
         }
     }
@@ -6706,6 +6770,190 @@ impl SynthMcpServer {
             }
         }
         batch_msg(ok_count, "note ornaments updated", &[], &errors)
+    }
+
+    // === Sequencer: Note Grid (pooled note-processing graphs) ===
+
+    #[tool(
+        description = "List every pooled Note Grid graph in summary form: id, name, description, color, module/connection counts, and how many patterns bind it."
+    )]
+    async fn list_note_graphs(&self, _params: Parameters<NoParams>) -> String {
+        match self.bridge.list_note_graphs() {
+            Ok(graphs) => to_json(&graphs),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Get one Note Grid graph in full detail: its modules (in processing order, each with id/kind/config JSON) and connections (from/to/port/to_input)."
+    )]
+    async fn get_note_graph(&self, params: Parameters<NoteGraphIdParam>) -> String {
+        match self.bridge.get_note_graph(params.0.graph_id) {
+            Ok(detail) => to_json(&detail),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Create an empty pooled Note Grid graph. Returns the new graph id. Add modules with add_note_graph_module, wire them with connect_note_graph, then bind it to a pattern with set_pattern_note_graph."
+    )]
+    async fn create_note_graph(&self, params: Parameters<CreateNoteGraphParam>) -> String {
+        let p = params.0;
+        match self
+            .bridge
+            .create_note_graph(p.name, p.description, p.color)
+        {
+            Ok(id) => to_json(&serde_json::json!({ "graph_id": id })),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Duplicate a pooled Note Grid graph — nodes, connections, metadata, and editor layout — as '<name> copy'. Use before diverging a shared graph for one pattern (pair with set_pattern_note_graph to repoint). Returns the new graph's id."
+    )]
+    async fn duplicate_note_graph(&self, params: Parameters<NoteGraphIdParam>) -> String {
+        match self.bridge.duplicate_note_graph(params.0.graph_id) {
+            Ok(id) => to_json(&serde_json::json!({ "graph_id": id })),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Delete one or more pooled Note Grid graphs. DESTRUCTIVE: every pattern that binds a deleted graph is unbound (falls back to dry playback). Returns the per-graph count of patterns that were unbound."
+    )]
+    async fn delete_note_graph(&self, params: Parameters<DeleteNoteGraphParam>) -> String {
+        let mut oks = Vec::new();
+        let mut errors = Vec::new();
+        for graph_id in params.0.graph_ids {
+            match self.bridge.delete_note_graph(graph_id) {
+                Ok(unbound) => oks.push(format!("graph {graph_id} (unbound {unbound} patterns)")),
+                Err(e) => errors.push(format!("{graph_id}: {e}")),
+            }
+        }
+        batch_msg(oks.len(), "note graphs deleted", &oks, &errors)
+    }
+
+    #[tool(
+        description = "Add one or more modules to Note Grid graphs. Each module is externally-tagged NoteModuleConfig JSON (Processor/Euclidean/ProbabilityGate/NoteLfo/StepLfo/NoteEnvelope/NoteScriptTransform/NoteDelay/Ratchet). For a NoteScriptTransform, add it with a source then compile it with set_note_graph_script. Returns each new module id."
+    )]
+    async fn add_note_graph_module(&self, params: Parameters<AddNoteGraphModuleParam>) -> String {
+        let mut oks = Vec::new();
+        let mut errors = Vec::new();
+        for it in params.0.items {
+            let graph_id = it.graph_id;
+            match self.bridge.add_note_graph_module(graph_id, it.module) {
+                Ok(module_id) => oks.push(format!("graph {graph_id} @ module {module_id}")),
+                Err(e) => errors.push(format!("{graph_id}: {e}")),
+            }
+        }
+        batch_msg(oks.len(), "note graph modules added", &oks, &errors)
+    }
+
+    #[tool(
+        description = "Replace a Note Grid module's config in place (config edit), keeping its id and connections. A change that would orphan an existing connection is rejected."
+    )]
+    async fn set_note_graph_module(&self, params: Parameters<SetNoteGraphModuleParam>) -> String {
+        let p = params.0;
+        match self
+            .bridge
+            .set_note_graph_module(p.graph_id, p.module_id, p.module)
+        {
+            Ok(()) => format!("Module {} updated on graph {}", p.module_id, p.graph_id),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Set a Note Grid NoteScriptTransform node's YAMS note_event source, compile it, and install the program. The script runs per note (1:1): read note_pitch/note_vel/note_dur/tick and value inputs in1..in4, assign out.pitch/out.vel/out.dur/out.gate. Returns the compile status; the source is always saved, and an empty source or a compile error leaves the node pass-through (the diagnostic is in the returned status). Add the node first with add_note_graph_module ({\"NoteScriptTransform\":{\"source\":\"\"}})."
+    )]
+    async fn set_note_graph_script(&self, params: Parameters<SetNoteGraphScriptParam>) -> String {
+        let p = params.0;
+        match self
+            .bridge
+            .set_note_graph_script(p.graph_id, p.module_id, p.source)
+        {
+            Ok(status) => status,
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Remove a module (and every connection touching it) from a Note Grid graph."
+    )]
+    async fn remove_note_graph_module(
+        &self,
+        params: Parameters<RemoveNoteGraphModuleParam>,
+    ) -> String {
+        let p = params.0;
+        match self
+            .bridge
+            .remove_note_graph_module(p.graph_id, p.module_id)
+        {
+            Ok(()) => format!("Module {} removed from graph {}", p.module_id, p.graph_id),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Connect two Note Grid modules (one or many). port is 'note_stream' (the linear spine), 'value', or 'gate'; to_input selects the target's value-input port for modulation edges. Each connection is validated for linearity (one stream in/out per node), acyclicity, and endpoint types."
+    )]
+    async fn connect_note_graph(&self, params: Parameters<ConnectNoteGraphParam>) -> String {
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in params.0.items {
+            let port = it.port.unwrap_or_else(|| "note_stream".to_string());
+            let to_input = it.to_input.unwrap_or(0);
+            match self
+                .bridge
+                .connect_note_graph(it.graph_id, it.from, it.to, port, to_input)
+            {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("graph {} {}→{}: {e}", it.graph_id, it.from, it.to)),
+            }
+        }
+        batch_msg(ok_count, "note graph connections added", &[], &errors)
+    }
+
+    #[tool(
+        description = "Bind patterns to Note Grid graphs (one or many). Set graph_id to bind, or null/omitted to clear the binding (the pattern's raw notes + per-note ornaments then play). A bound graph processes the pattern's notes at playback."
+    )]
+    async fn set_pattern_note_graph(&self, params: Parameters<SetPatternNoteGraphParam>) -> String {
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in params.0.items {
+            let pattern_id = it.pattern_id;
+            match self.bridge.set_pattern_note_graph(pattern_id, it.graph_id) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("pattern {pattern_id}: {e}")),
+            }
+        }
+        batch_msg(
+            ok_count,
+            "pattern note-graph bindings updated",
+            &[],
+            &errors,
+        )
+    }
+
+    #[tool(
+        description = "Bind individual notes to Note Grid graphs for per-note articulation (flam / strum / arp / echo of one note), one or many. Set graph_id to bind, or null/omitted to clear. The note-scope graph runs on that note's material during source collection — before, and feeding, the pattern-scope graph / rack — and is decorrelated per note. Dangling graph ids are rejected."
+    )]
+    async fn set_note_note_graph(&self, params: Parameters<SetNoteNoteGraphParam>) -> String {
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for it in params.0.items {
+            match self
+                .bridge
+                .set_note_note_graph(it.pattern_id, it.note_id, it.graph_id)
+            {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!(
+                    "pattern {} note {}: {e}",
+                    it.pattern_id, it.note_id
+                )),
+            }
+        }
+        batch_msg(ok_count, "note note-graph bindings updated", &[], &errors)
     }
 
     // === Sequencer: Tracks ===

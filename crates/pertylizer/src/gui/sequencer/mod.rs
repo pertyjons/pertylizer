@@ -28,7 +28,7 @@ use crate::gui::widgets::{
 
 mod arrangement;
 mod automation;
-mod note_fx;
+pub(crate) mod note_fx;
 mod ornament;
 mod piano_roll;
 mod tracker;
@@ -292,11 +292,9 @@ pub struct SequencerViewState {
     /// pattern (toggled by the "Note FX" button in the piano-roll toolbar or the
     /// pattern view's editor-mode row).
     pub(crate) note_fx_panel_open: bool,
-    /// Pre-edit snapshot of a note processor captured when an edit gesture begins
-    /// (pattern, rack index, prior config), so a knob/slider drag collapses into
-    /// a single `SetNoteProcessorConfig` undo entry on release. Discrete edits
-    /// (combos, toggles) capture and finalize in the same frame.
-    note_fx_edit_drag_start: Option<(PatternId, usize, NoteProcessor)>,
+    /// One-shot request from the Note FX panel's "edit" affordance: the backend
+    /// takes this and switches to the Note Grid view with the graph loaded.
+    pub(crate) jump_to_note_graph: Option<synth_sequencer::NoteGraphId>,
     /// Open per-note ornament editor popup (target note + baseline + working
     /// copy). `None` when the popup is closed; one coalesced undo entry is pushed
     /// when it closes.
@@ -360,7 +358,7 @@ impl SequencerViewState {
             loop_end_tick: None,
             tracker: tracker::TrackerViewState::default(),
             note_fx_panel_open: false,
-            note_fx_edit_drag_start: None,
+            jump_to_note_graph: None,
             editing_ornament: None,
             show_note_fx_ghosts: false,
             ghost_cache: None,
@@ -386,19 +384,39 @@ impl SequencerViewState {
         };
         let notes = pattern.notes();
         let processors = pattern.processors();
+        // A bound graph takes precedence over the rack (like playback); resolve it
+        // so its content is both the expansion source and part of the freshness key.
+        let graph = pattern.note_graph().and_then(|gid| s.note_graph(gid));
+        // Note-scope graphs bound to individual notes (plan §2.1). Their content
+        // must be part of the freshness key so editing one invalidates the ghosts;
+        // a binding *id* change is already covered by `notes`. Compared by
+        // reference (no clone in the hot path); cloned only on a cache miss.
+        let note_scope_refs = collect_note_scope_graphs(&s, notes);
         let fresh = self.ghost_cache.as_ref().is_some_and(|c| {
             c.pattern_id == pattern_id
                 && c.length == pattern.length
                 && c.notes.as_slice() == notes
                 && c.processors.as_slice() == processors
+                && c.graph.as_ref() == graph
+                && c.note_scope_graphs
+                    .iter()
+                    .eq(note_scope_refs.iter().copied())
         });
         if !fresh {
+            let ghosts = compute_ghosts(
+                pattern,
+                graph,
+                s.note_graph_pool(),
+                s.tempo_at(synth_sequencer::Tick(0)),
+            );
             self.ghost_cache = Some(GhostCache {
                 pattern_id,
                 length: pattern.length,
                 notes: notes.to_vec(),
                 processors: processors.to_vec(),
-                ghosts: compute_ghosts(pattern, s.tempo_at(synth_sequencer::Tick(0))),
+                graph: graph.cloned(),
+                note_scope_graphs: note_scope_refs.into_iter().cloned().collect(),
+                ghosts,
             });
         }
         self.ghost_cache
@@ -740,6 +758,9 @@ struct PianoRollNote {
     legato: bool,
     glide: Option<Glide>,
     expression: Option<NoteExpression>,
+    /// The note's bound note-scope graph, if any (plan §2.1). Edited via the
+    /// selection inspector's per-note graph selector.
+    note_graph: Option<synth_sequencer::NoteGraphId>,
     /// The note's per-note ornament, if any (drawn as a head marker in the piano
     /// roll, as a tag in the tracker ornament column).
     ornament: Option<Ornament>,
@@ -768,27 +789,89 @@ struct GhostCache {
     length: SeqDuration,
     notes: Vec<Note>,
     processors: Vec<NoteProcessor>,
+    /// The bound note graph (content, not just id) at cache time, so a graph
+    /// edit — or a binding change — invalidates the preview.
+    graph: Option<synth_sequencer::NoteGraph>,
+    /// The distinct note-scope graphs (content) bound to this pattern's notes.
+    /// A note's binding *id* change is already caught by `notes`; this also
+    /// invalidates when a bound note-scope graph's *content* is edited (plan §2.1).
+    note_scope_graphs: Vec<synth_sequencer::NoteGraph>,
     ghosts: Vec<GhostNote>,
 }
 
-/// Sweep the note-processor expansion over every tick of `pattern`, collecting
-/// the generated notes for the ghost overlay. Empty when there is nothing to
-/// expand (no rack, no ornaments). Capped to bound a pathological pattern; runs
-/// on the UI thread (allocates), gated by the [`GhostCache`].
-fn compute_ghosts(pattern: &synth_sequencer::Pattern, bpm: Bpm) -> Vec<GhostNote> {
+/// Distinct note-scope graphs (deterministically ordered) bound to `notes`,
+/// resolved from the pool — the content half of the ghost-cache key so a
+/// note-scope graph edit invalidates the preview (plan §2.1). Returns borrows;
+/// the caller clones only when it actually refreshes the cache.
+fn collect_note_scope_graphs<'a>(
+    song: &'a Song,
+    notes: &[Note],
+) -> Vec<&'a synth_sequencer::NoteGraph> {
+    let mut ids: Vec<synth_sequencer::NoteGraphId> =
+        notes.iter().filter_map(|n| n.note_graph).collect();
+    ids.sort_unstable();
+    ids.dedup();
+    ids.iter().filter_map(|&gid| song.note_graph(gid)).collect()
+}
+
+/// Sweep the note expansion over every tick of `pattern`, collecting the
+/// generated notes for the ghost overlay. A bound note `graph` takes precedence
+/// over the legacy rack (mirroring playback and the load-time migration, which
+/// leaves every migrated pattern graph-bound with an empty rack). Per-note
+/// note-scope graphs (plan §2.1) are resolved from `pool` exactly like playback.
+/// Empty when there is nothing to expand (no graph nodes, no rack, no ornaments,
+/// no note-scope bindings). Capped to bound a pathological pattern; runs on the
+/// UI thread, gated by the [`GhostCache`].
+fn compute_ghosts(
+    pattern: &synth_sequencer::Pattern,
+    graph: Option<&synth_sequencer::NoteGraph>,
+    pool: &[synth_sequencer::NoteGraph],
+    bpm: Bpm,
+) -> Vec<GhostNote> {
     const MAX_GHOSTS: usize = 4096;
-    // Nothing to preview without a rack or any ornament. `||` short-circuits so
-    // the note scan is skipped when a rack is present.
-    let has_work =
-        !pattern.processors().is_empty() || pattern.notes().iter().any(|n| n.ornament.is_some());
+    let has_ornament = pattern.notes().iter().any(|n| n.ornament.is_some());
+    // Per-note graph bindings (plan §2.1) also constitute work, even with no
+    // pattern-scope graph / rack / ornament.
+    let has_note_scope = pattern.notes().iter().any(|n| n.note_graph.is_some());
+    let has_work = has_note_scope
+        || match graph {
+            Some(g) => g.node_count() > 0 || has_ornament,
+            None => !pattern.processors().is_empty() || has_ornament,
+        };
     if !has_work {
         return Vec::new();
     }
+    let host = synth_sequencer::HostKey::from(pattern.id);
     let mut ghosts = Vec::new();
     let mut buf = ExpansionBuffer::new();
+    // Note-scope resolves each note's bound graph during source seeding, exactly
+    // like playback; its inner single-note expansion needs its own scratch.
+    let mut note_scope_scratch = ExpansionBuffer::new();
+    let mut ns_ctx = synth_sequencer::NoteScopeCtx {
+        pool,
+        scratch: &mut note_scope_scratch,
+    };
+    // Timing look-back pool (delay/echo re-running the upstream prefix at earlier
+    // ticks); non-RT preview, so allocated locally like playback allocates its
+    // engine field. Kept once, reused per tick.
+    let mut lookback = synth_sequencer::lookback_pool();
     for t in 0..pattern.length.0 {
         let tick = PatternTick(t);
-        pattern.expand_at_tick(tick, |_| true, bpm, &mut buf);
+        match graph {
+            Some(g) => {
+                g.expand_at_tick(
+                    pattern.notes(),
+                    tick,
+                    host,
+                    bpm,
+                    |_| true,
+                    Some(&mut ns_ctx),
+                    Some(&mut lookback),
+                    &mut buf,
+                );
+            }
+            None => pattern.expand_at_tick(tick, |_| true, bpm, Some(&mut ns_ctx), &mut buf),
+        }
         for en in buf.notes() {
             ghosts.push(GhostNote {
                 start: tick,

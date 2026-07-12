@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use serde::{Deserialize, Serialize};
 
 use super::automation::AutomationLane;
-use super::ids::{NoteId, PatternId, RowCount, RowIndex, TicksPerRow};
+use super::ids::{NoteGraphId, NoteId, PatternId, RowCount, RowIndex, TicksPerRow};
 use super::note::Note;
 use super::note_processor::NoteProcessor;
 use super::pitch::{Pitch, Velocity};
@@ -116,10 +116,19 @@ pub struct Pattern {
     notes: Vec<Note>,
     /// Automation lanes.
     pub automation: Vec<AutomationLane>,
-    /// Note-processor rack (Model B generative articulation), in execution
-    /// order. Accessors live in [`crate::note_processor`].
+    /// Legacy note-processor rack (Model B generative articulation), in
+    /// execution order. Retired in favour of the Note Grid: there is no product
+    /// authoring path anymore, and a loaded rack migrates to a pooled graph
+    /// ([`crate::Song::migrate_processor_racks_to_graphs`]). Kept `#[serde(default)]`
+    /// so pre-migration projects still deserialize; the expansion + freeze
+    /// accessors live in [`crate::note_processor`].
     #[serde(default)]
     pub(crate) processors: Vec<NoteProcessor>,
+    /// Optional pooled Note Grid graph this pattern expands through. When set,
+    /// it takes precedence over the linear rack. A dangling id (graph removed
+    /// from the pool) is treated as pass-through at expansion time.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    note_graph: Option<NoteGraphId>,
     /// Next note ID counter.
     next_note_id: u64,
 }
@@ -136,8 +145,21 @@ impl Pattern {
             notes: Vec::new(),
             automation: Vec::new(),
             processors: Vec::new(),
+            note_graph: None,
             next_note_id: 0,
         }
+    }
+
+    /// The pooled Note Grid graph this pattern expands through, if any.
+    #[must_use]
+    pub fn note_graph(&self) -> Option<NoteGraphId> {
+        self.note_graph
+    }
+
+    /// Bind (or clear with `None`) the pooled Note Grid graph for this pattern.
+    /// When set, the graph takes precedence over the linear processor rack.
+    pub fn set_note_graph(&mut self, graph: Option<NoteGraphId>) {
+        self.note_graph = graph;
     }
 
     /// Set the name (builder pattern).
@@ -308,6 +330,18 @@ impl Pattern {
     pub fn set_note_glide(&mut self, id: NoteId, glide: Option<super::note::Glide>) -> bool {
         if let Some(note) = self.note_mut(id) {
             note.glide = glide;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Bind (or clear) a note-scope [`NoteGraph`] on a single note — per-note
+    /// articulation (plan §2.1), the generalization of the per-note ornament.
+    /// A dangling id resolves to plain pass-through at expansion, never a panic.
+    pub fn set_note_note_graph(&mut self, id: NoteId, graph: Option<NoteGraphId>) -> bool {
+        if let Some(note) = self.note_mut(id) {
+            note.note_graph = graph;
             true
         } else {
             false

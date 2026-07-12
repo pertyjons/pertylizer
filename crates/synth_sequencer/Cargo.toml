@@ -15,6 +15,8 @@ synth_core = { path = "../synth_core" }
 serde = { workspace = true }
 fastrand = { workspace = true }
 schemars = { workspace = true }
+thiserror = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }
+synth_script = { path = "../synth_script" }

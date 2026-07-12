@@ -290,6 +290,9 @@ struct SynthApp {
     // Pattern view state (tab-local UI bits; selection shared via sequencer_view_state)
     pattern_view_state: crate::gui::pattern_view::PatternViewState,
 
+    /// Note Grid view state (selected graph, canvas cameras, node positions).
+    note_grid_view_state: crate::gui::note_grid_view::NoteGridViewState,
+
     // MCP shared state
     #[cfg(feature = "mcp")]
     mcp_shared: Option<std::sync::Arc<crate::mcp_shared::McpSharedState>>,
@@ -449,6 +452,7 @@ impl SynthApp {
             song,
             sequencer_view_state: crate::gui::sequencer::SequencerViewState::new(),
             pattern_view_state: crate::gui::pattern_view::PatternViewState::default(),
+            note_grid_view_state: crate::gui::note_grid_view::NoteGridViewState::default(),
             #[cfg(feature = "mcp")]
             mcp_shared: config.mcp_shared,
             #[cfg(feature = "mcp")]
@@ -878,6 +882,14 @@ impl eframe::App for SynthApp {
                         });
                     }
                 }
+                AppView::NoteGraph => {
+                    crate::gui::note_grid_view::draw_note_grid_view(
+                        ui,
+                        &self.song,
+                        &mut self.note_grid_view_state,
+                        &mut self.undo_manager,
+                    );
+                }
                 AppView::AcousticWorld => {
                     // Scan user presets on first view
                     if !self.awe_ui.user_presets_loaded {
@@ -1067,6 +1079,13 @@ impl eframe::App for SynthApp {
                 }
             }
         } // end view block
+
+        // Cross-view jump: the Note FX panel's "edit graph" affordance loads
+        // the graph in the Note Grid view.
+        if let Some(graph_id) = self.sequencer_view_state.jump_to_note_graph.take() {
+            self.note_grid_view_state.selected = Some(graph_id);
+            self.active_view = AppView::NoteGraph;
+        }
 
         // Dialogs
         self.show_dialogs(ctx);
@@ -3606,9 +3625,10 @@ impl SynthApp {
     fn render_view_selector(&mut self, ui: &mut egui::Ui) {
         use egui_remixicon::icons as ri;
         let t = theme();
-        let views: [(AppView, &str); 7] = [
+        let views: [(AppView, &str); 8] = [
             (AppView::Home, &format!("{} Home", ri::HOME_FILL)),
             (AppView::Rack, &format!("{} Rack", ri::LAYOUT_GRID_FILL)),
+            (AppView::NoteGraph, &format!("{} Notes", ri::MIND_MAP)),
             (
                 AppView::AcousticWorld,
                 &format!("{} AWE", ri::SURROUND_SOUND_FILL),
@@ -4528,6 +4548,29 @@ impl SynthApp {
     fn apply_undo_action(&mut self, action: &crate::undo::UndoAction) {
         use crate::undo::UndoAction;
         match action {
+            UndoAction::SetNoteGraph { graph_id, new, .. } => {
+                let mut song_w = self.song.write();
+                match new {
+                    Some(graph) => {
+                        if let Some(existing) = song_w.note_graph_mut(*graph_id) {
+                            *existing = graph.clone();
+                        } else {
+                            song_w.insert_note_graph(graph.clone());
+                        }
+                    }
+                    None => {
+                        song_w.remove_note_graph(*graph_id);
+                    }
+                }
+            }
+            UndoAction::SetPatternNoteGraph {
+                pattern_id, new, ..
+            } => {
+                let mut song_w = self.song.write();
+                if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
+                    pattern.set_note_graph(*new);
+                }
+            }
             UndoAction::AddNote { pattern_id, note } => {
                 // Re-add the note to the pattern.
                 let mut song_w = self.song.write();
@@ -4653,41 +4696,22 @@ impl SynthApp {
                     }
                 }
             }
-            UndoAction::AddNoteProcessor {
+            UndoAction::SetNoteGraphBindingBatch {
                 pattern_id,
-                processor,
-                ..
+                changes,
             } => {
                 let mut song_w = self.song.write();
                 if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
-                    pattern.add_processor(processor.clone());
-                }
-            }
-            UndoAction::RemoveNoteProcessor {
-                pattern_id, index, ..
-            } => {
-                let mut song_w = self.song.write();
-                if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
-                    pattern.remove_processor(*index);
-                }
-            }
-            UndoAction::SetNoteProcessorConfig {
-                pattern_id,
-                index,
-                new,
-                ..
-            } => {
-                let mut song_w = self.song.write();
-                if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
-                    pattern.set_processor(*index, new.clone());
+                    for (note_id, _old, new) in changes {
+                        pattern.set_note_note_graph(*note_id, *new);
+                    }
                 }
             }
             UndoAction::FreezePattern { pattern_id, .. } => {
                 let mut song_w = self.song.write();
                 let bpm = song_w.tempo_at(synth_sequencer::Tick(0));
-                if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
-                    pattern.freeze_processors(bpm);
-                }
+                // Song::freeze_pattern owns the graph-over-rack precedence.
+                song_w.freeze_pattern(*pattern_id, bpm);
             }
             UndoAction::RestorePattern {
                 pattern_id,
@@ -6234,6 +6258,10 @@ impl SynthApp {
     /// from `bundle::load_bundle`.
     fn apply_and_refresh_project(&mut self, project: &ProjectFile) {
         self.sample_view_state.invalidate_peaks();
+        // Note-graph ids restart per project, so stale per-id canvas state
+        // (positions, cameras, a mid-gesture undo baseline) must not leak
+        // into the loaded project's graphs.
+        self.note_grid_view_state = Default::default();
         if let Err(e) = crate::project_apply::apply_project(
             project,
             &self.session,
@@ -6270,6 +6298,7 @@ impl SynthApp {
         }
         tracing::info!(target: "pertylizer::project", "new project");
         self.sample_view_state.invalidate_peaks();
+        self.note_grid_view_state = Default::default();
         self.refresh_ui_after_reset();
         self.current_project_path = None;
         self.current_patch_name = "Init".to_string();

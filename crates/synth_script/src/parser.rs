@@ -369,18 +369,28 @@ impl Parser {
     fn parse_output(&mut self) -> Option<Output> {
         let start = self.cur_span();
         self.advance(); // `out`
-        // Optional `.left` / `.right` channel selector (stereo multi-out). A bare
-        // `out` is mono. The compiler rejects channel outputs in a control script.
+        // Optional member selector after `out.`: the stereo multi-out
+        // (`left`/`right`, audio-rate) or a note-event field
+        // (`pitch`/`vel`/`dur`/`gate`, `note_event`). A bare `out` is mono. The
+        // parser is dialect-agnostic; the compiler rejects members that do not
+        // belong to the active dialect.
         let channel = if self.eat(&TokenKind::Dot) {
             match self.eat_member() {
                 Some(id) if id.name == "left" => OutChannel::Left,
                 Some(id) if id.name == "right" => OutChannel::Right,
+                Some(id) if id.name == "pitch" => OutChannel::Pitch,
+                Some(id) if id.name == "vel" => OutChannel::Vel,
+                Some(id) if id.name == "dur" => OutChannel::Dur,
+                Some(id) if id.name == "gate" => OutChannel::Gate,
                 Some(id) => {
-                    self.error(id.span, "expected `left` or `right` after `out.`");
+                    self.error(
+                        id.span,
+                        "expected `left`, `right`, `pitch`, `vel`, `dur`, or `gate` after `out.`",
+                    );
                     OutChannel::Mono
                 }
                 None => {
-                    self.error_here("expected `left` or `right` after `out.`");
+                    self.error_here("expected a channel or field name after `out.`");
                     return None;
                 }
             }
@@ -831,11 +841,11 @@ mod tests {
         // A bare identifier after `out` (no dot) is not a channel — it's a syntax
         // error (the old "named output" form is gone).
         assert!(!errors("out foo = 1").is_empty());
-        // An unknown channel after the dot is rejected.
+        // An unknown member after the dot is rejected.
         assert!(
             errors("out.middle = 1")
                 .iter()
-                .any(|e| e.contains("left` or `right"))
+                .any(|e| e.contains("`left`, `right`, `pitch`"))
         );
     }
 

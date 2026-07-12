@@ -22,8 +22,8 @@ use synth_core::{Milliseconds, NormalizedValue, Semitones};
 use synth_engine::EngineHandle;
 use synth_sequencer::{
     AutomationLane, AutomationPoint, AutomationTarget, CurveType, Duration as SeqDuration,
-    ExpansionBuffer, Glide, GlideFrom, GlideInterp, NoteExpression, NoteId, NoteLane, PatternId,
-    PatternTick, Pitch, Song,
+    ExpansionBuffer, Glide, GlideFrom, GlideInterp, NoteExpression, NoteId, NoteLane, NoteScopeCtx,
+    PatternId, PatternTick, Pitch, Song,
 };
 
 use super::{
@@ -225,18 +225,23 @@ fn expr_field_text(expr: Option<&NoteExpression>, field: ExprField) -> Cow<'stat
 /// events that land *between* rows (a strum offset, an arp step finer than a row) are
 /// not shown — consistent with how the voice cells key off a note's start row.
 struct NpStage {
-    /// Column header — the processor kind (`scale_quantize`/`chord`/`arp`/`humanize`).
+    /// Column header — the processor kind (`scale_quantize`/`chord`/`arp`/
+    /// `humanize`), or the bound note graph's name.
     label: String,
+    /// Header hover text explaining what the column shows.
+    tooltip: String,
     /// Cumulative expanded pitches after this stage, parallel to rows `0..n_rows`.
     rows: Vec<Vec<Pitch>>,
 }
 
-/// Run the rack offline and build one [`NpStage`] per processor (cumulative output
-/// after each stage). Returns an empty `Vec` (cheaply) when the rack is empty — the
-/// common case — so the per-row expansion cost is only paid when there is a rack to
-/// show. Non-blocking `try_read`; a contended lock just skips the overlay this frame.
-/// `expand_at_tick_through` is pure/deterministic, so calling it off the audio thread
-/// is safe.
+/// Run the pattern's note processing offline and build its output columns.
+/// Mirrors playback precedence: a bound, resolvable note graph yields ONE
+/// "graph output" column (per-node taps are a later feature, plan §7);
+/// otherwise one [`NpStage`] per rack processor (cumulative output after each
+/// stage). Returns an empty `Vec` (cheaply) when there is nothing to show —
+/// the common case. Non-blocking `try_read`; a contended lock just skips the
+/// overlay this frame. Both expansions are pure/deterministic, so calling
+/// them off the audio thread is safe.
 fn compute_np_stages(
     song: &Arc<RwLock<Song>>,
     pattern_id: PatternId,
@@ -249,23 +254,77 @@ fn compute_np_stages(
     let Some(pattern) = song.pattern(pattern_id) else {
         return Vec::new();
     };
-    let n_proc = pattern.processors().len();
-    if n_proc == 0 {
-        return Vec::new();
-    }
     let bpm = song.tempo_at(synth_sequencer::Tick(0));
+
+    // Columns only exist for a bound note graph (a dangling id resolves to
+    // nothing, like the engine); an unbound pattern plays its raw notes and has
+    // no NP columns. One column per spine node — each shows the cumulative
+    // output *through* that node via the tapped expansion; a graph with no
+    // active spine falls back to a single named "graph output" column.
+    let Some(graph) = pattern.note_graph().and_then(|gid| song.note_graph(gid)) else {
+        return Vec::new();
+    };
+    // Note-scope articulation (plan §2.1): each expansion resolves per-note
+    // bound graphs exactly like playback. Its inner single-note expansion needs
+    // its own scratch, distinct from each column's `buf`.
+    let mut ns_scratch = ExpansionBuffer::new();
+    let mut ns_ctx = NoteScopeCtx {
+        pool: song.note_graph_pool(),
+        scratch: &mut ns_scratch,
+    };
     let mut buf = ExpansionBuffer::new();
-    let mut stages = Vec::with_capacity(n_proc);
-    for p in 0..n_proc {
-        let label = pattern.processors()[p].kind().to_string();
+    // Timing look-back pool (delay/echo prefix re-eval); non-RT column render, so
+    // allocated locally and reused across rows.
+    let mut lookback = synth_sequencer::lookback_pool();
+    let host = synth_sequencer::HostKey::from(pattern_id);
+    if graph.stream_spine.is_empty() {
         let mut rows = Vec::with_capacity(n_rows);
         for r in 0..n_rows {
             let tick = PatternTick((r as u32) * tpr);
-            // Cumulative output through processors `0..=p`.
-            pattern.expand_at_tick_through(tick, |_| true, bpm, p + 1, &mut buf);
+            graph.expand_at_tick(
+                pattern.notes(),
+                tick,
+                host,
+                bpm,
+                |_| true,
+                Some(&mut ns_ctx),
+                Some(&mut lookback),
+                &mut buf,
+            );
             rows.push(buf.notes().iter().map(|n| n.pitch).collect());
         }
-        stages.push(NpStage { label, rows });
+        return vec![NpStage {
+            label: graph.name.clone(),
+            tooltip: "Bound note graph output".to_owned(),
+            rows,
+        }];
+    }
+    let mut stages = Vec::with_capacity(graph.stream_spine.len());
+    for &node_id in &graph.stream_spine {
+        let label = graph
+            .nodes
+            .get(&node_id)
+            .map_or_else(String::new, |c| c.kind().to_string());
+        let mut rows = Vec::with_capacity(n_rows);
+        for r in 0..n_rows {
+            let tick = PatternTick((r as u32) * tpr);
+            graph.expand_at_tick_tapped(
+                pattern.notes(),
+                tick,
+                host,
+                bpm,
+                node_id,
+                Some(&mut ns_ctx),
+                Some(&mut lookback),
+                &mut buf,
+            );
+            rows.push(buf.notes().iter().map(|n| n.pitch).collect());
+        }
+        stages.push(NpStage {
+            label,
+            tooltip: format!("Note graph output through node #{}", node_id.0),
+            rows,
+        });
     }
     stages
 }
@@ -1352,8 +1411,9 @@ pub(crate) fn draw_tracker(
         ui.ctx().request_repaint();
     }
 
-    // Note-processor output columns (read-only, one per processor). Empty — and so
-    // no columns — unless the pattern has a processor rack.
+    // Note-processing output columns (read-only): one per rack processor, or a
+    // single graph-output column when a note graph is bound (playback
+    // precedence). Empty — and so no columns — when there is neither.
     let np_stages = compute_np_stages(song, data.pattern_id, tpr, n_rows);
 
     // Assign each note to a voice lane and index notes by their start row so each
@@ -1592,12 +1652,9 @@ pub(crate) fn draw_tracker(
                     }
                 });
             }
-            for (si, stage) in np_stages.iter().enumerate() {
+            for stage in &np_stages {
                 header.col(|ui| {
-                    header_label(ui, stage.label.clone(), false).on_hover_text(format!(
-                        "Note processor {} output (cumulative after this stage)",
-                        si + 1
-                    ));
+                    header_label(ui, stage.label.clone(), false).on_hover_text(&stage.tooltip);
                 });
             }
         })

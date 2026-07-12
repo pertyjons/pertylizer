@@ -33,6 +33,34 @@ pub(crate) fn clear_sample_library(sample_library: &SharedSampleLibrary) {
     lib.clear();
 }
 
+/// Recompile every pooled graph's `NoteScriptTransform` programs from their
+/// serialized `source`. The compiled `BoundScript` is `#[serde(skip)]`, so a
+/// freshly-deserialized (or MCP/serde-built) script node starts with no program
+/// and would silently pass notes through — this is the non-RT resync step that
+/// installs the program (or clears it on a compile error / empty source). Call
+/// after any path that installs a `Song` from serialized data.
+pub(crate) fn recompile_note_graph_scripts(song: &mut Song) {
+    for graph in song.note_graphs_mut() {
+        recompile_graph_scripts(graph);
+    }
+}
+
+/// Recompile one graph's `NoteScriptTransform` programs from their `source`.
+/// The per-graph unit of [`recompile_note_graph_scripts`], reused by the Note
+/// Grid GUI and MCP mutation paths after they add or replace a node.
+pub(crate) fn recompile_graph_scripts(graph: &mut synth_sequencer::NoteGraph) {
+    for config in graph.nodes_mut() {
+        if let synth_sequencer::NoteModuleConfig::NoteScriptTransform(transform) = config {
+            let compiled = if transform.source().trim().is_empty() {
+                None
+            } else {
+                crate::session::compile_note_event_script(transform.source()).ok()
+            };
+            transform.set_compiled(compiled);
+        }
+    }
+}
+
 /// Replace all engine/session/song state with the contents of `project`.
 ///
 /// Visualizer modules in the patch (Oscilloscope, LevelMeter, SpectrumAnalyzer,
@@ -60,6 +88,26 @@ pub fn apply_project(
     {
         let mut s = song.write();
         *s = project.song.clone();
+        // Upgrade legacy pre-Note-Grid projects: fold each pattern's linear
+        // NoteProcessor rack into a pooled graph (before the rebuild below, which
+        // then builds the new graphs' derived order alongside the existing pool).
+        let migrated = s.migrate_processor_racks_to_graphs();
+        if migrated > 0 {
+            tracing::info!(
+                migrated,
+                "Migrated {migrated} note-processor rack(s) to note graphs on load"
+            );
+        }
+        // `NoteGraph::processing_order` is `#[serde(skip)]`, so a freshly
+        // deserialized pool has empty derived orders. This in-place install
+        // path never sends `EngineCommand::SetSong` (which is where the engine
+        // otherwise rebuilds), so rebuild here or every graph-bound pattern
+        // would expand through zero nodes and play dry until an unrelated edit.
+        s.rebuild_note_graphs();
+        // Every `NoteScriptTransform` node's compiled program is `#[serde(skip)]`
+        // too, so a just-loaded script node is pass-through until recompiled from
+        // its `source`. Same reasoning as the rebuild above — no `SetSong` here.
+        recompile_note_graph_scripts(&mut s);
     }
 
     // Restore the saved transport loop into the engine's sequencer (runtime
@@ -1038,6 +1086,88 @@ mod tests {
             block.fill(0.0);
             engine.process(&mut block, &context);
         }
+    }
+
+    /// A `NoteScriptTransform`'s compiled program is `#[serde(skip)]`, so a
+    /// project loaded from disk starts with the node pass-through. The load-time
+    /// `recompile_note_graph_scripts` step must rebuild the program from the
+    /// saved `source` — otherwise a saved script silently stops transforming
+    /// notes after a reload. This exercises the serde round-trip + recompile and
+    /// asserts the reloaded graph both reports compiled and actually transforms.
+    #[test]
+    fn reloaded_note_script_recompiles_and_transforms() {
+        use synth_sequencer::{
+            Duration as SeqDuration, NoteModuleConfig, NoteModuleId, NoteScriptTransform,
+            PatternTick, Pitch, Velocity,
+        };
+
+        // Build a song whose pooled graph has a single up-an-octave script node.
+        let mut song = Song::new("Scripted Notes");
+        let gid = song.create_note_graph("octave up");
+        song.note_graph_mut(gid)
+            .expect("graph")
+            .try_insert_node(
+                NoteModuleId::new(0),
+                NoteModuleConfig::NoteScriptTransform(NoteScriptTransform::new(
+                    "out.pitch = note_pitch + 12",
+                )),
+            )
+            .expect("insert script node");
+
+        // Round-trip through JSON — the compiled program does not serialize, so
+        // the reloaded node is uncompiled (pass-through) until recompiled.
+        let json = serde_json::to_string(&song).expect("serialize song");
+        let mut reloaded: Song = serde_json::from_str(&json).expect("deserialize song");
+        reloaded.rebuild_note_graphs();
+        assert!(
+            !script_node_compiled(&reloaded, gid),
+            "a freshly-deserialized script node must start uncompiled"
+        );
+
+        // The load-time recompile step installs the program.
+        recompile_note_graph_scripts(&mut reloaded);
+        assert!(
+            script_node_compiled(&reloaded, gid),
+            "recompile must install the program from the saved source"
+        );
+
+        // And it must actually transform: C4 (60) → C5 (72) after freezing the
+        // bound pattern through the graph.
+        let pid = reloaded.create_pattern(SeqDuration(960));
+        {
+            let p = reloaded.pattern_mut(pid).expect("pattern");
+            let _ = p.add_note(PatternTick(0), Pitch::new(60).expect("pitch"), Velocity::MF);
+            p.set_note_graph(Some(gid));
+        }
+        assert!(
+            reloaded
+                .freeze_pattern_note_graph(pid, synth_core::Bpm::DEFAULT)
+                .is_some()
+        );
+        let pitches: Vec<u8> = reloaded
+            .pattern(pid)
+            .expect("pattern")
+            .notes()
+            .iter()
+            .map(|n| n.pitch.as_midi())
+            .collect();
+        assert_eq!(
+            pitches,
+            vec![72],
+            "the recompiled script must raise the note an octave"
+        );
+    }
+
+    /// Whether the given graph's single script node reports a compiled program.
+    fn script_node_compiled(song: &Song, gid: synth_sequencer::NoteGraphId) -> bool {
+        song.note_graph(gid)
+            .expect("graph present")
+            .nodes
+            .values()
+            .any(|c| match c {
+                synth_sequencer::NoteModuleConfig::NoteScriptTransform(t) => t.is_compiled(),
+                _ => false,
+            })
     }
 
     /// New Project must reset the instrument-ID counter: after tearing down a

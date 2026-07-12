@@ -2,8 +2,10 @@
 //!
 //! Holds the `PatchEditor` methods that resolve port endpoints, draw connection
 //! cables (including the effect-chain cables), and handle port interactions and
-//! the port context menu. Extracted verbatim from `patch_editor.rs` — no
-//! behavior change.
+//! the port context menu. Drag-to-connect now runs through the shared
+//! [`node_canvas::wiring`] FSM (`handle_port_interactions` collects the frame's
+//! port events and resolves them); the cable drawing and endpoint resolution
+//! stay patch-editor-specific (groups, effect chains, foreground glow layer).
 
 use std::collections::HashMap;
 
@@ -20,9 +22,11 @@ use crate::gui::widgets::{
     draw_cable, draw_cable_highlighted, draw_flow_particles, point_near_cable,
 };
 
+use crate::gui::node_canvas;
+
 use super::{
-    CanvasInteraction, EFFECT_CHAIN_AMBER, EffectType, GroupPortKey, PaletteSelection, PatchEditor,
-    PatchEditorResult, PendingConnection, PortContextMenuState, screen_to_world,
+    EFFECT_CHAIN_AMBER, EffectType, GroupPortKey, PaletteSelection, PatchEditor, PatchEditorResult,
+    PatchPort, PortContextMenuState, screen_to_world,
 };
 
 impl PatchEditor {
@@ -485,7 +489,9 @@ impl PatchEditor {
                                 ],
                             );
                         }
-                        WidgetPortType::Midi => {}
+                        // MIDI has no quick-add sources; NoteStream never
+                        // appears in the audio patch editor.
+                        WidgetPortType::Midi | WidgetPortType::NoteStream => {}
                     }
                 }
                 WidgetPortDirection::Output => {
@@ -560,7 +566,7 @@ impl PatchEditor {
                                 ],
                             );
                         }
-                        WidgetPortType::Midi => {}
+                        WidgetPortType::Midi | WidgetPortType::NoteStream => {}
                     }
                 }
             }
@@ -572,116 +578,20 @@ impl PatchEditor {
     }
 
     pub(super) fn handle_port_interactions(&mut self, ui: &mut Ui, result: &mut PatchEditorResult) {
-        let pointer_pos = ui
-            .input(|i| i.pointer.interact_pos())
-            .map(|p| screen_to_world(ui, p));
-
-        // Check for port clicks
-        for ((module_id, port_name), port_pos) in &self.port_positions {
-            let port_rect = Rect::from_center_size(port_pos.position, Vec2::splat(20.0));
-
-            if let Some(pos) = pointer_pos
-                && port_rect.contains(pos)
+        // Right-click still opens the port context menu via a direct hit-test
+        // against this frame's anchors (normal ports first, then collapsed-group
+        // exposed ports — matching the old two-loop precedence).
+        if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary))
+            && let Some(pos) = ui
+                .input(|i| i.pointer.interact_pos())
+                .map(|p| screen_to_world(ui, p))
+        {
+            for port_pos in self
+                .port_positions
+                .values()
+                .chain(self.group_port_positions.values())
             {
-                // Check for click
-                if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary)) {
-                    // Clone the in-progress wire out so we can mutate the
-                    // interaction state inside the branch.
-                    if let Some(pending) = self.pending_connection().cloned() {
-                        // Complete connection
-                        if self.can_connect(&pending, port_pos) {
-                            let connection =
-                                if pending.from_direction == WidgetPortDirection::Output {
-                                    Connection::new(
-                                        pending.from_module,
-                                        pending.from_port,
-                                        *module_id,
-                                        *port_name,
-                                    )
-                                } else {
-                                    Connection::new(
-                                        *module_id,
-                                        *port_name,
-                                        pending.from_module,
-                                        pending.from_port,
-                                    )
-                                };
-                            result.connections_to_add.push(connection);
-                        }
-                        self.canvas_interaction = CanvasInteraction::Idle;
-                    } else if matches!(self.canvas_interaction, CanvasInteraction::Idle) {
-                        // Start new connection — only from Idle, so a click that
-                        // lands on a port while a marquee/node drag is live can't
-                        // hijack it into a wire drag.
-                        self.canvas_interaction =
-                            CanvasInteraction::DraggingWire(PendingConnection {
-                                from_module: *module_id,
-                                from_port: *port_name,
-                                from_position: port_pos.position,
-                                from_type: port_pos.port_type,
-                                from_direction: port_pos.direction,
-                                current_pos: pos,
-                            });
-                    }
-                }
-
-                // Right-click opens port context menu
-                if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary)) {
-                    self.port_context_menu = Some(PortContextMenuState {
-                        module_id: *module_id,
-                        port_name: *port_name,
-                        port_type: port_pos.port_type,
-                        direction: port_pos.direction,
-                        menu_pos: pos,
-                    });
-                }
-            }
-        }
-
-        // Check for group port clicks
-        for port_pos in self.group_port_positions.values() {
-            let port_rect = Rect::from_center_size(port_pos.position, Vec2::splat(20.0));
-
-            if let Some(pos) = pointer_pos
-                && port_rect.contains(pos)
-            {
-                if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Primary)) {
-                    if let Some(pending) = self.pending_connection().cloned() {
-                        if self.can_connect(&pending, port_pos) {
-                            let connection =
-                                if pending.from_direction == WidgetPortDirection::Output {
-                                    Connection::new(
-                                        pending.from_module,
-                                        pending.from_port,
-                                        port_pos.module_id,
-                                        port_pos.port_name,
-                                    )
-                                } else {
-                                    Connection::new(
-                                        port_pos.module_id,
-                                        port_pos.port_name,
-                                        pending.from_module,
-                                        pending.from_port,
-                                    )
-                                };
-                            result.connections_to_add.push(connection);
-                        }
-                        self.canvas_interaction = CanvasInteraction::Idle;
-                    } else if matches!(self.canvas_interaction, CanvasInteraction::Idle) {
-                        // Start new connection — only from Idle (see above).
-                        self.canvas_interaction =
-                            CanvasInteraction::DraggingWire(PendingConnection {
-                                from_module: port_pos.module_id,
-                                from_port: port_pos.port_name,
-                                from_position: port_pos.position,
-                                from_type: port_pos.port_type,
-                                from_direction: port_pos.direction,
-                                current_pos: pos,
-                            });
-                    }
-                }
-
-                if ui.input(|i| i.pointer.button_clicked(egui::PointerButton::Secondary)) {
+                if Rect::from_center_size(port_pos.position, Vec2::splat(20.0)).contains(pos) {
                     self.port_context_menu = Some(PortContextMenuState {
                         module_id: port_pos.module_id,
                         port_name: port_pos.port_name,
@@ -689,16 +599,52 @@ impl PatchEditor {
                         direction: port_pos.direction,
                         menu_pos: pos,
                     });
+                    break;
                 }
             }
         }
 
-        // Update pending connection position
-        if let Some(pending) = self.pending_connection_mut()
-            && let Some(pos) = pointer_pos
+        // Left drag/click wiring goes through the shared node-canvas FSM. Merge
+        // the normal and collapsed-group anchors into one map keyed by the
+        // self-describing `PatchPort` (a port is visible xor collapsed, so the
+        // `(module, port)` keys never collide). The port widgets pushed
+        // `wire_events` while the nodes were drawn; a drag releases onto the
+        // nearest anchor inside the canvas that forms a valid connection.
+        let anchors: HashMap<PatchPort, Pos2> = self
+            .port_positions
+            .values()
+            .chain(self.group_port_positions.values())
+            .map(|p| {
+                (
+                    PatchPort {
+                        module: p.module_id,
+                        port: p.port_name,
+                        direction: p.direction,
+                        port_type: p.port_type,
+                    },
+                    p.position,
+                )
+            })
+            .collect();
+        let world_rect = ui.clip_rect();
+        let events = std::mem::take(&mut self.wire_events);
+        let mut pending = self.pending_wire.take();
         {
-            pending.current_pos = pos;
+            let connections = &self.connections;
+            node_canvas::resolve_wire_events(
+                ui,
+                &mut pending,
+                node_canvas::DropTargets {
+                    anchors: &anchors,
+                    world_rect,
+                    drop_radius: 16.0,
+                },
+                events,
+                |from, to| Self::open_patch_connection(connections, from, to),
+                |connection| result.connections_to_add.push(connection),
+            );
         }
+        self.pending_wire = pending;
     }
 
     /// Recompute the set of modules the in-progress drag must not connect to
@@ -714,10 +660,10 @@ impl PatchEditor {
     pub(super) fn recompute_drag_cycle_blocked(&mut self) {
         self.drag_cycle_blocked.clear();
         // Pull the scalars out of the borrow before mutating `drag_cycle_blocked`.
-        let Some((source, walk_forward)) = self.pending_connection().map(|p| {
+        let Some((source, walk_forward)) = self.pending_wire.as_ref().map(|w| {
             (
-                p.from_module,
-                p.from_direction == WidgetPortDirection::Input,
+                w.from.module,
+                w.from.direction == WidgetPortDirection::Input,
             )
         }) else {
             return;

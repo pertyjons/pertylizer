@@ -4,7 +4,7 @@
 //! (decision #5): macros, context vars, constants, and functions. A `src`/`let`
 //! name that collides with any of them is a compile error ([`is_reserved`]).
 
-use synth_core::script::{AudioInputChannel, Builtin};
+use synth_core::script::{AudioInputChannel, Builtin, NoteField};
 
 /// A per-voice macro input — always in scope, never bound with `src`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -173,6 +173,33 @@ pub fn audio_in_channel(name: &str) -> Option<AudioInputChannel> {
     })
 }
 
+/// Resolve a note-event field identifier. `note_event` scripts only — the
+/// compiler gates these behind [`CompileOptions::note_event`](crate::CompileOptions);
+/// in other dialects they are reserved but unresolvable.
+#[must_use]
+pub fn note_field(name: &str) -> Option<NoteField> {
+    Some(match name {
+        "note_pitch" => NoteField::Pitch,
+        "note_vel" => NoteField::Vel,
+        "note_dur" => NoteField::Dur,
+        "tick" => NoteField::Tick,
+        _ => return None,
+    })
+}
+
+/// Resolve a note-event `Value` modulation input `in1..in4` to its 0-based
+/// index. `note_event` scripts only (gated like [`note_field`]).
+#[must_use]
+pub fn note_input(name: &str) -> Option<u8> {
+    Some(match name {
+        "in1" => 0,
+        "in2" => 1,
+        "in3" => 2,
+        "in4" => 3,
+        _ => return None,
+    })
+}
+
 /// Resolve a context-variable name.
 #[must_use]
 pub fn context_from_name(name: &str) -> Option<Context> {
@@ -282,6 +309,20 @@ pub fn is_reserved(name: &str) -> bool {
         || macro_from_name(name).is_some()
         || context_from_name(name).is_some()
         || constant_value(name).is_some()
+}
+
+/// Whether `name` is a `note_event`-dialect built-in read (`note_pitch`/`note_vel`/
+/// `note_dur`/`tick`/`in1..in4`) — reserved from binding *only when compiling a
+/// note-event script* (they resolve to note fields there). In every other dialect
+/// these are ordinary identifiers, so a pre-existing mod-matrix/audio script that
+/// bound e.g. `let tick = …` keeps compiling. The caller ANDs this with its
+/// `note_event` flag.
+#[must_use]
+pub fn is_note_event_reserved(name: &str) -> bool {
+    matches!(
+        name,
+        "note_pitch" | "note_vel" | "note_dur" | "tick" | "in1" | "in2" | "in3" | "in4"
+    )
 }
 
 #[cfg(test)]

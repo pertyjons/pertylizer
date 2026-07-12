@@ -151,6 +151,19 @@ pub enum McpBridgeError {
         available_ms: f32,
     },
 
+    /// Note-graph (Note Grid pool asset) not found.
+    #[error("note graph not found: {0}")]
+    NoteGraphNotFound(u32),
+
+    /// Note-graph module (node) not found within a graph.
+    #[error("note graph {graph_id} has no module {module_id}")]
+    NoteGraphModuleNotFound {
+        /// The graph that was searched.
+        graph_id: u32,
+        /// The module id that was absent.
+        module_id: u32,
+    },
+
     /// Generic error — use sparingly; prefer a specific variant when the failure
     /// mode is known so MCP clients can programmatically handle it.
     #[error("{0}")]

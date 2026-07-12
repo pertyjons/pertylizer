@@ -29,6 +29,7 @@ fn build(src: &str) -> (BoundScript, AudioBindings, usize) {
     let opts = CompileOptions {
         audio_rate: true,
         control_rate: SAMPLE_RATE,
+        ..CompileOptions::default()
     };
     let (prog, diags) = compile(src, &opts);
     let prog = prog.unwrap_or_else(|| panic!("compile failed for `{src}`: {diags:?}"));
