@@ -20,7 +20,6 @@ use crate::effect_chain::EffectChain;
 use crate::graph::ModuleGraph;
 use crate::voice::{VoiceId, VoiceState};
 use crate::voice_allocator::{AllocatorConfig, VoiceAllocator};
-use synth_awe::{SpatialContext, SpatialVoiceBank};
 use synth_core::{
     AudioBuffer, BipolarValue, Gain, MidiNote, ModuleType, MuteState, NormalizedValue, Param,
     ProcessContext, SampleCount, SamplePosition, SampleRate, Seconds, Semitones, SoloState,
@@ -1210,12 +1209,7 @@ impl Instrument {
     /// # Returns
     /// The number of active voices processed.
     #[allow(clippy::too_many_lines)]
-    pub fn process(
-        &mut self,
-        context: &ProcessContext,
-        spatial_ctx: Option<&SpatialContext>,
-        spatial_bank: &mut SpatialVoiceBank,
-    ) -> u32 {
+    pub fn process(&mut self, context: &ProcessContext) -> u32 {
         if self.mute_state.is_muted() {
             return 0;
         }
@@ -1359,27 +1353,7 @@ impl Instrument {
                     };
                 }
 
-                // Per-voice spatial capture (naive decimation from oversampled)
-                if spatial_ctx.is_some()
-                    && let Some(note) = voice.note()
-                {
-                    // Decimate oversampled voice data to original rate for spatial bank
-                    let mut dec_left = [0.0f32; 1024];
-                    let mut dec_right = [0.0f32; 1024];
-                    for i in 0..sample_count {
-                        dec_left[i] = temp_left[i * os_factor];
-                        dec_right[i] = temp_right[i * os_factor];
-                    }
-                    spatial_bank.write_voice(
-                        note,
-                        &dec_left[..sample_count],
-                        &dec_right[..sample_count],
-                        SampleCount::new(sample_count),
-                    );
-                }
-
-                // Per-voice unison stereo spread. (The oversampled loop applies no
-                // AWE dry-pan, so spread is applied independently here.)
+                // Per-voice unison stereo spread.
                 apply_unison_spread(
                     &mut temp_left.as_mut_slice()[..os_count],
                     &mut temp_right.as_mut_slice()[..os_count],
@@ -1503,33 +1477,7 @@ impl Instrument {
                     };
                 }
 
-                // Per-voice spatial capture + dry panning
-                if let Some(ctx) = spatial_ctx
-                    && let Some(note) = voice.note()
-                {
-                    spatial_bank.write_voice(
-                        note,
-                        temp_left.as_slice(),
-                        temp_right.as_slice(),
-                        SampleCount::new(sample_count),
-                    );
-                    let pan = ctx.mapping.pan_for_note(
-                        note,
-                        ctx.room_length,
-                        ctx.room_width,
-                        ctx.room_height,
-                        ctx.listener_x,
-                    );
-                    let pan_f = pan.as_f32();
-                    let gain_l = ((1.0 - pan_f) * 0.5).sqrt();
-                    let gain_r = ((1.0 + pan_f) * 0.5).sqrt();
-                    for i in 0..sample_count {
-                        temp_left[i] *= gain_l;
-                        temp_right[i] *= gain_r;
-                    }
-                }
-
-                // Per-voice unison stereo spread (composes with the AWE pan above).
+                // Per-voice unison stereo spread.
                 apply_unison_spread(
                     &mut temp_left.as_mut_slice()[..sample_count],
                     &mut temp_right.as_mut_slice()[..sample_count],

@@ -393,11 +393,7 @@
   "global": {
     "master_volume": 0.8,
     "octave_offset": 0,
-    "glide_time_seconds": 0.0,
-    "awe_state_present": false,
-    "awe_enabled": null,
-    "awe_preset_name": null,
-    "awe_description_present": false
+    "glide_time_seconds": 0.0
   },
   "samples": {
     "count": 0,

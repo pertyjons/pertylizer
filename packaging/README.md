@@ -11,7 +11,7 @@ visualizer, plus example projects and ready-made AI-CLI configs.
 ```
 pertylizer            The synthesizer (GUI app)
 pertylizer-visualizer 3D OSC-driven visualizer
-examples/             Example projects, patches, and AWE presets
+examples/             Example projects and patches
 pertylizer.toml       Editable config (MCP / OSC ports) — read at startup
 mcp/                  AI-CLI MCP configs + setup guide (see mcp/README.md)
 .mcp.json             Project-local Claude Code config (works in this folder)
@@ -38,8 +38,8 @@ launches normally. Run the visualizer the same way (or from a terminal).
 
 ## Examples
 
-Open Pertylizer and load a project from `examples/projects`, a patch from
-`examples/patches`, or an AWE preset from `examples/awe`.
+Open Pertylizer and load a project from `examples/projects` or a patch from
+`examples/patches`.
 
 ## Configuration (`pertylizer.toml`)
 

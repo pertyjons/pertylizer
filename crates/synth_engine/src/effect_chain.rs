@@ -332,7 +332,7 @@ impl EffectChain {
     ///
     /// The `mix_buffer` contains interleaved stereo audio and is modified in place.
     /// Visualizers are processed separately via `process_visualizers()` so they
-    /// can run after AWE to show the final post-AWE signal.
+    /// can run after the effect chain to show the final signal.
     pub fn process(&mut self, mix_buffer: &mut AudioBuffer, context: &ProcessContext<'_>) {
         // Resize to active frame count. This never exceeds MAX_BUFFER_SIZE * 2
         // which was pre-allocated in the constructor, so no heap allocation occurs.
@@ -360,14 +360,14 @@ impl EffectChain {
                     }
                 }
                 ChainSlot::Visualizer(_) => {
-                    // Visualizers are processed post-AWE via process_visualizers()
+                    // Visualizers are processed via process_visualizers()
                     continue;
                 }
             }
         }
     }
 
-    /// Process visualizers only (called after AWE to capture final signal).
+    /// Process visualizers only (called after the effect chain to capture the final signal).
     ///
     /// Visualizers capture audio data without modifying the signal.
     pub fn process_visualizers(&mut self, mix_buffer: &AudioBuffer) {

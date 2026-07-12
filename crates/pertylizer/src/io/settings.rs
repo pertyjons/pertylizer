@@ -56,8 +56,6 @@ pub struct DirectorySettings {
     pub projects_dir: Option<PathBuf>,
     /// Last directory used for opening/saving projects.
     pub last_project_dir: Option<PathBuf>,
-    /// Custom AWE presets directory (None = platform default).
-    pub awe_presets_dir: Option<PathBuf>,
 }
 
 /// Persisted window geometry.

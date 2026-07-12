@@ -1139,13 +1139,7 @@ fn analyze_section_render_quality_controls_sample_rate() {
         0,
         3840,
         Some(true),
-        synth_mcp::AnalysisScope::from_flags(
-            None,
-            None,
-            None,
-            None,
-            synth_mcp::RenderQuality::Full,
-        ),
+        synth_mcp::AnalysisScope::from_flags(None, None, None, synth_mcp::RenderQuality::Full),
     )
     .expect("full-quality section");
     assert_eq!(full.metrics.sample_rate, 44_100);
@@ -1168,13 +1162,7 @@ fn analyze_section_render_quality_controls_sample_rate() {
         0,
         3840,
         Some(true),
-        synth_mcp::AnalysisScope::from_flags(
-            None,
-            None,
-            None,
-            None,
-            synth_mcp::RenderQuality::Draft,
-        ),
+        synth_mcp::AnalysisScope::from_flags(None, None, None, synth_mcp::RenderQuality::Draft),
     )
     .expect("draft-quality section");
     assert_eq!(draft.metrics.sample_rate, 22_050);

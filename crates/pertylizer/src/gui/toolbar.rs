@@ -1,5 +1,5 @@
 //! Shared building blocks for the per-view context top-bars (Transport, Sample,
-//! AWE, Pattern, Patch) so they all share one uniform look: a panel docked
+//! Pattern, Patch) so they all share one uniform look: a panel docked
 //! directly under the global menu bar with a subtle panel fill, a uniform inner
 //! margin, and consistent 8 px spacing between items.
 //!

@@ -413,8 +413,8 @@ pub enum EngineCommand {
     /// renders. Real-time safe.
     ///
     /// Not reset (out of scope — not in the offline single-instrument render
-    /// path): the AWE room simulation, and the one-block sidechain
-    /// previous-output buffer (self-heals after one block).
+    /// path): the one-block sidechain previous-output buffer (self-heals after
+    /// one block).
     ResetDsp,
 
     /// Pitch bend (type-safe bipolar value).
@@ -717,16 +717,6 @@ pub enum EngineCommand {
 
     /// Set metronome volume.
     SetMetronomeVolume(Gain),
-
-    // === AWE (Acoustic World Engine) ===
-    /// Set a single AWE parameter.
-    SetAweParameter { param: synth_awe::AweParam },
-
-    /// Enable or disable the AWE engine.
-    SetAweEnabled { enabled: bool },
-
-    /// Apply a batch AWE parameter snapshot.
-    SetAweState { snapshot: synth_awe::AweSnapshot },
 
     // === Audio Input ===
     /// Set the audio input consumer (from AudioInputManager's engine ring buffer).
@@ -1382,18 +1372,6 @@ impl std::fmt::Debug for EngineCommand {
             Self::SetMetronome(enabled) => write!(f, "SetMetronome({enabled})"),
             Self::SetMetronomeVolume(vol) => write!(f, "SetMetronomeVolume({vol})"),
             Self::SetSong { .. } => write!(f, "SetSong"),
-            Self::SetAweParameter { param } => f
-                .debug_struct("SetAweParameter")
-                .field("param", param)
-                .finish(),
-            Self::SetAweEnabled { enabled } => f
-                .debug_struct("SetAweEnabled")
-                .field("enabled", enabled)
-                .finish(),
-            Self::SetAweState { snapshot } => f
-                .debug_struct("SetAweState")
-                .field("snapshot", snapshot)
-                .finish(),
             Self::SetAudioInputConsumer { .. } => f.debug_struct("SetAudioInputConsumer").finish(),
             Self::ClearAudioInputConsumer => write!(f, "ClearAudioInputConsumer"),
             Self::LoadSampleData {

@@ -33,10 +33,6 @@ pub enum FileDialogMode {
     SaveProject,
     /// Choosing output path for WAV export.
     ExportWav,
-    /// Opening an AWE preset file.
-    OpenAwePreset,
-    /// Saving an AWE preset file.
-    SaveAwePreset,
     /// Importing a WAV sample file.
     ImportSample,
     /// Exporting a sample as WAV file.
@@ -92,14 +88,6 @@ pub struct DialogState {
     pub show_export_wav: bool,
     /// Export dialog state.
     pub export_state: crate::gui::export_dialog::ExportDialogState,
-    /// Show save AWE preset dialog.
-    pub show_save_awe_preset: bool,
-    /// AWE preset name when saving.
-    pub awe_preset_save_name: String,
-    /// AWE preset description when saving.
-    pub awe_preset_save_description: String,
-    /// AWE preset tags when saving (comma-separated).
-    pub awe_preset_save_tags: String,
 }
 
 impl Default for DialogState {
@@ -126,10 +114,6 @@ impl Default for DialogState {
             file_dialog_kind: None,
             show_export_wav: false,
             export_state: crate::gui::export_dialog::ExportDialogState::default(),
-            show_save_awe_preset: false,
-            awe_preset_save_name: String::new(),
-            awe_preset_save_description: String::new(),
-            awe_preset_save_tags: String::new(),
         }
     }
 }
@@ -260,30 +244,6 @@ impl DialogState {
         self.file_dialog.save_file();
     }
 
-    /// Open the file dialog for opening an AWE preset.
-    pub fn open_open_awe_preset_dialog(&mut self, initial_dir: Option<&Path>) {
-        self.ensure_dialog(FileDialogMode::OpenAwePreset, initial_dir, |d| {
-            d.add_file_filter(
-                "AWE presets",
-                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "json")),
-            )
-            .add_file_filter("All files", Filter::new(|_: &Path| true))
-        });
-        self.file_dialog.pick_file();
-    }
-
-    /// Open the file dialog for saving an AWE preset.
-    pub fn open_save_awe_preset_dialog(&mut self, default_name: &str, initial_dir: Option<&Path>) {
-        self.ensure_dialog(FileDialogMode::SaveAwePreset, initial_dir, |d| {
-            d.add_file_filter(
-                "AWE presets",
-                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "json")),
-            )
-        });
-        self.file_dialog.config_mut().default_file_name = default_name.to_string();
-        self.file_dialog.save_file();
-    }
-
     /// Open the file dialog for importing a WAV sample.
     pub fn open_import_sample_dialog(&mut self, initial_dir: Option<&Path>) {
         self.ensure_dialog(FileDialogMode::ImportSample, initial_dir, |d| {
@@ -349,7 +309,6 @@ impl DialogState {
                     FileDialogMode::SavePatch
                     | FileDialogMode::SaveProject
                     | FileDialogMode::ExportWav
-                    | FileDialogMode::SaveAwePreset
                     | FileDialogMode::ExportSample,
                 ) => Some(FileDialogResult::Saved(path, mode)),
                 _ => Some(FileDialogResult::Picked(path, mode)),
@@ -976,73 +935,6 @@ pub fn show_save_group_template_dialog(
             }
             DialogButton::Confirm => {
                 result = SaveGroupTemplateResult::Save;
-                *open = false;
-            }
-            DialogButton::None => {}
-        }
-    });
-
-    result
-}
-
-/// Result from save AWE preset dialog.
-pub enum SaveAwePresetResult {
-    /// No action taken.
-    None,
-    /// User cancelled.
-    Cancelled,
-    /// User wants to save — returns (name, description, tags).
-    Save,
-}
-
-/// Show the save AWE preset dialog.
-pub fn show_save_awe_preset_dialog(
-    ctx: &egui::Context,
-    open: &mut bool,
-    name: &mut String,
-    description: &mut String,
-    tags: &mut String,
-    author: &crate::patch::Author,
-) -> SaveAwePresetResult {
-    if !*open {
-        return SaveAwePresetResult::None;
-    }
-
-    let mut result = SaveAwePresetResult::None;
-
-    modal_window(ctx, "Save AWE Preset", |ui| {
-        ui.label("Preset name");
-        ui.text_edit_singleline(name);
-
-        ui.add_space(theme().spacing.sm);
-        ui.label("Description");
-        ui.text_edit_multiline(description);
-
-        ui.add_space(theme().spacing.sm);
-        ui.label("Tags (comma-separated)");
-        ui.text_edit_singleline(tags);
-
-        ui.add_space(theme().spacing.sm);
-        ui.separator();
-        caption(ui, "Author", CaptionTone::Dim);
-        if !author.name.is_empty() {
-            ui.label(format!("Name: {}", author.name));
-        }
-        if !author.license.is_empty() {
-            ui.label(format!("License: {}", author.license));
-        }
-        if author.name.is_empty() && author.license.is_empty() {
-            caption(ui, "(set in Settings)", CaptionTone::Dim);
-        }
-
-        ui.add_space(theme().spacing.lg);
-        match dialog_button_row(ui, "Save", !name.trim().is_empty()) {
-            DialogButton::Cancel => {
-                result = SaveAwePresetResult::Cancelled;
-                *open = false;
-            }
-            DialogButton::Confirm => {
-                result = SaveAwePresetResult::Save;
                 *open = false;
             }
             DialogButton::None => {}

@@ -1,4 +1,9 @@
-//! AWE-specific newtypes for domain values.
+//! Spatial geometry newtypes shared across DSP crates.
+//!
+//! These wrap raw `f32` values for room-acoustics and spatialisation code
+//! (early reflections, binaural spatialisers). Keeping them in `synth_core`
+//! lets `synth_modules` use real newtypes for room dimensions and positions
+//! instead of raw meters-as-`f32`.
 
 use std::ops::{Add, AddAssign, Div, DivAssign, Mul, MulAssign, Sub, SubAssign};
 
@@ -124,89 +129,12 @@ impl DivAssign<f32> for Meters {
     }
 }
 
-/// Area in square meters.
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
-#[serde(transparent)]
-#[repr(transparent)]
-#[must_use]
-pub struct SquareMeters(pub f32);
-
-impl SquareMeters {
-    /// Create a new area.
-    #[inline]
-    pub const fn new(value: f32) -> Self {
-        Self(value)
-    }
-
-    /// Get the raw value.
-    #[inline]
-    pub const fn as_f32(self) -> f32 {
-        self.0
-    }
-}
-
-/// Volume in cubic meters.
-#[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
-#[serde(transparent)]
-#[repr(transparent)]
-#[must_use]
-pub struct CubicMeters(pub f32);
-
-impl CubicMeters {
-    /// Create a new volume.
-    #[inline]
-    pub const fn new(value: f32) -> Self {
-        Self(value)
-    }
-
-    /// Get the raw value.
-    #[inline]
-    pub const fn as_f32(self) -> f32 {
-        self.0
-    }
-}
-
 /// Speed in meters per second.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
 #[serde(transparent)]
 #[repr(transparent)]
 #[must_use]
 pub struct MetersPerSecond(pub f32);
-
-/// Temperature in degrees Celsius.
-#[derive(
-    Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(transparent)]
-#[repr(transparent)]
-#[must_use]
-pub struct Celsius(pub f32);
-
-impl Celsius {
-    /// Create a new temperature value.
-    #[inline]
-    pub const fn new(value: f32) -> Self {
-        Self(value)
-    }
-
-    /// Get the raw value.
-    #[inline]
-    pub const fn as_f32(self) -> f32 {
-        self.0
-    }
-
-    /// Calculate speed of sound at this temperature.
-    /// Formula: v = 331.3 + 0.606 * T (m/s)
-    pub fn speed_of_sound(self) -> MetersPerSecond {
-        MetersPerSecond::new(331.3 + 0.606 * self.0)
-    }
-}
-
-impl Default for Celsius {
-    fn default() -> Self {
-        Self(20.0) // 20 C ~ 343.4 m/s (matches old constant)
-    }
-}
 
 impl MetersPerSecond {
     /// Create a new speed.
@@ -240,52 +168,6 @@ impl SampleOffset {
     #[inline]
     pub const fn as_f32(self) -> f32 {
         self.0
-    }
-}
-
-/// Tail stretch factor for late reverb (dimensionless).
-#[derive(
-    Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize, schemars::JsonSchema,
-)]
-#[serde(transparent)]
-#[repr(transparent)]
-#[must_use]
-pub struct StretchFactor(pub f32);
-
-impl StretchFactor {
-    /// Minimum allowed stretch factor.
-    pub const MIN: Self = Self(0.5);
-    /// Maximum allowed stretch factor.
-    pub const MAX: Self = Self(4.0);
-
-    /// Create a new stretch factor with clamping.
-    #[inline]
-    pub fn new(value: f32) -> Self {
-        Self(value.clamp(Self::MIN.0, Self::MAX.0))
-    }
-
-    /// Create without clamping.
-    #[inline]
-    pub const fn new_unchecked(value: f32) -> Self {
-        Self(value)
-    }
-
-    /// Get the raw value.
-    #[inline]
-    pub const fn as_f32(self) -> f32 {
-        self.0
-    }
-}
-
-impl From<f32> for StretchFactor {
-    fn from(value: f32) -> Self {
-        Self::new(value)
-    }
-}
-
-impl Default for StretchFactor {
-    fn default() -> Self {
-        Self::new(1.0)
     }
 }
 
@@ -326,6 +208,13 @@ impl Position3 {
     pub fn as_f32(self) -> [f32; 3] {
         [self.0[0].as_f32(), self.0[1].as_f32(), self.0[2].as_f32()]
     }
+
+    /// Safe access by index. Returns `None` if index is out of range (0..3).
+    #[inline]
+    #[must_use]
+    pub fn get(&self, index: usize) -> Option<&Meters> {
+        self.0.get(index)
+    }
 }
 
 impl Default for Position3 {
@@ -353,15 +242,6 @@ impl From<[f32; 3]> for Position3 {
 impl From<Position3> for [Meters; 3] {
     fn from(value: Position3) -> Self {
         value.0
-    }
-}
-
-impl Position3 {
-    /// Safe access by index. Returns `None` if index is out of range (0..3).
-    #[inline]
-    #[must_use]
-    pub fn get(&self, index: usize) -> Option<&Meters> {
-        self.0.get(index)
     }
 }
 

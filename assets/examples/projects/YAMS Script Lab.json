@@ -20,6 +20,8 @@
       "description": "Pedagogical demo of the Script (scr) module + YAMS. The voice (pulse osc → acid LP filter → amp/env → out) has NO LFO — every bit of movement comes from two Script modules. scr-1 'Rhythm Brain' is global/tempo-synced (arr lookup tables driven by `beat`, polyrhythm, `playing` mute) — press PLAY to hear it. scr-2 'Voice Motion' is per-voice/expressive (vibrato that fades in with note age + mod wheel, per-note random rate, velocity→resonance) — audible on any single note. Read the slot scripts via get_module_info(scr-1/scr-2).",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
       "max_voices": 8,
       "velocity_amp_sensitivity": 1.0,
       "velocity_filter_sensitivity": 0.5,
@@ -507,7 +509,8 @@
       "rows": 64,
       "ticks_per_row": 240
     },
-    "next_return_bus_id": 0
+    "next_return_bus_id": 0,
+    "next_note_graph_id": 0
   },
   "global": {
     "master_volume": 1.0,

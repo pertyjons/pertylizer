@@ -53,7 +53,7 @@ project files by the leading bytes:
 - `PK\x03\x04` (ZIP magic) → bundle, load via
   [`bundle::load_bundle`](../crates/pertylizer/src/bundle.rs).
 - Otherwise → parse as JSON and dispatch on `file_type`
-  (`"project"` / `"awe_preset"`) or fall back to plain patch format.
+  (`"project"`) or fall back to plain patch format.
 
 ## Recommended extension
 

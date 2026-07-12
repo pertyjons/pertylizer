@@ -855,7 +855,7 @@ impl Voice {
         let offset = spec.depth.as_f32() * lfo * fade;
         // Defensive: a non-finite depth/rate (only reachable via a programmatic
         // write that bypasses validation) must not propagate NaN into the
-        // oscillator frequency and poison the mix/AWE buffers.
+        // oscillator frequency and poison the mix buffers.
         self.vibrato_offset = if offset.is_finite() {
             Semitones::new(offset)
         } else {

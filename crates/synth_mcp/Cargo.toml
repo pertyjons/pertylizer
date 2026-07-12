@@ -12,7 +12,6 @@ workspace = true
 
 [dependencies]
 synth_core = { path = "../synth_core" }
-synth_awe = { path = "../synth_awe" }
 synth_script = { path = "../synth_script" } # YAMS language reference (get_yams_reference)
 
 serde = { workspace = true }

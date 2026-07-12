@@ -34,9 +34,9 @@ use synth_engine::{EngineCommand, EngineHandle, ModuleId};
 /// - Applying parameters
 /// - Establishing connections
 ///
-/// When `apply_global` is `true` (full project load), master volume, glide time,
-/// and AWE settings are applied. When `false` (per-instrument patch load), those
-/// global settings are skipped to avoid overwriting state from other instruments.
+/// When `apply_global` is `true` (full project load), master volume and glide
+/// time are applied. When `false` (per-instrument patch load), those global
+/// settings are skipped to avoid overwriting state from other instruments.
 ///
 /// Note: Effects are per-instrument (on EffectChain) - each instrument has its own effects.
 #[allow(clippy::too_many_arguments)]
@@ -126,28 +126,6 @@ pub fn load_patch(
         *glide_time = patch.settings.glide_time;
         handle.send_blocking(EngineCommand::SetMasterVolume(patch.settings.master_volume));
         handle.send_blocking(EngineCommand::SetGlideTime(patch.settings.glide_time));
-
-        // Load full AWE state if present
-        if let Some(awe) = &patch.settings.awe {
-            handle.send_blocking(EngineCommand::SetAweEnabled {
-                enabled: awe.enabled,
-            });
-            handle.send_blocking(EngineCommand::SetAweParameter {
-                param: synth_awe::AweParam::RoomShape(awe.room),
-            });
-            handle.send_blocking(EngineCommand::SetAweParameter {
-                param: synth_awe::AweParam::Material(awe.material),
-            });
-            handle.send_blocking(EngineCommand::SetAweState {
-                snapshot: awe.to_snapshot(),
-            });
-            handle.send_blocking(EngineCommand::SetAweParameter {
-                param: synth_awe::AweParam::SpatialEnabled(awe.spatial_enabled),
-            });
-            handle.send_blocking(EngineCommand::SetAweParameter {
-                param: synth_awe::AweParam::NoteMapping(awe.note_mapping),
-            });
-        }
     }
 
     // Ensure the target instrument is enabled after loading
@@ -598,8 +576,6 @@ pub fn create_patch_from_rack(
     keyboard: &PianoKeyboard,
     handle: &EngineHandle,
     glide_time: synth_core::Seconds,
-    awe_enabled: bool,
-    awe_ui: &crate::gui::awe_view::AweUiState,
     engine_state: Option<(&synth_engine::state::EngineState, InstrumentId)>,
 ) -> Option<Patch> {
     let mut patch = create_patch_from_editor(patch_name, patch_editor, engine_state);
@@ -609,9 +585,6 @@ pub fn create_patch_from_rack(
     patch.settings.octave_offset = keyboard.octave_offset();
     patch.settings.master_volume = synth_core::Gain::new(handle.master_volume());
     patch.settings.glide_time = glide_time;
-    if awe_enabled {
-        patch.settings.awe = Some(awe_ui.to_awe_state(true));
-    }
     // Save canvas size so layout is restored correctly on load
     let content_size = patch_editor.content_size();
     patch.settings.canvas_size = Some(crate::patch::CanvasSize::new(
@@ -624,7 +597,7 @@ pub fn create_patch_from_rack(
 /// Create a patch from a `PatchEditor` without global settings.
 ///
 /// Used by project save to extract each instrument's module graph independently.
-/// Global settings (master volume, keyboard, glide, AWE) are stored at the
+/// Global settings (master volume, keyboard, glide) are stored at the
 /// project level, not per-instrument.
 ///
 /// If `engine_state` is provided, actual parameter values are read from the

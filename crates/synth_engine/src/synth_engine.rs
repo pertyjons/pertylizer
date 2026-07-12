@@ -26,7 +26,6 @@ use crate::shared_state::{
 };
 use crate::state::{CommandSync, EngineState};
 use crate::visualizers::{LevelMeter, Oscilloscope, SpectrumAnalyzer, VisualizationBuffer};
-use synth_awe::{AweEngine, SpatialContext, SpatialVoiceBank};
 use synth_core::params::LfoWaveform;
 use synth_core::{
     AudioBuffer, AudioCallbackContext, AudioProcessor, BeatPosition, BipolarValue, CcNumber,
@@ -177,8 +176,6 @@ pub struct CpuStageBreakdown {
     pub module_graph: f32,
     /// The master effect chain.
     pub master_fx: f32,
-    /// AWE room simulation.
-    pub awe: f32,
     /// Overall audio-callback load (the status-bar number).
     pub total: f32,
 }
@@ -379,7 +376,6 @@ impl EngineHandle {
             voices: self.state.cpu_voices.load(),
             module_graph: self.state.cpu_module_graph.load(),
             master_fx: self.state.cpu_master_fx.load(),
-            awe: self.state.cpu_awe.load(),
             total: self.state.cpu_usage.load(),
         }
     }
@@ -461,12 +457,6 @@ pub struct SynthEngine {
     /// Global master effect chain (processes mixed output from all instruments).
     /// Effects like master reverb, limiter, EQ go here.
     master_effects: EffectChain,
-
-    // === AWE (Acoustic World Engine) ===
-    /// Room simulation engine, processed after master effects.
-    awe_engine: AweEngine,
-    /// Per-voice spatial audio bank (written by instruments, read by AWE).
-    spatial_voice_bank: SpatialVoiceBank,
 
     // === Global module graph ===
     /// The global module graph for modular routing.
@@ -567,7 +557,6 @@ pub struct SynthEngine {
     stage_voices_sum: f32,
     stage_module_graph_sum: f32,
     stage_master_fx_sum: f32,
-    stage_awe_sum: f32,
 }
 
 impl SynthEngine {
@@ -624,8 +613,6 @@ impl SynthEngine {
             state: Arc::clone(&state),
             instruments: vec![],
             master_effects: EffectChain::new(),
-            awe_engine: AweEngine::new(),
-            spatial_voice_bank: SpatialVoiceBank::new(),
             module_graph: ModuleGraph::new(),
             use_modular_routing: false,
             sample_rate: 48000.0,
@@ -659,7 +646,6 @@ impl SynthEngine {
             stage_voices_sum: 0.0,
             stage_module_graph_sum: 0.0,
             stage_master_fx_sum: 0.0,
-            stage_awe_sum: 0.0,
         };
 
         // Hand the sequencer the producer end of the automation-trash channel so
@@ -1532,16 +1518,6 @@ impl SynthEngine {
                 self.state.transport.set_tempo(bpm);
             }
 
-            // AWE commands
-            EngineCommand::SetAweParameter { param } => {
-                self.awe_engine.set_param(param);
-            }
-            EngineCommand::SetAweEnabled { enabled } => {
-                self.awe_engine.set_enabled(enabled);
-            }
-            EngineCommand::SetAweState { snapshot } => {
-                self.awe_engine.apply_snapshot(snapshot);
-            }
             EngineCommand::SetAudioInputConsumer { consumer } => {
                 self.audio_input_consumer = Some(consumer);
             }
@@ -2031,9 +2007,9 @@ impl SynthEngine {
     /// clean slate — tail-proof isolation between offline renders. Real-time safe:
     /// only touches pre-allocated DSP buffers, no alloc/lock.
     ///
-    /// Not reset (out of the offline single-instrument render path): the AWE room
-    /// simulation and the one-block sidechain previous-output buffer (the latter
-    /// self-heals after one block, and the offline render uses no sidechain).
+    /// Not reset (out of the offline single-instrument render path): the
+    /// one-block sidechain previous-output buffer (it self-heals after one
+    /// block, and the offline render uses no sidechain).
     fn handle_reset_dsp(&mut self) {
         for instrument in &mut self.instruments {
             instrument.reset_dsp();
@@ -3094,24 +3070,6 @@ impl SynthEngine {
 
         let mut active_count = 0u32;
 
-        // Prepare spatial context if per-voice spatial is active
-        let spatial_enabled = self.awe_engine.enabled() && self.awe_engine.spatial_enabled();
-        self.spatial_voice_bank.clear();
-
-        let spatial_ctx = if spatial_enabled {
-            let room = self.awe_engine.room();
-            let snap = self.awe_engine.snapshot();
-            Some(SpatialContext {
-                mapping: self.awe_engine.note_mapping(),
-                room_length: room.length(),
-                room_width: room.width(),
-                room_height: room.height(),
-                listener_x: snap.listener_pos[0],
-            })
-        } else {
-            None
-        };
-
         // Check if any instrument is soloed
         let any_soloed = self.instruments.iter().any(|i| i.is_solo());
 
@@ -3140,8 +3098,7 @@ impl SynthEngine {
                 instrument.feed_sidechain_inputs(prev.as_slice());
             }
 
-            active_count +=
-                instrument.process(context, spatial_ctx.as_ref(), &mut self.spatial_voice_bank);
+            active_count += instrument.process(context);
         }
 
         // Clear each return bus's send-accumulation buffer for this block before
@@ -3825,27 +3782,11 @@ impl AudioProcessor for SynthEngine {
         self.process_master_effects(&process_context);
         self.stage_master_fx_sum += t_stage.elapsed().as_secs_f32();
 
-        // Process AWE (room simulation) after master effects
-        let t_stage = Instant::now();
-        if self.awe_engine.enabled() {
-            let sr = SampleRate::new(self.sample_rate);
-            if self.awe_engine.spatial_enabled() && self.spatial_voice_bank.active_count() > 0 {
-                self.awe_engine.process_spatial(
-                    self.mix_buffer.as_mut_slice(),
-                    &self.spatial_voice_bank,
-                    sr,
-                );
-            } else {
-                self.awe_engine.process(self.mix_buffer.as_mut_slice(), sr);
-            }
-        }
-        self.stage_awe_sum += t_stage.elapsed().as_secs_f32();
-
         // Mix metronome click into output
         self.click_generator
             .process(self.mix_buffer.as_mut_slice(), context.frames);
 
-        // Process master-level visualizers after AWE (so they show final signal)
+        // Process master-level visualizers after master effects (final signal)
         self.master_effects.process_visualizers(&self.mix_buffer);
 
         // Copy to output with master volume
@@ -3906,15 +3847,11 @@ impl AudioProcessor for SynthEngine {
             self.state
                 .cpu_master_fx
                 .store((self.stage_master_fx_sum / n) / buffer_duration);
-            self.state
-                .cpu_awe
-                .store((self.stage_awe_sum / n) / buffer_duration);
             self.callback_duration_sum = 0.0;
             self.callback_count = 0;
             self.stage_voices_sum = 0.0;
             self.stage_module_graph_sum = 0.0;
             self.stage_master_fx_sum = 0.0;
-            self.stage_awe_sum = 0.0;
         }
     }
 
@@ -3925,8 +3862,6 @@ impl AudioProcessor for SynthEngine {
         self.metering.set_sample_rate(sr);
         self.sequencer.set_sample_rate(sr);
         self.click_generator.set_sample_rate(sr);
-        // AWE delay lines depend on sample rate — recalculate on next process()
-        self.awe_engine.mark_geometry_dirty();
     }
 
     fn on_stream_stop(&mut self) {

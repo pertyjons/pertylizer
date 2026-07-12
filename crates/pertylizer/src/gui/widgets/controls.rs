@@ -66,7 +66,7 @@ pub fn paint_marker_corners(ui: &Ui, rect: Rect, markers: ModMarkers, outside: b
 // background container whose contents are separate AccessKit nodes drawn on top
 // (the patch canvas has node cards, the tempo lane has points, a group box has
 // its module body); use `Other` for a monolithic custom surface with no per-
-// element child nodes in the tree (piano roll, arrangement, tracker, AWE room,
+// element child nodes in the tree (piano roll, arrangement, tracker,
 // sample waveform, keyboard).
 //
 // (An `expose_painted` escape hatch for pure-paint elements with no `Response`,

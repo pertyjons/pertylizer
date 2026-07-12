@@ -33,7 +33,6 @@ synth_config = { path = "../synth_config" }
 synth_dsp = { path = "../synth_dsp" }
 synth_sequencer = { path = "../synth_sequencer" }
 synth_modules = { path = "../synth_modules" }
-synth_awe = { path = "../synth_awe" }
 synth_engine = { path = "../synth_engine" }
 synth_sampler = { path = "../synth_sampler" }
 synth_script = { path = "../synth_script" } # YAMS control-script compiler (non-RT, load/authoring)

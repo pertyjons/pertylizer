@@ -20,6 +20,8 @@
       "description": "Demo voice for the per-note EXPRESSION patterns (bars 1-9): accent/ghost, gate, vibrato, glide, legato, probability, ornaments.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
       "max_voices": 8,
       "velocity_amp_sensitivity": 1.0,
       "velocity_filter_sensitivity": 0.5,
@@ -245,6 +247,8 @@
       "description": "Demo voice for the pattern NOTE-PROCESSOR patterns (bars 10-18): scale-quantize, chord, chord+strum, chord→arpeggiator, humanize.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
       "max_voices": 8,
       "velocity_amp_sensitivity": 1.0,
       "velocity_filter_sensitivity": 0.5,
@@ -454,6 +458,8 @@
       "description": "Demo voice for the CUSTOM ARPEGGIATOR / chiptune patterns (bars 19-23): SID-style per-frame arps with custom offset cycles, sub-grid Ticks / frame-locked MilliHz rates and cross-pitch legato.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
       "max_voices": 8,
       "velocity_amp_sensitivity": 1.0,
       "velocity_filter_sensitivity": 0.5,
@@ -1696,7 +1702,9 @@
               "gate": 0.75,
               "swing": 0.0,
               "velocity": "AsPlayed",
-              "latch": false
+              "latch": false,
+              "legato": false,
+              "custom": []
             }
           }
         ],
@@ -3147,7 +3155,8 @@
       "rows": 64,
       "ticks_per_row": 240
     },
-    "next_return_bus_id": 0
+    "next_return_bus_id": 0,
+    "next_note_graph_id": 0
   },
   "global": {
     "master_volume": 0.8,

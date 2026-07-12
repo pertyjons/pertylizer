@@ -7,8 +7,6 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use synth_awe::AweState;
-
 use crate::patch::{Author, Patch};
 use crate::project::ProjectFile;
 use synth_mcp::McpSessionRegistry;
@@ -21,7 +19,7 @@ use synth_sequencer::Song;
 /// change engine state so the UI has nothing to refresh.
 pub enum ProjectRefresh {
     /// A project was loaded — the GUI must rebuild every UI mirror
-    /// (instruments, patch editor canvases, AWE UI, keyboard octave, …).
+    /// (instruments, patch editor canvases, keyboard octave, …).
     Loaded(Box<ProjectFile>),
     /// The project was reset to empty — equivalent to loading an empty
     /// `ProjectFile`. The GUI rebuilds its mirrors against the empty
@@ -75,7 +73,7 @@ pub struct McpSharedState {
     /// observes increments to detect "something changed; refresh".
     pub project_revision: AtomicU64,
     /// Bumped whenever MCP writes a one-shot GUI-mirror payload
-    /// (`pending_patch`, `pending_awe_state`). Same fast-path pattern as
+    /// (`pending_patch`). Same fast-path pattern as
     /// `project_revision`: the GUI checks this atomic at the top of each
     /// frame and only locks the slot mutexes when it actually changed,
     /// so idle frames pay only one `Acquire` load instead of two mutex
@@ -91,15 +89,6 @@ pub struct McpSharedState {
     /// the GUI can surface errors in the status line. `None` before any
     /// op has run.
     pub last_project_io_status: Mutex<Option<Result<String, String>>>,
-    /// Current AWE state (written by GUI each frame, read by MCP).
-    pub awe_state: Mutex<AweState>,
-    /// Pending AWE state change from MCP (consumed by GUI each frame).
-    pub pending_awe_state: Mutex<Option<AweState>>,
-    /// Free-text description of the AWE state's acoustic character.
-    /// Lives outside `AweState` to avoid touching 36+ literal initializers
-    /// in the preset table. Empty string == not set. Both GUI and MCP
-    /// read/write this directly.
-    pub awe_description: Arc<Mutex<String>>,
     /// Project author / composer metadata. Both GUI ("Project → Edit
     /// metadata…") and MCP (future `set_project_author`) read and write
     /// this directly. `None` when not set — file-save then emits a
@@ -133,9 +122,6 @@ impl McpSharedState {
             pending_project_refresh: Mutex::new(None),
             last_loaded_project_path: Mutex::new(None),
             last_project_io_status: Mutex::new(None),
-            awe_state: Mutex::new(AweState::default()),
-            pending_awe_state: Mutex::new(None),
-            awe_description: Arc::new(Mutex::new(String::new())),
             author: Arc::new(Mutex::new(None)),
             mix_baseline: Mutex::new(None),
         }

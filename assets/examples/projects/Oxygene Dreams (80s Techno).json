@@ -20,6 +20,8 @@
       "description": "Synthesized kick drum driving the four-on-the-floor pulse of this 80s techno track (tracks \"Kick\" and \"Syncopated Kick\"). The foundational rhythmic anchor at 126 BPM.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
       "max_voices": 8,
       "velocity_amp_sensitivity": 1.0,
       "velocity_filter_sensitivity": 0.0,
@@ -227,6 +229,8 @@
       "description": "Snare drum for the backbeat (track \"Snare\"), providing the 2-and-4 accent that propels the 80s techno groove.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
       "max_voices": 8,
       "velocity_amp_sensitivity": 1.0,
       "velocity_filter_sensitivity": 0.0,
@@ -485,6 +489,8 @@
       "description": "Hi-hat used for the driving sixteenth-note top end and ticking percussion (tracks \"Hats\" and \"Percussion/Sticks\"), keeping the high-frequency motion in this 80s techno arrangement.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
       "max_voices": 8,
       "velocity_amp_sensitivity": 1.0,
       "velocity_filter_sensitivity": 0.0,
@@ -653,6 +659,8 @@
       "description": "Aggressive lead bass carrying the main bassline (track \"Bass\"), the punchy mid-forward groove element that locks with the kick in this 80s techno track.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
       "max_voices": 8,
       "velocity_amp_sensitivity": 1.0,
       "velocity_filter_sensitivity": 0.0,
@@ -883,6 +891,8 @@
       "description": "Main monophonic-style synth lead for the \"Lead\" track, carrying the song's primary Jarre-style melodic hook over the 80s techno groove. Bright, slightly hollow vintage analog lead with subtle vibrato for an expressive retro-electro top line.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
       "max_voices": 8,
       "velocity_amp_sensitivity": 1.0,
       "velocity_filter_sensitivity": 0.0,
@@ -1200,6 +1210,8 @@
       "description": "Lush evolving pad for the \"Pad\" track, providing the warm sustained harmonic bed underneath the 80s techno arrangement in classic Jean-Michel Jarre fashion. Slow-swelling, detuned analog pad that fills the background and glues the chords together.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
       "max_voices": 8,
       "velocity_amp_sensitivity": 1.0,
       "velocity_filter_sensitivity": 0.0,
@@ -1465,6 +1477,8 @@
       "description": "Sub bass holding the low-frequency harmonic foundation (track \"Sub Bass (Harmony)\"), reinforcing the root notes beneath the main bass in this 80s techno track.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
       "max_voices": 8,
       "velocity_amp_sensitivity": 1.0,
       "velocity_filter_sensitivity": 0.0,
@@ -1725,6 +1739,8 @@
       "description": "Wide unison supersaw lead variation on the \"Unison Supersaw (Lead Var)\" track, used as a thicker, detuned alternative voicing of the main lead for big retro-electro lead moments and choruses in this 80s techno track.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
       "max_voices": 8,
       "velocity_amp_sensitivity": 1.0,
       "velocity_filter_sensitivity": 0.0,
@@ -1914,6 +1930,8 @@
       "description": "Noise Sweep (SFX): a slow filtered-noise riser/whoosh used as a transitional sweep between sections of this 80s techno track, building tension into drops and breakdowns Jarre-style.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
       "max_voices": 8,
       "velocity_amp_sensitivity": 1.0,
       "velocity_filter_sensitivity": 0.0,
@@ -2106,6 +2124,8 @@
       "description": "Shepard Riser (SFX): an endlessly-rising tone used as a build-up effect to create perpetual upward motion and tension before drops in this 80s techno arrangement.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
       "max_voices": 8,
       "velocity_amp_sensitivity": 1.0,
       "velocity_filter_sensitivity": 0.0,
@@ -2278,6 +2298,8 @@
       "description": "Short plucky synth for the \"Arpeggio\" track, driving the song's rhythmic arpeggiated 16th-note motion in the classic Jarre / 80s techno style. Tight, percussive note attacks that keep the arpeggio crisp and rhythmic.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
       "max_voices": 8,
       "velocity_amp_sensitivity": 1.0,
       "velocity_filter_sensitivity": 0.0,
@@ -2485,6 +2507,8 @@
       "description": "Resonant percussion hit for accents and transitions (track \"Impact FX\"), adding metallic Jarre-style impacts that punctuate sections of the 80s techno arrangement.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
       "max_voices": 8,
       "velocity_amp_sensitivity": 1.0,
       "velocity_filter_sensitivity": 0.0,
@@ -2627,6 +2651,8 @@
       "description": "Euclidean Texture (Intro Textures): a self-generating rhythmic/melodic texture that supplies evolving intro atmosphere and arpeggiated movement, a Jarre-flavoured generative backdrop for this 80s techno piece.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
       "max_voices": 8,
       "velocity_amp_sensitivity": 1.0,
       "velocity_filter_sensitivity": 0.0,
@@ -2949,6 +2975,8 @@
       "description": "Aggressive screaming power lead for the \"Screamer Power Lead\" track, used for high-energy lead stabs and climactic lines that cut through the 80s techno mix with a hard, resonant edge.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
       "max_voices": 8,
       "velocity_amp_sensitivity": 1.0,
       "velocity_filter_sensitivity": 0.0,
@@ -3221,6 +3249,8 @@
       "description": "Wave Folder Bass (Wavefolder Pressure Bass): an aggressive, harmonically dense bass that anchors the low end of this 80s techno track with gritty, pressurized weight and bite.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
       "max_voices": 8,
       "velocity_amp_sensitivity": 1.0,
       "velocity_filter_sensitivity": 0.0,
@@ -3449,6 +3479,8 @@
       "description": "Hybrid Resonator (Harmonic Echo Resonator): a complex multi-oscillator lead/pad hybrid providing the shimmering, metallic-resonant melodic centerpiece of this 80s techno track, rich and Jarre-esque in character.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
       "max_voices": 8,
       "velocity_amp_sensitivity": 1.0,
       "velocity_filter_sensitivity": 0.0,
@@ -3928,6 +3960,8 @@
       "description": "Moog Resonant Sweep: an empty/unused patch with no modules. Not assigned to any track; kept as a placeholder.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
       "max_voices": 8,
       "velocity_amp_sensitivity": 1.0,
       "velocity_filter_sensitivity": 0.0,
@@ -3975,7 +4009,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -3986,7 +4022,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 2,
@@ -3997,7 +4035,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 3,
@@ -4008,10 +4048,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 4
       },
       {
@@ -4029,7 +4072,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -4040,10 +4085,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 2
       },
       {
@@ -4061,7 +4109,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -4072,7 +4122,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 2,
@@ -4083,7 +4135,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 3,
@@ -4094,10 +4148,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 4
       },
       {
@@ -4115,7 +4172,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -4126,7 +4185,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 2,
@@ -4137,7 +4198,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 3,
@@ -4148,7 +4211,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 4,
@@ -4159,7 +4224,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 5,
@@ -4170,7 +4237,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 6,
@@ -4181,7 +4250,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 7,
@@ -4192,7 +4263,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 8,
@@ -4203,7 +4276,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 9,
@@ -4214,7 +4289,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 10,
@@ -4225,7 +4302,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 11,
@@ -4236,7 +4315,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 12,
@@ -4247,7 +4328,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 13,
@@ -4258,7 +4341,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 14,
@@ -4269,7 +4354,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 15,
@@ -4280,10 +4367,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 16
       },
       {
@@ -4301,7 +4391,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -4312,7 +4404,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 2,
@@ -4323,7 +4417,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 3,
@@ -4334,7 +4430,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 4,
@@ -4345,7 +4443,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 5,
@@ -4356,7 +4456,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 6,
@@ -4367,7 +4469,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 7,
@@ -4378,10 +4482,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 8
       },
       {
@@ -4399,7 +4506,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -4410,7 +4519,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 2,
@@ -4421,7 +4532,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 3,
@@ -4432,7 +4545,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 4,
@@ -4443,7 +4558,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 5,
@@ -4454,10 +4571,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 6
       },
       {
@@ -4475,7 +4595,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -4486,10 +4608,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 2
       },
       {
@@ -4507,7 +4632,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -4518,7 +4645,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 2,
@@ -4529,7 +4658,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 3,
@@ -4540,7 +4671,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 4,
@@ -4551,7 +4684,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 5,
@@ -4562,7 +4697,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 6,
@@ -4573,7 +4710,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 7,
@@ -4584,10 +4723,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 8
       },
       {
@@ -4605,7 +4747,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -4616,7 +4760,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 2,
@@ -4627,7 +4773,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 3,
@@ -4638,7 +4786,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 4,
@@ -4649,7 +4799,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 5,
@@ -4660,7 +4812,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 6,
@@ -4671,10 +4825,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 7
       },
       {
@@ -4692,10 +4849,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 1
       },
       {
@@ -4713,10 +4873,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 1
       },
       {
@@ -4734,7 +4897,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -4745,7 +4910,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 2,
@@ -4756,7 +4923,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 3,
@@ -4767,7 +4936,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 4,
@@ -4778,7 +4949,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 5,
@@ -4789,10 +4962,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 6
       },
       {
@@ -4810,7 +4986,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -4821,7 +4999,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 2,
@@ -4832,7 +5012,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 3,
@@ -4843,7 +5025,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 4,
@@ -4854,10 +5038,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 5
       },
       {
@@ -4875,7 +5062,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -4886,10 +5075,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 2
       },
       {
@@ -4907,7 +5099,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -4918,7 +5112,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 2,
@@ -4929,7 +5125,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 3,
@@ -4940,10 +5138,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 4
       },
       {
@@ -4961,7 +5162,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -4972,7 +5175,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 2,
@@ -4983,7 +5188,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 3,
@@ -4994,7 +5201,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 4,
@@ -5005,10 +5214,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 5
       },
       {
@@ -5026,7 +5238,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -5037,7 +5251,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 2,
@@ -5048,7 +5264,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 3,
@@ -5059,7 +5277,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 4,
@@ -5070,7 +5290,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 5,
@@ -5081,7 +5303,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 6,
@@ -5092,7 +5316,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 7,
@@ -5103,10 +5329,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 8
       },
       {
@@ -5124,7 +5353,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -5135,7 +5366,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 2,
@@ -5146,7 +5379,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 3,
@@ -5157,10 +5392,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 4
       },
       {
@@ -5178,7 +5416,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -5189,7 +5429,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 2,
@@ -5200,7 +5442,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 3,
@@ -5211,7 +5455,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 4,
@@ -5222,7 +5468,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 5,
@@ -5233,7 +5481,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 6,
@@ -5244,7 +5494,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 7,
@@ -5255,7 +5507,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 8,
@@ -5266,7 +5520,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 9,
@@ -5277,7 +5533,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 10,
@@ -5288,7 +5546,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 11,
@@ -5299,7 +5559,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 12,
@@ -5310,7 +5572,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 13,
@@ -5321,7 +5585,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 14,
@@ -5332,7 +5598,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 15,
@@ -5343,10 +5611,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 16
       },
       {
@@ -5364,7 +5635,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -5375,7 +5648,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 2,
@@ -5386,7 +5661,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 3,
@@ -5397,7 +5674,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 4,
@@ -5408,7 +5687,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 5,
@@ -5419,7 +5700,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 6,
@@ -5430,7 +5713,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 7,
@@ -5441,7 +5726,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 8,
@@ -5452,7 +5739,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 9,
@@ -5463,7 +5752,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 10,
@@ -5474,7 +5765,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 11,
@@ -5485,7 +5778,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 12,
@@ -5496,7 +5791,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 13,
@@ -5507,7 +5804,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 14,
@@ -5518,7 +5817,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 15,
@@ -5529,10 +5830,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 16
       },
       {
@@ -5550,7 +5854,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -5561,7 +5867,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 2,
@@ -5572,7 +5880,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 3,
@@ -5583,10 +5893,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 4
       },
       {
@@ -5604,10 +5917,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 1
       },
       {
@@ -5625,10 +5941,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 1
       },
       {
@@ -5646,10 +5965,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 1
       },
       {
@@ -5667,7 +5989,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -5678,7 +6002,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 2,
@@ -5689,7 +6015,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 3,
@@ -5700,7 +6028,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 4,
@@ -5711,7 +6041,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 5,
@@ -5722,7 +6054,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 6,
@@ -5733,7 +6067,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 7,
@@ -5744,7 +6080,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 8,
@@ -5755,7 +6093,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 9,
@@ -5766,7 +6106,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 10,
@@ -5777,7 +6119,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 11,
@@ -5788,7 +6132,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 12,
@@ -5799,7 +6145,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 13,
@@ -5810,7 +6158,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 14,
@@ -5821,7 +6171,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 15,
@@ -5832,10 +6184,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 16
       },
       {
@@ -5853,7 +6208,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -5864,10 +6221,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 2
       },
       {
@@ -5885,7 +6245,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -5896,7 +6258,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 2,
@@ -5907,7 +6271,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 3,
@@ -5918,7 +6284,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 4,
@@ -5929,7 +6297,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 5,
@@ -5940,7 +6310,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 6,
@@ -5951,7 +6323,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 7,
@@ -5962,10 +6336,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 8
       },
       {
@@ -5983,7 +6360,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -5994,7 +6373,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 2,
@@ -6005,7 +6386,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 3,
@@ -6016,7 +6399,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 4,
@@ -6027,7 +6412,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 5,
@@ -6038,7 +6425,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 6,
@@ -6049,7 +6438,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 7,
@@ -6060,7 +6451,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 8,
@@ -6071,7 +6464,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 9,
@@ -6082,10 +6477,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 10
       },
       {
@@ -6103,7 +6501,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -6114,7 +6514,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 2,
@@ -6125,10 +6527,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 3
       },
       {
@@ -6146,7 +6551,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -6157,7 +6564,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 2,
@@ -6168,7 +6577,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 3,
@@ -6179,7 +6590,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 4,
@@ -6190,7 +6603,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 5,
@@ -6201,7 +6616,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 6,
@@ -6212,7 +6629,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 7,
@@ -6223,10 +6642,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 8
       },
       {
@@ -6244,7 +6666,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -6255,7 +6679,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 2,
@@ -6266,7 +6692,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 3,
@@ -6277,7 +6705,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 4,
@@ -6288,7 +6718,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 5,
@@ -6299,7 +6731,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 6,
@@ -6310,7 +6744,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 7,
@@ -6321,10 +6757,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 8
       },
       {
@@ -6342,7 +6781,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -6353,7 +6794,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 2,
@@ -6364,7 +6807,9 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 3,
@@ -6375,10 +6820,13 @@
             "track": null,
             "legato": false,
             "glide": null,
-            "expression": null
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 4
       }
     ],
@@ -10103,7 +10551,8 @@
       "rows": 64,
       "ticks_per_row": 240
     },
-    "next_return_bus_id": 0
+    "next_return_bus_id": 0,
+    "next_note_graph_id": 0
   },
   "global": {
     "master_volume": 0.8,

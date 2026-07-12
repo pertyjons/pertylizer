@@ -33,7 +33,6 @@ fn workspace_root() -> PathBuf {
 const SCHEMA_FILES: &[&str] = &[
     "project.schema.json",
     "patch.schema.json",
-    "awe-preset.schema.json",
     "bundle-metadata.schema.json",
     "descriptors.json",
 ];
@@ -90,7 +89,6 @@ fn example_files_validate_against_schemas() {
     let groups: &[(&str, &str, &str)] = &[
         ("project.schema.json", "projects", "project"),
         ("patch.schema.json", "patches", "patch"),
-        ("awe-preset.schema.json", "awe", "awe preset"),
     ];
 
     for (schema_file, subdir, label) in groups {

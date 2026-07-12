@@ -108,10 +108,9 @@ commit and the code carry the detail; history.md is the index.
 | `synth_config`       | Runtime config (`pertylizer.toml`) shared by the app and visualizer |
 | `synth_engine`       | Audio engine, voice management, instrument graph, recording        |
 | `synth_sequencer`    | Song, patterns, tracks, arrangement, automation                    |
-| `synth_modules`      | DSP module implementations (70 module types incl. 25 effects)      |
+| `synth_modules`      | DSP module implementations (71 module types incl. 25 effects)      |
 | `synth_dsp`          | Low-level DSP primitives (biquad, delay lines, interpolation)      |
 | `synth_sampler`      | Sample loading, playback, and waveform analysis                    |
-| `synth_awe`          | Acoustic World Engine (room simulation)                            |
 | `synth_mcp`          | MCP server for external control (175+ tools)                       |
 | `synth_osc`          | OSC telemetry sender (spectrum, notes, transport over UDP)         |
 | `synth_osc_protocol` | Shared OSC protocol definitions for synth and visualizer           |
@@ -167,7 +166,6 @@ The `synth` MCP server provides a wide range of tools:
 - **Discovery:** `list_module_types`, `get_module_type_info`, `search_modules`, `list_port_types`.
 - **Instruments:** `create_instrument`, `build_instrument`, `list_instruments`, `set_parameter`.
 - **Sequencer:** `create_pattern`, `add_note`, `create_track`, `place_pattern`.
-- **AWE:** `set_awe_preset`, `set_awe_parameter`, `get_awe_state`.
 - **Analysis:** `analyze_harmony`, `analyze_mix_bus`, `analyze_section`.
 
 ### Batch Operations
@@ -213,10 +211,9 @@ fn set_frequency(freq: Hertz) { ... }
 
 | Crate             | Examples                                                                                                                                                                                                      | 
 |-------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `synth_core`      | `Hertz`, `SampleRate`, `Cents`, `Semitones`, `MidiNote`, `Velocity`, `Gain`, `Decibels`, `Seconds`, `Milliseconds`, `Bpm`, `NormalizedValue`, `BipolarValue`, `Phase`, `SampleCount`, `BlockSize`, `PortName` |
+| `synth_core`      | `Hertz`, `SampleRate`, `Cents`, `Semitones`, `MidiNote`, `Velocity`, `Gain`, `Decibels`, `Seconds`, `Milliseconds`, `Bpm`, `NormalizedValue`, `BipolarValue`, `Phase`, `SampleCount`, `BlockSize`, `PortName`, `Meters`, `MetersPerSecond`, `SampleOffset`, `Position3` |
 | `synth_sequencer` | `PatternId`, `TrackId`, `NoteId`, `Tick`, `PatternTick`, `Duration`, `Pitch`, `TrackIndex`, `RowIndex`, `SeqInstrumentId`, `NoteGraphId`, `NoteModuleId`                                                          |
 | `synth_engine`    | `TransactionId`, `ClientId`, `InstrumentId`, `MidiChannel`, `ConnectionCount`, `ModuleId`                                                                                                                     |
-| `synth_awe`       | `Meters`, `SquareMeters`, `CubicMeters`, `SampleOffset`, `StretchFactor`                                                                                                                                      |
 
 ---
 

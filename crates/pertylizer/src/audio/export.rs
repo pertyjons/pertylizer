@@ -258,26 +258,6 @@ fn render_to_wav(
     // 5. Apply global settings
     handle.send_blocking(EngineCommand::SetMasterVolume(project.global.master_volume));
     handle.send_blocking(EngineCommand::SetGlideTime(project.global.glide_time));
-    if let Some(awe) = &project.global.awe {
-        handle.send_blocking(EngineCommand::SetAweEnabled {
-            enabled: awe.enabled,
-        });
-        handle.send_blocking(EngineCommand::SetAweParameter {
-            param: synth_awe::AweParam::RoomShape(awe.room),
-        });
-        handle.send_blocking(EngineCommand::SetAweParameter {
-            param: synth_awe::AweParam::Material(awe.material),
-        });
-        handle.send_blocking(EngineCommand::SetAweState {
-            snapshot: awe.to_snapshot(),
-        });
-        handle.send_blocking(EngineCommand::SetAweParameter {
-            param: synth_awe::AweParam::SpatialEnabled(awe.spatial_enabled),
-        });
-        handle.send_blocking(EngineCommand::SetAweParameter {
-            param: synth_awe::AweParam::NoteMapping(awe.note_mapping),
-        });
-    }
 
     // 6. Notify the engine about the stream configuration
     let hw_sample_rate = HwSampleRate(config.sample_rate);
@@ -568,28 +548,6 @@ fn load_patch_modules(
     // NOTE: SetMasterVolume and SetGlideTime are global (not per-instrument) settings.
     // They are applied once at the project level, so we skip them here to avoid
     // the last instrument's patch overriding the project-level values.
-
-    // Apply AWE settings from patch
-    if let Some(awe) = &patch.settings.awe {
-        handle.send_blocking(EngineCommand::SetAweEnabled {
-            enabled: awe.enabled,
-        });
-        handle.send_blocking(EngineCommand::SetAweParameter {
-            param: synth_awe::AweParam::RoomShape(awe.room),
-        });
-        handle.send_blocking(EngineCommand::SetAweParameter {
-            param: synth_awe::AweParam::Material(awe.material),
-        });
-        handle.send_blocking(EngineCommand::SetAweState {
-            snapshot: awe.to_snapshot(),
-        });
-        handle.send_blocking(EngineCommand::SetAweParameter {
-            param: synth_awe::AweParam::SpatialEnabled(awe.spatial_enabled),
-        });
-        handle.send_blocking(EngineCommand::SetAweParameter {
-            param: synth_awe::AweParam::NoteMapping(awe.note_mapping),
-        });
-    }
 }
 
 /// Apply parameters to a module without GUI types.

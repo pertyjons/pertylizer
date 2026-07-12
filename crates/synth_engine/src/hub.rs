@@ -391,11 +391,6 @@ impl EngineHub {
 
             EngineCommand::SetEffectEnabled { .. } => perms.can_modify_params,
 
-            // AWE commands
-            EngineCommand::SetAweParameter { .. }
-            | EngineCommand::SetAweEnabled { .. }
-            | EngineCommand::SetAweState { .. } => perms.can_modify_params,
-
             // Recording commands
             EngineCommand::ArmRecord { .. }
             | EngineCommand::DisarmRecord

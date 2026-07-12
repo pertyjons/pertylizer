@@ -74,6 +74,84 @@ impl Default for KeyboardPannerParam {
 }
 
 // ============================================================================
+// SPATIAL PANNER PARAMETERS
+// ============================================================================
+
+/// Spatial panner parameter with typed value.
+///
+/// Positions a mono voice in a fixed virtual room via ISM early reflections
+/// and a binaural (ITD/ILD) direct path. `x`/`y`/`z` are bipolar offsets from
+/// the room centre (listener position).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum SpatialPannerParam {
+    /// Left/right source offset (-1 = full left, +1 = full right).
+    X(BipolarValue),
+    /// Front/back source offset (-1 = behind, +1 = in front).
+    Y(BipolarValue),
+    /// Down/up source offset (-1 = below, +1 = above).
+    Z(BipolarValue),
+    /// Material diffusion / scattering of the reflections (0..1).
+    Diffusion(NormalizedValue),
+    /// Early-reflection (room) level (0..1).
+    ErLevel(NormalizedValue),
+    /// Direct (binaural) path level (0..1).
+    DirectLevel(NormalizedValue),
+    /// Wall absorption amount (0 = reflective, 1 = dead) (0..1).
+    Absorption(NormalizedValue),
+    /// Air absorption (high-frequency damping over distance) (0..1).
+    AirAbsorption(NormalizedValue),
+}
+
+impl SpatialPannerParam {
+    pub fn same_kind(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::X(_) => "X",
+            Self::Y(_) => "Y",
+            Self::Z(_) => "Z",
+            Self::Diffusion(_) => "Diffusion",
+            Self::ErLevel(_) => "ER Level",
+            Self::DirectLevel(_) => "Direct Level",
+            Self::Absorption(_) => "Absorption",
+            Self::AirAbsorption(_) => "Air Absorption",
+        }
+    }
+
+    pub fn as_f32(&self) -> f32 {
+        match self {
+            Self::X(v) | Self::Y(v) | Self::Z(v) => v.as_f32(),
+            Self::Diffusion(v)
+            | Self::ErLevel(v)
+            | Self::DirectLevel(v)
+            | Self::Absorption(v)
+            | Self::AirAbsorption(v) => v.as_f32(),
+        }
+    }
+
+    pub fn with_f32(&self, value: f32) -> Self {
+        match self {
+            Self::X(_) => Self::X(BipolarValue::new(value)),
+            Self::Y(_) => Self::Y(BipolarValue::new(value)),
+            Self::Z(_) => Self::Z(BipolarValue::new(value)),
+            Self::Diffusion(_) => Self::Diffusion(NormalizedValue::new(value)),
+            Self::ErLevel(_) => Self::ErLevel(NormalizedValue::new(value)),
+            Self::DirectLevel(_) => Self::DirectLevel(NormalizedValue::new(value)),
+            Self::Absorption(_) => Self::Absorption(NormalizedValue::new(value)),
+            Self::AirAbsorption(_) => Self::AirAbsorption(NormalizedValue::new(value)),
+        }
+    }
+}
+
+impl Default for SpatialPannerParam {
+    fn default() -> Self {
+        Self::X(BipolarValue::CENTER)
+    }
+}
+
+// ============================================================================
 // BODY RESONANCE PARAMETERS
 // ============================================================================
 

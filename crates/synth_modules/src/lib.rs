@@ -71,6 +71,7 @@ mod voice_pitch_harness;
 pub mod body_resonance;
 pub mod keyboard_panner;
 pub mod mechanical_noise;
+pub mod spatial_panner;
 
 // Effects
 pub mod effects;
@@ -121,6 +122,7 @@ pub use wavetable_osc::WavetableOsc;
 pub use body_resonance::BodyResonance;
 pub use keyboard_panner::KeyboardPanner;
 pub use mechanical_noise::MechanicalNoise;
+pub use spatial_panner::SpatialPanner;
 
 // Effects exports
 pub use effects::{

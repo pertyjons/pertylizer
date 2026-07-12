@@ -139,12 +139,6 @@ fn every_example_project_round_trips() {
                             path.display()
                         );
                     }
-                    LoadedFile::AwePreset(_) => {
-                        eprintln!(
-                            "note: {} is an AWE preset, skipping (not a project)",
-                            path.display()
-                        );
-                    }
                 }
             }
         });

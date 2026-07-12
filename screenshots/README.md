@@ -86,16 +86,6 @@ exercising a note processor or per-note expression: arpeggios, ornaments
 (flam/drag/ruff/roll), chords, glide, legato, probability, scale-quantize and
 humanize.
 
-## Acoustic World Engine (AWE)
-
-### `awe-1.png`
-
-![AWE 1](awe-1.png)
-
-The Acoustic World Engine — a 3D room simulator with a sound source and a
-listener positioned in space, showing reflection paths. The right-hand panel
-exposes Room dimensions, Material, Mix, Effects and Spatial parameters.
-
 ## Visualizer
 
 The realtime 3D audio visualizer with several scenes driven by the audio

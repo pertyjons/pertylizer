@@ -300,11 +300,7 @@
   "global": {
     "master_volume": 1.0,
     "octave_offset": -1,
-    "glide_time_seconds": 0.0,
-    "awe_state_present": true,
-    "awe_enabled": true,
-    "awe_preset_name": null,
-    "awe_description_present": false
+    "glide_time_seconds": 0.0
   },
   "samples": {
     "count": 9,

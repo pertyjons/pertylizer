@@ -112,10 +112,6 @@ struct GlobalSummary {
     master_volume: f32,
     octave_offset: i32,
     glide_time_seconds: f32,
-    awe_state_present: bool,
-    awe_enabled: Option<bool>,
-    awe_preset_name: Option<String>,
-    awe_description_present: bool,
 }
 
 #[derive(Serialize)]
@@ -182,10 +178,6 @@ fn build_project_snapshot(project: &ProjectFile, samples: &SampleSummary) -> Pro
         master_volume: project.global.master_volume.as_f32(),
         octave_offset: project.global.octave_offset,
         glide_time_seconds: project.global.glide_time.as_f32(),
-        awe_state_present: project.global.awe.is_some(),
-        awe_enabled: project.global.awe.as_ref().map(|a| a.enabled),
-        awe_preset_name: project.global.awe_preset.as_ref().map(|p| p.name.clone()),
-        awe_description_present: project.global.awe_description.is_some(),
     };
 
     ProjectSnapshot {
@@ -237,7 +229,7 @@ fn snapshot_for_example(path: &Path) -> Option<ProjectSnapshot> {
                 let samples = sample_summary_from_library(&lib);
                 Some(build_project_snapshot(&project, &samples))
             }
-            LoadedFile::Patch(_) | LoadedFile::AwePreset(_) => None,
+            LoadedFile::Patch(_) => None,
         }
     }
 }

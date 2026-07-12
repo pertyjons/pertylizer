@@ -123,23 +123,6 @@ pub enum McpBridgeError {
         max: usize,
     },
 
-    /// Invalid AWE parameter name.
-    #[error(
-        "unknown AWE parameter '{0}'. Valid parameters: dry_wet, early_late_balance, modes_amount, \
-         freq_warp, resonance_boost, tail_stretch, portal_amount, pre_delay, modulation_depth, \
-         modulation_rate, air_absorption, width, high_cut, low_cut, temperature, source_x, \
-         source_y, listener_x, listener_y"
-    )]
-    InvalidAweParameter(String),
-
-    /// AWE preset not found.
-    #[error("AWE preset '{0}' not found. Use list_awe_presets to see available presets.")]
-    AwePresetNotFound(String),
-
-    /// Invalid AWE LFO index.
-    #[error("invalid LFO index {0}: must be 1-4")]
-    InvalidLfoIndex(u8),
-
     /// A requested analysis window starts at or beyond the end of the audio.
     #[error(
         "analysis window starts at {start_ms}ms but only {available_ms}ms of audio is available"

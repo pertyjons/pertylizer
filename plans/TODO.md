@@ -1,5 +1,52 @@
 # TODO - Pertylizer
 
+## ⭐ HIGHEST PRIORITY — SpatialPanner position can't be modulated (found live 2026-07-12)
+
+The new `spp` (Spatial Panner) module positions sound correctly — verified live on an
+`osc → amp → spp → out` instrument: `X = -0.95` → left RMS `0.137` / right `0.080`
+(≈ +4.6 dB left), and `X = +0.95` mirrors it exactly. Its `X`/`Y`/`Z` params report
+`modulatable: true` **and** `is_automatable: true` — **but no modulation source can
+actually reach them.** So "make the sound orbit the room" is impossible today except by
+poking the params from outside (MCP `set_parameter`). Four gaps, most-scoped first.
+
+- [ ] **1. Add `x_cv`/`y_cv`/`z_cv` control-input ports to `spp`.** `spp` currently has a
+  single input port (`in`, audio) — no CV inputs — so an LFO / Script / AudioScript /
+  Envelope cable can't drive its position. Add three `control` input ports summed onto the
+  `X`/`Y`/`Z` params and clamped to [-1, 1], following the existing idiom (`amp` has
+  `cv`/`pan_cv`, `flt` has `cutoff_cv`). This is the direct enabler for "the script draws
+  the orbit, `spp` renders it": `lfo → x_cv` + `lfo (90° phase) → y_cv` = a smooth per-voice
+  circle; `env → z_cv` = rise on attack. Best done on `feat/awe-to-spatial-panner` before
+  it merges (branch is unmerged + not yet eyeballed).
+
+- [ ] **2. Mod Matrix destination list is a hardcoded legacy roster.** `Slot N Dest` offers
+  a fixed 19-entry enum — `Osc 1–3`, `Filter 1–2`, `Amp 1–2`, `LFO 1–2` — that is **not**
+  derived from the instrument's actual voice graph (verified: an instrument containing an
+  `spp` still shows no `spp` in the destination list). So every `modulatable: true` param on
+  any module outside that roster (`spp`, and anything newer) is unreachable via the Mod
+  Matrix **and** YAMS. `Slot N Source` is a fixed enum too. Make both pickers address-based
+  from the live graph (enumerate the actual `modulatable` params / available sources) so
+  they reflect what's really patched.
+
+- [ ] **3. No MCP write path for address-based Mod Matrix routings.** The read side
+  (`get_mod_matrix_routings`) already reports dotted `module.param` addresses, and
+  `set_mod_matrix_script` installs the slot *expression* — but there is no symmetric tool to
+  *set a slot's source/destination by address* (only the positional `Slot N Source/Dest`
+  enums via `set_parameter`, which can't name `spp.X`). Add an address-based
+  `set_mod_matrix_routing` (or extend the script tool with source/dest address fields) so a
+  routing to an arbitrary `module.param` can be created headlessly. Unblocks #2 over MCP.
+
+- [ ] **4. (Minor, ergonomics) `note_on`/`note_off` can't target an instrument.** They route
+  only by MIDI channel, and a freshly built instrument silently gets a *different* channel —
+  so `note_on` (default ch 1) hit the wrong (silent) instrument during the live test and
+  produced confusing silence. Add an optional `instrument_id` to `note_on`/`note_off` (like
+  `preview_note` already has), or return the assigned channel from
+  `build_instrument`/`create_instrument`.
+
+> Related: §6.6 already tracks other Pertylizer MCP gaps; items 2–3 generalize beyond `spp`
+> and should probably fold in with that section once addressed.
+
+---
+
 ## 0. ~~HIGHEST PRIORITY~~ — DONE: Envelope attack/decay/release now mean their nominal time
 
 **Shipped (branch `feat/envelope-nominal-time`).** Option 1 (analog-style
@@ -468,7 +515,7 @@ debuggable at low cost.
 - [x] **N/A — no such conversions exist.** Audited the whole workspace: there are
   **zero** `PI / 180.0`-style degree↔radian multipliers (and no `to_radians` /
   `to_degrees` calls). The M/S "rotation" maps a normalized value ×π (not
-  degrees×π/180), and AWE angle math uses `atan2`/geometry in radians directly.
+  degrees×π/180), and the Spatial Panner angle math uses `atan2`/geometry in radians directly.
   Every remaining "degrees" hit is a comment, a graph in-degree, or a musical
   scale-degree. Nothing to change.
 
@@ -585,19 +632,11 @@ enough to be driven by an actual observed symptom. Ordered by likely impact.
 > **Consolidated 2026-07-13.** The standalone design/status docs that used to live
 > under `plans/` were folded in here. **Shipped/done plan docs were deleted** —
 > their full text is recoverable via `git log --follow -- plans/<file>.md`; only
-> their remaining open work is captured below. **Three not-yet-started design docs
+> their remaining open work is captured below. **Two not-yet-started design docs
 > are KEPT as files** and indexed in §6.1 (open them for the full design).
 
 ### 6.1 Kept design docs (not started — full design lives in the file)
 
-- [ ] **AWE decomposition — dissolve AWE into the effect-module graph.**
-  `plans/awe-decomposition-plan.md` (design sketch, on hold, no code). Replace the
-  AWE monolith with a per-voice `SpatialPanner` PolyModule (ER + spatializer,
-  mono→L/R, mandatory param smoothing), an evolved `Reverb` (FDN-tail parity),
-  reused `ModalResonator`/`Convolver`, and an **engine-side automatable "Room" macro**
-  for coherence (decision A: DSP-independent modules linked at the parameter layer).
-  Phased so AWE stays alive in parallel until phase 5 retires the `synth_awe`
-  special-case wiring + `awe_view.rs`.
 - [ ] **Cable routing / layering / aesthetics.** `plans/cable-routing.md` (PROPOSED).
   Opt-in cubic-Bézier hanging cables (vs orthogonal), foreground transparent
   rendering, source→destination colour gradients, selection focus-dimming, and
@@ -658,7 +697,7 @@ enough to be driven by an actual observed symptom. Ordered by likely impact.
 *(from `plans/accesskit-custom-widgets.md`; shipped to main @`c7372dae`, container-level exposure across all views. Full inventory in git history.)*
 
 - [ ] **Per-element canvas drivability.** v1 exposed the big canvases (piano roll,
-  tracker, arrangement, keyboard, AWE, sample) only at *container* level. Making
+  tracker, arrangement, keyboard, sample) only at *container* level. Making
   individual notes / tracker cells / keys / clips clickable+queryable via MCP needs a
   per-element `ui.interact(sub_rect, …)` per view — a larger, view-specific effort.
 - [ ] **Cables as AccessKit nodes.** Cables are pure paint (no `Response`); v1

@@ -9,7 +9,7 @@ use std::path::{Path, PathBuf};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::patch::{Author, AwePresetFile, InstrumentState, ModuleState, Patch, PatchError};
+use crate::patch::{Author, InstrumentState, ModuleState, Patch, PatchError};
 use synth_core::{BipolarValue, Gain, Seconds, Semitones};
 use synth_engine::instrument::InstrumentId;
 use synth_sequencer::Song;
@@ -49,18 +49,6 @@ pub struct GlobalProjectState {
     #[serde(default)]
     #[schemars(with = "f32")]
     pub glide_time: Seconds,
-    /// AWE (Acoustic World Engine) state.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub awe: Option<synth_awe::AweState>,
-    /// Full AWE preset with metadata, embedded in project when enabled.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub awe_preset: Option<AwePresetFile>,
-    /// Free-text description of the current AWE state (room's acoustic
-    /// character). Mirrors `AwePresetFile.description` when a preset is
-    /// loaded but persists separately so MCP-written descriptions on
-    /// unsaved rooms survive a project save / load round-trip.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub awe_description: Option<String>,
     /// Effect chains on return busses (the busses themselves — id/name/fader —
     /// live in the `Song`; only the engine-side effect chain is captured here).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -90,9 +78,6 @@ impl Default for GlobalProjectState {
             master_volume: Gain::new(0.8),
             octave_offset: 0,
             glide_time: Seconds::ZERO,
-            awe: None,
-            awe_preset: None,
-            awe_description: None,
             return_bus_effects: Vec::new(),
             master_effects: Vec::new(),
         }
@@ -143,11 +128,9 @@ impl ProjectFile {
 /// Result of auto-detecting and loading a file.
 pub enum LoadedFile {
     /// A single-instrument patch file.
-    Patch(Patch),
+    Patch(Box<Patch>),
     /// A full project file with multiple instruments and song.
     Project(Box<ProjectFile>),
-    /// An AWE preset file.
-    AwePreset(AwePresetFile),
     /// A ZIP bundle (contains project + samples). Path stored for deferred loading.
     Bundle(PathBuf),
 }
@@ -170,7 +153,7 @@ pub fn normalize_project_path(path: &Path, has_samples: bool) -> PathBuf {
     p
 }
 
-/// Read a file, auto-detect whether it's a ZIP bundle, patch, project, or AWE preset,
+/// Read a file, auto-detect whether it's a ZIP bundle, patch, or project,
 /// and parse it.
 ///
 /// Detects ZIP bundles via magic bytes (`PK\x03\x04`), then falls back to JSON parsing
@@ -185,23 +168,46 @@ pub fn load_file(path: impl AsRef<Path>) -> Result<LoadedFile, PatchError> {
 
     // Check for discriminator field
     if let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) {
-        match value.get("file_type").and_then(|v| v.as_str()) {
-            Some("project") => {
-                let project =
-                    serde_json::from_str(&content).map_err(|e| PatchError::Parse(e.to_string()))?;
-                return Ok(LoadedFile::Project(Box::new(project)));
-            }
-            Some("awe_preset") => {
-                let preset =
-                    serde_json::from_str(&content).map_err(|e| PatchError::Parse(e.to_string()))?;
-                return Ok(LoadedFile::AwePreset(preset));
-            }
-            _ => {}
+        warn_if_legacy_awe(&value, path.as_ref());
+        if value.get("file_type").and_then(|v| v.as_str()) == Some("project") {
+            let project =
+                serde_json::from_str(&content).map_err(|e| PatchError::Parse(e.to_string()))?;
+            return Ok(LoadedFile::Project(Box::new(project)));
         }
     }
 
     let patch = serde_json::from_str(&content).map_err(|e| PatchError::Parse(e.to_string()))?;
-    Ok(LoadedFile::Patch(patch))
+    Ok(LoadedFile::Patch(Box::new(patch)))
+}
+
+/// True if a parsed save file still carries state from the removed Acoustic
+/// World Engine — a non-null `global.awe` block (projects) or `settings.awe`
+/// block (patches). The field no longer deserializes, so the key is silently
+/// dropped on load; this detects it from the raw JSON.
+#[must_use]
+pub(crate) fn value_has_legacy_awe(value: &serde_json::Value) -> bool {
+    ["global", "settings"].iter().any(|parent| {
+        value
+            .get(parent)
+            .and_then(|p| p.get("awe"))
+            .is_some_and(|awe| !awe.is_null())
+    })
+}
+
+/// Warn when a saved file still carries removed-AWE state. The key is silently
+/// ignored on load; this tells the user why the room is gone and how to rebuild
+/// it, rather than letting the sound quietly change with no explanation.
+pub(crate) fn warn_if_legacy_awe(value: &serde_json::Value, path: &Path) {
+    if value_has_legacy_awe(value) {
+        tracing::warn!(
+            target: "pertylizer::project",
+            "Loaded '{}' — this file was saved with the removed Acoustic World Engine \
+             (AWE); its room/spatial state is ignored. Rebuild spatial audio with the \
+             Spatial Panner module plus the Reverb / Convolution / Modal Resonator \
+             effects.",
+            path.display()
+        );
+    }
 }
 
 /// Get the default projects directory based on the platform.
@@ -214,18 +220,6 @@ pub(crate) fn default_projects_dir() -> Result<PathBuf, String> {
         .or_else(dirs::home_dir)
         .ok_or_else(|| "Could not determine home directory".to_string())?;
     Ok(base.join("pertylizer").join("projects"))
-}
-
-/// Get the default AWE presets directory based on the platform.
-///
-/// - Linux: `~/.local/share/pertylizer/awe_presets`
-/// - macOS: `~/Library/Application Support/pertylizer/awe_presets`
-/// - Windows: `%APPDATA%\pertylizer\awe_presets`
-pub(crate) fn default_awe_presets_dir() -> Result<PathBuf, String> {
-    let base = dirs::data_dir()
-        .or_else(dirs::home_dir)
-        .ok_or_else(|| "Could not determine home directory".to_string())?;
-    Ok(base.join("pertylizer").join("awe_presets"))
 }
 
 /// Create a default instrument state for instrument 0 with an empty patch.
@@ -269,13 +263,57 @@ mod tests {
         assert!((state.master_volume.as_f32() - 0.8).abs() < f32::EPSILON);
         assert_eq!(state.octave_offset, 0);
         assert!((state.glide_time.as_f32()).abs() < f32::EPSILON);
-        assert!(state.awe.is_none());
     }
 
     #[test]
     fn project_extension_picks_zip_for_samples_json_otherwise() {
         assert_eq!(project_extension(true), "zip");
         assert_eq!(project_extension(false), "json");
+    }
+
+    #[test]
+    fn load_file_accepts_legacy_awe_project_gracefully() {
+        // A real example project with an injected legacy AWE block: it must still
+        // load (the unknown `awe` key is ignored) and be flagged by the detector
+        // that drives the load-time warning.
+        let example = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../assets/examples/projects/all-modules-reference.json");
+        let mut value: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&example).expect("read example"))
+                .expect("parse example");
+        value["global"]["awe"] = serde_json::json!({ "enabled": true });
+        assert!(
+            value_has_legacy_awe(&value),
+            "injected awe must be detected"
+        );
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("legacy_awe.json");
+        fs::write(&path, serde_json::to_string(&value).expect("serialize")).expect("write temp");
+
+        // Runs the warn path and drops the unknown `awe` key without error.
+        match load_file(&path).expect("load legacy-awe project") {
+            LoadedFile::Project(_) => {}
+            _ => panic!("expected a project"),
+        }
+    }
+
+    #[test]
+    fn detects_legacy_awe_state_in_saved_files() {
+        // Project: awe under `global`.
+        let proj = serde_json::json!({ "global": { "awe": { "enabled": true } } });
+        assert!(value_has_legacy_awe(&proj));
+        // Patch: awe under `settings`.
+        let patch = serde_json::json!({ "settings": { "awe": { "enabled": false } } });
+        assert!(value_has_legacy_awe(&patch));
+        // Absent or null awe → no warning.
+        assert!(!value_has_legacy_awe(&serde_json::json!({ "global": {} })));
+        assert!(!value_has_legacy_awe(
+            &serde_json::json!({ "global": { "awe": null } })
+        ));
+        assert!(!value_has_legacy_awe(
+            &serde_json::json!({ "master_volume": 0.8 })
+        ));
     }
 
     #[test]

@@ -3386,7 +3386,6 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "synth_awe",
  "synth_config",
  "synth_core",
  "synth_dsp",
@@ -4653,17 +4652,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "synth_awe"
-version = "0.1.0"
-dependencies = [
- "schemars",
- "serde",
- "serde_json",
- "synth_core",
- "synth_dsp",
-]
-
-[[package]]
 name = "synth_config"
 version = "0.1.0"
 dependencies = [
@@ -4701,7 +4689,6 @@ dependencies = [
  "schemars",
  "serde",
  "static_assertions",
- "synth_awe",
  "synth_core",
  "synth_dsp",
  "synth_modules",
@@ -4721,7 +4708,6 @@ dependencies = [
  "schemars",
  "serde",
  "serde_json",
- "synth_awe",
  "synth_core",
  "synth_script",
  "thiserror 2.0.18",

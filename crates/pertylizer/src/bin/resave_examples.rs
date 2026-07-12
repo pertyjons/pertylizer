@@ -2,7 +2,7 @@
 //! normalising, and saving it back. Useful when the save format changes
 //! silently (e.g. choice values flip from numeric indices to string ids)
 //! and the checked-in examples should be normalised. Bundles, projects,
-//! patches, and AWE presets are all handled.
+//! and patches are all handled.
 //!
 //! Normalisations applied during the load → save pass:
 //! - Choice parameters: `ParamValue::Float(idx)` is upgraded to
@@ -14,7 +14,7 @@ use std::path::{Path, PathBuf};
 
 use pertylizer::bundle::{load_bundle, save_bundle};
 use pertylizer::module_factory::get_descriptor;
-use pertylizer::patch::{AwePresetFile, ModuleState, ParamValue, Patch};
+use pertylizer::patch::{ModuleState, ParamValue, Patch};
 use pertylizer::project::ProjectFile;
 use synth_sampler::SampleLibrary;
 
@@ -51,14 +51,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let mut patch = Patch::load(&path)?;
             normalise_patch(&mut patch);
             patch.save(&path)?;
-            println!("resaved {}", path.display());
-            touched += 1;
-        }
-    }
-    for path in list_dir(&root.join("awe"))? {
-        if path.extension().and_then(|e| e.to_str()) == Some("json") {
-            let awe = AwePresetFile::load(&path)?;
-            awe.save(&path)?;
             println!("resaved {}", path.display());
             touched += 1;
         }

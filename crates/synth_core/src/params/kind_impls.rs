@@ -2039,6 +2039,47 @@ impl KeyboardPannerParam {
     }
 }
 
+impl SpatialPannerParam {
+    /// Value-kind of this parameter, dispatched on the bound value.
+    #[must_use]
+    pub fn kind(&self) -> ParamKind {
+        match self {
+            Self::X(v) | Self::Y(v) | Self::Z(v) => v.scalar_kind(),
+            Self::Diffusion(v)
+            | Self::ErLevel(v)
+            | Self::DirectLevel(v)
+            | Self::Absorption(v)
+            | Self::AirAbsorption(v) => v.scalar_kind(),
+        }
+    }
+
+    /// Display unit of this parameter, dispatched on the bound value.
+    #[must_use]
+    pub fn unit(&self) -> ParameterUnit {
+        match self {
+            Self::X(v) | Self::Y(v) | Self::Z(v) => v.scalar_unit(),
+            Self::Diffusion(v)
+            | Self::ErLevel(v)
+            | Self::DirectLevel(v)
+            | Self::Absorption(v)
+            | Self::AirAbsorption(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type.
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::X(v) | Self::Y(v) | Self::Z(v) => v.scalar_curve(),
+            Self::Diffusion(v)
+            | Self::ErLevel(v)
+            | Self::DirectLevel(v)
+            | Self::Absorption(v)
+            | Self::AirAbsorption(v) => v.scalar_curve(),
+        }
+    }
+}
+
 impl BodyResonanceParam {
     /// Value-kind of this parameter, dispatched on the bound value.
     #[must_use]
@@ -2661,6 +2702,7 @@ impl Param {
             Self::VocalTract(p) => p.kind(),
             Self::Fof(p) => p.kind(),
             Self::SidOscillator(p) => p.kind(),
+            Self::SpatialPanner(p) => p.kind(),
         }
     }
 
@@ -2736,6 +2778,7 @@ impl Param {
             Self::VocalTract(p) => p.unit(),
             Self::Fof(p) => p.unit(),
             Self::SidOscillator(p) => p.unit(),
+            Self::SpatialPanner(p) => p.unit(),
         }
     }
 
@@ -2811,6 +2854,7 @@ impl Param {
             Self::VocalTract(p) => p.default_curve(),
             Self::Fof(p) => p.default_curve(),
             Self::SidOscillator(p) => p.default_curve(),
+            Self::SpatialPanner(p) => p.default_curve(),
         }
     }
 }

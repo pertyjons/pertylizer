@@ -890,7 +890,7 @@ pub struct AnalyzeMixBusParam {
     )]
     pub include_per_track: Option<bool>,
     #[schemars(
-        description = "Include the full signal chain (master effects + return-bus effects + AWE) in the offline render. Shortcut for turning on every include_* flag below. Default false = dry instrument sum (per-instrument effects only), matching what the analysis has historically rendered."
+        description = "Include the full signal chain (master effects + return-bus effects) in the offline render. Shortcut for turning on every include_* flag below. Default false = dry instrument sum (per-instrument effects only), matching what the analysis has historically rendered."
     )]
     pub include_all: Option<bool>,
     #[schemars(
@@ -901,10 +901,6 @@ pub struct AnalyzeMixBusParam {
         description = "Load each return bus's effect chain (send/return reverbs, delays, …) into the offline render. When false the return busses are summed dry. Default false."
     )]
     pub include_return_effects: Option<bool>,
-    #[schemars(
-        description = "Reconstruct AWE room simulation in the offline render. NOT YET IMPLEMENTED — requesting it adds a warning to the result and otherwise renders without AWE. Default false."
-    )]
-    pub include_awe: Option<bool>,
     #[schemars(
         description = "Render resolution: 'draft' (22.05 kHz, ~2x faster per render) or 'full' (44.1 kHz, default). Draft speeds up the render(s) — which compounds across per-track analyses — but its 11 kHz Nyquist truncates the 'high' energy band, weakens true_peak, biases LUFS (the K-weighting filters are tuned for 44.1 kHz), and aliases distortion-heavy patches. Use 'draft' only for quick level/balance/RMS passes; use 'full' when LUFS accuracy, high-frequency content, true peak, or saturation behavior matters. Unrecognized values fall back to 'full'."
     )]
@@ -930,7 +926,7 @@ pub struct RenderToWavParam {
     )]
     pub instrument_id: Option<u16>,
     #[schemars(
-        description = "Include the full signal chain (master effects + return-bus effects + AWE) in the render. Shortcut for every include_* flag below. Default false = dry instrument sum (per-instrument effects only)."
+        description = "Include the full signal chain (master effects + return-bus effects) in the render. Shortcut for every include_* flag below. Default false = dry instrument sum (per-instrument effects only)."
     )]
     pub include_all: Option<bool>,
     #[schemars(description = "Load the master effect chain into the render. Default false.")]
@@ -939,10 +935,6 @@ pub struct RenderToWavParam {
         description = "Load each return bus's effect chain into the render. Default false."
     )]
     pub include_return_effects: Option<bool>,
-    #[schemars(
-        description = "Reconstruct AWE room simulation. NOT YET IMPLEMENTED — adds a warning and otherwise renders without AWE. Default false."
-    )]
-    pub include_awe: Option<bool>,
     #[schemars(
         description = "Render resolution: 'draft' (22.05 kHz) or 'full' (44.1 kHz, default). Use 'full' for spectral fingerprinting — 'draft' truncates everything above 11 kHz. Unrecognized values fall back to 'full'."
     )]
@@ -976,7 +968,7 @@ pub struct AnalyzeSpectrumParam {
     )]
     pub log_bins: Option<u32>,
     #[schemars(
-        description = "Include the full signal chain (master effects + return-bus effects + AWE) in the render. Shortcut for every include_* flag below. Default false = dry instrument sum."
+        description = "Include the full signal chain (master effects + return-bus effects) in the render. Shortcut for every include_* flag below. Default false = dry instrument sum."
     )]
     pub include_all: Option<bool>,
     #[schemars(description = "Load the master effect chain into the render. Default false.")]
@@ -985,10 +977,6 @@ pub struct AnalyzeSpectrumParam {
         description = "Load each return bus's effect chain into the render. Default false."
     )]
     pub include_return_effects: Option<bool>,
-    #[schemars(
-        description = "Reconstruct AWE room simulation. NOT YET IMPLEMENTED — adds a warning and otherwise renders without AWE. Default false."
-    )]
-    pub include_awe: Option<bool>,
     #[schemars(
         description = "Render resolution: 'draft' (22.05 kHz) or 'full' (44.1 kHz, default). Use 'full' for spectral work — 'draft' truncates everything above 11 kHz. Unrecognized values fall back to 'full'."
     )]
@@ -1028,7 +1016,7 @@ pub struct AnalyzeSpectrogramParam {
     )]
     pub window_len_ms: Option<f32>,
     #[schemars(
-        description = "Include the full signal chain (master + return effects + AWE) in the render. Shortcut for the include_* flags. Default false = dry instrument sum."
+        description = "Include the full signal chain (master + return effects) in the render. Shortcut for the include_* flags. Default false = dry instrument sum."
     )]
     pub include_all: Option<bool>,
     #[schemars(description = "Load the master effect chain into the render. Default false.")]
@@ -1037,10 +1025,6 @@ pub struct AnalyzeSpectrogramParam {
         description = "Load each return bus's effect chain into the render. Default false."
     )]
     pub include_return_effects: Option<bool>,
-    #[schemars(
-        description = "Reconstruct AWE room simulation. NOT YET IMPLEMENTED — adds a warning. Default false."
-    )]
-    pub include_awe: Option<bool>,
     #[schemars(
         description = "Render resolution: 'draft' (22.05 kHz) or 'full' (44.1 kHz, default). Use 'full' for spectral work."
     )]
@@ -1152,7 +1136,7 @@ pub struct CompareSpectraParam {
     )]
     pub mel_bands: Option<u32>,
     #[schemars(
-        description = "Include the full signal chain (master + return effects + AWE) in any render source. Shortcut for the include_* flags. Default false = dry instrument sum."
+        description = "Include the full signal chain (master + return effects) in any render source. Shortcut for the include_* flags. Default false = dry instrument sum."
     )]
     pub include_all: Option<bool>,
     #[schemars(description = "Load the master effect chain into render sources. Default false.")]
@@ -1161,10 +1145,6 @@ pub struct CompareSpectraParam {
         description = "Load each return bus's effect chain into render sources. Default false."
     )]
     pub include_return_effects: Option<bool>,
-    #[schemars(
-        description = "Reconstruct AWE in render sources. NOT YET IMPLEMENTED — adds a warning. Default false."
-    )]
-    pub include_awe: Option<bool>,
     #[schemars(
         description = "Render resolution for render sources: 'draft' (22.05 kHz) or 'full' (44.1 kHz, default). Use 'full' for spectral work."
     )]
@@ -1216,7 +1196,7 @@ pub struct CompareEnvelopesParam {
     )]
     pub transient_window_ms: Option<f32>,
     #[schemars(
-        description = "Include the full signal chain (master + return effects + AWE) in any render source. Shortcut for the include_* flags. Default false = dry instrument sum."
+        description = "Include the full signal chain (master + return effects) in any render source. Shortcut for the include_* flags. Default false = dry instrument sum."
     )]
     pub include_all: Option<bool>,
     #[schemars(description = "Load the master effect chain into render sources. Default false.")]
@@ -1225,10 +1205,6 @@ pub struct CompareEnvelopesParam {
         description = "Load each return bus's effect chain into render sources. Default false."
     )]
     pub include_return_effects: Option<bool>,
-    #[schemars(
-        description = "Reconstruct AWE in render sources. NOT YET IMPLEMENTED — adds a warning. Default false."
-    )]
-    pub include_awe: Option<bool>,
     #[schemars(
         description = "Render resolution for render sources: 'draft' (22.05 kHz) or 'full' (44.1 kHz, default)."
     )]
@@ -1250,10 +1226,6 @@ pub struct AnalyzeMasterChainParam {
     )]
     pub include_return_effects: Option<bool>,
     #[schemars(
-        description = "Reconstruct AWE room simulation. NOT YET IMPLEMENTED — adds a warning and otherwise renders without AWE. Default false."
-    )]
-    pub include_awe: Option<bool>,
-    #[schemars(
         description = "Render resolution: 'draft' (22.05 kHz, ~2x faster per render) or 'full' (44.1 kHz, default). Draft compounds across the per-effect renders but truncates the 'high' band, weakens true_peak, and biases LUFS. Use 'full' when loudness/peak/saturation accuracy matters. Unrecognized values fall back to 'full'."
     )]
     pub render_quality: Option<String>,
@@ -1273,10 +1245,6 @@ pub struct AnalyzeReturnBussesParam {
         description = "Also load the master effect chain so each return's contribution is measured through the processed master output rather than the raw pre-master sum. The return-bus effect chains themselves are ALWAYS reconstructed — they are the subject of the analysis. Default false."
     )]
     pub include_master_effects: Option<bool>,
-    #[schemars(
-        description = "Reconstruct AWE room simulation. NOT YET IMPLEMENTED — adds a warning and otherwise renders without AWE. Default false."
-    )]
-    pub include_awe: Option<bool>,
     #[schemars(
         description = "Render resolution: 'draft' (22.05 kHz, ~2x faster per render) or 'full' (44.1 kHz, default). Draft compounds across the per-return renders but truncates the 'high' band, weakens true_peak, and biases LUFS. Use 'full' when loudness/peak accuracy matters. Unrecognized values fall back to 'full'."
     )]
@@ -1302,17 +1270,13 @@ pub struct CompareMixBeforeAfterParam {
     )]
     pub label: Option<String>,
     #[schemars(
-        description = "Capture only: include the full signal chain (master + return effects + AWE) in the render. Shortcut for every include_* flag. Default false. The scope is stored and reused on compare."
+        description = "Capture only: include the full signal chain (master + return effects) in the render. Shortcut for every include_* flag. Default false. The scope is stored and reused on compare."
     )]
     pub include_all: Option<bool>,
     #[schemars(description = "Capture only: load the master effect chain. Default false.")]
     pub include_master_effects: Option<bool>,
     #[schemars(description = "Capture only: load each return bus's effect chain. Default false.")]
     pub include_return_effects: Option<bool>,
-    #[schemars(
-        description = "Capture only: reconstruct AWE room simulation. NOT YET IMPLEMENTED. Default false."
-    )]
-    pub include_awe: Option<bool>,
     #[schemars(
         description = "Capture only: render resolution, 'draft' (22.05 kHz) or 'full' (44.1 kHz, default). Unrecognized values fall back to 'full'."
     )]
@@ -1350,7 +1314,7 @@ pub struct AnalyzeSectionParam {
     )]
     pub include_per_track: Option<bool>,
     #[schemars(
-        description = "Include the full signal chain (master effects + return-bus effects + AWE) in the offline render. Shortcut for every include_* flag below. Default false = dry instrument sum (per-instrument effects only)."
+        description = "Include the full signal chain (master effects + return-bus effects) in the offline render. Shortcut for every include_* flag below. Default false = dry instrument sum (per-instrument effects only)."
     )]
     pub include_all: Option<bool>,
     #[schemars(
@@ -1361,10 +1325,6 @@ pub struct AnalyzeSectionParam {
         description = "Load each return bus's effect chain into the offline render. When false the return busses are summed dry. Default false."
     )]
     pub include_return_effects: Option<bool>,
-    #[schemars(
-        description = "Reconstruct AWE room simulation. NOT YET IMPLEMENTED — adds a warning and otherwise renders without AWE. Default false."
-    )]
-    pub include_awe: Option<bool>,
     #[schemars(
         description = "Render resolution: 'draft' (22.05 kHz, ~2x faster per render) or 'full' (44.1 kHz, default). Draft speeds up the render(s) — which compounds across per-track analyses — but its 11 kHz Nyquist truncates the 'high' energy band, weakens true_peak, biases LUFS (the K-weighting filters are tuned for 44.1 kHz), and aliases distortion-heavy patches. Use 'draft' only for quick level/balance/RMS passes; use 'full' when LUFS accuracy, high-frequency content, true peak, or saturation behavior matters. Unrecognized values fall back to 'full'."
     )]
@@ -1386,7 +1346,7 @@ pub struct AnalyzeMaskingMatrixParam {
     )]
     pub top_pairs: Option<u32>,
     #[schemars(
-        description = "Include the full signal chain (master effects + return-bus effects + AWE) in the per-track offline renders. Shortcut for every include_* flag below. Default false = dry instrument sum (per-instrument effects only)."
+        description = "Include the full signal chain (master effects + return-bus effects) in the per-track offline renders. Shortcut for every include_* flag below. Default false = dry instrument sum (per-instrument effects only)."
     )]
     pub include_all: Option<bool>,
     #[schemars(
@@ -1397,10 +1357,6 @@ pub struct AnalyzeMaskingMatrixParam {
         description = "Load each return bus's effect chain into the per-track offline renders. When false the return busses are summed dry. Default false."
     )]
     pub include_return_effects: Option<bool>,
-    #[schemars(
-        description = "Reconstruct AWE room simulation. NOT YET IMPLEMENTED — adds a warning and otherwise renders without AWE. Default false."
-    )]
-    pub include_awe: Option<bool>,
     #[schemars(
         description = "Render resolution: 'draft' (22.05 kHz, ~2x faster per render) or 'full' (44.1 kHz, default). Draft speeds up the render(s) — which compounds across per-track analyses — but its 11 kHz Nyquist truncates the 'high' energy band, weakens true_peak, biases LUFS (the K-weighting filters are tuned for 44.1 kHz), and aliases distortion-heavy patches. Use 'draft' only for quick level/balance/RMS passes; use 'full' when LUFS accuracy, high-frequency content, true peak, or saturation behavior matters. Unrecognized values fall back to 'full'."
     )]
@@ -2097,15 +2053,6 @@ pub struct PatchColorInput {
 pub struct SetPatchColorParam {
     #[schemars(description = "Array of per-instrument patch-color updates")]
     pub items: Vec<PatchColorInput>,
-}
-
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetAweDescriptionParam {
-    #[schemars(
-        description = "Free-text description of the AWE state's acoustic character. \
-        Mirrors `AwePresetFile.description` when an AWE preset is loaded. Pass \"\" to clear."
-    )]
-    pub description: String,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -3667,95 +3614,6 @@ pub struct SavePatchParam {
     pub path: String,
 }
 
-// === AWE parameter structs ===
-
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetAweEnabledParam {
-    #[schemars(description = "Whether to enable AWE (Acoustic World Engine) room simulation")]
-    pub enabled: bool,
-}
-
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetAweParameterParam {
-    #[schemars(
-        description = "AWE parameter name. Valid names: dry_wet (0-1, wet/dry mix), \
-                       early_late_balance (0-1, early vs late reflections), \
-                       modes_amount (0-1, room mode resonance strength), \
-                       freq_warp (-1 to 1, shifts room mode frequencies), \
-                       resonance_boost (0-1, emphasize room modes), \
-                       tail_stretch (0.5-4.0, reverb tail length multiplier), \
-                       portal_amount (0-1, acoustic portal effect), \
-                       pre_delay (0-200, milliseconds before first reflection; alias pre_delay_ms accepted to match get_awe_state), \
-                       modulation_depth (0-1, FDN chorus depth), \
-                       modulation_rate (0.01-20.0, FDN chorus rate in Hz), \
-                       air_absorption (0-1, high-frequency damping over distance), \
-                       width (0-1, stereo width: 0=mono, 1=full stereo), \
-                       high_cut (200-20000, high-cut frequency in Hz), \
-                       low_cut (20-2000, low-cut frequency in Hz), \
-                       temperature (-40 to 60, Celsius, affects speed of sound), \
-                       source_x (meters, sound source X position in room), \
-                       source_y (meters, sound source Y position in room), \
-                       listener_x (meters, listener X position in room), \
-                       listener_y (meters, listener Y position in room)"
-    )]
-    pub name: String,
-    #[schemars(
-        description = "New value for the parameter (range depends on parameter, see name description)"
-    )]
-    pub value: f64,
-}
-
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetAweRoomShapeParam {
-    #[schemars(
-        description = "Room shape type. Each shape expects a specific set of dimensions (see `dimensions`)."
-    )]
-    pub shape: synth_awe::RoomShapeKind,
-    #[schemars(description = "Room dimensions in meters (depends on shape): \
-                       Box: [length, width, height] (e.g. [8.0, 5.0, 3.0]). \
-                       Cylinder: [radius, length] (e.g. [1.0, 20.0]). \
-                       LShape: [length_a, width_a, length_b, width_b, height] (e.g. [8.0, 5.0, 6.0, 4.0, 3.0]). \
-                       Sphere: [radius] (e.g. [5.0]). \
-                       Dome: [radius] (e.g. [6.0]). \
-                       Tube: [radius, length] (e.g. [1.5, 30.0]).")]
-    pub dimensions: Vec<f32>,
-}
-
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetAweMaterialParam {
-    #[schemars(
-        description = "Wall material preset. Controls frequency-dependent absorption and \
-                       diffusion of the room surfaces."
-    )]
-    pub material: synth_awe::MaterialKind,
-}
-
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetAwePresetParam {
-    #[schemars(
-        description = "AWE preset name (case-insensitive). Use list_awe_presets to see all available presets. \
-                       Examples: 'Cathedral', 'Bathroom', 'Cave', 'Concert Hall', 'Dream', 'Small Studio'"
-    )]
-    pub name: String,
-}
-
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetAweLfoParam {
-    #[schemars(
-        description = "LFO index (1-4). AWE has 4 internal LFOs for parameter modulation.",
-        range(min = 1, max = 4)
-    )]
-    pub index: u8,
-    #[schemars(
-        description = "LFO rate in Hz (0.01-20.0). Lower = slow sweep, higher = vibrato-like."
-    )]
-    pub rate: f32,
-    #[schemars(description = "Modulation amount (0.0-1.0). 0 = no modulation, 1 = maximum.")]
-    pub amount: f32,
-    #[schemars(description = "Modulation target — which AWE parameter this LFO sweeps.")]
-    pub target: synth_awe::AweLfoTarget,
-}
-
 // ============================================================================
 // SAMPLE PARAMETER STRUCTS
 // ============================================================================
@@ -3972,7 +3830,7 @@ impl SynthMcpServer {
     ///
     /// Disabled tools are excluded from `tools/list` and rejected at call time.
     /// Use this to expose a focused tool surface (e.g. read-only mode, or
-    /// hiding categories like AWE/sampler that don't apply to the deployment).
+    /// hiding categories like the sampler that don't apply to the deployment).
     pub fn with_filter(bridge: Arc<dyn SynthBridge>, disabled_tools: &[&'static str]) -> Self {
         Self {
             bridge,
@@ -4311,7 +4169,6 @@ impl SynthMcpServer {
             "set_patch_color" => set_patch_color(SetPatchColorParam),
             "set_patch_description" => set_patch_description(SetPatchDescriptionParam),
             "set_module_description" => set_module_description(SetModuleDescriptionParam),
-            "set_awe_description" => set_awe_description(SetAweDescriptionParam),
             "set_sidechain_source" => set_sidechain_source(SetSidechainSourceParam),
             "set_instrument_mixer" => set_instrument_mixer(SetInstrumentMixerParam),
             "set_allocator_config" => set_allocator_config(SetAllocatorConfigParam),
@@ -4437,16 +4294,6 @@ impl SynthMcpServer {
             "save_patch" => save_patch(SavePatchParam),
             "load_project" => load_project(ProjectPathParam),
             "optimize_project" => optimize_project(NoParams),
-
-            // AWE
-            "get_awe_state" => get_awe_state(NoParams),
-            "set_awe_enabled" => set_awe_enabled(SetAweEnabledParam),
-            "set_awe_parameter" => set_awe_parameter(SetAweParameterParam),
-            "set_awe_room_shape" => set_awe_room_shape(SetAweRoomShapeParam),
-            "set_awe_material" => set_awe_material(SetAweMaterialParam),
-            "set_awe_preset" => set_awe_preset(SetAwePresetParam),
-            "list_awe_presets" => list_awe_presets(NoParams),
-            "set_awe_lfo" => set_awe_lfo(SetAweLfoParam),
 
             // Samples
             "list_samples" => list_samples(ListSamplesParam),
@@ -4669,23 +4516,7 @@ impl ServerHandler for SynthMcpServer {
              - Generic: `batch_execute` — run up to 50 tool calls in a single request. \
                Accepts an array of `{tool, params}` objects, executes sequentially, \
                and returns per-item results. Use for cross-domain orchestration \
-               (e.g. instrument setup + sequencer config + AWE in one call).\n\n\
-             ## AWE (Acoustic World Engine)\n\
-             AWE is a physics-based room simulation applied to the master output. It models \
-             early reflections, late reverb (FDN), room modes (standing waves), and stereo \
-             spatialisation based on room geometry, wall material, and source/listener positions.\n\n\
-             **Typical workflow:**\n\
-             1. `list_awe_presets` → browse available room presets\n\
-             2. `set_awe_preset` → load a preset (also enables AWE)\n\
-             3. `set_awe_parameter` → fine-tune individual parameters (dry_wet, tail_stretch, etc.)\n\
-             4. `set_awe_room_shape` / `set_awe_material` → change room geometry or wall material\n\
-             5. `set_awe_lfo` → add animated modulation (e.g. slowly sweep source position)\n\n\
-             **Key concepts:** Room shape determines reflection patterns and standing waves. \
-             Material controls frequency-dependent absorption (Metal = bright, Carpet = dark). \
-             Source/listener positions affect early reflection timing and stereo image. \
-             4 internal LFOs can modulate any parameter for evolving, animated spaces.\n\
-             AWE must be enabled (`set_awe_enabled`) before you can hear its effect. \
-             Use `get_awe_state` to inspect the current configuration at any time.",
+               (e.g. instrument setup + sequencer config in one call).",
         )
     }
 
@@ -5166,7 +4997,6 @@ impl SynthMcpServer {
             params.0.include_all,
             params.0.include_master_effects,
             params.0.include_return_effects,
-            params.0.include_awe,
             crate::bridge::RenderQuality::parse(params.0.render_quality.as_deref()),
         );
         run_blocking_json(|| {
@@ -5188,7 +5018,6 @@ impl SynthMcpServer {
             params.0.include_all,
             params.0.include_master_effects,
             params.0.include_return_effects,
-            params.0.include_awe,
             crate::bridge::RenderQuality::parse(params.0.render_quality.as_deref()),
         );
         run_blocking_json(|| {
@@ -5211,7 +5040,6 @@ impl SynthMcpServer {
             params.0.include_all,
             params.0.include_master_effects,
             params.0.include_return_effects,
-            params.0.include_awe,
             crate::bridge::RenderQuality::parse(params.0.render_quality.as_deref()),
         );
         run_blocking_json(|| {
@@ -5236,7 +5064,6 @@ impl SynthMcpServer {
             params.0.include_all,
             params.0.include_master_effects,
             params.0.include_return_effects,
-            params.0.include_awe,
             crate::bridge::RenderQuality::parse(params.0.render_quality.as_deref()),
         );
         run_blocking_json(|| {
@@ -5301,7 +5128,6 @@ impl SynthMcpServer {
             p.include_all,
             p.include_master_effects,
             p.include_return_effects,
-            p.include_awe,
             crate::bridge::RenderQuality::parse(p.render_quality.as_deref()),
         );
         let to_source = |s: &SpectrumSourceParam| crate::bridge::SpectrumSource {
@@ -5352,7 +5178,6 @@ impl SynthMcpServer {
             p.include_all,
             p.include_master_effects,
             p.include_return_effects,
-            p.include_awe,
             crate::bridge::RenderQuality::parse(p.render_quality.as_deref()),
         );
         let to_source = |s: &SpectrumSourceParam| crate::bridge::SpectrumSource {
@@ -5388,7 +5213,6 @@ impl SynthMcpServer {
             None,
             Some(true),
             params.0.include_return_effects,
-            params.0.include_awe,
             crate::bridge::RenderQuality::parse(params.0.render_quality.as_deref()),
         );
         run_blocking_json(|| {
@@ -5408,7 +5232,6 @@ impl SynthMcpServer {
             None,
             params.0.include_master_effects,
             Some(true),
-            params.0.include_awe,
             crate::bridge::RenderQuality::parse(params.0.render_quality.as_deref()),
         );
         run_blocking_json(|| {
@@ -5430,7 +5253,6 @@ impl SynthMcpServer {
             p.include_all,
             p.include_master_effects,
             p.include_return_effects,
-            p.include_awe,
             crate::bridge::RenderQuality::parse(p.render_quality.as_deref()),
         );
         run_blocking_json(|| {
@@ -5470,7 +5292,6 @@ impl SynthMcpServer {
             params.0.include_all,
             params.0.include_master_effects,
             params.0.include_return_effects,
-            params.0.include_awe,
             crate::bridge::RenderQuality::parse(params.0.render_quality.as_deref()),
         );
         run_blocking_json(|| {
@@ -5494,7 +5315,6 @@ impl SynthMcpServer {
             params.0.include_all,
             params.0.include_master_effects,
             params.0.include_return_effects,
-            params.0.include_awe,
             crate::bridge::RenderQuality::parse(params.0.render_quality.as_deref()),
         );
         run_blocking_json(|| {
@@ -6294,28 +6114,6 @@ impl SynthMcpServer {
             }
         }
         batch_msg(ok_count, "sample descriptions set", &[], &errors)
-    }
-
-    #[tool(
-        description = "Set or clear the free-text description on the current AWE state \
-        (the acoustic character of the loaded room / preset). Mirrors \
-        `AwePresetFile.description` when an AWE preset is loaded; can also be set directly. \
-        Pass \"\" to clear."
-    )]
-    async fn set_awe_description(&self, params: Parameters<SetAweDescriptionParam>) -> String {
-        match self.bridge.set_awe_description(&params.0.description) {
-            Ok(()) => {
-                if params.0.description.is_empty() {
-                    "OK: cleared AWE description".to_owned()
-                } else {
-                    format!(
-                        "OK: set AWE description ({} chars)",
-                        params.0.description.chars().count()
-                    )
-                }
-            }
-            Err(e) => format!("Error: {e}"),
-        }
     }
 
     #[tool(
@@ -8420,148 +8218,6 @@ impl SynthMcpServer {
         }
     }
 
-    // === AWE (Acoustic World Engine) ===
-
-    #[tool(
-        description = "Get the current state of the Acoustic World Engine (AWE) — a physics-based room simulation \
-                       that adds reverb, early reflections, and spatial effects. Returns room shape, material, \
-                       all acoustic parameters, source/listener positions, LFO states, and whether AWE is enabled. \
-                       Call this first to understand the current acoustic environment before making changes."
-    )]
-    async fn get_awe_state(&self, _params: Parameters<NoParams>) -> String {
-        match self.bridge.get_awe_state() {
-            Ok(state) => to_json(&state),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(
-        description = "Enable or disable AWE (Acoustic World Engine). AWE must be enabled for room simulation \
-                       to affect the audio output. When disabled, audio passes through dry."
-    )]
-    async fn set_awe_enabled(&self, params: Parameters<SetAweEnabledParam>) -> String {
-        match self.bridge.set_awe_enabled(params.0.enabled) {
-            Ok(()) => {
-                let state = if params.0.enabled {
-                    "enabled"
-                } else {
-                    "disabled"
-                };
-                format!("OK: AWE {state}")
-            }
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(
-        description = "Set a single AWE acoustic parameter by name. Use get_awe_state to see current values \
-                       and valid ranges. Each parameter controls a different aspect of the room simulation — \
-                       see the parameter name description for all options and their ranges."
-    )]
-    async fn set_awe_parameter(&self, params: Parameters<SetAweParameterParam>) -> String {
-        match self
-            .bridge
-            .set_awe_parameter(&params.0.name, params.0.value)
-        {
-            Ok(()) => format!("OK: AWE {} = {}", params.0.name, params.0.value),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(
-        description = "Set the AWE room shape and dimensions. The room geometry determines early reflection \
-                       patterns, room modes (standing waves), and reverb character. \
-                       Changing the room shape will clamp source/listener positions to fit the new geometry. \
-                       Hint: small rooms (< 5m) sound tight and colored, large rooms (> 20m) sound spacious."
-    )]
-    async fn set_awe_room_shape(&self, params: Parameters<SetAweRoomShapeParam>) -> String {
-        // Validate dimensions are positive
-        for (i, &d) in params.0.dimensions.iter().enumerate() {
-            if d <= 0.0 || d.is_nan() {
-                return format!(
-                    "Error: dimension[{i}] must be positive, got {d}. \
-                     All room dimensions are in meters and must be > 0."
-                );
-            }
-        }
-        match self
-            .bridge
-            .set_awe_room_shape(params.0.shape, &params.0.dimensions)
-        {
-            Ok(()) => format!("OK: AWE room shape set to {:?}", params.0.shape),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(
-        description = "Set the AWE wall material. Materials determine how sound is absorbed and reflected \
-                       at different frequencies, dramatically affecting the reverb character. \
-                       Hard materials (Metal, Tile, Concrete) create bright, long reverb tails. \
-                       Soft materials (Carpet, Fabric, Nanogel) create dark, short reverb. \
-                       Exotic materials (Void, Prism, Plasma, Membrane) create non-physical effects."
-    )]
-    async fn set_awe_material(&self, params: Parameters<SetAweMaterialParam>) -> String {
-        match self.bridge.set_awe_material(params.0.material) {
-            Ok(()) => format!("OK: AWE material set to {:?}", params.0.material),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(
-        description = "Load a named AWE preset. Presets configure the complete room simulation \
-                       (room shape, material, all acoustic parameters, positions) in one call. \
-                       This also enables AWE. Use list_awe_presets to see all available presets. \
-                       After loading a preset, use set_awe_parameter to fine-tune individual settings."
-    )]
-    async fn set_awe_preset(&self, params: Parameters<SetAwePresetParam>) -> String {
-        match self.bridge.set_awe_preset(&params.0.name) {
-            Ok(state) => to_json(&state),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(
-        description = "List all available AWE (Acoustic World Engine) presets with their names and descriptions. \
-                       Presets range from realistic spaces (Cathedral, Concert Hall, Bathroom, Small Studio) \
-                       to creative effects (Dream, Portal, Stargate) and exotic/sci-fi environments \
-                       (EXT: Singularity, EXT: Plasma Storm, EXT: Nano Fog)."
-    )]
-    async fn list_awe_presets(&self, _params: Parameters<NoParams>) -> String {
-        match self.bridge.list_awe_presets() {
-            Ok(presets) => to_json(&presets),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(
-        description = "Configure one of AWE's 4 internal LFOs. LFOs automatically modulate AWE parameters \
-                       at a given rate, creating evolving, animated room effects. \
-                       Example: set LFO 1 to slowly sweep the source position for a moving-source effect, \
-                       or modulate tail_stretch for breathing reverb."
-    )]
-    async fn set_awe_lfo(&self, params: Parameters<SetAweLfoParam>) -> String {
-        let p = params.0;
-        if !(1..=4).contains(&p.index) {
-            return format!(
-                "Error: LFO index must be 1-4, got {}. AWE has 4 LFOs (LFO 1 through LFO 4).",
-                p.index
-            );
-        }
-        if let Err(e) = validate_range("rate", p.rate, 0.01, 20.0) {
-            return format!("Error: {e}");
-        }
-        if let Err(e) = validate_range("amount", p.amount, 0.0, 1.0) {
-            return format!("Error: {e}");
-        }
-        match self.bridge.set_awe_lfo(p.index, p.rate, p.amount, p.target) {
-            Ok(()) => format!(
-                "OK: AWE LFO {} → {:?} at {:.2} Hz (amount {:.2})",
-                p.index, p.target, p.rate, p.amount
-            ),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
     // ========================================================================
     // SAMPLE LIBRARY TOOLS
     // ========================================================================
@@ -9461,20 +9117,6 @@ mod schema_range_tests {
         assert!(
             channel.contains("\"maximum\":16") && channel.contains("\"minimum\":1"),
             "channel 1..=16 bounds missing: {channel}"
-        );
-
-        // LFO index has its own 1..=4 range — guard the distinct bound.
-        let lfo = serde_json::to_value(schemars::schema_for!(SetAweLfoParam))
-            .expect("SetAweLfoParam schema serializes");
-        assert_eq!(
-            lfo["properties"]["index"]["maximum"],
-            serde_json::json!(4),
-            "lfo index max=4"
-        );
-        assert_eq!(
-            lfo["properties"]["index"]["minimum"],
-            serde_json::json!(1),
-            "lfo index min=1"
         );
     }
 }

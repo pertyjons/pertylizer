@@ -42,15 +42,15 @@ exploratory encounter — poke at things, see what happens, and discover how it 
 
 A quick tour of what's inside — each item is described in more detail in its own section below.
 
-- **Modular synthesis** — 70 module types (including 25 effects), patched freely over a DAG-based audio graph with live
+- **Modular synthesis** — 71 module types (including 25 effects), patched freely over a DAG-based audio graph with live
   cable visualization, plus 68 built-in patches to start from
 - **Deep modulation** — a dynamic Mod Matrix wires any module output or per-voice macro to any modulatable parameter,
   and any routing's amount can be a live **YAMS** control script (`out = lag(velocity, 40ms)`) instead of a fixed value
 - **Real-time GUI** — an immediate-mode egui interface for building instruments, wiring modules, and tweaking
   parameters while everything keeps playing
 - **MIDI** — hardware MIDI input with velocity, pitch bend, mod wheel, and aftertouch
-- **Acoustic World Engine** — physics-based spatial audio with room simulation, early reflections, late reverb, room
-  modes, and per-voice 3D placement
+- **Spatial & reverb** — per-voice binaural placement with the **Spatial Panner** module (image-source early
+  reflections + ITD/ILD direct path), plus FDN reverb, convolution, and modal-resonator effects
 - **Pattern sequencer** — pattern-based composition with song arrangement, real-time recording, and per-pattern
   automation lanes, edited in the piano roll or a vertical **tracker** view
 - **Note processors & expression** — non-destructive per-track articulation (arpeggiator, ornaments, chord + strum,
@@ -75,12 +75,11 @@ to load and pull apart:
   module` and the sample-bundled `echoing`), and a `Sidechain Demo`
 - **`patches/`** — individual instrument sounds, such as `moog_resonant_sweep`, `hybrid_resonator`, and a
   `robot-from-hell-audio-input` patch that runs live audio input through the voice graph
-- **`awe/`** — Acoustic World Engine room presets (e.g. `cave_perty`)
 
 ## Screenshots
 
 See [`screenshots/README.md`](screenshots/README.md) for a visual tour of the patch editor, the Mod Matrix YAMS script
-editor, the sequencer and tracker, the Acoustic World Engine, and 3D visualizer.
+editor, the sequencer and tracker, and 3D visualizer.
 
 ## Synthesis & Sound Design
 
@@ -89,7 +88,7 @@ At its core, Pertylizer is a modular synthesizer. Every instrument is a voice gr
 feeding a per-instrument effect chain. You can start from one of the built-in patches or from an empty graph and build
 up from scratch.
 
-- **70 module types** (42 voice & synthesis modules, 25 effects, 3 inline visualizers) — oscillators (standard,
+- **71 module types** (43 voice & synthesis modules, 25 effects, 3 inline visualizers) — oscillators (standard,
   wavetable, additive, granular, fractal, FM/math, sub, LA synth, vector, pad synth, chaotic), filters (ladder, SVF,
   biquad, formant), envelopes, LFOs, MSEG, mod matrix, ring mod, drift generator, sampler, audio input, and more
 - **25 effects** — delay, BBD delay, reverb, shimmer reverb, reverse gate reverb, chorus, ensemble chorus, flanger,
@@ -121,18 +120,17 @@ small script in place of a fixed amount.
   macros and context (note `age`, `gate`), stateful operators (`lag`, `slew`, `sah`, `phasor`), math, and ternaries —
   compiled and evaluated per voice, editable live in the patch editor with compile and auto-format feedback
 
-## Acoustic World Engine (AWE)
+## Spatial Audio & Reverb
 
-Instead of a single algorithmic reverb, Pertylizer includes a physics-based room simulator. Sound is placed in a
-virtual space, and the geometry and materials of that space shape what you hear — so reverb, reflections and resonance
-all come from the same model rather than from separate boxes.
+Space is built from ordinary graph modules rather than a separate subsystem, so it modulates and composes like
+everything else:
 
-- Room simulation with selectable shapes and surface materials
-- Early reflections via the image-source method
-- Late reverb via a feedback delay network (FDN)
-- Room modes (standing-wave resonances)
-- Per-voice 3D spatialization, so individual notes occupy different positions
-- Internal modulation LFOs for movement within the space
+- **Spatial Panner** — a per-voice module that places each note in a virtual room: image-source early reflections
+  plus a binaural direct path (interaural time/level difference and head-shadow filtering). Its position (`x`/`y`/`z`)
+  is Mod-Matrix / YAMS modulatable, so notes can move independently.
+- **Reverb & Shimmer Reverb** — feedback-delay-network late reverb.
+- **Convolution** — impulse-response spaces (plate / room / spring / hall).
+- **Modal Resonator** — a bank of tuned resonances for room-mode and body character.
 
 ## Pattern Sequencer
 
@@ -317,10 +315,9 @@ cargo test && cargo clippy --all-targets && cargo fmt --check
 | `synth_core`         | Domain types, module traits, audio abstractions              |
 | `synth_config`       | Runtime config (`pertylizer.toml`) shared by app & visualizer |
 | `synth_dsp`          | DSP primitives: oscillators, filters, delay lines, FFT       |
-| `synth_awe`          | Acoustic World Engine — spatial audio & room simulation      |
 | `synth_sampler`      | Sample loading, playback, and waveform analysis              |
 | `synth_sequencer`    | Pattern and song sequencing                                  |
-| `synth_modules`      | 70 module types including 25 effects                         |
+| `synth_modules`      | 71 module types including 25 effects                         |
 | `synth_engine`       | Audio engine: voice allocation, modular graph, mixing        |
 | `synth_mcp`          | MCP server with 180+ tools for AI agent integration          |
 | `synth_osc`          | OSC telemetry sender (spectrum, notes, transport over UDP)   |

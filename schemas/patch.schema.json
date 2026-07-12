@@ -30,387 +30,6 @@
       },
       "type": "object"
     },
-    "AweLfoState": {
-      "description": "State of one AWE-internal LFO for persistence.",
-      "examples": [
-        {
-          "amount": 0.0,
-          "rate": 0.5,
-          "target": "SourceX"
-        }
-      ],
-      "properties": {
-        "amount": {
-          "$ref": "#/$defs/NormalizedValue",
-          "description": "Modulation amount (0.0 – 1.0)."
-        },
-        "rate": {
-          "$ref": "#/$defs/Hertz",
-          "description": "LFO rate in Hz (0.01 – 20.0)."
-        },
-        "target": {
-          "$ref": "#/$defs/AweLfoTarget",
-          "description": "Modulation target."
-        }
-      },
-      "required": [
-        "rate",
-        "amount",
-        "target"
-      ],
-      "type": "object"
-    },
-    "AweLfoTarget": {
-      "description": "Target for an AWE-internal LFO modulation.",
-      "oneOf": [
-        {
-          "const": "RoomLength",
-          "description": "Modulate room length.",
-          "type": "string"
-        },
-        {
-          "const": "RoomWidth",
-          "description": "Modulate room width.",
-          "type": "string"
-        },
-        {
-          "const": "SourceX",
-          "description": "Modulate source X position.",
-          "type": "string"
-        },
-        {
-          "const": "SourceY",
-          "description": "Modulate source Y position.",
-          "type": "string"
-        },
-        {
-          "const": "ListenerX",
-          "description": "Modulate listener X position.",
-          "type": "string"
-        },
-        {
-          "const": "ListenerY",
-          "description": "Modulate listener Y position.",
-          "type": "string"
-        },
-        {
-          "const": "DryWet",
-          "description": "Modulate dry/wet mix.",
-          "type": "string"
-        },
-        {
-          "const": "FreqWarp",
-          "description": "Modulate frequency warp.",
-          "type": "string"
-        },
-        {
-          "const": "EarlyLate",
-          "description": "Modulate early/late balance.",
-          "type": "string"
-        },
-        {
-          "const": "ModesAmount",
-          "description": "Modulate modes amount.",
-          "type": "string"
-        },
-        {
-          "const": "ResonanceBoost",
-          "description": "Modulate resonance boost.",
-          "type": "string"
-        },
-        {
-          "const": "TailStretch",
-          "description": "Modulate tail stretch.",
-          "type": "string"
-        },
-        {
-          "const": "PortalAmount",
-          "description": "Modulate portal amount.",
-          "type": "string"
-        },
-        {
-          "const": "PreDelay",
-          "description": "Modulate pre-delay time.",
-          "type": "string"
-        },
-        {
-          "const": "ModulationDepth",
-          "description": "Modulate FDN chorus depth.",
-          "type": "string"
-        },
-        {
-          "const": "ModulationRate",
-          "description": "Modulate FDN chorus rate.",
-          "type": "string"
-        },
-        {
-          "const": "AirAbsorption",
-          "description": "Modulate air absorption.",
-          "type": "string"
-        },
-        {
-          "const": "Width",
-          "description": "Modulate stereo width.",
-          "type": "string"
-        },
-        {
-          "const": "HighCut",
-          "description": "Modulate high-cut frequency.",
-          "type": "string"
-        },
-        {
-          "const": "LowCut",
-          "description": "Modulate low-cut frequency.",
-          "type": "string"
-        },
-        {
-          "const": "Temperature",
-          "description": "Modulate temperature.",
-          "type": "string"
-        }
-      ]
-    },
-    "AweSnapshot": {
-      "description": "Snapshot of all numeric AWE parameters for batch-updating.",
-      "properties": {
-        "air_absorption": {
-          "$ref": "#/$defs/NormalizedValue",
-          "default": 0.0,
-          "description": "Air absorption — distance-proportional high-frequency damping (0.0 = off, 1.0 = max)."
-        },
-        "dry_wet": {
-          "$ref": "#/$defs/NormalizedValue",
-          "description": "Dry/wet mix."
-        },
-        "early_late_balance": {
-          "$ref": "#/$defs/NormalizedValue",
-          "description": "Early/late reflection balance."
-        },
-        "freq_warp": {
-          "$ref": "#/$defs/BipolarValue",
-          "description": "Frequency warping."
-        },
-        "high_cut": {
-          "$ref": "#/$defs/Hertz",
-          "default": 20000.0,
-          "description": "High-cut frequency for wet signal EQ."
-        },
-        "lfo1": {
-          "$ref": "#/$defs/AweLfoState",
-          "default": {
-            "amount": 0.0,
-            "rate": 0.5,
-            "target": "SourceX"
-          },
-          "description": "LFO 1 state."
-        },
-        "lfo2": {
-          "$ref": "#/$defs/AweLfoState",
-          "default": {
-            "amount": 0.0,
-            "rate": 0.5,
-            "target": "SourceX"
-          },
-          "description": "LFO 2 state."
-        },
-        "lfo3": {
-          "$ref": "#/$defs/AweLfoState",
-          "default": {
-            "amount": 0.0,
-            "rate": 0.5,
-            "target": "SourceX"
-          },
-          "description": "LFO 3 state."
-        },
-        "lfo4": {
-          "$ref": "#/$defs/AweLfoState",
-          "default": {
-            "amount": 0.0,
-            "rate": 0.5,
-            "target": "SourceX"
-          },
-          "description": "LFO 4 state."
-        },
-        "listener_pos": {
-          "$ref": "#/$defs/Position3",
-          "description": "Listener position."
-        },
-        "low_cut": {
-          "$ref": "#/$defs/Hertz",
-          "default": 20.0,
-          "description": "Low-cut frequency for wet signal EQ."
-        },
-        "modes_amount": {
-          "$ref": "#/$defs/NormalizedValue",
-          "description": "Room mode amount."
-        },
-        "modulation_depth": {
-          "$ref": "#/$defs/NormalizedValue",
-          "default": 0.0,
-          "description": "FDN chorus depth (0 = off, 1 = max wobble)."
-        },
-        "modulation_rate": {
-          "$ref": "#/$defs/Hertz",
-          "default": 1.0,
-          "description": "FDN chorus rate in Hz."
-        },
-        "note_mapping": {
-          "$ref": "#/$defs/NotePositionMapping",
-          "default": "Off",
-          "description": "Note-to-position mapping for per-voice spatial."
-        },
-        "portal_amount": {
-          "$ref": "#/$defs/NormalizedValue",
-          "default": 0.0,
-          "description": "Portal amount (0.0 = off, 1.0 = full)."
-        },
-        "pre_delay": {
-          "$ref": "#/$defs/Milliseconds",
-          "default": 0.0,
-          "description": "Pre-delay time before first reflection (0–200 ms)."
-        },
-        "resonance_boost": {
-          "$ref": "#/$defs/NormalizedValue",
-          "description": "Resonance boost."
-        },
-        "source_pos": {
-          "$ref": "#/$defs/Position3",
-          "description": "Source position."
-        },
-        "spatial_enabled": {
-          "default": false,
-          "description": "Whether per-voice spatial is enabled.",
-          "type": "boolean"
-        },
-        "tail_stretch": {
-          "$ref": "#/$defs/StretchFactor",
-          "description": "Tail stretch."
-        },
-        "temperature": {
-          "$ref": "#/$defs/Celsius",
-          "default": 20.0,
-          "description": "Temperature in Celsius (affects speed of sound)."
-        },
-        "width": {
-          "$ref": "#/$defs/NormalizedValue",
-          "default": 1.0,
-          "description": "Stereo width (0.0 = mono, 1.0 = full stereo)."
-        }
-      },
-      "required": [
-        "dry_wet",
-        "early_late_balance",
-        "modes_amount",
-        "freq_warp",
-        "resonance_boost",
-        "tail_stretch",
-        "source_pos",
-        "listener_pos"
-      ],
-      "type": "object"
-    },
-    "AweState": {
-      "description": "Serializable AWE state for persistence in patches.",
-      "properties": {
-        "enabled": {
-          "description": "Whether AWE is enabled.",
-          "type": "boolean"
-        },
-        "material": {
-          "$ref": "#/$defs/Material",
-          "default": {
-            "absorption_high": 0.15000000596046448,
-            "absorption_low": 0.05000000074505806,
-            "absorption_mid": 0.07999999821186066,
-            "diffusion": 0.15000000596046448
-          },
-          "description": "Wall material."
-        },
-        "note_mapping": {
-          "$ref": "#/$defs/NotePositionMapping",
-          "default": "Off",
-          "description": "Note-to-position mapping."
-        },
-        "room": {
-          "$ref": "#/$defs/RoomShape",
-          "default": {
-            "Box": {
-              "height": 3.0,
-              "length": 8.0,
-              "width": 5.0
-            }
-          },
-          "description": "Room geometry."
-        },
-        "snapshot": {
-          "$ref": "#/$defs/AweSnapshot",
-          "default": {
-            "air_absorption": 0.0,
-            "dry_wet": 0.30000001192092896,
-            "early_late_balance": 0.5,
-            "freq_warp": 0.0,
-            "high_cut": 20000.0,
-            "lfo1": {
-              "amount": 0.0,
-              "rate": 0.5,
-              "target": "SourceX"
-            },
-            "lfo2": {
-              "amount": 0.0,
-              "rate": 0.5,
-              "target": "SourceY"
-            },
-            "lfo3": {
-              "amount": 0.0,
-              "rate": 0.5,
-              "target": "EarlyLate"
-            },
-            "lfo4": {
-              "amount": 0.0,
-              "rate": 0.5,
-              "target": "ModesAmount"
-            },
-            "listener_pos": [
-              6.0,
-              2.5,
-              1.5
-            ],
-            "low_cut": 20.0,
-            "modes_amount": 0.5,
-            "modulation_depth": 0.0,
-            "modulation_rate": 1.0,
-            "note_mapping": "Off",
-            "portal_amount": 0.0,
-            "pre_delay": 0.0,
-            "resonance_boost": 0.0,
-            "source_pos": [
-              2.0,
-              2.5,
-              1.5
-            ],
-            "spatial_enabled": false,
-            "tail_stretch": 1.0,
-            "temperature": 20.0,
-            "width": 1.0
-          },
-          "description": "Numeric parameter snapshot."
-        },
-        "spatial_enabled": {
-          "default": false,
-          "description": "Per-voice spatial enabled.",
-          "type": "boolean"
-        }
-      },
-      "required": [
-        "enabled"
-      ],
-      "type": "object"
-    },
-    "BipolarValue": {
-      "description": "A value normalized to the range [-1.0, 1.0].\n\nUsed for:\n- Audio samples\n- LFO output\n- Modulation amounts\n- Pan position\n- Any bipolar signal",
-      "format": "float",
-      "type": "number"
-    },
     "CanvasSize": {
       "description": "Canvas size hint for the rack view.\n\nSerializes as `{\"width\": ..., \"height\": ...}`.",
       "properties": {
@@ -428,11 +47,6 @@
         "height"
       ],
       "type": "object"
-    },
-    "Celsius": {
-      "description": "Temperature in degrees Celsius.",
-      "format": "float",
-      "type": "number"
     },
     "ConnectionState": {
       "description": "Connection between two modules.",
@@ -511,57 +125,6 @@
       "format": "uint32",
       "minimum": 0,
       "type": "integer"
-    },
-    "Hertz": {
-      "description": "Frequency in Hertz.\n\nRepresents oscillation rate - the number of cycles per second.\n\n# Valid Range\nTypically 0.0 to Nyquist (sample_rate / 2), but audio frequencies\nare usually 20 Hz to 20,000 Hz.",
-      "format": "float",
-      "type": "number"
-    },
-    "Material": {
-      "description": "Surface material with frequency-dependent absorption.",
-      "examples": [
-        {
-          "absorption_high": 0.15,
-          "absorption_low": 0.05,
-          "absorption_mid": 0.08,
-          "diffusion": 0.15
-        }
-      ],
-      "properties": {
-        "absorption_high": {
-          "$ref": "#/$defs/NormalizedValue",
-          "description": "High-frequency absorption coefficient."
-        },
-        "absorption_low": {
-          "$ref": "#/$defs/NormalizedValue",
-          "description": "Low-frequency absorption coefficient (0.0 = fully reflective, 1.0 = fully absorptive)."
-        },
-        "absorption_mid": {
-          "$ref": "#/$defs/NormalizedValue",
-          "description": "Mid-frequency absorption coefficient."
-        },
-        "diffusion": {
-          "$ref": "#/$defs/NormalizedValue",
-          "description": "Diffusion coefficient (0.0 = specular, 1.0 = fully diffuse)."
-        }
-      },
-      "required": [
-        "absorption_low",
-        "absorption_mid",
-        "absorption_high",
-        "diffusion"
-      ],
-      "type": "object"
-    },
-    "Meters": {
-      "description": "Length in meters.",
-      "format": "float",
-      "type": "number"
-    },
-    "Milliseconds": {
-      "description": "Duration in milliseconds.\n\nConvenience type for UI display and input.",
-      "format": "float",
-      "type": "number"
     },
     "ModuleGroupState": {
       "description": "Group of modules in the patch editor (UI-level metadata).",
@@ -8187,6 +7750,114 @@
           ],
           "title": "SID Oscillator",
           "type": "object"
+        },
+        {
+          "description": "Spatial Panner (spatial_panner) — Per-voice binaural positioning: ISM early reflections + ITD/ILD direct path",
+          "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
+            "id": {
+              "description": "Module instance ID, e.g. `spp-1`.",
+              "pattern": "^spp-\\d+$",
+              "type": "string"
+            },
+            "parameters": {
+              "additionalProperties": false,
+              "default": {},
+              "description": "Parameter values for this module.",
+              "properties": {
+                "absorption": {
+                  "default": 0.4000000059604645,
+                  "description": "Wall absorption (0 = reflective, 1 = dead) — unit: %",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Absorption",
+                  "type": "number"
+                },
+                "air_absorption": {
+                  "default": 0.10000000149011612,
+                  "description": "High-frequency damping over distance — unit: %",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Air Absorption",
+                  "type": "number"
+                },
+                "diffusion": {
+                  "default": 0.30000001192092896,
+                  "description": "Scattering of the reflections (0 = specular, 1 = diffuse) — unit: %",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Diffusion",
+                  "type": "number"
+                },
+                "direct_level": {
+                  "default": 1.0,
+                  "description": "Direct (binaural) path level — unit: %",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Direct Level",
+                  "type": "number"
+                },
+                "er_level": {
+                  "default": 0.4000000059604645,
+                  "description": "Early-reflection (room) level — unit: %",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "ER Level",
+                  "type": "number"
+                },
+                "x": {
+                  "default": 0.0,
+                  "description": "Left/right source offset (-1 = left, +1 = right)",
+                  "maximum": 1.0,
+                  "minimum": -1.0,
+                  "title": "X",
+                  "type": "number"
+                },
+                "y": {
+                  "default": 0.4000000059604645,
+                  "description": "Front/back source offset (-1 = behind, +1 = in front)",
+                  "maximum": 1.0,
+                  "minimum": -1.0,
+                  "title": "Y",
+                  "type": "number"
+                },
+                "z": {
+                  "default": 0.0,
+                  "description": "Down/up source offset (-1 = below, +1 = above)",
+                  "maximum": 1.0,
+                  "minimum": -1.0,
+                  "title": "Z",
+                  "type": "number"
+                }
+              },
+              "type": "object"
+            },
+            "position": {
+              "$ref": "#/$defs/Position"
+            },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
+            "type": {
+              "const": "spatial_panner",
+              "description": "Module type discriminator."
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "position"
+          ],
+          "title": "Spatial Panner",
+          "type": "object"
         }
       ]
     },
@@ -8278,35 +7949,10 @@
           "const": "sid_oscillator",
           "description": "MOS 6581/8580 (SID) waveform generator: combinable waveforms, noise\nLFSR, ring/hard-sync, TEST, per-model DAC.",
           "type": "string"
-        }
-      ]
-    },
-    "NormalizedValue": {
-      "description": "A value normalized to the range [0.0, 1.0].\n\nUsed for:\n- Knob positions\n- Envelope levels\n- Mix amounts\n- Pulse width\n- Any parameter where 0 = min and 1 = max",
-      "format": "float",
-      "type": "number"
-    },
-    "NotePositionMapping": {
-      "description": "How MIDI notes map to positions in the room.",
-      "oneOf": [
-        {
-          "const": "Off",
-          "description": "All voices use the global source position (spatial off per voice).",
-          "type": "string"
         },
         {
-          "const": "LinearX",
-          "description": "Note 0 at left wall, note 127 at right wall (X axis).",
-          "type": "string"
-        },
-        {
-          "const": "LinearY",
-          "description": "Note 0 at front wall, note 127 at back wall (Y axis).",
-          "type": "string"
-        },
-        {
-          "const": "Circular",
-          "description": "Notes distributed in a circle around the room center.",
+          "const": "spatial_panner",
+          "description": "Per-voice binaural spatial panner: ISM early reflections + ITD/ILD\ndirect path positioning a mono voice in a fixed virtual room.",
           "type": "string"
         }
       ]
@@ -8314,17 +7960,6 @@
     "PatchSettings": {
       "description": "Global patch settings.",
       "properties": {
-        "awe": {
-          "anyOf": [
-            {
-              "$ref": "#/$defs/AweState"
-            },
-            {
-              "type": "null"
-            }
-          ],
-          "description": "AWE (Acoustic World Engine) state."
-        },
         "bpm": {
           "description": "Tempo in BPM.",
           "format": "float",
@@ -8389,211 +8024,6 @@
         "y"
       ],
       "type": "object"
-    },
-    "Position3": {
-      "description": "3D position in meters.",
-      "items": {
-        "$ref": "#/$defs/Meters"
-      },
-      "maxItems": 3,
-      "minItems": 3,
-      "type": "array"
-    },
-    "RoomShape": {
-      "description": "Shape of the simulated room.",
-      "examples": [
-        {
-          "Sphere": {
-            "radius": 8.0
-          }
-        },
-        {
-          "Box": {
-            "height": 3.5,
-            "length": 10.0,
-            "width": 8.0
-          }
-        }
-      ],
-      "oneOf": [
-        {
-          "additionalProperties": false,
-          "description": "Rectangular room with dimensions in meters.",
-          "properties": {
-            "Box": {
-              "properties": {
-                "height": {
-                  "$ref": "#/$defs/Meters",
-                  "description": "Height in meters (z-axis)."
-                },
-                "length": {
-                  "$ref": "#/$defs/Meters",
-                  "description": "Length in meters (x-axis)."
-                },
-                "width": {
-                  "$ref": "#/$defs/Meters",
-                  "description": "Width in meters (y-axis)."
-                }
-              },
-              "required": [
-                "length",
-                "width",
-                "height"
-              ],
-              "type": "object"
-            }
-          },
-          "required": [
-            "Box"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Cylindrical room (pipeline/tunnel mode).",
-          "properties": {
-            "Cylinder": {
-              "properties": {
-                "length": {
-                  "$ref": "#/$defs/Meters",
-                  "description": "Length in meters (along cylinder axis)."
-                },
-                "radius": {
-                  "$ref": "#/$defs/Meters",
-                  "description": "Radius in meters."
-                }
-              },
-              "required": [
-                "radius",
-                "length"
-              ],
-              "type": "object"
-            }
-          },
-          "required": [
-            "Cylinder"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "L-shaped room (two connected rectangles).",
-          "properties": {
-            "LShape": {
-              "properties": {
-                "height": {
-                  "$ref": "#/$defs/Meters",
-                  "description": "Height of both sections (meters)."
-                },
-                "length_a": {
-                  "$ref": "#/$defs/Meters",
-                  "description": "First section: length along x-axis (meters)."
-                },
-                "length_b": {
-                  "$ref": "#/$defs/Meters",
-                  "description": "Second section: length along x-axis (meters)."
-                },
-                "width_a": {
-                  "$ref": "#/$defs/Meters",
-                  "description": "First section: width along y-axis (meters)."
-                },
-                "width_b": {
-                  "$ref": "#/$defs/Meters",
-                  "description": "Second section: width along y-axis (meters)."
-                }
-              },
-              "required": [
-                "length_a",
-                "width_a",
-                "length_b",
-                "width_b",
-                "height"
-              ],
-              "type": "object"
-            }
-          },
-          "required": [
-            "LShape"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Spherical room — all dimensions equal to diameter.",
-          "properties": {
-            "Sphere": {
-              "properties": {
-                "radius": {
-                  "$ref": "#/$defs/Meters",
-                  "description": "Radius in meters."
-                }
-              },
-              "required": [
-                "radius"
-              ],
-              "type": "object"
-            }
-          },
-          "required": [
-            "Sphere"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Dome (half-sphere) — height = radius, width/length = diameter.",
-          "properties": {
-            "Dome": {
-              "properties": {
-                "radius": {
-                  "$ref": "#/$defs/Meters",
-                  "description": "Radius in meters."
-                }
-              },
-              "required": [
-                "radius"
-              ],
-              "type": "object"
-            }
-          },
-          "required": [
-            "Dome"
-          ],
-          "type": "object"
-        },
-        {
-          "additionalProperties": false,
-          "description": "Open tube (no end caps) — cylindrical with no end reflections.",
-          "properties": {
-            "Tube": {
-              "properties": {
-                "length": {
-                  "$ref": "#/$defs/Meters",
-                  "description": "Length in meters."
-                },
-                "radius": {
-                  "$ref": "#/$defs/Meters",
-                  "description": "Radius in meters."
-                }
-              },
-              "required": [
-                "radius",
-                "length"
-              ],
-              "type": "object"
-            }
-          },
-          "required": [
-            "Tube"
-          ],
-          "type": "object"
-        }
-      ]
-    },
-    "StretchFactor": {
-      "description": "Tail stretch factor for late reverb (dimensionless).",
-      "format": "float",
-      "type": "number"
     }
   },
   "$schema": "https://json-schema.org/draft/2020-12/schema",

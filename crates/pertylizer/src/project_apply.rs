@@ -206,10 +206,6 @@ pub fn apply_project(
     // half-populated list.
     wait_for_instrument_count(session, project.instruments.len(), 2_000);
 
-    if let Some(awe) = &project.global.awe {
-        apply_awe_state(&sender, awe);
-    }
-
     // Focus the saved active instrument (or the first one) so MIDI /
     // keyboard input is routed correctly. Without this, focus stays on
     // whatever instrument was focused before the load.
@@ -251,8 +247,8 @@ pub fn reset_to_new_project(
     apply_project(&empty, session, song, sample_library)
 }
 
-/// Load any project-ish file (project JSON, ZIP bundle, single patch, AWE
-/// preset). Mirrors the GUI's `LoadedFile` dispatch.
+/// Load any project-ish file (project JSON, ZIP bundle, single patch).
+/// Mirrors the GUI's `LoadedFile` dispatch.
 pub fn load_file_into_engine(
     path: &std::path::Path,
     session: &SynthSession,
@@ -271,9 +267,6 @@ pub fn load_file_into_engine(
             apply_project(&proj, session, song, sample_library)
         }
         LoadedFile::Patch(patch) => apply_patch_as_single_instrument(&patch, session),
-        LoadedFile::AwePreset(_) => {
-            Err("AWE preset files cannot be loaded as a project in headless mode".to_string())
-        }
         LoadedFile::Bundle(bundle_path) => {
             load_bundle_into_engine(&bundle_path, session, song, sample_library)
         }
@@ -300,10 +293,6 @@ fn ensure_parent_dir(path: &std::path::Path) -> Result<(), String> {
 /// Limitations versus the GUI save path:
 /// - Module positions default to `(0, 0)` (headless has no patch-editor canvas).
 /// - Author metadata is omitted (no settings/UI source).
-/// - AWE state is not persisted (no engine-side getter — only `EngineCommand`
-///   writes exist; the audio thread is the only owner). This is acceptable
-///   because §9.7 scope is the per-instrument persisted fields; AWE round-trip
-///   from headless is tracked as a separate open item.
 /// - `glide_time` and `octave_offset` use defaults.
 pub fn save_project_to(
     path: &std::path::Path,
@@ -392,18 +381,13 @@ pub fn save_patch_to(
 }
 
 /// Caller-supplied fields that are not derivable from engine state alone.
-/// Headless / MCP callers fill in only what shared state knows (author,
-/// awe, awe_description); the GUI also passes `glide_time` and
-/// `octave_offset` from its widget state.
+/// Headless / MCP callers fill in only what shared state knows (author);
+/// the GUI also passes `glide_time` and `octave_offset` from its widget
+/// state.
 #[derive(Debug, Clone, Default)]
 pub struct ProjectBuildOptions {
     /// Project author / composer. `None` writes a missing `author` field.
     pub author: Option<crate::patch::Author>,
-    /// AWE state to persist. `None` means AWE was disabled.
-    pub awe: Option<synth_awe::AweState>,
-    /// AWE acoustic-character description. Empty/`None` writes a
-    /// missing `awe_description` field.
-    pub awe_description: Option<String>,
     /// Global glide / portamento time. Defaults to `Seconds::ZERO` when
     /// unset (matches `GlobalProjectState::default()`).
     pub glide_time: Option<synth_core::Seconds>,
@@ -414,7 +398,7 @@ pub struct ProjectBuildOptions {
 /// Build a `ProjectFile` from current engine + session + song state,
 /// in memory (no disk I/O). Engine-derived fields (instruments, module
 /// graph, song, master volume) come from `session` / `song`; anything
-/// not in engine state (author, AWE, octave, glide) comes from `opts`.
+/// not in engine state (author, octave, glide) comes from `opts`.
 /// Module positions default to `Position::default()` — GUI callers
 /// overlay their `PatchEditor` positions afterwards.
 ///
@@ -496,9 +480,6 @@ pub fn build_project_from_engine(
         master_volume,
         octave_offset: opts.octave_offset.unwrap_or(0),
         glide_time: opts.glide_time.unwrap_or(synth_core::Seconds::ZERO),
-        awe: opts.awe,
-        awe_preset: None,
-        awe_description: opts.awe_description.filter(|s| !s.is_empty()),
         return_bus_effects,
         master_effects,
     };
@@ -880,30 +861,6 @@ fn tear_down_all_instruments(session: &SynthSession) {
     // a fresh New Project) starts numbering from 1 again rather than continuing
     // from the torn-down project's high-water mark.
     session.reset_instrument_counter();
-}
-
-/// Push every field of `awe` onto the engine. Uses non-blocking sends because
-/// these all land in the same audio callback batch and no later step gates on
-/// their arrival — matches `egui_backend::load_project_data`.
-pub(crate) fn apply_awe_state(sender: &CommandSender, awe: &synth_awe::AweState) {
-    sender.send(EngineCommand::SetAweEnabled {
-        enabled: awe.enabled,
-    });
-    sender.send(EngineCommand::SetAweParameter {
-        param: synth_awe::AweParam::RoomShape(awe.room),
-    });
-    sender.send(EngineCommand::SetAweParameter {
-        param: synth_awe::AweParam::Material(awe.material),
-    });
-    sender.send(EngineCommand::SetAweState {
-        snapshot: awe.to_snapshot(),
-    });
-    sender.send(EngineCommand::SetAweParameter {
-        param: synth_awe::AweParam::SpatialEnabled(awe.spatial_enabled),
-    });
-    sender.send(EngineCommand::SetAweParameter {
-        param: synth_awe::AweParam::NoteMapping(awe.note_mapping),
-    });
 }
 
 /// Send `LoadSampleData` for every Sampler module in the project that

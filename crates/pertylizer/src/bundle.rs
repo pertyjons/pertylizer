@@ -176,6 +176,9 @@ pub fn load_bundle(path: &Path, library: &mut SampleLibrary) -> Result<ProjectFi
         entry
             .read_to_string(&mut content)
             .map_err(|e| PatchError::Io(format!("Read project.json: {e}")))?;
+        if let Ok(value) = serde_json::from_str::<serde_json::Value>(&content) {
+            crate::project::warn_if_legacy_awe(&value, path);
+        }
         serde_json::from_str(&content).map_err(|e| PatchError::Parse(e.to_string()))?
     };
 

@@ -37,7 +37,7 @@ use crate::gui::widgets::{
 use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
 use crate::io::settings::AppSettings;
 use crate::io::{GroupTemplateManager, MidiHandler, PatchManager};
-use crate::patch::{Author, AwePresetFile, GroupCategory, Patch, categorized_patches};
+use crate::patch::{Author, GroupCategory, Patch, categorized_patches};
 use crate::project::{self, GlobalProjectState, LoadedFile, ProjectFile};
 use synth_core::{Describable, ModuleCategory};
 use synth_core::{Seconds, Velocity};
@@ -279,10 +279,6 @@ struct SynthApp {
 
     // DEBUG: frame counter after project load (0 = not tracking)
 
-    // AWE state
-    awe_enabled: bool,
-    awe_ui: crate::gui::awe_view::AweUiState,
-
     // Sequencer state
     song: std::sync::Arc<parking_lot::RwLock<synth_sequencer::Song>>,
     sequencer_view_state: crate::gui::sequencer::SequencerViewState,
@@ -304,7 +300,7 @@ struct SynthApp {
 
     /// Last `McpSharedState::gui_revision` value the GUI consumed. Same
     /// fast-path idea as `last_seen_project_revision`, but for one-shot
-    /// MCP→GUI mirror payloads (`pending_patch`, `pending_awe_state`).
+    /// MCP→GUI mirror payloads (`pending_patch`).
     /// Idle frames skip both slot mutexes entirely.
     #[cfg(feature = "mcp")]
     last_seen_gui_revision: u64,
@@ -340,9 +336,6 @@ struct SynthApp {
 
     /// Cached window title to avoid allocating every frame.
     last_title: String,
-
-    /// Pending AWE preset to save (waiting for file dialog).
-    pending_awe_preset_save: Option<crate::patch::AwePresetFile>,
 
     /// Shared sample library.
     sample_library: std::sync::Arc<std::sync::RwLock<SampleLibrary>>,
@@ -447,8 +440,6 @@ impl SynthApp {
             instruments,
             active_instrument_id,
             active_view: AppView::default(),
-            awe_enabled: false,
-            awe_ui: crate::gui::awe_view::AweUiState::default(),
             song,
             sequencer_view_state: crate::gui::sequencer::SequencerViewState::new(),
             pattern_view_state: crate::gui::pattern_view::PatternViewState::default(),
@@ -471,7 +462,6 @@ impl SynthApp {
             scope_buf_l: Vec::new(),
             scope_buf_r: Vec::new(),
             last_title: String::new(),
-            pending_awe_preset_save: None,
             sample_library: config.sample_library,
             sample_view_state: crate::gui::sample_view::SampleViewState::new(),
             mixer_view_state: crate::gui::mixer_view::MixerViewState::default(),
@@ -647,7 +637,7 @@ impl eframe::App for SynthApp {
         //
         // Non-destructive load: a request stays set until the Rack view
         // actually applies it (see apply site below). This means a
-        // request that arrives while the user is in AcousticWorld /
+        // request that arrives while the user is in
         // Sequencer / Sample survives until they switch back to Rack.
         #[cfg(feature = "mcp")]
         let mcp_auto_layout = self.mcp_shared.as_ref().is_some_and(|shared| {
@@ -658,7 +648,7 @@ impl eframe::App for SynthApp {
         #[cfg(not(feature = "mcp"))]
         let mcp_auto_layout = false;
 
-        // Drain MCP project I/O, GUI mirror payloads, and AWE-state sync, then
+        // Drain MCP project I/O and GUI mirror payloads, then
         // reconcile module add/removes the MCP side performed.
         #[cfg(feature = "mcp")]
         {
@@ -755,8 +745,6 @@ impl eframe::App for SynthApp {
                     // OSC telemetry status indicator
                     #[cfg(feature = "osc")]
                     self.render_osc_status(ui);
-                    // AWE (Acoustic World Engine) status indicator with preset menu
-                    self.render_awe_status(ui);
                     self.render_instrument_selector(ui);
 
                     // Pencil edit icon (sits visually to the right of the title
@@ -889,48 +877,6 @@ impl eframe::App for SynthApp {
                         &mut self.note_grid_view_state,
                         &mut self.undo_manager,
                     );
-                }
-                AppView::AcousticWorld => {
-                    // Scan user presets on first view
-                    if !self.awe_ui.user_presets_loaded {
-                        let dir = self
-                            .settings
-                            .directories
-                            .awe_presets_dir
-                            .clone()
-                            .or_else(|| crate::project::default_awe_presets_dir().ok());
-                        if let Some(dir) = dir {
-                            self.awe_ui.scan_user_presets(&dir);
-                        } else {
-                            self.awe_ui.user_presets_loaded = true;
-                        }
-                    }
-
-                    let awe_action = crate::gui::awe_view::draw_awe_view(
-                        ui,
-                        &mut self.handle,
-                        &mut self.awe_enabled,
-                        &mut self.awe_ui,
-                    );
-                    match awe_action {
-                        crate::gui::awe_view::AweViewAction::SavePreset => {
-                            self.dialog_state.show_save_awe_preset = true;
-                            self.dialog_state.awe_preset_save_name.clear();
-                            self.dialog_state.awe_preset_save_description.clear();
-                            self.dialog_state.awe_preset_save_tags.clear();
-                        }
-                        crate::gui::awe_view::AweViewAction::LoadPreset => {
-                            let dir = self
-                                .settings
-                                .directories
-                                .awe_presets_dir
-                                .clone()
-                                .or_else(|| crate::project::default_awe_presets_dir().ok());
-                            self.dialog_state
-                                .open_open_awe_preset_dialog(dir.as_deref());
-                        }
-                        crate::gui::awe_view::AweViewAction::None => {}
-                    }
                 }
                 AppView::Pattern => {
                     crate::gui::pattern_view::draw_pattern_view(
@@ -1959,9 +1905,9 @@ impl SynthApp {
         });
     }
 
-    /// Drain MCP→GUI shared state once per frame: project I/O refresh/status,
-    /// one-shot patch/AWE mirror payloads, and the live AWE-state sync. Each
-    /// section is revision-gated so an idle frame touches no mutex.
+    /// Drain MCP→GUI shared state once per frame: project I/O refresh/status
+    /// and one-shot patch mirror payloads. Each section is revision-gated so
+    /// an idle frame touches no mutex.
     #[cfg(feature = "mcp")]
     fn drain_mcp_state(&mut self) {
         // Single revision-gated drain for everything MCP project I/O
@@ -2022,7 +1968,7 @@ impl SynthApp {
         }
 
         // Revision-gated drain of MCP→GUI one-shot mirror payloads
-        // (`pending_patch`, `pending_awe_state`). Same shape as the
+        // (`pending_patch`). Same shape as the
         // `project_revision` drain just above.
         if let Some(shared) = self.mcp_shared.as_ref().map(std::sync::Arc::clone) {
             let current_rev = shared
@@ -2040,40 +1986,7 @@ impl SynthApp {
                     self.load_patch_data(&patch);
                 }
 
-                let pending_awe = shared
-                    .pending_awe_state
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .take();
-                if let Some(awe_state) = pending_awe {
-                    self.awe_enabled = awe_state.enabled;
-                    self.awe_ui.restore_from(&awe_state);
-                    crate::project_apply::apply_awe_state(
-                        &self.handle.command_sender(),
-                        &awe_state,
-                    );
-                }
-
                 self.last_seen_gui_revision = current_rev;
-            }
-        }
-
-        // Sync AWE state to MCP shared state
-        if let Some(shared) = &self.mcp_shared {
-            if let Ok(mut awe_state) = shared.awe_state.lock() {
-                *awe_state = self.awe_ui.to_awe_state(self.awe_enabled);
-            }
-            // The edit-in-progress flag (set last frame in draw_controls) decides
-            // direction: while editing, GUI is source of truth; otherwise let MCP
-            // writes flow back.
-            if let Ok(mut desc) = shared.awe_description.lock()
-                && *desc != self.awe_ui.description
-            {
-                if self.awe_ui.description_edit_in_progress {
-                    desc.clone_from(&self.awe_ui.description);
-                } else {
-                    self.awe_ui.description.clone_from(&desc);
-                }
             }
         }
     }
@@ -3504,135 +3417,14 @@ impl SynthApp {
         ui.separator();
     }
 
-    /// Top-bar AWE status indicator with its preset dropdown menu.
-    fn render_awe_status(&mut self, ui: &mut egui::Ui) {
-        use egui_remixicon::icons as ri;
-        let presets = synth_awe::presets::awe_presets();
-        let preset_name = self
-            .awe_ui
-            .selected_preset
-            .and_then(|i| presets.get(i).map(|p| p.name.to_owned()));
-        let (icon, color, hover_text) = if self.awe_enabled {
-            let name = preset_name.as_deref().unwrap_or("Custom");
-            (
-                ri::SURROUND_SOUND_FILL,
-                theme().colors.meter_green,
-                format!("AWE: {name}"),
-            )
-        } else {
-            (
-                ri::SURROUND_SOUND_LINE,
-                theme().colors.text_dim,
-                "AWE: off".to_owned(),
-            )
-        };
-        let arrow = ri::ARROW_DOWN_S_FILL;
-        let awe_label = RichText::new(format!("{icon} AWE {arrow}")).color(color);
-        let resp = ui.menu_button(awe_label, |ui| {
-            ui.set_min_width(250.0);
-            // Off option
-            let is_off = !self.awe_enabled;
-            let off_label = if is_off {
-                RichText::new(format!("{} Off", ri::CHECKBOX_BLANK_CIRCLE_FILL))
-                    .color(theme().colors.text_dim)
-            } else {
-                RichText::new("  Off")
-            };
-            if ui.button(off_label).clicked() {
-                self.awe_enabled = false;
-                self.awe_ui.selected_preset = None;
-                self.handle
-                    .send(EngineCommand::SetAweEnabled { enabled: false });
-                self.mark_dirty();
-                ui.close();
-            }
-            ui.separator();
-            // Standard presets
-            let standard: Vec<usize> = presets
-                .iter()
-                .enumerate()
-                .filter(|(_, p)| !p.name.starts_with("EXT:"))
-                .map(|(i, _)| i)
-                .collect();
-            let extreme: Vec<usize> = presets
-                .iter()
-                .enumerate()
-                .filter(|(_, p)| p.name.starts_with("EXT:"))
-                .map(|(i, _)| i)
-                .collect();
-            if !standard.is_empty() {
-                for i in &standard {
-                    let preset = &presets[*i];
-                    let is_current = self.awe_enabled && self.awe_ui.selected_preset == Some(*i);
-                    let label = if is_current {
-                        RichText::new(format!(
-                            "{} {}",
-                            ri::CHECKBOX_BLANK_CIRCLE_FILL,
-                            preset.name
-                        ))
-                        .color(theme().colors.meter_green)
-                    } else {
-                        RichText::new(format!("  {}", preset.name))
-                    };
-                    if ui.button(label).on_hover_text(preset.description).clicked() {
-                        crate::gui::awe_view::apply_awe_preset(
-                            *i,
-                            preset,
-                            &mut self.handle,
-                            &mut self.awe_enabled,
-                            &mut self.awe_ui,
-                        );
-                        self.mark_dirty();
-                        ui.close();
-                    }
-                }
-            }
-            if !extreme.is_empty() {
-                ui.separator();
-                dim_label(ui, "Extreme");
-                for i in &extreme {
-                    let preset = &presets[*i];
-                    let is_current = self.awe_enabled && self.awe_ui.selected_preset == Some(*i);
-                    let label = if is_current {
-                        RichText::new(format!(
-                            "{} {}",
-                            ri::CHECKBOX_BLANK_CIRCLE_FILL,
-                            preset.name.trim_start_matches("EXT: ")
-                        ))
-                        .color(theme().colors.meter_green)
-                    } else {
-                        RichText::new(format!("  {}", preset.name.trim_start_matches("EXT: ")))
-                    };
-                    if ui.button(label).on_hover_text(preset.description).clicked() {
-                        crate::gui::awe_view::apply_awe_preset(
-                            *i,
-                            preset,
-                            &mut self.handle,
-                            &mut self.awe_enabled,
-                            &mut self.awe_ui,
-                        );
-                        self.mark_dirty();
-                        ui.close();
-                    }
-                }
-            }
-        });
-        resp.response.on_hover_text(hover_text);
-        ui.separator();
-    }
-
-    /// The top-bar segmented view selector (Rack / AWE / Pattern / Seq / Sample).
+    /// The top-bar segmented view selector (Rack / Pattern / Seq / Sample).
     fn render_view_selector(&mut self, ui: &mut egui::Ui) {
         use egui_remixicon::icons as ri;
         let t = theme();
-        let views: [(AppView, &str); 8] = [
+        let views: [(AppView, &str); 7] = [
             (AppView::Home, &format!("{} Home", ri::HOME_FILL)),
             (AppView::Rack, &format!("{} Rack", ri::LAYOUT_GRID_FILL)),
             (AppView::NoteGraph, &format!("{} Notes", ri::MIND_MAP)),
-            (
-                AppView::AcousticWorld,
-                &format!("{} AWE", ri::SURROUND_SOUND_FILL),
-            ),
             (AppView::Pattern, &format!("{} Pattern", ri::PIANO_FILL)),
             (AppView::Sequencer, &format!("{} Seq", ri::PLAY_LIST_FILL)),
             (AppView::Mixer, &format!("{} Mixer", ri::EQUALIZER_FILL)),
@@ -3819,17 +3611,13 @@ impl SynthApp {
                                 .spacing([14.0, 2.0])
                                 .show(ui, |ui| {
                                     let pct = |v: f32| format!("{:>5.1} %", v * 100.0);
-                                    let other = (bd.total
-                                        - bd.voices
-                                        - bd.module_graph
-                                        - bd.master_fx
-                                        - bd.awe)
-                                        .max(0.0);
+                                    let other =
+                                        (bd.total - bd.voices - bd.module_graph - bd.master_fx)
+                                            .max(0.0);
                                     for (label, value) in [
                                         ("Voices", bd.voices),
                                         ("Module graph", bd.module_graph),
                                         ("Master FX", bd.master_fx),
-                                        ("AWE (room)", bd.awe),
                                         ("Other", other),
                                     ] {
                                         ui.label(label);
@@ -5166,58 +4954,6 @@ impl SynthApp {
             }
         }
 
-        // Save AWE preset dialog
-        if self.dialog_state.show_save_awe_preset {
-            match crate::gui::dialogs::show_save_awe_preset_dialog(
-                ctx,
-                &mut self.dialog_state.show_save_awe_preset,
-                &mut self.dialog_state.awe_preset_save_name,
-                &mut self.dialog_state.awe_preset_save_description,
-                &mut self.dialog_state.awe_preset_save_tags,
-                &self.settings.author,
-            ) {
-                crate::gui::dialogs::SaveAwePresetResult::Save => {
-                    let state = self.awe_ui.to_awe_state(self.awe_enabled);
-                    let mut preset =
-                        AwePresetFile::new(self.dialog_state.awe_preset_save_name.trim(), state);
-                    preset.description = self
-                        .dialog_state
-                        .awe_preset_save_description
-                        .trim()
-                        .to_string();
-                    preset.tags = self
-                        .dialog_state
-                        .awe_preset_save_tags
-                        .split(',')
-                        .map(|t| t.trim().to_string())
-                        .filter(|t| !t.is_empty())
-                        .collect();
-                    if !self.settings.author.is_empty() {
-                        preset.author = Some(self.settings.author.clone());
-                    }
-
-                    // Open file save dialog
-                    let default_name =
-                        format!("{}.json", preset.name.to_lowercase().replace(' ', "_"));
-                    let dir = self
-                        .settings
-                        .directories
-                        .awe_presets_dir
-                        .clone()
-                        .or_else(|| crate::project::default_awe_presets_dir().ok());
-                    // Ensure directory exists
-                    if let Some(ref d) = dir {
-                        let _ = std::fs::create_dir_all(d);
-                    }
-                    self.pending_awe_preset_save = Some(preset);
-                    self.dialog_state
-                        .open_save_awe_preset_dialog(&default_name, dir.as_deref());
-                }
-                crate::gui::dialogs::SaveAwePresetResult::Cancelled
-                | crate::gui::dialogs::SaveAwePresetResult::None => {}
-            }
-        }
-
         // File dialog (open/save/import)
         if let Some(result) = self.dialog_state.update_file_dialog(ctx) {
             match result {
@@ -5288,11 +5024,6 @@ impl SynthApp {
                             self.dialog_state
                                 .set_status(format!("Loaded patch: {}", path.display()));
                         }
-                        Ok(LoadedFile::AwePreset(preset)) => {
-                            self.load_awe_preset_data(&preset);
-                            self.dialog_state
-                                .set_status(format!("Loaded AWE preset: {}", preset.name));
-                        }
                         Ok(LoadedFile::Bundle(bundle_path)) => {
                             match self.load_bundle_file(&bundle_path) {
                                 Ok(msg) => {
@@ -5361,37 +5092,6 @@ impl SynthApp {
                         Err(e) => {
                             self.dialog_state
                                 .set_status(format!("Error loading template: {e}"));
-                        }
-                    }
-                }
-                FileDialogResult::Picked(path, Some(FileDialogMode::OpenAwePreset)) => {
-                    match AwePresetFile::load(&path) {
-                        Ok(preset) => {
-                            self.load_awe_preset_data(&preset);
-                            self.dialog_state
-                                .set_status(format!("Loaded AWE preset: {}", preset.name));
-                            // Refresh user presets list
-                            self.awe_ui.user_presets_loaded = false;
-                        }
-                        Err(e) => {
-                            self.dialog_state
-                                .set_status(format!("Error loading AWE preset: {e}"));
-                        }
-                    }
-                }
-                FileDialogResult::Saved(path, Some(FileDialogMode::SaveAwePreset)) => {
-                    if let Some(preset) = self.pending_awe_preset_save.take() {
-                        match preset.save(&path) {
-                            Ok(()) => {
-                                self.dialog_state
-                                    .set_status(format!("AWE preset saved: {}", path.display()));
-                                // Refresh user presets list
-                                self.awe_ui.user_presets_loaded = false;
-                            }
-                            Err(e) => {
-                                self.dialog_state
-                                    .set_status(format!("Error saving AWE preset: {e}"));
-                            }
                         }
                     }
                 }
@@ -5602,15 +5302,6 @@ impl SynthApp {
             instrument
                 .patch_editor
                 .set_min_canvas_size(eframe::egui::Vec2::new(cs.width, cs.height));
-        }
-
-        // Restore AWE UI state from loaded patch
-        if let Some(awe) = &patch.settings.awe {
-            self.awe_enabled = awe.enabled;
-            self.awe_ui.restore_from(awe);
-        } else {
-            self.awe_enabled = false;
-            self.awe_ui = crate::gui::awe_view::AweUiState::default();
         }
 
         tracing::info!(target: "pertylizer::patch", "loaded patch '{}'", patch.name);
@@ -5936,8 +5627,6 @@ impl SynthApp {
             &self.keyboard,
             &self.handle,
             self.glide_time,
-            self.awe_enabled,
-            &self.awe_ui,
             engine_state,
         )
     }
@@ -5966,9 +5655,9 @@ impl SynthApp {
         project
     }
 
-    /// Build save options from current GUI state (author, AWE, glide,
-    /// octave). MCP uses the same `ProjectBuildOptions` type with its
-    /// own field sources (`McpSharedState`); this is the GUI's mirror.
+    /// Build save options from current GUI state (author, glide, octave).
+    /// MCP uses the same `ProjectBuildOptions` type with its own field
+    /// sources (`McpSharedState`); this is the GUI's mirror.
     fn build_save_options(&self) -> crate::project_apply::ProjectBuildOptions {
         let author = if self.current_project_author.is_empty() {
             None
@@ -5976,46 +5665,8 @@ impl SynthApp {
             Some(self.current_project_author.clone())
         };
 
-        // Prefer the MCP-shared `awe_description` slot when present so a
-        // recent MCP write survives a save in the same frame (the
-        // bi-directional sync at the top of update() runs *after* the
-        // refresh handler, so self.awe_ui.description can be stale).
-        #[cfg(feature = "mcp")]
-        let awe_description = self
-            .mcp_shared
-            .as_ref()
-            .map(|shared| {
-                shared
-                    .awe_description
-                    .lock()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .clone()
-            })
-            .filter(|s| !s.is_empty())
-            .or_else(|| {
-                if self.awe_ui.description.is_empty() {
-                    None
-                } else {
-                    Some(self.awe_ui.description.clone())
-                }
-            });
-        #[cfg(not(feature = "mcp"))]
-        let awe_description = if self.awe_ui.description.is_empty() {
-            None
-        } else {
-            Some(self.awe_ui.description.clone())
-        };
-
-        let awe = if self.awe_enabled {
-            Some(self.awe_ui.to_awe_state(true))
-        } else {
-            None
-        };
-
         crate::project_apply::ProjectBuildOptions {
             author,
-            awe,
-            awe_description,
             glide_time: Some(self.glide_time),
             octave_offset: Some(self.keyboard.octave_offset()),
         }
@@ -6111,7 +5762,7 @@ impl SynthApp {
     /// Rebuild the GUI's UI mirrors against `project`. Assumes engine
     /// state has already been written via `project_apply::apply_project`;
     /// this only touches `InstrumentUiState`, `PatchEditor` canvases,
-    /// visualization buffers, glide / awe / keyboard widgets, and the
+    /// visualization buffers, glide / keyboard widgets, and the
     /// active-instrument bookkeeping.
     fn refresh_ui_from_project(&mut self, project: &ProjectFile) {
         // 1. Tear down old UI mirrors. The engine instruments are already
@@ -6195,27 +5846,6 @@ impl SynthApp {
         self.glide_time = project.global.glide_time;
         self.keyboard
             .set_octave_offset(project.global.octave_offset);
-
-        // AWE description goes into the UI buffer and the MCP-shared slot.
-        // Seeding both prevents the next frame's two-way sync from pulling
-        // a stale empty value back over the just-loaded one.
-        self.awe_ui.description = project.global.awe_description.clone().unwrap_or_default();
-        #[cfg(feature = "mcp")]
-        if let Some(shared) = &self.mcp_shared {
-            shared
-                .awe_description
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .clone_from(&self.awe_ui.description);
-        }
-
-        if let Some(awe) = &project.global.awe {
-            self.awe_enabled = awe.enabled;
-            self.awe_ui.restore_from(awe);
-        } else {
-            self.awe_enabled = false;
-            self.awe_ui = crate::gui::awe_view::AweUiState::default();
-        }
 
         // 4. Active-instrument bookkeeping. `apply_project` already sent
         //    `SetFocusedInstrument` to the engine; we only mirror it
@@ -6308,35 +5938,6 @@ impl SynthApp {
         self.active_view = AppView::Home;
     }
 
-    /// Load an AWE preset file, applying its state to the engine and UI.
-    fn load_awe_preset_data(&mut self, preset: &crate::patch::AwePresetFile) {
-        let state = &preset.state;
-        self.awe_enabled = state.enabled;
-        self.awe_ui.restore_from(state);
-        self.awe_ui.selected_preset = None;
-        self.awe_ui.current_preset_name = preset.name.clone();
-        self.awe_ui.current_preset_description = preset.description.clone();
-        self.awe_ui.current_preset_tags = preset.tags.clone();
-        self.handle.send(EngineCommand::SetAweEnabled {
-            enabled: state.enabled,
-        });
-        self.handle.send(EngineCommand::SetAweParameter {
-            param: synth_awe::AweParam::RoomShape(state.room),
-        });
-        self.handle.send(EngineCommand::SetAweParameter {
-            param: synth_awe::AweParam::Material(state.material),
-        });
-        self.handle.send(EngineCommand::SetAweState {
-            snapshot: state.to_snapshot(),
-        });
-        self.handle.send(EngineCommand::SetAweParameter {
-            param: synth_awe::AweParam::SpatialEnabled(state.spatial_enabled),
-        });
-        self.handle.send(EngineCommand::SetAweParameter {
-            param: synth_awe::AweParam::NoteMapping(state.note_mapping),
-        });
-    }
-
     /// Load a project from a recent-projects path.
     fn load_recent_project(&mut self, path: PathBuf) {
         match project::load_file(&path) {
@@ -6358,11 +5959,6 @@ impl SynthApp {
                 self.settings.save();
                 self.dialog_state
                     .set_status(format!("Loaded patch: {}", path.display()));
-            }
-            Ok(LoadedFile::AwePreset(preset)) => {
-                self.load_awe_preset_data(&preset);
-                self.dialog_state
-                    .set_status(format!("Loaded AWE preset: {}", preset.name));
             }
             Ok(LoadedFile::Bundle(bundle_path)) => match self.load_bundle_file(&bundle_path) {
                 Ok(msg) => {

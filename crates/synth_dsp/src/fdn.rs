@@ -1,4 +1,4 @@
-//! Feedback Delay Network (FDN) core for shared use in reverb and AWE.
+//! Feedback Delay Network (FDN) core for shared use in the reverb effects.
 //!
 //! Contains:
 //! - 8-channel FDN with Hadamard mixing matrix

@@ -20,6 +20,8 @@
       "description": "Four-on-the-floor kick driving the demo. Acts as the sidechain SOURCE for both Pad and Bass — every quarter-note hit triggers ducking on the sustained instruments. Plays on bars 5–16 (beats 16–64); silent in intro and outro so the listener can hear pad alone for A/B comparison.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
       "max_voices": 8,
       "velocity_amp_sensitivity": 1.0,
       "velocity_filter_sensitivity": 0.0,
@@ -188,6 +190,8 @@
       "description": "Sustained Cm7 pad held across the entire song. Acts as a sidechain RECEIVER (sidechain_source_id = 1, the Kick). When the kick hits during bars 5–16, the compressor ducks the pad ≈10 dB; release 220 ms allows the pad to breathe back up between kicks. In intro/outro the pad plays uncompressed because the kick is silent (no sidechain signal).",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
       "max_voices": 8,
       "velocity_amp_sensitivity": 1.0,
       "velocity_filter_sensitivity": 0.0,
@@ -460,6 +464,8 @@
       "description": "Sustained C2 sub-bass under the drop (bars 5–16). Sidechain RECEIVER from the Kick (id 1) — pumps in sync with the pad so the entire low-mid spectrum breathes together. Slightly tighter release (180 ms) than the pad to keep low-end punch and stay out of the kick's transient.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
       "max_voices": 8,
       "velocity_amp_sensitivity": 1.0,
       "velocity_filter_sensitivity": 0.0,
@@ -668,10 +674,12 @@
   "song": {
     "name": "Sidechain Demo",
     "author": "Pertylizer",
+    "description": "",
     "patterns": [
       {
         "id": 0,
         "name": "Pad Cm7 (full)",
+        "description": "",
         "length": 76800,
         "notes": [
           {
@@ -680,8 +688,12 @@
             "duration": 76320,
             "pitch": 48,
             "velocity": 0.70866144,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -689,8 +701,12 @@
             "duration": 76320,
             "pitch": 51,
             "velocity": 0.6692913,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 2,
@@ -698,8 +714,12 @@
             "duration": 76320,
             "pitch": 55,
             "velocity": 0.6692913,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 3,
@@ -707,16 +727,22 @@
             "duration": 76320,
             "pitch": 58,
             "velocity": 0.62992126,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 4
       },
       {
         "id": 1,
         "name": "Kick 4-floor",
+        "description": "",
         "length": 3840,
         "notes": [
           {
@@ -725,8 +751,12 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.9448819,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 1,
@@ -734,8 +764,12 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.9448819,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 2,
@@ -743,8 +777,12 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.9448819,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           },
           {
             "id": 3,
@@ -752,16 +790,22 @@
             "duration": 240,
             "pitch": 36,
             "velocity": 0.9448819,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 4
       },
       {
         "id": 2,
         "name": "Bass sustain (full)",
+        "description": "",
         "length": 46080,
         "notes": [
           {
@@ -770,11 +814,16 @@
             "duration": 45792,
             "pitch": 36,
             "velocity": 0.78740156,
-            "instrument": 0,
-            "track": null
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
           }
         ],
         "automation": [],
+        "processors": [],
         "next_note_id": 1
       }
     ],
@@ -783,6 +832,7 @@
       {
         "id": 0,
         "name": "Pad",
+        "description": "",
         "instrument": 2,
         "volume": 1.0,
         "pan": 0.0,
@@ -798,6 +848,7 @@
       {
         "id": 1,
         "name": "Kick",
+        "description": "",
         "instrument": 1,
         "volume": 1.0,
         "pan": 0.0,
@@ -813,6 +864,7 @@
       {
         "id": 2,
         "name": "Bass",
+        "description": "",
         "instrument": 3,
         "volume": 1.0,
         "pan": 0.0,
@@ -951,79 +1003,13 @@
     "row_resolution": {
       "rows": 64,
       "ticks_per_row": 240
-    }
+    },
+    "next_return_bus_id": 0,
+    "next_note_graph_id": 0
   },
   "global": {
     "master_volume": 1.0,
     "octave_offset": -1,
-    "glide_time": 0.0,
-    "awe": {
-      "enabled": true,
-      "room": {
-        "Box": {
-          "length": 5.0,
-          "width": 4.0,
-          "height": 3.0
-        }
-      },
-      "material": {
-        "absorption_low": 0.2,
-        "absorption_mid": 0.18,
-        "absorption_high": 0.25,
-        "diffusion": 0.35
-      },
-      "spatial_enabled": false,
-      "note_mapping": "Off",
-      "snapshot": {
-        "dry_wet": 0.2,
-        "early_late_balance": 0.3,
-        "modes_amount": 0.2,
-        "freq_warp": 0.0,
-        "resonance_boost": 0.0,
-        "tail_stretch": 0.8,
-        "portal_amount": 0.0,
-        "pre_delay": 0.0,
-        "source_pos": [
-          1.5,
-          2.0,
-          1.5
-        ],
-        "listener_pos": [
-          3.5,
-          2.0,
-          1.5
-        ],
-        "spatial_enabled": false,
-        "note_mapping": "Off",
-        "modulation_depth": 0.0,
-        "modulation_rate": 1.0,
-        "air_absorption": 0.0,
-        "width": 1.0,
-        "high_cut": 20000.0,
-        "low_cut": 20.0,
-        "temperature": 20.0,
-        "lfo1": {
-          "rate": 0.5,
-          "amount": 0.0,
-          "target": "SourceX"
-        },
-        "lfo2": {
-          "rate": 0.5,
-          "amount": 0.0,
-          "target": "SourceY"
-        },
-        "lfo3": {
-          "rate": 0.5,
-          "amount": 0.0,
-          "target": "EarlyLate"
-        },
-        "lfo4": {
-          "rate": 0.5,
-          "amount": 0.0,
-          "target": "ModesAmount"
-        }
-      }
-    },
-    "awe_description": "Small Studio preset — a controlled, dry 5x4x3 m wooden room with 20% dry/wet. Chosen deliberately for this sidechain demo: too much reverb tail would smear the kick transients and make the pumping motion harder to hear. The mild room reflections add subtle \"glue\" and dimension to the pad without obscuring the duck-and-recover envelope on every quarter note."
+    "glide_time": 0.0
   }
 }

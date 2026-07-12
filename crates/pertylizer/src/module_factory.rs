@@ -114,6 +114,11 @@ pub fn create_voice_module(
             let d = m.descriptor();
             Some((Box::new(m), d))
         }
+        ModuleType::SpatialPanner => {
+            let m = synth_modules::SpatialPanner::new();
+            let d = m.descriptor();
+            Some((Box::new(m), d))
+        }
         ModuleType::BodyResonance => {
             let m = synth_modules::BodyResonance::new();
             let d = m.descriptor();

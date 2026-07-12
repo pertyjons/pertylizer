@@ -1,7 +1,7 @@
 # Pertylizer × MCP — AI Agent Integration Guide
 
 Pertylizer ships with a built-in [Model Context Protocol](https://modelcontextprotocol.io) server that exposes
-**175+ tools** for full remote control of the synth, sequencer, sample library, and Acoustic World Engine. Any
+**175+ tools** for full remote control of the synth, sequencer, and sample library. Any
 MCP-capable client — Claude Code, Claude Desktop, custom agents — can use it to build instruments, compose songs,
 edit patterns, render audio, and analyze the result, all while the synth keeps running.
 
@@ -282,16 +282,6 @@ iteration.
 | `normalize_sample`, `reverse_sample`, `trim_sample_silence` | DSP |
 | `set_sample_loop`, `set_sample_crop`, `set_sample_root_note` | Slicing & mapping |
 | `assign_sample_to_module`, `get_sampler_state`, `set_sampler_parameter` | Sampler module |
-
-### Acoustic World Engine
-
-Spatial audio and room simulation.
-
-| Tool | Purpose |
-|------|---------|
-| `get_awe_state`, `set_awe_enabled`, `set_awe_parameter` | Core |
-| `set_awe_room_shape`, `set_awe_material`, `set_awe_lfo` | Room & modulation |
-| `set_awe_preset`, `list_awe_presets` | Preset library |
 
 ### Audio Input
 

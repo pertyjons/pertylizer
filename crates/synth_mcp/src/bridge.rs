@@ -18,15 +18,15 @@ use crate::error::McpBridgeError;
 use crate::types::{
     ApplyExamplePatchResult, AudioPreview, AutoGainStageResult, AutomationLaneInfo,
     AutomationPointInfo, AutomationSummaryGroup, AutomationSummaryLane, AutomationSummaryResult,
-    AutomationTargetInfo, AwePresetInfo, AweStateInfo, BatchResult, BuildInstrumentResult,
-    ChordProgressionStep, ConnectionCheckResult, ConnectionInfo, CreateChordProgressionResult,
-    DetailedSampleInfo, DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic,
-    InputDeviceInfo, InputStateInfo, InsertModuleResult, InstrumentInfo, InstrumentProfileResult,
-    MatrixRoutingInfo, ModuleInfo, ModuleSearchResult, ModuleTypeBrief, ModuleTypeInfo,
-    NoteGraphDetail, NoteGraphInfo, NoteInfo, OptimizeResult, ParameterInfo, PatchResourceData,
-    PatternInfo, PlacementInfo, ProjectLintEntry, ProjectLintReport, ProjectSchemaInfo,
-    ReturnBusInfo, ReturnEffectInfo, SampleInfo, SamplerStateInfo, SetSongResult, SongInfo,
-    TempoPoint, TrackInfo, UiSnapshot, VersionInfo,
+    AutomationTargetInfo, BatchResult, BuildInstrumentResult, ChordProgressionStep,
+    ConnectionCheckResult, ConnectionInfo, CreateChordProgressionResult, DetailedSampleInfo,
+    DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic, InputDeviceInfo,
+    InputStateInfo, InsertModuleResult, InstrumentInfo, InstrumentProfileResult, MatrixRoutingInfo,
+    ModuleInfo, ModuleSearchResult, ModuleTypeBrief, ModuleTypeInfo, NoteGraphDetail,
+    NoteGraphInfo, NoteInfo, OptimizeResult, ParameterInfo, PatchResourceData, PatternInfo,
+    PlacementInfo, ProjectLintEntry, ProjectLintReport, ProjectSchemaInfo, ReturnBusInfo,
+    ReturnEffectInfo, SampleInfo, SamplerStateInfo, SetSongResult, SongInfo, TempoPoint, TrackInfo,
+    UiSnapshot, VersionInfo,
 };
 
 // === Bridge-level data structures for batch operations ===
@@ -267,9 +267,6 @@ pub struct AnalysisScope {
     pub master_effects: bool,
     /// Load each return bus's effect chain (else returns stay dry).
     pub return_effects: bool,
-    /// Reconstruct AWE room simulation. Not yet implemented — requesting it
-    /// emits a warning on the result and otherwise behaves as `false`.
-    pub awe: bool,
     /// Sample rate the offline render runs at (see [`RenderQuality`]).
     pub render_sample_rate: u32,
 }
@@ -279,7 +276,6 @@ impl Default for AnalysisScope {
         Self {
             master_effects: false,
             return_effects: false,
-            awe: false,
             render_sample_rate: RenderQuality::FULL_SAMPLE_RATE,
         }
     }
@@ -344,14 +340,12 @@ impl AnalysisScope {
         all: Option<bool>,
         master_effects: Option<bool>,
         return_effects: Option<bool>,
-        awe: Option<bool>,
         quality: RenderQuality,
     ) -> Self {
         let all = all.unwrap_or(false);
         Self {
             master_effects: all || master_effects.unwrap_or(false),
             return_effects: all || return_effects.unwrap_or(false),
-            awe: all || awe.unwrap_or(false),
             render_sample_rate: quality.sample_rate(),
         }
     }
@@ -1903,7 +1897,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// When `instrument_id` is `Some`, only that instrument's tracks are soloed
     /// so the file contains a single instrument's contribution (a clean
     /// fingerprint for external spectral matching); `None` writes the full mix.
-    /// `scope` selects which optional signal stages (master/return effects, AWE)
+    /// `scope` selects which optional signal stages (master/return effects)
     /// the render includes, exactly as for `analyze_mix_bus`.
     fn render_to_wav(
         &self,
@@ -2033,7 +2027,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// effect's contribution (loudness/peak/width/dynamics delta) is isolated.
     /// The master effect chain is always reconstructed regardless of `scope`;
     /// `scope` only controls whether the return-bus wet signal feeds the chain
-    /// input, the render sample rate, and AWE. Cost is O(effect_count) renders.
+    /// input and the render sample rate. Cost is O(effect_count) renders.
     fn analyze_master_chain(
         &self,
         duration_seconds: f32,
@@ -2045,8 +2039,8 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// then re-renders with each return bus muted in turn; the deltas report
     /// what each return adds (loudness/peak/width). Return-bus effect chains are
     /// always reconstructed regardless of `scope`; `scope` only controls whether
-    /// the master effect chain processes the sum, the render sample rate, and
-    /// AWE. Cost is O(return_count) renders.
+    /// the master effect chain processes the sum and the render sample rate.
+    /// Cost is O(return_count) renders.
     fn analyze_return_busses(
         &self,
         duration_seconds: f32,
@@ -2351,47 +2345,6 @@ pub trait SynthBridge: Send + Sync + 'static {
         humanize_seed: Option<u64>,
     ) -> Result<crate::types::QuantizeNotesToGridResult, McpBridgeError>;
 
-    // === AWE (Acoustic World Engine) ===
-
-    /// Get the current AWE state (room, material, all parameters, LFOs).
-    fn get_awe_state(&self) -> Result<AweStateInfo, McpBridgeError>;
-
-    /// Enable or disable the AWE engine.
-    fn set_awe_enabled(&self, enabled: bool) -> Result<(), McpBridgeError>;
-
-    /// Set or clear the AWE state's free-text description (the acoustic
-    /// character of the current room / preset). Pass `""` to clear.
-    fn set_awe_description(&self, description: &str) -> Result<(), McpBridgeError>;
-
-    /// Set a single AWE parameter by name. Value interpretation depends on the parameter.
-    fn set_awe_parameter(&self, name: &str, value: f64) -> Result<(), McpBridgeError>;
-
-    /// Set the room shape. `dimensions` carries the shape-specific values
-    /// (length, width, height, radius, …) in meters.
-    fn set_awe_room_shape(
-        &self,
-        shape: synth_awe::RoomShapeKind,
-        dimensions: &[f32],
-    ) -> Result<(), McpBridgeError>;
-
-    /// Set the wall material.
-    fn set_awe_material(&self, material: synth_awe::MaterialKind) -> Result<(), McpBridgeError>;
-
-    /// Load a named AWE preset. Returns the resulting state.
-    fn set_awe_preset(&self, name: &str) -> Result<AweStateInfo, McpBridgeError>;
-
-    /// List all available AWE presets.
-    fn list_awe_presets(&self) -> Result<Vec<AwePresetInfo>, McpBridgeError>;
-
-    /// Configure an AWE LFO (1-4).
-    fn set_awe_lfo(
-        &self,
-        index: u8,
-        rate: f32,
-        amount: f32,
-        target: synth_awe::AweLfoTarget,
-    ) -> Result<(), McpBridgeError>;
-
     // === Sample library ===
 
     /// List all samples, optionally filtered by name substring.
@@ -2526,7 +2479,7 @@ pub trait SynthBridge: Send + Sync + 'static {
 ///
 /// Mirrors the sequencer's `CurveType` without depending on the sequencer
 /// crate. `Exponential` carries no strength here — it is supplied separately
-/// via `curve_strength` so the schema stays a flat string enum (the AWE-style
+/// via `curve_strength` so the schema stays a flat string enum (the
 /// pattern that advertises the valid values to MCP clients).
 #[derive(
     Debug,

@@ -105,6 +105,7 @@ impl_module_param!(
     PhaseVocoderParam,
     BodyResonanceParam,
     KeyboardPannerParam,
+    SpatialPannerParam,
     MechanicalNoiseParam,
     PitchTrackerParam,
     RingModParam,

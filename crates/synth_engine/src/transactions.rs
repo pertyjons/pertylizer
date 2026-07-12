@@ -648,12 +648,6 @@ impl EngineCommand {
             | Self::AddEffectInstance { .. }
             | Self::AddReturnEffect { .. }
             | Self::AddVisualizer { .. } => return None,
-            // AWE commands
-            Self::SetAweParameter { param } => Self::SetAweParameter { param: *param },
-            Self::SetAweEnabled { enabled } => Self::SetAweEnabled { enabled: *enabled },
-            Self::SetAweState { snapshot } => Self::SetAweState {
-                snapshot: *snapshot,
-            },
 
             // Recording commands
             Self::ArmRecord {

@@ -632,9 +632,6 @@ pub struct PatchSettings {
     #[serde(default)]
     #[schemars(with = "f32")]
     pub glide_time: Seconds,
-    /// AWE (Acoustic World Engine) state.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub awe: Option<synth_awe::AweState>,
     /// Canvas size hint for the rack view.
     /// Used to restore the scroll area size when loading a patch.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -658,7 +655,6 @@ impl Default for PatchSettings {
             bpm: Some(Bpm::new(120.0)),
             octave_offset: 0,
             glide_time: Seconds::new(0.0),
-            awe: None,
             canvas_size: None,
             effect_chain_order: Vec::new(),
         }
@@ -930,65 +926,6 @@ pub enum PatchError {
     Parse(String),
     #[error("Serialize error: {0}")]
     Serialize(String),
-}
-
-// ============================================================================
-// AWE PRESET FILE
-// ============================================================================
-
-/// A saved AWE (Acoustic World Engine) preset file.
-///
-/// Contains full AWE state plus metadata (name, author, license, tags).
-/// Serialized as JSON with `"file_type": "awe_preset"` discriminator.
-#[derive(Debug, Clone, Serialize, Deserialize, JsonSchema)]
-pub struct AwePresetFile {
-    /// Always `"awe_preset"` — distinguishes from patch and project files.
-    pub file_type: String,
-    /// Format version (currently `"1.0"`).
-    #[serde(default = "default_version")]
-    pub version: String,
-    /// Preset name.
-    pub name: String,
-    /// Short description of the acoustic character.
-    #[serde(default, skip_serializing_if = "String::is_empty")]
-    pub description: String,
-    /// Author information.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub author: Option<Author>,
-    /// Tags for categorization.
-    #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub tags: Vec<String>,
-    /// Full AWE state.
-    pub state: synth_awe::AweState,
-}
-
-impl AwePresetFile {
-    /// Create a new AWE preset file.
-    pub fn new(name: impl Into<String>, state: synth_awe::AweState) -> Self {
-        Self {
-            file_type: "awe_preset".to_string(),
-            version: "1.0".to_string(),
-            name: name.into(),
-            description: String::new(),
-            author: None,
-            tags: Vec::new(),
-            state,
-        }
-    }
-
-    /// Load an AWE preset from a JSON file.
-    pub fn load(path: impl AsRef<Path>) -> Result<Self, PatchError> {
-        let content =
-            fs::read_to_string(path.as_ref()).map_err(|e| PatchError::Io(e.to_string()))?;
-        serde_json::from_str(&content).map_err(|e| PatchError::Parse(e.to_string()))
-    }
-
-    /// Save the AWE preset to a JSON file.
-    pub fn save(&self, path: impl AsRef<Path>) -> Result<(), PatchError> {
-        let content =
-            serde_json::to_string_pretty(self).map_err(|e| PatchError::Serialize(e.to_string()))?;
-        fs::write(path.as_ref(), content).map_err(|e| PatchError::Io(e.to_string()))
-    }
 }
 
 // ============================================================================
@@ -1419,32 +1356,6 @@ mod tests {
     }
 
     #[test]
-    fn test_awe_preset_file_round_trip() {
-        let state = synth_awe::AweState::default();
-        let mut preset = AwePresetFile::new("Test Preset", state);
-        preset.description = "A test preset".to_string();
-        preset.tags = vec!["test".to_string(), "demo".to_string()];
-        preset.author = Some(Author {
-            name: "Test Author".to_string(),
-            license: "CC BY 4.0".to_string(),
-            ..Author::default()
-        });
-
-        let json = serde_json::to_string_pretty(&preset).expect("serialize");
-        let parsed: AwePresetFile = serde_json::from_str(&json).expect("deserialize");
-
-        assert_eq!(parsed.file_type, "awe_preset");
-        assert_eq!(parsed.name, "Test Preset");
-        assert_eq!(parsed.description, "A test preset");
-        assert_eq!(parsed.tags, vec!["test", "demo"]);
-        assert_eq!(
-            parsed.author.as_ref().map(|a| a.name.as_str()),
-            Some("Test Author")
-        );
-        assert_eq!(parsed.state.enabled, preset.state.enabled);
-    }
-
-    #[test]
     fn test_author_is_empty() {
         let author = Author::default();
         assert!(author.is_empty());
@@ -1529,23 +1440,5 @@ mod tests {
         let legacy = serde_json::to_string(&value).expect("reserialize");
         let parsed: InstrumentState = serde_json::from_str(&legacy).expect("deserialize legacy");
         assert!(parsed.unison_spread.as_f32().abs() < f32::EPSILON);
-    }
-
-    #[test]
-    fn test_awe_preset_file_save_load() {
-        let dir = std::env::temp_dir().join("pertylizer_test_awe");
-        let _ = std::fs::create_dir_all(&dir);
-        let path = dir.join("test_preset.json");
-
-        let state = synth_awe::AweState::default();
-        let preset = AwePresetFile::new("Save Load Test", state);
-        preset.save(&path).expect("save");
-
-        let loaded = AwePresetFile::load(&path).expect("load");
-        assert_eq!(loaded.name, "Save Load Test");
-        assert_eq!(loaded.file_type, "awe_preset");
-
-        let _ = std::fs::remove_file(&path);
-        let _ = std::fs::remove_dir(&dir);
     }
 }

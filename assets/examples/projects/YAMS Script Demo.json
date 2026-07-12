@@ -20,6 +20,8 @@
       "description": "Demo synth voice for the YAMS scripts. Signal path: osc-1 (saw) -> flt-1 (LP) -> amp-1 -> out-1; env-1 -> amp-1.cv. lfo-1 (~5 Hz) is a shared script source (cable-free - read via the address lfo-1.out). mmx-1 carries 8 YAMS-scripted routings: (1) flt cutoff = lag(velocity,40ms); (2) osc detune = LFO vibrato whose depth mod_wheel opens via lerp; (3) amp level = lfo*env tremolo; (4) flt resonance = sin(phasor(3)*tau) wobble gated by a velocity ternary; (5) amp pan = phasor auto-pan widening over age via smoothstep; (6) lfo rate = sah(white(), clock) stepped randomness; (7) flt drive = slew-shaped LFO; (8) osc level = white() shimmer. lfo-2 is a dedicated vibrato LFO (-> osc-1.fm) whose depth is automated 0->1->0 (because the mod_wheel macro is not sequencer-automatable).",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
       "max_voices": 8,
       "velocity_amp_sensitivity": 1.0,
       "velocity_filter_sensitivity": 0.5,
@@ -540,7 +542,8 @@
       "rows": 64,
       "ticks_per_row": 240
     },
-    "next_return_bus_id": 0
+    "next_return_bus_id": 0,
+    "next_note_graph_id": 0
   },
   "global": {
     "master_volume": 1.0,

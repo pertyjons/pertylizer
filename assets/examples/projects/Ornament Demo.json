@@ -20,6 +20,8 @@
       "description": "Electronic snare (example 'Snare Drum' patch). The ornament carrier: its backbeat hits (beats 2 & 4) get the per-note flam/drag/ruff/roll/grace figures. Signal: white-noise snap, band-passed, blended with a pitch-swept triangle body.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
       "max_voices": 8,
       "velocity_amp_sensitivity": 1.0,
       "velocity_filter_sensitivity": 0.5,
@@ -285,6 +287,8 @@
       "description": "Electronic kick (example 'Kick Drum' patch). Steady four-on-the-floor pulse giving a beat reference under the ornamented snare. Sine body with a fast pitch sweep, punched by distortion.",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
       "max_voices": 8,
       "velocity_amp_sensitivity": 1.0,
       "velocity_filter_sensitivity": 0.5,
@@ -1157,7 +1161,8 @@
       "rows": 64,
       "ticks_per_row": 240
     },
-    "next_return_bus_id": 0
+    "next_return_bus_id": 0,
+    "next_note_graph_id": 0
   },
   "global": {
     "master_volume": 0.8,

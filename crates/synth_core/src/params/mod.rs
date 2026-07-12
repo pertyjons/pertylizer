@@ -101,6 +101,7 @@ pub use padsynth::PadSynthParam;
 pub use phase_vocoder::{FftSizeOption, PhaseVocoderParam};
 pub use physical::{
     BodyResonanceParam, KeyboardPannerParam, MechanicalNoiseParam, MechanicalNoiseType,
+    SpatialPannerParam,
 };
 pub use pitch_tracker::PitchTrackerParam;
 pub use ring_mod::RingModParam;
@@ -246,6 +247,9 @@ pub enum ModuleType {
     /// MOS 6581/8580 (SID) waveform generator: combinable waveforms, noise
     /// LFSR, ring/hard-sync, TEST, per-model DAC.
     SidOscillator,
+    /// Per-voice binaural spatial panner: ISM early reflections + ITD/ILD
+    /// direct path positioning a mono voice in a fixed virtual room.
+    SpatialPanner,
 }
 
 impl ModuleType {
@@ -295,6 +299,7 @@ impl ModuleType {
                 | Self::KeyboardPanner
                 | Self::BodyResonance
                 | Self::MechanicalNoise
+                | Self::SpatialPanner
                 // Granular
                 | Self::GranularOsc
                 // Kinetic modulation
@@ -490,6 +495,7 @@ impl ModuleType {
             Self::Script => "Script",
             Self::AudioScript => "Audio Script",
             Self::SidOscillator => "SID Oscillator",
+            Self::SpatialPanner => "Spatial Panner",
         }
     }
 
@@ -574,6 +580,7 @@ impl ModuleType {
             Self::Script => "scr",
             Self::AudioScript => "asc",
             Self::SidOscillator => "sid",
+            Self::SpatialPanner => "spp",
         }
     }
 
@@ -658,6 +665,7 @@ impl ModuleType {
             "scr" => Some(Self::Script),
             "asc" => Some(Self::AudioScript),
             "sid" => Some(Self::SidOscillator),
+            "spp" => Some(Self::SpatialPanner),
             _ => None,
         }
     }
@@ -791,6 +799,7 @@ pub enum Param {
     Fof(FofParam),
     // Chip-accurate SID waveform generator
     SidOscillator(SidOscillatorParam),
+    SpatialPanner(SpatialPannerParam),
 }
 
 impl Param {
@@ -887,6 +896,7 @@ impl Param {
             (Self::VocalTract(a), Self::VocalTract(b)) => a.same_kind(b),
             (Self::Fof(a), Self::Fof(b)) => a.same_kind(b),
             (Self::SidOscillator(a), Self::SidOscillator(b)) => a.same_kind(b),
+            (Self::SpatialPanner(a), Self::SpatialPanner(b)) => a.same_kind(b),
             _ => false,
         }
     }
@@ -967,6 +977,7 @@ impl Param {
             Self::VocalTract(_) => ModuleType::VocalTract,
             Self::Fof(_) => ModuleType::Fof,
             Self::SidOscillator(_) => ModuleType::SidOscillator,
+            Self::SpatialPanner(_) => ModuleType::SpatialPanner,
         }
     }
 
@@ -1046,6 +1057,7 @@ impl Param {
             Self::VocalTract(p) => p.name(),
             Self::Fof(p) => p.name(),
             Self::SidOscillator(p) => p.name(),
+            Self::SpatialPanner(p) => p.name(),
         }
     }
 
@@ -1125,6 +1137,7 @@ impl Param {
             Self::VocalTract(p) => p.as_f32(),
             Self::Fof(p) => p.as_f32(),
             Self::SidOscillator(p) => p.as_f32(),
+            Self::SpatialPanner(p) => p.as_f32(),
         }
     }
 
@@ -1204,6 +1217,7 @@ impl Param {
             Self::VocalTract(p) => Self::VocalTract(p.with_f32(value)),
             Self::Fof(p) => Self::Fof(p.with_f32(value)),
             Self::SidOscillator(p) => Self::SidOscillator(p.with_f32(value)),
+            Self::SpatialPanner(p) => Self::SpatialPanner(p.with_f32(value)),
         }
     }
 }

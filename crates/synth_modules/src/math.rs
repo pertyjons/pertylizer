@@ -670,8 +670,9 @@ pub fn brightness_boost(harmonic_num: f32, brightness: f32) -> f32 {
 /// Calculate early reflection delay times using image-mirror technique.
 /// Returns an array of (delay_samples, gain) pairs for the first 6 reflections.
 /// Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Effects/74-early-echo-s-with-image-mirror-technique.rst
-/// Note: room dimensions use raw f32 (meters) because `Meters` is in synth_awe,
-/// not in synth_core which this crate depends on.
+/// Note: room dimensions use raw f32 (meters) here for the plain image-mirror
+/// helper; the `Meters`/`Position3` newtypes (in synth_core) are used by the
+/// spatial modules that need typed geometry.
 pub fn early_reflection_taps(
     room_width_m: f32,
     room_depth_m: f32,

@@ -225,7 +225,7 @@ pub struct OfflineEngineSession {
     /// no prior voices to drain).
     first_call_done: bool,
     /// Which optional signal stages this session reconstructs (master/return
-    /// effects, AWE). Fixed at construction so every `render_range` call on the
+    /// effects). Fixed at construction so every `render_range` call on the
     /// session — including the per-track soloed renders — uses the same scope.
     scope: AnalysisScope,
     /// Master effect chain captured from the live engine at construction time.
@@ -533,13 +533,6 @@ impl OfflineEngineSession {
                 &mut self.handle,
                 &self.master_effect_snapshot[..prefix],
                 &mut warnings,
-            );
-        }
-        if self.scope.awe {
-            warnings.push(
-                "include_awe requested but AWE room simulation is not yet reconstructed in \
-                 offline analysis renders — the result excludes AWE."
-                    .to_string(),
             );
         }
 
