@@ -577,3 +577,131 @@ enough to be driven by an actual observed symptom. Ordered by likely impact.
   lowpass or sample-rate linear ramp) in oscillators, amplifiers, and filters
   guarantees smooth transitions. An **audible-quality** fix (effectively a small
   feature). **Trigger: when you hear clicks on cutoff/CV moves.**
+
+---
+
+## 6. Future features (harvested from retired plan docs)
+
+> **Consolidated 2026-07-13.** The standalone design/status docs that used to live
+> under `plans/` were folded in here. **Shipped/done plan docs were deleted** —
+> their full text is recoverable via `git log --follow -- plans/<file>.md`; only
+> their remaining open work is captured below. **Three not-yet-started design docs
+> are KEPT as files** and indexed in §6.1 (open them for the full design).
+
+### 6.1 Kept design docs (not started — full design lives in the file)
+
+- [ ] **AWE decomposition — dissolve AWE into the effect-module graph.**
+  `plans/awe-decomposition-plan.md` (design sketch, on hold, no code). Replace the
+  AWE monolith with a per-voice `SpatialPanner` PolyModule (ER + spatializer,
+  mono→L/R, mandatory param smoothing), an evolved `Reverb` (FDN-tail parity),
+  reused `ModalResonator`/`Convolver`, and an **engine-side automatable "Room" macro**
+  for coherence (decision A: DSP-independent modules linked at the parameter layer).
+  Phased so AWE stays alive in parallel until phase 5 retires the `synth_awe`
+  special-case wiring + `awe_view.rs`.
+- [ ] **Cable routing / layering / aesthetics.** `plans/cable-routing.md` (PROPOSED).
+  Opt-in cubic-Bézier hanging cables (vs orthogonal), foreground transparent
+  rendering, source→destination colour gradients, selection focus-dimming, and
+  real-time telemetry-driven flow particles (CV speed/direction, audio RMS density,
+  gate burst). Touches `theme.rs`, `cable.rs`, `wiring.rs` + an `AtomicF32`
+  port-level feed from the audio thread.
+- [ ] **SID seq per-step frequency + `Note.legato` doc fix.**
+  `plans/sid-seq-legato-and-step-freq.md` (revised draft). (a) **Doc fix:** reword
+  `Note.legato` (`synth_sequencer/src/note.rs:274`) to *continuation-of-predecessor*
+  semantics — the engine ties on the successor (shipped + tested); the doc is the
+  odd one out and a client mis-exported by following it. (b) **Feature:** per-step
+  frequency for the SID waveform sequence (16 `seq_step_freq_i` params + a
+  `seq_freq_mask` enable bitmask, all-0 = track pitch) so far-from-pitch noise/drum
+  steps (Hubbard) render correctly.
+
+### 6.2 Note Grid — deferred earned-escalation
+*(from `plans/note-grid.md`; Note Grid shipped + squash-merged to main 2026-07-13 @`65f12900`. Full plan in git history.)*
+
+- [ ] **DAG (branch/merge) escalation** — relax the linear-stream validation; add
+  `KeyZoneSplitter`/`VelocitySplitter`/`RoundRobin` + merge semantics
+  (connection-sorted concat under the buffer cap). Data model is already
+  graph-shaped (no serde change); the hard part is **held-pitch resolution through a
+  *branched* upstream** (`expand_pitch` in `note_processor.rs` today assumes one
+  linear upstream chain). Value is low (single terminal output, no cross-instrument
+  routing) — **only if real usage shows branching is needed**, not scheduled.
+- [ ] **Track scope** (`SequencerTrack::note_graph`) — graph over the merged stream
+  of all placements on a track: tails across pattern boundaries + the future
+  live-input path (Ableton/Bitwig model). Costs: cross-placement look-back source
+  material + a freeze-semantics answer.
+- [ ] **`NoteScriptGenerator`** (YAMS `note_event` + `emit`) — statement-only 1-to-N
+  generation (`emit(pitch,vel,dur[,delay])`, `MAX_SCRIPT_EMITS=16`), purity via the
+  same bounded look-back idiom as Delay/Ratchet. Real language-surface work
+  (parser/compiler/VM/`yamsfmt`/docs); may need a `StreamOnset`-style anti-stall cap.
+- [ ] **`MicrotonalTuner` note-graph module** — per-note detune field + event
+  plumbing. Related to §2.2 (alternative tunings) but delivered as a Note Grid node.
+- [ ] **Misc later**: per-reference overrides, per-scope `Vec` of graphs,
+  cross-track routing, cable telemetry, per-node tracker taps.
+
+### 6.3 SID oscillator — open fidelity follow-ups
+*(from `plans/sid-oscillator-module.md`; the `sid` module shipped to main @`d0d872f3`. Full spec + expert reviews in git history.)*
+
+- [ ] **Oversampled ring/sync bus (ring-mod HF fidelity).** Ring sideband
+  *positions* are exact but broadband `compare_spectra` distance holds ~16.9 dB vs
+  reSID — pinned to **host-rate ring-edge jitter (~22.7 µs)**: the neighbour's `msb`
+  is read once per host sample, outside the oversample loop. Fix needs the source
+  `sid` to expose its MSB at the 4× rate (or the sub-sample crossing fraction) — a
+  cross-module `msb`-port contract change, out of scope for a local
+  `sid_oscillator.rs` edit. The one-sided PolyBLEP fold-flip already shipped (keep
+  it). *(Same item as the ring note under §6.6.)*
+- [ ] **Golden reSID A/B acceptance re-run.** Re-run the §11 reSID matrix (the
+  sid-analyzer harness) as the acceptance gate for the shipped option-C combine /
+  ring / `DcBlock` changes.
+
+### 6.4 AccessKit / egui-inspection — deferred
+*(from `plans/accesskit-custom-widgets.md`; shipped to main @`c7372dae`, container-level exposure across all views. Full inventory in git history.)*
+
+- [ ] **Per-element canvas drivability.** v1 exposed the big canvases (piano roll,
+  tracker, arrangement, keyboard, AWE, sample) only at *container* level. Making
+  individual notes / tracker cells / keys / clips clickable+queryable via MCP needs a
+  per-element `ui.interact(sub_rect, …)` per view — a larger, view-specific effort.
+- [ ] **Cables as AccessKit nodes.** Cables are pure paint (no `Response`); v1
+  encodes topology on the port labels. A cable-as-node pass (via the `expose_painted`
+  escape hatch + AccessKit relations) is optional follow-up.
+
+### 6.5 Sampling & recording backlog
+*(from `plans/sampling-plan.md`; feature shipped through v0.262.0. Full P1/P2/P3 backlog + RT-review notes in git history. Related: §2.1.)*
+
+- [ ] **P1 — MCP recording/monitoring reach the engine.** Engine-side sample cache
+  (`LoadSample`/`UnloadSample`, with the cache on the *control* side so the audio
+  thread never hashes by `SampleId`); a **sample-data trash ring** for
+  `UnloadSample`/replace (so the last `Arc` drop/`free()` never lands on the audio
+  thread — like `automation_trash`/`script_trash`); `pending_sample_ops` in
+  `McpSharedState`; wire `list_input_devices`/`get_input_state` to the real backend;
+  MCP `set_input_device`/`start|stop_monitoring`/`start|stop_recording`. (Device
+  ownership lives in the `pertylizer` app crate — the reason these are GUI-side.)
+- [ ] **P1 — recording-drain thread.** Drain the input ring on a dedicated
+  low-priority thread, not the ~60 fps GUI thread (a GUI stall overflows the ~5.5 s
+  ring; also enables headless/MCP-only recording). The audio thread is already
+  RT-safe — this is purely about who drains.
+- [ ] **P2 — sample UX/DSP.** Draggable crop/loop handles + preview playback cursor;
+  zero-crossing snap (match slope *sign*, not just proximity); loop crossfade
+  (static/baked default, keep the original alongside; dynamic dual-read only if loop
+  points are modulated); cubic-Hermite interpolation (+ oversample-in-RAM for *short*
+  samples only); mini waveform in the Rack; sample-usage tracking; undo/redo for edits.
+- [ ] **P3 — stretch.** Sinc resampling, mipmaps for pitch-up anti-alias, disk
+  streaming for large files, multi-sample zones (pull the `SampleZone` data model
+  earlier to avoid a voice/GUI rewrite), slicing, timestretch, granular
+  `GrainSource::Sample`, audio track in the sequencer.
+
+### 6.6 Pertylizer MCP gaps
+*(from `plans/pertylizer-mcp-feedback.md`; the live running log continues in the sid-analyzer session memory. Only Pertylizer-side open items harvested.)*
+
+- [ ] **`compare_spectra` energy-masked distance (option b).** Restrict the distance
+  to frames where the *target* has energy; whole-window and 500 ms RMS both failed to
+  rank candidates on sparse staccato material where an external numpy energy-mask
+  ranked cleanly. Needs frame-aware masking in `compare()` (currently one aggregate
+  spectrum per source). (Option a — the `voicing_penalty_db` field — already shipped.)
+- [ ] **Arpeggiator free-running / continuous-phase mode.** The `Arpeggiator`
+  NoteProcessor restarts its offset cycle on every note onset, so a note shorter than
+  one full cycle never reaches the trailing offsets (SID short-stab arps drop chord
+  tones). Add a mode where the offset index derives from absolute transport position
+  (or a per-instrument running counter). Anchors: `emit_custom`/`step_onset` in
+  `synth_sequencer/src/note_processor.rs`.
+- [ ] **`render_to_wav` tail truncation.** `render_range` truncates any voice still
+  ringing past the window edge, so offline `analyze_*` can't surface over-hang/tail
+  artifacts that live playback plays. Render a short release-tail past the window, or
+  add a flag to capture/analyze the LIVE playback audio.
