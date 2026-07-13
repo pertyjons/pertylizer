@@ -21,11 +21,11 @@ use std::sync::Arc;
 
 use synth_core::script::{
     AudioBindings, AudioInputChannel, BoundScript, EvalContext, RegisterFile, SCRIPT_PRNG_SEED,
-    ScriptContext, ScriptInput,
+    ScriptContext, ScriptInput, ScriptParams, knob_descriptor,
 };
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ModuleType, Param,
-    PolyModule, PortDescriptor, PortName, ProcessContext,
+    PolyModule, PortDescriptor, PortName, ProcessContext, ScriptParam,
 };
 use synth_core::{MidiNote, Velocity};
 
@@ -61,6 +61,9 @@ pub struct AudioScript {
     /// `true` until the first block of the note has been processed — drives the
     /// `first_sample` one-shot. Set by `note_on`, cleared after the first block.
     first_block: bool,
+    /// User-declared knob store (values + mod-offsets), remapped in place from the
+    /// installed program's `param` decls on `set_script`.
+    knobs: ScriptParams,
 }
 
 impl AudioScript {
@@ -75,6 +78,7 @@ impl AudioScript {
             out_l: Vec::new(),
             out_r: Vec::new(),
             first_block: true,
+            knobs: ScriptParams::new(),
         }
     }
 
@@ -104,7 +108,7 @@ impl Default for AudioScript {
 
 impl Describable for AudioScript {
     fn descriptor(&self) -> ModuleDescriptor {
-        ModuleDescriptor::new("audio_script", "Audio Script")
+        let mut desc = ModuleDescriptor::new("audio_script", "Audio Script")
             .description(
                 "Audio-rate scripted DSP (one YAMS eval per sample): waveshaper, bitcrusher, \
                  ring-mod, custom IIR. Stereo in/out.",
@@ -129,7 +133,16 @@ impl Describable for AudioScript {
             .port(
                 PortDescriptor::audio_output(PortName::OUT_R, "Out R")
                     .description("Right audio output"),
-            )
+            );
+        // User-declared knobs from the installed program (per-instance), at their
+        // current stored value. Modulatable and automatable like any real param.
+        if let Some(script) = &self.script {
+            for decl in &script.params {
+                let value = self.knobs.get(decl.name).unwrap_or(decl.default);
+                desc = desc.parameter(knob_descriptor(decl, value));
+            }
+        }
+        desc
     }
 }
 
@@ -199,16 +212,48 @@ impl PolyModule for AudioScript {
         }
     }
 
-    fn set_param(&mut self, _param: Param) {
-        // No numeric parameters — the program is installed via `set_script`.
+    fn set_param(&mut self, param: Param) {
+        // Only the script-declared knobs are settable; the program is installed
+        // via `set_script`. An undeclared knob name is silently ignored.
+        if let Param::Script(ScriptParam::Knob(name, value)) = param {
+            self.knobs.set(name, value);
+        }
     }
 
-    fn get_param(&self, _param: &Param) -> Option<f32> {
-        None
+    fn get_param(&self, param: &Param) -> Option<f32> {
+        if let Param::Script(ScriptParam::Knob(name, _)) = param {
+            self.knobs.get(*name)
+        } else {
+            None
+        }
     }
 
     fn get_params(&self) -> Vec<Param> {
-        Vec::new()
+        self.knobs.as_params()
+    }
+
+    fn set_mod_offset(&mut self, target: &str, value: f32) {
+        self.knobs.add_offset(target, value);
+    }
+
+    fn clear_mod_offsets(&mut self) {
+        self.knobs.clear_offsets();
+    }
+
+    fn set_param_override(&mut self, param: Param) {
+        // Sequencer automation of a declared knob: a transient override on top of
+        // the stored base (cleared on transport stop).
+        if let Param::Script(ScriptParam::Knob(name, value)) = param {
+            self.knobs.set_override(name, value);
+        }
+    }
+
+    fn clear_param_overrides(&mut self) {
+        self.knobs.clear_overrides();
+    }
+
+    fn effective_param(&self, name: PortName) -> Option<f32> {
+        self.knobs.effective(name)
     }
 
     fn module_type(&self) -> ModuleType {
@@ -256,7 +301,14 @@ impl PolyModule for AudioScript {
                 self.sources.clear();
             }
         }
-        std::mem::replace(&mut self.script, script)
+        let replaced = std::mem::replace(&mut self.script, script);
+        // Remap the knob store from the new program's declared params — in place,
+        // RT-safe — keeping a surviving knob's value across an edit.
+        match &self.script {
+            Some(s) => self.knobs.remap(&s.params),
+            None => self.knobs.clear(),
+        }
+        replaced
     }
 
     fn set_audio_block_sources(&mut self, sources: &[f32]) {
@@ -380,10 +432,10 @@ mod tests {
             Some(bound(
                 vec![
                     Op::PushSource(0),
-                    Op::StoreAudioOut(0),
+                    Op::StoreOut(0),
                     Op::PushSource(0),
                     Op::Neg,
-                    Op::StoreAudioOut(1),
+                    Op::StoreOut(1),
                 ],
                 vec![],
                 vec![ScriptInput::AudioIn(AudioInputChannel::Left)],

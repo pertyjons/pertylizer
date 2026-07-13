@@ -69,9 +69,13 @@ pub struct ScriptEditorState {
     pub show_help: bool,
     /// When set, the draft is compiled with the audio-rate dialect (the
     /// per-sample `AudioScript` module): `in`/`in_l`/`in_r`, `first_sample`, and
-    /// `out.left`/`out.right` are unlocked. Control-rate hosts (Mod Matrix /
-    /// Script) leave this `false`, matching `session::compile_mod_script`.
+    /// `out.left`/`out.right` are unlocked. The Mod Matrix `scr` scripts leave both
+    /// this and [`Self::control_ports`] `false`, matching `session::compile_mod_script`.
     pub audio_rate: bool,
+    /// When set, the draft is compiled with the control-ports dialect (the
+    /// `Script` module): the numbered CV ports `in1..in4` (read) and `out1..out4`
+    /// (written) are unlocked. Mutually exclusive with [`Self::audio_rate`].
+    pub control_ports: bool,
 }
 
 impl ModulePanelState {

@@ -150,6 +150,23 @@ fn render(program: &Program, comments: &[Comment], lines: &LineMap) -> String {
             text: format!("state {} = {}", s.name.name, render_expr(&s.init)),
         });
     }
+    for p in &program.params {
+        let mut text = format!("param {} = {}", p.name.name, render_expr(&p.default));
+        if let Some((min, max)) = &p.range {
+            text.push_str(&format!(" [{}, {}]", render_expr(min), render_expr(max)));
+        }
+        if let Some(label) = &p.label {
+            text.push_str(&format!(" {label:?}"));
+        }
+        if let Some(tooltip) = &p.tooltip {
+            text.push_str(&format!(" {tooltip:?}"));
+        }
+        stmts.push(Stmt::Binding {
+            sline: lines.line_of(p.span.start),
+            eline: lines.line_of(p.span.end),
+            text,
+        });
+    }
     // `src` and `arr` are separate AST lists but share the header block; emit them
     // in source order so the comment-attachment loop below (which walks the
     // line-sorted comments with a single forward cursor) keeps seeing
@@ -177,14 +194,16 @@ fn render(program: &Program, comments: &[Comment], lines: &LineMap) -> String {
     // Output statement(s): a mono `out`, or the `out.left`/`out.right` pair.
     let out_start = stmts.len();
     for o in &program.outputs {
-        let kw = match o.channel {
-            OutChannel::Mono => "out",
-            OutChannel::Left => "out.left",
-            OutChannel::Right => "out.right",
-            OutChannel::Pitch => "out.pitch",
-            OutChannel::Vel => "out.vel",
-            OutChannel::Dur => "out.dur",
-            OutChannel::Gate => "out.gate",
+        let kw: std::borrow::Cow<str> = match o.channel {
+            OutChannel::Mono => "out".into(),
+            OutChannel::Left => "out.left".into(),
+            OutChannel::Right => "out.right".into(),
+            OutChannel::Pitch => "out.pitch".into(),
+            OutChannel::Vel => "out.vel".into(),
+            OutChannel::Dur => "out.dur".into(),
+            OutChannel::Gate => "out.gate".into(),
+            // Numbered CV output ports render bare: `out1`..`out4`.
+            OutChannel::Out(n) => format!("out{}", n + 1).into(),
         };
         stmts.push(Stmt::Body {
             sline: lines.line_of(o.span.start),
@@ -566,5 +585,32 @@ mod tests {
             "out.pitch = note_pitch + 12\nout.vel = note_vel * in1\n"
         );
         idempotent("out.pitch = note_pitch + 12\nout.dur = note_dur\nout.gate = 1");
+    }
+
+    #[test]
+    fn numbered_output_ports_format_and_round_trip() {
+        // Control-ports `out1..out4` render bare (no dot), like every numbered
+        // port; the formatter is dialect-agnostic so this is pure text.
+        assert_eq!(
+            fmt("out1=in1*in2\nout2=in3+in4"),
+            "out1 = in1 * in2\nout2 = in3 + in4\n"
+        );
+        idempotent("out1 = in1\nout2 = in2\nout3 = in3\nout4 = in4");
+    }
+
+    #[test]
+    fn param_declarations_render_and_round_trip() {
+        // A `param` decl renders in the header with canonical spacing; the
+        // optional `[min, max]` range and the label/tooltip strings round-trip.
+        let out = fmt("param drive=0.5\nout1=in1*drive");
+        assert!(out.contains("param drive = 0.5"), "got: {out}");
+        let ranged = fmt("param cutoff=1000 [20,20000] \"Cutoff\" \"tip\"\nout1=cutoff");
+        assert!(
+            ranged.contains("param cutoff = 1000 [20, 20000] \"Cutoff\" \"tip\""),
+            "got: {ranged}"
+        );
+        // Formatting the canonical output again is a no-op.
+        assert_eq!(fmt(&ranged), ranged);
+        assert_eq!(fmt(&out), out);
     }
 }

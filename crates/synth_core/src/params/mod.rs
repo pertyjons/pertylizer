@@ -45,6 +45,7 @@ mod pitch_tracker;
 mod ring_mod;
 mod sampler;
 mod scalar_impls;
+mod script;
 mod sid_oscillator;
 mod signal_monitor;
 mod spectrum_analyzer;
@@ -106,6 +107,7 @@ pub use physical::{
 pub use pitch_tracker::PitchTrackerParam;
 pub use ring_mod::RingModParam;
 pub use sampler::{PlayDirection, SampleId, SamplerParam, SamplerPlayMode};
+pub use script::ScriptParam;
 pub use sid_oscillator::{
     SID_FREQ_REG_MAX, SID_PW_REG_MAX, SID_SEQ_STEPS, SidClock, SidModel, SidOscillatorParam,
     SidQuality,
@@ -408,6 +410,18 @@ impl ModuleType {
     #[must_use]
     pub fn script_is_audio_rate(&self) -> bool {
         matches!(self, Self::AudioScript)
+    }
+
+    /// Whether this module's YAMS script compiles in the **control-ports** dialect
+    /// (the `Script` module): numbered CV ports `in1..in4` (read) and `out1..out4`
+    /// (written), one program. Distinct from the Mod Matrix's `scr` scripts (no
+    /// ports, single `out`) and the audio-rate `AudioScript`. Single source of
+    /// truth for the dialect decision, shared by every script install/compile site
+    /// (`session::set_mod_script`, the offline renderer, the GUI editor).
+    #[inline]
+    #[must_use]
+    pub fn script_uses_control_ports(&self) -> bool {
+        matches!(self, Self::Script)
     }
 
     // ========================================================================
@@ -800,6 +814,9 @@ pub enum Param {
     // Chip-accurate SID waveform generator
     SidOscillator(SidOscillatorParam),
     SpatialPanner(SpatialPannerParam),
+    // Script modules' user-declared knobs (dynamic, name-keyed via an interned
+    // PortName so `Param` stays `Copy`). Shared by `Script` and `AudioScript`.
+    Script(ScriptParam),
 }
 
 impl Param {
@@ -897,6 +914,7 @@ impl Param {
             (Self::Fof(a), Self::Fof(b)) => a.same_kind(b),
             (Self::SidOscillator(a), Self::SidOscillator(b)) => a.same_kind(b),
             (Self::SpatialPanner(a), Self::SpatialPanner(b)) => a.same_kind(b),
+            (Self::Script(a), Self::Script(b)) => a.same_kind(b),
             _ => false,
         }
     }
@@ -978,6 +996,10 @@ impl Param {
             Self::Fof(_) => ModuleType::Fof,
             Self::SidOscillator(_) => ModuleType::SidOscillator,
             Self::SpatialPanner(_) => ModuleType::SpatialPanner,
+            // A script knob is shared by `Script` and `AudioScript`; the concrete
+            // module is always resolved by `ModuleId`, never by this discriminant,
+            // so it reports the primary `Script` type.
+            Self::Script(_) => ModuleType::Script,
         }
     }
 
@@ -1058,6 +1080,7 @@ impl Param {
             Self::Fof(p) => p.name(),
             Self::SidOscillator(p) => p.name(),
             Self::SpatialPanner(p) => p.name(),
+            Self::Script(p) => p.name(),
         }
     }
 
@@ -1138,6 +1161,7 @@ impl Param {
             Self::Fof(p) => p.as_f32(),
             Self::SidOscillator(p) => p.as_f32(),
             Self::SpatialPanner(p) => p.as_f32(),
+            Self::Script(p) => p.as_f32(),
         }
     }
 
@@ -1218,6 +1242,7 @@ impl Param {
             Self::Fof(p) => Self::Fof(p.with_f32(value)),
             Self::SidOscillator(p) => Self::SidOscillator(p.with_f32(value)),
             Self::SpatialPanner(p) => Self::SpatialPanner(p.with_f32(value)),
+            Self::Script(p) => Self::Script(p.with_f32(value)),
         }
     }
 }

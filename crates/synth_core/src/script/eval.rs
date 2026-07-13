@@ -74,7 +74,7 @@ pub struct AudioBindings {
 const OUT_SLOTS: usize = 4;
 
 /// Output slots captured while running one evaluation. Each slot is `Some(v)`
-/// once an `out.<member>` statement has written it (`Op::StoreAudioOut`), and
+/// once an `out.<member>` statement has written it (`Op::StoreOut`), and
 /// `None` otherwise — a bare `out = expr` writes nothing here and leaves its
 /// value on the value stack, so `eval_block` falls back to duplicating the stack
 /// top to both unwritten audio channels, and `eval_note` reports unwritten note
@@ -188,6 +188,34 @@ impl CompiledScript {
             dur: out.slots[2],
             gate: out.slots[3],
         }
+    }
+
+    /// Evaluate a **control-ports**-dialect script (the `Script` module) for one
+    /// control block, capturing up to four outputs `out1..out4`
+    /// (`Op::StoreOut(0..3)`). The control-rate twin of [`eval_note`](Self::eval_note):
+    /// `sources` holds the voice-resolved block constants plus the `in1..in4` port
+    /// values indexed by source register, `regs` is this voice's persistent state.
+    ///
+    /// Slot `i` is `Some(v)` when the program wrote `out{i+1}`; an unwritten higher
+    /// slot stays `None` (the module emits `0` / a silent port). Slot 0 additionally
+    /// falls back to the value-stack top, so a bare `out = expr` (which leaves its
+    /// value on the stack rather than storing) still yields `out1`. Real-time safe.
+    #[must_use]
+    pub fn eval_multi(
+        &self,
+        sources: &[f32],
+        regs: &mut RegisterFile,
+        ctx: &EvalContext,
+    ) -> [Option<f32>; OUT_SLOTS] {
+        let mut stack = Stack::new();
+        let mut locals = [0.0f32; MAX_LOCALS];
+        let mut out = OutCapture::default();
+        self.run(sources, regs, ctx.dt(), &mut stack, &mut locals, &mut out);
+        let mut slots = out.slots;
+        if slots[0].is_none() {
+            slots[0] = Some(finite_or_zero(stack.top()));
+        }
+        slots
     }
 
     /// Run the straight-line program once over `sources`, leaving the result on
@@ -455,7 +483,7 @@ impl CompiledScript {
                     let v = stack.pop();
                     regs.state_set(i, v); // layer-2 sanitize: NaN/Inf → 0
                 }
-                Op::StoreAudioOut(slot) => {
+                Op::StoreOut(slot) => {
                     let v = finite_or_zero(stack.pop());
                     if let Some(cell) = out.slots.get_mut(slot as usize) {
                         *cell = Some(v);
@@ -477,7 +505,7 @@ impl CompiledScript {
     /// one-shot. `ctx` carries the audio sample rate (see [`EvalContext::audio`]).
     ///
     /// Output: each sample's left/right is the `out.left` / `out.right` value
-    /// (`Op::StoreAudioOut`) when the program writes them, else the bare
+    /// (`Op::StoreOut`) when the program writes them, else the bare
     /// `out = expr` value (the value-stack top) duplicated to both channels.
     /// `first_block` is `true` only for the note's very first block, so
     /// `first_sample` fires exactly once at global sample 0. Real-time safe.
@@ -1015,15 +1043,15 @@ mod tests {
 
     #[test]
     fn eval_block_multi_out_writes_independent_channels() {
-        // out.left = in;  out.right = -in  (via StoreAudioOut).
-        //   PushSource(0); StoreAudioOut(0)   -> left = in
-        //   PushSource(0); Neg; StoreAudioOut(1) -> right = -in
+        // out.left = in;  out.right = -in  (via StoreOut).
+        //   PushSource(0); StoreOut(0)   -> left = in
+        //   PushSource(0); Neg; StoreOut(1) -> right = -in
         let code = [
             Op::PushSource(0),
-            Op::StoreAudioOut(0),
+            Op::StoreOut(0),
             Op::PushSource(0),
             Op::Neg,
-            Op::StoreAudioOut(1),
+            Op::StoreOut(1),
         ];
         let bindings = AudioBindings {
             in_left: Some(0),
@@ -1086,7 +1114,7 @@ mod tests {
             Op::PushSource(0),
             Op::PushConst(0),
             Op::Add,
-            Op::StoreAudioOut(0),
+            Op::StoreOut(0),
         ];
         let script = CompiledScript::new(code.to_vec(), vec![12.0], 1, 0);
         let mut regs = RegisterFile::new(0, SEED);
@@ -1102,13 +1130,13 @@ mod tests {
         // Write all four slots from four distinct constants.
         let code = [
             Op::PushConst(0),
-            Op::StoreAudioOut(0), // pitch
+            Op::StoreOut(0), // pitch
             Op::PushConst(1),
-            Op::StoreAudioOut(1), // vel
+            Op::StoreOut(1), // vel
             Op::PushConst(2),
-            Op::StoreAudioOut(2), // dur
+            Op::StoreOut(2), // dur
             Op::PushConst(3),
-            Op::StoreAudioOut(3), // gate
+            Op::StoreOut(3), // gate
         ];
         let script = CompiledScript::new(code.to_vec(), vec![64.0, 0.5, 120.0, 0.9], 0, 0);
         let mut regs = RegisterFile::new(0, SEED);
@@ -1122,7 +1150,7 @@ mod tests {
     #[test]
     fn eval_note_sanitizes_nan_to_zero_on_store() {
         // A NaN written to a field is stored as 0 (never leaks NaN to the consumer).
-        let code = [Op::PushConst(0), Op::StoreAudioOut(1)];
+        let code = [Op::PushConst(0), Op::StoreOut(1)];
         let script = CompiledScript::new(code.to_vec(), vec![f32::NAN], 0, 0);
         let mut regs = RegisterFile::new(0, SEED);
         let outs = script.eval_note(&[], &mut regs);
@@ -1157,5 +1185,38 @@ mod tests {
         assert!(approx(l[1], 0.0));
         assert!(approx(l[2], 0.2));
         assert!(approx(l[3], 0.5));
+    }
+
+    // ---- control-ports dialect: `eval_multi` ------------------------------
+
+    #[test]
+    fn eval_multi_captures_written_ports_only() {
+        // out1 = 0.5 (slot 0); out3 = -0.25 (slot 2); out2/out4 unwritten → None.
+        let code = [
+            Op::PushConst(0),
+            Op::StoreOut(0),
+            Op::PushConst(1),
+            Op::StoreOut(2),
+        ];
+        let script = CompiledScript::new(code.to_vec(), vec![0.5, -0.25], 0, 0);
+        let mut regs = RegisterFile::new(0, SEED);
+        let outs = script.eval_multi(&[], &mut regs, &EvalContext::new(CR));
+        assert_eq!(outs[0], Some(0.5));
+        assert_eq!(outs[1], None);
+        assert_eq!(outs[2], Some(-0.25));
+        assert_eq!(outs[3], None);
+    }
+
+    #[test]
+    fn eval_multi_bare_out_falls_back_to_stack_top() {
+        // A bare `out = expr` leaves its value on the stack (no store); slot 0
+        // must fall back to it so `out` still means `out1`.
+        let bare = CompiledScript::new(vec![Op::PushConst(0)], vec![0.7], 0, 0);
+        let mut regs = RegisterFile::new(0, SEED);
+        let outs = bare.eval_multi(&[], &mut regs, &EvalContext::new(CR));
+        assert_eq!(outs[0], Some(0.7));
+        assert_eq!(outs[1], None);
+        assert_eq!(outs[2], None);
+        assert_eq!(outs[3], None);
     }
 }

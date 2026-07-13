@@ -519,20 +519,24 @@ impl SynthBridge for AppSynthBridge {
                     outputs.push(MATRIX_VIRTUAL_PORT.to_string());
                 }
 
-                // Script (`scr`) modules: surface every declared output port
-                // (`out1`..`out8`) even when unconnected, and read back the
-                // installed YAMS scripts per slot — symmetric with
+                // Script (`scr`) modules: surface every declared CV port — 4 inputs
+                // (`in1`..`in4`) and 4 outputs (`out1`..`out4`) — even when
+                // unconnected, and read back the installed program — symmetric with
                 // `set_mod_matrix_script`, so a client can inspect/diff a Script
                 // module it just configured.
                 let is_script = m.module_type == ModuleType::Script;
                 let scripts = if is_script {
                     if let Some(desc) = descriptor.as_ref() {
                         for p in &desc.ports {
-                            if p.direction == PortDirection::Output {
-                                let name = p.name.as_str().to_string();
-                                if !outputs.contains(&name) {
+                            let name = p.name.as_str().to_string();
+                            match p.direction {
+                                PortDirection::Output if !outputs.contains(&name) => {
                                     outputs.push(name);
                                 }
+                                PortDirection::Input if !inputs.contains(&name) => {
+                                    inputs.push(name);
+                                }
+                                _ => {}
                             }
                         }
                     }
@@ -685,10 +689,10 @@ impl SynthBridge for AppSynthBridge {
 
         // The tool's `slot` is 1-based (matching the routings report); the engine
         // is 0-based. Range-check against the real slot count for this module
-        // type — a Script (`scr`) module has fewer slots than a Mod Matrix, so a
-        // too-large slot is rejected up front instead of being a silent no-op.
+        // type — a Script (`scr`) module is now a single program (slot 1 only),
+        // so a too-large slot is rejected up front instead of being a silent no-op.
         let max = match mid.module_type {
-            ModuleType::Script => synth_modules::script_module::SCRIPT_MODULE_OUTPUTS as u8,
+            ModuleType::Script => 1,
             _ => synth_core::MAX_MOD_MATRIX_SLOTS as u8,
         };
         if !(1..=max).contains(&slot) {

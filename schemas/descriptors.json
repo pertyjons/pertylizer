@@ -6106,7 +6106,7 @@
       }
     },
     "script": {
-      "description": "Scripted control signals — up to 8 YAMS slots, each on its own output port",
+      "description": "Write your own control module in YAMS: one program with 4 CV inputs (in1..in4) and 4 CV outputs (out1..out4). Wire cables into in1..in4 and out of out1..out4; read/write them by name in the script.",
       "name": "Script",
       "parameters": {}
     },

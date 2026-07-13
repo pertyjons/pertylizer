@@ -10,12 +10,16 @@ pub mod bound;
 pub mod bytecode;
 pub mod eval;
 pub mod host;
+pub mod knobs;
 
-pub use bound::{AudioInputChannel, BoundScript, NoteField, ScriptContext, ScriptInput};
+pub use bound::{
+    AudioInputChannel, BoundScript, NoteField, ScriptContext, ScriptInput, ScriptParamDecl,
+};
 pub use bytecode::{
     Builtin, CompiledScript, MAX_ARRAY_STORAGE, MAX_ARRAYS, MAX_INSTRUCTIONS, MAX_LOCALS,
-    MAX_NESTING_DEPTH, MAX_SOURCE_LEN, MAX_SOURCES, MAX_STACK, MAX_STATE, Op, finite_or_zero,
-    safe_clamp, safe_div,
+    MAX_NESTING_DEPTH, MAX_SOURCE_LEN, MAX_SOURCES, MAX_STACK, MAX_STATE, Op, SCRIPT_MAX_PARAMS,
+    finite_or_zero, safe_clamp, safe_div,
 };
 pub use eval::{AudioBindings, EvalContext, NoteOutputs, RegisterFile};
 pub use host::{SCRIPT_HOST_SLOTS, SCRIPT_PRNG_SEED, ScriptHost};
+pub use knobs::{ScriptParams, knob_descriptor};

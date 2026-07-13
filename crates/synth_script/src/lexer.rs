@@ -27,8 +27,14 @@ pub enum TokenKind {
     /// `state` — declares a persistent, author-addressable difference-equation
     /// cell (custom IIR/feedback memory).
     State,
+    /// `param` — declares a user-facing knob (`param drive = 0.5`), Script /
+    /// AudioScript modules only.
+    Param,
     // Identifier (not a keyword).
     Ident(String),
+    /// A double-quoted string literal (`"Drive"`), used for optional `param`
+    /// display label / tooltip. No escape sequences (v1).
+    Str(String),
     /// Numeric literal. `unit` is set for durations; `is_int` is true for a
     /// bare non-negative integer (used for module instance numbers like the
     /// `1` in `lfo-1`).
@@ -83,6 +89,7 @@ impl TokenKind {
             Self::Out => Some("out"),
             Self::Arr => Some("arr"),
             Self::State => Some("state"),
+            Self::Param => Some("param"),
             _ => None,
         }
     }
@@ -128,6 +135,7 @@ impl Lexer<'_> {
             match c {
                 b'\n' | b';' => self.lex_separator(start),
                 b'0'..=b'9' => self.lex_number(start),
+                b'"' => self.lex_string(start),
                 c if is_ident_start(c) => self.lex_ident(start),
                 c => self.lex_symbol(start, c),
             }
@@ -180,9 +188,39 @@ impl Lexer<'_> {
             "out" => TokenKind::Out,
             "arr" => TokenKind::Arr,
             "state" => TokenKind::State,
+            "param" => TokenKind::Param,
             _ => TokenKind::Ident(text.to_string()),
         };
         self.push(kind, start, self.pos);
+    }
+
+    /// Lex a double-quoted string literal (`"Drive"`) for an optional `param`
+    /// label / tooltip. No escapes and no multi-line strings (v1): a newline or
+    /// EOF before the closing quote is an "unterminated string" error, but a
+    /// best-effort [`TokenKind::Str`] with the text so far is still emitted so the
+    /// rest of the program keeps parsing (decision #9: collect, don't abort).
+    fn lex_string(&mut self, start: usize) {
+        self.pos += 1; // opening quote
+        let content_start = self.pos;
+        while let Some(c) = self.byte_at(self.pos) {
+            match c {
+                b'"' => {
+                    let text = self.src[content_start..self.pos].to_string();
+                    self.pos += 1; // closing quote
+                    self.push(TokenKind::Str(text), start, self.pos);
+                    return;
+                }
+                b'\n' => break,
+                _ => self.pos += 1,
+            }
+        }
+        // Unterminated (newline or EOF before the closing quote).
+        let text = self.src[content_start..self.pos].to_string();
+        self.diags.push(Diagnostic::error(
+            Span::new(start as u32, self.pos as u32),
+            "unterminated string literal",
+        ));
+        self.push(TokenKind::Str(text), start, self.pos);
     }
 
     fn lex_number(&mut self, start: usize) {

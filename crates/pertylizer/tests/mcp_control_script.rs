@@ -118,9 +118,10 @@ async fn set_mod_matrix_script_compiles_clears_and_validates() {
 
 #[test]
 fn script_module_readback_via_get_module_info() {
-    // §3.2: a Script (`scr`) module must expose its declared output ports
-    // (`out1`..`out8`) even when unconnected, plus the installed scripts per
-    // slot — symmetric with set_mod_matrix_script so a client can inspect/diff.
+    // §3.2: a Script (`scr`) module must expose its declared CV ports — 4 inputs
+    // (`in1`..`in4`) and 4 outputs (`out1`..`out4`) — even when unconnected, plus
+    // its installed program — symmetric with set_mod_matrix_script so a client can
+    // inspect/diff.
     // Needs a live (pumped) engine so the module reaches the shared graph that
     // get_module_info reads; the server-dispatch rig drops the engine.
     use pertylizer::mcp_bridge::AppSynthBridge;
@@ -167,8 +168,10 @@ fn script_module_readback_via_get_module_info() {
     // A Script module with one slot occupied — apply_patch installs the script.
     let mut patch = Patch::new("ScrReadback");
     let mut scr = ModuleBuilder::new(1, ModuleType::Script).build();
-    scr.scripts
-        .insert("1".to_string(), "out = velocity * 0.5".to_string());
+    scr.scripts.insert(
+        "1".to_string(),
+        "param drive = 0.5\nout = velocity * drive".to_string(),
+    );
     patch.add_module(scr);
     let _ = session.apply_patch(InstrumentId::FIRST, &patch);
     for _ in 0..16 {
@@ -188,9 +191,15 @@ fn script_module_readback_via_get_module_info() {
 
     assert!(
         info.output_ports.iter().any(|p| p == "out1")
-            && info.output_ports.iter().any(|p| p == "out8"),
-        "scr output ports out1..out8 must be listed even unconnected: {:?}",
+            && info.output_ports.iter().any(|p| p == "out4")
+            && !info.output_ports.iter().any(|p| p == "out5"),
+        "scr output ports out1..out4 must be listed even unconnected: {:?}",
         info.output_ports
+    );
+    assert!(
+        info.input_ports.iter().any(|p| p == "in1") && info.input_ports.iter().any(|p| p == "in4"),
+        "scr input ports in1..in4 must be listed even unconnected: {:?}",
+        info.input_ports
     );
     let scripts = info
         .scripts
@@ -199,16 +208,29 @@ fn script_module_readback_via_get_module_info() {
     assert_eq!(scripts[0].slot, 1);
     assert_eq!(scripts[0].output_port, "out1");
     assert_eq!(
-        scripts[0].source, "out = velocity * 0.5",
+        scripts[0].source, "param drive = 0.5\nout = velocity * drive",
         "installed source must round-trip"
     );
+    // The declared `param drive` surfaces as a discoverable module parameter
+    // (the descriptor cache-sync registered it into the session registry that
+    // get_module_info reads).
+    assert!(
+        info.parameters
+            .iter()
+            .any(|p| p.type_id.as_deref() == Some("drive")),
+        "declared knob 'drive' must appear in get_module_info parameters: {:?}",
+        info.parameters
+            .iter()
+            .map(|p| p.type_id.clone())
+            .collect::<Vec<_>>()
+    );
 
-    // §3.1: a Script module has only 8 slots, so a slot past 8 is rejected up
-    // front (not silently dropped at the engine like the old 1..=16 check did).
-    let err = bridge.set_mod_matrix_script(InstrumentId::FIRST.as_u64(), "scr-1", 9, "out = 1");
+    // §3.1: a Script module is now a single program (slot 1 only), so any slot
+    // past 1 is rejected up front (not silently dropped at the engine).
+    let err = bridge.set_mod_matrix_script(InstrumentId::FIRST.as_u64(), "scr-1", 2, "out1 = 1");
     assert!(
         err.is_err(),
-        "scr slot 9 must be rejected — only out1..out8 exist"
+        "scr slot 2 must be rejected — the Script module has one program (slot 1)"
     );
 }
 

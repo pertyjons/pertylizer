@@ -1536,6 +1536,26 @@ pub trait PolyModule: Describable + Send {
         None
     }
 
+    /// Evaluate a one-program **control-ports** script module (the `Script`
+    /// module) from externally-resolved `sources`, caching up to four outputs
+    /// (`out1..out4`) for [`process`](Self::process) to broadcast across their
+    /// port buffers. Unlike [`eval_script_slot`](Self::eval_script_slot) (one
+    /// value per rack slot, used by the Mod Matrix), this runs the module's single
+    /// program once into a 4-output capture. The voice resolves the block-constant
+    /// sources **and** the `in1..in4` port values first (holding `&graph`), then
+    /// calls this with `&mut module`. Default: no-op (not a control-ports script
+    /// module). Real-time safe.
+    fn eval_control_multi(&mut self, _sources: &[f32], _ctx: &crate::script::EvalContext) {}
+
+    /// The **effective value** (stored/automated base + this block's accumulated
+    /// mod-offset) of a script module's user-declared `param` knob, by interned
+    /// name. The voice reads it each block to fill the program's `LocalParam`
+    /// source register — the block-constant knob value the script sees. Default
+    /// `None` (not a script module, or no such knob). Real-time safe.
+    fn effective_param(&self, _name: PortName) -> Option<f32> {
+        None
+    }
+
     /// Set the stable per-(voice, module) PRNG seed base for this module's hosted
     /// scripts, re-seeding their state. Called once per voice at allocation, after
     /// the voice id is assigned. Default: no-op (the module hosts no scripts).

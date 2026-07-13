@@ -402,6 +402,46 @@ in `mcp_allocator_config.rs` drive the real engine.
   stale-`sr` bug class. The `Context` enum / `context_from_name` / resolver
   triangle was already guarded by `every_context_var_declares_catalog_membership`.
 
+### 2.7 Script-exposed params follow-ups
+*(from `plans/script-exposed-params.md`, IMPLEMENTED on branch `feat/script-exposed-params`
+— both parts landed, workspace green (dev + release), NOT merged/eyeballed. The `Script`
+module became a one-program **4 CV-in (`in1..in4`) / 4 CV-out (`out1..out4`)** node, and both
+`Script` and `AudioScript` gained user-declared `param` knobs — real descriptor params:
+GUI faceplate + mod-matrix dest + automation + save + cross-script `scr-1.drive` reads.)*
+
+- [ ] **In-app GUI eyeball (pending verification, not a bug).** The 4-in/4-out faceplate
+  ports, the ƒx editor's live control-ports status, and the declared-knob rendering are
+  wired + unit/integration-tested but never clicked through in the running app. Confirm: a
+  `param drive = 0.5` shows a **Drive** knob that changes the sound; the ƒx popup lists the
+  declared params; rewiring a cable into `in1` changes the read without editing the script;
+  editing a live script to add a `param` makes the knob appear with no audio glitch.
+- [ ] **Cross-script reads don't see automation overrides.** `resolve_param_source`
+  (`voice.rs`) reads another script's knob (`scr-1.drive`) as its *stored base* value via
+  `get_param` — the transient sequencer-automation override (and the per-block mod-offset,
+  deliberately) are excluded. So one script reading another's *automated* knob sees the
+  un-automated value. Minor v1 limitation; if it matters, route the read through the knob
+  store's effective-minus-offset value. **S**.
+- [ ] **Optional per-CV-port display labels (`in1 "rate"` / `out1 "pitch"`).** Deferred from
+  plan §2.A — the `param` string label/tooltip shipped, but the cosmetic per-port faceplate
+  labels did not; ports show bare `in1..in4` / `out1..out4`. Needs a small header-declaration
+  grammar addition (a bare `in1 "label"` statement) + carrying the label onto the port
+  descriptor (it must NOT change the port id, so no cable churn). **S–M**, purely cosmetic.
+- [ ] **Confirm `rebuild_instrument_preserve_automation` + a removed `param`.** Plan §6 open
+  question: editing a live script to *remove* a knob a lane was bound to should drop the
+  orphaned automation lane and warn, not panic. The store degrades (the knob vanishes from the
+  descriptor + the fixed arrays reindex), but the rebuild/automation interaction wasn't
+  specifically exercised — worth an in-app check.
+- [ ] **Built-in knob smoothing (`smooth()` / slew) for audio-rate params.** Plan §6: a
+  declared `param` is block-constant, so under fast automation/mod it *steps* at each block
+  boundary — audible on a steep `audio_script` knob (filter cutoff, gain). v1 leaves click-free
+  knobs to user-side per-sample smoothing in the script (`s = s + (drive - s) * 0.005` via a
+  `state` cell); a built-in `smooth(x, coeff)` helper (or a `param … smooth` modifier) would
+  remove the boilerplate. Defer unless the manual one-pole proves too fiddly.
+- [ ] **Unit keyword for `param` metadata.** v1 carries default + `[min,max]` + `"label"` +
+  `"tooltip"`; the `ParameterUnit` (Hz/dB/…), bipolar-vs-unipolar, and response curve are
+  deferred (default linear/unipolar). A later optional `param … unit hz` keyword maps a
+  recognized token → the `ParameterUnit` enum, else `None`. **S**.
+
 ---
 
 ## 3. UI & Visual Polish

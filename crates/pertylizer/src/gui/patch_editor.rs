@@ -252,28 +252,39 @@ struct ScriptSourceRefs {
 /// *changed* scripts, not all of them.
 type ScriptSourceCache = HashMap<(ModuleId, u8), (String, ScriptSourceRefs)>;
 
-/// Compile `src` (with the given audio/control dialect) and return its resolved
-/// source inputs. Empty for a blank or uncompilable script (the live editor
-/// already flags compile errors). Shared by every caller that walks a script's
-/// `inputs`, so the compile boilerplate lives in one place.
-fn compiled_script_inputs(src: &str, audio_rate: bool) -> Vec<synth_core::script::ScriptInput> {
+/// The YAMS compile dialect for a script-hosting module's editor / dep-graph
+/// compile, derived from the module type. Single source of truth is
+/// [`ModuleType::script_is_audio_rate`] / [`ModuleType::script_uses_control_ports`]
+/// (also what `session::compile_mod_script` uses for the real install).
+fn script_compile_opts(module_type: ModuleType) -> synth_script::CompileOptions {
+    synth_script::CompileOptions {
+        audio_rate: module_type.script_is_audio_rate(),
+        control_ports: module_type.script_uses_control_ports(),
+        ..synth_script::CompileOptions::default()
+    }
+}
+
+/// Compile `src` (with the given dialect) and return its resolved source inputs.
+/// Empty for a blank or uncompilable script (the live editor already flags
+/// compile errors). Shared by every caller that walks a script's `inputs`, so the
+/// compile boilerplate lives in one place.
+fn compiled_script_inputs(
+    src: &str,
+    opts: &synth_script::CompileOptions,
+) -> Vec<synth_core::script::ScriptInput> {
     if src.trim().is_empty() {
         return Vec::new();
     }
-    let opts = synth_script::CompileOptions {
-        audio_rate,
-        ..synth_script::CompileOptions::default()
-    };
-    let (program, _diags) = synth_script::compile(src, &opts);
+    let (program, _diags) = synth_script::compile(src, opts);
     // `into_bound` needs an owned source string only for persistence/inspection;
     // we read `inputs` and discard it, so an empty string is fine here.
     program.map_or_else(Vec::new, |p| p.into_bound(String::new()).inputs)
 }
 
 /// Collect the modules and macros a script reads as sources (`ScriptInput::Source`).
-fn extract_script_sources(src: &str, audio_rate: bool) -> ScriptSourceRefs {
+fn extract_script_sources(src: &str, module_type: ModuleType) -> ScriptSourceRefs {
     let mut refs = ScriptSourceRefs::default();
-    for input in compiled_script_inputs(src, audio_rate) {
+    for input in compiled_script_inputs(src, &script_compile_opts(module_type)) {
         match input {
             synth_core::script::ScriptInput::Source(SrcAddr::Module {
                 module_type,
@@ -386,8 +397,8 @@ impl PatchAnalysis {
 
             // Script-read sources (all three consumer kinds): each scripted slot's
             // YAMS text reads modules/macros that are invisible to the cable graph
-            // and the scalar addresses above. Compile once per changed slot (cached).
-            let audio_rate = id.module_type.script_is_audio_rate();
+            // and the scalar addresses above. Compile once per changed slot (cached),
+            // with the dialect the module's real install uses.
             for (slot, src) in &panel.slot_scripts {
                 // A disabled Mod Matrix slot routes nothing, so its script must not
                 // emit markers either — mirroring the scalar-address path above.
@@ -407,7 +418,10 @@ impl PatchAnalysis {
                 // Recompute only when the slot's script text changed; on a cache hit
                 // read the stored refs by reference (no per-frame Vec clone).
                 if !matches!(cache.get(&key), Some((cached_src, _)) if cached_src == src) {
-                    cache.insert(key, (src.clone(), extract_script_sources(src, audio_rate)));
+                    cache.insert(
+                        key,
+                        (src.clone(), extract_script_sources(src, id.module_type)),
+                    );
                 }
                 let refs = &cache[&key].1;
                 for (mid, name) in &refs.modules {
@@ -518,8 +532,12 @@ impl PatchAnalysis {
 /// feedback loop (LFO / macro / context sources can't). A script that fails to
 /// compile yields an empty set (the live editor already flags the compile error).
 fn script_output_refs(src: &str) -> HashSet<(ModuleId, u8)> {
-    // Feedback detection only concerns Script modules, which are control-rate.
-    script_refs_from_inputs(&compiled_script_inputs(src, false))
+    // Feedback detection only concerns Script modules — compile in their
+    // control-ports dialect so `in1..in4` / `out1..out4` don't break the compile.
+    script_refs_from_inputs(&compiled_script_inputs(
+        src,
+        &script_compile_opts(ModuleType::Script),
+    ))
 }
 
 /// The Script-module output slots referenced by an already-compiled script's
@@ -4080,54 +4098,93 @@ fn draw_script_slot_row(
     clicked
 }
 
+/// Render a script module's user-declared knob params (from its descriptor)
+/// generically, below the ƒx editor row — the same widgets every other module
+/// uses, so a `param drive = 0.5` shows a Drive knob on the faceplate. Returns
+/// the param changes to route to the engine. No-op when the program declares no
+/// knobs (the common case).
+fn draw_script_knob_params(
+    ui: &mut Ui,
+    state: &mut ModulePanelState,
+    descriptor: &ModuleDescriptor,
+    accent_color: Color32,
+    markers: impl Fn(&synth_core::ParameterDescriptor) -> crate::gui::widgets::ModMarkers,
+) -> Vec<Param> {
+    if descriptor.parameters.is_empty() {
+        return Vec::new();
+    }
+    let mut param_changes = Vec::new();
+    let changes = crate::gui::widgets::draw_parameter_grid(
+        ui,
+        descriptor,
+        accent_color,
+        |p| {
+            state
+                .param_values
+                .get(&p.name)
+                .copied()
+                .unwrap_or(p.range.default)
+        },
+        |_p, _c| true,
+        markers,
+    );
+    for (param, value) in changes {
+        state.param_values.insert(param.name.clone(), value);
+        param_changes.push(param.id.with_f32(value));
+    }
+    param_changes
+}
+
 fn draw_script_module_grid(
     ui: &mut Ui,
     state: &mut ModulePanelState,
+    descriptor: &ModuleDescriptor,
     accent_color: Color32,
     script_graph: Option<&ScriptDepGraph>,
     catalog: &ModAddrCatalog,
+    markers: impl Fn(&synth_core::ParameterDescriptor) -> crate::gui::widgets::ModMarkers,
 ) -> PanelParamsResult {
     let mut mod_script_actions: Vec<(u8, Option<String>)> = Vec::new();
-    let mut open_editor_for: Option<u8> = None;
     let t = theme();
 
-    // Column header: the OUT port column starts with an "OUT" label that takes
-    // up the top strip, so without a matching header here the slot rows would
-    // sit half a row above their nipples. This 8px header restores alignment.
+    // The Script module is now one program (slot 0) reading in1..in4 and writing
+    // out1..out4 — like the AudioScript grid, a single ƒx row, not the former
+    // 8-slot rack. The 8px header mirrors the port column so the row lines up.
     ui.label(
-        egui::RichText::new("SLOTS")
+        egui::RichText::new("PROGRAM")
             .size(8.0)
             .color(t.colors.text_dim),
     );
 
-    for slot in 0u8..synth_modules::script_module::SCRIPT_MODULE_OUTPUTS as u8 {
-        if draw_script_slot_row(
-            ui,
-            state,
-            slot,
-            format!("out{}", slot + 1),
-            accent_color,
-            "Edit this slot's YAMS expression",
-        ) {
-            open_editor_for = Some(slot);
-        }
-    }
+    let open_editor = draw_script_slot_row(
+        ui,
+        state,
+        0,
+        "cv".to_string(),
+        accent_color,
+        "Edit this module's YAMS program (in1..in4 → out1..out4)",
+    );
 
-    // Open the editor for a clicked slot, seeding the draft from the installed
-    // script (empty for a fresh slot) — mirrors the Mod Matrix ƒx flow.
-    if let Some(slot) = open_editor_for {
-        let draft = state.slot_scripts.get(&slot).cloned().unwrap_or_default();
+    // Open the editor for the single program, seeding the draft from the installed
+    // script (empty for a fresh module), flagging the control-ports dialect so the
+    // live status matches the install (in1..in4 / out1..out4 unlocked).
+    if open_editor {
+        let draft = state.slot_scripts.get(&0).cloned().unwrap_or_default();
         state.script_editor = Some(super::module_panel::ScriptEditorState {
-            slot,
+            slot: 0,
             draft,
+            control_ports: true,
             ..Default::default()
         });
     }
 
     draw_slot_expression_editor(ui, state, script_graph, catalog, &mut mod_script_actions);
 
+    // The program's declared knobs render below the editor row.
+    let param_changes = draw_script_knob_params(ui, state, descriptor, accent_color, markers);
+
     PanelParamsResult {
-        param_changes: Vec::new(),
+        param_changes,
         audio_input_action: None,
         mod_script_actions,
     }
@@ -4146,9 +4203,11 @@ fn draw_script_module_grid(
 fn draw_audio_script_module_grid(
     ui: &mut Ui,
     state: &mut ModulePanelState,
+    descriptor: &ModuleDescriptor,
     accent_color: Color32,
     script_graph: Option<&ScriptDepGraph>,
     catalog: &ModAddrCatalog,
+    markers: impl Fn(&synth_core::ParameterDescriptor) -> crate::gui::widgets::ModMarkers,
 ) -> PanelParamsResult {
     let mut mod_script_actions: Vec<(u8, Option<String>)> = Vec::new();
     let t = theme();
@@ -4184,8 +4243,11 @@ fn draw_audio_script_module_grid(
 
     draw_slot_expression_editor(ui, state, script_graph, catalog, &mut mod_script_actions);
 
+    // The program's declared knobs render below the editor row.
+    let param_changes = draw_script_knob_params(ui, state, descriptor, accent_color, markers);
+
     PanelParamsResult {
-        param_changes: Vec::new(),
+        param_changes,
         audio_input_action: None,
         mod_script_actions,
     }

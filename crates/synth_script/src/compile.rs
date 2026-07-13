@@ -9,8 +9,8 @@
 //! program.
 
 use crate::ast::{
-    ArrayDecl, Assign, BinaryOp, Binding, BodyStmt, Expr, Local, OutChannel, Output, Program,
-    StateDecl, UnaryOp,
+    ArrayDecl, Assign, BinaryOp, Binding, BodyStmt, Expr, Local, OutChannel, Output, ParamDecl,
+    Program, StateDecl, UnaryOp,
 };
 use crate::diag::Diagnostic;
 use crate::lexer::DurationUnit;
@@ -23,9 +23,9 @@ use crate::symbols::{
 use synth_core::script::{
     AudioInputChannel, BoundScript, Builtin, CompiledScript, MAX_ARRAY_STORAGE, MAX_ARRAYS,
     MAX_INSTRUCTIONS, MAX_LOCALS, MAX_NESTING_DEPTH, MAX_SOURCE_LEN, MAX_SOURCES, MAX_STATE,
-    NoteField, Op, ScriptContext, ScriptInput, safe_div,
+    NoteField, Op, SCRIPT_MAX_PARAMS, ScriptContext, ScriptInput, ScriptParamDecl, safe_div,
 };
-use synth_core::{MacroSource, SrcAddr};
+use synth_core::{MacroSource, PortName, SrcAddr};
 
 /// One value the engine fills into a source register before evaluation.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -41,6 +41,13 @@ pub enum SourceInput {
     /// A note-event `Value` modulation input `in1..in4` — `note_event` scripts
     /// only, indexed `0..3`.
     NoteInput(u8),
+    /// A control-ports CV input `in1..in4` — the control-ports `Script` module
+    /// only, indexed `0..3`. The voice fills it from the wired incoming graph
+    /// connection to the matching `in{N}` port.
+    ControlIn(u8),
+    /// A user-declared `param` knob, read in-script by its interned name. The
+    /// voice fills it from the host module's stored knob value each block.
+    LocalParam(PortName),
     /// A module member address, e.g. `lfo-1.out`. `instance` defaults to 1.
     Module {
         module: String,
@@ -55,6 +62,9 @@ pub enum SourceInput {
 pub struct CompiledProgram {
     pub script: CompiledScript,
     pub inputs: Vec<SourceInput>,
+    /// User-declared `param` knobs (empty for a program with none). Carried onto
+    /// the [`BoundScript`] so the host module builds its descriptor + knob store.
+    pub params: Vec<ScriptParamDecl>,
 }
 
 impl CompiledProgram {
@@ -67,7 +77,7 @@ impl CompiledProgram {
     #[must_use]
     pub fn into_bound(self, source: String) -> BoundScript {
         let inputs = self.inputs.iter().map(input_to_runtime).collect();
-        BoundScript::new(self.script, inputs, source)
+        BoundScript::new(self.script, inputs, source).with_params(self.params)
     }
 }
 
@@ -79,6 +89,8 @@ fn input_to_runtime(input: &SourceInput) -> ScriptInput {
         SourceInput::AudioIn(ch) => ScriptInput::AudioIn(*ch),
         SourceInput::NoteField(field) => ScriptInput::NoteField(*field),
         SourceInput::NoteInput(idx) => ScriptInput::NoteInput(*idx),
+        SourceInput::ControlIn(idx) => ScriptInput::ControlIn(*idx),
+        SourceInput::LocalParam(name) => ScriptInput::LocalParam(*name),
         SourceInput::Module {
             module,
             instance,
@@ -139,15 +151,24 @@ pub struct CompileOptions {
     /// any other dialect. Mutually exclusive with [`Self::audio_rate`] in
     /// practice (a script targets exactly one module kind).
     pub note_event: bool,
+    /// Compile for the control-ports `Script` module. Enables the numbered CV
+    /// port grammar — `in1..in4` reads (as [`SourceInput::ControlIn`], distinct
+    /// from the `note_event` `in1..in4`) and `out1..out4` writes — which are
+    /// compile errors in any other dialect. A bare `out` still means `out1`.
+    /// Mutually exclusive with [`Self::audio_rate`]/[`Self::note_event`] in
+    /// practice; the Mod Matrix's control `scr` scripts leave this `false` and
+    /// keep their single-`out`, no-ports contract.
+    pub control_ports: bool,
 }
 
 impl Default for CompileOptions {
     fn default() -> Self {
-        // 48 kHz / 64-sample blocks, control-rate (Mod Matrix / Script module).
+        // 48 kHz / 64-sample blocks, control-rate (Mod Matrix `scr` script).
         Self {
             control_rate: 750.0,
             audio_rate: false,
             note_event: false,
+            control_ports: false,
         }
     }
 }
@@ -160,12 +181,14 @@ pub fn compile(src: &str, opts: &CompileOptions) -> (Option<CompiledProgram>, Ve
         control_rate: opts.control_rate,
         audio_rate: opts.audio_rate,
         note_event: opts.note_event,
+        control_ports: opts.control_ports,
         code: Vec::new(),
         constants: Vec::new(),
         inputs: Vec::new(),
         bindings: Vec::new(),
         arrays: Vec::new(),
         states: Vec::new(),
+        params: Vec::new(),
         array_storage: 0,
         locals: Vec::new(),
         next_state: 0,
@@ -210,12 +233,16 @@ struct Compiler {
     control_rate: f32,
     audio_rate: bool,
     note_event: bool,
+    control_ports: bool,
     code: Vec<Op>,
     constants: Vec<f32>,
     inputs: Vec<SourceInput>,
     bindings: Vec<BindingEntry>,
     arrays: Vec<ArrayEntry>,
     states: Vec<StateEntry>,
+    /// Declared `param` knobs, in source order — the runtime decls carried onto
+    /// the compiled program, and the resolution table for in-script param reads.
+    params: Vec<ScriptParamDecl>,
     array_storage: usize,
     locals: Vec<String>,
     next_state: u16,
@@ -248,6 +275,11 @@ impl Compiler {
         for s in &program.states {
             self.register_state(s);
         }
+        // Declared `param` knobs are registered before the body so an in-script
+        // read of a param name resolves to its source register.
+        for p in &program.params {
+            self.register_param(p);
+        }
         for stmt in &program.body {
             match stmt {
                 BodyStmt::Local(l) => self.compile_local(l),
@@ -279,6 +311,7 @@ impl Compiler {
                 self.next_state,
             ),
             inputs: std::mem::take(&mut self.inputs),
+            params: std::mem::take(&mut self.params),
         })
     }
 
@@ -289,13 +322,16 @@ impl Compiler {
             || self.arrays.iter().any(|a| a.name == name)
             || self.states.iter().any(|s| s.name == name)
             || self.locals.iter().any(|l| l == name)
+            || self.params.iter().any(|p| p.name_str == name)
     }
 
     /// Emit a diagnostic if `name` shadows a built-in or collides with an
     /// existing declaration. The single guard shared by every declaration site
     /// (`src` / `arr` / `state` / `let`), so the rules and wording stay in lockstep.
     fn check_unique_name(&mut self, name: &str, span: Span) {
-        if symbols::is_reserved(name) || (self.note_event && symbols::is_note_event_reserved(name))
+        if symbols::is_reserved(name)
+            || (self.note_event && symbols::is_note_event_reserved(name))
+            || (self.control_ports && control_ports_reserves(name))
         {
             self.error(span, format!("cannot shadow built-in `{name}`"));
         } else if self.name_taken(name) {
@@ -321,6 +357,53 @@ impl Compiler {
         self.states.push(StateEntry {
             name: name.clone(),
             cell,
+        });
+    }
+
+    /// Register a `param <name> = <default> [ [min, max] ] [ "label" ] [ "tooltip" ]`
+    /// knob. Script / AudioScript modules only — a control-rate Mod Matrix `scr`
+    /// script has no knobs. The default and optional range bounds must const-fold;
+    /// the name is interned to a [`PortName`] (off the audio thread) and its
+    /// `'static` string cached so audio-thread mod-offset matching never locks.
+    fn register_param(&mut self, p: &ParamDecl) {
+        let name = &p.name.name;
+        // Dialect gate: knobs belong to the two script *modules*, not the Mod Matrix.
+        if !self.control_ports && !self.audio_rate {
+            self.error(
+                p.name.span,
+                "`param` knobs are only available in a Script or AudioScript program",
+            );
+            return;
+        }
+        self.check_unique_name(name, p.name.span);
+        if self.params.len() >= SCRIPT_MAX_PARAMS {
+            self.error(p.span, format!("too many params (max {SCRIPT_MAX_PARAMS})"));
+            return;
+        }
+        // The default (and optional range bounds) must fold to constants.
+        let Some(default) = const_eval(&p.default) else {
+            self.error(p.default.span(), "param default must be a constant");
+            return;
+        };
+        let (min, max) = match &p.range {
+            Some((lo, hi)) => match (const_eval(lo), const_eval(hi)) {
+                (Some(lo), Some(hi)) => (lo, hi),
+                _ => {
+                    self.error(p.span, "param range bounds must be constants");
+                    return;
+                }
+            },
+            None => (0.0, 1.0),
+        };
+        let interned = PortName::intern(name);
+        self.params.push(ScriptParamDecl {
+            name: interned,
+            name_str: interned.as_str(),
+            default,
+            min,
+            max,
+            label: p.label.clone(),
+            tooltip: p.tooltip.clone(),
         });
     }
 
@@ -403,6 +486,7 @@ impl Compiler {
         let Some(cell) = self.states.iter().find(|s| s.name == *name).map(|s| s.cell) else {
             if symbols::is_reserved(name)
                 || (self.note_event && symbols::is_note_event_reserved(name))
+                || (self.control_ports && control_ports_reserves(name))
             {
                 self.error(a.name.span, format!("cannot assign to built-in `{name}`"));
             } else if self.name_taken(name) {
@@ -435,7 +519,7 @@ impl Compiler {
     /// to two channel outputs `out.left`/`out.right` (no duplicate channel, not
     /// mixed with a mono `out`). `note_event`: one or more of `out.pitch`/
     /// `out.vel`/`out.dur`/`out.gate` (no mono, no stereo). A mono `out` leaves
-    /// its value on the value stack; every other output emits `Op::StoreAudioOut`
+    /// its value on the value stack; every other output emits `Op::StoreOut`
     /// into its slot (`0..3`).
     fn compile_outputs(&mut self, outputs: &[Output]) {
         self.validate_output_channels(outputs);
@@ -447,10 +531,12 @@ impl Compiler {
                 OutChannel::Mono => {}
                 // Audio left / note pitch share output slot 0; right / vel slot 1.
                 // A script is a single dialect, so the slot is unambiguous.
-                OutChannel::Left | OutChannel::Pitch => self.code.push(Op::StoreAudioOut(0)),
-                OutChannel::Right | OutChannel::Vel => self.code.push(Op::StoreAudioOut(1)),
-                OutChannel::Dur => self.code.push(Op::StoreAudioOut(2)),
-                OutChannel::Gate => self.code.push(Op::StoreAudioOut(3)),
+                OutChannel::Left | OutChannel::Pitch => self.code.push(Op::StoreOut(0)),
+                OutChannel::Right | OutChannel::Vel => self.code.push(Op::StoreOut(1)),
+                OutChannel::Dur => self.code.push(Op::StoreOut(2)),
+                OutChannel::Gate => self.code.push(Op::StoreOut(3)),
+                // Numbered CV output `out1..out4` → slot `0..3`.
+                OutChannel::Out(slot) => self.code.push(Op::StoreOut(slot)),
             }
         }
     }
@@ -476,6 +562,17 @@ impl Compiler {
                 "use a single `out` OR `out.left`/`out.right`, not both",
             );
         }
+        // Control-ports: a bare `out` is sugar for `out1`, so both target slot 0 —
+        // writing both is a duplicate (the second would silently win).
+        if self.control_ports
+            && outputs.iter().any(|o| o.channel == OutChannel::Mono)
+            && let Some(o) = outputs.iter().find(|o| o.channel == OutChannel::Out(0))
+        {
+            self.error(
+                o.span,
+                "use `out` OR `out1` (they are the same port), not both",
+            );
+        }
         // Each channel may appear at most once (a later one would silently win).
         for (channel, label) in [
             (OutChannel::Mono, "out"),
@@ -485,6 +582,10 @@ impl Compiler {
             (OutChannel::Vel, "out.vel"),
             (OutChannel::Dur, "out.dur"),
             (OutChannel::Gate, "out.gate"),
+            (OutChannel::Out(0), "out1"),
+            (OutChannel::Out(1), "out2"),
+            (OutChannel::Out(2), "out3"),
+            (OutChannel::Out(3), "out4"),
         ] {
             self.dup_channel_error(outputs, channel, label);
         }
@@ -501,6 +602,7 @@ impl Compiler {
             OutChannel::Pitch | OutChannel::Vel | OutChannel::Dur | OutChannel::Gate => {
                 self.note_event
             }
+            OutChannel::Out(_) => self.control_ports,
         }
     }
 
@@ -579,6 +681,12 @@ impl Compiler {
             self.push_source(input);
             return;
         }
+        // A declared `param` knob reads its own source register (the voice fills
+        // it from the host module's stored knob value each block).
+        if let Some(decl) = self.params.iter().find(|p| p.name_str == name) {
+            self.push_source(SourceInput::LocalParam(decl.name));
+            return;
+        }
         if let Some(m) = macro_from_name(name) {
             // Macros and context vars are engine-graph modulation sources with no
             // meaning inside a per-event note script — reject rather than resolve
@@ -616,7 +724,26 @@ impl Compiler {
             return;
         }
         if let Some(idx) = note_input(name) {
-            self.resolve_note_only(name, span, SourceInput::NoteInput(idx));
+            // `in1..in4` names both a note-event `Value` input and a control-ports
+            // CV input; the active dialect decides which (or neither).
+            if self.control_ports {
+                self.push_source(SourceInput::ControlIn(idx));
+            } else if self.note_event {
+                self.push_source(SourceInput::NoteInput(idx));
+            } else {
+                self.error(
+                    span,
+                    format!("`{name}` is only available in a note-event or control-ports script"),
+                );
+                self.emit_const(0.0);
+            }
+            return;
+        }
+        // A numbered CV input past the 4-port ceiling in a control-ports script
+        // (`in5`, `in0`) gets a clear ceiling error instead of "unknown identifier".
+        if self.control_ports && matches!(symbols::input_port_index(name), Some(Err(()))) {
+            self.error(span, "only in1..in4 are available (max 4 CV inputs)");
+            self.emit_const(0.0);
             return;
         }
         if self.arrays.iter().any(|a| a.name == name) {
@@ -1123,7 +1250,19 @@ fn channel_reject_msg(channel: OutChannel) -> String {
             "a note-event script writes `out.pitch`/`out.vel`/`out.dur`/`out.gate`, not a bare `out`"
                 .to_string()
         }
+        OutChannel::Out(_) => {
+            "`out1`..`out4` (numbered CV output) is only available in a control-ports (Script module) script"
+                .to_string()
+        }
     }
+}
+
+/// Whether `name` is a control-ports reserved port token (`in1..in4` /
+/// `out1..out4`). Those names belong to the `Script` module's CV ports, so a
+/// control-ports script cannot bind (`src`/`let`/`state`/`arr`) or assign over
+/// them. The caller ANDs this with its `control_ports` flag.
+fn control_ports_reserves(name: &str) -> bool {
+    symbols::note_input(name).is_some() || matches!(symbols::output_port_index(name), Some(Ok(_)))
 }
 
 #[cfg(test)]
@@ -1311,7 +1450,9 @@ mod tests {
             SourceInput::Context(_)
             | SourceInput::AudioIn(_)
             | SourceInput::NoteField(_)
-            | SourceInput::NoteInput(_) => 0.0,
+            | SourceInput::NoteInput(_)
+            | SourceInput::ControlIn(_)
+            | SourceInput::LocalParam(_) => 0.0,
         });
         assert!(approx(out, 0.4));
     }
@@ -2014,10 +2155,10 @@ mod tests {
                 .iter()
                 .any(|e| e.contains("audio-rate"))
         );
-        // Audio-rate emits StoreAudioOut(0) and StoreAudioOut(1).
+        // Audio-rate emits StoreOut(0) and StoreOut(1).
         let prog = compile_audio_ok("out.left = in_l\nout.right = in_r");
-        assert!(prog.script.code().contains(&Op::StoreAudioOut(0)));
-        assert!(prog.script.code().contains(&Op::StoreAudioOut(1)));
+        assert!(prog.script.code().contains(&Op::StoreOut(0)));
+        assert!(prog.script.code().contains(&Op::StoreOut(1)));
         // Mixing mono and channel, or duplicating a channel, is an error.
         assert!(
             audio_errors("out = in\nout.left = in")
@@ -2252,6 +2393,241 @@ mod tests {
             note_errors("out.pitch = 1\nout.pitch = 2")
                 .iter()
                 .any(|e| e.contains("duplicate"))
+        );
+    }
+
+    // ---- control-ports dialect (the `Script` module) ----------------------
+
+    fn cp_opts() -> CompileOptions {
+        CompileOptions {
+            control_ports: true,
+            ..CompileOptions::default()
+        }
+    }
+
+    fn compile_cp_ok(src: &str) -> CompiledProgram {
+        let (prog, diags) = compile(src, &cp_opts());
+        let errs: Vec<_> = diags.iter().filter(|d| d.is_error()).collect();
+        assert!(errs.is_empty(), "unexpected errors: {errs:?}");
+        prog.expect("a compiled control-ports program")
+    }
+
+    fn cp_errors(src: &str) -> Vec<String> {
+        compile(src, &cp_opts())
+            .1
+            .iter()
+            .filter(|d| d.is_error())
+            .map(|d| d.message.clone())
+            .collect()
+    }
+
+    /// Run a compiled control-ports program's `eval_multi`, filling each source
+    /// register from `fill` (`in1..in4` arrive as `SourceInput::ControlIn`).
+    fn eval_cp(prog: &CompiledProgram, fill: impl Fn(&SourceInput) -> f32) -> [Option<f32>; 4] {
+        let sources: Vec<f32> = prog.inputs.iter().map(&fill).collect();
+        let mut regs = RegisterFile::new(0, SEED);
+        prog.script
+            .eval_multi(&sources, &mut regs, &EvalContext::new(CR))
+    }
+
+    #[test]
+    fn control_ports_out_emit_store_out_slots() {
+        // out1..out4 map to StoreOut(0..3).
+        let prog = compile_cp_ok("out1 = 0.1\nout2 = 0.2\nout3 = 0.3\nout4 = 0.4");
+        for slot in 0u8..4 {
+            assert!(
+                prog.script.code().contains(&Op::StoreOut(slot)),
+                "missing StoreOut({slot})"
+            );
+        }
+    }
+
+    #[test]
+    fn control_ports_in_reads_control_in_registers() {
+        let prog = compile_cp_ok("out1 = in1 * in2\nout2 = in3 + in4");
+        for idx in 0u8..4 {
+            assert!(
+                prog.inputs.contains(&SourceInput::ControlIn(idx)),
+                "missing in{}",
+                idx + 1
+            );
+        }
+        // in1=0.5, in2=0.4, in3=0.25, in4=0.1 → out1=0.2, out2=0.35; out3/out4 None.
+        let outs = eval_cp(&prog, |inp| match inp {
+            SourceInput::ControlIn(0) => 0.5,
+            SourceInput::ControlIn(1) => 0.4,
+            SourceInput::ControlIn(2) => 0.25,
+            SourceInput::ControlIn(3) => 0.1,
+            _ => 0.0,
+        });
+        assert!(outs[0].is_some_and(|v| approx(v, 0.2)));
+        assert!(outs[1].is_some_and(|v| approx(v, 0.35)));
+        assert_eq!(outs[2], None);
+        assert_eq!(outs[3], None);
+    }
+
+    #[test]
+    fn control_ports_bare_out_is_out1() {
+        // A bare `out` yields slot 0 (out1) via the eval_multi fallback.
+        let prog = compile_cp_ok("out = velocity * 0.5");
+        let outs = eval_cp(&prog, |_| 1.0);
+        assert!(outs[0].is_some_and(|v| approx(v, 0.5)));
+        assert_eq!(outs[1], None);
+        // `out` and `out1` are the same port — writing both is an error.
+        assert!(
+            cp_errors("out = 1\nout1 = 2")
+                .iter()
+                .any(|e| e.contains("same port"))
+        );
+    }
+
+    #[test]
+    fn control_ports_one_program_shares_locals_across_outputs() {
+        // One program computes a value once and feeds it to several outputs (the
+        // in-module chaining the 8-slot rack used to need `scr-1.out1` plumbing for).
+        let prog = compile_cp_ok("let p = in1 * 2\nout1 = p\nout2 = p + 1");
+        let outs = eval_cp(&prog, |inp| match inp {
+            SourceInput::ControlIn(0) => 0.3,
+            _ => 0.0,
+        });
+        assert!(outs[0].is_some_and(|v| approx(v, 0.6)));
+        assert!(outs[1].is_some_and(|v| approx(v, 1.6)));
+    }
+
+    #[test]
+    fn control_ports_numbered_ports_gated_to_the_dialect() {
+        // out1/in1 are control-ports-only: rejected in a control-rate `scr` script.
+        assert!(
+            errors("out1 = 0")
+                .iter()
+                .any(|e| e.contains("control-ports"))
+        );
+        assert!(
+            errors("out = in1")
+                .iter()
+                .any(|e| e.contains("note-event or control-ports"))
+        );
+        // Conversely, audio channels / note fields are rejected in control-ports.
+        assert!(
+            cp_errors("out.left = 0")
+                .iter()
+                .any(|e| e.contains("audio-rate"))
+        );
+    }
+
+    #[test]
+    fn control_ports_reject_past_the_ceiling() {
+        assert!(
+            cp_errors("out5 = 0")
+                .iter()
+                .any(|e| e.contains("max 4 CV outputs"))
+        );
+        assert!(
+            cp_errors("out = in5")
+                .iter()
+                .any(|e| e.contains("max 4 CV inputs"))
+        );
+    }
+
+    #[test]
+    fn control_ports_port_names_are_reserved_only_in_this_dialect() {
+        // in1..in4 / out1..out4 cannot be shadowed in a control-ports script…
+        assert!(
+            cp_errors("let in1 = 1\nout = in1")
+                .iter()
+                .any(|e| e.contains("shadow"))
+        );
+        assert!(
+            cp_errors("let out1 = 1\nout = 0")
+                .iter()
+                .any(|e| e.contains("shadow"))
+        );
+        // …but `in1` stays an ordinary bindable local in a control-rate `scr` script.
+        assert!(errors("let in1 = 1\nout = in1").is_empty());
+    }
+
+    // ---- `param` knob declarations ----------------------------------------
+
+    #[test]
+    fn param_declares_a_knob_read_as_a_local_param() {
+        let prog = compile_cp_ok("param drive = 0.5\nout1 = in1 * drive");
+        assert_eq!(prog.params.len(), 1);
+        let d = &prog.params[0];
+        assert_eq!(d.name_str, "drive");
+        assert!(approx(d.default, 0.5));
+        assert!(approx(d.min, 0.0) && approx(d.max, 1.0));
+        assert_eq!(d.label, None);
+        assert_eq!(d.tooltip, None);
+        // The body reads it as a LocalParam source register.
+        assert!(
+            prog.inputs
+                .iter()
+                .any(|i| matches!(i, SourceInput::LocalParam(n) if *n == d.name))
+        );
+    }
+
+    #[test]
+    fn param_range_label_and_tooltip_parse() {
+        let prog = compile_cp_ok(
+            "param cutoff = 1000 [20, 20000] \"Cutoff\" \"filter cutoff\"\nout1 = cutoff",
+        );
+        let d = &prog.params[0];
+        assert!(approx(d.default, 1000.0));
+        assert!(approx(d.min, 20.0) && approx(d.max, 20000.0));
+        assert_eq!(d.label.as_deref(), Some("Cutoff"));
+        assert_eq!(d.tooltip.as_deref(), Some("filter cutoff"));
+    }
+
+    #[test]
+    fn param_is_gated_to_script_modules() {
+        // A plain control-rate `scr` script has no knobs.
+        assert!(
+            errors("param drive = 0.5\nout = drive")
+                .iter()
+                .any(|e| e.contains("only available in a Script or AudioScript"))
+        );
+        // Both the audio-rate and control-ports dialects allow it.
+        assert_eq!(
+            compile_audio_ok("param drive = 0.5\nout = in * drive")
+                .params
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn param_default_and_range_must_be_constant() {
+        assert!(
+            cp_errors("param drive = velocity\nout1 = drive")
+                .iter()
+                .any(|e| e.contains("must be a constant"))
+        );
+        assert!(
+            cp_errors("param drive = 0.5 [velocity, 1]\nout1 = drive")
+                .iter()
+                .any(|e| e.contains("bounds must be constants"))
+        );
+    }
+
+    #[test]
+    fn duplicate_param_name_is_an_error() {
+        assert!(
+            cp_errors("param drive = 0.1\nparam drive = 0.2\nout1 = drive")
+                .iter()
+                .any(|e| e.contains("duplicate"))
+        );
+    }
+
+    #[test]
+    fn param_count_is_capped() {
+        let decls = (0..=SCRIPT_MAX_PARAMS)
+            .map(|i| format!("param p{i} = 0"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            cp_errors(&format!("{decls}\nout1 = p0"))
+                .iter()
+                .any(|e| e.contains("too many params"))
         );
     }
 }

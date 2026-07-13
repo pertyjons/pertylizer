@@ -21,6 +21,7 @@ pub struct Program {
     pub bindings: Vec<Binding>,
     pub arrays: Vec<ArrayDecl>,
     pub states: Vec<StateDecl>,
+    pub params: Vec<ParamDecl>,
     pub body: Vec<BodyStmt>,
     pub outputs: Vec<Output>,
 }
@@ -80,6 +81,22 @@ pub struct StateDecl {
     pub span: Span,
 }
 
+/// `param <name> = <default> [ [<min>, <max>] ] [ "<label>" [ "<tooltip>" ] ]` —
+/// a user-facing knob (Script / AudioScript modules only). The default and
+/// optional `[min, max]` bounds must const-fold; the two strings are optional
+/// positional metadata (label, then tooltip). Read in-script by name.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ParamDecl {
+    pub name: Ident,
+    pub default: Expr,
+    /// `Some((min, max))` when a `[min, max]` range is given, else `None`
+    /// (defaults to `0..1`).
+    pub range: Option<(Expr, Expr)>,
+    pub label: Option<String>,
+    pub tooltip: Option<String>,
+    pub span: Span,
+}
+
 /// `<state-name> = <expr>` — write a declared `state` cell (compiles to
 /// `Op::StoreState`). A body statement so its position is significant: the write
 /// updates the cell for subsequent reads (the next sample, for an audio-rate IIR).
@@ -101,8 +118,10 @@ pub enum BodyStmt {
 /// Which output a statement writes. A bare `out` is `Mono` (duplicated to both
 /// channels of a stereo audio script); `out.left` / `out.right` (audio-rate only)
 /// are the stereo multi-out grammar; `out.pitch` / `out.vel` / `out.dur` /
-/// `out.gate` (`note_event` only) are the note-event field grammar. The parser
-/// accepts every member spelling regardless of dialect; the compiler validates
+/// `out.gate` (`note_event` only) are the note-event field grammar; `out1`..`out4`
+/// (`Out(0..3)`, control-ports `Script` module only) are the numbered CV outputs
+/// — a **bare** spelling like every other numbered port, not a dotted member. The
+/// parser accepts every spelling regardless of dialect; the compiler validates
 /// which are legal for the active dialect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OutChannel {
@@ -113,6 +132,8 @@ pub enum OutChannel {
     Vel,
     Dur,
     Gate,
+    /// A numbered CV output port `out1`..`out4`, 0-based slot `0..3`.
+    Out(u8),
 }
 
 /// `out[.left|.right|.pitch|.vel|.dur|.gate] = <expr>` — one output statement. A

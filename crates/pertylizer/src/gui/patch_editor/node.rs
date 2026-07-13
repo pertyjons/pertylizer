@@ -562,16 +562,32 @@ pub(super) fn draw_module_panel_params(
         );
     }
 
-    // Special handling for the Script module — a list of YAMS slots (one per
-    // output port), each opening the shared expression editor.
+    // Special handling for the Script module — a single YAMS program (ƒx editor)
+    // plus its declared knobs rendered generically below.
     if descriptor.type_id.0 == "script" {
-        return draw_script_module_grid(ui, state, accent_color, script_graph, mod_catalog);
+        return draw_script_module_grid(
+            ui,
+            state,
+            descriptor,
+            accent_color,
+            script_graph,
+            mod_catalog,
+            markers,
+        );
     }
 
     // Special handling for the AudioScript module — a single per-sample YAMS
-    // program (one stereo slot) rather than 8 control-rate slots.
+    // program (one stereo slot) plus its declared knobs.
     if descriptor.type_id.0 == "audio_script" {
-        return draw_audio_script_module_grid(ui, state, accent_color, script_graph, mod_catalog);
+        return draw_audio_script_module_grid(
+            ui,
+            state,
+            descriptor,
+            accent_color,
+            script_graph,
+            mod_catalog,
+            markers,
+        );
     }
 
     // Signal Monitor — draw oscilloscope display above parameters

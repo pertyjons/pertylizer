@@ -1124,45 +1124,76 @@ impl Voice {
         }
     }
 
-    /// Evaluate every scripted slot of a Script module (Phase 2) in two passes,
-    /// mirroring the Mod Matrix: resolve each slot's address-based sources into
-    /// `script_scratch` while the graph is borrowed immutably, then evaluate under
-    /// a mutable borrow. The module caches each result (via its overridden
-    /// `eval_script_slot`) and emits it on the matching output port in `process()`.
+    /// Evaluate a Script module's single program (one CV node with 4 fixed inputs
+    /// `in1`..`in4` and 4 outputs `out1`..`out4`) in two passes, mirroring the Mod
+    /// Matrix borrow split: resolve the program's block-constant sources **and** the
+    /// `in1`..`in4` port values into `script_scratch` while the graph is borrowed
+    /// immutably, then evaluate under a mutable borrow. The module caches the 4
+    /// outputs (via `eval_control_multi`) and broadcasts them on `out1`..`out4` in
+    /// `process()`.
     fn eval_script_module(&mut self, id: crate::ModuleId, macros: &MacroValues, sctx: &ScriptCtx) {
-        // Pass 1: resolve sources for each active slot into its scratch row.
-        let mut active = [None::<usize>; MAX_MOD_MATRIX_SLOTS];
-        {
+        // Pass 1: resolve the program's block-constant sources into scratch row 0,
+        // then overwrite the `in1`..`in4` (ControlIn) registers with the value
+        // wired into each `in{N}` port (previous-block output of the wired source).
+        let n = {
             let Some(module) = self.graph.get_module(id) else {
                 return;
             };
-            let Some(scripts) = module.scripts() else {
+            let Some(Some(script)) = module.scripts().and_then(|s| s.first()) else {
                 return;
             };
-            for (slot, entry) in scripts.iter().enumerate().take(MAX_MOD_MATRIX_SLOTS) {
-                if let Some(script) = entry {
-                    let n = Self::resolve_script_sources(
-                        &mut self.script_scratch[slot],
-                        &self.graph,
-                        script,
-                        macros,
-                        sctx,
-                    );
-                    active[slot] = Some(n);
+            let n = Self::resolve_script_sources(
+                &mut self.script_scratch[0],
+                &self.graph,
+                script,
+                macros,
+                sctx,
+            );
+            // The numbered CV inputs are patch cables, not bound sources; the
+            // `param` knobs read the module's stored knob value. Overwrite each
+            // such register (both are block constants).
+            for (j, input) in script.inputs.iter().take(n).enumerate() {
+                match input {
+                    ScriptInput::ControlIn(k) => {
+                        self.script_scratch[0][j] =
+                            Self::resolve_control_in_port(&self.graph, id, *k);
+                    }
+                    ScriptInput::LocalParam(name) => {
+                        self.script_scratch[0][j] = module.effective_param(*name).unwrap_or(0.0);
+                    }
+                    _ => {}
                 }
             }
-        }
+            n
+        };
 
-        // Pass 2: evaluate each active slot against the module's own state.
+        // Pass 2: evaluate the single program into 4 cached outputs.
         let eval_ctx = EvalContext::new(sctx.cr);
         if let Some(module) = self.graph.get_module_mut(id) {
-            for (slot, count) in active.iter().enumerate() {
-                if let Some(n) = *count {
-                    let _ =
-                        module.eval_script_slot(slot, &self.script_scratch[slot][..n], &eval_ctx);
-                }
+            module.eval_control_multi(&self.script_scratch[0][..n], &eval_ctx);
+        }
+    }
+
+    /// Resolve a Script module's `in{k+1}` CV input port to its wired value: the
+    /// sum of the **previous-block first sample** of every source wired into that
+    /// port (an unwired port reads `0.0`, summing mirrors the graph's own input
+    /// summation). Uses the graph's pre-built incoming-connection map, so it is a
+    /// lookup, not a scan; `in1`..`in4` are the compile-time `PortName::IN1`..`IN4`
+    /// constants (no interning lock on the audio thread).
+    fn resolve_control_in_port(graph: &ModuleGraph, id: crate::ModuleId, k: u8) -> f32 {
+        let Some(&port) = synth_core::PortName::MIXER_INPUTS.get(k as usize) else {
+            return 0.0;
+        };
+        let mut sum = 0.0;
+        for &(from_module, from_port, to_port) in graph.incoming_connections(id) {
+            if to_port == port
+                && let Some(buf) = graph.get_module_output(from_module, from_port)
+                && !buf.is_empty()
+            {
+                sum += buf[0];
             }
         }
+        sum
     }
 
     /// Resolve an `AudioScript` module's **block-constant** source registers and
@@ -1186,13 +1217,22 @@ impl Voice {
             let Some(Some(script)) = module.scripts().and_then(|s| s.first()) else {
                 return;
             };
-            Self::resolve_script_sources(
+            let n = Self::resolve_script_sources(
                 &mut self.script_scratch[0],
                 &self.graph,
                 script,
                 macros,
                 sctx,
-            )
+            );
+            // Fill each `param`-knob register with the module's stored knob value
+            // (a block constant); the per-sample audio-in registers stay 0
+            // placeholders the module overwrites in `eval_block`.
+            for (j, input) in script.inputs.iter().take(n).enumerate() {
+                if let ScriptInput::LocalParam(name) = input {
+                    self.script_scratch[0][j] = module.effective_param(*name).unwrap_or(0.0);
+                }
+            }
+            n
         };
         // Pass 2: copy the resolved block constants into the module.
         if let Some(module) = self.graph.get_module_mut(id) {
@@ -1403,6 +1443,15 @@ impl Voice {
             // the note-graph consumer of a `note_event` script, not the voice's
             // control-rate resolution; here they are inert placeholders.
             ScriptInput::NoteField(_) | ScriptInput::NoteInput(_) => 0.0,
+            // Control-ports CV inputs (`in1..in4` on the `Script` module) are a
+            // placeholder here; the Script-module driver (`eval_script_module`)
+            // overwrites this register with the wired incoming connection's
+            // previous-block value before evaluating.
+            ScriptInput::ControlIn(_) => 0.0,
+            // A user-declared `param` knob is a placeholder here; the script
+            // module's driver overwrites this register with the knob's effective
+            // value (stored/automated base + mod offset) from its knob store.
+            ScriptInput::LocalParam(_) => 0.0,
             ScriptInput::Zero => 0.0,
         }
     }

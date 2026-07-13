@@ -475,6 +475,13 @@ pub enum EngineCommand {
         module_id: ModuleId,
         slot: u8,
         script: Option<std::sync::Arc<synth_core::script::BoundScript>>,
+        /// A prebuilt fresh [`ModuleDescriptor`] to swap into the module's graph
+        /// nodes (template + every voice), for a script module whose `param` set
+        /// may have changed. Built off the audio thread (the descriptor allocates);
+        /// the audio thread only shares it in per node (cheap `Arc` clone) and
+        /// defers the replaced ones' drop. `None` for scripts that never change
+        /// their descriptor (the Mod Matrix `scr` scripts).
+        descriptor: Option<std::sync::Arc<synth_core::ModuleDescriptor>>,
     },
 
     // === Module control ===
@@ -1195,6 +1202,7 @@ impl std::fmt::Debug for EngineCommand {
                 module_id,
                 slot,
                 script,
+                descriptor,
             } => f
                 .debug_struct("SetModScript")
                 .field("instrument_id", instrument_id)
@@ -1202,6 +1210,7 @@ impl std::fmt::Debug for EngineCommand {
                 .field("slot", slot)
                 // Show the source text, not the bytecode.
                 .field("script", &script.as_ref().map(|s| s.source.as_str()))
+                .field("rebuilt_descriptor", &descriptor.is_some())
                 .finish(),
             Self::AddModuleInstance {
                 instrument_id, id, ..

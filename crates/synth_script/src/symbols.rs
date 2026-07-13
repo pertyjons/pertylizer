@@ -188,7 +188,9 @@ pub fn note_field(name: &str) -> Option<NoteField> {
 }
 
 /// Resolve a note-event `Value` modulation input `in1..in4` to its 0-based
-/// index. `note_event` scripts only (gated like [`note_field`]).
+/// index. `note_event` scripts only (gated like [`note_field`]). The same
+/// `in1..in4` tokens double as the control-ports `Script` module's CV inputs;
+/// the compiler dispatches by dialect on this shared index.
 #[must_use]
 pub fn note_input(name: &str) -> Option<u8> {
     Some(match name {
@@ -198,6 +200,40 @@ pub fn note_input(name: &str) -> Option<u8> {
         "in4" => 3,
         _ => return None,
     })
+}
+
+/// Parse a bare numbered CV **output**-port name for the control-ports `Script`
+/// module. Returns `Some(Ok(slot))` for `out1..out4` (0-based), `Some(Err(()))`
+/// for any other all-digit `out<N>` (`out0`, `out5`, … — past the 4-port
+/// ceiling), or `None` when `name` is not an `out<digits>` spelling at all (an
+/// ordinary identifier like `output` or `out_gain`). The parser routes the
+/// `Ok`/`Err` cases to an output statement; `None` stays a `state` assignment.
+#[must_use]
+pub fn output_port_index(name: &str) -> Option<Result<u8, ()>> {
+    numbered_port_index("out", name)
+}
+
+/// As [`output_port_index`], for a bare numbered CV **input** port `in1..in4`.
+/// Used only to phrase the "past the ceiling" diagnostic (`in5`, `in0`) in a
+/// control-ports script — the `in1..in4` reads themselves go through
+/// [`note_input`].
+#[must_use]
+pub fn input_port_index(name: &str) -> Option<Result<u8, ()>> {
+    numbered_port_index("in", name)
+}
+
+/// Shared parse for a `<prefix><digits>` numbered port name. `Some(Ok(slot))`
+/// for `1..=4`, `Some(Err(()))` for any other all-digit suffix (past the
+/// ceiling), `None` when the suffix is empty or not all digits.
+fn numbered_port_index(prefix: &str, name: &str) -> Option<Result<u8, ()>> {
+    let rest = name.strip_prefix(prefix)?;
+    if rest.is_empty() || !rest.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    match rest.parse::<u32>() {
+        Ok(n @ 1..=4) => Some(Ok((n - 1) as u8)),
+        _ => Some(Err(())),
+    }
 }
 
 /// Resolve a context-variable name.
@@ -296,6 +332,7 @@ pub fn is_reserved(name: &str) -> bool {
             | "out"
             | "arr"
             | "state"
+            | "param"
             | "len"
             | "table_lin"
             | "scale_snap"

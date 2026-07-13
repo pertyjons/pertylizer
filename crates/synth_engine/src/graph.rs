@@ -7,6 +7,7 @@
 //! - Signal routing during audio processing
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::sync::Arc;
 
 use crate::ModuleId;
 use synth_core::{
@@ -62,8 +63,11 @@ impl Connection {
 struct GraphNode {
     /// The module.
     module: Box<dyn PolyModule>,
-    /// Module descriptor (cached).
-    descriptor: ModuleDescriptor,
+    /// Module descriptor (cached). Held behind an `Arc` so a script edit can share
+    /// one freshly-built descriptor across a template + every voice node with a
+    /// cheap clone (no audio-thread allocation), then defer the replaced ones'
+    /// drop — see [`ModuleGraph::set_node_descriptor`].
+    descriptor: Arc<ModuleDescriptor>,
     /// Output buffers (keyed by interned port name for zero-allocation lookup).
     outputs: HashMap<PortName, AudioBuffer>,
 }
@@ -194,7 +198,7 @@ impl ModuleGraph {
             id,
             GraphNode {
                 module,
-                descriptor,
+                descriptor: Arc::new(descriptor),
                 outputs,
             },
         );
@@ -222,7 +226,7 @@ impl ModuleGraph {
             id,
             GraphNode {
                 module,
-                descriptor,
+                descriptor: Arc::new(descriptor),
                 outputs,
             },
         );
@@ -268,7 +272,7 @@ impl ModuleGraph {
     /// to call on the audio thread (e.g. to denormalize an automation value via
     /// a parameter's range). Returns `None` if the module id is absent.
     pub fn module_descriptor(&self, id: ModuleId) -> Option<&ModuleDescriptor> {
-        self.nodes.get(&id).map(|node| &node.descriptor)
+        self.nodes.get(&id).map(|node| node.descriptor.as_ref())
     }
 
     /// Get a mutable module by ID.
@@ -282,7 +286,27 @@ impl ModuleGraph {
 
     /// Get module descriptor by ID.
     pub fn get_descriptor(&self, id: ModuleId) -> Option<&ModuleDescriptor> {
-        self.nodes.get(&id).map(|n| &n.descriptor)
+        self.nodes.get(&id).map(|n| n.descriptor.as_ref())
+    }
+
+    /// Swap a module node's cached descriptor, returning the replaced one so the
+    /// caller can drop it **off the audio thread** (a `ModuleDescriptor` owns
+    /// `String`s/`Vec`s whose free must not run in `process()`). RT-safe — a
+    /// `mem::replace`, no allocation: the engine builds the fresh descriptor
+    /// off-thread (when a script edit changes a module's `param` set) and hands it
+    /// in here. Output buffers are **not** touched — a script edit changes only the
+    /// param list, never the fixed port set. An absent module hands the descriptor
+    /// straight back.
+    #[must_use = "the replaced descriptor must be dropped off the audio thread"]
+    pub fn set_node_descriptor(
+        &mut self,
+        id: ModuleId,
+        descriptor: Arc<ModuleDescriptor>,
+    ) -> Option<Arc<ModuleDescriptor>> {
+        match self.nodes.get_mut(&id) {
+            Some(node) => Some(std::mem::replace(&mut node.descriptor, descriptor)),
+            None => Some(descriptor),
+        }
     }
 
     /// Connect two modules.
@@ -478,6 +502,25 @@ impl ModuleGraph {
         port_name: PortName,
     ) -> Option<&AudioBuffer> {
         self.nodes.get(&module_id)?.outputs.get(&port_name)
+    }
+
+    /// The incoming graph connections to `id`, as `(from_module, from_port,
+    /// to_port)` — the wired edges feeding this module's input ports. Backs the
+    /// pre-built `incoming_map` (rebuilt only when topology changes, at the start
+    /// of [`process`](Self::process)), so this is a `HashMap` lookup plus a slice
+    /// borrow — no per-call scan, safe on the audio thread. Empty for a module
+    /// with no incoming edges or an unknown id.
+    ///
+    /// The `Voice` uses it to resolve the control-ports `Script` module's
+    /// `in1..in4` CV ports from their wired sources' previous-block output. After
+    /// a topology change the map is one control block stale until the next
+    /// `process()` rebuilds it — the same one-block latency every bound source has.
+    #[must_use]
+    pub fn incoming_connections(&self, id: ModuleId) -> &[(ModuleId, PortName, PortName)] {
+        match self.incoming_map.get(&id) {
+            Some(v) => v.as_slice(),
+            None => &[],
+        }
     }
 
     /// Find a module by type and return its ID.
@@ -953,6 +996,38 @@ mod tests {
         let osc3 = graph.add_module(Box::new(Oscillator::new()));
         assert_eq!(osc3.instance, 3, "instance numbers must not be reused");
         assert!(graph.get_module(osc2).is_some());
+    }
+
+    #[test]
+    fn incoming_connections_reports_wired_edges() {
+        // osc.out -> amp.in. After one process() (which rebuilds the incoming
+        // map on the dirty topology), the accessor reports the amp's single
+        // incoming edge; the source has none, and an unknown id is empty.
+        let mut graph = ModuleGraph::new();
+        let osc = graph.add_module(Box::new(Oscillator::new()));
+        let amp = graph.add_module(Box::new(Amplifier::new()));
+        graph
+            .connect(osc, "out", amp, "in")
+            .expect("osc out -> amp in");
+
+        let ctx = ProcessContext {
+            samples: SampleCount::new(64),
+            sample_rate: SampleRate::DVD_QUALITY,
+            ..ProcessContext::default()
+        };
+        let mut out = AudioBuffer::new(64);
+        graph.process(&mut out, &ctx);
+
+        assert_eq!(
+            graph.incoming_connections(amp),
+            &[(osc, PortName::OUT, PortName::IN)]
+        );
+        assert!(graph.incoming_connections(osc).is_empty());
+        assert!(
+            graph
+                .incoming_connections(ModuleId::new(ModuleType::Filter, 99))
+                .is_empty()
+        );
     }
 
     /// `set_script` installs a slot's compiled script onto a Mod Matrix

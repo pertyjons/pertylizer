@@ -198,6 +198,9 @@ pub struct EngineHandle {
     /// `Arc<BoundScript>` (bytecode + source text) frees here, on the main
     /// thread, never on the audio thread (see `handle_set_mod_script`).
     script_trash_consumer: ringbuf::HeapCons<Arc<synth_core::script::BoundScript>>,
+    /// Receive replaced graph-node descriptors from the audio thread so the old
+    /// `ModuleDescriptor` frees here, on the main thread (see `handle_set_mod_script`).
+    descriptor_trash_consumer: ringbuf::HeapCons<Arc<synth_core::ModuleDescriptor>>,
     /// Shared state for reading meters, etc.
     pub state: Arc<EngineState>,
     /// Visualization buffers keyed by module ID (shared with engine via Arc).
@@ -249,6 +252,9 @@ impl EngineHandle {
         // Clean up replaced mod-matrix scripts — their Arc<BoundScript> frees here
         // on the main thread, never on the audio thread.
         while self.script_trash_consumer.try_pop().is_some() {}
+        // Clean up replaced graph-node descriptors — their String/Vec fields free
+        // here on the main thread, never on the audio thread.
+        while self.descriptor_trash_consumer.try_pop().is_some() {}
     }
 
     /// Send a note on event to the default channel.
@@ -446,6 +452,11 @@ pub struct SynthEngine {
     /// thread. `set_mod_script` runs during the command drain (audio thread), so
     /// the old `Arc<BoundScript>`'s final `free()` must not happen here.
     script_trash_producer: ringbuf::HeapProd<Arc<synth_core::script::BoundScript>>,
+    /// Send replaced graph-node descriptors back to the main thread for dropping.
+    /// A script edit that changes a module's `param` set swaps a fresh descriptor
+    /// into each voice node (audio thread); the old `ModuleDescriptor` owns
+    /// `String`s/`Vec`s whose free must not run in `process()`.
+    descriptor_trash_producer: ringbuf::HeapProd<Arc<synth_core::ModuleDescriptor>>,
     /// Shared state.
     state: Arc<EngineState>,
 
@@ -601,6 +612,13 @@ impl SynthEngine {
             HeapRb::<Arc<synth_core::script::BoundScript>>::new(SCRIPT_TRASH_BUFFER_SIZE);
         let (script_trash_producer, script_trash_consumer) = script_trash_rb.split();
 
+        // Return buffer for replaced graph-node descriptors (a script edit that
+        // changes a module's param set swaps a fresh descriptor into every voice
+        // node); same worst-case fan-out as the script trash (template + voices).
+        let descriptor_trash_rb =
+            HeapRb::<Arc<synth_core::ModuleDescriptor>>::new(SCRIPT_TRASH_BUFFER_SIZE);
+        let (descriptor_trash_producer, descriptor_trash_consumer) = descriptor_trash_rb.split();
+
         let instrument_mapping = InstrumentMapping::new();
 
         let mut engine = Self {
@@ -610,6 +628,7 @@ impl SynthEngine {
             return_producer,
             instrument_return_producer,
             script_trash_producer,
+            descriptor_trash_producer,
             state: Arc::clone(&state),
             instruments: vec![],
             master_effects: EffectChain::new(),
@@ -664,6 +683,7 @@ impl SynthEngine {
             instrument_return_consumer,
             automation_trash_consumer,
             script_trash_consumer,
+            descriptor_trash_consumer,
             state,
             visualization_buffers: HashMap::new(),
             note_event_consumer: Some(note_event_consumer),
@@ -1120,8 +1140,15 @@ impl SynthEngine {
                 module_id,
                 slot,
                 script,
+                descriptor,
             } => {
-                self.handle_set_mod_script(instrument_id, module_id, slot as usize, script);
+                self.handle_set_mod_script(
+                    instrument_id,
+                    module_id,
+                    slot as usize,
+                    script,
+                    descriptor,
+                );
                 // Refresh the shared snapshot so the new script is visible to the
                 // save path (`ModuleStateSnapshot.scripts`).
                 self.update_shared_graph(instrument_id);
@@ -2223,11 +2250,16 @@ impl SynthEngine {
         module_id: ModuleId,
         slot: usize,
         script: Option<std::sync::Arc<synth_core::script::BoundScript>>,
+        descriptor: Option<Arc<synth_core::ModuleDescriptor>>,
     ) {
         // Every install replaces a slot's previous `Arc<BoundScript>` (template
         // voice graph + each live voice). Capture each replaced `Arc` and ship it
-        // to the main thread instead of dropping it here, on the audio thread.
-        let trash = &mut self.script_trash_producer;
+        // to the main thread instead of dropping it here, on the audio thread. When
+        // a rebuilt descriptor is supplied (a script module whose `param` set may
+        // have changed), share it into each graph node too (cheap `Arc` clone) and
+        // ship the replaced descriptors to the deferred-drop channel.
+        let script_trash = &mut self.script_trash_producer;
+        let desc_trash = &mut self.descriptor_trash_producer;
         match instrument_id {
             Some(inst_id) => match self.instruments.iter_mut().find(|i| i.id() == inst_id) {
                 Some(instrument) => {
@@ -2235,10 +2267,20 @@ impl SynthEngine {
                         instrument
                             .voice_graph_mut()
                             .set_script(module_id, slot, script.clone());
-                    Self::trash_script(trash, replaced);
+                    Self::trash_script(script_trash, replaced);
+                    if let Some(d) = &descriptor {
+                        let old = instrument
+                            .voice_graph_mut()
+                            .set_node_descriptor(module_id, Arc::clone(d));
+                        Self::trash_descriptor(desc_trash, old);
+                    }
                     for voice in instrument.allocator_mut().voices_mut() {
                         let replaced = voice.graph.set_script(module_id, slot, script.clone());
-                        Self::trash_script(trash, replaced);
+                        Self::trash_script(script_trash, replaced);
+                        if let Some(d) = &descriptor {
+                            let old = voice.graph.set_node_descriptor(module_id, Arc::clone(d));
+                            Self::trash_descriptor(desc_trash, old);
+                        }
                     }
                 }
                 // Instrument not found (stale id — removed/renamed between the
@@ -2247,12 +2289,28 @@ impl SynthEngine {
                 // inline would free on the audio thread; route it to the trash
                 // channel instead. (The `Some` arm above only ever *clones*
                 // `script`, so its final drop is a non-last refcount decrement.)
-                None => Self::trash_script(trash, script),
+                None => Self::trash_script(script_trash, script),
             },
             None => {
                 let replaced = self.module_graph.set_script(module_id, slot, script);
-                Self::trash_script(trash, replaced);
+                Self::trash_script(script_trash, replaced);
+                if let Some(d) = descriptor {
+                    let old = self.module_graph.set_node_descriptor(module_id, d);
+                    Self::trash_descriptor(desc_trash, old);
+                }
             }
+        }
+    }
+
+    /// Ship a replaced graph-node descriptor to the main thread for a deferred
+    /// drop (its `String`/`Vec` fields must not free on the audio thread). Full
+    /// channel → drops here as a last resort, like [`trash_script`](Self::trash_script).
+    fn trash_descriptor(
+        producer: &mut ringbuf::HeapProd<Arc<synth_core::ModuleDescriptor>>,
+        replaced: Option<Arc<synth_core::ModuleDescriptor>>,
+    ) {
+        if let Some(old) = replaced {
+            let _ = producer.try_push(old);
         }
     }
 
@@ -4011,6 +4069,7 @@ mod tests {
             module_id: ModuleId::new(ModuleType::ModMatrix, 1),
             slot: 0,
             script: Some(std::sync::Arc::clone(&script)),
+            descriptor: None,
         }));
         // Test holds one ref, the queued command holds the other.
         assert_eq!(std::sync::Arc::strong_count(&script), 2);

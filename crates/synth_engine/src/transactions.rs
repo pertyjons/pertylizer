@@ -439,17 +439,19 @@ impl EngineCommand {
                 module_id: *module_id,
                 param: *param,
             },
-            // The script is a shared `Arc` — cloning bumps the refcount.
+            // The script and descriptor are shared `Arc`s — cloning bumps refcounts.
             Self::SetModScript {
                 instrument_id,
                 module_id,
                 slot,
                 script,
+                descriptor,
             } => Self::SetModScript {
                 instrument_id: *instrument_id,
                 module_id: *module_id,
                 slot: *slot,
                 script: script.clone(),
+                descriptor: descriptor.clone(),
             },
             Self::RemoveModule { instrument_id, id } => Self::RemoveModule {
                 instrument_id: *instrument_id,

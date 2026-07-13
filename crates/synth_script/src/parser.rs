@@ -10,7 +10,7 @@
 
 use crate::ast::{
     ArrayDecl, Assign, BinaryOp, Binding, BodyStmt, Expr, Ident, Local, ModuleRef, OutChannel,
-    Output, Program, StateDecl, UnaryOp,
+    Output, ParamDecl, Program, StateDecl, UnaryOp,
 };
 use crate::diag::Diagnostic;
 use crate::lexer::{Token, TokenKind, lex};
@@ -137,7 +137,7 @@ impl Parser {
 
     fn program(&mut self) -> Program {
         self.skip_seps();
-        let (bindings, arrays, states) = self.parse_header();
+        let (bindings, arrays, states, params) = self.parse_header();
         let (body, outputs) = self.parse_body();
         self.skip_seps();
         if !self.is_eof() {
@@ -150,18 +150,21 @@ impl Parser {
             bindings,
             arrays,
             states,
+            params,
             body,
             outputs,
         }
     }
 
     /// Parse the header section: `src` bindings, `arr` const-table declarations,
-    /// and `state` cell declarations, in any order, until the body (`let` /
-    /// assignment / `out`) begins.
-    fn parse_header(&mut self) -> (Vec<Binding>, Vec<ArrayDecl>, Vec<StateDecl>) {
+    /// `state` cell declarations, and `param` knob declarations, in any order,
+    /// until the body (`let` / assignment / `out`) begins.
+    #[allow(clippy::type_complexity)]
+    fn parse_header(&mut self) -> (Vec<Binding>, Vec<ArrayDecl>, Vec<StateDecl>, Vec<ParamDecl>) {
         let mut bindings = Vec::new();
         let mut arrays = Vec::new();
         let mut states = Vec::new();
+        let mut params = Vec::new();
         loop {
             match self.cur_kind() {
                 TokenKind::Src => match self.parse_binding() {
@@ -176,10 +179,75 @@ impl Parser {
                     Some(s) => states.push(s),
                     None => self.recover_to_sep(),
                 },
+                TokenKind::Param => match self.parse_param_decl() {
+                    Some(p) => params.push(p),
+                    None => self.recover_to_sep(),
+                },
                 _ => break,
             }
         }
-        (bindings, arrays, states)
+        (bindings, arrays, states, params)
+    }
+
+    /// `param <name> = <default> [ '[' <min> ',' <max> ']' ] [ <str> [ <str> ] ]`
+    /// — a user-facing knob declaration (dialect-checked by the compiler).
+    fn parse_param_decl(&mut self) -> Option<ParamDecl> {
+        let start = self.cur_span();
+        self.advance(); // `param`
+        let Some(name) = self.eat_ident() else {
+            self.error_here("expected a name after 'param'");
+            return None;
+        };
+        if !self.eat(&TokenKind::Eq) {
+            self.error_here("expected '=' in param declaration");
+            return None;
+        }
+        let default = self.expr();
+        // Optional `[min, max]` range.
+        let range = if self.eat(&TokenKind::LBracket) {
+            let min = self.expr();
+            if !self.eat(&TokenKind::Comma) {
+                self.error_here("expected ',' between the param's min and max");
+                return None;
+            }
+            let max = self.expr();
+            if !self.eat(&TokenKind::RBracket) {
+                self.error_here("expected ']' to close the param range");
+                return None;
+            }
+            Some((min, max))
+        } else {
+            None
+        };
+        // Optional positional strings: label first, then tooltip.
+        let label = self.eat_str();
+        let tooltip = if label.is_some() {
+            self.eat_str()
+        } else {
+            None
+        };
+        let span = start.to(self.cur_span());
+        self.expect_terminator();
+        Some(ParamDecl {
+            name,
+            default,
+            range,
+            label,
+            tooltip,
+            span,
+        })
+    }
+
+    /// Consume a string-literal token, returning its content (or `None` if the
+    /// current token is not a string). Used for the optional `param` label/tooltip.
+    fn eat_str(&mut self) -> Option<String> {
+        if let TokenKind::Str(s) = self.cur_kind() {
+            let s = s.clone();
+            self.advance();
+            Some(s)
+        } else {
+            None
+        }
     }
 
     /// `state <name> = <expr>` — declare a persistent state cell.
@@ -305,32 +373,91 @@ impl Parser {
     /// for state).
     fn parse_body(&mut self) -> (Vec<BodyStmt>, Vec<Output>) {
         let mut body = Vec::new();
+        // Phase 1: body statements (`let` locals, `s = expr` state assigns), up to
+        // the first output. A numbered-output identifier (`out1..out4`) ends the
+        // body just like the `out` keyword does — both are handled by the output
+        // loop below, so outputs always form one contiguous trailing block.
         loop {
             match self.cur_kind() {
                 TokenKind::Let => match self.parse_local() {
                     Some(l) => body.push(BodyStmt::Local(l)),
                     None => self.recover_to_sep(),
                 },
-                // A bare identifier at statement level is a `state` assignment
-                // (`s = expr`); nothing else starts with an identifier here.
-                TokenKind::Ident(_) => match self.parse_assign() {
-                    Some(a) => body.push(BodyStmt::Assign(a)),
-                    None => self.recover_to_sep(),
-                },
+                // A bare identifier is either a `state` assignment (`s = expr`) or
+                // a numbered CV output; the latter ends the body block.
+                TokenKind::Ident(_) if self.peek_numbered_output().is_none() => {
+                    match self.parse_assign() {
+                        Some(a) => body.push(BodyStmt::Assign(a)),
+                        None => self.recover_to_sep(),
+                    }
+                }
                 _ => break,
             }
         }
+        // Phase 2: the trailing output block — keyword outputs (`out`, `out.left`,
+        // `out.pitch`, …) and numbered CV outputs (`out1..out4 = expr`, the
+        // control-ports Script module), interleaved in any order. Numbered outputs
+        // route here regardless of dialect; the compiler rejects them outside the
+        // control-ports dialect (like `out.left` outside audio-rate).
         let mut outputs = Vec::new();
-        while matches!(self.cur_kind(), TokenKind::Out) {
-            match self.parse_output() {
-                Some(o) => outputs.push(o),
-                None => self.recover_to_sep(),
+        loop {
+            match self.cur_kind() {
+                TokenKind::Out => match self.parse_output() {
+                    Some(o) => outputs.push(o),
+                    None => self.recover_to_sep(),
+                },
+                TokenKind::Ident(_) => match self.peek_numbered_output() {
+                    Some(Ok(slot)) => match self.parse_numbered_output(OutChannel::Out(slot)) {
+                        Some(o) => outputs.push(o),
+                        None => self.recover_to_sep(),
+                    },
+                    Some(Err(())) => {
+                        self.error_here("only out1..out4 are available (max 4 CV outputs)");
+                        self.recover_to_sep();
+                    }
+                    // An ordinary identifier here is a stray statement after the
+                    // output block; stop and let the caller flag the leftover.
+                    None => break,
+                },
+                _ => break,
             }
         }
         if outputs.is_empty() {
             self.error_here("expected 'out = …'");
         }
         (body, outputs)
+    }
+
+    /// Classify the current identifier token as a numbered CV output port, if it
+    /// spells one (`out1..out4` → `Ok(slot)`, any other all-digit `out<N>` →
+    /// `Err`, an ordinary identifier → `None`). Borrows only inside this method so
+    /// the caller can dispatch to a `&mut self` parse without a borrow conflict.
+    fn peek_numbered_output(&self) -> Option<Result<u8, ()>> {
+        if let TokenKind::Ident(name) = self.cur_kind() {
+            crate::symbols::output_port_index(name)
+        } else {
+            None
+        }
+    }
+
+    /// `out<N> = <expr>` — a numbered CV output statement (control-ports Script
+    /// module). The current token is the `out<N>` identifier; `channel` is its
+    /// already-resolved [`OutChannel::Out`] slot.
+    fn parse_numbered_output(&mut self, channel: OutChannel) -> Option<Output> {
+        let start = self.cur_span();
+        self.advance(); // the `out<N>` identifier
+        if !self.eat(&TokenKind::Eq) {
+            self.error_here("expected '=' after output port name");
+            return None;
+        }
+        let expr = self.expr();
+        let span = start.to(expr.span());
+        self.expect_terminator();
+        Some(Output {
+            channel,
+            expr,
+            span,
+        })
     }
 
     /// `<name> = <expr>` — a state-cell assignment statement.

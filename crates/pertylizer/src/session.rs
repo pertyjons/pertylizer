@@ -48,18 +48,23 @@ pub enum SessionError {
 /// the live load path ([`SynthSession::set_mod_script`]) and the offline renderer
 /// so both report compile errors identically.
 ///
-/// `audio_rate` selects the language dialect: `false` for control-rate hosts (Mod
-/// Matrix / Script module), `true` for the per-sample `AudioScript` module (which
-/// unlocks the audio-in / `first_sample` / `out.left`/`out.right` grammar). The
-/// caller derives it from the target module's type.
+/// `audio_rate` / `control_ports` select the language dialect (the caller derives
+/// both from the target module's type — [`ModuleType::script_is_audio_rate`] /
+/// [`ModuleType::script_uses_control_ports`]): both `false` for the Mod Matrix
+/// `scr` scripts (single `out`, no ports); `audio_rate` for the per-sample
+/// `AudioScript` (`in`/`in_l`/`in_r`, `first_sample`, `out.left`/`out.right`);
+/// `control_ports` for the `Script` module (`in1..in4` / `out1..out4`). The two
+/// are mutually exclusive.
 pub(crate) fn compile_mod_script(
     source: &str,
     audio_rate: bool,
+    control_ports: bool,
 ) -> Result<Arc<synth_core::script::BoundScript>, String> {
     compile_script_with(
         source,
         synth_script::CompileOptions {
             audio_rate,
+            control_ports,
             ..synth_script::CompileOptions::default()
         },
     )
@@ -101,6 +106,27 @@ fn compile_script_with(
         return Err(msg);
     };
     Ok(Arc::new(program.into_bound(source.to_string())))
+}
+
+/// Build the fresh [`ModuleDescriptor`] a script module (`Script`/`AudioScript`)
+/// advertises with `params` installed: its base descriptor plus one knob
+/// parameter per declared `param`. Returns `None` for any other module type — a
+/// Mod Matrix `scr` script never changes its descriptor. Built **off the audio
+/// thread**; the engine only shares the `Arc` into each graph node and defers the
+/// old one's drop (§3.C). Shared by the live authoring path and the offline
+/// renderer.
+pub(crate) fn build_script_descriptor(
+    module_type: ModuleType,
+    params: &[synth_core::script::ScriptParamDecl],
+) -> Option<Arc<ModuleDescriptor>> {
+    if !module_type.script_is_audio_rate() && !module_type.script_uses_control_ports() {
+        return None;
+    }
+    let mut desc = crate::module_factory::get_descriptor(module_type)?;
+    for decl in params {
+        desc = desc.parameter(synth_core::script::knob_descriptor(decl, decl.default));
+    }
+    Some(Arc::new(desc))
 }
 
 /// Parse a 1-based mod-script slot key into a 0-based slot index, range-checked
@@ -1082,13 +1108,28 @@ impl SynthSession {
         // a mismatch only nudges constant-time smoothing — recompile on a real
         // rate change is a later refinement. The `AudioScript` module compiles its
         // program in the audio-rate dialect (per-sample `in`/`out.left`/…).
-        let audio_rate = module_id.module_type.script_is_audio_rate();
-        let bound = compile_mod_script(source, audio_rate).map_err(SessionError::ScriptCompile)?;
+        let mt = module_id.module_type;
+        let bound = compile_mod_script(
+            source,
+            mt.script_is_audio_rate(),
+            mt.script_uses_control_ports(),
+        )
+        .map_err(SessionError::ScriptCompile)?;
+        // Rebuild the descriptor off-thread for a script module whose knob set may
+        // have changed; register it into the session registry (feeds the GUI knob
+        // grid, MCP discovery, and the save path) and carry it to the engine to
+        // swap into each voice node (feeds cross-script reads). `None` for the Mod
+        // Matrix, whose descriptor never changes on a script edit.
+        let descriptor = build_script_descriptor(mt, &bound.params);
+        if let Some(d) = &descriptor {
+            self.register_descriptor(instrument_id, module_id, (**d).clone());
+        }
         let cmd = EngineCommand::SetModScript {
             instrument_id: Some(instrument_id),
             module_id,
             slot,
             script: Some(bound),
+            descriptor,
         };
         if !self.command_sender.send(cmd) {
             return Err(SessionError::SendFailed);
@@ -1106,11 +1147,19 @@ impl SynthSession {
         module_id: ModuleId,
         slot: u8,
     ) -> Result<(), SessionError> {
+        // Clearing reverts a script module's descriptor to its base (no knobs);
+        // register + carry it so the GUI/MCP/save and the voice nodes drop the
+        // now-gone knobs. `None` for the Mod Matrix.
+        let descriptor = build_script_descriptor(module_id.module_type, &[]);
+        if let Some(d) = &descriptor {
+            self.register_descriptor(instrument_id, module_id, (**d).clone());
+        }
         let cmd = EngineCommand::SetModScript {
             instrument_id: Some(instrument_id),
             module_id,
             slot,
             script: None,
+            descriptor,
         };
         if !self.command_sender.send(cmd) {
             return Err(SessionError::SendFailed);
@@ -1176,14 +1225,22 @@ impl SynthSession {
                     result.module_count += 1;
                     result.module_ids.push(Some(module_id.to_string()));
 
-                    // Apply parameters
-                    for (param_name, value) in &module_state.parameters {
-                        if let Err(e) =
-                            self.set_parameter(instrument_id, module_id, param_name, value)
-                        {
-                            result
-                                .errors
-                                .push(format!("{} param '{}': {e}", module_id, param_name));
+                    // A script module's knobs are declared by the program that
+                    // hasn't been installed yet, so its params can't be applied
+                    // until after the script loop below (the descriptor + knob
+                    // store don't exist here). Every other module applies params
+                    // first, so a Mod Matrix routing exists before its script.
+                    let is_script_module = module_type.script_is_audio_rate()
+                        || module_type.script_uses_control_ports();
+                    if !is_script_module {
+                        for (param_name, value) in &module_state.parameters {
+                            if let Err(e) =
+                                self.set_parameter(instrument_id, module_id, param_name, value)
+                            {
+                                result
+                                    .errors
+                                    .push(format!("{} param '{}': {e}", module_id, param_name));
+                            }
                         }
                     }
 
@@ -1203,11 +1260,37 @@ impl SynthSession {
                                 continue;
                             }
                         };
+                        // The Script module is now a single program (slot 1). A
+                        // legacy multi-slot patch keeps slot 1 and drops the rest
+                        // with a note — graceful migration, no panic (the engine's
+                        // set_script would silently no-op the higher slots anyway).
+                        if module_id.module_type == ModuleType::Script && slot != 0 {
+                            result.errors.push(format!(
+                                "{module_id} slot {slot_key} script dropped: the Script \
+                                 module is now one program (slot 1 only)"
+                            ));
+                            continue;
+                        }
                         if let Err(e) = self.set_mod_script(instrument_id, module_id, slot, source)
                         {
                             result
                                 .errors
                                 .push(format!("{module_id} slot {slot_key} script: {e}"));
+                        }
+                    }
+
+                    // Now that the script is installed (its knobs exist in the
+                    // descriptor + store), apply a script module's saved knob
+                    // values — deferred from the bulk restore above (§3.B).
+                    if is_script_module {
+                        for (param_name, value) in &module_state.parameters {
+                            if let Err(e) =
+                                self.set_parameter(instrument_id, module_id, param_name, value)
+                            {
+                                result
+                                    .errors
+                                    .push(format!("{} knob '{}': {e}", module_id, param_name));
+                            }
                         }
                     }
 
@@ -1456,19 +1539,102 @@ mod tests {
         );
     }
 
+    /// A legacy multi-slot Script patch loads best-effort: slot 1 (the single
+    /// program) installs, and any higher slot is dropped with a note — graceful
+    /// migration to the one-program Script module, no panic.
+    #[test]
+    fn apply_patch_migrates_legacy_multislot_script() {
+        use crate::patch::{ModuleBuilder, Patch};
+        let (_engine, session) = test_session();
+        session
+            .add_instrument_with_id(InstrumentId::FIRST, "T")
+            .expect("add instrument");
+
+        let mut patch = Patch::new("Legacy");
+        let mut scr = ModuleBuilder::new(1, ModuleType::Script).build();
+        scr.scripts
+            .insert("1".to_string(), "out1 = in1".to_string());
+        scr.scripts
+            .insert("2".to_string(), "out2 = in2".to_string());
+        patch.add_module(scr);
+        let result = session.apply_patch(InstrumentId::FIRST, &patch);
+
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.contains("slot 2") && e.contains("dropped")),
+            "legacy slot 2 must be dropped with a note: {:?}",
+            result.errors
+        );
+        // Only the slot-2 drop note — slot 1 installs without an error of its own.
+        assert!(
+            !result.errors.iter().any(|e| e.contains("slot 1 script:")),
+            "slot 1 must install cleanly: {:?}",
+            result.errors
+        );
+    }
+
+    /// Installing a program that declares a `param` registers the knob into the
+    /// session-registry descriptor (feeds the GUI / MCP discovery / save), and
+    /// clearing the program reverts the descriptor to its knob-free base.
+    #[test]
+    fn set_mod_script_registers_and_clears_knob_descriptor() {
+        let (_engine, session) = test_session();
+        session
+            .add_instrument_with_id(InstrumentId::FIRST, "T")
+            .expect("add instrument");
+        let (scr, _) = session
+            .add_module(InstrumentId::FIRST, ModuleType::Script)
+            .expect("add scr");
+
+        session
+            .set_mod_script(
+                InstrumentId::FIRST,
+                scr,
+                0,
+                "param drive = 0.5\nout1 = in1 * drive",
+            )
+            .expect("install script with a knob");
+        let desc = session
+            .module_descriptor(InstrumentId::FIRST, scr)
+            .expect("registered descriptor");
+        assert!(
+            desc.parameters.iter().any(|p| p.type_id == "drive"),
+            "knob 'drive' must appear in the registered descriptor"
+        );
+
+        session
+            .clear_mod_script(InstrumentId::FIRST, scr, 0)
+            .expect("clear script");
+        let desc = session
+            .module_descriptor(InstrumentId::FIRST, scr)
+            .expect("registered descriptor");
+        assert!(
+            !desc.parameters.iter().any(|p| p.type_id == "drive"),
+            "clearing the program must drop the knob from the descriptor"
+        );
+    }
+
     /// The compile dialect follows the target module type: an `AudioScript`
     /// program (audio-rate grammar — `in`, multi-out) compiles for an `AudioScript`
     /// module but is a compile error for a control-rate module, and vice-versa.
     #[test]
     fn mod_script_dialect_follows_module_type() {
         // Audio-rate grammar compiles only in the audio dialect.
-        assert!(compile_mod_script("out = tanh(in * 4)", true).is_ok());
-        assert!(compile_mod_script("out = tanh(in * 4)", false).is_err());
-        assert!(compile_mod_script("out.left = in_l\nout.right = in_r", true).is_ok());
+        assert!(compile_mod_script("out = tanh(in * 4)", true, false).is_ok());
+        assert!(compile_mod_script("out = tanh(in * 4)", false, false).is_err());
+        assert!(compile_mod_script("out.left = in_l\nout.right = in_r", true, false).is_ok());
 
-        // A plain control-rate program compiles in both dialects.
-        assert!(compile_mod_script("out = velocity * 0.5", false).is_ok());
-        assert!(compile_mod_script("out = velocity * 0.5", true).is_ok());
+        // A plain control-rate program compiles in every dialect.
+        assert!(compile_mod_script("out = velocity * 0.5", false, false).is_ok());
+        assert!(compile_mod_script("out = velocity * 0.5", true, false).is_ok());
+        assert!(compile_mod_script("out = velocity * 0.5", false, true).is_ok());
+
+        // Control-ports grammar (in1..in4 / out1..out4) compiles only with
+        // control_ports; it is a compile error in the plain control dialect.
+        assert!(compile_mod_script("out1 = in1 * in2", false, true).is_ok());
+        assert!(compile_mod_script("out1 = in1 * in2", false, false).is_err());
 
         // set_mod_script picks the dialect from the module type: the same audio
         // program is accepted for an AudioScript module, rejected for the Mod Matrix.

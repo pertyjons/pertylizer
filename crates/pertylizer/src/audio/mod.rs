@@ -115,19 +115,27 @@ pub(crate) fn replay_module_scripts(
                 continue;
             }
         };
-        let audio_rate = module_id.module_type.script_is_audio_rate();
-        let script = match crate::session::compile_mod_script(source, audio_rate) {
+        let mt = module_id.module_type;
+        let script = match crate::session::compile_mod_script(
+            source,
+            mt.script_is_audio_rate(),
+            mt.script_uses_control_ports(),
+        ) {
             Ok(script) => script,
             Err(msg) => {
                 warnings.push(format!("{ctx}: {module_id} slot {slot_key} script: {msg}"));
                 continue;
             }
         };
+        // Rebuild the script module's descriptor so the render's voice nodes see
+        // its knobs (cross-script reads); `None` for the Mod Matrix.
+        let descriptor = crate::session::build_script_descriptor(mt, &script.params);
         if !handle.send_blocking(synth_engine::EngineCommand::SetModScript {
             instrument_id: Some(instrument_id),
             module_id,
             slot,
             script: Some(script),
+            descriptor,
         }) {
             warnings.push(format!(
                 "{ctx}: failed to enqueue script for module {module_id} slot {slot_key}"

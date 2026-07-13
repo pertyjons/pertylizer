@@ -158,10 +158,12 @@ pub(super) fn draw_slot_expression_editor(
     let ctx = ui.ctx().clone();
     let mut keep_open = true;
     let mut closed_by_action = false;
-    // AudioScript hosts a single per-sample program rather than numbered
-    // control-rate slots, so it gets a program-centric title.
+    // AudioScript and the control-ports Script module each host a single program
+    // rather than numbered Mod Matrix slots, so they get a program-centric title.
     let title = if editor.audio_rate {
         "Audio program - per-sample DSP".to_string()
+    } else if editor.control_ports {
+        "CV program - in1..in4 → out1..out4".to_string()
     } else {
         format!("Slot {} - Expression", editor.slot + 1)
     };
@@ -175,6 +177,8 @@ pub(super) fn draw_slot_expression_editor(
         .show(&ctx, |ui| {
             let hint = if editor.audio_rate {
                 "YAMS audio program - per-sample DSP, e.g. `out = tanh(in * 4)` (stereo: `out.left`/`out.right`)"
+            } else if editor.control_ports {
+                "YAMS CV program - read in1..in4, write out1..out4, e.g. `out1 = in1 * in2`"
             } else {
                 "YAMS expression - assign `out`, e.g. `out = lfo-1.out * velocity`"
             };
@@ -231,6 +235,7 @@ pub(super) fn draw_slot_expression_editor(
                 // install would reject (or vice-versa).
                 let opts = synth_script::CompileOptions {
                     audio_rate: editor.audio_rate,
+                    control_ports: editor.control_ports,
                     ..synth_script::CompileOptions::default()
                 };
                 let (program, diags) = synth_script::compile(&editor.draft, &opts);

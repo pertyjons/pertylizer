@@ -17,8 +17,13 @@ fn fill(inp: &SourceInput) -> f32 {
         SourceInput::Module { module, member, .. } if module == "lfo" && member == "out" => 1.0,
         SourceInput::Module { .. } => 0.0,
         // Audio inputs only appear in audio-rate scripts (not exercised here);
-        // note-event fields only in note_event scripts (likewise).
-        SourceInput::AudioIn(_) | SourceInput::NoteField(_) | SourceInput::NoteInput(_) => 0.0,
+        // note-event fields only in note_event scripts, control-ports CV inputs
+        // only in the Script module (likewise).
+        SourceInput::AudioIn(_)
+        | SourceInput::NoteField(_)
+        | SourceInput::NoteInput(_)
+        | SourceInput::ControlIn(_)
+        | SourceInput::LocalParam(_) => 0.0,
     }
 }
 
@@ -55,6 +60,8 @@ fn show_valid(src: &str) {
                     SourceInput::AudioIn(ch) => format!("{ch:?}"),
                     SourceInput::NoteField(f) => format!("{f:?}"),
                     SourceInput::NoteInput(i) => format!("in{}", i + 1),
+                    SourceInput::ControlIn(i) => format!("in{}", i + 1),
+                    SourceInput::LocalParam(name) => format!("param {name}"),
                     SourceInput::Module {
                         module,
                         instance,

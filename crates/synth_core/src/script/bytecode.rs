@@ -28,6 +28,12 @@ pub const MAX_SOURCE_LEN: usize = 4096;
 pub const MAX_ARRAYS: usize = 16;
 /// Maximum total element storage across all `arr` declarations (f32 slots).
 pub const MAX_ARRAY_STORAGE: usize = 256;
+/// Maximum number of user-declared `param` knobs one script module may expose.
+/// A fixed ceiling (array-backed knob store) so `set_script` remaps the store in
+/// place with no audio-thread allocation; declaring a 33rd `param` is a compile
+/// error naming this cap. Invisible in the GUI/save/MCP surface — the descriptor
+/// lists only the declared knobs, never 32 empty ones.
+pub const SCRIPT_MAX_PARAMS: usize = 32;
 
 /// A built-in stateless function. Arity is fixed per function; the evaluator
 /// pops that many operands (last argument on top) and pushes one result.
@@ -310,10 +316,12 @@ pub enum Op {
     /// A generic multi-out store whose slot meaning is set by the dialect: the
     /// audio grammar uses `0 = left`, `1 = right` (`out.left`/`out.right`); the
     /// `note_event` grammar uses `0 = pitch`, `1 = vel`, `2 = dur`, `3 = gate`
-    /// (`out.pitch`/…). A bare mono `out = expr` emits no store and leaves its
+    /// (`out.pitch`/…); the control-ports grammar (the `Script` module) uses
+    /// `0..3 = out1..out4`. A bare mono `out = expr` emits no store and leaves its
     /// value on the value stack instead (the `eval_block` fallback duplicates it
-    /// to both audio channels). An unwritten slot stays `None` (pass-through).
-    StoreAudioOut(u8),
+    /// to both audio channels; the `eval_multi` fallback maps it to slot 0). An
+    /// unwritten slot stays `None` (pass-through / silent port).
+    StoreOut(u8),
 }
 
 /// An immutable, compiled YAMS program. Shared across voices behind an `Arc`;

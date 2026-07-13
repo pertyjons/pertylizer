@@ -7,8 +7,8 @@
 //! audio thread runs; the per-voice mutable [`super::RegisterFile`] is separate
 //! (decision #4 — the script is never deep-cloned onto a `Copy` routing).
 
-use crate::SrcAddr;
 use crate::script::CompiledScript;
+use crate::{PortName, SrcAddr};
 
 /// A per-voice context value the engine supplies each control block — the
 /// real-time mirror of the compiler's `Context` symbol. Kept out of `SrcAddr`
@@ -99,9 +99,45 @@ pub enum ScriptInput {
     /// only), indexed `0..3`. The consumer fills it from the module's matching
     /// `Value` input port.
     NoteInput(u8),
+    /// A control-ports CV input `in1..in4` (the `Script` module only), indexed
+    /// `0..3`. The voice fills it each block from the wired incoming graph
+    /// connection to the matching `in{N}` port (previous-block value); an unwired
+    /// port reads `0.0`. Distinct from [`Self::NoteInput`] so the two dialects
+    /// resolve the same `in1..in4` token differently.
+    ControlIn(u8),
+    /// A user-declared `param` knob (`param drive = 0.5`), read in-script by its
+    /// name. The voice fills this register each block from the module's stored
+    /// (automated) knob value plus its accumulated mod-offset — a block constant,
+    /// like a macro. The interned name matches the knob in the module's store.
+    LocalParam(PortName),
     /// An unresolvable binding (e.g. an unknown module prefix) — always `0.0`.
     /// Keeps the register slot so later indices stay aligned with the bytecode.
     Zero,
+}
+
+/// One user-declared `param` knob from a script's header (`param drive = 0.5
+/// [0, 1] "Drive" "tooltip"`). Rides immutably on the [`BoundScript`] — read
+/// (never copied onto the audio thread) to build the module's descriptor and to
+/// remap its fixed knob store on a script edit.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ScriptParamDecl {
+    /// Interned knob identifier — the in-script name, the persistence `type_id`,
+    /// and the mod-matrix / cross-script address (`scr-1.drive`).
+    pub name: PortName,
+    /// Cached `name.as_str()` — a leaked `'static` from the intern pool, resolved
+    /// once at compile time so the audio-thread mod-offset match is a lock-free
+    /// `str` compare, never a per-block `PortName::as_str` read-lock.
+    pub name_str: &'static str,
+    /// Default value: the knob's initial position and its range default.
+    pub default: f32,
+    /// Range minimum (default `0.0` when no `[min, max]` is given).
+    pub min: f32,
+    /// Range maximum (default `1.0` when no `[min, max]` is given).
+    pub max: f32,
+    /// Optional display label (falls back to the identifier when absent).
+    pub label: Option<String>,
+    /// Optional tooltip shown on hover.
+    pub tooltip: Option<String>,
 }
 
 /// A compiled YAMS program paired with the addresses its source registers read.
@@ -120,16 +156,28 @@ pub struct BoundScript {
     pub inputs: Vec<ScriptInput>,
     /// Canonical YAMS source text (persistence + inspection only).
     pub source: String,
+    /// User-declared `param` knobs (empty for a program with none). Read to build
+    /// the host module's descriptor + knob store; never touched on the audio thread.
+    pub params: Vec<ScriptParamDecl>,
 }
 
 impl BoundScript {
-    /// Assemble from already-compiled parts.
+    /// Assemble from already-compiled parts (no declared params).
     #[must_use]
     pub fn new(script: CompiledScript, inputs: Vec<ScriptInput>, source: String) -> Self {
         Self {
             script,
             inputs,
             source,
+            params: Vec::new(),
         }
+    }
+
+    /// Attach the program's declared `param` knobs (builder form so the many
+    /// param-less `new` callers stay unchanged).
+    #[must_use]
+    pub fn with_params(mut self, params: Vec<ScriptParamDecl>) -> Self {
+        self.params = params;
+        self
     }
 }

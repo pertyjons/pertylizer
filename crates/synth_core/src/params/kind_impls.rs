@@ -2706,6 +2706,7 @@ impl Param {
             Self::Fof(p) => p.kind(),
             Self::SidOscillator(p) => p.kind(),
             Self::SpatialPanner(p) => p.kind(),
+            Self::Script(p) => p.kind(),
         }
     }
 
@@ -2782,6 +2783,7 @@ impl Param {
             Self::Fof(p) => p.unit(),
             Self::SidOscillator(p) => p.unit(),
             Self::SpatialPanner(p) => p.unit(),
+            Self::Script(p) => p.unit(),
         }
     }
 
@@ -2858,6 +2860,7 @@ impl Param {
             Self::Fof(p) => p.default_curve(),
             Self::SidOscillator(p) => p.default_curve(),
             Self::SpatialPanner(p) => p.default_curve(),
+            Self::Script(p) => p.default_curve(),
         }
     }
 }
