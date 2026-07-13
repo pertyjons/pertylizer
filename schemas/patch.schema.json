@@ -257,6 +257,14 @@
                   "title": "Frequency",
                   "type": "number"
                 },
+                "glide_time": {
+                  "default": 0.0,
+                  "description": "Per-oscillator portamento time (0 = follow the voice glide) — unit: s",
+                  "maximum": 2.0,
+                  "minimum": 0.0,
+                  "title": "Glide",
+                  "type": "number"
+                },
                 "level": {
                   "default": 1.0,
                   "description": "Output level",
@@ -420,6 +428,14 @@
                   "title": "Frequency",
                   "type": "number"
                 },
+                "glide_time": {
+                  "default": 0.0,
+                  "description": "Per-oscillator portamento time (0 = follow the voice glide) — unit: s",
+                  "maximum": 2.0,
+                  "minimum": 0.0,
+                  "title": "Glide",
+                  "type": "number"
+                },
                 "level": {
                   "default": 1.0,
                   "description": "Output level",
@@ -496,6 +512,14 @@
               "default": {},
               "description": "Parameter values for this module.",
               "properties": {
+                "glide_time": {
+                  "default": 0.0,
+                  "description": "Per-oscillator portamento time (0 = follow the voice glide) — unit: s",
+                  "maximum": 2.0,
+                  "minimum": 0.0,
+                  "title": "Glide",
+                  "type": "number"
+                },
                 "level": {
                   "default": 0.5,
                   "description": "Sub-oscillator output level — unit: %",
@@ -3050,6 +3074,14 @@
                   "title": "Detune",
                   "type": "number"
                 },
+                "glide_time": {
+                  "default": 0.0,
+                  "description": "Per-oscillator portamento time (0 = follow the voice glide) — unit: s",
+                  "maximum": 2.0,
+                  "minimum": 0.0,
+                  "title": "Glide",
+                  "type": "number"
+                },
                 "level": {
                   "default": 0.800000011920929,
                   "description": "Output level — unit: %",
@@ -3616,6 +3648,14 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Brightness",
+                  "type": "number"
+                },
+                "glide_time": {
+                  "default": 0.0,
+                  "description": "Per-oscillator portamento time (0 = follow the voice glide) — unit: s",
+                  "maximum": 2.0,
+                  "minimum": 0.0,
+                  "title": "Glide",
                   "type": "number"
                 },
                 "level": {
@@ -4451,6 +4491,14 @@
                     "number",
                     "boolean"
                   ]
+                },
+                "glide_time": {
+                  "default": 0.0,
+                  "description": "Per-oscillator portamento time (0 = follow the voice glide) — unit: s",
+                  "maximum": 2.0,
+                  "minimum": 0.0,
+                  "title": "Glide",
+                  "type": "number"
                 },
                 "grain_size": {
                   "default": 50.0,
@@ -5829,6 +5877,14 @@
                   "maximum": 1.0,
                   "minimum": 0.0,
                   "title": "Dispersion",
+                  "type": "number"
+                },
+                "glide_time": {
+                  "default": 0.0,
+                  "description": "Per-oscillator portamento time (0 = follow the voice glide) — unit: s",
+                  "maximum": 2.0,
+                  "minimum": 0.0,
+                  "title": "Glide",
                   "type": "number"
                 },
                 "level": {
@@ -7445,6 +7501,14 @@
                   "maximum": 65535.0,
                   "minimum": 0.0,
                   "title": "Freq Reg",
+                  "type": "number"
+                },
+                "glide_time": {
+                  "default": 0.0,
+                  "description": "Per-oscillator portamento time (0 = follow the voice glide) — unit: s",
+                  "maximum": 2.0,
+                  "minimum": 0.0,
+                  "title": "Glide",
                   "type": "number"
                 },
                 "hard_sync": {

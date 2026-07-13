@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{Cents, Gain, NormalizedValue, Octaves};
+use crate::types::{Cents, Gain, NormalizedValue, Octaves, Seconds};
 
 // ============================================================================
 // WAVETABLE SELECT ENUM
@@ -118,6 +118,9 @@ pub enum WavetableParam {
     Octave(Octaves),
     /// Output level (0.0 - 1.0)
     Level(Gain),
+    /// Per-oscillator glide (portamento) time in seconds (0 = follow the
+    /// voice-level glide).
+    GlideTime(Seconds),
 }
 
 impl WavetableParam {
@@ -134,6 +137,7 @@ impl WavetableParam {
             Self::Detune(_) => "Detune",
             Self::Octave(_) => "Octave",
             Self::Level(_) => "Level",
+            Self::GlideTime(_) => "Glide",
         }
     }
 
@@ -145,6 +149,7 @@ impl WavetableParam {
             Self::Detune(c) => c.as_f32(),
             Self::Octave(o) => o.as_i32() as f32,
             Self::Level(g) => g.as_f32(),
+            Self::GlideTime(s) => s.as_f32(),
         }
     }
 
@@ -159,6 +164,7 @@ impl WavetableParam {
             Self::Detune(_) => Self::Detune(Cents::new(value)),
             Self::Octave(_) => Self::Octave(Octaves::new(value.round() as i32)),
             Self::Level(_) => Self::Level(Gain::new(value)),
+            Self::GlideTime(_) => Self::GlideTime(Seconds::new(value.max(0.0))),
         }
     }
 

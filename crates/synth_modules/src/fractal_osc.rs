@@ -12,12 +12,15 @@
 //! - 100% real-time safe: zero heap allocations in `process()`
 
 use std::collections::HashMap;
+use synth_core::VoicePitch;
 use synth_core::{
     AudioBuffer, BipolarValue, Describable, FractalOscParam, Hertz, InputPorts, MidiNote,
     ModuleCategory, ModuleDescriptor, ModuleType, NormalizedValue, Param, ParamModOffsets,
-    ParameterDescriptor, PolyModule, PortDescriptor, PortName, ProcessContext, SampleRate,
-    Velocity, WidgetHint,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortName, ProcessContext,
+    SampleRate, Seconds, Velocity, WidgetHint,
 };
+
+use crate::osc_glide::OscGlide;
 
 /// Maximum number of Weierstrass partials.
 const NUM_PARTIALS: usize = 64;
@@ -39,6 +42,8 @@ pub struct FractalOscillator {
     inv_sample_rate: f32,
     /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
     mod_offsets: ParamModOffsets,
+    /// Per-oscillator glide (portamento); `0` glide time = follow the voice glide.
+    glide: OscGlide,
 
     // Pre-allocated output buffers
     output_buffer_left: AudioBuffer,
@@ -59,6 +64,7 @@ impl FractalOscillator {
             sample_rate: SampleRate::DVD_QUALITY,
             inv_sample_rate: 1.0 / SampleRate::DVD_QUALITY.as_f32(),
             mod_offsets: ParamModOffsets::new(),
+            glide: OscGlide::new(),
 
             output_buffer_left: AudioBuffer::new(1024),
             output_buffer_right: AudioBuffer::new(1024),
@@ -230,6 +236,19 @@ impl Describable for FractalOscillator {
                 .default(1.0)
                 .widget(WidgetHint::Knob),
             )
+            .parameter(
+                ParameterDescriptor::float(
+                    "glide_time",
+                    Param::FractalOsc(FractalOscParam::GlideTime(Seconds::ZERO)),
+                    "Glide",
+                )
+                .description("Per-oscillator portamento time (0 = follow the voice glide)")
+                .range(0.0, 2.0)
+                .default(0.0)
+                .modulatable(false)
+                .unit(ParameterUnit::Seconds)
+                .widget(WidgetHint::Knob),
+            )
             .port(
                 PortDescriptor::control_input("freq_cv", "Freq CV")
                     .description("Pitch modulation (1V/oct). Connect: LFO, Envelope"),
@@ -257,6 +276,12 @@ impl PolyModule for FractalOscillator {
         let num_samples = context.samples.as_usize();
         self.output_buffer_left.resize(num_samples);
         self.output_buffer_right.resize(num_samples);
+
+        // Per-oscillator glide: with glide_time > 0 run our own portamento toward
+        // the note target (bend/vibrato on top), overriding the voice glide.
+        if let Some(glided) = self.glide.resolve(context.sample_rate, context.samples) {
+            self.note_freq = Hertz::new(Hertz::OSC_RANGE.clamp(glided.as_f32()));
+        }
 
         let freq_cv = inputs.get(PortName::FREQ_CV);
         let level = self.mod_offsets.effective("level", self.level.as_f32());
@@ -317,6 +342,7 @@ impl PolyModule for FractalOscillator {
                 FractalOscParam::Dispersion(v) => self.dispersion = v,
                 FractalOscParam::Spread(v) => self.spread = v,
                 FractalOscParam::Level(v) => self.level = v,
+                FractalOscParam::GlideTime(t) => self.glide.set_time(t),
             }
         }
     }
@@ -329,6 +355,7 @@ impl PolyModule for FractalOscillator {
                 FractalOscParam::Dispersion(_) => self.dispersion.as_f32(),
                 FractalOscParam::Spread(_) => self.spread.as_f32(),
                 FractalOscParam::Level(_) => self.level.as_f32(),
+                FractalOscParam::GlideTime(_) => self.glide.time().as_f32(),
             })
         } else {
             None
@@ -342,6 +369,7 @@ impl PolyModule for FractalOscillator {
             Param::FractalOsc(FractalOscParam::Dispersion(self.dispersion)),
             Param::FractalOsc(FractalOscParam::Spread(self.spread)),
             Param::FractalOsc(FractalOscParam::Level(self.level)),
+            Param::FractalOsc(FractalOscParam::GlideTime(self.glide.time())),
         ]
     }
 
@@ -355,17 +383,19 @@ impl PolyModule for FractalOscillator {
 
     fn reset(&mut self) {
         self.phases.fill(0.0);
+        self.glide.reset();
     }
 
     fn note_on(&mut self, note: MidiNote, _velocity: Velocity) {
         self.note_freq = note.to_frequency();
     }
 
-    fn set_voice_pitch(&mut self, freq: Hertz) {
+    fn set_voice_pitch(&mut self, pitch: VoicePitch) {
         // `process` reads `note_freq` live each sample to scale the fractal
         // generator, so tracking the modulated note pitch is just updating
         // `note_freq`. Phase accumulates continuously — no click.
-        self.note_freq = Hertz::new(Hertz::OSC_RANGE.clamp(freq.as_f32()));
+        self.glide.store(pitch);
+        self.note_freq = Hertz::new(Hertz::OSC_RANGE.clamp(pitch.played.as_f32()));
     }
 
     fn note_off(&mut self) {
@@ -416,7 +446,7 @@ mod tests {
 
         let mut s2 = pure();
         let up = render_mono(&mut s2, sr, 4, 1024, |m| {
-            m.set_voice_pitch(Hertz::new(f * 2.0));
+            m.set_voice_pitch(VoicePitch::tracking(Hertz::new(f * 2.0)));
         });
         let est_up = amdf_fundamental(&up[2048..], srf, f * 2.0);
         assert!(cents(est_up, f * 2.0).abs() < 50.0, "2x {est_up}");

@@ -45,6 +45,7 @@ pub mod math_oscillator;
 pub mod mod_matrix;
 pub mod mseg;
 pub mod noise;
+pub mod osc_glide;
 pub mod oscillator;
 pub mod output;
 pub mod padsynth;

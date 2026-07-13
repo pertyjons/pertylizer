@@ -8,12 +8,17 @@
 //! - FM input for frequency modulation
 
 use std::collections::HashMap;
+use synth_core::VoicePitch;
 use synth_core::{
     AdditiveParam, AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor,
     ModuleType, Param, ParamModOffsets, ParameterDescriptor, ParameterUnit, PolyModule,
     PortDescriptor, ProcessContext, WidgetHint,
 };
-use synth_core::{BipolarValue, Hertz, MidiNote, NormalizedValue, PortName, SampleRate, Velocity};
+use synth_core::{
+    BipolarValue, Hertz, MidiNote, NormalizedValue, PortName, SampleRate, Seconds, Velocity,
+};
+
+use crate::osc_glide::OscGlide;
 
 /// Number of harmonics.
 const NUM_HARMONICS: usize = 32;
@@ -38,6 +43,8 @@ pub struct AdditiveOsc {
     amplitudes_dirty: bool,
     /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
     mod_offsets: ParamModOffsets,
+    /// Per-oscillator glide (portamento); `0` glide time = follow the voice glide.
+    glide: OscGlide,
 
     // Buffer
     output_buffer: AudioBuffer,
@@ -60,6 +67,7 @@ impl AdditiveOsc {
             inv_sample_rate: 1.0 / SampleRate::DVD_QUALITY.as_f32(),
             amplitudes_dirty: true,
             mod_offsets: ParamModOffsets::new(),
+            glide: OscGlide::new(),
 
             output_buffer: AudioBuffer::new(1024),
         }
@@ -207,6 +215,19 @@ impl Describable for AdditiveOsc {
                 .unit(ParameterUnit::Percent)
                 .widget(WidgetHint::Knob),
             )
+            .parameter(
+                ParameterDescriptor::float(
+                    "glide_time",
+                    Param::AdditiveOsc(AdditiveParam::GlideTime(Seconds::ZERO)),
+                    "Glide",
+                )
+                .description("Per-oscillator portamento time (0 = follow the voice glide)")
+                .range(0.0, 2.0)
+                .default(0.0)
+                .modulatable(false)
+                .unit(ParameterUnit::Seconds)
+                .widget(WidgetHint::Knob),
+            )
             .port(
                 PortDescriptor::control_input("freq_cv", "Freq CV").description(
                     "Modulates pitch (1V/oct). Connect: LFO, Envelope, Kinetic Modulator",
@@ -231,6 +252,12 @@ impl PolyModule for AdditiveOsc {
         self.inv_sample_rate = 1.0 / context.sample_rate.as_f32();
         let num_samples = context.samples.as_usize();
         self.output_buffer.resize(num_samples);
+
+        // Per-oscillator glide: with glide_time > 0 run our own portamento toward
+        // the note target (bend/vibrato on top), overriding the voice glide.
+        if let Some(glided) = self.glide.resolve(context.sample_rate, context.samples) {
+            self.note_freq = Hertz::new(Hertz::OSC_RANGE.clamp(glided.as_f32()));
+        }
 
         // Spectral params (tilt/odd_even/brightness) cache into `amplitudes`
         // behind a dirty flag; while any mod offset is live, force a recompute
@@ -309,6 +336,7 @@ impl PolyModule for AdditiveOsc {
                 AdditiveParam::Stretch(v) => self.stretch = v,
                 AdditiveParam::Randomize(v) => self.randomize = v,
                 AdditiveParam::Level(v) => self.level = v,
+                AdditiveParam::GlideTime(t) => self.glide.set_time(t),
             }
         }
     }
@@ -322,6 +350,7 @@ impl PolyModule for AdditiveOsc {
                 AdditiveParam::Stretch(_) => self.stretch.as_f32(),
                 AdditiveParam::Randomize(_) => self.randomize.as_f32(),
                 AdditiveParam::Level(_) => self.level.as_f32(),
+                AdditiveParam::GlideTime(_) => self.glide.time().as_f32(),
             })
         } else {
             None
@@ -336,6 +365,7 @@ impl PolyModule for AdditiveOsc {
             Param::AdditiveOsc(AdditiveParam::Stretch(self.stretch)),
             Param::AdditiveOsc(AdditiveParam::Randomize(self.randomize)),
             Param::AdditiveOsc(AdditiveParam::Level(self.level)),
+            Param::AdditiveOsc(AdditiveParam::GlideTime(self.glide.time())),
         ]
     }
 
@@ -349,6 +379,7 @@ impl PolyModule for AdditiveOsc {
 
     fn reset(&mut self) {
         self.phases.fill(0.0);
+        self.glide.reset();
     }
 
     fn note_on(&mut self, note: MidiNote, _velocity: Velocity) {
@@ -356,12 +387,13 @@ impl PolyModule for AdditiveOsc {
         self.randomize_phases();
     }
 
-    fn set_voice_pitch(&mut self, freq: Hertz) {
+    fn set_voice_pitch(&mut self, pitch: VoicePitch) {
         // `process` rebuilds every harmonic from `note_freq` each block (skipping
         // partials above Nyquist), so tracking the modulated note pitch is just
         // updating `note_freq`. Per-harmonic phases accumulate continuously — no
         // click.
-        self.note_freq = Hertz::new(Hertz::OSC_RANGE.clamp(freq.as_f32()));
+        self.glide.store(pitch);
+        self.note_freq = Hertz::new(Hertz::OSC_RANGE.clamp(pitch.played.as_f32()));
     }
 
     fn note_off(&mut self) {
@@ -398,7 +430,7 @@ mod tests {
         let mut s2 = AdditiveOsc::new();
         s2.note_on(note, Velocity::MAX);
         let up = render_mono(&mut s2, sr, 4, 1024, |m| {
-            m.set_voice_pitch(Hertz::new(f * 2.0));
+            m.set_voice_pitch(VoicePitch::tracking(Hertz::new(f * 2.0)));
         });
         let est_up = amdf_fundamental(&up[2048..], srf, f * 2.0);
         assert!(cents(est_up, f * 2.0).abs() < 50.0, "2x {est_up}");

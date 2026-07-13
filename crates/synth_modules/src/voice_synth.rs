@@ -22,6 +22,7 @@
 
 use std::collections::HashMap;
 
+use synth_core::VoicePitch;
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
     ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
@@ -744,12 +745,12 @@ impl PolyModule for VoiceSynth {
         self.derive_decorrelation();
     }
 
-    fn set_voice_pitch(&mut self, freq: Hertz) {
+    fn set_voice_pitch(&mut self, pitch: VoicePitch) {
         // `process` derives the glottal/formant rate from `note_freq` each block,
         // so tracking the modulated note pitch (glide / vibrato / bend) is just
         // updating `note_freq`. Per-voice phases accumulate continuously — the
         // note_on phase decorrelation is one-time seeding and isn't disturbed.
-        self.note_freq = Hertz::new(Hertz::OSC_RANGE.clamp(freq.as_f32()));
+        self.note_freq = Hertz::new(Hertz::OSC_RANGE.clamp(pitch.played.as_f32()));
     }
 
     fn note_off(&mut self) {
@@ -806,7 +807,7 @@ mod tests {
         let mut s2 = VoiceSynth::new();
         s2.note_on(note, Velocity::MAX);
         let up = render_mono(&mut s2, sr, 6, 1024, |m| {
-            m.set_voice_pitch(Hertz::new(f * 2.0));
+            m.set_voice_pitch(VoicePitch::tracking(Hertz::new(f * 2.0)));
         });
         let est_up = amdf_fundamental(&up[3072..], srf, f * 2.0);
         assert!(cents(est_up, f * 2.0).abs() < 50.0, "2x {est_up}");

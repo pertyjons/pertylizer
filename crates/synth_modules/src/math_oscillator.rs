@@ -9,15 +9,19 @@
 use std::collections::HashMap;
 use std::f32::consts::{PI, TAU};
 
+use synth_core::VoicePitch;
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
+    WidgetHint,
 };
 use synth_core::{
     BipolarValue, BufferIndex, FrameCount, Gain, Hertz, MidiNote, NormalizedValue, Phase, PortName,
-    SampleRate, Velocity,
+    SampleRate, Seconds, Velocity,
 };
 use synth_core::{MathAlgo, MathOscillatorParam, ModuleType, Param};
+
+use crate::osc_glide::OscGlide;
 
 /// Maximum delay line size for Karplus-Strong (enough for ~20Hz at 48kHz)
 const MAX_DELAY_SIZE: usize = 4800;
@@ -40,6 +44,8 @@ pub struct MathOscillator {
     sample_rate: SampleRate,
     /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
     mod_offsets: ParamModOffsets,
+    /// Per-oscillator glide (portamento); `0` glide time = follow the voice glide.
+    glide: OscGlide,
 
     // Chaos/Lorenz state (raw f32 - mathematical state, not audio domain)
     lorenz_x: f32,
@@ -78,6 +84,7 @@ impl MathOscillator {
             phase: Phase::ZERO,
             sample_rate: SampleRate::DVD_QUALITY,
             mod_offsets: ParamModOffsets::new(),
+            glide: OscGlide::new(),
             lorenz_x: 0.1,
             lorenz_y: 0.0,
             lorenz_z: 0.0,
@@ -546,6 +553,19 @@ impl Describable for MathOscillator {
                 .default(1.0)
                 .widget(WidgetHint::Knob),
             )
+            .parameter(
+                ParameterDescriptor::float(
+                    "glide_time",
+                    Param::MathOscillator(MathOscillatorParam::GlideTime(Seconds::ZERO)),
+                    "Glide",
+                )
+                .description("Per-oscillator portamento time (0 = follow the voice glide)")
+                .range(0.0, 2.0)
+                .default(0.0)
+                .modulatable(false)
+                .unit(ParameterUnit::Seconds)
+                .widget(WidgetHint::Knob),
+            )
             // Ports
             .port(
                 PortDescriptor::control_input("fm", "FM")
@@ -575,6 +595,12 @@ impl PolyModule for MathOscillator {
     ) {
         self.sample_rate = context.sample_rate;
         self.output_buffer.resize(context.samples.as_usize());
+
+        // Per-oscillator glide: with glide_time > 0 run our own portamento toward
+        // the note target (bend/vibrato on top), overriding the voice glide.
+        if let Some(glided) = self.glide.resolve(context.sample_rate, context.samples) {
+            self.base_frequency = Hertz::new(glided.as_f32().clamp(20.0, 20000.0));
+        }
 
         // Get modulation inputs
         let fm_input = inputs.get(PortName::FM);
@@ -633,6 +659,7 @@ impl PolyModule for MathOscillator {
                 MathOscillatorParam::ParamB(v) => self.var_b = v,
                 MathOscillatorParam::ParamC(v) => self.var_c = v,
                 MathOscillatorParam::Level(l) => self.level = l,
+                MathOscillatorParam::GlideTime(t) => self.glide.set_time(t),
             }
         }
     }
@@ -646,6 +673,7 @@ impl PolyModule for MathOscillator {
                 MathOscillatorParam::ParamB(_) => self.var_b.as_f32(),
                 MathOscillatorParam::ParamC(_) => self.var_c.as_f32(),
                 MathOscillatorParam::Level(_) => self.level.as_f32(),
+                MathOscillatorParam::GlideTime(_) => self.glide.time().as_f32(),
             })
         } else {
             None
@@ -660,6 +688,7 @@ impl PolyModule for MathOscillator {
             Param::MathOscillator(MathOscillatorParam::ParamB(self.var_b)),
             Param::MathOscillator(MathOscillatorParam::ParamC(self.var_c)),
             Param::MathOscillator(MathOscillatorParam::Level(self.level)),
+            Param::MathOscillator(MathOscillatorParam::GlideTime(self.glide.time())),
         ]
     }
 
@@ -676,6 +705,7 @@ impl PolyModule for MathOscillator {
         self.delay_line.fill(0.0);
         self.write_pos = BufferIndex::ZERO;
         self.burst_remaining = FrameCount::ZERO;
+        self.glide.reset();
     }
 
     fn note_on(&mut self, note: MidiNote, _velocity: Velocity) {
@@ -688,12 +718,13 @@ impl PolyModule for MathOscillator {
         }
     }
 
-    fn set_voice_pitch(&mut self, freq: Hertz) {
+    fn set_voice_pitch(&mut self, pitch: VoicePitch) {
         // `process` recomputes `self.frequency` from `base_frequency` each block
         // (mod-offset + FM on top), so the modulated note pitch must land on
         // `base_frequency` — writing `self.frequency` would be overwritten. Same
         // clamp the `Frequency` param uses.
-        self.base_frequency = Hertz::new(freq.as_f32().clamp(20.0, 20000.0));
+        self.glide.store(pitch);
+        self.base_frequency = Hertz::new(pitch.played.as_f32().clamp(20.0, 20000.0));
     }
 
     fn note_off(&mut self) {
@@ -730,7 +761,7 @@ mod tests {
         let mut s2 = MathOscillator::new();
         s2.note_on(MidiNote::A4, Velocity::MAX);
         let up = render_mono(&mut s2, sr, 4, 1024, |m| {
-            m.set_voice_pitch(Hertz::new(f * 2.0));
+            m.set_voice_pitch(VoicePitch::tracking(Hertz::new(f * 2.0)));
         });
         let est_up = amdf_fundamental(&up[2048..], srf, f * 2.0);
         assert!(cents(est_up, f * 2.0).abs() < 50.0, "2x {est_up}");

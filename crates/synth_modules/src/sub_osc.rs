@@ -12,15 +12,18 @@
 use std::collections::HashMap;
 use std::f32::consts::TAU;
 
+use synth_core::VoicePitch;
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
     ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortName, ProcessContext,
     WidgetHint,
 };
 use synth_core::{
-    BipolarValue, Gain, Hertz, MidiNote, NormalizedValue, Phase, SampleRate, Velocity,
+    BipolarValue, Gain, Hertz, MidiNote, NormalizedValue, Phase, SampleRate, Seconds, Velocity,
 };
 use synth_core::{ModuleType, Param, SubOscOctave, SubOscParam, SubOscWaveform};
+
+use crate::osc_glide::OscGlide;
 
 /// Sub-oscillator for bass reinforcement.
 #[derive(Clone)]
@@ -36,6 +39,8 @@ pub struct SubOscillator {
     sample_rate: SampleRate,
     /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
     mod_offsets: ParamModOffsets,
+    /// Per-oscillator glide (portamento); `0` glide time = follow the voice glide.
+    glide: OscGlide,
 
     // Output buffer
     output_buffer: AudioBuffer,
@@ -51,6 +56,7 @@ impl SubOscillator {
             base_frequency: Hertz::A4,
             sample_rate: SampleRate::DVD_QUALITY,
             mod_offsets: ParamModOffsets::new(),
+            glide: OscGlide::new(),
             output_buffer: AudioBuffer::new(1024),
         }
     }
@@ -149,6 +155,19 @@ impl Describable for SubOscillator {
                 .unit(ParameterUnit::Percent)
                 .widget(WidgetHint::Knob),
             )
+            .parameter(
+                ParameterDescriptor::float(
+                    "glide_time",
+                    Param::SubOsc(SubOscParam::GlideTime(Seconds::ZERO)),
+                    "Glide",
+                )
+                .description("Per-oscillator portamento time (0 = follow the voice glide)")
+                .range(0.0, 2.0)
+                .default(0.0)
+                .modulatable(false)
+                .unit(ParameterUnit::Seconds)
+                .widget(WidgetHint::Knob),
+            )
             .port(
                 PortDescriptor::control_input("pitch_cv", "Pitch CV")
                     .description("1V/oct pitch offset (octaves). Connect: LFO, Envelope, Pitch"),
@@ -175,6 +194,12 @@ impl PolyModule for SubOscillator {
     ) {
         self.sample_rate = context.sample_rate;
         self.output_buffer.resize(context.samples.as_usize());
+
+        // Per-oscillator glide: with glide_time > 0 run our own portamento toward
+        // the note target (bend/vibrato on top), overriding the voice glide.
+        if let Some(glided) = self.glide.resolve(context.sample_rate, context.samples) {
+            self.base_frequency = Hertz::new(Hertz::OSC_RANGE.clamp(glided.as_f32()));
+        }
 
         // Base sub frequency (note pitch / octave divisor), constant per block;
         // the Pitch CV input shifts it 1V/oct per sample. Base level = knob +
@@ -204,6 +229,7 @@ impl PolyModule for SubOscillator {
                 SubOscParam::Waveform(w) => self.waveform = w,
                 SubOscParam::Octave(o) => self.octave = o,
                 SubOscParam::Level(l) => self.level = Gain::new(l.as_f32().clamp(0.0, 1.0)),
+                SubOscParam::GlideTime(t) => self.glide.set_time(t),
             }
         }
     }
@@ -214,6 +240,7 @@ impl PolyModule for SubOscillator {
                 SubOscParam::Waveform(_) => self.waveform.index() as f32,
                 SubOscParam::Octave(_) => self.octave.index() as f32,
                 SubOscParam::Level(_) => self.level.as_f32(),
+                SubOscParam::GlideTime(_) => self.glide.time().as_f32(),
             })
         } else {
             None
@@ -225,6 +252,7 @@ impl PolyModule for SubOscillator {
             Param::SubOsc(SubOscParam::Waveform(self.waveform)),
             Param::SubOsc(SubOscParam::Octave(self.octave)),
             Param::SubOsc(SubOscParam::Level(self.level)),
+            Param::SubOsc(SubOscParam::GlideTime(self.glide.time())),
         ]
     }
 
@@ -238,6 +266,7 @@ impl PolyModule for SubOscillator {
 
     fn reset(&mut self) {
         self.phase = Phase::ZERO;
+        self.glide.reset();
     }
 
     fn note_on(&mut self, note: MidiNote, _velocity: Velocity) {
@@ -246,11 +275,12 @@ impl PolyModule for SubOscillator {
         self.phase = Phase::ZERO;
     }
 
-    fn set_voice_pitch(&mut self, freq: Hertz) {
+    fn set_voice_pitch(&mut self, pitch: VoicePitch) {
         // Track the voice's modulated note pitch (glide / vibrato / bend); the
         // octave divisor still applies in `generate_sample`. Phase accumulates
         // continuously, so only the step size changes — no click.
-        self.base_frequency = Hertz::new(Hertz::OSC_RANGE.clamp(freq.as_f32()));
+        self.glide.store(pitch);
+        self.base_frequency = Hertz::new(Hertz::OSC_RANGE.clamp(pitch.played.as_f32()));
     }
 
     fn note_off(&mut self) {
@@ -287,7 +317,7 @@ mod tests {
         let mut s2 = SubOscillator::new();
         s2.note_on(MidiNote::A4, Velocity::MAX);
         let up = render_mono(&mut s2, sr, 4, 1024, |m| {
-            m.set_voice_pitch(Hertz::new(f * 2.0));
+            m.set_voice_pitch(VoicePitch::tracking(Hertz::new(f * 2.0)));
         });
         let est_up = amdf_fundamental(&up[2048..], srf, f); // base 880 / 2 = 440
         assert!(cents(est_up, f).abs() < 50.0, "2x {est_up}");

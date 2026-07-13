@@ -9,6 +9,7 @@
 
 use std::collections::HashMap;
 
+use synth_core::VoicePitch;
 use synth_core::{AudioBuffer, InputPorts, PolyModule, PortName, ProcessContext, SampleRate};
 
 /// Estimate the fundamental (Hz) of `signal` via the Average Magnitude
@@ -127,7 +128,7 @@ mod tests {
         let mut osc2 = Oscillator::new();
         osc2.note_on(MidiNote::A4, Velocity::MAX);
         let up = render_mono(&mut osc2, sr, 4, 1024, |m| {
-            m.set_voice_pitch(Hertz::new(f * 2.0));
+            m.set_voice_pitch(VoicePitch::tracking(Hertz::new(f * 2.0)));
         });
         let est_up = amdf_fundamental(&up[2048..], srf, f * 2.0);
         assert!(

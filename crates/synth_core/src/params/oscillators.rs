@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::types::{
-    BipolarValue, Cents, Gain, Hertz, NormalizedValue, Phase, PulseWidth, Semitones,
+    BipolarValue, Cents, Gain, Hertz, NormalizedValue, Phase, PulseWidth, Seconds, Semitones,
 };
 
 // ============================================================================
@@ -624,6 +624,10 @@ pub enum OscillatorParam {
     CrossModAmount(NormalizedValue),
     /// Anti-aliasing algorithm
     AntiAlias(AntiAliasMode),
+    /// Per-oscillator glide (portamento) time in seconds. `0.0` = follow the
+    /// voice-level glide; `> 0` = this oscillator runs its own glide toward the
+    /// note target, overriding the voice glide for itself.
+    GlideTime(Seconds),
 }
 
 impl OscillatorParam {
@@ -650,6 +654,7 @@ impl OscillatorParam {
             Self::UnisonPhaseRandom(_) => "Uni Phase",
             Self::CrossModAmount(_) => "X-Mod",
             Self::AntiAlias(_) => "Anti-Alias",
+            Self::GlideTime(_) => "Glide",
         }
     }
 
@@ -672,6 +677,7 @@ impl OscillatorParam {
             Self::CrossModAmount(v) => v.as_f32(),
             #[allow(clippy::cast_precision_loss)]
             Self::AntiAlias(m) => m.index() as f32,
+            Self::GlideTime(s) => s.as_f32(),
         }
     }
 
@@ -701,6 +707,7 @@ impl OscillatorParam {
             Self::CrossModAmount(_) => Self::CrossModAmount(NormalizedValue::new(value)),
             #[allow(clippy::cast_possible_truncation)]
             Self::AntiAlias(_) => Self::AntiAlias(AntiAliasMode::from_index(value as usize)),
+            Self::GlideTime(_) => Self::GlideTime(Seconds::new(value.max(0.0))),
         }
     }
 
@@ -774,6 +781,9 @@ pub enum MathOscillatorParam {
     ParamC(NormalizedValue),
     /// Output level (0.0 to 1.0)
     Level(Gain),
+    /// Per-oscillator glide (portamento) time in seconds (0 = follow the
+    /// voice-level glide).
+    GlideTime(Seconds),
 }
 
 impl MathOscillatorParam {
@@ -791,6 +801,7 @@ impl MathOscillatorParam {
             Self::ParamB(_) => "Param B",
             Self::ParamC(_) => "Param C",
             Self::Level(_) => "Level",
+            Self::GlideTime(_) => "Glide",
         }
     }
 
@@ -803,6 +814,7 @@ impl MathOscillatorParam {
             Self::ParamB(v) => v.as_f32(),
             Self::ParamC(v) => v.as_f32(),
             Self::Level(g) => g.as_f32(),
+            Self::GlideTime(s) => s.as_f32(),
         }
     }
 
@@ -817,6 +829,7 @@ impl MathOscillatorParam {
             Self::ParamB(_) => Self::ParamB(NormalizedValue::new(value)),
             Self::ParamC(_) => Self::ParamC(NormalizedValue::new(value)),
             Self::Level(_) => Self::Level(Gain::new(value)),
+            Self::GlideTime(_) => Self::GlideTime(Seconds::new(value.max(0.0))),
         }
     }
 }

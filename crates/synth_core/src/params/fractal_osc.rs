@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::NormalizedValue;
+use crate::types::{NormalizedValue, Seconds};
 
 /// Fractal oscillator parameter with typed value.
 ///
@@ -20,6 +20,9 @@ pub enum FractalOscParam {
     Spread(NormalizedValue),
     /// Output level.
     Level(NormalizedValue),
+    /// Per-oscillator glide (portamento) time in seconds (0 = follow the
+    /// voice-level glide).
+    GlideTime(Seconds),
 }
 
 impl FractalOscParam {
@@ -34,6 +37,7 @@ impl FractalOscParam {
             Self::Dispersion(_) => "Dispersion",
             Self::Spread(_) => "Spread",
             Self::Level(_) => "Level",
+            Self::GlideTime(_) => "Glide",
         }
     }
 
@@ -44,6 +48,7 @@ impl FractalOscParam {
             | Self::Dispersion(v)
             | Self::Spread(v)
             | Self::Level(v) => v.as_f32(),
+            Self::GlideTime(s) => s.as_f32(),
         }
     }
 
@@ -54,6 +59,7 @@ impl FractalOscParam {
             Self::Dispersion(_) => Self::Dispersion(NormalizedValue::new(value)),
             Self::Spread(_) => Self::Spread(NormalizedValue::new(value)),
             Self::Level(_) => Self::Level(NormalizedValue::new(value)),
+            Self::GlideTime(_) => Self::GlideTime(Seconds::new(value.max(0.0))),
         }
     }
 }

@@ -10,6 +10,7 @@
 
 use std::collections::HashMap;
 
+use synth_core::VoicePitch;
 use synth_core::{AntiAliasMode, FmMode, ModuleType, OscillatorParam, Param};
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
@@ -18,9 +19,11 @@ use synth_core::{
 };
 use synth_core::{
     BipolarValue, Cents, Gain, Hertz, MidiNote, NormalizedValue, Phase, PortName,
-    PulseWidth as PulseWidthParam, SampleRate, Semitones, Velocity, VoiceCount, Waveform,
+    PulseWidth as PulseWidthParam, SampleRate, Seconds, Semitones, Velocity, VoiceCount, Waveform,
 };
 use synth_dsp::oscillators::{poly_blamp, poly_blep};
+
+use crate::osc_glide::OscGlide;
 
 use std::sync::LazyLock;
 
@@ -105,6 +108,10 @@ pub struct Oscillator {
     /// (pulse_width, fm_amt, x_mod). See [`ParamModOffsets`].
     mod_offsets: ParamModOffsets,
 
+    /// Per-oscillator glide (portamento). `0` glide time = follow the voice-level
+    /// glide (jump with `pitch.played`); `> 0` = own glide toward the note target.
+    glide: OscGlide,
+
     // Transient automation overrides (replace the base value while active,
     // cleared on transport stop; the base param is never mutated).
     /// Detune override from sequencer automation.
@@ -152,6 +159,7 @@ impl Oscillator {
             mod_offset_pitch: Semitones::ZERO,
             mod_offset_level: BipolarValue::CENTER,
             mod_offsets: ParamModOffsets::new(),
+            glide: OscGlide::new(),
             override_detune: None,
             override_pulse_width: None,
             output_buffer: AudioBuffer::new(1024),
@@ -354,6 +362,19 @@ impl Describable for Oscillator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "glide_time",
+                    Param::Oscillator(OscillatorParam::GlideTime(Seconds::ZERO)),
+                    "Glide",
+                )
+                .description("Per-oscillator portamento time (0 = follow the voice glide)")
+                .range(0.0, 2.0)
+                .default(0.0)
+                .modulatable(false)
+                .unit(ParameterUnit::Seconds)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
                     "detune",
                     Param::Oscillator(OscillatorParam::Detune(Cents::ZERO)),
                     "Detune",
@@ -546,6 +567,14 @@ impl PolyModule for Oscillator {
         let sync_reader = inputs.reader(PortName::SYNC, 0.0);
         let cross_mod_reader = inputs.reader(PortName::CROSS_MOD, 0.0);
 
+        // Per-oscillator glide: with `glide_time > 0` this oscillator runs its
+        // own portamento toward the raw note target (re-applying bend/vibrato via
+        // `expr`), overriding the voice glide for itself. `glide_time == 0` leaves
+        // `self.frequency` at the voice's `played` pitch set in `set_voice_pitch`.
+        if let Some(glided) = self.glide.resolve(context.sample_rate, context.samples) {
+            self.frequency = Hertz::new(Hertz::OSC_RANGE.clamp(glided.as_f32()));
+        }
+
         let voice_count = self.unison_voice_count.as_usize();
         let base_freq = self.actual_frequency();
 
@@ -714,6 +743,7 @@ impl PolyModule for Oscillator {
                 OscillatorParam::UnisonPhaseRandom(v) => self.unison_phase_random = v,
                 OscillatorParam::CrossModAmount(v) => self.cross_mod_amount = v,
                 OscillatorParam::AntiAlias(m) => self.aa_mode = m,
+                OscillatorParam::GlideTime(t) => self.glide.set_time(t),
             }
         }
     }
@@ -737,6 +767,7 @@ impl PolyModule for Oscillator {
                 OscillatorParam::CrossModAmount(_) => self.cross_mod_amount.as_f32(),
                 #[allow(clippy::cast_precision_loss)]
                 OscillatorParam::AntiAlias(_) => self.aa_mode.index() as f32,
+                OscillatorParam::GlideTime(_) => self.glide.time().as_f32(),
             })
         } else {
             None
@@ -762,6 +793,7 @@ impl PolyModule for Oscillator {
             Param::Oscillator(OscillatorParam::UnisonPhaseRandom(self.unison_phase_random)),
             Param::Oscillator(OscillatorParam::CrossModAmount(self.cross_mod_amount)),
             Param::Oscillator(OscillatorParam::AntiAlias(self.aa_mode)),
+            Param::Oscillator(OscillatorParam::GlideTime(self.glide.time())),
         ]
     }
 
@@ -776,13 +808,18 @@ impl PolyModule for Oscillator {
     fn reset(&mut self) {
         self.unison_phases = [Phase::ZERO; MAX_UNISON_VOICES];
         self.prev_sync = 0.0;
+        // Uninitialize the glide so the first note of a freshly allocated voice
+        // snaps (jumps) instead of gliding from a stale pitch.
+        self.glide.reset();
     }
 
-    fn set_voice_pitch(&mut self, freq: Hertz) {
-        // Track the voice's per-block modulated note pitch. Identical to
-        // `set_param(Frequency)` — detune/octave/FM still apply on top in
-        // `process`. (Was the oscillator-only `set_oscillator_frequency` path.)
-        self.frequency = Hertz::new(Hertz::OSC_RANGE.clamp(freq.as_f32()));
+    fn set_voice_pitch(&mut self, pitch: VoicePitch) {
+        // Store the decomposed voice pitch and seed `self.frequency` with the
+        // finished `played` value (detune/octave/FM apply on top in `process`).
+        // When `glide_time > 0`, `process` overrides `self.frequency` with this
+        // oscillator's own glide toward `pitch.note_target`.
+        self.glide.store(pitch);
+        self.frequency = Hertz::new(Hertz::OSC_RANGE.clamp(pitch.played.as_f32()));
     }
 
     fn note_on(&mut self, note: MidiNote, _velocity: Velocity) {
@@ -1306,5 +1343,79 @@ mod tests {
                 "voice {j} sample {sample} out of reasonable range"
             );
         }
+    }
+
+    /// `glide_time == 0` follows `pitch.played` verbatim (jump); `glide_time > 0`
+    /// snaps on the first note of a fresh voice (after `reset`) and glides on the
+    /// next; `expr` (bend/vibrato) is re-applied on top of the glide.
+    #[test]
+    fn per_oscillator_glide_smooths_between_notes() {
+        let ctx = ProcessContext {
+            samples: synth_core::SampleCount::new(256),
+            ..ProcessContext::default()
+        };
+        let render = |osc: &mut Oscillator| {
+            let mut outs = HashMap::new();
+            outs.insert(PortName::OUT, AudioBuffer::new(256));
+            osc.process(InputPorts::empty(), &mut outs, &ctx);
+        };
+        let mut osc = Oscillator::new();
+
+        // glide_time == 0: notes jump directly (regression — voice glide only).
+        osc.reset();
+        osc.set_voice_pitch(VoicePitch::tracking(Hertz::new(220.0)));
+        render(&mut osc);
+        assert!((osc.actual_frequency().as_f32() - 220.0).abs() < 0.5);
+        osc.set_voice_pitch(VoicePitch::tracking(Hertz::new(880.0)));
+        render(&mut osc);
+        assert!(
+            (osc.actual_frequency().as_f32() - 880.0).abs() < 0.5,
+            "glide_time == 0 must jump, got {}",
+            osc.actual_frequency().as_f32()
+        );
+
+        // glide_time > 0: first note snaps, the next glides partway then converges.
+        osc.set_param(Param::Oscillator(OscillatorParam::GlideTime(Seconds::new(
+            0.2,
+        ))));
+        osc.reset();
+        osc.set_voice_pitch(VoicePitch::tracking(Hertz::new(220.0)));
+        render(&mut osc);
+        assert!(
+            (osc.actual_frequency().as_f32() - 220.0).abs() < 0.5,
+            "first note after reset should snap to 220, got {}",
+            osc.actual_frequency().as_f32()
+        );
+        osc.set_voice_pitch(VoicePitch::tracking(Hertz::new(880.0)));
+        render(&mut osc);
+        let one = osc.actual_frequency().as_f32();
+        assert!(
+            one > 221.0 && one < 800.0,
+            "one glide block should be partway between 220 and 880, got {one}"
+        );
+        for _ in 0..500 {
+            render(&mut osc);
+        }
+        assert!(
+            (osc.actual_frequency().as_f32() - 880.0).abs() < 1.0,
+            "glide should converge to 880, got {}",
+            osc.actual_frequency().as_f32()
+        );
+
+        // `expr` (+12 semitones) is applied after the glide: a fresh note snaps to
+        // note_target (440) and the octave-up bend rides on top → 880.
+        osc.reset();
+        osc.set_voice_pitch(VoicePitch {
+            played: Hertz::new(440.0),
+            note_target: Hertz::new(440.0),
+            expr: Semitones::new(12.0),
+            note: MidiNote::A4,
+        });
+        render(&mut osc);
+        assert!(
+            (osc.actual_frequency().as_f32() - 880.0).abs() < 2.0,
+            "snap to 440 then +12 semis expr = 880, got {}",
+            osc.actual_frequency().as_f32()
+        );
     }
 }

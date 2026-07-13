@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::Gain;
+use crate::types::{Gain, Seconds};
 
 // ============================================================================
 // SUB-OSCILLATOR WAVEFORM ENUM
@@ -168,6 +168,9 @@ pub enum SubOscParam {
     Octave(SubOscOctave),
     /// Output level (0.0 to 1.0)
     Level(Gain),
+    /// Per-oscillator glide (portamento) time in seconds (0 = follow the
+    /// voice-level glide).
+    GlideTime(Seconds),
 }
 
 impl SubOscParam {
@@ -182,6 +185,7 @@ impl SubOscParam {
             Self::Waveform(_) => "Waveform",
             Self::Octave(_) => "Octave",
             Self::Level(_) => "Level",
+            Self::GlideTime(_) => "Glide",
         }
     }
 
@@ -191,6 +195,7 @@ impl SubOscParam {
             Self::Waveform(w) => w.index() as f32,
             Self::Octave(o) => o.index() as f32,
             Self::Level(g) => g.as_f32(),
+            Self::GlideTime(s) => s.as_f32(),
         }
     }
 
@@ -204,6 +209,7 @@ impl SubOscParam {
                 Self::Octave(SubOscOctave::from_index(value as usize).unwrap_or_default())
             }
             Self::Level(_) => Self::Level(Gain::new(value)),
+            Self::GlideTime(_) => Self::GlideTime(Seconds::new(value.max(0.0))),
         }
     }
 

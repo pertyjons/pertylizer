@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::NormalizedValue;
+use crate::types::{NormalizedValue, Seconds};
 
 /// Additive oscillator parameter with typed value.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -19,6 +19,9 @@ pub enum AdditiveParam {
     Randomize(NormalizedValue),
     /// Output level.
     Level(NormalizedValue),
+    /// Per-oscillator glide (portamento) time in seconds (0 = follow the
+    /// voice-level glide).
+    GlideTime(Seconds),
 }
 
 impl AdditiveParam {
@@ -34,6 +37,7 @@ impl AdditiveParam {
             Self::Stretch(_) => "Stretch",
             Self::Randomize(_) => "Randomize",
             Self::Level(_) => "Level",
+            Self::GlideTime(_) => "Glide",
         }
     }
 
@@ -45,6 +49,7 @@ impl AdditiveParam {
             | Self::Stretch(v)
             | Self::Randomize(v)
             | Self::Level(v) => v.as_f32(),
+            Self::GlideTime(s) => s.as_f32(),
         }
     }
 
@@ -56,6 +61,7 @@ impl AdditiveParam {
             Self::Stretch(_) => Self::Stretch(NormalizedValue::new(value)),
             Self::Randomize(_) => Self::Randomize(NormalizedValue::new(value)),
             Self::Level(_) => Self::Level(NormalizedValue::new(value)),
+            Self::GlideTime(_) => Self::GlideTime(Seconds::new(value.max(0.0))),
         }
     }
 }

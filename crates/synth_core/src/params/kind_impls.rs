@@ -20,6 +20,7 @@ impl AdditiveParam {
             | Self::Stretch(v)
             | Self::Randomize(v)
             | Self::Level(v) => v.scalar_kind(),
+            Self::GlideTime(v) => v.scalar_kind(),
         }
     }
 
@@ -33,6 +34,7 @@ impl AdditiveParam {
             | Self::Stretch(v)
             | Self::Randomize(v)
             | Self::Level(v) => v.scalar_unit(),
+            Self::GlideTime(v) => v.scalar_unit(),
         }
     }
 
@@ -47,6 +49,7 @@ impl AdditiveParam {
             | Self::Stretch(v)
             | Self::Randomize(v)
             | Self::Level(v) => v.scalar_curve(),
+            Self::GlideTime(v) => v.scalar_curve(),
         }
     }
 }
@@ -1233,6 +1236,7 @@ impl FractalOscParam {
             | Self::Dispersion(v)
             | Self::Spread(v)
             | Self::Level(v) => v.scalar_kind(),
+            Self::GlideTime(v) => v.scalar_kind(),
         }
     }
 
@@ -1245,6 +1249,7 @@ impl FractalOscParam {
             | Self::Dispersion(v)
             | Self::Spread(v)
             | Self::Level(v) => v.scalar_unit(),
+            Self::GlideTime(v) => v.scalar_unit(),
         }
     }
 
@@ -1258,6 +1263,7 @@ impl FractalOscParam {
             | Self::Dispersion(v)
             | Self::Spread(v)
             | Self::Level(v) => v.scalar_curve(),
+            Self::GlideTime(v) => v.scalar_curve(),
         }
     }
 }
@@ -1400,6 +1406,7 @@ impl GranularParam {
             Self::Window(v) => v.scalar_kind(),
             Self::Source(v) => v.scalar_kind(),
             Self::Level(v) => v.scalar_kind(),
+            Self::GlideTime(v) => v.scalar_kind(),
         }
     }
 
@@ -1417,6 +1424,7 @@ impl GranularParam {
             Self::Window(v) => v.scalar_unit(),
             Self::Source(v) => v.scalar_unit(),
             Self::Level(v) => v.scalar_unit(),
+            Self::GlideTime(v) => v.scalar_unit(),
         }
     }
 
@@ -1435,6 +1443,7 @@ impl GranularParam {
             Self::Window(v) => v.scalar_curve(),
             Self::Source(v) => v.scalar_curve(),
             Self::Level(v) => v.scalar_curve(),
+            Self::GlideTime(v) => v.scalar_curve(),
         }
     }
 }
@@ -1848,6 +1857,7 @@ impl OscillatorParam {
                 v.scalar_kind()
             }
             Self::AntiAlias(v) => v.scalar_kind(),
+            Self::GlideTime(v) => v.scalar_kind(),
         }
     }
 
@@ -1869,6 +1879,7 @@ impl OscillatorParam {
                 v.scalar_unit()
             }
             Self::AntiAlias(v) => v.scalar_unit(),
+            Self::GlideTime(v) => v.scalar_unit(),
         }
     }
 
@@ -1891,6 +1902,7 @@ impl OscillatorParam {
                 v.scalar_curve()
             }
             Self::AntiAlias(v) => v.scalar_curve(),
+            Self::GlideTime(v) => v.scalar_curve(),
         }
     }
 }
@@ -1904,6 +1916,7 @@ impl MathOscillatorParam {
             Self::Frequency(v) => v.scalar_kind(),
             Self::ParamA(v) | Self::ParamB(v) | Self::ParamC(v) => v.scalar_kind(),
             Self::Level(v) => v.scalar_kind(),
+            Self::GlideTime(v) => v.scalar_kind(),
         }
     }
 
@@ -1915,6 +1928,7 @@ impl MathOscillatorParam {
             Self::Frequency(v) => v.scalar_unit(),
             Self::ParamA(v) | Self::ParamB(v) | Self::ParamC(v) => v.scalar_unit(),
             Self::Level(v) => v.scalar_unit(),
+            Self::GlideTime(v) => v.scalar_unit(),
         }
     }
 
@@ -1927,6 +1941,7 @@ impl MathOscillatorParam {
             Self::Frequency(v) => v.scalar_curve(),
             Self::ParamA(v) | Self::ParamB(v) | Self::ParamC(v) => v.scalar_curve(),
             Self::Level(v) => v.scalar_curve(),
+            Self::GlideTime(v) => v.scalar_curve(),
         }
     }
 }
@@ -2287,6 +2302,7 @@ impl SidOscillatorParam {
             Self::Quality(v) => v.scalar_kind(),
             Self::Level(v) => v.scalar_kind(),
             Self::SeqLength(v) | Self::SeqRate(v) | Self::SeqStep(_, v) => v.scalar_kind(),
+            Self::GlideTime(v) => v.scalar_kind(),
         }
     }
 
@@ -2310,6 +2326,7 @@ impl SidOscillatorParam {
             Self::Quality(v) => v.scalar_unit(),
             Self::Level(v) => v.scalar_unit(),
             Self::SeqLength(v) | Self::SeqRate(v) | Self::SeqStep(_, v) => v.scalar_unit(),
+            Self::GlideTime(v) => v.scalar_unit(),
         }
     }
 
@@ -2334,6 +2351,7 @@ impl SidOscillatorParam {
             Self::Quality(v) => v.scalar_curve(),
             Self::Level(v) => v.scalar_curve(),
             Self::SeqLength(v) | Self::SeqRate(v) | Self::SeqStep(_, v) => v.scalar_curve(),
+            Self::GlideTime(v) => v.scalar_curve(),
         }
     }
 }
@@ -2409,6 +2427,7 @@ impl SubOscParam {
             Self::Waveform(v) => v.scalar_kind(),
             Self::Octave(v) => v.scalar_kind(),
             Self::Level(v) => v.scalar_kind(),
+            Self::GlideTime(v) => v.scalar_kind(),
         }
     }
 
@@ -2419,6 +2438,7 @@ impl SubOscParam {
             Self::Waveform(v) => v.scalar_unit(),
             Self::Octave(v) => v.scalar_unit(),
             Self::Level(v) => v.scalar_unit(),
+            Self::GlideTime(v) => v.scalar_unit(),
         }
     }
 
@@ -2430,6 +2450,7 @@ impl SubOscParam {
             Self::Waveform(v) => v.scalar_curve(),
             Self::Octave(v) => v.scalar_curve(),
             Self::Level(v) => v.scalar_curve(),
+            Self::GlideTime(v) => v.scalar_curve(),
         }
     }
 }
@@ -2603,6 +2624,7 @@ impl WavetableParam {
             Self::Detune(v) => v.scalar_kind(),
             Self::Octave(v) => v.scalar_kind(),
             Self::Level(v) => v.scalar_kind(),
+            Self::GlideTime(v) => v.scalar_kind(),
         }
     }
 
@@ -2615,6 +2637,7 @@ impl WavetableParam {
             Self::Detune(v) => v.scalar_unit(),
             Self::Octave(v) => v.scalar_unit(),
             Self::Level(v) => v.scalar_unit(),
+            Self::GlideTime(v) => v.scalar_unit(),
         }
     }
 
@@ -2628,6 +2651,7 @@ impl WavetableParam {
             Self::Detune(v) => v.scalar_curve(),
             Self::Octave(v) => v.scalar_curve(),
             Self::Level(v) => v.scalar_curve(),
+            Self::GlideTime(v) => v.scalar_curve(),
         }
     }
 }

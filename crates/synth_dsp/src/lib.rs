@@ -16,6 +16,7 @@
 pub mod delay;
 pub mod fdn;
 pub mod filters;
+pub mod glide;
 pub mod oscillators;
 pub mod oversampling;
 pub mod spectral;
@@ -27,6 +28,7 @@ pub use filters::{
     AcidFilter, BiquadCoeffs, FluidFilter, KarlsenFilter, LinkwitzRiley, LinkwitzRileyCoeffs,
     ScreamerFilter, StereoBiquad, StereoSvf, SvfCoeffs, SvfFilterType,
 };
+pub use glide::PitchGlide;
 pub use oscillators::poly_blep;
 pub use oversampling::{Downsampler, OversamplingFactor};
 pub use spectral::{

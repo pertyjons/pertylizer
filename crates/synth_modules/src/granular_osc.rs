@@ -12,6 +12,7 @@
 use std::collections::HashMap;
 use std::f32::consts::TAU;
 
+use synth_core::VoicePitch;
 use synth_core::module_traits::ChoiceOption;
 use synth_core::{
     AudioBuffer, BipolarValue, Describable, Gain, GrainSource, GrainWindow, GranularParam, Hertz,
@@ -19,7 +20,9 @@ use synth_core::{
     ParamModOffsets, ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortName,
     ProcessContext, SampleRate, WidgetHint,
 };
-use synth_core::{MidiNote, Velocity};
+use synth_core::{MidiNote, Seconds, Velocity};
+
+use crate::osc_glide::OscGlide;
 
 /// Maximum number of simultaneous grains.
 const MAX_GRAINS: usize = 32;
@@ -136,6 +139,8 @@ pub struct GranularOsc {
     rng: Xorshift32,
     /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
     mod_offsets: ParamModOffsets,
+    /// Per-oscillator glide (portamento); `0` glide time = follow the voice glide.
+    glide: OscGlide,
     /// Cached interned port name for the Density CV input (interning locks an
     /// internal table, so it must not happen on the audio thread — see
     /// [`PortName::intern`]). Pitch/Position CV use the `PITCH_CV`/`POS_CV`
@@ -172,6 +177,7 @@ impl GranularOsc {
             samples_until_next_grain: 0.0,
             rng: Xorshift32::new(42),
             mod_offsets: ParamModOffsets::new(),
+            glide: OscGlide::new(),
             density_cv_port: PortName::intern("density_cv"),
 
             output_buffer: AudioBuffer::new(1024),
@@ -428,6 +434,19 @@ impl Describable for GranularOsc {
                 .unit(ParameterUnit::Percent)
                 .widget(WidgetHint::Knob),
             )
+            .parameter(
+                ParameterDescriptor::float(
+                    "glide_time",
+                    Param::GranularOsc(GranularParam::GlideTime(Seconds::ZERO)),
+                    "Glide",
+                )
+                .description("Per-oscillator portamento time (0 = follow the voice glide)")
+                .range(0.0, 2.0)
+                .default(0.0)
+                .modulatable(false)
+                .unit(ParameterUnit::Seconds)
+                .widget(WidgetHint::Knob),
+            )
             .port(
                 PortDescriptor::control_input("pitch_cv", "Pitch CV")
                     .description("1V/oct pitch offset (octaves). Connect: LFO, Envelope, Pitch"),
@@ -460,6 +479,12 @@ impl PolyModule for GranularOsc {
         let samples = context.samples.as_usize();
         self.output_buffer.resize(samples);
         self.output_buffer.clear();
+
+        // Per-oscillator glide: with glide_time > 0 run our own portamento toward
+        // the note target (bend/vibrato on top), overriding the voice glide.
+        if let Some(glided) = self.glide.resolve(context.sample_rate, context.samples) {
+            self.note_freq = Hertz::new(Hertz::OSC_RANGE.clamp(glided.as_f32()));
+        }
 
         // Follow the render sample rate. The engine propagates the rate to
         // voice-graph modules only through ProcessContext — it never calls
@@ -643,6 +668,7 @@ impl PolyModule for GranularOsc {
                 // audio thread costs only a field write here, not a fill.
                 GranularParam::Source(s) => self.source = s,
                 GranularParam::Level(g) => self.level = g,
+                GranularParam::GlideTime(t) => self.glide.set_time(t),
             }
         }
     }
@@ -667,6 +693,7 @@ impl PolyModule for GranularOsc {
                 GranularParam::Window(_) => self.window.index() as f32,
                 GranularParam::Source(_) => self.source.index() as f32,
                 GranularParam::Level(_) => self.level.as_f32(),
+                GranularParam::GlideTime(_) => self.glide.time().as_f32(),
             })
         } else {
             None
@@ -685,6 +712,7 @@ impl PolyModule for GranularOsc {
             Param::GranularOsc(GranularParam::Window(self.window)),
             Param::GranularOsc(GranularParam::Source(self.source)),
             Param::GranularOsc(GranularParam::Level(self.level)),
+            Param::GranularOsc(GranularParam::GlideTime(self.glide.time())),
         ]
     }
 
@@ -702,6 +730,7 @@ impl PolyModule for GranularOsc {
         }
         self.playhead = 0.0;
         self.samples_until_next_grain = 0.0;
+        self.glide.reset();
     }
 
     fn note_on(&mut self, note: MidiNote, _velocity: Velocity) {
@@ -710,12 +739,13 @@ impl PolyModule for GranularOsc {
         self.samples_until_next_grain = 0.0;
     }
 
-    fn set_voice_pitch(&mut self, freq: Hertz) {
+    fn set_voice_pitch(&mut self, pitch: VoicePitch) {
         // `process` derives `base_rate = note_freq / SOURCE_BASE_FREQ` each block
         // and accumulates each active grain's read position at `base_rate ·
         // pitch_ratio`, so updating `note_freq` bends both new *and* already-
         // playing grains continuously (no jump — see the `Grain.read_pos` note).
-        self.note_freq = Hertz::new(Hertz::OSC_RANGE.clamp(freq.as_f32()));
+        self.glide.store(pitch);
+        self.note_freq = Hertz::new(Hertz::OSC_RANGE.clamp(pitch.played.as_f32()));
     }
 
     fn note_off(&mut self) {
@@ -767,7 +797,7 @@ mod tests {
 
         let mut s2 = clean();
         let up = render_mono(&mut s2, sr, 8, 1024, |m| {
-            m.set_voice_pitch(Hertz::new(f * 2.0));
+            m.set_voice_pitch(VoicePitch::tracking(Hertz::new(f * 2.0)));
         });
         let est_up = amdf_fundamental(&up[4096..], srf, f * 2.0);
         assert!(cents(est_up, f * 2.0).abs() < 50.0, "2x {est_up}");

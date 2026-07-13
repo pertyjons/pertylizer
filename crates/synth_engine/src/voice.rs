@@ -19,7 +19,7 @@ use crate::graph::ModuleGraph;
 use synth_core::params::LfoWaveform;
 use synth_core::script::{BoundScript, EvalContext, MAX_SOURCES, ScriptContext, ScriptInput};
 use synth_core::tuning::TuningTable;
-use synth_core::{AudioBuffer, DestAddr, Phase, PortName, ProcessContext};
+use synth_core::{AudioBuffer, DestAddr, Phase, PortName, ProcessContext, VoicePitch};
 use synth_core::{
     BipolarValue, Cents, Hertz, MidiNote, NormalizedValue, SampleCount, SamplePosition, Seconds,
     Semitones, Velocity,
@@ -966,11 +966,24 @@ impl Voice {
         // destination still adds its own offset to the oscillator afterwards, so
         // mod-matrix vibrato and per-note vibrato compose additively.
         let bend_semitones = self.expression.pitch_bend_range * self.pitch_bend.as_f32();
-        let freq = (bend_semitones + self.vibrato_offset).apply(base_freq);
+        // Pitch-bend + per-note vibrato as one additive semitone offset. Folded
+        // into `freq` (the finished playing pitch) for everyone, and handed over
+        // separately in `expr` so a module running its own glide can re-apply it
+        // *after* smoothing (the glide never smears vibrato / lags the bend).
+        let expr = bend_semitones + self.vibrato_offset;
+        let freq = expr.apply(base_freq);
 
-        // Deliver the modulated note pitch to every pitch-tracking sound source
-        // (oscillators, sampler, …) in the graph before processing.
-        self.graph.set_voice_pitch(freq);
+        // Deliver the decomposed note pitch to every pitch-tracking sound source
+        // (oscillators, sampler, …) before processing. `note_target` is the raw
+        // destination note frequency (the voice glide's target), so an opt-in
+        // module smooths toward it instead of the already-glided `played`.
+        let voice_pitch = VoicePitch {
+            played: freq,
+            note_target: self.glide.to_freq,
+            expr,
+            note: self.state.note().unwrap_or(MidiNote::A4),
+        };
+        self.graph.set_voice_pitch(voice_pitch);
 
         // === Control scripts: evaluate the Mod Matrix and Script modules ===
         // Both read the same per-block source snapshot (so `gate_on` is seen by

@@ -13,8 +13,52 @@ use crate::ChannelCount;
 use crate::params::{ModuleType, Param};
 pub use crate::types::{
     BeatPosition, Bpm, Hertz, MidiNote, NormalizedValue, SampleCount, SamplePosition, SampleRate,
-    ValueRange, Velocity,
+    Semitones, ValueRange, Velocity,
 };
+
+/// The voice's per-block note pitch, **decomposed** so a pitch-tracking module
+/// can either follow the finished pitch (default) or run its own glide.
+///
+/// The voice pre-computes all four fields once per block. A module that does not
+/// opt into per-oscillator glide reads only [`played`](Self::played) and behaves
+/// exactly as before. A module running its own portamento smooths toward
+/// [`note_target`](Self::note_target) and re-applies [`expr`](Self::expr) on top,
+/// so pitch-bend and per-note vibrato are never smoothed away by the glide.
+///
+/// `Copy`/alloc-free so it threads through the per-block broadcast without
+/// allocation.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct VoicePitch {
+    /// Finished playing pitch: voice glide + pitch-bend + per-note vibrato folded
+    /// in. Identical to the single frequency the voice handed its sound sources
+    /// before this struct existed — the value every non-opt-in module reads.
+    pub played: Hertz,
+    /// Raw note target: the destination note frequency with **no** glide, bend or
+    /// vibrato applied. A module gliding itself smooths toward this.
+    pub note_target: Hertz,
+    /// Pitch-bend + per-note vibrato as a single additive semitone offset, to be
+    /// applied *after* a module's own glide so expression rides on top
+    /// un-smoothed.
+    pub expr: Semitones,
+    /// The sounding MIDI note (before continuous modulation). Lets note-aware
+    /// sources read the note without back-solving it from `played`.
+    pub note: MidiNote,
+}
+
+impl VoicePitch {
+    /// A voice pitch that simply tracks `freq`: no bend/vibrato, `note_target`
+    /// equal to `played`. Used for note-on seeding and in tests where only the
+    /// played pitch matters; `note` defaults to [`MidiNote::A4`].
+    #[must_use]
+    pub fn tracking(freq: Hertz) -> Self {
+        Self {
+            played: freq,
+            note_target: freq,
+            expr: Semitones::ZERO,
+            note: MidiNote::A4,
+        }
+    }
+}
 
 // ============================================================================
 // Module Type ID
@@ -1410,18 +1454,19 @@ pub trait PolyModule: Describable + Send {
 
     /// Deliver the voice's per-block note pitch to a pitch-tracking sound source.
     ///
-    /// The [`Voice`](../../synth_engine) calls this every block with the played
-    /// note's *modulated* fundamental frequency (base pitch, glide, pitch-bend
-    /// and per-note vibrato combined). Any module that is a pitched sound source
-    /// tracking the played note — oscillators, the sampler, etc. — overrides so it
-    /// follows continuous pitch modulation, not just the pitch latched at
-    /// [`note_on`](Self::note_on).
+    /// The [`Voice`](../../synth_engine) calls this every block with a
+    /// [`VoicePitch`]: the finished [`played`](VoicePitch::played) pitch (base
+    /// pitch, glide, pitch-bend and per-note vibrato combined) plus the
+    /// decomposed [`note_target`](VoicePitch::note_target) and
+    /// [`expr`](VoicePitch::expr) so a module can optionally run its own glide.
+    /// Any module that is a pitched sound source tracking the played note —
+    /// oscillators, the sampler, etc. — overrides so it follows continuous pitch
+    /// modulation, not just the pitch latched at [`note_on`](Self::note_on).
     ///
-    /// Default: no-op. Effects, modulators and fixed-rate sources ignore the
-    /// voice pitch. This is the generalised replacement for the former
-    /// oscillator-only `set_oscillator_frequency` path — pitch tracking is now a
-    /// per-module capability rather than a hard-coded module-type special case.
-    fn set_voice_pitch(&mut self, _freq: Hertz) {}
+    /// Most overrides simply read [`VoicePitch::played`] (identical to the former
+    /// single-`Hertz` value). Default: no-op — effects, modulators and fixed-rate
+    /// sources ignore the voice pitch.
+    fn set_voice_pitch(&mut self, _pitch: VoicePitch) {}
 
     /// Trigger note off.
     fn note_off(&mut self) {}

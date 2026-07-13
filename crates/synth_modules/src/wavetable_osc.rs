@@ -12,15 +12,18 @@
 
 use std::collections::HashMap;
 
+use synth_core::VoicePitch;
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
     ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
 };
 use synth_core::{
     BipolarValue, Cents, Gain, Hertz, MidiNote, NormalizedValue, Octaves, Phase, PortName,
-    SampleRate, Velocity,
+    SampleRate, Seconds, Velocity,
 };
 use synth_core::{ModuleType, Param, WavetableParam, WavetableSelect};
+
+use crate::osc_glide::OscGlide;
 
 use crate::wavetable_data::get_wavetable;
 
@@ -40,6 +43,8 @@ pub struct WavetableOsc {
     sample_rate: SampleRate,
     /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
     mod_offsets: ParamModOffsets,
+    /// Per-oscillator glide (portamento); `0` glide time = follow the voice glide.
+    glide: OscGlide,
 
     // Buffers
     output_buffer: AudioBuffer,
@@ -57,6 +62,7 @@ impl WavetableOsc {
             note_freq: Hertz::A4,
             sample_rate: SampleRate::DVD_QUALITY,
             mod_offsets: ParamModOffsets::new(),
+            glide: OscGlide::new(),
             output_buffer: AudioBuffer::new(1024),
         }
     }
@@ -158,6 +164,19 @@ impl Describable for WavetableOsc {
                 .unit(ParameterUnit::Percent)
                 .widget(WidgetHint::Knob),
             )
+            .parameter(
+                ParameterDescriptor::float(
+                    "glide_time",
+                    Param::WavetableOsc(WavetableParam::GlideTime(Seconds::ZERO)),
+                    "Glide",
+                )
+                .description("Per-oscillator portamento time (0 = follow the voice glide)")
+                .range(0.0, 2.0)
+                .default(0.0)
+                .modulatable(false)
+                .unit(ParameterUnit::Seconds)
+                .widget(WidgetHint::Knob),
+            )
             .port(
                 PortDescriptor::control_input("fm", "FM").description(
                     "Modulates pitch. Connect: LFO for vibrato, Envelope for pitch sweep",
@@ -186,6 +205,12 @@ impl PolyModule for WavetableOsc {
         self.sample_rate = context.sample_rate;
         let num_samples = context.samples.as_usize();
         self.output_buffer.resize(num_samples);
+
+        // Per-oscillator glide: with glide_time > 0 run our own portamento toward
+        // the note target (bend/vibrato on top), overriding the voice glide.
+        if let Some(glided) = self.glide.resolve(context.sample_rate, context.samples) {
+            self.note_freq = Hertz::new(Hertz::OSC_RANGE.clamp(glided.as_f32()));
+        }
 
         let fm_input = inputs.get(PortName::FM);
         let pos_cv = inputs.get(PortName::POS_CV);
@@ -241,6 +266,7 @@ impl PolyModule for WavetableOsc {
                 WavetableParam::Level(g) => {
                     self.level = Gain::new(g.as_f32().clamp(0.0, 1.0));
                 }
+                WavetableParam::GlideTime(t) => self.glide.set_time(t),
             }
         }
     }
@@ -253,6 +279,7 @@ impl PolyModule for WavetableOsc {
                 WavetableParam::Detune(_) => self.detune.as_f32(),
                 WavetableParam::Octave(_) => self.octave.as_i32() as f32,
                 WavetableParam::Level(_) => self.level.as_f32(),
+                WavetableParam::GlideTime(_) => self.glide.time().as_f32(),
             })
         } else {
             None
@@ -266,6 +293,7 @@ impl PolyModule for WavetableOsc {
             Param::WavetableOsc(WavetableParam::Detune(self.detune)),
             Param::WavetableOsc(WavetableParam::Octave(self.octave)),
             Param::WavetableOsc(WavetableParam::Level(self.level)),
+            Param::WavetableOsc(WavetableParam::GlideTime(self.glide.time())),
         ]
     }
 
@@ -279,6 +307,7 @@ impl PolyModule for WavetableOsc {
 
     fn reset(&mut self) {
         self.phase = Phase::ZERO;
+        self.glide.reset();
     }
 
     fn note_on(&mut self, note: MidiNote, _velocity: Velocity) {
@@ -286,11 +315,12 @@ impl PolyModule for WavetableOsc {
         self.phase = Phase::ZERO;
     }
 
-    fn set_voice_pitch(&mut self, freq: Hertz) {
+    fn set_voice_pitch(&mut self, pitch: VoicePitch) {
         // `effective_freq()` derives the playback frequency from `note_freq` each
         // block (octave + detune on top), so the modulated note pitch lands on
         // `note_freq`. Phase accumulates continuously — no click.
-        self.note_freq = Hertz::new(Hertz::OSC_RANGE.clamp(freq.as_f32()));
+        self.glide.store(pitch);
+        self.note_freq = Hertz::new(Hertz::OSC_RANGE.clamp(pitch.played.as_f32()));
     }
 
     fn note_off(&mut self) {
@@ -329,7 +359,7 @@ mod tests {
         let mut s2 = WavetableOsc::new();
         s2.note_on(note, Velocity::MAX);
         let up = render_mono(&mut s2, sr, 4, 1024, |m| {
-            m.set_voice_pitch(Hertz::new(f * 2.0));
+            m.set_voice_pitch(VoicePitch::tracking(Hertz::new(f * 2.0)));
         });
         let est_up = amdf_fundamental(&up[2048..], srf, f * 2.0);
         assert!(cents(est_up, f * 2.0).abs() < 50.0, "2x {est_up}");
@@ -401,7 +431,7 @@ mod tests {
         assert_eq!(wt.octave, Octaves::new(-1));
 
         let params = wt.get_params();
-        assert_eq!(params.len(), 5);
+        assert_eq!(params.len(), 6);
     }
 
     #[test]

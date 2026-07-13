@@ -8,11 +8,12 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use synth_core::ChannelCount;
+use synth_core::VoicePitch;
 use synth_core::{
-    AudioBuffer, Cents, Describable, Gain, Hertz, InputPorts, MidiNote, ModuleCategory,
-    ModuleDescriptor, ModuleType, NormalizedValue, Param, ParamModOffsets, ParameterDescriptor,
-    ParameterUnit, PlayDirection, PolyModule, PortDescriptor, PortName, ProcessContext, SampleId,
-    SampleRate, SamplerParam, SamplerPlayMode, Velocity, WidgetHint,
+    AudioBuffer, Cents, Describable, Gain, InputPorts, MidiNote, ModuleCategory, ModuleDescriptor,
+    ModuleType, NormalizedValue, Param, ParamModOffsets, ParameterDescriptor, ParameterUnit,
+    PlayDirection, PolyModule, PortDescriptor, PortName, ProcessContext, SampleId, SampleRate,
+    SamplerParam, SamplerPlayMode, Velocity, WidgetHint,
 };
 use synth_sampler::playback::{PlaybackState, SamplePlayer};
 use synth_sampler::types::{CropRegion, LoopRegion};
@@ -401,7 +402,7 @@ impl PolyModule for Sampler {
         self.load_sample(data, channels, frame_count, None, None, root_note);
     }
 
-    fn set_voice_pitch(&mut self, freq: Hertz) {
+    fn set_voice_pitch(&mut self, pitch: VoicePitch) {
         // Follow the voice's modulated note pitch continuously (glide / vibrato /
         // pitch-bend). When pitch tracking is off the sampler ignores the played
         // note (fixed-rate playback), so leave `base_speed` at its note-on,
@@ -410,11 +411,12 @@ impl PolyModule for Sampler {
             return;
         }
         let root_freq = self.root_note.to_frequency().as_f32();
-        if root_freq > 0.0 && freq.as_f32() > 0.0 {
+        let played = pitch.played.as_f32();
+        if root_freq > 0.0 && played > 0.0 {
             // speed = freq / root_freq × fine-tune. At freq == note pitch this
             // equals the note-on `base_speed`; it scales with the modulation.
             let fine_factor = 2.0_f64.powf(self.active_fine_tune_cents / 1200.0);
-            self.base_speed = (f64::from(freq.as_f32()) / f64::from(root_freq)) * fine_factor;
+            self.base_speed = (f64::from(played) / f64::from(root_freq)) * fine_factor;
         }
     }
 
@@ -456,7 +458,7 @@ impl PolyModule for Sampler {
         if self.pitch_tracking {
             // Seed through the exact same formula the per-block refresh uses, so
             // the note-on speed and the first `set_voice_pitch` agree.
-            self.set_voice_pitch(note.to_frequency());
+            self.set_voice_pitch(VoicePitch::tracking(note.to_frequency()));
         } else {
             // Fixed-rate playback: fine-tune only (the played note is ignored).
             self.base_speed = 2.0_f64.powf(self.active_fine_tune_cents / 1200.0);
@@ -513,6 +515,7 @@ impl PolyModule for Sampler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use synth_core::Hertz;
 
     fn ctx(n: usize) -> ProcessContext<'static> {
         ProcessContext {
@@ -603,7 +606,7 @@ mod tests {
             let root = MidiNote(60).to_frequency().as_f32();
             let mut total = 0;
             for _ in 0..400 {
-                s.set_voice_pitch(Hertz::new(root * pitch_mul));
+                s.set_voice_pitch(VoicePitch::tracking(Hertz::new(root * pitch_mul)));
                 let e = render_energy(&mut s, 64);
                 total += 64;
                 if e < 1e-6 {

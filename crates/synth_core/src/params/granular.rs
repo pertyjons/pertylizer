@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{Gain, Milliseconds, NormalizedValue};
+use crate::types::{Gain, Milliseconds, NormalizedValue, Seconds};
 
 /// Grain window envelope shape.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -143,6 +143,9 @@ pub enum GranularParam {
     Source(GrainSource),
     /// Output level.
     Level(Gain),
+    /// Per-oscillator glide (portamento) time in seconds (0 = follow the
+    /// voice-level glide).
+    GlideTime(Seconds),
 }
 
 impl GranularParam {
@@ -162,6 +165,7 @@ impl GranularParam {
             Self::Window(_) => "Window",
             Self::Source(_) => "Source",
             Self::Level(_) => "Level",
+            Self::GlideTime(_) => "Glide",
         }
     }
 
@@ -184,6 +188,7 @@ impl GranularParam {
             Self::Window(w) => w.index() as f32,
             Self::Source(s) => s.index() as f32,
             Self::Level(g) => g.as_f32(),
+            Self::GlideTime(s) => s.as_f32(),
         }
     }
 
@@ -200,6 +205,7 @@ impl GranularParam {
             Self::Window(_) => Self::Window(GrainWindow::from_index(value as usize)),
             Self::Source(_) => Self::Source(GrainSource::from_index(value as usize)),
             Self::Level(_) => Self::Level(Gain::new(value)),
+            Self::GlideTime(_) => Self::GlideTime(Seconds::new(value.max(0.0))),
         }
     }
 }

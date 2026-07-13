@@ -541,9 +541,9 @@ impl ModuleGraph {
     /// former `== ModuleType::Oscillator` special case — pitch tracking is now a
     /// per-module capability, so any pitched source (sub-osc, wavetable, …) can
     /// follow continuous pitch simply by implementing the trait method.
-    pub fn set_voice_pitch(&mut self, freq: synth_core::Hertz) {
+    pub fn set_voice_pitch(&mut self, pitch: synth_core::VoicePitch) {
         for node in self.nodes.values_mut() {
-            node.module.set_voice_pitch(freq);
+            node.module.set_voice_pitch(pitch);
         }
     }
 

@@ -12,10 +12,14 @@
 
 use std::collections::HashMap;
 
+use synth_core::VoicePitch;
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, Seconds,
+    WidgetHint,
 };
+
+use crate::osc_glide::OscGlide;
 use synth_core::{
     Gain, Hertz, MidiNote, ModuleType, Param, PortName, SID_FREQ_REG_MAX, SID_PW_REG_MAX,
     SID_SEQ_STEPS, SampleRate, SidClock, SidModel, SidOscillatorParam, SidQuality, Velocity,
@@ -175,6 +179,9 @@ pub struct SidOscillator {
     /// the authored `freq_reg` param so playback never mutates the value the
     /// save path serializes.
     tracked_freq_reg: Option<u32>,
+    /// Per-oscillator glide (portamento); `0` glide time = follow the voice glide.
+    /// Only affects tuning while `track_voice_pitch` is on.
+    glide: OscGlide,
     /// 23-bit noise LFSR, clocked on accumulator bit 19's rising edge.
     lfsr: u32,
     /// Previous sample's sync-input value, for MSB 0→1 edge detection.
@@ -264,6 +271,7 @@ impl SidOscillator {
             seq_steps: [0; SID_SEQ_STEPS],
             acc: 0,
             tracked_freq_reg: None,
+            glide: OscGlide::new(),
             lfsr: LFSR_INIT,
             prev_sync: 0.0,
             pending_sync_step: 0.0,
@@ -595,6 +603,7 @@ impl SidOscillator {
             SidOscillatorParam::Quality(_) => SidOscillatorParam::Quality(self.quality),
             SidOscillatorParam::DcBlock(_) => SidOscillatorParam::DcBlock(self.dc_block),
             SidOscillatorParam::Level(_) => SidOscillatorParam::Level(self.level),
+            SidOscillatorParam::GlideTime(_) => SidOscillatorParam::GlideTime(self.glide.time()),
             SidOscillatorParam::SeqLength(_) => SidOscillatorParam::SeqLength(self.seq_length),
             SidOscillatorParam::SeqRate(_) => SidOscillatorParam::SeqRate(self.seq_rate),
             SidOscillatorParam::SeqLoop(_) => SidOscillatorParam::SeqLoop(self.seq_loop),
@@ -861,6 +870,19 @@ impl Describable for SidOscillator {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "glide_time",
+                    Param::SidOscillator(SidOscillatorParam::GlideTime(Seconds::ZERO)),
+                    "Glide",
+                )
+                .description("Per-oscillator portamento time (0 = follow the voice glide)")
+                .range(0.0, 2.0)
+                .default(0.0)
+                .modulatable(false)
+                .unit(ParameterUnit::Seconds)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
                     "seq_len",
                     Param::SidOscillator(SidOscillatorParam::SeqLength(0)),
                     "Seq Length",
@@ -974,6 +996,14 @@ impl PolyModule for SidOscillator {
         let n_samples = context.samples.as_usize();
         self.output_buffer.resize(n_samples);
         self.msb_buffer.resize(n_samples);
+
+        // Per-oscillator glide: with glide_time > 0 run our own portamento toward
+        // the note target; it only affects tuning while tracking the voice pitch.
+        if let Some(glided) = self.glide.resolve(context.sample_rate, context.samples)
+            && self.track_voice_pitch
+        {
+            self.tracked_freq_reg = Some(self.freq_to_reg(glided));
+        }
 
         let fm_reader = inputs.reader(PortName::FM, 0.0);
         let pwm_reader = inputs.reader(PortName::PWM, 0.0);
@@ -1310,6 +1340,7 @@ impl PolyModule for SidOscillator {
                     self.dc_block = b;
                 }
                 SidOscillatorParam::Level(g) => self.level = g,
+                SidOscillatorParam::GlideTime(t) => self.glide.set_time(t),
                 SidOscillatorParam::SeqLength(n) => {
                     self.seq_length = n.min(SID_SEQ_STEPS as u8);
                 }
@@ -1349,6 +1380,7 @@ impl PolyModule for SidOscillator {
             SidOscillatorParam::Quality(SidQuality::Fast),
             SidOscillatorParam::DcBlock(true),
             SidOscillatorParam::Level(Gain::UNITY),
+            SidOscillatorParam::GlideTime(Seconds::ZERO),
             SidOscillatorParam::SeqLength(0),
             SidOscillatorParam::SeqRate(1),
             SidOscillatorParam::SeqLoop(false),
@@ -1411,6 +1443,7 @@ impl PolyModule for SidOscillator {
         self.frame_pos = 0.0;
         self.frame_count = 0;
         self.downsampler.reset();
+        self.glide.reset();
     }
 
     fn note_on(&mut self, note: MidiNote, _velocity: Velocity) {
@@ -1424,9 +1457,10 @@ impl PolyModule for SidOscillator {
         self.frame_count = 0;
     }
 
-    fn set_voice_pitch(&mut self, freq: Hertz) {
+    fn set_voice_pitch(&mut self, pitch: VoicePitch) {
+        self.glide.store(pitch);
         if self.track_voice_pitch {
-            self.tracked_freq_reg = Some(self.freq_to_reg(freq));
+            self.tracked_freq_reg = Some(self.freq_to_reg(pitch.played));
         }
     }
 
@@ -1497,14 +1531,14 @@ mod tests {
     #[test]
     fn voice_pitch_maps_to_freq_reg() {
         let mut sid = SidOscillator::new();
-        sid.set_voice_pitch(Hertz::new(440.0));
+        sid.set_voice_pitch(VoicePitch::tracking(Hertz::new(440.0)));
         // PAL: 440 * 16777216 / 985248 = 7493.06… → 7493
         assert_eq!(sid.effective_freq_reg(), 7493);
 
         sid.set_param(Param::SidOscillator(SidOscillatorParam::Clock(
             SidClock::Ntsc,
         )));
-        sid.set_voice_pitch(Hertz::new(440.0));
+        sid.set_voice_pitch(VoicePitch::tracking(Hertz::new(440.0)));
         // NTSC: 440 * 16777216 / 1022727 = 7218.4… → 7218
         assert_eq!(sid.effective_freq_reg(), 7218);
 
@@ -1521,7 +1555,7 @@ mod tests {
             false,
         )));
         sid.set_param(Param::SidOscillator(SidOscillatorParam::FreqReg(1234)));
-        sid.set_voice_pitch(Hertz::new(880.0));
+        sid.set_voice_pitch(VoicePitch::tracking(Hertz::new(880.0)));
         assert_eq!(sid.effective_freq_reg(), 1234);
         sid.note_on(MidiNote::A4, Velocity::MAX);
         assert_eq!(sid.effective_freq_reg(), 1234);
@@ -2171,7 +2205,7 @@ mod tests {
         let mut sid = SidOscillator::new();
         sid.note_on(a2, Velocity::MAX);
         let up = render_mono(&mut sid, sr, 4, 1024, |m| {
-            m.set_voice_pitch(Hertz::new(f * 2.0));
+            m.set_voice_pitch(VoicePitch::tracking(Hertz::new(f * 2.0)));
         });
         let est_up = amdf_fundamental(&up[2048..], sr.as_f32(), f * 2.0);
         assert!(
@@ -2449,7 +2483,7 @@ mod tests {
         sid.set_param(Param::SidOscillator(SidOscillatorParam::TrackVoicePitch(
             true,
         )));
-        sid.set_voice_pitch(Hertz::new(880.0));
+        sid.set_voice_pitch(VoicePitch::tracking(Hertz::new(880.0)));
         // PAL: 880 * 16777216 / 985248 = 14985.01… → 14985
         assert_eq!(sid.effective_freq_reg(), 14985, "played note outranks");
     }

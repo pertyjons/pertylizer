@@ -13,6 +13,7 @@
 use std::collections::HashMap;
 use std::f32::consts::TAU;
 
+use synth_core::VoicePitch;
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
     ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
@@ -301,11 +302,11 @@ impl PolyModule for RingMod {
         self.carrier_phase = Phase::ZERO;
     }
 
-    fn set_voice_pitch(&mut self, freq: Hertz) {
+    fn set_voice_pitch(&mut self, pitch: VoicePitch) {
         // The carrier key-tracks the note (blended by `track_keyboard` in
         // `effective_carrier_freq`); follow the modulated note pitch so
         // glide/vibrato bend the carrier and its sidebands. Phase-continuous.
-        self.note_freq = Hertz::new(Hertz::OSC_RANGE.clamp(freq.as_f32()));
+        self.note_freq = Hertz::new(Hertz::OSC_RANGE.clamp(pitch.played.as_f32()));
     }
 
     fn note_off(&mut self) {
@@ -354,7 +355,7 @@ mod tests {
             let mut out = Vec::with_capacity(block * 4);
             for _ in 0..4 {
                 if let Some(vp) = voice_pitch {
-                    rm.set_voice_pitch(Hertz::new(vp));
+                    rm.set_voice_pitch(VoicePitch::tracking(Hertz::new(vp)));
                 }
                 let mut outs = HashMap::new();
                 outs.insert(PortName::OUT, AudioBuffer::new(block));

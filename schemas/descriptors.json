@@ -18,6 +18,18 @@
           "unit": "none",
           "value_kind": "continuous"
         },
+        "glide_time": {
+          "default": 0.0,
+          "description": "Per-oscillator portamento time (0 = follow the voice glide)",
+          "max": 2.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Glide",
+          "response_curve": "linear",
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
+        },
         "level": {
           "default": 1.0,
           "description": "Output level",
@@ -1928,6 +1940,18 @@
           "unit": "none",
           "value_kind": "continuous"
         },
+        "glide_time": {
+          "default": 0.0,
+          "description": "Per-oscillator portamento time (0 = follow the voice glide)",
+          "max": 2.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Glide",
+          "response_curve": "linear",
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
+        },
         "level": {
           "default": 1.0,
           "description": "Output level",
@@ -2161,6 +2185,18 @@
           "type": "boolean",
           "unit": "none",
           "value_kind": "bool"
+        },
+        "glide_time": {
+          "default": 0.0,
+          "description": "Per-oscillator portamento time (0 = follow the voice glide)",
+          "max": 2.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Glide",
+          "response_curve": "linear",
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
         },
         "grain_size": {
           "default": 50.0,
@@ -2914,6 +2950,18 @@
           "response_curve": "logarithmic",
           "type": "number",
           "unit": "hertz",
+          "value_kind": "continuous"
+        },
+        "glide_time": {
+          "default": 0.0,
+          "description": "Per-oscillator portamento time (0 = follow the voice glide)",
+          "max": 2.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Glide",
+          "response_curve": "linear",
+          "type": "number",
+          "unit": "seconds",
           "value_kind": "continuous"
         },
         "level": {
@@ -5162,6 +5210,18 @@
           "unit": "hertz",
           "value_kind": "continuous"
         },
+        "glide_time": {
+          "default": 0.0,
+          "description": "Per-oscillator portamento time (0 = follow the voice glide)",
+          "max": 2.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Glide",
+          "response_curve": "linear",
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
+        },
         "level": {
           "default": 1.0,
           "description": "Output level",
@@ -6248,6 +6308,18 @@
           "unit": "none",
           "value_kind": "integer"
         },
+        "glide_time": {
+          "default": 0.0,
+          "description": "Per-oscillator portamento time (0 = follow the voice glide)",
+          "max": 2.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Glide",
+          "response_curve": "linear",
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
+        },
         "hard_sync": {
           "default": 0.0,
           "description": "SYNC bit: reset the accumulator on the `sync` input's MSB 0→1 rising edge",
@@ -6978,6 +7050,18 @@
       "description": "Sub-oscillator for bass reinforcement at -1 or -2 octaves",
       "name": "Sub Osc",
       "parameters": {
+        "glide_time": {
+          "default": 0.0,
+          "description": "Per-oscillator portamento time (0 = follow the voice glide)",
+          "max": 2.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Glide",
+          "response_curve": "linear",
+          "type": "number",
+          "unit": "seconds",
+          "value_kind": "continuous"
+        },
         "level": {
           "default": 0.5,
           "description": "Sub-oscillator output level",
@@ -7628,6 +7712,18 @@
           "response_curve": "linear",
           "type": "number",
           "unit": "cents",
+          "value_kind": "continuous"
+        },
+        "glide_time": {
+          "default": 0.0,
+          "description": "Per-oscillator portamento time (0 = follow the voice glide)",
+          "max": 2.0,
+          "min": 0.0,
+          "modulatable": false,
+          "name": "Glide",
+          "response_curve": "linear",
+          "type": "number",
+          "unit": "seconds",
           "value_kind": "continuous"
         },
         "level": {

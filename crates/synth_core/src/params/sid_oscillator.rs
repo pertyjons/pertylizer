@@ -8,7 +8,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::Gain;
+use crate::types::{Gain, Seconds};
 
 /// Number of steps in the per-frame waveform-mask sequence.
 pub const SID_SEQ_STEPS: usize = 16;
@@ -262,6 +262,9 @@ pub enum SidOscillatorParam {
     /// Waveform-mask sequence step: (step index, 4-bit mask 0-15).
     /// Bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise.
     SeqStep(u8, u8),
+    /// Per-oscillator glide (portamento) time in seconds (0 = follow the
+    /// voice-level glide). Only affects the tuning when `TrackVoicePitch` is on.
+    GlideTime(Seconds),
 }
 
 impl SidOscillatorParam {
@@ -295,6 +298,7 @@ impl SidOscillatorParam {
             Self::SeqRate(_) => "Seq Rate",
             Self::SeqLoop(_) => "Seq Loop",
             Self::SeqStep(..) => "Seq Step",
+            Self::GlideTime(_) => "Glide",
         }
     }
 
@@ -327,6 +331,7 @@ impl SidOscillatorParam {
             Self::Quality(q) => q.index() as f32,
             Self::Level(g) => g.as_f32(),
             Self::SeqLength(n) | Self::SeqRate(n) | Self::SeqStep(_, n) => f32::from(*n),
+            Self::GlideTime(s) => s.as_f32(),
         }
     }
 
@@ -364,6 +369,7 @@ impl SidOscillatorParam {
             Self::SeqRate(_) => Self::SeqRate(value.round().clamp(1.0, 16.0) as u8),
             Self::SeqLoop(_) => Self::SeqLoop(as_bool),
             Self::SeqStep(i, _) => Self::SeqStep(*i, value.round().clamp(0.0, 15.0) as u8),
+            Self::GlideTime(_) => Self::GlideTime(Seconds::new(value.max(0.0))),
         }
     }
 }

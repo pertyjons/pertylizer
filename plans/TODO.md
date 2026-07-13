@@ -442,6 +442,38 @@ GUI faceplate + mod-matrix dest + automation + save + cross-script `scr-1.drive`
   deferred (default linear/unipolar). A later optional `param … unit hz` keyword maps a
   recognized token → the `ParameterUnit` enum, else `None`. **S**.
 
+### 2.8 Per-oscillator glide (portamento)
+
+**Shipped (branch `feat/per-oscillator-glide`, squash-merged 2026-07-13).** All 8
+pitched oscillators (`oscillator`, `sub_osc`, `wavetable_osc`, `math_oscillator`,
+`additive_osc`, `granular_osc`, `fractal_osc`, `sid_oscillator`) gained a
+`glide_time` param: when `> 0` the oscillator runs its own portamento (shared
+`PitchGlide` in synth_dsp / `OscGlide` in synth_modules) toward the raw note
+target and re-applies bend/vibrato on top, overriding the voice-level glide for
+itself; `= 0` is bit-identical to before. `VoicePitch` (synth_core) decomposes the
+per-block pitch broadcast into `played` / `note_target` / `expr` / `note`. Gate
+green; final full-branch review clean. Plan doc deleted with the merge.
+
+- [ ] **In-app eyeball (pending — not a bug).** Two oscillators in one voice: set
+  `glide_time > 0` on one, confirm it audibly portamentos between notes while the
+  other jumps; confirm the **Glide** knob renders and changes the sound; confirm
+  no-glide patches sound unchanged and that pitch-bend/vibrato still track on a
+  gliding oscillator.
+- [ ] **Extend the opt-in param to the other pitch-tracking sources.** `voice_synth`,
+  `vocal_tract`, `fof`, `ring_mod`, `padsynth`, `sampler` took the `VoicePitch`
+  signature change but not the `glide_time` param (plan §5 "candidates"). Each is a
+  small `OscGlide` adoption if wanted. **S each.**
+- [ ] **(Optional) Make `glide_time` modulatable/automatable.** It's deliberately
+  `.modulatable(false)` on every module because `OscGlide` doesn't read
+  `ParamModOffsets`/automation overrides for it — marking it modulatable without
+  that would be a silent-drop bug (`is_automatable()` also gates on `modulatable`).
+  To let an LFO/automation sweep the glide time, have `OscGlide` consume the mod
+  offset for `glide_time`. **S–M.**
+- [ ] **(Optional) Per-note glide + stepped glissando, per-oscillator.** The
+  per-note glide (tracker import, `GlideState::start_from`) and stepped/glissando
+  voice glides stay voice-level; a per-osc glide is always continuous. Mirror them
+  per-oscillator only if a use case appears.
+
 ---
 
 ## 3. UI & Visual Polish
@@ -893,3 +925,29 @@ enough to be driven by an actual observed symptom. Ordered by likely impact.
   ringing past the window edge, so offline `analyze_*` can't surface over-hang/tail
   artifacts that live playback plays. Render a short release-tail past the window, or
   add a flag to capture/analyze the LIVE playback audio.
+
+---
+
+## Maybe later
+
+### Graph-level feedback edges (mostly redundant with Script — only build for audio-rate/UX)
+
+- [ ] **Graph-level feedback loops (allow cycles via a one-block delay).** Was
+  `plans/graph-feedback-loops.md` (deleted 2026-07-13; full text in git history). The
+  proposal: stop rejecting a cycle-closing cable, tag it `is_feedback`, exclude it from the
+  topo sort, and read the source's *previous* block (z⁻ᵇˡᵒᶜᵏ). **Largely redundant** — the
+  block-latency feedback it wants already exists for the script path: a `Script` (`scr`) or
+  `AudioScript` (`asc`) reads any module output as an **address-based source**
+  (`src fb = flt-1.out`), which resolves via `Voice::resolve_source` to that module's
+  **previous block's** value (`voice.rs:1277`, `buf[0]`) and does **not** go through
+  `validate_connection`/`would_create_cycle` (the cycle check only guards `Connection` cable
+  edges). So `flt-1.out → osc-1.fm_amt` (the plan's exit-gate example) is expressible today
+  as: `scr-1` reads `src fb = flt-1.out`, writes `out1 = fb * amount`, cable
+  `scr-1.out1 → osc-1.fm_amt` (a forward edge, no cycle). `AudioScript` additionally gives
+  **sample-accurate** in-module feedback via `state` cells — strictly better than one-block
+  latency for loops that fit in one module. **Only build the graph-edge feature if we
+  actually want** (a) **audio-buffer-rate** feedback wrapped around *existing* modules
+  without reimplementing their DSP in script (the address source yields one control-rate
+  scalar/block, not an audio buffer), or (b) the **turnkey "drag a back-edge → feedback
+  cable" UX** (`plans/cable-routing.md` §2.A already sketches the distinct arc). Otherwise
+  document the script recipe as the supported way to do control/CV-rate feedback.

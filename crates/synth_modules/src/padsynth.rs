@@ -13,6 +13,7 @@
 
 use std::collections::HashMap;
 
+use synth_core::VoicePitch;
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
     ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
@@ -478,12 +479,12 @@ impl PolyModule for PadSynth {
         self.active = true;
     }
 
-    fn set_voice_pitch(&mut self, freq: Hertz) {
+    fn set_voice_pitch(&mut self, pitch: VoicePitch) {
         // The wavetable is baked from base_freq and stays put; the note pitch is
         // only the phase increment, which `process()` derives from `current_pitch`
         // and the current sample rate (no O(N²) table rebuild). Just record the
         // target pitch — the clamp + division happen at the single site in process().
-        self.current_pitch = freq;
+        self.current_pitch = pitch.played;
     }
 
     fn note_off(&mut self) {
@@ -531,7 +532,7 @@ mod tests {
 
         let mut s2 = narrow();
         let up = render_mono(&mut s2, sr, 4, 1024, |m| {
-            m.set_voice_pitch(Hertz::new(f * 2.0));
+            m.set_voice_pitch(VoicePitch::tracking(Hertz::new(f * 2.0)));
         });
         let est_up = amdf_fundamental(&up[2048..], srf, f * 2.0);
         assert!(cents(est_up, f * 2.0).abs() < 50.0, "2x {est_up}");
