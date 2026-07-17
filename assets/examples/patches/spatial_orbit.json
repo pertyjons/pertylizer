@@ -1,0 +1,241 @@
+{
+  "name": "Spatial Orbit",
+  "author": {
+    "name": "Per Jonsson",
+    "email": "pertyjons@gmail.com",
+    "website": "https://github.com/pertyjons"
+  },
+  "version": "1.0",
+  "modules": [
+    {
+      "id": "osc-1",
+      "type": "oscillator",
+      "position": {
+        "x": 32.0,
+        "y": 32.0
+      },
+      "parameters": {
+        "anti_alias": "polyblep",
+        "detune": 0.0,
+        "fm_amt": 1.0,
+        "fm_mode": "exponential",
+        "frequency": 440.0,
+        "level": 1.0,
+        "octave": 0.0,
+        "phase": 0.0,
+        "pulse_width": 0.5,
+        "uni_detune": 10.0,
+        "uni_phase": 1.0,
+        "uni_spread": 0.5,
+        "unison": 1,
+        "waveform": "sawtooth",
+        "x_mod": 0.0
+      }
+    },
+    {
+      "id": "env-1",
+      "type": "envelope",
+      "position": {
+        "x": 32.0,
+        "y": 480.0
+      },
+      "parameters": {
+        "atk_curve": 0.0,
+        "attack": 0.02,
+        "dec_curve": 0.0,
+        "decay": 0.1,
+        "rel_curve": 0.0,
+        "release": 0.4,
+        "sustain": 0.7,
+        "vel_sens": 1.0
+      }
+    },
+    {
+      "id": "amp-1",
+      "type": "amplifier",
+      "position": {
+        "x": 544.0,
+        "y": 32.0
+      },
+      "parameters": {
+        "cv_bipolar": false,
+        "level": 1.0,
+        "pan": 0.0
+      }
+    },
+    {
+      "id": "out-1",
+      "type": "stereo_output",
+      "position": {
+        "x": 1184.0,
+        "y": 32.0
+      },
+      "parameters": {
+        "dither": false,
+        "limit": true,
+        "master": 0.8,
+        "mute": false,
+        "pan": 0.0
+      }
+    },
+    {
+      "id": "mmx-1",
+      "type": "mod_matrix",
+      "position": {
+        "x": 1664.0,
+        "y": 32.0
+      },
+      "parameters": {
+        "grid_size": "2x2",
+        "slot_10_amount": 0.0,
+        "slot_10_dest": "none",
+        "slot_10_enabled": true,
+        "slot_10_source": "none",
+        "slot_11_amount": 0.0,
+        "slot_11_dest": "none",
+        "slot_11_enabled": true,
+        "slot_11_source": "none",
+        "slot_12_amount": 0.0,
+        "slot_12_dest": "none",
+        "slot_12_enabled": true,
+        "slot_12_source": "none",
+        "slot_13_amount": 0.0,
+        "slot_13_dest": "none",
+        "slot_13_enabled": true,
+        "slot_13_source": "none",
+        "slot_14_amount": 0.0,
+        "slot_14_dest": "none",
+        "slot_14_enabled": true,
+        "slot_14_source": "none",
+        "slot_15_amount": 0.0,
+        "slot_15_dest": "none",
+        "slot_15_enabled": true,
+        "slot_15_source": "none",
+        "slot_16_amount": 0.0,
+        "slot_16_dest": "none",
+        "slot_16_enabled": true,
+        "slot_16_source": "none",
+        "slot_1_amount": 0.0,
+        "slot_1_dest": "spp-1.x",
+        "slot_1_enabled": true,
+        "slot_1_source": "none",
+        "slot_2_amount": 0.0,
+        "slot_2_dest": "spp-1.y",
+        "slot_2_enabled": true,
+        "slot_2_source": "none",
+        "slot_3_amount": 0.0,
+        "slot_3_dest": "spp-1.z",
+        "slot_3_enabled": true,
+        "slot_3_source": "none",
+        "slot_4_amount": 0.0,
+        "slot_4_dest": "none",
+        "slot_4_enabled": true,
+        "slot_4_source": "none",
+        "slot_5_amount": 0.0,
+        "slot_5_dest": "none",
+        "slot_5_enabled": true,
+        "slot_5_source": "none",
+        "slot_6_amount": 0.0,
+        "slot_6_dest": "none",
+        "slot_6_enabled": true,
+        "slot_6_source": "none",
+        "slot_7_amount": 0.0,
+        "slot_7_dest": "none",
+        "slot_7_enabled": true,
+        "slot_7_source": "none",
+        "slot_8_amount": 0.0,
+        "slot_8_dest": "none",
+        "slot_8_enabled": true,
+        "slot_8_source": "none",
+        "slot_9_amount": 0.0,
+        "slot_9_dest": "none",
+        "slot_9_enabled": true,
+        "slot_9_source": "none"
+      },
+      "scripts": {
+        "1": "out = sin(phasor(0.25) * tau) * 0.5",
+        "2": "out = cos(phasor(0.25) * tau) * 0.5"
+      }
+    },
+    {
+      "id": "spp-1",
+      "type": "spatial_panner",
+      "position": {
+        "x": 864.0,
+        "y": 32.0
+      },
+      "parameters": {
+        "absorption": 0.4,
+        "air_absorption": 0.1,
+        "diffusion": 0.3,
+        "direct_level": 1.0,
+        "er_level": 0.5,
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0
+      }
+    }
+  ],
+  "connections": [
+    {
+      "from": [
+        "osc-1",
+        "out"
+      ],
+      "to": [
+        "amp-1",
+        "in"
+      ]
+    },
+    {
+      "from": [
+        "env-1",
+        "out"
+      ],
+      "to": [
+        "amp-1",
+        "cv"
+      ]
+    },
+    {
+      "from": [
+        "amp-1",
+        "out"
+      ],
+      "to": [
+        "spp-1",
+        "in"
+      ]
+    },
+    {
+      "from": [
+        "spp-1",
+        "out_l"
+      ],
+      "to": [
+        "out-1",
+        "in_l"
+      ]
+    },
+    {
+      "from": [
+        "spp-1",
+        "out_r"
+      ],
+      "to": [
+        "out-1",
+        "in_r"
+      ]
+    }
+  ],
+  "settings": {
+    "master_volume": 1.0,
+    "bpm": 120.0,
+    "octave_offset": -1,
+    "glide_time": 0.0,
+    "canvas_size": {
+      "width": 2114.0,
+      "height": 980.0
+    }
+  }
+}
