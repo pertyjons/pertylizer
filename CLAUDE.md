@@ -99,22 +99,6 @@ commit and the code carry the detail; history.md is the index.
 
 ## Architecture
 
-### Crate Structure
-
-| Crate                | Purpose                                                            |
-|----------------------|--------------------------------------------------------------------|
-| `pertylizer`         | GUI application (egui/eframe), MCP integration, project management |
-| `synth_core`         | Shared types, traits (`PolyModule`, `ModuleDescriptor`), newtypes  |
-| `synth_config`       | Runtime config (`pertylizer.toml`) shared by the app and visualizer |
-| `synth_engine`       | Audio engine, voice management, instrument graph, recording        |
-| `synth_sequencer`    | Song, patterns, tracks, arrangement, automation                    |
-| `synth_modules`      | DSP module implementations (71 module types incl. 25 effects)      |
-| `synth_dsp`          | Low-level DSP primitives (biquad, delay lines, interpolation)      |
-| `synth_sampler`      | Sample loading, playback, and waveform analysis                    |
-| `synth_mcp`          | MCP server for external control (175+ tools)                       |
-| `synth_osc`          | OSC telemetry sender (spectrum, notes, transport over UDP)         |
-| `synth_osc_protocol` | Shared OSC protocol definitions for synth and visualizer           |
-
 ### Thread Model
 
 - **Audio thread** — real-time, lock-free. Runs `SynthEngine::process()`. Communicates via `EngineCommand` (in) and
