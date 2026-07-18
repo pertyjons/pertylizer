@@ -23,14 +23,14 @@ use synth_core::params::EnvelopeParam;
 use synth_core::{ModuleType, Param, SamplerParam, SamplerPlayMode};
 use synth_engine::state::EngineState;
 use synth_engine::{InstrumentCategory, InstrumentSnapshot, ModuleStateSnapshot};
-use synth_sequencer::{SeqInstrumentId, SequencerTrack, Song};
+use synth_sequencer::{InstrumentId, SequencerTrack, Song};
 
 /// Full profile for a single instrument across several independent axes.
 #[derive(Debug, Clone, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub struct InstrumentProfile {
-    /// Sequencer instrument id (matches `SeqInstrumentId.0`).
-    pub instrument_id: u16,
+    /// Sequencer instrument id (matches `InstrumentId.0`).
+    pub instrument_id: InstrumentId,
     pub instrument_name: String,
     pub role: RoleInference,
     pub envelope_shape: EnvelopeShape,
@@ -847,7 +847,7 @@ fn build_pad_inference(
 /// no audio, no locks, no engine access. Tests reach for this directly.
 ///
 /// `tracks_assigned` are tracks whose `instrument` field equals
-/// `snapshot.seq_instrument_id`; the first one's name (if any) becomes the
+/// `snapshot.id`; the first one's name (if any) becomes the
 /// secondary input to the name vocabulary.
 #[must_use]
 pub fn infer_instrument_profile(
@@ -861,7 +861,7 @@ pub fn infer_instrument_profile(
         let role = map_category_to_role(snapshot.category);
         let stats = pattern_stats(notes);
         return InstrumentProfile {
-            instrument_id: snapshot.seq_instrument_id,
+            instrument_id: snapshot.id,
             instrument_name: snapshot.name.clone(),
             role: RoleInference {
                 role,
@@ -915,7 +915,7 @@ pub fn infer_instrument_profile(
     };
 
     InstrumentProfile {
-        instrument_id: snapshot.seq_instrument_id,
+        instrument_id: snapshot.id,
         instrument_name: snapshot.name.clone(),
         role,
         envelope_shape: envelope,
@@ -948,7 +948,7 @@ fn map_category_to_role(cat: InstrumentCategory) -> Role {
 /// thread.
 #[must_use]
 pub fn infer_all_profiles(song: &Song, engine_state: &EngineState) -> Vec<InstrumentProfile> {
-    let referenced: HashSet<SeqInstrumentId> = song.tracks().map(|t| t.instrument).collect();
+    let referenced: HashSet<InstrumentId> = song.tracks().map(|t| t.instrument).collect();
     if referenced.is_empty() {
         return Vec::new();
     }
@@ -957,7 +957,7 @@ pub fn infer_all_profiles(song: &Song, engine_state: &EngineState) -> Vec<Instru
     let mut profiles: Vec<InstrumentProfile> = Vec::with_capacity(referenced.len());
 
     for snapshot in snapshots.iter() {
-        let seq_id = SeqInstrumentId(snapshot.seq_instrument_id);
+        let seq_id = snapshot.id;
         if !referenced.contains(&seq_id) {
             continue;
         }

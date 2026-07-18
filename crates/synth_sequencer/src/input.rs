@@ -2,7 +2,7 @@
 //!
 //! Provides a unified interface for all input sources (MIDI, keyboard, GUI, etc.).
 
-use super::ids::{NoteId, PatternId, SeqInstrumentId};
+use super::ids::{InstrumentId, NoteId, PatternId};
 use super::pitch::{Pitch, Velocity};
 use super::time::{Duration, PatternTick, Tick, TimeSignature};
 use synth_core::{Bpm, NormalizedValue, Octaves, Semitones};
@@ -15,7 +15,7 @@ pub enum InputCommand {
     NoteOn {
         pitch: Pitch,
         velocity: Velocity,
-        instrument: Option<SeqInstrumentId>,
+        instrument: Option<InstrumentId>,
     },
     /// Note off.
     NoteOff { pitch: Pitch },
@@ -339,7 +339,7 @@ impl KeyboardInputSource {
     }
 
     /// Handle a key press (note on).
-    pub fn key_down(&mut self, note_offset: u8, instrument: Option<SeqInstrumentId>) {
+    pub fn key_down(&mut self, note_offset: u8, instrument: Option<InstrumentId>) {
         let midi_note = (self.base_octave.as_i32() + 1) * 12 + i32::from(note_offset);
         let Ok(midi_note) = u8::try_from(midi_note) else {
             return;

@@ -9,6 +9,7 @@
 
 mod common;
 
+use synth_core::InstrumentId;
 use synth_mcp::AnalysisScope;
 
 use pertylizer::mcp_bridge::render_to_wav_impl;
@@ -107,12 +108,12 @@ fn render_to_wav_unknown_instrument_warns_and_is_silent() {
         path.to_string_lossy().into_owned(),
         1.0,
         Some(0),
-        Some(99), // no track uses instrument 99
+        Some(InstrumentId::new(99)), // no track uses instrument 99
         AnalysisScope::default(),
     )
     .expect("render_to_wav should succeed even with no matching instrument");
 
-    assert_eq!(result.soloed_instrument_id, Some(99));
+    assert_eq!(result.soloed_instrument_id, Some(InstrumentId::new(99)));
     assert!(
         result
             .warnings

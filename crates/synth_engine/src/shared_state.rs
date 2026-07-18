@@ -345,9 +345,6 @@ impl ConnectionSnapshot {
 pub struct InstrumentSnapshot {
     /// Instrument ID.
     pub id: InstrumentId,
-    /// Sequencer instrument ID for pattern/note routing.
-    /// Convention: `SeqInstrumentId(X)` ↔ `InstrumentId(X)`.
-    pub seq_instrument_id: u16,
     /// Instrument name.
     pub name: String,
     /// Free-text description / intent. Empty when not set.

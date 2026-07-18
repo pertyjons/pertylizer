@@ -186,7 +186,7 @@ fn script_module_readback_via_get_module_info() {
     let bridge = AppSynthBridge::new(Arc::clone(&session), shared, sample_library);
 
     let info = bridge
-        .get_module_info(InstrumentId::FIRST.as_u64(), "scr-1")
+        .get_module_info(InstrumentId::FIRST, "scr-1")
         .expect("get_module_info scr-1");
 
     assert!(
@@ -227,7 +227,7 @@ fn script_module_readback_via_get_module_info() {
 
     // §3.1: a Script module is now a single program (slot 1 only), so any slot
     // past 1 is rejected up front (not silently dropped at the engine).
-    let err = bridge.set_mod_matrix_script(InstrumentId::FIRST.as_u64(), "scr-1", 2, "out1 = 1");
+    let err = bridge.set_mod_matrix_script(InstrumentId::FIRST, "scr-1", 2, "out1 = 1");
     assert!(
         err.is_err(),
         "scr slot 2 must be rejected — the Script module has one program (slot 1)"
@@ -305,7 +305,7 @@ fn set_parameters_sets_address_based_mod_matrix_destination() {
     // Batch set: an address destination (string) + enable (bool) in one call.
     let result = bridge
         .set_parameters(
-            InstrumentId::FIRST.as_u64(),
+            InstrumentId::FIRST,
             &[
                 BridgeParamSet {
                     module_id: "mmx-1".to_string(),
@@ -327,7 +327,7 @@ fn set_parameters_sets_address_based_mod_matrix_destination() {
     pump(&mut engine, &mut block);
 
     let routings = bridge
-        .get_mod_matrix_routings(InstrumentId::FIRST.as_u64())
+        .get_mod_matrix_routings(InstrumentId::FIRST)
         .expect("get_mod_matrix_routings");
     let slot1 = routings
         .iter()

@@ -14,6 +14,8 @@
 //! before values reach the bridge, and conversion to domain newtypes happens in the
 //! bridge implementation (`mcp_bridge.rs` in the `pertylizer` crate).
 
+use synth_core::InstrumentId;
+
 use crate::error::McpBridgeError;
 use crate::types::{
     ApplyExamplePatchResult, AudioPreview, AutoGainStageResult, AutomationLaneInfo,
@@ -126,7 +128,7 @@ pub struct BridgeTrackData {
     /// Track name.
     pub name: String,
     /// Optional instrument ID.
-    pub instrument_id: Option<u16>,
+    pub instrument_id: Option<InstrumentId>,
 }
 
 /// Placement data for batch arrange operations.
@@ -194,7 +196,7 @@ pub struct BridgeConnectionDef {
 /// Complete instrument definition for `build_instrument`.
 pub struct BridgeInstrumentDef {
     /// Optional existing instrument ID to update (clears graph and rebuilds).
-    pub instrument_id: Option<u64>,
+    pub instrument_id: Option<InstrumentId>,
     /// Instrument name.
     pub name: String,
     /// Optional MIDI channel (1-16).
@@ -291,7 +293,7 @@ pub struct SpectrumSource {
     /// `Some` → analyse this imported-sample id or WAV path. `None` → render.
     pub sample_id_or_path: Option<String>,
     /// (Render only) solo this instrument; `None` = full mix.
-    pub instrument_id: Option<u16>,
+    pub instrument_id: Option<InstrumentId>,
     /// (Render only) absolute start tick (default 0).
     pub start_tick: Option<u64>,
     /// (Render only) seconds to render (default 10).
@@ -487,20 +489,26 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn get_instrument_profiles(&self) -> Result<Vec<InstrumentProfileResult>, McpBridgeError>;
 
     /// Get detailed info for a single instrument.
-    fn get_instrument_info(&self, instrument_id: u64) -> Result<InstrumentInfo, McpBridgeError>;
+    fn get_instrument_info(
+        &self,
+        instrument_id: InstrumentId,
+    ) -> Result<InstrumentInfo, McpBridgeError>;
 
     /// List all modules in an instrument's voice graph.
-    fn list_modules(&self, instrument_id: u64) -> Result<Vec<ModuleInfo>, McpBridgeError>;
+    fn list_modules(&self, instrument_id: InstrumentId) -> Result<Vec<ModuleInfo>, McpBridgeError>;
 
     /// Get detailed info for a single module.
     fn get_module_info(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         module_id: &str,
     ) -> Result<ModuleInfo, McpBridgeError>;
 
     /// Get all connections in the voice graph.
-    fn get_connections(&self, instrument_id: u64) -> Result<Vec<ConnectionInfo>, McpBridgeError>;
+    fn get_connections(
+        &self,
+        instrument_id: InstrumentId,
+    ) -> Result<Vec<ConnectionInfo>, McpBridgeError>;
 
     /// Get all active Mod Matrix routings across every Mod Matrix module in
     /// the instrument. Returns slot rows with semantic source/destination
@@ -508,7 +516,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// by hand.
     fn get_mod_matrix_routings(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
     ) -> Result<Vec<MatrixRoutingInfo>, McpBridgeError>;
 
     /// Install (or clear) a YAMS control script on a Mod Matrix slot (Step 2).
@@ -517,7 +525,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// clears the slot, reverting it to scalar `amount × source`.
     fn set_mod_matrix_script(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         module_id: &str,
         slot: u8,
         source: &str,
@@ -526,7 +534,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Get a single parameter value.
     fn get_parameter(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         module_id: &str,
         param_name: &str,
     ) -> Result<ParameterInfo, McpBridgeError>;
@@ -541,7 +549,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Run diagnostics on the graph and report issues.
     fn get_graph_diagnostics(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
     ) -> Result<Vec<GraphDiagnostic>, McpBridgeError>;
 
     /// Return the authoritative on-disk `.pertyproj` JSON Schema plus the format
@@ -582,36 +590,48 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn create_instrument(&self, name: &str) -> Result<InstrumentInfo, McpBridgeError>;
 
     /// Delete an instrument.
-    fn delete_instrument(&self, instrument_id: u64) -> Result<(), McpBridgeError>;
+    fn delete_instrument(&self, instrument_id: InstrumentId) -> Result<(), McpBridgeError>;
 
     /// Rename an instrument.
-    fn rename_instrument(&self, instrument_id: u64, name: &str) -> Result<(), McpBridgeError>;
+    fn rename_instrument(
+        &self,
+        instrument_id: InstrumentId,
+        name: &str,
+    ) -> Result<(), McpBridgeError>;
 
     /// Set the free-text description / intent on an instrument. Pass `""`
     /// to clear. Never affects audio; surfaces in `InstrumentInfo` for
     /// later AI reads.
     fn set_instrument_description(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         description: &str,
     ) -> Result<(), McpBridgeError>;
 
     /// Set or clear an instrument's accent color. Accepts `"#RRGGBB"` /
     /// `"#RRGGBBAA"`; pass `""` to clear back to "auto" / default. Never affects
     /// audio; surfaces in `InstrumentInfo.color` and is persisted on save.
-    fn set_instrument_color(&self, instrument_id: u64, color: &str) -> Result<(), McpBridgeError>;
+    fn set_instrument_color(
+        &self,
+        instrument_id: InstrumentId,
+        color: &str,
+    ) -> Result<(), McpBridgeError>;
 
     /// Set or clear the patch-level accent color on an instrument's currently
     /// loaded patch (distinct from `set_instrument_color`). Accepts
     /// `"#RRGGBB"` / `"#RRGGBBAA"`; pass `""` to clear. Travels with the patch
     /// when saved; surfaces in `InstrumentInfo.patch_color`.
-    fn set_patch_color(&self, instrument_id: u64, color: &str) -> Result<(), McpBridgeError>;
+    fn set_patch_color(
+        &self,
+        instrument_id: InstrumentId,
+        color: &str,
+    ) -> Result<(), McpBridgeError>;
 
     /// Set or clear the patch-level description on an instrument's
     /// currently-loaded patch. Pass `""` to clear (treated as `None`).
     fn set_patch_description(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         description: &str,
     ) -> Result<(), McpBridgeError>;
 
@@ -621,7 +641,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// does not exist or the description exceeds the hard length limit.
     fn set_module_description(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         module_id: &str,
         description: &str,
     ) -> Result<(), McpBridgeError>;
@@ -631,40 +651,56 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Self-routing is rejected.
     fn set_sidechain_source(
         &self,
-        instrument_id: u64,
-        source: Option<u64>,
+        instrument_id: InstrumentId,
+        source: Option<InstrumentId>,
     ) -> Result<(), McpBridgeError>;
 
     /// Set instrument volume (0.0-2.0).
-    fn set_instrument_volume(&self, instrument_id: u64, volume: f32) -> Result<(), McpBridgeError>;
+    fn set_instrument_volume(
+        &self,
+        instrument_id: InstrumentId,
+        volume: f32,
+    ) -> Result<(), McpBridgeError>;
 
     /// Set instrument pan (-1.0 = left, 0.0 = center, 1.0 = right).
-    fn set_instrument_pan(&self, instrument_id: u64, pan: f32) -> Result<(), McpBridgeError>;
+    fn set_instrument_pan(
+        &self,
+        instrument_id: InstrumentId,
+        pan: f32,
+    ) -> Result<(), McpBridgeError>;
 
     /// Set instrument mute state.
-    fn set_instrument_mute(&self, instrument_id: u64, muted: bool) -> Result<(), McpBridgeError>;
+    fn set_instrument_mute(
+        &self,
+        instrument_id: InstrumentId,
+        muted: bool,
+    ) -> Result<(), McpBridgeError>;
 
     /// Set instrument solo state.
-    fn set_instrument_solo(&self, instrument_id: u64, solo: bool) -> Result<(), McpBridgeError>;
+    fn set_instrument_solo(
+        &self,
+        instrument_id: InstrumentId,
+        solo: bool,
+    ) -> Result<(), McpBridgeError>;
 
     /// Set instrument MIDI channel (1-16).
     fn set_instrument_midi_channel(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         channel: u8,
     ) -> Result<(), McpBridgeError>;
 
     /// Set instrument enabled state.
     fn set_instrument_enabled(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         enabled: bool,
     ) -> Result<(), McpBridgeError>;
 
     /// Set instrument category (for visualization routing).
     fn set_instrument_category(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         category: &str,
     ) -> Result<(), McpBridgeError>;
 
@@ -672,7 +708,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// or "Unison" (case-sensitive).
     fn set_instrument_allocation_mode(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         mode: &str,
     ) -> Result<(), McpBridgeError>;
 
@@ -680,21 +716,21 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// "LowestPriority", or "SameNote" (case-sensitive).
     fn set_instrument_stealing_strategy(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         strategy: &str,
     ) -> Result<(), McpBridgeError>;
 
     /// Set the unison detune spread in cents (total across `Unison`-mode voices).
     fn set_instrument_unison_detune(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         cents: f32,
     ) -> Result<(), McpBridgeError>;
 
     /// Set the unison stereo spread (0.0 = centred .. 1.0 = full width).
     fn set_instrument_unison_spread(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         spread: f32,
     ) -> Result<(), McpBridgeError>;
 
@@ -702,7 +738,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// rebuild (e.g. project load), not live.
     fn set_instrument_max_voices(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         max_voices: u32,
     ) -> Result<(), McpBridgeError>;
 
@@ -713,7 +749,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// parameter info with the actual value set.
     fn set_parameter(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         module_id: &str,
         param_name: &str,
         value: BridgeParamValue,
@@ -737,7 +773,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn load_example_patch(&self, name: &str) -> Result<String, McpBridgeError>;
 
     /// Get a snapshot of the current UI layout (module positions, sizes, connections).
-    fn get_ui_snapshot(&self, instrument_id: u64) -> Result<UiSnapshot, McpBridgeError>;
+    fn get_ui_snapshot(&self, instrument_id: InstrumentId) -> Result<UiSnapshot, McpBridgeError>;
 
     /// Request auto-layout of modules in the patch view (GUI applies it next frame).
     fn request_auto_layout(&self) -> Result<String, McpBridgeError>;
@@ -752,15 +788,23 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn list_module_types_brief(&self) -> Result<Vec<ModuleTypeBrief>, McpBridgeError>;
 
     /// Add a module to an instrument's voice graph. Returns confirmation message.
-    fn add_module(&self, instrument_id: u64, module_type: &str) -> Result<String, McpBridgeError>;
+    fn add_module(
+        &self,
+        instrument_id: InstrumentId,
+        module_type: &str,
+    ) -> Result<String, McpBridgeError>;
 
     /// Remove a module from an instrument's voice graph.
-    fn remove_module(&self, instrument_id: u64, module_id: &str) -> Result<(), McpBridgeError>;
+    fn remove_module(
+        &self,
+        instrument_id: InstrumentId,
+        module_id: &str,
+    ) -> Result<(), McpBridgeError>;
 
     /// Connect two module ports.
     fn connect(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         from_module: &str,
         from_port: &str,
         to_module: &str,
@@ -770,7 +814,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Disconnect two module ports.
     fn disconnect(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         from_module: &str,
         from_port: &str,
         to_module: &str,
@@ -778,7 +822,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     ) -> Result<(), McpBridgeError>;
 
     /// Clear the entire voice graph for an instrument (remove all modules and connections).
-    fn clear_graph(&self, instrument_id: u64) -> Result<(), McpBridgeError>;
+    fn clear_graph(&self, instrument_id: InstrumentId) -> Result<(), McpBridgeError>;
 
     /// Splice a new module of `module_type` into an existing audio cable,
     /// re-routing `source → new module → destination`.
@@ -793,7 +837,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// get it for free.
     fn insert_module_between(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         module_type: &str,
         anchor: InsertAnchor,
     ) -> Result<InsertModuleResult, McpBridgeError> {
@@ -1230,7 +1274,11 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn list_tracks(&self) -> Result<Vec<TrackInfo>, McpBridgeError>;
 
     /// Create a new track. Returns the track ID.
-    fn create_track(&self, name: &str, instrument_id: Option<u16>) -> Result<u16, McpBridgeError>;
+    fn create_track(
+        &self,
+        name: &str,
+        instrument_id: Option<InstrumentId>,
+    ) -> Result<u16, McpBridgeError>;
 
     // === Sequencer: Arrangement ===
 
@@ -1352,7 +1400,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// If `instrument_id` is None, creates a new instrument.
     fn apply_example_patch(
         &self,
-        instrument_id: Option<u64>,
+        instrument_id: Option<InstrumentId>,
         patch_name: &str,
     ) -> Result<ApplyExamplePatchResult, McpBridgeError>;
 
@@ -1377,7 +1425,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// without reverse-engineering descriptor `type_id`s or instance indices.
     fn get_instrument_automation_targets(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
     ) -> Result<Vec<AutomationTargetInfo>, McpBridgeError>;
 
     /// Get all automation points for a specific lane.
@@ -1385,7 +1433,7 @@ pub trait SynthBridge: Send + Sync + 'static {
         &self,
         pattern_id: u32,
         target: &str,
-        instrument_id: u16,
+        instrument_id: InstrumentId,
     ) -> Result<Vec<AutomationPointInfo>, McpBridgeError>;
 
     /// Remove automation points at specific beats.
@@ -1393,7 +1441,7 @@ pub trait SynthBridge: Send + Sync + 'static {
         &self,
         pattern_id: u32,
         target: &str,
-        instrument_id: u16,
+        instrument_id: InstrumentId,
         beats: &[f32],
     ) -> Result<BatchResult, McpBridgeError>;
 
@@ -1402,7 +1450,7 @@ pub trait SynthBridge: Send + Sync + 'static {
         &self,
         pattern_id: u32,
         target: &str,
-        instrument_id: u16,
+        instrument_id: InstrumentId,
     ) -> Result<usize, McpBridgeError>;
 
     /// Scale and/or offset every point's value in an existing automation lane,
@@ -1413,7 +1461,7 @@ pub trait SynthBridge: Send + Sync + 'static {
         &self,
         pattern_id: u32,
         target: &str,
-        instrument_id: u16,
+        instrument_id: InstrumentId,
         scale: f32,
         pivot: f32,
         offset: f32,
@@ -1428,10 +1476,10 @@ pub trait SynthBridge: Send + Sync + 'static {
         &self,
         from_pattern_id: u32,
         from_target: &str,
-        from_instrument_id: u16,
+        from_instrument_id: InstrumentId,
         to_pattern_id: u32,
         to_target: &str,
-        to_instrument_id: u16,
+        to_instrument_id: InstrumentId,
         scale: f32,
         offset: f32,
         clear_destination: bool,
@@ -1513,7 +1561,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn set_track_instrument(
         &self,
         track_id: u16,
-        instrument_id: Option<u16>,
+        instrument_id: Option<InstrumentId>,
     ) -> Result<(), McpBridgeError>;
 
     /// Rename a track.
@@ -1708,7 +1756,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Set multiple parameters at once.
     fn set_parameters(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         params: &[BridgeParamSet],
     ) -> Result<BatchResult, McpBridgeError>;
 
@@ -1725,7 +1773,8 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Save a single instrument as a standalone patch file.
     ///
     /// **Warning:** Performs file I/O. Must not be called from the audio thread.
-    fn save_patch(&self, instrument_id: u64, path: &str) -> Result<String, McpBridgeError>;
+    fn save_patch(&self, instrument_id: InstrumentId, path: &str)
+    -> Result<String, McpBridgeError>;
 
     /// Load a project from a file.
     ///
@@ -1743,7 +1792,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// plays the note, and returns WAV data.
     fn render_note_preview(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         note: u8,
         velocity: u8,
         duration_ms: u32,
@@ -1769,7 +1818,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     #[allow(clippy::too_many_arguments)]
     fn analyze_note(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         note: u8,
         velocity: u8,
         duration_ms: u32,
@@ -1987,7 +2036,7 @@ pub trait SynthBridge: Send + Sync + 'static {
         path: String,
         duration_seconds: f32,
         start_tick: Option<u64>,
-        instrument_id: Option<u16>,
+        instrument_id: Option<InstrumentId>,
         scope: AnalysisScope,
     ) -> Result<crate::types::RenderToWavResult, McpBridgeError>;
 
@@ -2006,7 +2055,7 @@ pub trait SynthBridge: Send + Sync + 'static {
         &self,
         duration_seconds: f32,
         start_tick: Option<u64>,
-        instrument_id: Option<u16>,
+        instrument_id: Option<InstrumentId>,
         f0_hint: Option<f32>,
         max_partials: Option<u32>,
         log_bins: Option<u32>,
@@ -2023,7 +2072,7 @@ pub trait SynthBridge: Send + Sync + 'static {
         &self,
         duration_seconds: f32,
         start_tick: Option<u64>,
-        instrument_id: Option<u16>,
+        instrument_id: Option<InstrumentId>,
         f0_hint: Option<f32>,
         max_partials: Option<u32>,
         log_bins: Option<u32>,
@@ -2224,7 +2273,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     #[allow(clippy::too_many_arguments)]
     fn analyze_instrument_range(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         low_note: u8,
         high_note: u8,
         step_semitones: Option<u8>,
@@ -2241,7 +2290,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     #[allow(clippy::too_many_arguments)]
     fn analyze_velocity_response(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         note: u8,
         velocity_low: Option<u8>,
         velocity_high: Option<u8>,
@@ -2499,7 +2548,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Assign a sample to a Sampler module.
     fn assign_sample_to_module(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         module_id: &str,
         sample_id: u64,
     ) -> Result<(), McpBridgeError>;
@@ -2507,14 +2556,14 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Get the current state of a Sampler module.
     fn get_sampler_state(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         module_id: &str,
     ) -> Result<SamplerStateInfo, McpBridgeError>;
 
     /// Set a Sampler module parameter by name.
     fn set_sampler_parameter(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         module_id: &str,
         param_name: &str,
         value: &str,
@@ -2550,7 +2599,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Check whether a connection between two ports is valid.
     fn check_connection(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         from_module: &str,
         from_port: &str,
         to_module: &str,
@@ -2593,7 +2642,7 @@ pub struct BridgeAutomationPointData {
     /// "Attack", "Decay", "Sustain", "Release".
     pub param: String,
     /// Instrument index (default 0).
-    pub instrument_id: u16,
+    pub instrument_id: InstrumentId,
     /// Position in beats.
     pub beat: f32,
     /// Normalized value (0.0-1.0).
@@ -2622,7 +2671,7 @@ pub struct BridgeParamSet {
 /// doesn't flood the report. Pure (no engine access) so `SynthBridge::lint_project`
 /// stays a thin I/O wrapper and the aggregation is unit-testable on its own.
 pub(crate) fn build_lint_report(
-    per_instrument: Vec<(u64, String, Vec<GraphDiagnostic>)>,
+    per_instrument: Vec<(InstrumentId, String, Vec<GraphDiagnostic>)>,
 ) -> ProjectLintReport {
     let instruments_checked = per_instrument.len();
     let mut entries = Vec::new();
@@ -2667,6 +2716,7 @@ pub(crate) fn build_lint_report(
 mod lint_report_tests {
     use super::build_lint_report;
     use crate::types::{DiagnosticSeverity, GraphDiagnostic};
+    use synth_core::InstrumentId;
 
     fn diag(severity: DiagnosticSeverity) -> GraphDiagnostic {
         GraphDiagnostic {
@@ -2680,7 +2730,7 @@ mod lint_report_tests {
     fn tallies_all_severities_but_entries_are_actionable_only() {
         let report = build_lint_report(vec![
             (
-                1,
+                InstrumentId(1),
                 "Bass".to_string(),
                 vec![
                     diag(DiagnosticSeverity::Warning),
@@ -2688,10 +2738,14 @@ mod lint_report_tests {
                 ],
             ),
             // A clean instrument: counted in instruments_checked, absent from entries.
-            (2, "Lead".to_string(), vec![]),
+            (InstrumentId(2), "Lead".to_string(), vec![]),
             // Info-only (e.g. empty graph): counted in info_count, but NOT in
             // entries — it isn't actionable.
-            (3, "Pad".to_string(), vec![diag(DiagnosticSeverity::Info)]),
+            (
+                InstrumentId(3),
+                "Pad".to_string(),
+                vec![diag(DiagnosticSeverity::Info)],
+            ),
         ]);
 
         assert_eq!(report.instruments_checked, 3);
@@ -2701,13 +2755,13 @@ mod lint_report_tests {
         // from entries — so the counts are not derivable from entries alone.
         assert_eq!(report.info_count, 1);
         assert_eq!(report.entries.len(), 1);
-        assert_eq!(report.entries[0].instrument_id, 1);
+        assert_eq!(report.entries[0].instrument_id, InstrumentId(1));
     }
 
     #[test]
     fn actionable_entry_keeps_its_info_diagnostics_for_context() {
         let report = build_lint_report(vec![(
-            1,
+            InstrumentId(1),
             "Bass".to_string(),
             vec![
                 diag(DiagnosticSeverity::Info),

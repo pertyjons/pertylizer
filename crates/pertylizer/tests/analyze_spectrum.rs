@@ -20,9 +20,8 @@ use parking_lot::RwLock;
 use synth_core::AudioProcessor;
 use synth_core::audio::SampleRate as HwSampleRate;
 use synth_engine::SynthEngine;
-use synth_engine::instrument::InstrumentId;
 use synth_sequencer::{
-    Duration as SeqDuration, PatternTick, Pitch, SeqInstrumentId, Song, Tick, Velocity,
+    Duration as SeqDuration, InstrumentId, PatternTick, Pitch, Song, Tick, Velocity,
 };
 
 use pertylizer::audio::preview::SharedSampleLibrary;
@@ -199,7 +198,7 @@ fn setup() -> (Rig, Arc<RwLock<Song>>) {
     for (idx, label) in [(0u16, "Saw"), (1u16, "Noise"), (2u16, "Sine")] {
         let tid = song.create_track(label);
         if let Some(t) = song.track_mut(tid) {
-            t.instrument = SeqInstrumentId(idx);
+            t.instrument = InstrumentId(u64::from(idx));
         }
         assert!(song.place_pattern(pat, tid, Tick(0)), "place {label}");
     }
@@ -218,7 +217,7 @@ fn setup() -> (Rig, Arc<RwLock<Song>>) {
 fn analyze(
     rig: &Rig,
     shared: &McpSharedState,
-    instrument_id: Option<u16>,
+    instrument_id: Option<InstrumentId>,
 ) -> synth_mcp::types::AnalyzeSpectrumResult {
     analyze_spectrum_impl(
         &rig.session,
@@ -240,11 +239,11 @@ fn analyze_spectrum_solo_isolates_instrument() {
     let (rig, song) = setup();
     let shared = McpSharedState::with_song(song);
 
-    let saw = analyze(&rig, &shared, Some(0));
-    let noise = analyze(&rig, &shared, Some(1));
+    let saw = analyze(&rig, &shared, Some(InstrumentId::new(0)));
+    let noise = analyze(&rig, &shared, Some(InstrumentId::new(1)));
     let full = analyze(&rig, &shared, None);
 
-    assert_eq!(saw.soloed_instrument_id, Some(0));
+    assert_eq!(saw.soloed_instrument_id, Some(InstrumentId::new(0)));
     // The soloed sawtooth is a clean pitched tone; the soloed noise is not. The
     // full mix contains both, so its flatness sits above the pure sawtooth's.
     assert!(saw.spectrum.voiced, "soloed sawtooth should be voiced");
@@ -266,8 +265,8 @@ fn descriptors_separate_harmonic_from_noise() {
     let (rig, song) = setup();
     let shared = McpSharedState::with_song(song);
 
-    let saw = analyze(&rig, &shared, Some(0));
-    let noise = analyze(&rig, &shared, Some(1));
+    let saw = analyze(&rig, &shared, Some(InstrumentId::new(0)));
+    let noise = analyze(&rig, &shared, Some(InstrumentId::new(1)));
 
     // Sawtooth: pitched at ~220 Hz, low flatness, a real harmonic series.
     assert!(
@@ -329,7 +328,7 @@ fn analyze_sample_spectrum_roundtrips() {
         path.to_string_lossy().into_owned(),
         2.0,
         Some(0),
-        Some(0), // solo the sawtooth
+        Some(InstrumentId::new(0)), // solo the sawtooth
         AnalysisScope::default(),
     )
     .expect("render_to_wav should succeed");
@@ -344,7 +343,7 @@ fn analyze_sample_spectrum_roundtrips() {
         None,
     )
     .expect("analyze_sample_spectrum should succeed");
-    let from_render = analyze(&rig, &shared, Some(0));
+    let from_render = analyze(&rig, &shared, Some(InstrumentId::new(0)));
 
     assert_eq!(from_file.sample_rate, TEST_SR);
     assert_eq!(
@@ -372,7 +371,7 @@ fn analyze_sample_spectrum_roundtrips() {
 }
 
 /// Build a render `SpectrumSource` for the given soloed instrument.
-fn render_source(instrument_id: u16) -> synth_mcp::SpectrumSource {
+fn render_source(instrument_id: InstrumentId) -> synth_mcp::SpectrumSource {
     synth_mcp::SpectrumSource {
         sample_id_or_path: None,
         instrument_id: Some(instrument_id),
@@ -409,7 +408,12 @@ fn compare(
 fn compare_spectra_identical_render_is_near_zero() {
     let (rig, song) = setup();
     let shared = McpSharedState::with_song(song);
-    let d = compare(&rig, &shared, render_source(0), render_source(0));
+    let d = compare(
+        &rig,
+        &shared,
+        render_source(InstrumentId::new(0)),
+        render_source(InstrumentId::new(0)),
+    );
     assert!(!d.voicing_mismatch, "same source is not a voicing mismatch");
     assert!(
         d.log_spectral_distance < 1.0,
@@ -438,8 +442,8 @@ fn compare_spectra_time_resolved_identical_is_near_zero_and_populated() {
         &rig.session,
         &rig.sample_library,
         &shared,
-        render_source(0),
-        render_source(0),
+        render_source(InstrumentId::new(0)),
+        render_source(InstrumentId::new(0)),
         None,
         None,
         None,
@@ -481,7 +485,12 @@ fn compare_spectra_reports_missing_partial() {
     // only). The saw's upper harmonics must show up as missing in the candidate.
     let (rig, song) = setup();
     let shared = McpSharedState::with_song(song);
-    let d = compare(&rig, &shared, render_source(0), render_source(2));
+    let d = compare(
+        &rig,
+        &shared,
+        render_source(InstrumentId::new(0)),
+        render_source(InstrumentId::new(2)),
+    );
     assert!(!d.voicing_mismatch, "both saw and sine are voiced");
     assert!(
         !d.missing_partials.is_empty(),
@@ -505,7 +514,12 @@ fn compare_spectra_voicing_mismatch_is_penalised() {
     // Sawtooth (voiced) vs noise (unvoiced) — a gross timbral mismatch.
     let (rig, song) = setup();
     let shared = McpSharedState::with_song(song);
-    let d = compare(&rig, &shared, render_source(0), render_source(1));
+    let d = compare(
+        &rig,
+        &shared,
+        render_source(InstrumentId::new(0)),
+        render_source(InstrumentId::new(1)),
+    );
     assert!(d.voicing_mismatch, "voiced vs noise is a voicing mismatch");
     // The penalty is reported on its own field, not folded into the spectral
     // scalar. A folded value would be raw_lsd + 60 ≥ 60; observing < 60 proves
@@ -549,7 +563,12 @@ fn compare_env(
 fn compare_envelopes_identical_render_is_near_zero() {
     let (rig, song) = setup();
     let shared = McpSharedState::with_song(song);
-    let d = compare_env(&rig, &shared, render_source(0), render_source(0));
+    let d = compare_env(
+        &rig,
+        &shared,
+        render_source(InstrumentId::new(0)),
+        render_source(InstrumentId::new(0)),
+    );
     assert!(
         d.dtw_distance < 1.0e-3,
         "identical contours should warp to ~0, got {}",
@@ -569,7 +588,12 @@ fn compare_envelopes_differing_shapes_have_positive_distance() {
     // over the note, so the warp distance must be clearly non-zero.
     let (rig, song) = setup();
     let shared = McpSharedState::with_song(song);
-    let d = compare_env(&rig, &shared, render_source(0), render_source(1));
+    let d = compare_env(
+        &rig,
+        &shared,
+        render_source(InstrumentId::new(0)),
+        render_source(InstrumentId::new(1)),
+    );
     assert!(
         d.dtw_distance > 0.0,
         "different contours should carry a non-zero DTW distance, got {}",
@@ -597,7 +621,7 @@ fn compare_spectra_render_vs_sample_matches() {
         path.to_string_lossy().into_owned(),
         2.0,
         Some(0),
-        Some(0),
+        Some(InstrumentId::new(0)),
         AnalysisScope::default(),
     )
     .expect("render_to_wav");
@@ -606,7 +630,12 @@ fn compare_spectra_render_vs_sample_matches() {
         sample_id_or_path: Some(path.to_string_lossy().into_owned()),
         ..Default::default()
     };
-    let d = compare(&rig, &shared, sample_source, render_source(0));
+    let d = compare(
+        &rig,
+        &shared,
+        sample_source,
+        render_source(InstrumentId::new(0)),
+    );
     assert!(!d.voicing_mismatch);
     assert!(
         d.log_spectral_distance < 1.0,
@@ -628,7 +657,7 @@ fn analyze_spectrogram_frames_track_the_soloed_saw() {
         &shared,
         2.0,
         Some(0),
-        Some(0), // solo the sawtooth
+        Some(InstrumentId::new(0)), // solo the sawtooth
         None,
         None,
         Some(0),
@@ -638,7 +667,7 @@ fn analyze_spectrogram_frames_track_the_soloed_saw() {
     )
     .expect("analyze_spectrogram should succeed");
 
-    assert_eq!(result.soloed_instrument_id, Some(0));
+    assert_eq!(result.soloed_instrument_id, Some(InstrumentId::new(0)));
     assert_eq!(result.sample_rate, TEST_SR);
     // ~2 s at a 20 ms hop ≈ 100 frames.
     assert!(

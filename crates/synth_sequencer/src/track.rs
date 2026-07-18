@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use super::ids::{ReturnBusId, SeqInstrumentId, TrackId};
+use super::ids::{InstrumentId, ReturnBusId, TrackId};
 use synth_core::{BipolarValue, NormalizedValue};
 
 /// A send tap from a track's channel to a return bus.
@@ -175,9 +175,9 @@ pub struct SequencerTrack {
     pub description: String,
     /// Instrument this track routes its notes to. Every track has one;
     /// instruments may be shared across tracks (intentional layering). Defaults
-    /// to `SeqInstrumentId(0)` for a freshly created track until reassigned.
+    /// to `InstrumentId(0)` for a freshly created track until reassigned.
     #[serde(default)]
-    pub instrument: SeqInstrumentId,
+    pub instrument: InstrumentId,
     /// Volume (type-safe normalized 0.0-1.0).
     pub volume: NormalizedValue,
     /// Panning (type-safe: -1.0 = left, 0.0 = center, 1.0 = right).
@@ -203,7 +203,7 @@ impl SequencerTrack {
             id,
             name: name.into(),
             description: String::new(),
-            instrument: SeqInstrumentId::default(),
+            instrument: InstrumentId::default(),
             volume: NormalizedValue::MAX,
             pan: BipolarValue::CENTER,
             mute: false,
@@ -216,7 +216,7 @@ impl SequencerTrack {
 
     /// Set the instrument (builder pattern).
     #[must_use]
-    pub fn with_instrument(mut self, instrument: SeqInstrumentId) -> Self {
+    pub fn with_instrument(mut self, instrument: InstrumentId) -> Self {
         self.instrument = instrument;
         self
     }
@@ -411,11 +411,11 @@ mod tests {
     #[test]
     fn test_track_builder() {
         let track = SequencerTrack::new(TrackId(0), "Bass")
-            .with_instrument(SeqInstrumentId(1))
+            .with_instrument(InstrumentId(1))
             .with_volume(NormalizedValue::new(0.8))
             .with_pan(BipolarValue::new(0.3));
 
-        assert_eq!(track.instrument, SeqInstrumentId(1));
+        assert_eq!(track.instrument, InstrumentId(1));
         assert_eq!(track.volume, NormalizedValue::new(0.8));
         assert_eq!(track.pan, BipolarValue::new(0.3));
     }
@@ -423,18 +423,17 @@ mod tests {
     #[test]
     fn new_track_has_a_default_instrument() {
         // Phase 3: every track has an instrument (no `Option`); a freshly
-        // created track defaults to `SeqInstrumentId(0)` until reassigned.
+        // created track defaults to `InstrumentId(0)` until reassigned.
         let track = SequencerTrack::new(TrackId(3), "Fresh");
-        assert_eq!(track.instrument, SeqInstrumentId(0));
+        assert_eq!(track.instrument, InstrumentId(0));
     }
 
     #[test]
     fn instruments_may_be_shared_across_tracks() {
         // Phase 3: sharing is allowed (intentional layering, e.g. Kick +
         // Syncopated Kick). Two tracks can route to the same instrument.
-        let a = SequencerTrack::new(TrackId(0), "Kick").with_instrument(SeqInstrumentId(7));
-        let b =
-            SequencerTrack::new(TrackId(1), "Syncopated Kick").with_instrument(SeqInstrumentId(7));
+        let a = SequencerTrack::new(TrackId(0), "Kick").with_instrument(InstrumentId(7));
+        let b = SequencerTrack::new(TrackId(1), "Syncopated Kick").with_instrument(InstrumentId(7));
         assert_eq!(a.instrument, b.instrument);
     }
 

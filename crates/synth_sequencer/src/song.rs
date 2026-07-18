@@ -3,7 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use super::ids::{
-    ModGraphId, NoteGraphId, NoteId, NoteModuleId, PatternId, ReturnBusId, SeqInstrumentId, TrackId,
+    InstrumentId, ModGraphId, NoteGraphId, NoteId, NoteModuleId, PatternId, ReturnBusId, TrackId,
 };
 use super::mod_grid::{ModGraph, ModGraphScope};
 use super::note::Note;
@@ -875,7 +875,7 @@ impl Song {
     pub fn automated_module_params(
         &self,
     ) -> std::collections::HashMap<
-        (SeqInstrumentId, synth_core::ModuleType, u16),
+        (InstrumentId, synth_core::ModuleType, u16),
         std::collections::BTreeSet<String>,
     > {
         use super::automation::AutomationTarget;
@@ -908,7 +908,7 @@ impl Song {
     #[must_use]
     pub fn is_module_automated(
         &self,
-        instrument: SeqInstrumentId,
+        instrument: InstrumentId,
         module_type: synth_core::ModuleType,
         instance: u16,
     ) -> bool {
@@ -1184,7 +1184,7 @@ impl Song {
     /// throwaway clone of the song.
     ///
     /// Returns the number of tracks left audible.
-    pub fn isolate_instrument(&mut self, instrument: SeqInstrumentId) -> usize {
+    pub fn isolate_instrument(&mut self, instrument: InstrumentId) -> usize {
         let mut audible = 0;
         for track in &mut self.tracks {
             let matches = track.instrument == instrument;
@@ -1514,7 +1514,7 @@ impl Song {
     ) -> (
         Vec<String>,
         Vec<String>,
-        std::collections::HashSet<SeqInstrumentId>,
+        std::collections::HashSet<InstrumentId>,
     ) {
         use std::collections::HashSet;
 
@@ -1975,7 +1975,7 @@ mod tests {
         let mut song = Song::new("auto");
         let pid = song.create_pattern(Duration(3840));
         let target = AutomationTarget::Module {
-            instrument: SeqInstrumentId::new(2),
+            instrument: InstrumentId::new(2),
             module_type: ModuleType::Filter,
             instance: 1,
             param_id: "cutoff".into(),
@@ -1985,7 +1985,7 @@ mod tests {
         song.pattern_mut(pid)
             .unwrap()
             .get_or_create_automation(target.clone());
-        assert!(!song.is_module_automated(SeqInstrumentId::new(2), ModuleType::Filter, 1));
+        assert!(!song.is_module_automated(InstrumentId::new(2), ModuleType::Filter, 1));
         assert!(song.automated_module_params().is_empty());
 
         // A point makes it a real reference.
@@ -1997,14 +1997,14 @@ mod tests {
                 NormalizedValue::new(0.5),
             ));
 
-        assert!(song.is_module_automated(SeqInstrumentId::new(2), ModuleType::Filter, 1));
+        assert!(song.is_module_automated(InstrumentId::new(2), ModuleType::Filter, 1));
         // Different instance / instrument are not automated.
-        assert!(!song.is_module_automated(SeqInstrumentId::new(2), ModuleType::Filter, 2));
-        assert!(!song.is_module_automated(SeqInstrumentId::new(9), ModuleType::Filter, 1));
+        assert!(!song.is_module_automated(InstrumentId::new(2), ModuleType::Filter, 2));
+        assert!(!song.is_module_automated(InstrumentId::new(9), ModuleType::Filter, 1));
 
         let index = song.automated_module_params();
         let params = index
-            .get(&(SeqInstrumentId::new(2), ModuleType::Filter, 1))
+            .get(&(InstrumentId::new(2), ModuleType::Filter, 1))
             .expect("filter instance 1 must be indexed");
         assert!(params.contains("cutoff"));
     }
@@ -2079,7 +2079,7 @@ mod tests {
     #[test]
     fn mod_graph_survives_json_round_trip() {
         use crate::automation::{AutomationTarget, TrackParam};
-        use crate::ids::{ModNodeId, SeqInstrumentId};
+        use crate::ids::{InstrumentId, ModNodeId};
         use crate::mod_grid::{
             AudioTapNode, AudioTapSource, CombineMode, MacroNode, MidiCcNode, ModConnection,
             ModNodeConfig, ModTarget, ModuleNode, TransportNode, TransportSource,
@@ -2166,7 +2166,7 @@ mod tests {
                 ModNodeId::new(6),
                 ModNodeConfig::Target(ModTarget {
                     target: AutomationTarget::Module {
-                        instrument: SeqInstrumentId::new(0),
+                        instrument: InstrumentId::new(0),
                         module_type: ModuleType::Filter,
                         instance: 1,
                         param_id: "cutoff".into(),

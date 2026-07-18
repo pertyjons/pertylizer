@@ -5,7 +5,7 @@ use std::sync::Arc;
 use serde::{Deserialize, Serialize};
 use synth_core::{ModuleType, NormalizedValue, Semitones};
 
-use super::ids::{SeqInstrumentId, TrackId};
+use super::ids::{InstrumentId, TrackId};
 use super::time::PatternTick;
 
 /// Interned-by-`Arc` parameter id for [`AutomationTarget::Module`].
@@ -278,7 +278,7 @@ impl AutomationLane {
 pub enum AutomationTarget {
     /// Instrument parameter.
     Instrument {
-        instrument: SeqInstrumentId,
+        instrument: InstrumentId,
         param: AutoInstrumentParam,
     },
     /// Track parameter.
@@ -314,7 +314,7 @@ pub enum AutomationTarget {
     /// with `Param::with_f32`.
     Module {
         /// Instrument owning the module.
-        instrument: SeqInstrumentId,
+        instrument: InstrumentId,
         /// Module type (with `instance`, the positional module identity).
         module_type: ModuleType,
         /// 1-based instance index within the module type (as in `ModuleId`).
@@ -670,7 +670,7 @@ mod tests {
     #[test]
     fn test_module_target_serde_round_trip() {
         let target = AutomationTarget::Module {
-            instrument: SeqInstrumentId::new(3),
+            instrument: InstrumentId::new(3),
             module_type: ModuleType::Filter,
             instance: 1,
             param_id: "cutoff".into(),

@@ -16,8 +16,8 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use synth_core::ModuleType;
 use synth_sequencer::{
-    AudioTapNode, AudioTapSource, AutomationTarget, GlobalParam, MacroNode, ModConnection,
-    ModGraphScope, ModNodeConfig, ModNodeId, ModTarget, ModuleNode, SeqInstrumentId, Song,
+    AudioTapNode, AudioTapSource, AutomationTarget, GlobalParam, InstrumentId, MacroNode,
+    ModConnection, ModGraphScope, ModNodeConfig, ModNodeId, ModTarget, ModuleNode, Song,
     TrackParam, TransportNode, TransportSource,
 };
 
@@ -199,7 +199,7 @@ fn module_scope_cutoff_modulation_changes_the_render() {
             ModNodeId::new(1),
             ModNodeConfig::Target(ModTarget {
                 target: AutomationTarget::Module {
-                    instrument: SeqInstrumentId(0),
+                    instrument: InstrumentId(0),
                     module_type: ModuleType::Filter,
                     instance: 1,
                     param_id: "cutoff".into(),
@@ -270,7 +270,7 @@ fn instrument_scope_volume_modulation_changes_the_render() {
             ModNodeId::new(1),
             ModNodeConfig::Target(ModTarget {
                 target: AutomationTarget::Instrument {
-                    instrument: SeqInstrumentId(0),
+                    instrument: InstrumentId(0),
                     param: synth_sequencer::AutoInstrumentParam::Volume,
                 },
                 amount: 0.5,

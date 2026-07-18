@@ -11,8 +11,8 @@ use ringbuf::traits::Producer;
 
 use synth_core::{BipolarValue, Bpm, NormalizedValue, SampleCount, SampleRate, Semitones};
 use synth_sequencer::{
-    AutomationTarget, ExpandedNote, ExpansionBuffer, Glide, GlideFrom, HostKey, NoteExpression,
-    NoteScopeCtx, PatternId, PatternTick, Pitch, SeqInstrumentId, SequencerEvent, Song,
+    AutomationTarget, ExpandedNote, ExpansionBuffer, Glide, GlideFrom, HostKey, InstrumentId,
+    NoteExpression, NoteScopeCtx, PatternId, PatternTick, Pitch, SequencerEvent, Song,
     TICKS_PER_QUARTER, Tick, TrackId, TrackParam, Velocity, track_pitch_semitones,
 };
 
@@ -67,7 +67,7 @@ struct ActiveNote {
     /// The pitch being played.
     pitch: Pitch,
     /// The sequencer instrument playing the note.
-    instrument: SeqInstrumentId,
+    instrument: InstrumentId,
     /// When the note should end (if duration is known).
     end_tick: Option<Tick>,
 }
@@ -81,7 +81,7 @@ struct ActiveNote {
 struct PendingNote {
     pitch: Pitch,
     velocity: Velocity,
-    instrument: SeqInstrumentId,
+    instrument: InstrumentId,
     end_tick: Option<Tick>,
     /// Per-note tie/legato intent (taxonomy primitive 2).
     legato: bool,
@@ -163,7 +163,7 @@ fn shaped_duration_ticks(duration_ticks: u32, expr: Option<NoteExpression>, lega
 /// tick of the note's onset), and the accent/ghost velocity shaping.
 fn make_pending_note(
     expanded: ExpandedNote,
-    instrument: SeqInstrumentId,
+    instrument: InstrumentId,
     transpose: Semitones,
     start_tick: u64,
     track: Option<TrackId>,
@@ -309,7 +309,7 @@ pub struct SequencerEngine {
     preview_pattern: Option<PatternId>,
     /// Instrument that orphan-preview notes play through (no track context
     /// exists in preview mode). Set together with `preview_pattern`.
-    preview_instrument: SeqInstrumentId,
+    preview_instrument: InstrumentId,
     /// Per-note-probability roll nonce. Increments on every loop-wrap so a
     /// looped section re-rolls each pass; resets to 0 with the transport so
     /// playback from a given start is reproducible.
@@ -345,7 +345,7 @@ impl SequencerEngine {
             expansion_drops: 0,
             solo_pattern: None,
             preview_pattern: None,
-            preview_instrument: SeqInstrumentId(0),
+            preview_instrument: InstrumentId(0),
             roll_nonce: 0,
         }
     }
@@ -386,7 +386,7 @@ impl SequencerEngine {
             expansion_drops: 0,
             solo_pattern: None,
             preview_pattern: None,
-            preview_instrument: SeqInstrumentId(0),
+            preview_instrument: InstrumentId(0),
             roll_nonce: 0,
         }
     }
@@ -414,7 +414,7 @@ impl SequencerEngine {
     /// Enable or disable orphan-preview mode for a single pattern. `Some((id,
     /// instrument))` previews the pattern through `instrument` (preview has no
     /// track context); `None` clears preview mode.
-    pub fn set_preview_pattern(&mut self, preview: Option<(PatternId, SeqInstrumentId)>) {
+    pub fn set_preview_pattern(&mut self, preview: Option<(PatternId, InstrumentId)>) {
         match preview {
             Some((pattern, instrument)) => {
                 self.preview_pattern = Some(pattern);
@@ -1132,7 +1132,7 @@ impl Default for SequencerEngine {
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
-    use synth_sequencer::{Duration, PatternTick, SeqInstrumentId, Velocity};
+    use synth_sequencer::{Duration, InstrumentId, PatternTick, Velocity};
 
     #[test]
     fn deterministic_unit_is_in_range_and_reproducible() {
@@ -1505,7 +1505,7 @@ mod tests {
         let mut seq =
             SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
 
-        let preview_inst = SeqInstrumentId(7);
+        let preview_inst = InstrumentId(7);
         seq.set_preview_pattern(Some((pattern_id, preview_inst)));
         seq.play();
 
@@ -1551,7 +1551,7 @@ mod tests {
         let mut seq =
             SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
 
-        seq.set_preview_pattern(Some((pattern_id, SeqInstrumentId(3))));
+        seq.set_preview_pattern(Some((pattern_id, InstrumentId(3))));
         assert_eq!(seq.preview_pattern(), Some(pattern_id));
 
         seq.set_preview_pattern(None);
@@ -1577,7 +1577,7 @@ mod tests {
         }
         let mut seq =
             SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
-        seq.set_preview_pattern(Some((pattern_id, SeqInstrumentId(0))));
+        seq.set_preview_pattern(Some((pattern_id, InstrumentId(0))));
         seq.play();
 
         let mut events = Vec::new();
@@ -1750,7 +1750,7 @@ mod tests {
         }
         let mut seq =
             SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
-        seq.set_preview_pattern(Some((pattern_id, SeqInstrumentId(1))));
+        seq.set_preview_pattern(Some((pattern_id, InstrumentId(1))));
         seq.play();
         let mut events = Vec::new();
         seq.process(SampleCount::new(1000), &mut events);
@@ -1778,7 +1778,7 @@ mod tests {
         }
         let mut seq =
             SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
-        seq.set_preview_pattern(Some((pattern_id, SeqInstrumentId(1))));
+        seq.set_preview_pattern(Some((pattern_id, InstrumentId(1))));
         seq.play();
 
         let mut events = Vec::new();
@@ -1931,7 +1931,7 @@ mod tests {
         // Seed the dedup map with a Module target — the variant that owns a
         // ParamId(Arc<str>) whose final drop must not land on the audio thread.
         let target = AutomationTarget::Module {
-            instrument: SeqInstrumentId(1),
+            instrument: InstrumentId(1),
             module_type: synth_core::ModuleType::Filter,
             instance: 1,
             param_id: synth_sequencer::ParamId::from("cutoff"),

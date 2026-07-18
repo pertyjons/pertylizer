@@ -921,29 +921,22 @@ impl eframe::App for SynthApp {
                     );
                 }
                 AppView::ModGrid => {
-                    let instruments: Vec<(synth_sequencer::SeqInstrumentId, String)> = self
+                    let instruments: Vec<(synth_sequencer::InstrumentId, String)> = self
                         .instruments
                         .iter()
-                        .map(|i| {
-                            (
-                                synth_sequencer::SeqInstrumentId::new(i.id.as_u64() as u16),
-                                i.name.clone(),
-                            )
-                        })
+                        .map(|i| (i.id, i.name.clone()))
                         .collect();
                     // Per-instrument automatable module targets, from the live
                     // descriptors (shared enumeration → matches MCP + the lane
                     // picker). Built for the modules only, so the transient
                     // descriptor clones are dropped immediately.
                     let module_groups: std::collections::HashMap<
-                        synth_sequencer::SeqInstrumentId,
+                        synth_sequencer::InstrumentId,
                         Vec<crate::module_targets::ModuleTargetGroup>,
                     > = instruments
                         .iter()
                         .map(|(seq_id, _)| {
-                            let modules = self.session.all_modules_for_instrument(
-                                synth_engine::InstrumentId::new(u64::from(seq_id.0)),
-                            );
+                            let modules = self.session.all_modules_for_instrument(*seq_id);
                             (
                                 *seq_id,
                                 crate::module_targets::module_target_groups(&modules),
@@ -992,10 +985,7 @@ impl eframe::App for SynthApp {
                     );
                     if let Some(crate::gui::mixer_view::MixerViewAction::EditChannelFx(seq_id)) =
                         action
-                        && let Some(inst) = self
-                            .instruments
-                            .iter()
-                            .find(|i| i.id.0 == u64::from(seq_id.0))
+                        && let Some(inst) = self.instruments.iter().find(|i| i.id.0 == seq_id.0)
                     {
                         // Channel inserts live on the instrument — open its
                         // patch editor in the Rack.
@@ -2793,7 +2783,7 @@ impl SynthApp {
             // Built per frame from the sequencer reference index for this
             // instrument (positional module identity → ModuleId).
             let automated_modules: std::collections::HashSet<synth_engine::ModuleId> = {
-                let seq_id = synth_sequencer::SeqInstrumentId::new(active_id.as_u64() as u16);
+                let seq_id = active_id;
                 self.song
                     .read()
                     .automated_module_params()
@@ -2813,7 +2803,7 @@ impl SynthApp {
                 std::collections::HashSet<String>,
             > = {
                 use synth_sequencer::{AutomationTarget, ModNodeConfig};
-                let seq_id = synth_sequencer::SeqInstrumentId::new(active_id.as_u64() as u16);
+                let seq_id = active_id;
                 let song = self.song.read();
                 let mut map: std::collections::HashMap<
                     synth_engine::ModuleId,
@@ -2941,7 +2931,7 @@ impl SynthApp {
                 // targets, so the user doesn't silently orphan that lane.
                 // Module identity is positional (see AutomationTarget::Module);
                 // the GUI treats the engine instrument id as the sequencer id.
-                let seq_id = synth_sequencer::SeqInstrumentId::new(active_id.as_u64() as u16);
+                let seq_id = active_id;
                 let referenced = self.song.read().is_module_automated(
                     seq_id,
                     module_id.module_type,
@@ -3262,9 +3252,7 @@ impl SynthApp {
                     self.song.try_read().map(|song| {
                         let mut counts = std::collections::HashMap::new();
                         for track in song.tracks() {
-                            *counts
-                                .entry(InstrumentId::from(track.instrument))
-                                .or_insert(0) += 1;
+                            *counts.entry(track.instrument).or_insert(0) += 1;
                         }
                         counts
                     });
@@ -4382,7 +4370,7 @@ impl SynthApp {
         if selection.is_empty() {
             return;
         }
-        let seq_id = synth_sequencer::SeqInstrumentId::new(active_id.as_u64() as u16);
+        let seq_id = active_id;
         let mut removed_any = false;
         for module_id in selection {
             // Don't orphan an automation lane that still targets this module.
@@ -4434,8 +4422,7 @@ impl SynthApp {
             .instruments
             .iter()
             .filter(|inst| {
-                #[allow(clippy::cast_possible_truncation)]
-                let seq_id = synth_sequencer::SeqInstrumentId(inst.id.as_u64() as u16);
+                let seq_id = inst.id;
                 !used_instrument_ids.contains(&seq_id)
             })
             .map(|inst| inst.id)

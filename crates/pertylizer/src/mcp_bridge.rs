@@ -327,12 +327,9 @@ impl AppSynthBridge {
     }
 
     /// Validate that an instrument exists in the shared snapshots.
-    fn validate_instrument(&self, instrument_id: u64) -> Result<(), McpBridgeError> {
-        if !self
-            .session
-            .instrument_exists(InstrumentId::new(instrument_id))
-        {
-            return Err(McpBridgeError::InstrumentNotFound(instrument_id));
+    fn validate_instrument(&self, instrument_id: InstrumentId) -> Result<(), McpBridgeError> {
+        if !self.session.instrument_exists(instrument_id) {
+            return Err(McpBridgeError::InstrumentNotFound(instrument_id.as_u64()));
         }
         Ok(())
     }
@@ -346,8 +343,8 @@ impl AppSynthBridge {
     /// command queue). This matters because a `batch_execute` that adds a module
     /// and then automates it in the same request must see the just-added module —
     /// the same reason the session keeps `alive_instruments` for `instrument_exists`.
-    fn instrument_module_ids(&self, instrument_id: u16) -> Vec<synth_engine::ModuleId> {
-        let inst_id = InstrumentId::new(u64::from(instrument_id));
+    fn instrument_module_ids(&self, instrument_id: InstrumentId) -> Vec<synth_engine::ModuleId> {
+        let inst_id = instrument_id;
         self.session
             .all_modules_for_instrument(inst_id)
             .into_keys()
@@ -359,8 +356,8 @@ impl AppSynthBridge {
     /// one graph query per instrument rather than one per point.
     fn module_id_cache(
         &self,
-        instrument_ids: impl IntoIterator<Item = u16>,
-    ) -> std::collections::HashMap<u16, Vec<synth_engine::ModuleId>> {
+        instrument_ids: impl IntoIterator<Item = InstrumentId>,
+    ) -> std::collections::HashMap<InstrumentId, Vec<synth_engine::ModuleId>> {
         let mut cache = std::collections::HashMap::new();
         for iid in instrument_ids {
             cache
@@ -373,7 +370,7 @@ impl AppSynthBridge {
     /// Convert an `InstrumentSnapshot` to an `InstrumentInfo`.
     fn snapshot_to_info(snap: &synth_engine::shared_state::InstrumentSnapshot) -> InstrumentInfo {
         InstrumentInfo {
-            id: snap.id.as_u64(),
+            id: snap.id,
             name: snap.name.clone(),
             description: snap.description.clone(),
             patch_description: snap.patch_description.clone(),
@@ -453,20 +450,23 @@ impl SynthBridge for AppSynthBridge {
         Ok(profiles.into_iter().map(profile_to_result).collect())
     }
 
-    fn get_instrument_info(&self, instrument_id: u64) -> Result<InstrumentInfo, McpBridgeError> {
+    fn get_instrument_info(
+        &self,
+        instrument_id: InstrumentId,
+    ) -> Result<InstrumentInfo, McpBridgeError> {
         let snapshots = self.session.list_instruments();
         snapshots
             .iter()
-            .find(|s| s.id.as_u64() == instrument_id)
+            .find(|s| s.id == instrument_id)
             .map(Self::snapshot_to_info)
-            .ok_or(McpBridgeError::InstrumentNotFound(instrument_id))
+            .ok_or(McpBridgeError::InstrumentNotFound(instrument_id.as_u64()))
     }
 
-    fn list_modules(&self, instrument_id: u64) -> Result<Vec<ModuleInfo>, McpBridgeError> {
+    fn list_modules(&self, instrument_id: InstrumentId) -> Result<Vec<ModuleInfo>, McpBridgeError> {
         self.validate_instrument(instrument_id)?;
 
         let state = self.session.state();
-        let inst_id = InstrumentId::new(instrument_id);
+        let inst_id = instrument_id;
         let modules = state.shared_graph.get_modules_for_instrument(inst_id);
         let connections = state.shared_graph.get_connections_for_instrument(inst_id);
 
@@ -627,7 +627,7 @@ impl SynthBridge for AppSynthBridge {
 
     fn get_module_info(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         module_id: &str,
     ) -> Result<ModuleInfo, McpBridgeError> {
         let modules = self.list_modules(instrument_id)?;
@@ -637,14 +637,17 @@ impl SynthBridge for AppSynthBridge {
             .ok_or_else(|| McpBridgeError::ModuleNotFound(module_id.to_string()))
     }
 
-    fn get_connections(&self, instrument_id: u64) -> Result<Vec<ConnectionInfo>, McpBridgeError> {
+    fn get_connections(
+        &self,
+        instrument_id: InstrumentId,
+    ) -> Result<Vec<ConnectionInfo>, McpBridgeError> {
         self.validate_instrument(instrument_id)?;
 
         let connections = self
             .session
             .state()
             .shared_graph
-            .get_connections_for_instrument(InstrumentId::new(instrument_id));
+            .get_connections_for_instrument(instrument_id);
         Ok(connections
             .into_iter()
             .map(|c| ConnectionInfo {
@@ -658,7 +661,7 @@ impl SynthBridge for AppSynthBridge {
 
     fn get_mod_matrix_routings(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
     ) -> Result<Vec<MatrixRoutingInfo>, McpBridgeError> {
         self.validate_instrument(instrument_id)?;
 
@@ -666,7 +669,7 @@ impl SynthBridge for AppSynthBridge {
             .session
             .state()
             .shared_graph
-            .get_modules_for_instrument(InstrumentId::new(instrument_id));
+            .get_modules_for_instrument(instrument_id);
 
         Ok(modules
             .iter()
@@ -677,13 +680,13 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_mod_matrix_script(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         module_id: &str,
         slot: u8,
         source: &str,
     ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
-        let inst_id = InstrumentId::new(instrument_id);
+        let inst_id = instrument_id;
         let mid: ModuleId = module_id
             .parse()
             .map_err(|_| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
@@ -727,7 +730,7 @@ impl SynthBridge for AppSynthBridge {
 
     fn get_parameter(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         module_id: &str,
         param_name: &str,
     ) -> Result<ParameterInfo, McpBridgeError> {
@@ -782,13 +785,13 @@ impl SynthBridge for AppSynthBridge {
 
     fn get_graph_diagnostics(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
     ) -> Result<Vec<GraphDiagnostic>, McpBridgeError> {
         self.validate_instrument(instrument_id)?;
 
         let mut diagnostics = Vec::new();
         let state = self.session.state();
-        let inst_id = InstrumentId::new(instrument_id);
+        let inst_id = instrument_id;
         let modules = state.shared_graph.get_modules_for_instrument(inst_id);
         let connections = state.shared_graph.get_connections_for_instrument(inst_id);
 
@@ -959,7 +962,7 @@ impl SynthBridge for AppSynthBridge {
         // hardcoded) since the real values only arrive with the async snapshot.
         let alloc = synth_engine::voice_allocator::AllocatorConfig::default();
         Ok(InstrumentInfo {
-            id: id.as_u64(),
+            id,
             name: name.to_string(),
             description: String::new(),
             patch_description: None,
@@ -983,57 +986,69 @@ impl SynthBridge for AppSynthBridge {
         })
     }
 
-    fn delete_instrument(&self, instrument_id: u64) -> Result<(), McpBridgeError> {
-        if instrument_id == 0 {
+    fn delete_instrument(&self, instrument_id: InstrumentId) -> Result<(), McpBridgeError> {
+        if instrument_id == InstrumentId::FIRST {
             return Err(McpBridgeError::Other(
                 "cannot delete the default instrument".to_string(),
             ));
         }
         self.validate_instrument(instrument_id)?;
-        self.session
-            .remove_instrument(InstrumentId::new(instrument_id))
-            .map_err(|_| McpBridgeError::CommandSendFailed {
+        self.session.remove_instrument(instrument_id).map_err(|_| {
+            McpBridgeError::CommandSendFailed {
                 command: "delete_instrument",
-            })
+            }
+        })
     }
 
-    fn rename_instrument(&self, instrument_id: u64, name: &str) -> Result<(), McpBridgeError> {
+    fn rename_instrument(
+        &self,
+        instrument_id: InstrumentId,
+        name: &str,
+    ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
         self.session
-            .rename_instrument(InstrumentId::new(instrument_id), name)
+            .rename_instrument(instrument_id, name)
             .map_err(|e| McpBridgeError::Other(e.to_string()))
     }
 
     fn set_instrument_description(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         description: &str,
     ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
         self.session
-            .set_instrument_description(InstrumentId::new(instrument_id), description)
+            .set_instrument_description(instrument_id, description)
             .map_err(|e| McpBridgeError::Other(e.to_string()))
     }
 
-    fn set_instrument_color(&self, instrument_id: u64, color: &str) -> Result<(), McpBridgeError> {
+    fn set_instrument_color(
+        &self,
+        instrument_id: InstrumentId,
+        color: &str,
+    ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
         let normalized = normalize_color_arg(color)?;
         self.session
-            .set_instrument_color(InstrumentId::new(instrument_id), normalized.as_deref())
+            .set_instrument_color(instrument_id, normalized.as_deref())
             .map_err(|e| McpBridgeError::Other(e.to_string()))
     }
 
-    fn set_patch_color(&self, instrument_id: u64, color: &str) -> Result<(), McpBridgeError> {
+    fn set_patch_color(
+        &self,
+        instrument_id: InstrumentId,
+        color: &str,
+    ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
         let normalized = normalize_color_arg(color)?;
         self.session
-            .set_patch_color(InstrumentId::new(instrument_id), normalized.as_deref())
+            .set_patch_color(instrument_id, normalized.as_deref())
             .map_err(|e| McpBridgeError::Other(e.to_string()))
     }
 
     fn set_patch_description(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         description: &str,
     ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
@@ -1043,13 +1058,13 @@ impl SynthBridge for AppSynthBridge {
             Some(description)
         };
         self.session
-            .set_patch_description(InstrumentId::new(instrument_id), value)
+            .set_patch_description(instrument_id, value)
             .map_err(|e| McpBridgeError::Other(e.to_string()))
     }
 
     fn set_module_description(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         module_id: &str,
         description: &str,
     ) -> Result<(), McpBridgeError> {
@@ -1061,7 +1076,7 @@ impl SynthBridge for AppSynthBridge {
                 max: MAX_MODULE_DESCRIPTION_LEN,
             });
         }
-        let inst_id = InstrumentId::new(instrument_id);
+        let inst_id = instrument_id;
         let mid: ModuleId = module_id
             .parse()
             .map_err(|_| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
@@ -1083,8 +1098,8 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_sidechain_source(
         &self,
-        instrument_id: u64,
-        source: Option<u64>,
+        instrument_id: InstrumentId,
+        source: Option<InstrumentId>,
     ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
         if let Some(src) = source {
@@ -1106,60 +1121,68 @@ impl SynthBridge for AppSynthBridge {
                 };
                 if id == instrument_id {
                     return Err(McpBridgeError::Other(format!(
-                        "sidechain would form a cycle through instrument {id}"
+                        "sidechain would form a cycle through instrument {}",
+                        id.as_u64()
                     )));
                 }
                 current = snapshots
                     .iter()
-                    .find(|s| s.id.as_u64() == id)
-                    .and_then(|s| s.sidechain_source_id.map(|i| i.as_u64()));
+                    .find(|s| s.id == id)
+                    .and_then(|s| s.sidechain_source_id);
             }
         }
         self.session
-            .set_sidechain_source(
-                InstrumentId::new(instrument_id),
-                source.map(InstrumentId::new),
-            )
+            .set_sidechain_source(instrument_id, source)
             .map_err(|e| McpBridgeError::Other(e.to_string()))
     }
 
-    fn set_instrument_volume(&self, instrument_id: u64, volume: f32) -> Result<(), McpBridgeError> {
+    fn set_instrument_volume(
+        &self,
+        instrument_id: InstrumentId,
+        volume: f32,
+    ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
         self.session
-            .set_instrument_volume(
-                InstrumentId::new(instrument_id),
-                synth_core::Gain::new(volume),
-            )
+            .set_instrument_volume(instrument_id, synth_core::Gain::new(volume))
             .map_err(|_| McpBridgeError::CommandSendFailed {
                 command: "set_instrument_volume",
             })
     }
 
-    fn set_instrument_pan(&self, instrument_id: u64, pan: f32) -> Result<(), McpBridgeError> {
+    fn set_instrument_pan(
+        &self,
+        instrument_id: InstrumentId,
+        pan: f32,
+    ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
         self.session
-            .set_instrument_pan(
-                InstrumentId::new(instrument_id),
-                synth_core::BipolarValue::new(pan),
-            )
+            .set_instrument_pan(instrument_id, synth_core::BipolarValue::new(pan))
             .map_err(|_| McpBridgeError::CommandSendFailed {
                 command: "set_instrument_pan",
             })
     }
 
-    fn set_instrument_mute(&self, instrument_id: u64, muted: bool) -> Result<(), McpBridgeError> {
+    fn set_instrument_mute(
+        &self,
+        instrument_id: InstrumentId,
+        muted: bool,
+    ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
         self.session
-            .set_instrument_mute(InstrumentId::new(instrument_id), muted)
+            .set_instrument_mute(instrument_id, muted)
             .map_err(|_| McpBridgeError::CommandSendFailed {
                 command: "set_instrument_mute",
             })
     }
 
-    fn set_instrument_solo(&self, instrument_id: u64, solo: bool) -> Result<(), McpBridgeError> {
+    fn set_instrument_solo(
+        &self,
+        instrument_id: InstrumentId,
+        solo: bool,
+    ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
         self.session
-            .set_instrument_solo(InstrumentId::new(instrument_id), solo)
+            .set_instrument_solo(instrument_id, solo)
             .map_err(|_| McpBridgeError::CommandSendFailed {
                 command: "set_instrument_solo",
             })
@@ -1167,7 +1190,7 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_instrument_midi_channel(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         channel: u8,
     ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
@@ -1175,7 +1198,7 @@ impl SynthBridge for AppSynthBridge {
             McpBridgeError::Other(format!("invalid MIDI channel {channel}, must be 1-16"))
         })?;
         self.session
-            .set_instrument_midi_channel(InstrumentId::new(instrument_id), midi_channel)
+            .set_instrument_midi_channel(instrument_id, midi_channel)
             .map_err(|_| McpBridgeError::CommandSendFailed {
                 command: "set_midi_channel",
             })
@@ -1183,12 +1206,12 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_instrument_enabled(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         enabled: bool,
     ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
         self.session
-            .set_instrument_enabled(InstrumentId::new(instrument_id), enabled)
+            .set_instrument_enabled(instrument_id, enabled)
             .map_err(|_| McpBridgeError::CommandSendFailed {
                 command: "set_instrument_enabled",
             })
@@ -1196,14 +1219,14 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_instrument_category(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         category: &str,
     ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
         let cat: synth_engine::InstrumentCategory =
             category.parse().map_err(McpBridgeError::Other)?;
         self.session
-            .set_instrument_category(InstrumentId::new(instrument_id), cat)
+            .set_instrument_category(instrument_id, cat)
             .map_err(|_| McpBridgeError::CommandSendFailed {
                 command: "set_instrument_category",
             })
@@ -1211,14 +1234,14 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_instrument_allocation_mode(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         mode: &str,
     ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
         let parsed: synth_engine::voice_allocator::AllocationMode =
             mode.parse().map_err(McpBridgeError::Other)?;
         self.session
-            .set_instrument_allocation_mode(InstrumentId::new(instrument_id), parsed)
+            .set_instrument_allocation_mode(instrument_id, parsed)
             .map_err(|_| McpBridgeError::CommandSendFailed {
                 command: "set_instrument_allocation_mode",
             })
@@ -1226,14 +1249,14 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_instrument_stealing_strategy(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         strategy: &str,
     ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
         let parsed: synth_engine::voice_allocator::StealingStrategy =
             strategy.parse().map_err(McpBridgeError::Other)?;
         self.session
-            .set_instrument_stealing_strategy(InstrumentId::new(instrument_id), parsed)
+            .set_instrument_stealing_strategy(instrument_id, parsed)
             .map_err(|_| McpBridgeError::CommandSendFailed {
                 command: "set_instrument_stealing_strategy",
             })
@@ -1241,15 +1264,12 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_instrument_unison_detune(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         cents: f32,
     ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
         self.session
-            .set_instrument_unison_detune(
-                InstrumentId::new(instrument_id),
-                synth_core::Cents(cents),
-            )
+            .set_instrument_unison_detune(instrument_id, synth_core::Cents(cents))
             .map_err(|_| McpBridgeError::CommandSendFailed {
                 command: "set_instrument_unison_detune",
             })
@@ -1257,15 +1277,12 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_instrument_unison_spread(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         spread: f32,
     ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
         self.session
-            .set_instrument_unison_spread(
-                InstrumentId::new(instrument_id),
-                synth_core::NormalizedValue::new(spread),
-            )
+            .set_instrument_unison_spread(instrument_id, synth_core::NormalizedValue::new(spread))
             .map_err(|_| McpBridgeError::CommandSendFailed {
                 command: "set_instrument_unison_spread",
             })
@@ -1273,7 +1290,7 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_instrument_max_voices(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         max_voices: u32,
     ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
@@ -1281,7 +1298,7 @@ impl SynthBridge for AppSynthBridge {
         // out-of-range values, and `VoiceCount::new` clamps as a backstop.
         let count = synth_core::VoiceCount::new(max_voices.min(u32::from(u8::MAX)) as u8);
         self.session
-            .set_instrument_max_voices(InstrumentId::new(instrument_id), count)
+            .set_instrument_max_voices(instrument_id, count)
             .map_err(|_| McpBridgeError::CommandSendFailed {
                 command: "set_instrument_max_voices",
             })
@@ -1289,14 +1306,14 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_parameter(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         module_id: &str,
         param_name: &str,
         value: BridgeParamValue,
     ) -> Result<ParameterInfo, McpBridgeError> {
         self.validate_instrument(instrument_id)?;
 
-        let inst_id = InstrumentId::new(instrument_id);
+        let inst_id = instrument_id;
         let mid: ModuleId = module_id
             .parse()
             .map_err(|_| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
@@ -1588,7 +1605,7 @@ impl SynthBridge for AppSynthBridge {
         Ok("OK: auto-layout queued — applied on the next Rack-view frame".to_string())
     }
 
-    fn get_ui_snapshot(&self, instrument_id: u64) -> Result<UiSnapshot, McpBridgeError> {
+    fn get_ui_snapshot(&self, instrument_id: InstrumentId) -> Result<UiSnapshot, McpBridgeError> {
         self.validate_instrument(instrument_id)?;
 
         let layout = self
@@ -1662,7 +1679,11 @@ impl SynthBridge for AppSynthBridge {
             .collect())
     }
 
-    fn add_module(&self, instrument_id: u64, module_type: &str) -> Result<String, McpBridgeError> {
+    fn add_module(
+        &self,
+        instrument_id: InstrumentId,
+        module_type: &str,
+    ) -> Result<String, McpBridgeError> {
         self.validate_instrument(instrument_id)?;
 
         let mt = parse_module_type(module_type)
@@ -1679,13 +1700,17 @@ impl SynthBridge for AppSynthBridge {
 
         let (module_id, _descriptor) = self
             .session
-            .add_module(InstrumentId::new(instrument_id), mt)
+            .add_module(instrument_id, mt)
             .map_err(|e| McpBridgeError::InvalidModuleType(e.to_string()))?;
 
         Ok(format!("OK: {} added as {}", mt.name(), module_id))
     }
 
-    fn remove_module(&self, instrument_id: u64, module_id: &str) -> Result<(), McpBridgeError> {
+    fn remove_module(
+        &self,
+        instrument_id: InstrumentId,
+        module_id: &str,
+    ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
 
         let mid: ModuleId = module_id
@@ -1693,20 +1718,20 @@ impl SynthBridge for AppSynthBridge {
             .map_err(|_| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
 
         self.session
-            .remove_module(InstrumentId::new(instrument_id), mid)
+            .remove_module(instrument_id, mid)
             .map_err(|e| McpBridgeError::ModuleNotFound(e.to_string()))
     }
 
     fn connect(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         from_module: &str,
         from_port: &str,
         to_module: &str,
         to_port: &str,
     ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
-        let inst_id = InstrumentId::new(instrument_id);
+        let inst_id = instrument_id;
 
         let from_pn = self.validate_port(inst_id, from_module, from_port, PortDirection::Output)?;
         let to_pn = self.validate_port(inst_id, to_module, to_port, PortDirection::Input)?;
@@ -1725,14 +1750,14 @@ impl SynthBridge for AppSynthBridge {
 
     fn disconnect(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         from_module: &str,
         from_port: &str,
         to_module: &str,
         to_port: &str,
     ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
-        let inst_id = InstrumentId::new(instrument_id);
+        let inst_id = instrument_id;
 
         let from_pn = self.validate_port(inst_id, from_module, from_port, PortDirection::Output)?;
         let to_pn = self.validate_port(inst_id, to_module, to_port, PortDirection::Input)?;
@@ -1745,23 +1770,17 @@ impl SynthBridge for AppSynthBridge {
             .map_err(|_| McpBridgeError::ModuleNotFound(to_module.to_string()))?;
 
         self.session
-            .disconnect(
-                InstrumentId::new(instrument_id),
-                from_id,
-                from_pn,
-                to_id,
-                to_pn,
-            )
+            .disconnect(instrument_id, from_id, from_pn, to_id, to_pn)
             .map_err(|_| McpBridgeError::CommandSendFailed {
                 command: "disconnect",
             })
     }
 
-    fn clear_graph(&self, instrument_id: u64) -> Result<(), McpBridgeError> {
+    fn clear_graph(&self, instrument_id: InstrumentId) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
 
         self.session
-            .clear_graph(InstrumentId::new(instrument_id))
+            .clear_graph(instrument_id)
             .map_err(|_| McpBridgeError::CommandSendFailed {
                 command: "clear_graph",
             })
@@ -2621,7 +2640,7 @@ impl SynthBridge for AppSynthBridge {
                 name: t.name.clone(),
                 description: t.description.clone(),
                 color: t.color.to_hex(),
-                instrument_id: Some(t.instrument.0),
+                instrument_id: Some(t.instrument),
                 volume: t.volume.as_f32(),
                 // Convert normalized (0.0..1.0) to bipolar (-1.0..1.0) for MCP API
                 pan: t.pan.as_f32(),
@@ -2643,13 +2662,17 @@ impl SynthBridge for AppSynthBridge {
         Ok(tracks)
     }
 
-    fn create_track(&self, name: &str, instrument_id: Option<u16>) -> Result<u16, McpBridgeError> {
+    fn create_track(
+        &self,
+        name: &str,
+        instrument_id: Option<InstrumentId>,
+    ) -> Result<u16, McpBridgeError> {
         let mut song = self.shared.song.write();
         let id = song.create_track(name);
         if let Some(inst_id) = instrument_id
             && let Some(track) = song.track_mut(id)
         {
-            track.instrument = synth_sequencer::SeqInstrumentId(inst_id);
+            track.instrument = inst_id;
         }
         Ok(id.0)
     }
@@ -2941,7 +2964,7 @@ impl SynthBridge for AppSynthBridge {
             if let Some(inst_id) = t.instrument_id
                 && let Some(track) = song.track_mut(id)
             {
-                track.instrument = synth_sequencer::SeqInstrumentId(inst_id);
+                track.instrument = inst_id;
             }
             items.push(BatchItemResult {
                 index: i,
@@ -3079,7 +3102,7 @@ impl SynthBridge for AppSynthBridge {
             if let Some(inst_id) = t.instrument_id
                 && let Some(track) = song.track_mut(id)
             {
-                track.instrument = synth_sequencer::SeqInstrumentId(inst_id);
+                track.instrument = inst_id;
             }
             track_ids.push(id.0);
         }
@@ -3174,9 +3197,9 @@ impl SynthBridge for AppSynthBridge {
         // 1. Create or reuse instrument
         let mut errors = Vec::new();
         let inst_id = if let Some(id) = spec.instrument_id {
-            let iid = InstrumentId::new(id);
+            let iid = id;
             if !self.session.instrument_exists(iid) {
-                return Err(McpBridgeError::InstrumentNotFound(id));
+                return Err(McpBridgeError::InstrumentNotFound(id.as_u64()));
             }
             // Clear existing graph before rebuilding
             self.session
@@ -3358,7 +3381,7 @@ impl SynthBridge for AppSynthBridge {
         }
 
         Ok(BuildInstrumentResult {
-            instrument_id: inst_id.as_u64(),
+            instrument_id: inst_id,
             module_ids: module_id_strings,
             connection_count,
             errors,
@@ -3387,9 +3410,7 @@ impl SynthBridge for AppSynthBridge {
                     // spec already rolled itself back inside build_instrument.
                     for (built, built_spec) in results.iter().zip(specs) {
                         if built_spec.instrument_id.is_none() {
-                            let _ = self
-                                .session
-                                .remove_instrument(InstrumentId::new(built.instrument_id));
+                            let _ = self.session.remove_instrument(built.instrument_id);
                         }
                     }
                     return Err(e);
@@ -3409,16 +3430,10 @@ impl SynthBridge for AppSynthBridge {
                 "rebuild_instrument_preserve_automation requires instrument_id".to_string(),
             )
         })?;
-        let iid = InstrumentId::new(id);
+        let iid = id;
         if !self.session.instrument_exists(iid) {
-            return Err(McpBridgeError::InstrumentNotFound(id));
+            return Err(McpBridgeError::InstrumentNotFound(id.as_u64()));
         }
-        let inst_u16 = u16::try_from(id).map_err(|_| {
-            McpBridgeError::Other(format!(
-                "instrument id {id} too large for automation targeting"
-            ))
-        })?;
-
         // Reset per-(type) instance counters so the rebuilt graph numbers
         // modules deterministically from 1 in add order. Wherever the new
         // module set matches the old, modules keep their ids and their
@@ -3428,7 +3443,7 @@ impl SynthBridge for AppSynthBridge {
         let built = self.build_instrument(spec)?;
 
         // Classify the instrument's automation lanes against the rebuilt graph.
-        let valid_modules = self.instrument_module_ids(inst_u16);
+        let valid_modules = self.instrument_module_ids(id);
         let patterns = self.list_patterns()?;
         let mut preserved_lanes = 0u32;
         let mut orphaned_lanes = Vec::new();
@@ -3439,10 +3454,10 @@ impl SynthBridge for AppSynthBridge {
                 // `instrument_id` can't distinguish a `Track` lane that happens
                 // to share this instrument's numeric id, and instrument-/track-/
                 // global-level automation is unaffected by the rebuild anyway.
-                if lane.instrument_id != Some(inst_u16) || !lane.target.starts_with("module:") {
+                if lane.instrument_id != Some(id) || !lane.target.starts_with("module:") {
                     continue;
                 }
-                if build_automation_target(&lane.target, inst_u16, &valid_modules).is_ok() {
+                if build_automation_target(&lane.target, id, &valid_modules).is_ok() {
                     preserved_lanes += 1;
                 } else {
                     orphaned_lanes.push(synth_mcp::types::OrphanedAutomationLane {
@@ -3478,7 +3493,7 @@ impl SynthBridge for AppSynthBridge {
                 {
                     pattern.automation.retain(|lane| {
                         let (target, lane_inst, _scope) = automation_target_info(&lane.target);
-                        !(lane_inst == Some(inst_u16) && target == orphan.target)
+                        !(lane_inst == Some(id) && target == orphan.target)
                     });
                 }
             }
@@ -3497,7 +3512,7 @@ impl SynthBridge for AppSynthBridge {
 
     fn apply_example_patch(
         &self,
-        instrument_id: Option<u64>,
+        instrument_id: Option<InstrumentId>,
         patch_name: &str,
     ) -> Result<ApplyExamplePatchResult, McpBridgeError> {
         // Find the patch
@@ -3513,9 +3528,9 @@ impl SynthBridge for AppSynthBridge {
 
         // Create or reuse instrument
         let inst_id = if let Some(id) = instrument_id {
-            let iid = InstrumentId::new(id);
+            let iid = id;
             if !self.session.instrument_exists(iid) {
-                return Err(McpBridgeError::InstrumentNotFound(id));
+                return Err(McpBridgeError::InstrumentNotFound(id.as_u64()));
             }
             iid
         } else {
@@ -3527,7 +3542,7 @@ impl SynthBridge for AppSynthBridge {
         let result = self.session.apply_patch(inst_id, &patch);
 
         Ok(ApplyExamplePatchResult {
-            instrument_id: inst_id.as_u64(),
+            instrument_id: inst_id,
             patch_name: patch.name,
             module_count: result.module_count,
             connection_count: result.connection_count,
@@ -3628,7 +3643,7 @@ impl SynthBridge for AppSynthBridge {
 
     fn get_instrument_automation_targets(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
     ) -> Result<Vec<AutomationTargetInfo>, McpBridgeError> {
         use synth_core::ModuleType;
         use synth_sequencer::AutoInstrumentParam;
@@ -3637,7 +3652,7 @@ impl SynthBridge for AppSynthBridge {
         // Read from the session's synchronous registry (carries the live
         // descriptors), so freshly-added modules appear and we don't rebuild a
         // descriptor per module.
-        let inst_id = InstrumentId::new(instrument_id);
+        let inst_id = instrument_id;
         let modules = self.session.all_modules_for_instrument(inst_id);
 
         let has_filter = modules
@@ -3717,7 +3732,7 @@ impl SynthBridge for AppSynthBridge {
         &self,
         pattern_id: u32,
         target: &str,
-        instrument_id: u16,
+        instrument_id: InstrumentId,
     ) -> Result<Vec<AutomationPointInfo>, McpBridgeError> {
         let valid_modules = self.instrument_module_ids(instrument_id);
         let song = self.shared.song.read();
@@ -3746,7 +3761,7 @@ impl SynthBridge for AppSynthBridge {
         &self,
         pattern_id: u32,
         target: &str,
-        instrument_id: u16,
+        instrument_id: InstrumentId,
         beats: &[f32],
     ) -> Result<BatchResult, McpBridgeError> {
         let valid_modules = self.instrument_module_ids(instrument_id);
@@ -3795,7 +3810,7 @@ impl SynthBridge for AppSynthBridge {
         &self,
         pattern_id: u32,
         target: &str,
-        instrument_id: u16,
+        instrument_id: InstrumentId,
     ) -> Result<usize, McpBridgeError> {
         let valid_modules = self.instrument_module_ids(instrument_id);
         let mut song = self.shared.song.write();
@@ -3815,7 +3830,7 @@ impl SynthBridge for AppSynthBridge {
         &self,
         pattern_id: u32,
         target: &str,
-        instrument_id: u16,
+        instrument_id: InstrumentId,
         scale: f32,
         pivot: f32,
         offset: f32,
@@ -3857,10 +3872,10 @@ impl SynthBridge for AppSynthBridge {
         &self,
         from_pattern_id: u32,
         from_target: &str,
-        from_instrument_id: u16,
+        from_instrument_id: InstrumentId,
         to_pattern_id: u32,
         to_target: &str,
-        to_instrument_id: u16,
+        to_instrument_id: InstrumentId,
         scale: f32,
         offset: f32,
         clear_destination: bool,
@@ -3953,7 +3968,7 @@ impl SynthBridge for AppSynthBridge {
     fn set_track_instrument(
         &self,
         track_id: u16,
-        instrument_id: Option<u16>,
+        instrument_id: Option<InstrumentId>,
     ) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
         let tid = synth_sequencer::TrackId(track_id);
@@ -3963,7 +3978,7 @@ impl SynthBridge for AppSynthBridge {
         // Every track has an instrument now; `None` is a no-op (can no longer
         // clear to "no instrument"). Signature tightening is Phase 6 MCP cleanup.
         if let Some(inst_id) = instrument_id {
-            track.instrument = synth_sequencer::SeqInstrumentId(inst_id);
+            track.instrument = inst_id;
         }
         Ok(())
     }
@@ -4631,7 +4646,7 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_parameters(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         params: &[BridgeParamSet],
     ) -> Result<BatchResult, McpBridgeError> {
         self.validate_instrument(instrument_id)?;
@@ -4689,12 +4704,13 @@ impl SynthBridge for AppSynthBridge {
         self.do_save_project(std::path::PathBuf::from(path))
     }
 
-    fn save_patch(&self, instrument_id: u64, path: &str) -> Result<String, McpBridgeError> {
+    fn save_patch(
+        &self,
+        instrument_id: InstrumentId,
+        path: &str,
+    ) -> Result<String, McpBridgeError> {
         self.validate_instrument(instrument_id)?;
-        self.do_save_patch(
-            InstrumentId::new(instrument_id),
-            std::path::PathBuf::from(path),
-        )
+        self.do_save_patch(instrument_id, std::path::PathBuf::from(path))
     }
 
     fn load_project(&self, path: &str) -> Result<String, McpBridgeError> {
@@ -4712,9 +4728,7 @@ impl SynthBridge for AppSynthBridge {
         let mut removed_instruments = Vec::new();
         let snapshots = self.session.list_instruments();
         for snap in &snapshots {
-            #[allow(clippy::cast_possible_truncation)]
-            if !used_instrument_ids
-                .contains(&synth_sequencer::SeqInstrumentId(snap.id.as_u64() as u16))
+            if !used_instrument_ids.contains(&snap.id)
                 && self.session.remove_instrument(snap.id).is_ok()
             {
                 removed_instruments.push(snap.name.clone());
@@ -4744,7 +4758,7 @@ impl SynthBridge for AppSynthBridge {
 
     fn render_note_preview(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         note: u8,
         velocity: u8,
         duration_ms: u32,
@@ -4753,7 +4767,7 @@ impl SynthBridge for AppSynthBridge {
         crate::audio::preview::render_note_preview(
             &self.session,
             &self.sample_library,
-            InstrumentId::new(instrument_id),
+            instrument_id,
             MidiNote::new(note),
             Velocity::from_midi(velocity),
             duration_ms,
@@ -4764,7 +4778,7 @@ impl SynthBridge for AppSynthBridge {
     #[allow(clippy::too_many_arguments)]
     fn analyze_note(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         note: u8,
         velocity: u8,
         duration_ms: u32,
@@ -4791,7 +4805,7 @@ impl SynthBridge for AppSynthBridge {
             .session
             .state()
             .shared_graph
-            .get_modules_for_instrument(InstrumentId::new(instrument_id));
+            .get_modules_for_instrument(instrument_id);
         result.module_descriptions = collect_module_descriptions(&modules);
         Ok(result)
     }
@@ -5051,7 +5065,7 @@ impl SynthBridge for AppSynthBridge {
         path: String,
         duration_seconds: f32,
         start_tick: Option<u64>,
-        instrument_id: Option<u16>,
+        instrument_id: Option<InstrumentId>,
         scope: synth_mcp::AnalysisScope,
     ) -> Result<RenderToWavResult, McpBridgeError> {
         render_to_wav_impl(
@@ -5070,7 +5084,7 @@ impl SynthBridge for AppSynthBridge {
         &self,
         duration_seconds: f32,
         start_tick: Option<u64>,
-        instrument_id: Option<u16>,
+        instrument_id: Option<InstrumentId>,
         f0_hint: Option<f32>,
         max_partials: Option<u32>,
         log_bins: Option<u32>,
@@ -5094,7 +5108,7 @@ impl SynthBridge for AppSynthBridge {
         &self,
         duration_seconds: f32,
         start_tick: Option<u64>,
-        instrument_id: Option<u16>,
+        instrument_id: Option<InstrumentId>,
         f0_hint: Option<f32>,
         max_partials: Option<u32>,
         log_bins: Option<u32>,
@@ -5359,7 +5373,7 @@ impl SynthBridge for AppSynthBridge {
 
     fn analyze_instrument_range(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         low_note: u8,
         high_note: u8,
         step_semitones: Option<u8>,
@@ -5382,7 +5396,7 @@ impl SynthBridge for AppSynthBridge {
 
     fn analyze_velocity_response(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         note: u8,
         velocity_low: Option<u8>,
         velocity_high: Option<u8>,
@@ -5874,12 +5888,12 @@ impl SynthBridge for AppSynthBridge {
 
     fn assign_sample_to_module(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         module_id: &str,
         sample_id: u64,
     ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
-        let inst_id = InstrumentId::new(instrument_id);
+        let inst_id = instrument_id;
         let mid: ModuleId = module_id
             .parse()
             .map_err(|_| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
@@ -5937,7 +5951,7 @@ impl SynthBridge for AppSynthBridge {
 
     fn get_sampler_state(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         module_id: &str,
     ) -> Result<synth_mcp::types::SamplerStateInfo, McpBridgeError> {
         use synth_core::{Param, PlayDirection, SamplerParam, SamplerPlayMode};
@@ -5947,7 +5961,7 @@ impl SynthBridge for AppSynthBridge {
         // `Param::as_f32()` returns 0.0 for `SamplerParam::SampleSelect` (the
         // sample id doesn't fit a slider), so the f32 path silently loses it.
         // Read the typed enum from the snapshot instead.
-        let inst_id = InstrumentId::new(instrument_id);
+        let inst_id = instrument_id;
         let mid: ModuleId = module_id
             .parse()
             .map_err(|_| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
@@ -6023,13 +6037,13 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_sampler_parameter(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         module_id: &str,
         param_name: &str,
         value: &str,
     ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
-        let inst_id = InstrumentId::new(instrument_id);
+        let inst_id = instrument_id;
         let mid: ModuleId = module_id
             .parse()
             .map_err(|_| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
@@ -6172,14 +6186,14 @@ impl SynthBridge for AppSynthBridge {
 
     fn check_connection(
         &self,
-        instrument_id: u64,
+        instrument_id: InstrumentId,
         from_module: &str,
         from_port: &str,
         to_module: &str,
         to_port: &str,
     ) -> Result<ConnectionCheckResult, McpBridgeError> {
         self.validate_instrument(instrument_id)?;
-        let inst_id = InstrumentId::new(instrument_id);
+        let inst_id = instrument_id;
 
         let from_mid: ModuleId = from_module
             .parse()
@@ -7293,10 +7307,10 @@ fn format_curve_type(curve: synth_sequencer::CurveType) -> String {
 /// it.
 fn build_automation_target(
     target: &str,
-    instrument_id: u16,
+    instrument_id: InstrumentId,
     valid_modules: &[synth_engine::ModuleId],
 ) -> Result<synth_sequencer::AutomationTarget, McpBridgeError> {
-    let instrument = synth_sequencer::SeqInstrumentId::new(instrument_id);
+    let instrument = instrument_id;
 
     if let Some(rest) = target.strip_prefix("module:") {
         return build_module_automation_target(rest, instrument, valid_modules);
@@ -7341,7 +7355,7 @@ fn build_automation_target(
 /// [`parse_module_type`].
 fn build_module_automation_target(
     body: &str,
-    instrument: synth_sequencer::SeqInstrumentId,
+    instrument: synth_sequencer::InstrumentId,
     valid_modules: &[synth_engine::ModuleId],
 ) -> Result<synth_sequencer::AutomationTarget, McpBridgeError> {
     let malformed = || {
@@ -7405,7 +7419,7 @@ fn build_module_automation_target(
 /// from `list_automation_lanes` can be addressed by the other automation tools.
 fn automation_target_info(
     target: &synth_sequencer::AutomationTarget,
-) -> (String, Option<u16>, &'static str) {
+) -> (String, Option<InstrumentId>, &'static str) {
     use synth_sequencer::AutoInstrumentParam;
     match target {
         synth_sequencer::AutomationTarget::Instrument { instrument, param } => {
@@ -7419,7 +7433,7 @@ fn automation_target_info(
                 AutoInstrumentParam::Sustain => "Sustain",
                 AutoInstrumentParam::Release => "Release",
             };
-            (name.to_string(), Some(instrument.0), "instrument")
+            (name.to_string(), Some(*instrument), "instrument")
         }
         synth_sequencer::AutomationTarget::Track { track, param } => {
             // `track:<param>` (host) or `track:<param>:<id>` (specific track).
@@ -7448,7 +7462,7 @@ fn automation_target_info(
         } => (
             // Canonical, round-trippable form parsed by `build_automation_target`.
             format!("module:{}:{instance}:{param_id}", module_type.prefix()),
-            Some(instrument.0),
+            Some(*instrument),
             "module",
         ),
     }
@@ -7466,7 +7480,7 @@ fn automation_target_info(
 fn insert_automation_into_pattern(
     pattern: &mut synth_sequencer::Pattern,
     points: &[BridgeAutomationPointData],
-    module_cache: &std::collections::HashMap<u16, Vec<synth_engine::ModuleId>>,
+    module_cache: &std::collections::HashMap<InstrumentId, Vec<synth_engine::ModuleId>>,
 ) -> usize {
     use synth_sequencer::{AutomationPoint, PatternTick};
 
@@ -7540,7 +7554,7 @@ fn compute_overlaps(modules: &[crate::mcp_shared::ModuleLayout]) -> Vec<UiOverla
 fn analyze_rendered_note(
     session: &SynthSession,
     sample_library: &crate::audio::preview::SharedSampleLibrary,
-    instrument_id: u64,
+    instrument_id: InstrumentId,
     note: u8,
     velocity: u8,
     duration_ms: u32,
@@ -7551,7 +7565,7 @@ fn analyze_rendered_note(
     let rendered = crate::audio::preview::render_note_to_buffer(
         session,
         sample_library,
-        InstrumentId::new(instrument_id),
+        instrument_id,
         MidiNote::new(note),
         Velocity::from_midi(velocity),
         duration_ms,
@@ -7642,7 +7656,7 @@ fn sweep_range<T>(
 pub fn analyze_instrument_range_impl(
     session: &SynthSession,
     sample_library: &crate::audio::preview::SharedSampleLibrary,
-    instrument_id: u64,
+    instrument_id: InstrumentId,
     low_note: u8,
     high_note: u8,
     step_semitones: Option<u8>,
@@ -7667,11 +7681,8 @@ pub fn analyze_instrument_range_impl(
     let mut warnings: Vec<String> = Vec::new();
     // Build the offline engine + load the patch once, then reuse it for every
     // step instead of spinning up a fresh engine per note.
-    let (mut sess, setup_warnings) = crate::audio::preview::OfflineNoteSession::new(
-        session,
-        sample_library,
-        InstrumentId::new(instrument_id),
-    )?;
+    let (mut sess, setup_warnings) =
+        crate::audio::preview::OfflineNoteSession::new(session, sample_library, instrument_id)?;
     warnings.extend(setup_warnings);
     let steps_out = sweep_range(low_note, high_note, step, "note", &mut warnings, |note| {
         let result = analyze_rendered_note_in_session(
@@ -7708,7 +7719,7 @@ pub fn analyze_instrument_range_impl(
 pub fn analyze_velocity_response_impl(
     session: &SynthSession,
     sample_library: &crate::audio::preview::SharedSampleLibrary,
-    instrument_id: u64,
+    instrument_id: InstrumentId,
     note: u8,
     velocity_low: Option<u8>,
     velocity_high: Option<u8>,
@@ -7734,11 +7745,8 @@ pub fn analyze_velocity_response_impl(
     let mut warnings: Vec<String> = Vec::new();
     // Build the offline engine + load the patch once, then reuse it for every
     // velocity step instead of spinning up a fresh engine per step.
-    let (mut sess, setup_warnings) = crate::audio::preview::OfflineNoteSession::new(
-        session,
-        sample_library,
-        InstrumentId::new(instrument_id),
-    )?;
+    let (mut sess, setup_warnings) =
+        crate::audio::preview::OfflineNoteSession::new(session, sample_library, instrument_id)?;
     warnings.extend(setup_warnings);
     let steps_out = sweep_range(
         velocity_low,
@@ -7890,7 +7898,7 @@ pub fn analyze_song_harmony(
     query: HarmonyQuery,
     grouping_ticks: Option<u32>,
 ) -> Result<AnalyzeHarmonyResult, McpBridgeError> {
-    use synth_sequencer::{PatternId, SeqInstrumentId, TrackId};
+    use synth_sequencer::{InstrumentId, PatternId, TrackId};
 
     let song = shared.song.read();
     let default_grouping = if matches!(query, HarmonyQuery::Pattern { .. }) {
@@ -7972,7 +7980,7 @@ pub fn analyze_song_harmony(
             //      manually tagged — closing the §8.2 silent-no-op.
             // Tracks with no instrument assignment are never auto-excluded.
             let drum_profiles: std::collections::HashMap<
-                SeqInstrumentId,
+                InstrumentId,
                 crate::analysis::InstrumentProfile,
             > = if exclude_drums {
                 crate::analysis::infer_all_profiles(&song, session.state())
@@ -7980,7 +7988,7 @@ pub fn analyze_song_harmony(
                     .filter(|p| {
                         p.role.role == crate::analysis::Role::Drums && p.role.confidence >= 0.6
                     })
-                    .map(|p| (SeqInstrumentId(p.instrument_id), p))
+                    .map(|p| (p.instrument_id, p))
                     .collect()
             } else {
                 std::collections::HashMap::new()
@@ -8303,7 +8311,7 @@ fn analyze_drum_groove_impl(
         AnalyzeDrumGrooveResult, DrumBackbeat, DrumComposition, DrumFills, DrumGhostNotes, DrumHat,
         DrumRepetition, DrumTrackInfo, HarmonyScope,
     };
-    use synth_sequencer::{PatternId, SeqInstrumentId};
+    use synth_sequencer::{InstrumentId, PatternId};
 
     let song = shared.song.read();
     let mut warnings: Vec<String> = Vec::new();
@@ -8338,12 +8346,12 @@ fn analyze_drum_groove_impl(
 
             // Find drum-track candidates the same way `analyze_harmony` does.
             let drum_profiles: std::collections::HashMap<
-                SeqInstrumentId,
+                InstrumentId,
                 crate::analysis::InstrumentProfile,
             > = crate::analysis::infer_all_profiles(&song, session.state())
                 .into_iter()
                 .filter(|p| p.role.role == crate::analysis::Role::Drums && p.role.confidence >= 0.6)
-                .map(|p| (SeqInstrumentId(p.instrument_id), p))
+                .map(|p| (p.instrument_id, p))
                 .collect();
 
             if drum_profiles.is_empty() {
@@ -8361,7 +8369,7 @@ fn analyze_drum_groove_impl(
                     Some(DrumTrackInfo {
                         track_id: t.id.0,
                         track_name: t.name.clone(),
-                        instrument_id: seq.0,
+                        instrument_id: seq,
                         instrument_name: profile.instrument_name.clone(),
                         drum_confidence: profile.role.confidence,
                     })
@@ -8494,7 +8502,7 @@ fn analyze_bass_drum_lock_impl(
         AnalyzeBassDrumLockResult, BassDrumAlignment, BassPitchStability, BassTrackInfo,
         DrumTrackInfo, HarmonyScope,
     };
-    use synth_sequencer::{PatternId, SeqInstrumentId};
+    use synth_sequencer::{InstrumentId, PatternId};
 
     let song = shared.song.read();
     let mut warnings: Vec<String> = Vec::new();
@@ -8552,21 +8560,21 @@ fn analyze_bass_drum_lock_impl(
 
             let profiles = crate::analysis::infer_all_profiles(&song, session.state());
             let drum_profiles: std::collections::HashMap<
-                SeqInstrumentId,
+                InstrumentId,
                 crate::analysis::InstrumentProfile,
             > = profiles
                 .iter()
                 .filter(|p| p.role.role == crate::analysis::Role::Drums && p.role.confidence >= 0.6)
                 .cloned()
-                .map(|p| (SeqInstrumentId(p.instrument_id), p))
+                .map(|p| (p.instrument_id, p))
                 .collect();
             let bass_profiles: std::collections::HashMap<
-                SeqInstrumentId,
+                InstrumentId,
                 crate::analysis::InstrumentProfile,
             > = profiles
                 .into_iter()
                 .filter(|p| p.role.role == crate::analysis::Role::Bass && p.role.confidence >= 0.6)
-                .map(|p| (SeqInstrumentId(p.instrument_id), p))
+                .map(|p| (p.instrument_id, p))
                 .collect();
 
             if drum_profiles.is_empty() {
@@ -8590,7 +8598,7 @@ fn analyze_bass_drum_lock_impl(
                     Some(DrumTrackInfo {
                         track_id: t.id.0,
                         track_name: t.name.clone(),
-                        instrument_id: seq.0,
+                        instrument_id: seq,
                         instrument_name: profile.instrument_name.clone(),
                         drum_confidence: profile.role.confidence,
                     })
@@ -8605,7 +8613,7 @@ fn analyze_bass_drum_lock_impl(
                     Some(BassTrackInfo {
                         track_id: t.id.0,
                         track_name: t.name.clone(),
-                        instrument_id: seq.0,
+                        instrument_id: seq,
                         instrument_name: profile.instrument_name.clone(),
                         bass_confidence: profile.role.confidence,
                     })
@@ -8871,7 +8879,7 @@ fn collect_form_scope(
 ) -> Result<FormScopeData, McpBridgeError> {
     use crate::analysis::bar_features::MelodicNote;
     use synth_mcp::types::HarmonyScope;
-    use synth_sequencer::{PatternId, SeqInstrumentId};
+    use synth_sequencer::{InstrumentId, PatternId};
 
     let song = shared.song.read();
     let mut warnings: Vec<String> = Vec::new();
@@ -8928,13 +8936,13 @@ fn collect_form_scope(
                     .map(synth_sequencer::TrackId)
                     .collect();
             if exclude_drums {
-                let drum_instrument_ids: std::collections::HashSet<SeqInstrumentId> =
+                let drum_instrument_ids: std::collections::HashSet<InstrumentId> =
                     crate::analysis::infer_all_profiles(&song, session.state())
                         .into_iter()
                         .filter(|p| {
                             p.role.role == crate::analysis::Role::Drums && p.role.confidence >= 0.6
                         })
-                        .map(|p| SeqInstrumentId(p.instrument_id))
+                        .map(|p| p.instrument_id)
                         .collect();
                 for t in song.tracks() {
                     if drum_instrument_ids.contains(&t.instrument) {
@@ -10101,7 +10109,7 @@ pub fn render_to_wav_impl(
     path: String,
     duration_seconds: f32,
     start_tick: Option<u64>,
-    instrument_id: Option<u16>,
+    instrument_id: Option<InstrumentId>,
     scope: synth_mcp::AnalysisScope,
 ) -> Result<RenderToWavResult, McpBridgeError> {
     let (start, end) = resolve_duration_window(shared, duration_seconds, start_tick)?;
@@ -10160,13 +10168,11 @@ pub fn render_to_wav_impl(
 /// `render_to_wav` / `analyze_spectrum`) cannot override via the cloned song's
 /// track flags. Returns the (possibly empty) set of human-readable warnings for
 /// soloing `target_seq_id`.
-fn instrument_solo_conflicts(session: &SynthSession, target_seq_id: u16) -> Vec<String> {
+fn instrument_solo_conflicts(session: &SynthSession, target_seq_id: u64) -> Vec<String> {
     let snapshots = session.state().instrument_snapshots.read();
     let mut warnings = Vec::new();
 
-    if let Some(target) = snapshots
-        .iter()
-        .find(|s| s.seq_instrument_id == target_seq_id)
+    if let Some(target) = snapshots.iter().find(|s| s.id.as_u64() == target_seq_id)
         && (target.muted || !target.enabled)
     {
         warnings.push(format!(
@@ -10177,7 +10183,7 @@ fn instrument_solo_conflicts(session: &SynthSession, target_seq_id: u16) -> Vec<
 
     if snapshots
         .iter()
-        .any(|s| s.solo && s.seq_instrument_id != target_seq_id)
+        .any(|s| s.solo && s.id.as_u64() != target_seq_id)
     {
         warnings.push(format!(
             "another instrument is soloed in the live project — instrument-level solo \
@@ -10200,7 +10206,7 @@ fn render_analysis_window(
     shared: &McpSharedState,
     start: u64,
     end: u64,
-    instrument_id: Option<u16>,
+    instrument_id: Option<InstrumentId>,
     scope: synth_mcp::AnalysisScope,
 ) -> Result<
     (
@@ -10212,16 +10218,17 @@ fn render_analysis_window(
     let mut warnings = Vec::new();
     let song_handle = if let Some(inst_id) = instrument_id {
         let mut isolated = shared.song.read().clone();
-        let audible_tracks = isolated.isolate_instrument(synth_sequencer::SeqInstrumentId(inst_id));
+        let audible_tracks = isolated.isolate_instrument(inst_id);
         if audible_tracks == 0 {
             warnings.push(format!(
-                "instrument_id {inst_id} drives no track — the render will be silent"
+                "instrument_id {} drives no track — the render will be silent",
+                inst_id.as_u64()
             ));
         }
         // Track-level isolation cannot override *instrument*-level mute/solo,
         // which the offline render replays verbatim from the live engine
         // snapshot. Warn rather than produce a misleadingly empty render.
-        warnings.extend(instrument_solo_conflicts(session, inst_id));
+        warnings.extend(instrument_solo_conflicts(session, inst_id.as_u64()));
         synth_engine::shared_song(isolated)
     } else {
         Arc::clone(&shared.song)
@@ -10298,7 +10305,7 @@ fn render_window_mono(
     shared: &McpSharedState,
     duration_seconds: f32,
     start_tick: Option<u64>,
-    instrument_id: Option<u16>,
+    instrument_id: Option<InstrumentId>,
     scope: synth_mcp::AnalysisScope,
 ) -> Result<
     (
@@ -10333,7 +10340,7 @@ pub fn analyze_spectrum_impl(
     shared: &McpSharedState,
     duration_seconds: f32,
     start_tick: Option<u64>,
-    instrument_id: Option<u16>,
+    instrument_id: Option<InstrumentId>,
     f0_hint: Option<f32>,
     max_partials: Option<u32>,
     log_bins: Option<u32>,
@@ -10378,7 +10385,7 @@ pub fn analyze_spectrogram_impl(
     shared: &McpSharedState,
     duration_seconds: f32,
     start_tick: Option<u64>,
-    instrument_id: Option<u16>,
+    instrument_id: Option<InstrumentId>,
     f0_hint: Option<f32>,
     max_partials: Option<u32>,
     log_bins: Option<u32>,
@@ -11683,7 +11690,7 @@ fn render_per_track_contributions(
     struct TargetMeta {
         track_id: TrackId,
         name: String,
-        instrument_id: Option<u16>,
+        instrument_id: Option<InstrumentId>,
     }
 
     let (targets, base_song) = {
@@ -11703,7 +11710,7 @@ fn render_per_track_contributions(
                 t.is_audible(any_solo).then_some(TargetMeta {
                     track_id: tid,
                     name: t.name.clone(),
-                    instrument_id: Some(t.instrument.0),
+                    instrument_id: Some(t.instrument),
                 })
             })
             .collect();
@@ -11725,11 +11732,11 @@ fn render_per_track_contributions(
     // single division by (volume × max_pan_gain) on the loud-channel peak
     // recovers the patch's internal-signal peak. Saves a second render per
     // track vs. re-rendering with pan/volume overridden.
-    let instrument_gains: std::collections::HashMap<u16, (Gain, BipolarValue)> = {
+    let instrument_gains: std::collections::HashMap<InstrumentId, (Gain, BipolarValue)> = {
         let snapshots = session.state().instrument_snapshots.read();
         snapshots
             .iter()
-            .map(|s| (s.id.as_u64() as u16, (s.volume, s.pan)))
+            .map(|s| (s.id, (s.volume, s.pan)))
             .collect()
     };
 
@@ -13696,7 +13703,7 @@ mod automation_target_tests {
     use super::*;
     use std::assert_matches;
     use synth_engine::ModuleId;
-    use synth_sequencer::{AutomationTarget, SeqInstrumentId};
+    use synth_sequencer::{AutomationTarget, InstrumentId};
 
     /// A module set with a single Filter at instance 1 (the common test graph).
     fn flt1() -> Vec<ModuleId> {
@@ -13705,11 +13712,12 @@ mod automation_target_tests {
 
     #[test]
     fn build_module_target_parses_and_validates() {
-        let t = build_automation_target("module:flt:1:cutoff", 3, &flt1()).unwrap();
+        let t =
+            build_automation_target("module:flt:1:cutoff", InstrumentId::new(3), &flt1()).unwrap();
         assert_eq!(
             t,
             AutomationTarget::Module {
-                instrument: SeqInstrumentId::new(3),
+                instrument: InstrumentId::new(3),
                 module_type: synth_core::ModuleType::Filter,
                 instance: 1,
                 param_id: "cutoff".into(),
@@ -13720,24 +13728,26 @@ mod automation_target_tests {
     #[test]
     fn build_module_target_accepts_dash_and_full_name_forms() {
         let expected = AutomationTarget::Module {
-            instrument: SeqInstrumentId::new(3),
+            instrument: InstrumentId::new(3),
             module_type: synth_core::ModuleType::Filter,
             instance: 1,
             param_id: "cutoff".into(),
         };
         // Dash form mirrors the ModuleId rendering used by every other tool.
         assert_eq!(
-            build_automation_target("module:flt-1:cutoff", 3, &flt1()).unwrap(),
+            build_automation_target("module:flt-1:cutoff", InstrumentId::new(3), &flt1()).unwrap(),
             expected
         );
         // Full type name (snake_case) instead of the 3-letter prefix.
         assert_eq!(
-            build_automation_target("module:filter:1:cutoff", 3, &flt1()).unwrap(),
+            build_automation_target("module:filter:1:cutoff", InstrumentId::new(3), &flt1())
+                .unwrap(),
             expected
         );
         // Full name + dash form together.
         assert_eq!(
-            build_automation_target("module:filter-1:cutoff", 3, &flt1()).unwrap(),
+            build_automation_target("module:filter-1:cutoff", InstrumentId::new(3), &flt1())
+                .unwrap(),
             expected
         );
     }
@@ -13750,17 +13760,19 @@ mod automation_target_tests {
         // separators must resolve to the same target.
         let ldr = vec![ModuleId::new(synth_core::ModuleType::LadderFilter, 1)];
         let expected = AutomationTarget::Module {
-            instrument: SeqInstrumentId::new(3),
+            instrument: InstrumentId::new(3),
             module_type: synth_core::ModuleType::LadderFilter,
             instance: 1,
             param_id: "cutoff".into(),
         };
         assert_eq!(
-            build_automation_target("module:ladder-filter:1:cutoff", 3, &ldr).unwrap(),
+            build_automation_target("module:ladder-filter:1:cutoff", InstrumentId::new(3), &ldr)
+                .unwrap(),
             expected
         );
         assert_eq!(
-            build_automation_target("module:ladder-filter-1:cutoff", 3, &ldr).unwrap(),
+            build_automation_target("module:ladder-filter-1:cutoff", InstrumentId::new(3), &ldr)
+                .unwrap(),
             expected
         );
     }
@@ -13768,7 +13780,7 @@ mod automation_target_tests {
     #[test]
     fn build_instrument_target_still_works() {
         // Instrument-level params ignore the module set.
-        let t = build_automation_target("FilterCutoff", 2, &[]).unwrap();
+        let t = build_automation_target("FilterCutoff", InstrumentId::new(2), &[]).unwrap();
         assert_matches!(t, AutomationTarget::Instrument { .. });
     }
 
@@ -13776,12 +13788,12 @@ mod automation_target_tests {
     fn build_module_target_rejects_non_automatable_and_invalid() {
         let m = flt1();
         // "type" is the FilterMode choice param — excluded from the allowlist.
-        assert!(build_automation_target("module:flt:1:type", 0, &m).is_err());
+        assert!(build_automation_target("module:flt:1:type", InstrumentId::new(0), &m).is_err());
         // Unknown param / module type / instance-string / arity.
-        assert!(build_automation_target("module:flt:1:nope", 0, &m).is_err());
-        assert!(build_automation_target("module:zzz:1:cutoff", 0, &m).is_err());
-        assert!(build_automation_target("module:flt:x:cutoff", 0, &m).is_err());
-        assert!(build_automation_target("module:flt:1", 0, &m).is_err());
+        assert!(build_automation_target("module:flt:1:nope", InstrumentId::new(0), &m).is_err());
+        assert!(build_automation_target("module:zzz:1:cutoff", InstrumentId::new(0), &m).is_err());
+        assert!(build_automation_target("module:flt:x:cutoff", InstrumentId::new(0), &m).is_err());
+        assert!(build_automation_target("module:flt:1", InstrumentId::new(0), &m).is_err());
     }
 
     #[test]
@@ -13792,21 +13804,25 @@ mod automation_target_tests {
             ModuleId::new(synth_core::ModuleType::Filter, 4),
             ModuleId::new(synth_core::ModuleType::Filter, 5),
         ];
-        assert!(build_automation_target("module:flt:1:cutoff", 1, &modules).is_err());
+        assert!(
+            build_automation_target("module:flt:1:cutoff", InstrumentId::new(1), &modules).is_err()
+        );
         // The instances that do exist are accepted.
-        assert!(build_automation_target("module:flt:4:cutoff", 1, &modules).is_ok());
+        assert!(
+            build_automation_target("module:flt:4:cutoff", InstrumentId::new(1), &modules).is_ok()
+        );
     }
 
     #[test]
     fn module_target_info_round_trips_through_build() {
         let target = AutomationTarget::Module {
-            instrument: SeqInstrumentId::new(5),
+            instrument: InstrumentId::new(5),
             module_type: synth_core::ModuleType::Filter,
             instance: 2,
             param_id: "resonance".into(),
         };
         let (name, inst, scope) = automation_target_info(&target);
-        assert_eq!(inst, Some(5));
+        assert_eq!(inst, Some(InstrumentId::new(5)));
         assert_eq!(scope, "module");
         let modules = vec![ModuleId::new(synth_core::ModuleType::Filter, 2)];
         let rebuilt = build_automation_target(&name, inst.unwrap(), &modules).unwrap();
@@ -13832,7 +13848,7 @@ mod automation_target_tests {
             let (name, inst, scope) = automation_target_info(target);
             assert_eq!(scope, want_scope, "scope for {name}");
             // instrument_id is meaningless for track/global; build ignores it.
-            let rebuilt = build_automation_target(&name, inst.unwrap_or(0), &[]).unwrap();
+            let rebuilt = build_automation_target(&name, inst.unwrap_or_default(), &[]).unwrap();
             assert_eq!(&rebuilt, target, "round trip for {name}");
         }
     }

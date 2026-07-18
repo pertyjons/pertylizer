@@ -430,7 +430,7 @@ impl Default for TransportState {
 }
 
 /// Sentinel value indicating no focused instrument (use MIDI channel routing).
-/// Uses `u64::MAX` which matches `InstrumentId::MASTER` — a non-real instrument.
+/// `u64::MAX` is never a real instrument id (ids are allocated from 0 upward).
 pub const NO_FOCUSED_INSTRUMENT: u64 = u64::MAX;
 
 /// Monotonic enqueue/drain counters bridging command *submission* (any thread

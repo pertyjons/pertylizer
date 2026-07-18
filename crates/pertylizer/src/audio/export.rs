@@ -257,7 +257,7 @@ fn render_to_wav(
 
     // Build and ship the Mod Grid runtime so an offline render reproduces the
     // live control-rate modulation (seeded random nodes render bit-identically).
-    // Sent *after* the instruments so their SeqInstrumentId → InstrumentId mapping
+    // Sent *after* the instruments so their InstrumentId → InstrumentId mapping
     // exists when `SetModGrid` pre-creates the per-instrument offset slots for
     // `Instrument { Volume | Pan }` targets — otherwise those resolve to nothing
     // and the channel modulation silently drops (the track-scope path needs no

@@ -17,6 +17,7 @@ use rmcp::model::{
 };
 use rmcp::service::{NotificationContext, RequestContext};
 use rmcp::{ErrorData, RoleServer, ServerHandler, tool, tool_handler, tool_router};
+use synth_core::InstrumentId;
 
 use crate::bridge::SynthBridge;
 use crate::error::McpBridgeError;
@@ -699,7 +700,7 @@ pub struct ListModuleTypesParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct CheckConnectionParam {
     #[schemars(description = "Instrument ID (0 for default instrument)")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(description = "Source module ID, e.g. 'osc-1'")]
     pub from_module: String,
     #[schemars(description = "Source port name, e.g. 'out' ('output' is accepted as an alias)")]
@@ -746,7 +747,7 @@ pub struct BatchExecuteParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct InstrumentIdParam {
     #[schemars(description = "Instrument ID (0 for default instrument)")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -754,13 +755,13 @@ pub struct DeleteInstrumentsParam {
     #[schemars(
         description = "Instrument IDs to delete (one or many). The default instrument (ID 0) cannot be deleted."
     )]
-    pub instrument_ids: Vec<u64>,
+    pub instrument_ids: Vec<InstrumentId>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ModuleParam {
     #[schemars(description = "Instrument ID (0 for default instrument)")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(description = "Module ID string, e.g. 'osc-1', 'filter-1'")]
     pub module_id: String,
 }
@@ -768,7 +769,7 @@ pub struct ModuleParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct GetParameterParam {
     #[schemars(description = "Instrument ID (0 for default instrument)")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(description = "Module ID string, e.g. 'osc-1'")]
     pub module_id: String,
     #[schemars(description = "Parameter name, e.g. 'frequency', 'resonance'")]
@@ -778,7 +779,7 @@ pub struct GetParameterParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetModMatrixScriptParam {
     #[schemars(description = "Instrument ID (0 for default instrument)")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(description = "Mod Matrix module ID, e.g. 'mmx-1'")]
     pub module_id: String,
     #[schemars(description = "1-based slot number (1..=16), matching get_mod_matrix_routings")]
@@ -834,7 +835,7 @@ pub struct NoteOffParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct PreviewNoteParam {
     #[schemars(description = "Instrument ID (0 for default instrument)")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(
         description = "MIDI note number (0-127, where 60 = middle C)",
         range(min = 0, max = 127)
@@ -858,7 +859,7 @@ pub struct PreviewNoteParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ValidateInstrumentAudioParam {
     #[schemars(description = "Instrument ID (0 for default instrument)")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(
         description = "MIDI note to test (default 60 = middle C)",
         range(min = 0, max = 127)
@@ -924,7 +925,7 @@ pub struct RenderToWavParam {
     #[schemars(
         description = "When set, solo only this instrument's tracks so the file contains that one instrument's contribution — a clean single-source fingerprint for external spectral matching. Omit for the full mix. Done against a clone, so your project's solo state is untouched."
     )]
-    pub instrument_id: Option<u16>,
+    pub instrument_id: Option<InstrumentId>,
     #[schemars(
         description = "Include the full signal chain (master effects + return-bus effects) in the render. Shortcut for every include_* flag below. Default false = dry instrument sum (per-instrument effects only)."
     )]
@@ -954,7 +955,7 @@ pub struct AnalyzeSpectrumParam {
     #[schemars(
         description = "When set, solo only this instrument's tracks so the spectrum is that one instrument's contribution — a clean single-source fingerprint. Omit for the full mix. Done against a clone, so your project's solo state is untouched."
     )]
-    pub instrument_id: Option<u16>,
+    pub instrument_id: Option<InstrumentId>,
     #[schemars(
         description = "Approximate fundamental frequency in Hz. Restricts the pitch tracker's search to a fifth either side, killing octave errors and sharpening harmonic tagging (each partial's harmonic number + cents deviation). Optional."
     )]
@@ -996,7 +997,7 @@ pub struct AnalyzeSpectrogramParam {
     #[schemars(
         description = "When set, solo only this instrument's tracks. Omit for the full mix. Done against a clone, so your project's solo state is untouched."
     )]
-    pub instrument_id: Option<u16>,
+    pub instrument_id: Option<InstrumentId>,
     #[schemars(
         description = "Approximate fundamental frequency in Hz, applied to every frame to sharpen harmonic tagging. Optional."
     )]
@@ -1094,7 +1095,7 @@ pub struct SpectrumSourceParam {
     #[schemars(
         description = "(Render source only) solo this instrument so the source is that one instrument's contribution. Omit for the full mix."
     )]
-    pub instrument_id: Option<u16>,
+    pub instrument_id: Option<InstrumentId>,
     #[schemars(description = "(Render source only) absolute start tick (default 0).")]
     pub start_tick: Option<u64>,
     #[schemars(
@@ -1400,7 +1401,7 @@ pub struct AnalyzePatternParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AnalyzeInstrumentRangeParam {
     #[schemars(description = "Instrument ID to sweep.")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(
         description = "Lowest MIDI note in the sweep (0-127, inclusive).",
         range(min = 0, max = 127)
@@ -1431,7 +1432,7 @@ pub struct AnalyzeInstrumentRangeParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AnalyzeVelocityResponseParam {
     #[schemars(description = "Instrument ID to test.")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(
         description = "MIDI note to hold across the velocity sweep (0-127).",
         range(min = 0, max = 127)
@@ -1809,7 +1810,7 @@ pub struct AnalyzeBassDrumLockParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AnalyzeNoteParam {
     #[schemars(description = "Instrument ID (0 for default instrument)")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(
         description = "MIDI note number (0-127, where 60 = middle C)",
         range(min = 0, max = 127)
@@ -1851,7 +1852,7 @@ pub struct LoadExamplePatchParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AddModulesParam {
     #[schemars(description = "Instrument ID (0 for default instrument)")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(
         description = "Module types to add (one or many). Each accepts the short type key from list_module_types (e.g. 'osc', 'flt', 'amp'), the full name in snake_case (e.g. 'oscillator', 'ladder_filter'), or the display name (e.g. 'Oscillator', 'Ladder Filter'). Case-insensitive."
     )]
@@ -1861,7 +1862,7 @@ pub struct AddModulesParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct RemoveModulesParam {
     #[schemars(description = "Instrument ID (0 for default instrument)")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(description = "Module IDs to remove (one or many), e.g. ['osc-1', 'flt-2']")]
     pub module_ids: Vec<String>,
 }
@@ -1882,7 +1883,7 @@ pub struct ConnectionInput {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ConnectMultipleParam {
     #[schemars(description = "Instrument ID (0 for default instrument)")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(description = "Array of connections to make")]
     pub connections: Vec<ConnectionInput>,
 }
@@ -1890,7 +1891,7 @@ pub struct ConnectMultipleParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct InsertModuleBetweenParam {
     #[schemars(description = "Instrument ID (0 for default instrument)")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(
         description = "Type of module to insert (short key like 'flt', snake_case name, or display name). Must carry audio (have an audio input and output) — a pure modulator like an LFO is rejected."
     )]
@@ -1989,7 +1990,7 @@ pub struct CreateInstrumentParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct RenameInstrumentInput {
     #[schemars(description = "Instrument ID to rename")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(description = "New name for the instrument")]
     pub name: String,
 }
@@ -2003,7 +2004,7 @@ pub struct RenameInstrumentParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct InstrumentDescriptionInput {
     #[schemars(description = "Instrument ID to annotate")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(
         description = "Free-text description of the instrument's intent / role. \
         Pass \"\" to clear. Never affects audio; surfaces in \
@@ -2021,7 +2022,7 @@ pub struct SetInstrumentDescriptionParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct InstrumentColorInput {
     #[schemars(description = "Instrument ID to recolor")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(
         description = "Accent color as \"#RRGGBB\" or \"#RRGGBBAA\". Pass \"\" to clear back \
         to the default/auto tint. Lets you paint instruments so the mixer / arrangement is \
@@ -2040,7 +2041,7 @@ pub struct SetInstrumentColorParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct PatchColorInput {
     #[schemars(description = "Instrument ID whose patch color to set")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(
         description = "Patch-level accent color as \"#RRGGBB\" or \"#RRGGBBAA\" (distinct from \
         set_instrument_color — this travels with the patch when saved). Pass \"\" to clear. \
@@ -2058,7 +2059,7 @@ pub struct SetPatchColorParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetPatchDescriptionParam {
     #[schemars(description = "Instrument ID whose patch description to set")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(
         description = "Free-text patch description (what the patch is for / how it works). \
         Distinct from set_instrument_description, which captures per-instance song-role intent. \
@@ -2070,7 +2071,7 @@ pub struct SetPatchDescriptionParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ModuleDescriptionInput {
     #[schemars(description = "Instrument ID that owns the module")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(description = "Module ID, e.g. \"lfo-1\" or \"flt-2\"")]
     pub module_id: String,
     #[schemars(
@@ -2171,13 +2172,13 @@ pub struct SetSampleDescriptionParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SidechainSourceInput {
     #[schemars(description = "Instrument ID whose sidechain input to configure")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(
         description = "Source instrument ID whose audio output feeds the sidechain. \
         Pass null (omit) to disable sidechain routing. Self-routing is rejected."
     )]
     #[serde(default)]
-    pub source: Option<u64>,
+    pub source: Option<InstrumentId>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2191,7 +2192,7 @@ pub struct SetSidechainSourceParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct InstrumentMixerInput {
     #[schemars(description = "Instrument ID")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[serde(default)]
     #[schemars(
         description = "Volume level (0.0 = silent, 1.0 = unity, 2.0 = max). Omit to leave unchanged."
@@ -2227,7 +2228,7 @@ pub struct SetInstrumentMixerParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AllocatorConfigInput {
     #[schemars(description = "Instrument ID (0 for the default instrument)")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[serde(default)]
     #[schemars(
         description = "Voice allocation mode: Polyphonic, Mono, Legato, or Unison. Omit to leave unchanged."
@@ -2273,7 +2274,7 @@ pub struct SetAllocatorConfigParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct InstrumentMidiChannelInput {
     #[schemars(description = "Instrument ID")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(description = "MIDI channel (1-16)", range(min = 1, max = 16))]
     pub channel: u8,
 }
@@ -2288,7 +2289,7 @@ pub struct SetInstrumentMidiChannelParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct InstrumentCategoryInput {
     #[schemars(description = "Instrument ID")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(description = "Category: Uncategorized, Drums, Bass, Pad, Lead, Arp, Keys, FX")]
     pub category: String,
 }
@@ -2901,7 +2902,7 @@ pub struct AutomationPointInput {
     )]
     pub target: Option<AutomationTargetInput>,
     #[schemars(description = "Instrument index (default 0)")]
-    pub instrument_id: Option<u16>,
+    pub instrument_id: Option<InstrumentId>,
     #[schemars(description = "Position in beats")]
     pub beat: f32,
     #[schemars(description = "Normalized value (0.0-1.0)")]
@@ -2942,7 +2943,7 @@ pub struct GetAutomationPointsParam {
     )]
     pub target: String,
     #[schemars(description = "Instrument index (default 0)")]
-    pub instrument_id: Option<u16>,
+    pub instrument_id: Option<InstrumentId>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2954,7 +2955,7 @@ pub struct RemoveAutomationPointsParam {
     )]
     pub target: String,
     #[schemars(description = "Instrument index (default 0)")]
-    pub instrument_id: Option<u16>,
+    pub instrument_id: Option<InstrumentId>,
     #[schemars(description = "Beat positions of points to remove")]
     pub beats: Vec<f32>,
 }
@@ -2968,7 +2969,7 @@ pub struct ClearAutomationLaneInput {
     )]
     pub target: String,
     #[schemars(description = "Instrument index (default 0)")]
-    pub instrument_id: Option<u16>,
+    pub instrument_id: Option<InstrumentId>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2984,7 +2985,7 @@ pub struct ScaleAutomationLaneInput {
     #[schemars(description = "Target lane (e.g. 'module:flt:1:cutoff' or 'FilterCutoff')")]
     pub target: String,
     #[schemars(description = "Instrument index (default 0)")]
-    pub instrument_id: Option<u16>,
+    pub instrument_id: Option<InstrumentId>,
     #[schemars(
         description = "Multiplier applied to each point's value around the pivot (e.g. 0.8 = 20% less movement, 1.5 = more). Values are clamped to 0..1 afterwards."
     )]
@@ -3008,7 +3009,7 @@ pub struct OffsetAutomationLaneInput {
     #[schemars(description = "Target lane (e.g. 'module:flt:1:cutoff' or 'FilterCutoff')")]
     pub target: String,
     #[schemars(description = "Instrument index (default 0)")]
-    pub instrument_id: Option<u16>,
+    pub instrument_id: Option<InstrumentId>,
     #[schemars(
         description = "Amount added to every point's value (e.g. -0.05 lowers the whole lane). Values are clamped to 0..1 afterwards."
     )]
@@ -3028,13 +3029,13 @@ pub struct CopyAutomationLaneInput {
     #[schemars(description = "Source target lane")]
     pub from_target: String,
     #[schemars(description = "Source instrument index (default 0)")]
-    pub from_instrument_id: Option<u16>,
+    pub from_instrument_id: Option<InstrumentId>,
     #[schemars(description = "Destination pattern ID (may equal the source)")]
     pub to_pattern_id: u32,
     #[schemars(description = "Destination target lane")]
     pub to_target: String,
     #[schemars(description = "Destination instrument index (default 0)")]
-    pub to_instrument_id: Option<u16>,
+    pub to_instrument_id: Option<InstrumentId>,
     #[schemars(
         description = "Optional multiplier applied to copied values (default 1.0). Clamped to 0..1."
     )]
@@ -3105,7 +3106,7 @@ pub struct TrackInstrumentInput {
     #[schemars(
         description = "Instrument ID to drive this track. Pass null to unassign (the track plays nothing)."
     )]
-    pub instrument_id: Option<u16>,
+    pub instrument_id: Option<InstrumentId>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -3529,7 +3530,7 @@ pub struct ParamSetInput {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetParametersParam {
     #[schemars(description = "Instrument ID (0 for default instrument)")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(description = "Array of parameters to set")]
     pub params: Vec<ParamSetInput>,
 }
@@ -3559,7 +3560,7 @@ pub struct TrackInput {
     #[schemars(description = "Track name")]
     pub name: String,
     #[schemars(description = "Instrument ID to assign (optional)")]
-    pub instrument_id: Option<u16>,
+    pub instrument_id: Option<InstrumentId>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -3604,7 +3605,7 @@ pub struct SongTrackDef {
     #[schemars(description = "Track name")]
     pub name: String,
     #[schemars(description = "Instrument ID to assign (optional)")]
-    pub instrument_id: Option<u16>,
+    pub instrument_id: Option<InstrumentId>,
 }
 
 /// Placement definition for set_song (uses array indices, not IDs).
@@ -3684,7 +3685,7 @@ pub struct InstrumentDefInput {
     #[schemars(
         description = "Existing instrument ID to update. If omitted, creates a new instrument."
     )]
-    pub instrument_id: Option<u64>,
+    pub instrument_id: Option<InstrumentId>,
     #[schemars(description = "Instrument name")]
     pub name: String,
     #[schemars(
@@ -3711,7 +3712,7 @@ pub struct BuildInstrumentsParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct RebuildInstrumentParam {
     #[schemars(description = "Existing instrument ID to rebuild (required).")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(description = "Instrument name")]
     pub name: String,
     #[schemars(
@@ -3738,7 +3739,7 @@ pub struct ApplyExamplePatchParam {
     #[schemars(
         description = "Instrument ID to apply the patch to. If omitted, creates a new instrument."
     )]
-    pub instrument_id: Option<u64>,
+    pub instrument_id: Option<InstrumentId>,
     #[schemars(
         description = "Name of the example patch (case-insensitive). Use list_example_patches to see available patches."
     )]
@@ -3754,7 +3755,7 @@ pub struct ProjectPathParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SavePatchParam {
     #[schemars(description = "ID of the instrument to export as a patch")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(description = "Absolute file path for the patch (.json)")]
     pub path: String,
 }
@@ -3899,7 +3900,7 @@ pub struct ExportSampleParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AssignSampleInput {
     #[schemars(description = "Instrument ID.")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(description = "Sampler module ID (e.g. \"sam-1\"). Must be a Sampler module.")]
     pub module_id: String,
     #[schemars(description = "Sample ID to assign. Use list_samples to find IDs.")]
@@ -3915,7 +3916,7 @@ pub struct AssignSampleParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SamplerModuleParam {
     #[schemars(description = "Instrument ID.")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(description = "Sampler module ID (e.g. \"sam-1\").")]
     pub module_id: String,
 }
@@ -3923,7 +3924,7 @@ pub struct SamplerModuleParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SamplerParameterInput {
     #[schemars(description = "Instrument ID.")]
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     #[schemars(description = "Sampler module ID (e.g. \"sam-1\").")]
     pub module_id: String,
     #[schemars(
@@ -6031,7 +6032,7 @@ impl SynthMcpServer {
         for id in &params.0.instrument_ids {
             match self.bridge.delete_instrument(*id) {
                 Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{id}: {e}")),
+                Err(e) => errors.push(format!("{}: {e}", id.as_u64())),
             }
         }
         batch_msg(ok_count, "instruments deleted", &[], &errors)
@@ -6354,7 +6355,7 @@ impl SynthMcpServer {
             }
             match item_err {
                 None => ok_count += 1,
-                Some(e) => errors.push(format!("{id}: {e}")),
+                Some(e) => errors.push(format!("{}: {e}", id.as_u64())),
             }
         }
         batch_msg(ok_count, "instrument mixer updates applied", &[], &errors)
@@ -6404,7 +6405,7 @@ impl SynthMcpServer {
                 && it.unison_spread.is_none()
                 && it.max_voices.is_none();
             if sets_nothing && let Err(e) = self.bridge.get_instrument_info(id) {
-                errors.push(format!("{id}: {e}"));
+                errors.push(format!("{}: {e}", id.as_u64()));
                 continue;
             }
             if let Some(m) = &it.allocation_mode
@@ -6438,7 +6439,7 @@ impl SynthMcpServer {
             }
             match item_err {
                 None => ok_count += 1,
-                Some(e) => errors.push(format!("{id}: {e}")),
+                Some(e) => errors.push(format!("{}: {e}", id.as_u64())),
             }
         }
         batch_msg(ok_count, "allocator configs updated", &[], &errors)
@@ -7222,7 +7223,7 @@ impl SynthMcpServer {
             .into_iter()
             .map(|pt| crate::bridge::BridgeAutomationPointData {
                 param: pt.effective_target(),
-                instrument_id: pt.instrument_id.unwrap_or(0),
+                instrument_id: pt.instrument_id.unwrap_or_default(),
                 beat: pt.beat,
                 value: pt.value,
                 curve: pt.curve.unwrap_or_default(),
@@ -7267,7 +7268,7 @@ impl SynthMcpServer {
         match self.bridge.get_automation_points(
             p.pattern_id,
             &p.target,
-            p.instrument_id.unwrap_or(0),
+            p.instrument_id.unwrap_or_default(),
         ) {
             Ok(points) => to_json(&points),
             Err(e) => format!("Error: {e}"),
@@ -7283,7 +7284,7 @@ impl SynthMcpServer {
         match self.bridge.remove_automation_points(
             p.pattern_id,
             &p.target,
-            p.instrument_id.unwrap_or(0),
+            p.instrument_id.unwrap_or_default(),
             &p.beats,
         ) {
             Ok(result) => to_json(&result),
@@ -7301,7 +7302,7 @@ impl SynthMcpServer {
             match self.bridge.clear_automation_lane(
                 it.pattern_id,
                 &it.target,
-                it.instrument_id.unwrap_or(0),
+                it.instrument_id.unwrap_or_default(),
             ) {
                 Ok(_count) => ok_count += 1,
                 Err(e) => errors.push(format!("{}/{}: {e}", it.pattern_id, it.target)),
@@ -7322,7 +7323,7 @@ impl SynthMcpServer {
             match self.bridge.transform_automation_lane(
                 it.pattern_id,
                 &it.target,
-                it.instrument_id.unwrap_or(0),
+                it.instrument_id.unwrap_or_default(),
                 it.scale,
                 it.pivot.unwrap_or(0.5),
                 0.0,
@@ -7348,7 +7349,7 @@ impl SynthMcpServer {
             match self.bridge.transform_automation_lane(
                 it.pattern_id,
                 &it.target,
-                it.instrument_id.unwrap_or(0),
+                it.instrument_id.unwrap_or_default(),
                 1.0,
                 0.0,
                 it.offset,
@@ -7372,10 +7373,10 @@ impl SynthMcpServer {
             match self.bridge.copy_automation_lane(
                 it.from_pattern_id,
                 &it.from_target,
-                it.from_instrument_id.unwrap_or(0),
+                it.from_instrument_id.unwrap_or_default(),
                 it.to_pattern_id,
                 &it.to_target,
-                it.to_instrument_id.unwrap_or(0),
+                it.to_instrument_id.unwrap_or_default(),
                 it.scale.unwrap_or(1.0),
                 it.offset.unwrap_or(0.0),
                 it.clear_destination.unwrap_or(false),
@@ -9127,7 +9128,7 @@ impl SynthMcpServer {
 
 /// Convert input structs to bridge-level types.
 fn convert_instrument_def(
-    instrument_id: Option<u64>,
+    instrument_id: Option<InstrumentId>,
     name: String,
     midi_channel: Option<u8>,
     volume: Option<f32>,
@@ -9190,7 +9191,7 @@ fn convert_automation_points(
         .into_iter()
         .map(|pt| crate::bridge::BridgeAutomationPointData {
             param: pt.effective_target(),
-            instrument_id: pt.instrument_id.unwrap_or(0),
+            instrument_id: pt.instrument_id.unwrap_or_default(),
             beat: pt.beat,
             value: pt.value,
             curve: pt.curve.unwrap_or_default(),

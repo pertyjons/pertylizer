@@ -129,62 +129,9 @@ pub enum LearnState {
 
 /// Unique identifier for an instrument.
 ///
-/// Each instrument in the synth engine has a unique ID that persists for
-/// its lifetime. IDs are never reused within a session.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
-#[repr(transparent)]
-pub struct InstrumentId(pub u64);
-
-impl InstrumentId {
-    /// The default/first instrument ID.
-    pub const FIRST: Self = Self(0);
-
-    /// Sentinel ID for master bus effects (not a real instrument).
-    pub const MASTER: Self = Self(u64::MAX);
-
-    /// Create a new instrument ID.
-    #[inline]
-    pub const fn new(id: u64) -> Self {
-        Self(id)
-    }
-
-    /// Get the raw ID value.
-    #[inline]
-    pub const fn as_u64(self) -> u64 {
-        self.0
-    }
-}
-
-impl fmt::Display for InstrumentId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Instrument({})", self.0)
-    }
-}
-
-impl From<u64> for InstrumentId {
-    fn from(id: u64) -> Self {
-        Self(id)
-    }
-}
-
-/// Widen a sequencer-side `SeqInstrumentId` (`u16`) to an engine `InstrumentId`
-/// (`u64`). Always lossless.
-impl From<synth_sequencer::SeqInstrumentId> for InstrumentId {
-    fn from(id: synth_sequencer::SeqInstrumentId) -> Self {
-        Self(u64::from(id.0))
-    }
-}
-
-/// Narrow an engine `InstrumentId` (`u64`) to a sequencer `SeqInstrumentId`
-/// (`u16`). Fails when the id does not fit in `u16` instead of silently
-/// truncating (the old `id.0 as u16` cast).
-impl TryFrom<InstrumentId> for synth_sequencer::SeqInstrumentId {
-    type Error = std::num::TryFromIntError;
-
-    fn try_from(id: InstrumentId) -> Result<Self, Self::Error> {
-        Ok(Self(u16::try_from(id.0)?))
-    }
-}
+/// Re-exported from `synth_core` — one instrument-id namespace shared by the
+/// sequencer data model, engine, project format, MCP surface, and GUI.
+pub use synth_core::InstrumentId;
 
 /// Re-exported from `synth_osc_protocol` — shared across workspace and visualizer.
 pub use synth_osc_protocol::InstrumentCategory;

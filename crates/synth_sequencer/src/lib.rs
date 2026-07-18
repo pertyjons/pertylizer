@@ -48,8 +48,8 @@ pub use automation::{
 pub use automation::{AutomationLane, AutomationPoint, AutomationTarget, CurveType, ParamId};
 pub use events::SequencerEvent;
 pub use ids::{
-    ModGraphId, ModNodeId, NoteGraphId, NoteId, NoteLane, NoteModuleId, PatternId, ReturnBusId,
-    RowCount, RowIndex, SeqInstrumentId, TicksPerRow, TrackCount, TrackId, TrackIndex,
+    InstrumentId, ModGraphId, ModNodeId, NoteGraphId, NoteId, NoteLane, NoteModuleId, PatternId,
+    ReturnBusId, RowCount, RowIndex, TicksPerRow, TrackCount, TrackId, TrackIndex,
 };
 pub use input::{InputCommand, InputMultiplexer, InputSource, KeyboardInputSource};
 pub use mod_grid::{
@@ -85,7 +85,7 @@ pub mod prelude {
     pub use super::automation::{AutomationLane, AutomationPoint, AutomationTarget, CurveType};
     pub use super::events::SequencerEvent;
     pub use super::ids::{
-        NoteId, NoteLane, PatternId, ReturnBusId, RowCount, RowIndex, SeqInstrumentId, TicksPerRow,
+        InstrumentId, NoteId, NoteLane, PatternId, ReturnBusId, RowCount, RowIndex, TicksPerRow,
         TrackCount, TrackId, TrackIndex,
     };
     pub use super::input::{InputCommand, InputSource};

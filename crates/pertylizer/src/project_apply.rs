@@ -1147,7 +1147,7 @@ mod tests {
 
         // Climb the counter: three instruments → next free ID is 4.
         for name in ["a", "b", "c"] {
-            session.add_instrument(name).expect("add_instrument");
+            let _ = session.add_instrument(name).expect("add_instrument");
         }
         drive(&mut engine, 2);
 

@@ -15,8 +15,8 @@ use synth_engine::{EngineCommand, EngineHandle, InstrumentId, RecordingState};
 use synth_sequencer::{
     AutoInstrumentParam, AutomationPoint, AutomationTarget, CurveType, Duration as SeqDuration,
     ExpansionBuffer, Glide, GlideFrom, GlideInterp, GlobalParam, Note, NoteExpression, NoteId,
-    NoteLane, NoteName, NoteProcessor, Ornament, PatternId, PatternTick, Pitch, SeqInstrumentId,
-    Song, Tick, TimeSignature, TrackId, TrackParam, Velocity, Vibrato, VibratoShape,
+    NoteLane, NoteName, NoteProcessor, Ornament, PatternId, PatternTick, Pitch, Song, Tick,
+    TimeSignature, TrackId, TrackParam, Velocity, Vibrato, VibratoShape,
 };
 
 use crate::gui::input::KEY_MAP;
@@ -216,7 +216,7 @@ pub struct SequencerViewState {
     /// first-used instrument changes (e.g. a placement is added/moved to a
     /// different track after the pattern was already open) — but not on every
     /// frame, so a manual change while the placement is unchanged still sticks.
-    last_auto_instrument: Option<(PatternId, Option<SeqInstrumentId>)>,
+    last_auto_instrument: Option<(PatternId, Option<InstrumentId>)>,
     /// The automation lane whose right-click context menu is open, if any:
     /// the lane target plus the point tick under the cursor (`Some` = a point
     /// was hit → curve/delete-point items; `None` = empty zone → lane-level
@@ -278,7 +278,7 @@ pub struct SequencerViewState {
     /// Pattern length for preview rendering.
     pub recording_preview_pattern_length: SeqDuration,
     /// Selected instrument for new notes in the piano roll.
-    pub selected_instrument: SeqInstrumentId,
+    pub selected_instrument: InstrumentId,
     /// Pattern captured at recording arm time, and whether it was an orphan
     /// (no arrangement placement). Used to keep the armed-Play branch and the
     /// live-preview pitch fold tied to the pattern actually being recorded.
@@ -377,7 +377,7 @@ impl SequencerViewState {
             recording_preview_completed: Vec::new(),
             recording_preview_held: Vec::new(),
             recording_preview_pattern_length: SeqDuration(0),
-            selected_instrument: SeqInstrumentId::new(0),
+            selected_instrument: InstrumentId::new(0),
             recording_pattern: None,
             pr_zoom_x: 1.0,
             pr_zoom_y: 1.0,
@@ -729,7 +729,7 @@ struct TrackInfo {
     pan: BipolarValue,
     mute: bool,
     solo: bool,
-    instrument_id: SeqInstrumentId,
+    instrument_id: InstrumentId,
 }
 
 /// Snapshot of a pattern in the song (for pattern management UI).
@@ -759,7 +759,7 @@ struct PlacementInfo {
     note_count: usize,
     color: Color32,
     /// Instrument of this placement's track — drives miniature colour.
-    instrument: SeqInstrumentId,
+    instrument: InstrumentId,
     /// Length in beats (for tooltip).
     length_beats: f32,
     /// Note miniatures for preview drawing.
@@ -951,7 +951,7 @@ pub(crate) struct PianoRollData {
     /// pattern (collected from every placement of the pattern). Empty when
     /// no host track has `track.instrument` set — in that case the
     /// per-note instrument is used at playback.
-    track_overrides: Vec<SeqInstrumentId>,
+    track_overrides: Vec<InstrumentId>,
     /// Every track in the song, `(id, name)` — the cross-track lane targets
     /// (`Track { Some(id) }`) offered under the automation picker's submenu.
     all_tracks: Vec<(TrackId, String)>,
@@ -994,13 +994,10 @@ fn build_instrument_colour_cache(
 /// the instrument has no colour set.
 fn cached_instrument_color(
     cache: &std::collections::HashMap<InstrumentId, Color32>,
-    seq_id: SeqInstrumentId,
+    seq_id: InstrumentId,
     fallback: Color32,
 ) -> Color32 {
-    cache
-        .get(&InstrumentId::from(seq_id))
-        .copied()
-        .unwrap_or(fallback)
+    cache.get(&seq_id).copied().unwrap_or(fallback)
 }
 
 /// Send the engine an `ArmRecord` command for the given pattern, using the
@@ -1282,11 +1279,10 @@ pub(crate) fn draw_sequencer_view(
     // back to the first available one so new notes route to a real target.
     if !instruments
         .iter()
-        .any(|inst| inst.id == view_state.selected_instrument.into())
+        .any(|inst| inst.id == view_state.selected_instrument)
         && let Some(first) = instruments.first()
-        && let Ok(seq_id) = SeqInstrumentId::try_from(first.id)
     {
-        view_state.selected_instrument = seq_id;
+        view_state.selected_instrument = first.id;
     }
 
     // Transport bar at the top

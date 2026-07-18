@@ -382,7 +382,7 @@
             "Instrument": {
               "properties": {
                 "instrument": {
-                  "$ref": "#/$defs/SeqInstrumentId"
+                  "$ref": "#/$defs/InstrumentId"
                 },
                 "param": {
                   "$ref": "#/$defs/AutoInstrumentParam"
@@ -458,7 +458,7 @@
                   "type": "integer"
                 },
                 "instrument": {
-                  "$ref": "#/$defs/SeqInstrumentId",
+                  "$ref": "#/$defs/InstrumentId",
                   "description": "Instrument owning the module."
                 },
                 "module_type": {
@@ -900,7 +900,7 @@
       "type": "object"
     },
     "InstrumentId": {
-      "description": "Unique identifier for an instrument.\n\nEach instrument in the synth engine has a unique ID that persists for\nits lifetime. IDs are never reused within a session.",
+      "description": "Unique identifier for an instrument.\n\nA single id namespace shared by the sequencer data model, the engine, the\nproject format, the MCP surface, and the GUI. Each instrument gets a unique\nid that persists for its lifetime; ids are never reused within a session.\n\n`InstrumentId(0)` (also [`InstrumentId::FIRST`] and the `Default`) is the\nfirst/default instrument.",
       "format": "uint64",
       "minimum": 0,
       "type": "integer"
@@ -10571,13 +10571,6 @@
       "format": "float",
       "type": "number"
     },
-    "SeqInstrumentId": {
-      "description": "Unique identifier for an instrument in the sequencer.\n\nThis is a compact u16 ID used for pattern data storage.\nFor engine-level instrument identification, see `engine::instrument::InstrumentId`.",
-      "format": "uint16",
-      "maximum": 65535,
-      "minimum": 0,
-      "type": "integer"
-    },
     "SequencerTrack": {
       "description": "A sequencer track in the song.\nNamed SequencerTrack to distinguish from future AudioTrack.",
       "properties": {
@@ -10595,9 +10588,9 @@
           "description": "Unique identifier."
         },
         "instrument": {
-          "$ref": "#/$defs/SeqInstrumentId",
+          "$ref": "#/$defs/InstrumentId",
           "default": 0,
-          "description": "Instrument this track routes its notes to. Every track has one;\ninstruments may be shared across tracks (intentional layering). Defaults\nto `SeqInstrumentId(0)` for a freshly created track until reassigned."
+          "description": "Instrument this track routes its notes to. Every track has one;\ninstruments may be shared across tracks (intentional layering). Defaults\nto `InstrumentId(0)` for a freshly created track until reassigned."
         },
         "mode": {
           "$ref": "#/$defs/TrackMode",

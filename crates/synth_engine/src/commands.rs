@@ -18,7 +18,7 @@ use synth_core::{
     PortName, Seconds, Semitones, Velocity, VoiceCount,
 };
 use synth_core::{ModuleType, Param};
-use synth_sequencer::{PatternId, ReturnBusId, SeqInstrumentId, Tick, TrackId};
+use synth_sequencer::{PatternId, ReturnBusId, Tick, TrackId};
 
 /// Unique identifier for a module instance.
 ///
@@ -573,7 +573,7 @@ pub enum EngineCommand {
     /// preview); placed patterns route through their track's instrument.
     PlayPattern {
         pattern_id: PatternId,
-        instrument: SeqInstrumentId,
+        instrument: InstrumentId,
     },
 
     /// Start playback from the beginning of a specific pattern.
@@ -593,7 +593,7 @@ pub enum EngineCommand {
     /// apply (no track is involved); notes play through the supplied
     /// `instrument`. Pass `None` to clear. Cleared automatically by global
     /// `Play` (unarmed) and `Stop`.
-    SetPreviewPattern(Option<(PatternId, SeqInstrumentId)>),
+    SetPreviewPattern(Option<(PatternId, InstrumentId)>),
 
     // === Engine control ===
     /// Reset the engine state.

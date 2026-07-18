@@ -15,7 +15,7 @@ fn analyze_instrument_range_returns_one_step_per_swept_note() {
     let result = analyze_instrument_range_impl(
         &rig.session,
         &rig.sample_library,
-        InstrumentId::FIRST.as_u64(),
+        InstrumentId::FIRST,
         48, // C3
         72, // C5
         Some(12),
@@ -50,7 +50,7 @@ fn analyze_instrument_range_rejects_inverted_range() {
     let err = analyze_instrument_range_impl(
         &rig.session,
         &rig.sample_library,
-        InstrumentId::FIRST.as_u64(),
+        InstrumentId::FIRST,
         72,
         48,
         Some(12),
@@ -72,7 +72,7 @@ fn analyze_velocity_response_curve_rises_with_velocity() {
     let result = analyze_velocity_response_impl(
         &rig.session,
         &rig.sample_library,
-        InstrumentId::FIRST.as_u64(),
+        InstrumentId::FIRST,
         60,
         Some(32),
         Some(127),
@@ -106,7 +106,7 @@ fn analyze_velocity_response_inclusive_upper_bound() {
     let result = analyze_velocity_response_impl(
         &rig.session,
         &rig.sample_library,
-        InstrumentId::FIRST.as_u64(),
+        InstrumentId::FIRST,
         60,
         Some(100),
         Some(127),
@@ -125,7 +125,7 @@ fn analyze_velocity_response_rejects_inverted_range() {
     let err = analyze_velocity_response_impl(
         &rig.session,
         &rig.sample_library,
-        InstrumentId::FIRST.as_u64(),
+        InstrumentId::FIRST,
         60,
         Some(127),
         Some(32),

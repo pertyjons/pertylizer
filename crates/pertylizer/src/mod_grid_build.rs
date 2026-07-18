@@ -9,11 +9,11 @@
 use std::collections::HashMap;
 
 use synth_core::{DestAddr, ModuleType, PortName};
+use synth_engine::ModuleId;
 use synth_engine::graph::ModuleGraph;
 use synth_engine::mod_grid::{
     InputInjection, ModGridInstance, ModGridRuntime, ModSource, ResolvedTarget,
 };
-use synth_engine::{InstrumentId, ModuleId};
 use synth_sequencer::{
     AutoInstrumentParam, AutomationTarget, ModGraph, ModGraphScope, ModNodeConfig, ModNodeId, Song,
     TARGET_INPUT_PORT, TrackId,
@@ -236,10 +236,9 @@ fn resolve_source(
         ModNodeConfig::AudioTap(tap) => Some(match tap.source {
             synth_sequencer::AudioTapSource::Master => ModSource::MasterLevel,
             synth_sequencer::AudioTapSource::Track(track) => {
-                // The Track tap follows that track's instrument output. Resolve
-                // to the engine instrument id (SeqInstrumentId(X) ↔ InstrumentId(X)).
-                let seq_inst = song.tracks().find(|t| t.id == track)?.instrument;
-                ModSource::InstrumentLevel(InstrumentId::new(u64::from(seq_inst.0)))
+                // The Track tap follows that track's instrument output.
+                let inst = song.tracks().find(|t| t.id == track)?.instrument;
+                ModSource::InstrumentLevel(inst)
             }
         }),
         ModNodeConfig::MidiCc(m) => Some(ModSource::MidiCc {
@@ -277,7 +276,7 @@ mod tests {
                 ModNodeId::new(1),
                 ModNodeConfig::Target(ModTarget {
                     target: AutomationTarget::Instrument {
-                        instrument: synth_sequencer::SeqInstrumentId(0),
+                        instrument: synth_sequencer::InstrumentId(0),
                         param: AutoInstrumentParam::FilterCutoff,
                     },
                     amount: 1.0,
@@ -297,7 +296,7 @@ mod tests {
                 ModNodeId::new(3),
                 ModNodeConfig::Target(ModTarget {
                     target: AutomationTarget::Instrument {
-                        instrument: synth_sequencer::SeqInstrumentId(0),
+                        instrument: synth_sequencer::InstrumentId(0),
                         param: AutoInstrumentParam::Volume,
                     },
                     amount: 0.5,

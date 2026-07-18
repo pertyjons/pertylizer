@@ -93,7 +93,7 @@ pub(crate) fn collect_piano_roll_data(
     // Collect the distinct instruments this pattern's placements route through
     // (one per track). Used to show which instrument(s) actually play the
     // pattern. (Per-note instrument is no longer consulted at playback.)
-    let mut track_overrides: Vec<SeqInstrumentId> = Vec::new();
+    let mut track_overrides: Vec<InstrumentId> = Vec::new();
     for placement in song.arrangement() {
         if placement.pattern_id == pattern_id
             && let Some(track) = song.track(placement.track_id)
@@ -1039,7 +1039,7 @@ pub(crate) fn draw_automation_target_selector(
                 //    any continuous, RT-safe module parameter.
                 if let Some(inst) = instruments
                     .iter()
-                    .find(|i| i.id == view_state.selected_instrument.into())
+                    .find(|i| i.id == view_state.selected_instrument)
                 {
                     let mut module_ids = inst.patch_editor.module_ids();
                     module_ids.sort_unstable(); // deterministic (type, instance) order
@@ -1113,7 +1113,7 @@ pub(super) fn draw_pattern_instrument_transport(
     {
         let selected_label = instruments
             .iter()
-            .find(|inst| inst.id == view_state.selected_instrument.into())
+            .find(|inst| inst.id == view_state.selected_instrument)
             .map_or_else(|| "---".to_owned(), |inst| inst.name.clone());
         egui::ComboBox::from_id_salt(ui.id().with("piano_roll_instrument"))
             .selected_text(RichText::new(&selected_label).size(12.0))
@@ -1128,9 +1128,7 @@ pub(super) fn draw_pattern_instrument_transport(
                               inst: &crate::gui::instrument_rack::InstrumentUiState,
                               view_state: &mut SequencerViewState,
                               mark: bool| {
-                    let Ok(seq_id) = SeqInstrumentId::try_from(inst.id) else {
-                        return;
-                    };
+                    let seq_id = inst.id;
                     let selected = view_state.selected_instrument == seq_id;
                     let label = if mark {
                         format!("• {}", inst.name)
@@ -1143,7 +1141,7 @@ pub(super) fn draw_pattern_instrument_transport(
                 };
                 let mut any_used = false;
                 for seq_id in used {
-                    if let Some(inst) = instruments.iter().find(|i| i.id == (*seq_id).into()) {
+                    if let Some(inst) = instruments.iter().find(|i| i.id == *seq_id) {
                         render(ui, inst, view_state, true);
                         any_used = true;
                     }
@@ -1152,8 +1150,7 @@ pub(super) fn draw_pattern_instrument_transport(
                     ui.separator();
                 }
                 for inst in instruments {
-                    let is_used =
-                        SeqInstrumentId::try_from(inst.id).is_ok_and(|sid| used.contains(&sid));
+                    let is_used = used.contains(&inst.id);
                     if is_used {
                         continue; // already shown at the top
                     }
@@ -1171,7 +1168,7 @@ pub(super) fn draw_pattern_instrument_transport(
                 .map(|seq_id| {
                     instruments
                         .iter()
-                        .find(|inst| inst.id == (*seq_id).into())
+                        .find(|inst| inst.id == *seq_id)
                         .map_or_else(|| format!("#{}", seq_id.0), |inst| inst.name.clone())
                 })
                 .collect();
@@ -2616,7 +2613,7 @@ fn draw_piano_roll_grid(
                             data.track_overrides.first().copied().unwrap_or_default();
                         let inst_name = instruments
                             .iter()
-                            .find(|inst| inst.id == note_instrument.into())
+                            .find(|inst| inst.id == note_instrument)
                             .map_or_else(
                                 || format!("#{}", note_instrument.0),
                                 |inst| inst.name.clone(),

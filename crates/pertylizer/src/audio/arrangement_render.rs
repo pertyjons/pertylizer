@@ -294,7 +294,7 @@ impl OfflineEngineSession {
 
         let mut setup_warnings: Vec<String> = Vec::new();
 
-        // Use each instrument's live ID so the sequencer's SeqInstrumentId →
+        // Use each instrument's live ID so the sequencer's InstrumentId →
         // InstrumentId mapping survives into the offline engine.
         for inst_snap in &live_instruments {
             if let Err(e) = tmp_session.add_instrument_with_id(inst_snap.id, &inst_snap.name) {
@@ -658,7 +658,7 @@ fn earliest_active_note_start(song: &Song, start_tick: Tick) -> Tick {
 /// Mirrors the per-instrument load logic from
 /// `crate::audio::preview::render_note_to_buffer`, but writes into the
 /// offline engine under the live instrument's own `InstrumentId` (instead of
-/// `InstrumentId::FIRST`) so the sequencer's SeqInstrumentId → engine ID
+/// `InstrumentId::FIRST`) so the sequencer's InstrumentId → engine ID
 /// mapping survives.
 fn load_instrument_into_offline(
     inst_snap: &synth_engine::shared_state::InstrumentSnapshot,

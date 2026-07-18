@@ -15,10 +15,9 @@ use parking_lot::RwLock;
 use synth_core::audio::SampleRate as HwSampleRate;
 use synth_core::{AudioCallbackContext, AudioProcessor, ModuleType};
 use synth_engine::SynthEngine;
-use synth_engine::instrument::InstrumentId;
 use synth_sequencer::{
-    AutomationPoint, AutomationTarget, Duration as SeqDuration, PatternId, PatternTick, Pitch,
-    SeqInstrumentId, Song, Tick, TrackId, Velocity,
+    AutomationPoint, AutomationTarget, Duration as SeqDuration, InstrumentId, PatternId,
+    PatternTick, Pitch, Song, Tick, TrackId, Velocity,
 };
 
 use pertylizer::patch::{ModuleBuilder, Patch};
@@ -121,7 +120,7 @@ pub fn setup_with_patch(patch: &Patch) -> Rig {
     }
 }
 
-/// Build a single-pattern, single-track song on `SeqInstrumentId(0)` placed
+/// Build a single-pattern, single-track song on `InstrumentId(0)` placed
 /// at tick 0. `notes` lists `(start, pitch_midi, duration)` triples; the
 /// pattern length is `SeqDuration::WHOLE` (3840 ticks = 2 s at 120 BPM).
 pub fn build_single_pattern_song(
@@ -148,7 +147,7 @@ pub fn build_single_pattern_song(
 
     let track_id = song.create_track("T1");
     if let Some(track) = song.track_mut(track_id) {
-        track.instrument = SeqInstrumentId(0);
+        track.instrument = InstrumentId(0);
     }
     assert!(
         song.place_pattern(pattern_id, track_id, Tick(0)),
@@ -158,7 +157,7 @@ pub fn build_single_pattern_song(
     Arc::new(RwLock::new(song))
 }
 
-/// One-bar 4-note C-major arpeggio on `SeqInstrumentId(0)`, placed at tick 0.
+/// One-bar 4-note C-major arpeggio on `InstrumentId(0)`, placed at tick 0.
 /// At 120 BPM the pattern spans exactly 2 s (3840 ticks).
 pub fn build_arpeggio_song() -> Arc<RwLock<Song>> {
     let notes: Vec<_> = [60u8, 64, 67, 72]
@@ -228,7 +227,7 @@ pub fn build_sustained_note_song(name: &str) -> (Arc<RwLock<Song>>, PatternId, T
     }
     let track_id = song.create_track("T1");
     if let Some(track) = song.track_mut(track_id) {
-        track.instrument = SeqInstrumentId(0);
+        track.instrument = InstrumentId(0);
     }
     assert!(
         song.place_pattern(pattern_id, track_id, Tick(0)),

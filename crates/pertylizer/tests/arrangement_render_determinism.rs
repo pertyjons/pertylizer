@@ -9,8 +9,7 @@
 mod common;
 
 use synth_core::{BipolarValue, Gain, ModuleType};
-use synth_engine::instrument::InstrumentId;
-use synth_sequencer::{AutomationTarget, GlobalParam, SeqInstrumentId, TrackId, TrackParam};
+use synth_sequencer::{AutomationTarget, GlobalParam, InstrumentId, TrackId, TrackParam};
 
 use pertylizer::audio::arrangement_render::{OfflineEngineSession, render_arrangement_to_buffer};
 use pertylizer::audio::mix_analysis::analyze_mix_buffer;
@@ -540,7 +539,7 @@ fn module_param_automation_ramps_down() {
         "ModuleLevelRamp",
         "module-param (amp level) ramp-down must reach the offline render",
         |_| AutomationTarget::Module {
-            instrument: SeqInstrumentId(0),
+            instrument: InstrumentId(0),
             module_type: ModuleType::Amplifier,
             instance: 1,
             param_id: "level".into(),

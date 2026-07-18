@@ -9,6 +9,7 @@
 use std::sync::Arc;
 
 use parking_lot::RwLock as PlRwLock;
+use synth_core::InstrumentId;
 use synth_engine::SynthEngine;
 use synth_mcp::SynthBridge;
 use synth_mcp::bridge::{
@@ -42,7 +43,7 @@ fn build_bridge() -> AppSynthBridge {
 
 /// osc → flt → amp → out, with the filter present so `module:flt:1:cutoff`
 /// is a valid automation target.
-fn spec_with_filter(instrument_id: Option<u64>) -> BridgeInstrumentDef {
+fn spec_with_filter(instrument_id: Option<InstrumentId>) -> BridgeInstrumentDef {
     BridgeInstrumentDef {
         instrument_id,
         name: "Lead".to_string(),
@@ -89,7 +90,7 @@ fn spec_with_filter(instrument_id: Option<u64>) -> BridgeInstrumentDef {
 
 /// Same chain minus the filter: osc → amp → out. Rebuilding to this orphans any
 /// `flt` automation.
-fn spec_without_filter(instrument_id: Option<u64>) -> BridgeInstrumentDef {
+fn spec_without_filter(instrument_id: Option<InstrumentId>) -> BridgeInstrumentDef {
     BridgeInstrumentDef {
         instrument_id,
         name: "Lead".to_string(),
@@ -116,7 +117,7 @@ fn spec_without_filter(instrument_id: Option<u64>) -> BridgeInstrumentDef {
 
 /// Build the instrument + a pattern with one `module:flt:1:cutoff` lane.
 /// Returns (bridge, instrument_id, pattern_id).
-fn setup() -> (AppSynthBridge, u64, u32) {
+fn setup() -> (AppSynthBridge, InstrumentId, u32) {
     let bridge = build_bridge();
     let built = bridge
         .build_instrument(&spec_with_filter(None))
@@ -129,7 +130,7 @@ fn setup() -> (AppSynthBridge, u64, u32) {
             pattern_id,
             &[BridgeAutomationPointData {
                 param: "module:flt:1:cutoff".to_string(),
-                instrument_id: inst as u16,
+                instrument_id: inst,
                 beat: 0.0,
                 value: 0.5,
                 curve: CurveKind::Linear,

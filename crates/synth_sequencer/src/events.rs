@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use synth_core::NormalizedValue;
 
 use super::automation::AutomationTarget;
-use super::ids::{SeqInstrumentId, TrackId};
+use super::ids::{InstrumentId, TrackId};
 use super::note::{Glide, NoteExpression};
 use super::pitch::{Pitch, Velocity};
 use super::time::Tick;
@@ -23,7 +23,7 @@ pub enum SequencerEvent {
         /// Velocity/attack strength.
         velocity: Velocity,
         /// Instrument to play.
-        instrument: SeqInstrumentId,
+        instrument: InstrumentId,
         /// Per-note tie/legato intent (taxonomy primitive 2). `Copy`/alloc-free
         /// so this event stays RT-safe to clone on the audio thread. Carried from
         /// the source `Note`; consumed by the engine in Phase B3.
@@ -54,7 +54,7 @@ pub enum SequencerEvent {
         /// Pitch to stop.
         pitch: Pitch,
         /// Instrument to stop.
-        instrument: SeqInstrumentId,
+        instrument: InstrumentId,
     },
     /// Parameter automation event.
     Parameter {
@@ -109,7 +109,7 @@ impl SequencerEvent {
     }
 
     /// Get the instrument ID if this is a note event.
-    pub fn instrument(&self) -> Option<SeqInstrumentId> {
+    pub fn instrument(&self) -> Option<InstrumentId> {
         match self {
             Self::NoteOn { instrument, .. } => Some(*instrument),
             Self::NoteOff { instrument, .. } => Some(*instrument),
@@ -138,7 +138,7 @@ mod tests {
             tick: Tick(1000),
             pitch: Pitch::new(60).unwrap(),
             velocity: Velocity::MF,
-            instrument: SeqInstrumentId(0),
+            instrument: InstrumentId(0),
             legato: false,
             glide: None,
             expression: None,
@@ -153,7 +153,7 @@ mod tests {
             tick: Tick(0),
             pitch: Pitch::new(60).unwrap(),
             velocity: Velocity::MF,
-            instrument: SeqInstrumentId(0),
+            instrument: InstrumentId(0),
             legato: false,
             glide: None,
             expression: None,
@@ -165,7 +165,7 @@ mod tests {
         let note_off = SequencerEvent::NoteOff {
             tick: Tick(960),
             pitch: Pitch::new(60).unwrap(),
-            instrument: SeqInstrumentId(0),
+            instrument: InstrumentId(0),
         };
         assert!(note_off.is_note_off());
         assert!(!note_off.is_note_on());
@@ -178,7 +178,7 @@ mod tests {
                 tick: Tick(500),
                 pitch: Pitch::new(60).unwrap(),
                 velocity: Velocity::MF,
-                instrument: SeqInstrumentId(0),
+                instrument: InstrumentId(0),
                 legato: false,
                 glide: None,
                 expression: None,
@@ -188,7 +188,7 @@ mod tests {
                 tick: Tick(100),
                 pitch: Pitch::new(62).unwrap(),
                 velocity: Velocity::MF,
-                instrument: SeqInstrumentId(0),
+                instrument: InstrumentId(0),
                 legato: false,
                 glide: None,
                 expression: None,
@@ -197,7 +197,7 @@ mod tests {
             SequencerEvent::NoteOff {
                 tick: Tick(300),
                 pitch: Pitch::new(60).unwrap(),
-                instrument: SeqInstrumentId(0),
+                instrument: InstrumentId(0),
             },
         ]);
 
@@ -213,12 +213,12 @@ mod tests {
             tick: Tick(0),
             pitch: Pitch::new(60).unwrap(),
             velocity: Velocity::MF,
-            instrument: SeqInstrumentId(5),
+            instrument: InstrumentId(5),
             legato: false,
             glide: None,
             expression: None,
             track: None,
         };
-        assert_eq!(note.instrument(), Some(SeqInstrumentId(5)));
+        assert_eq!(note.instrument(), Some(InstrumentId(5)));
     }
 }

@@ -19,10 +19,9 @@ use synth_core::audio::SampleRate as HwSampleRate;
 use synth_core::{
     AudioCallbackContext, AudioProcessor, DistortionParam, ModuleType, NormalizedValue, Param,
 };
-use synth_engine::instrument::InstrumentId;
 use synth_engine::{EngineCommand, InstrumentCategory, ModuleId, SynthEngine};
 use synth_sequencer::{
-    Duration as SeqDuration, PatternTick, Pitch, SeqInstrumentId, Song, Tick, TrackSend, Velocity,
+    Duration as SeqDuration, InstrumentId, PatternTick, Pitch, Song, Tick, TrackSend, Velocity,
 };
 
 use pertylizer::mcp_bridge::{
@@ -332,7 +331,7 @@ fn build_drum_pollution_song() -> Arc<RwLock<Song>> {
     {
         let pat = song.pattern_mut(drum_pattern_id).expect("drum pattern");
         // Deliberately set the note's instrument to a value that does NOT
-        // match the drum track's instrument (SeqInstrumentId(1)). Real
+        // match the drum track's instrument (InstrumentId(1)). Real
         // projects routinely leave `Note.instrument` at a default that
         // doesn't correspond to the placement's track — routing is decided
         // by the track, not the note. The inference path must not rely on
@@ -350,11 +349,11 @@ fn build_drum_pollution_song() -> Arc<RwLock<Song>> {
 
     let pad_track = song.create_track("Pad");
     if let Some(t) = song.track_mut(pad_track) {
-        t.instrument = SeqInstrumentId(0);
+        t.instrument = InstrumentId(0);
     }
     let drum_track = song.create_track("Drums");
     if let Some(t) = song.track_mut(drum_track) {
-        t.instrument = SeqInstrumentId(1);
+        t.instrument = InstrumentId(1);
     }
 
     song.place_pattern(pad_pattern_id, pad_track, Tick(0));
@@ -652,11 +651,11 @@ fn build_two_track_song() -> Arc<RwLock<Song>> {
 
     let pad_track = song.create_track("Pad");
     if let Some(t) = song.track_mut(pad_track) {
-        t.instrument = SeqInstrumentId(0);
+        t.instrument = InstrumentId(0);
     }
     let bass_track = song.create_track("Bass");
     if let Some(t) = song.track_mut(bass_track) {
-        t.instrument = SeqInstrumentId(1);
+        t.instrument = InstrumentId(1);
     }
     song.place_pattern(pad_pattern_id, pad_track, Tick(0));
     song.place_pattern(bass_pattern_id, bass_track, Tick(0));
@@ -819,7 +818,7 @@ fn analyze_return_busses_reports_per_return_contribution() {
     }
     let pad_track = song.create_track("Pad");
     if let Some(t) = song.track_mut(pad_track) {
-        t.instrument = SeqInstrumentId(0);
+        t.instrument = InstrumentId(0);
     }
     song.place_pattern(pad_pattern_id, pad_track, Tick(0));
 
@@ -1351,7 +1350,7 @@ fn analyze_masking_matrix_with_single_track_returns_no_pairs() {
     }
     let pad_track = song.create_track("Pad");
     if let Some(t) = song.track_mut(pad_track) {
-        t.instrument = SeqInstrumentId(0);
+        t.instrument = InstrumentId(0);
     }
     song.place_pattern(pad_pattern_id, pad_track, Tick(0));
     let shared = McpSharedState::with_song(Arc::new(RwLock::new(song)));
@@ -1467,7 +1466,7 @@ fn analyze_section_master_effects_scope_reconstructs_live_master_chain() {
     }
     let pad_track = song.create_track("Pad");
     if let Some(t) = song.track_mut(pad_track) {
-        t.instrument = SeqInstrumentId(0);
+        t.instrument = InstrumentId(0);
     }
     song.place_pattern(pad_pattern_id, pad_track, Tick(0));
     let shared = McpSharedState::with_song(Arc::new(RwLock::new(song)));
@@ -1612,7 +1611,7 @@ fn analyze_master_chain_isolates_single_effect_contribution() {
     }
     let pad_track = song.create_track("Pad");
     if let Some(t) = song.track_mut(pad_track) {
-        t.instrument = SeqInstrumentId(0);
+        t.instrument = InstrumentId(0);
     }
     song.place_pattern(pad_pattern_id, pad_track, Tick(0));
     let shared = McpSharedState::with_song(Arc::new(RwLock::new(song)));

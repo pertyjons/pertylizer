@@ -16,7 +16,6 @@ use crate::commands::{EngineCommand, EngineEvent, ModuleId, NoteEvent, PortId, R
 use crate::effect_chain::{EffectChain, EffectSlot};
 use crate::graph::ModuleGraph;
 use crate::instrument::{Instrument, InstrumentId, MidiChannel, mix_stereo_faded, stereo_peak};
-use crate::instrument_mapping::InstrumentMapping;
 use crate::metering::MeteringSystem;
 use crate::recording::RecordingState;
 use crate::return_bus::ReturnBusChannel;
@@ -35,7 +34,7 @@ use synth_core::{
 };
 use synth_sequencer::{
     AutoInstrumentParam, AutomationTarget, Glide, GlideFrom, GlideInterp, GlobalParam,
-    NoteExpression, ReturnBusId, SeqInstrumentId, SequencerEvent, TrackParam, VibratoShape,
+    NoteExpression, ReturnBusId, SequencerEvent, TrackParam, VibratoShape,
 };
 
 /// Size of the command ring buffer.
@@ -550,9 +549,6 @@ pub struct SynthEngine {
     sequencer: SequencerEngine,
     /// Pre-allocated buffer for sequencer events (real-time safe).
     sequencer_event_buffer: Vec<SequencerEvent>,
-    /// Stable mapping from sequencer instrument IDs to engine instrument IDs.
-    /// Convention: `SeqInstrumentId(X)` ↔ `InstrumentId(X)`.
-    instrument_mapping: InstrumentMapping,
 
     // === Recording ===
     recording: crate::recording::RecordingBuffer,
@@ -669,8 +665,6 @@ impl SynthEngine {
             HeapRb::<Box<crate::mod_grid::ModGridRuntime>>::new(RETURN_BUFFER_SIZE);
         let (mod_grid_trash_producer, mod_grid_trash_consumer) = mod_grid_trash_rb.split();
 
-        let instrument_mapping = InstrumentMapping::new();
-
         let mut engine = Self {
             command_consumer,
             event_producer,
@@ -700,7 +694,6 @@ impl SynthEngine {
             metering: MeteringSystem::new(synth_core::SampleRate::DVD_QUALITY),
             sequencer: SequencerEngine::new(synth_core::SampleRate::DVD_QUALITY),
             sequencer_event_buffer: Vec::with_capacity(128),
-            instrument_mapping,
             recording: crate::recording::RecordingBuffer::new(),
             click_generator: crate::click_generator::ClickGenerator::new(
                 synth_core::SampleRate::DVD_QUALITY,
@@ -1748,10 +1741,6 @@ impl SynthEngine {
     // ========================================================================
 
     fn handle_add_instrument(&mut self, instrument: Box<Instrument>) {
-        // Register in mapping: SeqInstrumentId(id as u16) ↔ InstrumentId(id)
-        #[allow(clippy::cast_possible_truncation)]
-        let seq_id = synth_sequencer::SeqInstrumentId(instrument.id().as_u64() as u16);
-        self.instrument_mapping.insert(seq_id, instrument.id());
         // Pre-allocate this instrument's sidechain output buffer so the
         // audio thread never grows the map. MAX_BLOCK_SIZE × 2 = max interleaved frame.
         self.prev_instrument_outputs.insert(
@@ -1786,9 +1775,6 @@ impl SynthEngine {
             self.state
                 .shared_graph
                 .set_connections_for_instrument(instrument_id, Vec::new());
-
-            // Remove from mapping
-            self.instrument_mapping.remove_by_engine_id(instrument_id);
 
             let instrument = self.instruments.swap_remove(idx);
             // Drop this instrument's sidechain cache and track-control entry.
@@ -2429,8 +2415,7 @@ impl SynthEngine {
                     // An instrument target: a module-backed param (FilterCutoff,
                     // ADSR, …) carries a `dest_addr` and uses the same per-voice
                     // path; Volume/Pan are channel-level and accumulate into the
-                    // per-instrument offset (keyed by `SeqInstrumentId`, so no
-                    // mapping lookup here — the channel-bus stage maps back) folded
+                    // per-instrument offset (keyed by `InstrumentId`) folded
                     // in at the channel-bus stage.
                     AutomationTarget::Instrument { instrument, param } => {
                         if let Some(addr) = routing.dest_addr {
@@ -2461,21 +2446,18 @@ impl SynthEngine {
     }
 
     /// Apply a grid module-param offset to every active voice of the instrument
-    /// the `SeqInstrumentId` maps to — the shared per-voice write path for
+    /// the `InstrumentId` maps to — the shared per-voice write path for
     /// `Module` and module-backed `Instrument` targets. Skips an instrument that
     /// won't process this block (muted, or not soloed while another is), or the
     /// additive offset would latch (the voice clears it only when it runs).
     fn apply_grid_module_offset(
         &mut self,
-        instrument: synth_sequencer::SeqInstrumentId,
+        instrument: synth_sequencer::InstrumentId,
         addr: synth_core::DestAddr,
         contribution: f32,
         any_soloed: bool,
     ) {
-        let Some(engine_id) = self.instrument_mapping.engine_id(instrument) else {
-            return;
-        };
-        let Some(inst) = self.instruments.iter_mut().find(|i| i.id() == engine_id) else {
+        let Some(inst) = self.instruments.iter_mut().find(|i| i.id() == instrument) else {
             return;
         };
         if inst.is_enabled() && (!any_soloed || inst.is_solo()) {
@@ -3230,15 +3212,9 @@ impl SynthEngine {
             .instruments
             .iter()
             .map(|inst| {
-                #[allow(clippy::cast_possible_truncation)]
-                let seq_id = self
-                    .instrument_mapping
-                    .seq_id(inst.id())
-                    .map_or(inst.id().as_u64() as u16, |s| s.0);
                 let allocator_cfg = inst.allocator().config();
                 crate::shared_state::InstrumentSnapshot {
                     id: inst.id(),
-                    seq_instrument_id: seq_id,
                     name: inst.name().to_string(),
                     description: inst.description().to_string(),
                     patch_description: inst.patch_description().map(str::to_owned),
@@ -3291,8 +3267,9 @@ impl SynthEngine {
     ///
     /// Real-time safe: `try_read()` only (on contention, last block's controls
     /// are kept); no allocation — every key is pre-allocated on instrument add,
-    /// so this only resets and overwrites existing `Copy` values. Track →
-    /// instrument resolution goes through `InstrumentMapping`. Instruments may
+    /// so this only resets and overwrites existing `Copy` values. Track and
+    /// instrument now share one id namespace, so a track's `instrument` keys the
+    /// control maps directly. Instruments may
     /// be shared across tracks (intentional layering); when two tracks drive the
     /// same instrument the last one in `tracks()` order wins the fader for that
     /// block. Independent faders for a shared instrument would need per-voice
@@ -3312,10 +3289,7 @@ impl SynthEngine {
         for track in song.tracks() {
             // Every track has an instrument; a shared instrument means a shared
             // fader (last track in iteration order wins for that block).
-            let Some(engine_id) = self.instrument_mapping.engine_id(track.instrument) else {
-                continue;
-            };
-            if let Some(control) = self.track_controls.get_mut(&engine_id) {
+            if let Some(control) = self.track_controls.get_mut(&track.instrument) {
                 // Live automation overrides the stored fader; absent → static.
                 // The Mod Grid then adds its block-constant offset on top (lane
                 // or base value + grid offset, clamped) — additive composition.
@@ -3340,7 +3314,7 @@ impl SynthEngine {
             // sends sharing an instrument with one that has sends doesn't inherit
             // them. Sends to a missing return bus, or beyond `MAX_CHANNEL_SENDS`,
             // are dropped.
-            if let Some(list) = self.channel_sends.get_mut(&engine_id) {
+            if let Some(list) = self.channel_sends.get_mut(&track.instrument) {
                 list.clear();
                 for send in &track.sends {
                     if list.len() >= MAX_CHANNEL_SENDS {
@@ -3560,7 +3534,6 @@ impl SynthEngine {
             ChannelControls {
                 track: &self.track_controls,
                 grid_offsets: &self.mod_grid.instrument_offsets,
-                mapping: &self.instrument_mapping,
                 sends: &self.channel_sends,
             },
             &mut self.return_busses,
@@ -3730,12 +3703,10 @@ struct ResolvedReturnSend {
 /// the configured sends. Grouped to keep [`mix_channel_busses`]'s arity in check.
 struct ChannelControls<'a> {
     track: &'a std::collections::HashMap<InstrumentId, TrackControl>,
-    /// Mod Grid per-instrument Volume/Pan offsets, keyed by `SeqInstrumentId`
-    /// (pre-keyed off the audio thread); `mapping` resolves each channel's engine
-    /// id back to its seq id to look up.
+    /// Mod Grid per-instrument Volume/Pan offsets, keyed by `InstrumentId`
+    /// (pre-keyed off the audio thread).
     grid_offsets:
-        &'a std::collections::HashMap<SeqInstrumentId, crate::mod_grid::GridInstrumentOffset>,
-    mapping: &'a InstrumentMapping,
+        &'a std::collections::HashMap<InstrumentId, crate::mod_grid::GridInstrumentOffset>,
     sends: &'a std::collections::HashMap<InstrumentId, Vec<ChannelSend>>,
 }
 
@@ -3786,9 +3757,8 @@ fn mix_channel_busses(
             // per-instrument offset composes additively onto the instrument fader
             // (volume clamped to a valid gain, pan clamped by `BipolarValue`).
             let grid = controls
-                .mapping
-                .seq_id(instrument.id())
-                .and_then(|seq| controls.grid_offsets.get(&seq))
+                .grid_offsets
+                .get(&instrument.id())
                 .copied()
                 .unwrap_or_default();
             let pan = BipolarValue::new(instrument.pan().as_f32() + grid.pan + track.pan.as_f32());
@@ -3864,17 +3834,15 @@ fn count_effects(instrument: &Instrument) -> u32 {
         .count() as u32
 }
 
-/// Resolve a `SeqInstrumentId` to an instrument index using the stable mapping.
+/// Resolve an `InstrumentId` to its index in `instruments`.
 ///
-/// Falls back to index 0 (first instrument) if the mapping yields no match.
+/// Falls back to index 0 (first instrument) so orphaned notes — those naming an
+/// instrument that no longer exists — still produce sound.
 fn resolve_instrument_index(
-    seq_id: &synth_sequencer::SeqInstrumentId,
-    mapping: &InstrumentMapping,
+    id: &synth_sequencer::InstrumentId,
     instruments: &[Box<Instrument>],
 ) -> Option<usize> {
-    if let Some(engine_id) = mapping.engine_id(*seq_id)
-        && let Some(idx) = instruments.iter().position(|i| i.id() == engine_id)
-    {
+    if let Some(idx) = instruments.iter().position(|i| i.id() == *id) {
         return Some(idx);
     }
     // Fallback: first instrument (orphaned notes still produce sound)
@@ -3937,12 +3905,11 @@ fn note_trigger(
 
 /// Route sequencer events to the appropriate instruments.
 ///
-/// Uses `InstrumentMapping` for stable lookup instead of vec-index casting.
+/// Resolves each event's instrument id to a vec index by scanning `instruments`.
 /// Also pushes note events to the OSC telemetry ring buffer.
 fn route_sequencer_events(
     events: &[SequencerEvent],
     instruments: &mut [Box<Instrument>],
-    mapping: &InstrumentMapping,
     note_event_producer: &mut ringbuf::HeapProd<NoteEvent>,
     event_drops: &std::sync::atomic::AtomicU32,
 ) {
@@ -3962,7 +3929,7 @@ fn route_sequencer_events(
                 let vel = *velocity;
                 let trigger = note_trigger(*legato, glide, expression, *pitch, *track);
 
-                if let Some(idx) = resolve_instrument_index(instrument, mapping, instruments) {
+                if let Some(idx) = resolve_instrument_index(instrument, instruments) {
                     instruments[idx].note_on_expr(note, vel, trigger);
 
                     if note_event_producer
@@ -3983,7 +3950,7 @@ fn route_sequencer_events(
             } => {
                 let note = MidiNote::new(pitch.as_midi());
 
-                if let Some(idx) = resolve_instrument_index(instrument, mapping, instruments) {
+                if let Some(idx) = resolve_instrument_index(instrument, instruments) {
                     instruments[idx].note_off(note);
 
                     if note_event_producer
@@ -4000,8 +3967,7 @@ fn route_sequencer_events(
             }
             SequencerEvent::Parameter { target, value, .. } => {
                 if let AutomationTarget::Instrument { instrument, param } = target
-                    && let Some(engine_id) = mapping.engine_id(*instrument)
-                    && let Some(inst) = instruments.iter_mut().find(|i| i.id() == engine_id)
+                    && let Some(inst) = instruments.iter_mut().find(|i| i.id() == *instrument)
                 {
                     // The module-targeted params (FilterCutoff/Resonance, ADSR)
                     // resolve to the *first* module of the relevant type in the
@@ -4062,8 +4028,7 @@ fn route_sequencer_events(
                     instance,
                     param_id,
                 } = target
-                    && let Some(engine_id) = mapping.engine_id(*instrument)
-                    && let Some(inst) = instruments.iter_mut().find(|i| i.id() == engine_id)
+                    && let Some(inst) = instruments.iter_mut().find(|i| i.id() == *instrument)
                 {
                     // Generic A2 target: the positional (module_type, instance)
                     // identity is rebuilt into a ModuleId, the parameter resolved
@@ -4222,7 +4187,6 @@ impl AudioProcessor for SynthEngine {
         route_sequencer_events(
             &self.sequencer_event_buffer,
             &mut self.instruments,
-            &self.instrument_mapping,
             &mut self.note_event_producer,
             &self.state.event_drops,
         );
@@ -4776,7 +4740,7 @@ mod tests {
     fn enter_preview(engine: &mut SynthEngine, handle: &mut EngineHandle) {
         handle.send(EngineCommand::SetPreviewPattern(Some((
             synth_sequencer::PatternId(0),
-            synth_sequencer::SeqInstrumentId(0),
+            synth_sequencer::InstrumentId(0),
         ))));
         engine.process_commands();
         assert_eq!(
@@ -4832,11 +4796,11 @@ mod tests {
         use crate::mod_grid::{ModGridInstance, ModGridRuntime, ModSource, ResolvedTarget};
         use synth_core::{NormalizedValue, SampleCount, SampleRate};
         use synth_sequencer::{
-            AutomationTarget, CombineMode, ModGraphId, SeqInstrumentId, Song, TrackId, TrackParam,
+            AutomationTarget, CombineMode, InstrumentId, ModGraphId, Song, TrackId, TrackParam,
         };
 
         let (mut engine, mut handle) = SynthEngine::new();
-        // An instrument on track 0 (SeqInstrumentId(0) ↔ InstrumentId::FIRST).
+        // An instrument on track 0 (InstrumentId(0) ↔ InstrumentId::FIRST).
         handle.send(EngineCommand::AddInstrument {
             instrument: Box::new(Instrument::new(InstrumentId::FIRST, "d")),
         });
@@ -4900,13 +4864,9 @@ mod tests {
 
         // Composition path: update_track_controls folds it onto the base fader.
         engine.update_track_controls();
-        let engine_id = engine
-            .instrument_mapping
-            .engine_id(SeqInstrumentId(0))
-            .expect("track instrument mapped");
         let ctrl = engine
             .track_controls
-            .get(&engine_id)
+            .get(&InstrumentId(0))
             .copied()
             .expect("track control present");
         assert!(
@@ -4927,7 +4887,11 @@ mod tests {
         };
         let mut out = vec![0.0f32; 256 * 2];
         engine.process(&mut out, &context);
-        let ctrl2 = engine.track_controls.get(&engine_id).copied().unwrap();
+        let ctrl2 = engine
+            .track_controls
+            .get(&InstrumentId(0))
+            .copied()
+            .unwrap();
         assert!(
             (ctrl2.volume.as_f32() - 0.9).abs() < 1e-4,
             "after process(): expected composed track fader 0.9, got {}",
@@ -4940,11 +4904,11 @@ mod tests {
         use crate::mod_grid::{ModGridInstance, ModGridRuntime, ModSource, ResolvedTarget};
         use synth_core::{SampleCount, SampleRate};
         use synth_sequencer::{
-            AutoInstrumentParam, AutomationTarget, CombineMode, ModGraphId, SeqInstrumentId,
+            AutoInstrumentParam, AutomationTarget, CombineMode, InstrumentId, ModGraphId,
         };
 
         // A Constant(1.0) → Instrument 0 Volume runtime at amount 0.5, with its
-        // offset slot pre-keyed by SeqInstrumentId off the audio thread (as the
+        // offset slot pre-keyed by InstrumentId off the audio thread (as the
         // builder does). Because the slot needs no engine mapping, SetModGrid works
         // regardless of whether the instrument is loaded first — the old
         // offline-export ordering trap is gone.
@@ -4958,7 +4922,7 @@ mod tests {
                     targets: vec![ResolvedTarget {
                         source: Some(ModSource::Constant(1.0)),
                         target: AutomationTarget::Instrument {
-                            instrument: SeqInstrumentId(0),
+                            instrument: InstrumentId(0),
                             param: AutoInstrumentParam::Volume,
                         },
                         amount: 0.5,
@@ -4981,7 +4945,7 @@ mod tests {
             engine
                 .mod_grid
                 .instrument_offsets
-                .get(&SeqInstrumentId(0))
+                .get(&InstrumentId(0))
                 .copied()
                 .unwrap_or_default()
                 .volume
@@ -5153,7 +5117,7 @@ mod tests {
     fn filter_cutoff_automation_dispatches_through_override() {
         use synth_core::{SampleCount, SampleRate};
         use synth_modules::{Filter, Oscillator};
-        use synth_sequencer::{SeqInstrumentId, Tick};
+        use synth_sequencer::{InstrumentId, Tick};
 
         // Instrument graph: Osc -> Filter (sink). No voices allocated, so the
         // override lands on the template graph that we process directly.
@@ -5163,9 +5127,6 @@ mod tests {
         let flt_id = g.add_module(Box::new(Filter::new()));
         g.connect(osc_id, "out", flt_id, "in").unwrap();
         let mut instruments = vec![instrument];
-
-        let mut mapping = InstrumentMapping::new();
-        mapping.insert(SeqInstrumentId(7), InstrumentId::new(1));
 
         let note_rb = HeapRb::<NoteEvent>::new(16);
         let (mut note_prod, _note_cons) = note_rb.split();
@@ -5194,12 +5155,12 @@ mod tests {
         let events = vec![SequencerEvent::Parameter {
             tick: Tick(0),
             target: AutomationTarget::Instrument {
-                instrument: SeqInstrumentId(7),
+                instrument: InstrumentId(1),
                 param: AutoInstrumentParam::FilterCutoff,
             },
             value: NormalizedValue::MIN,
         }];
-        route_sequencer_events(&events, &mut instruments, &mapping, &mut note_prod, &drops);
+        route_sequencer_events(&events, &mut instruments, &mut note_prod, &drops);
 
         let low = settled_energy(instruments[0].voice_graph_mut(), &ctx);
         assert!(
@@ -5212,7 +5173,7 @@ mod tests {
     fn module_automation_target_dispatches_through_override() {
         use synth_core::{SampleCount, SampleRate};
         use synth_modules::{Filter, Oscillator};
-        use synth_sequencer::{SeqInstrumentId, Tick};
+        use synth_sequencer::{InstrumentId, Tick};
 
         // Osc -> Filter (sink); the filter is ModuleId(Filter, instance 1).
         let mut instrument = Box::new(Instrument::new(InstrumentId::new(1), "test"));
@@ -5221,9 +5182,6 @@ mod tests {
         let flt_id = g.add_module(Box::new(Filter::new()));
         g.connect(osc_id, "out", flt_id, "in").unwrap();
         let mut instruments = vec![instrument];
-
-        let mut mapping = InstrumentMapping::new();
-        mapping.insert(SeqInstrumentId(7), InstrumentId::new(1));
 
         let note_rb = HeapRb::<NoteEvent>::new(16);
         let (mut note_prod, _note_cons) = note_rb.split();
@@ -5250,19 +5208,52 @@ mod tests {
         let events = vec![SequencerEvent::Parameter {
             tick: Tick(0),
             target: AutomationTarget::Module {
-                instrument: SeqInstrumentId(7),
+                instrument: InstrumentId(1),
                 module_type: ModuleType::Filter,
                 instance: 1,
                 param_id: "cutoff".into(),
             },
             value: NormalizedValue::MIN,
         }];
-        route_sequencer_events(&events, &mut instruments, &mapping, &mut note_prod, &drops);
+        route_sequencer_events(&events, &mut instruments, &mut note_prod, &drops);
 
         let low = settled_energy(instruments[0].voice_graph_mut(), &ctx);
         assert!(
             low < base * 0.25,
             "module automation should have lowered the cutoff: {low} vs base {base}"
+        );
+    }
+
+    #[test]
+    fn resolve_instrument_index_matches_full_u64_id() {
+        // Ids past u16::MAX must resolve exactly. The old SeqInstrumentId(u16)
+        // truncation would have aliased 65536 onto 0 and misrouted the note.
+        let big = InstrumentId::new(u64::from(u16::MAX) + 1); // 65536
+        let instruments = vec![
+            Box::new(Instrument::new(InstrumentId::new(5), "a")),
+            Box::new(Instrument::new(big, "b")),
+        ];
+        assert_eq!(resolve_instrument_index(&big, &instruments), Some(1));
+        assert_eq!(
+            resolve_instrument_index(&InstrumentId::new(5), &instruments),
+            Some(0)
+        );
+    }
+
+    #[test]
+    fn resolve_instrument_index_falls_back_for_orphan_reference() {
+        // A note naming a removed / never-existent instrument routes to the
+        // first instrument (orphaned-note fallback) rather than being dropped.
+        let instruments = vec![Box::new(Instrument::new(InstrumentId::new(3), "only"))];
+        assert_eq!(
+            resolve_instrument_index(&InstrumentId::new(999), &instruments),
+            Some(0)
+        );
+        // With no instruments at all there is nothing to route to.
+        let empty: Vec<Box<Instrument>> = Vec::new();
+        assert_eq!(
+            resolve_instrument_index(&InstrumentId::new(0), &empty),
+            None
         );
     }
 
@@ -5427,12 +5418,12 @@ mod tests {
     #[test]
     fn update_track_controls_resolves_sends_and_drops_missing() {
         let (mut engine, mut handle) = SynthEngine::new();
-        add_default_instrument(&mut engine, &mut handle); // FIRST ↔ SeqInstrumentId(0)
+        add_default_instrument(&mut engine, &mut handle); // FIRST ↔ InstrumentId(0)
         handle.send(EngineCommand::CreateReturnBus { id: ReturnBusId(5) });
         handle.send(EngineCommand::CreateReturnBus { id: ReturnBusId(9) });
 
         let mut song = Song::default();
-        let tid = song.create_track("t"); // default instrument = SeqInstrumentId(0)
+        let tid = song.create_track("t"); // default instrument = InstrumentId(0)
         let track = song.track_mut(tid).unwrap();
         track.sends.push(TrackSend {
             target: ReturnBusId(9),
@@ -5467,7 +5458,7 @@ mod tests {
         // (which wins for the block) has none. The shared channel must end with
         // NO sends — the first track's send must not leak into it.
         let (mut engine, mut handle) = SynthEngine::new();
-        add_default_instrument(&mut engine, &mut handle); // FIRST ↔ SeqInstrumentId(0)
+        add_default_instrument(&mut engine, &mut handle); // FIRST ↔ InstrumentId(0)
         handle.send(EngineCommand::CreateReturnBus { id: ReturnBusId(0) });
 
         let mut song = Song::default();

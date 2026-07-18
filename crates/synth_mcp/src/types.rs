@@ -1,13 +1,13 @@
 //! Serializable response types for MCP tools.
 
 use serde::{Deserialize, Serialize};
-use synth_core::ParamKind;
+use synth_core::{InstrumentId, ParamKind};
 
 /// Information about an instrument.
 #[derive(Debug, Clone, Serialize)]
 pub struct InstrumentInfo {
     /// Instrument ID.
-    pub id: u64,
+    pub id: InstrumentId,
     /// Instrument name.
     pub name: String,
     /// Free-text description / intent — `""` when not set. Skipped from
@@ -300,7 +300,7 @@ pub enum DiagnosticSeverity {
 #[derive(Debug, Clone, Serialize)]
 pub struct ProjectLintEntry {
     /// Instrument the diagnostics belong to.
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     /// Instrument name (for human-readable reports).
     pub instrument_name: String,
     /// All graph diagnostics found for this instrument (any severity).
@@ -602,7 +602,7 @@ pub struct SetSongResult {
 #[derive(Debug, Clone, Serialize)]
 pub struct BuildInstrumentResult {
     /// Assigned instrument ID.
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     /// Module IDs in the same order as the input modules array.
     pub module_ids: Vec<String>,
     /// Number of connections successfully created.
@@ -630,7 +630,7 @@ pub struct OrphanedAutomationLane {
 #[derive(Debug, Clone, Serialize)]
 pub struct RebuildInstrumentResult {
     /// The rebuilt instrument's ID.
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     /// Module IDs in the rebuilt graph, in input order.
     pub module_ids: Vec<String>,
     /// Number of connections successfully created.
@@ -653,7 +653,7 @@ pub struct RebuildInstrumentResult {
 #[derive(Debug, Clone, Serialize)]
 pub struct ApplyExamplePatchResult {
     /// Instrument ID (created or reused).
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     /// Name of the patch that was applied.
     pub patch_name: String,
     /// Number of modules created.
@@ -902,7 +902,7 @@ pub struct TrackInfo {
     /// Track color as "#RRGGBB". Set via `set_track_color`.
     pub color: String,
     /// Instrument ID (if assigned).
-    pub instrument_id: Option<u16>,
+    pub instrument_id: Option<InstrumentId>,
     /// Volume (0.0-1.0).
     pub volume: f32,
     /// Pan (-1.0 = left, 0.0 = center, 1.0 = right).
@@ -1021,7 +1021,7 @@ pub struct AutomationLaneInfo {
     pub target: String,
     /// Instrument ID (instrument- and module-scoped lanes only; `None` for
     /// track/global lanes).
-    pub instrument_id: Option<u16>,
+    pub instrument_id: Option<InstrumentId>,
     /// Lane scope: `instrument`, `module`, `track`, or `global`.
     pub scope: String,
     /// Number of automation points.
@@ -1082,7 +1082,7 @@ pub struct AutomationSummaryLane {
     pub target: String,
     /// Instrument the lane targets, when instrument-scoped.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub instrument_id: Option<u16>,
+    pub instrument_id: Option<InstrumentId>,
     /// Number of points in the lane.
     pub point_count: usize,
 }
@@ -1933,7 +1933,7 @@ pub struct RenderToWavResult {
     /// means the render clipped the [-1, 1] WAV range.
     pub peak: f32,
     /// Instrument that was soloed for this render, or `None` for the full mix.
-    pub soloed_instrument_id: Option<u16>,
+    pub soloed_instrument_id: Option<InstrumentId>,
     /// Non-fatal warnings emitted during the render.
     pub warnings: Vec<String>,
 }
@@ -1993,7 +1993,7 @@ pub struct AnalyzeSpectrumResult {
     #[serde(flatten)]
     pub spectrum: SpectrumDescriptor,
     /// Instrument that was soloed for this analysis, or `null` for the full mix.
-    pub soloed_instrument_id: Option<u16>,
+    pub soloed_instrument_id: Option<InstrumentId>,
     /// Non-fatal warnings emitted during the render.
     pub warnings: Vec<String>,
 }
@@ -2028,7 +2028,7 @@ pub struct AnalyzeSpectrogramResult {
     /// One spectrum per hop, in time order.
     pub frames: Vec<SpectrogramFrame>,
     /// Instrument that was soloed, or `null` for the full mix.
-    pub soloed_instrument_id: Option<u16>,
+    pub soloed_instrument_id: Option<InstrumentId>,
     /// Non-fatal warnings emitted during the render.
     pub warnings: Vec<String>,
 }
@@ -2314,7 +2314,7 @@ pub struct TrackContribution {
     pub track_name: String,
     /// Assigned instrument's seq ID (matches `InstrumentInfo.id` value).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub instrument_id: Option<u16>,
+    pub instrument_id: Option<InstrumentId>,
     /// Mix-bus metrics of the soloed render (with the track's own volume and
     /// pan applied — includes pan-law attenuation; see struct docs).
     pub metrics: MixBusMetrics,
@@ -2630,8 +2630,8 @@ pub struct AnalyzeMaskingMatrixResult {
 /// MCP crate stays free of pertylizer-side types.
 #[derive(Debug, Clone, Serialize)]
 pub struct InstrumentProfileResult {
-    /// Sequencer instrument id (matches `SeqInstrumentId.0`).
-    pub instrument_id: u16,
+    /// Sequencer instrument id (matches `InstrumentId.0`).
+    pub instrument_id: InstrumentId,
     pub instrument_name: String,
     /// Inferred role plus confidence and the signal trail that produced it.
     pub role: RoleInferenceResult,
@@ -2864,7 +2864,7 @@ pub struct DrumRepetition {
 pub struct DrumTrackInfo {
     pub track_id: u16,
     pub track_name: String,
-    pub instrument_id: u16,
+    pub instrument_id: InstrumentId,
     pub instrument_name: String,
     pub drum_confidence: f32,
 }
@@ -2921,7 +2921,7 @@ pub struct AnalyzeDrumGrooveResult {
 pub struct BassTrackInfo {
     pub track_id: u16,
     pub track_name: String,
-    pub instrument_id: u16,
+    pub instrument_id: InstrumentId,
     pub instrument_name: String,
     pub bass_confidence: f32,
 }
@@ -3200,7 +3200,7 @@ pub struct InstrumentRangeIssues {
 #[derive(Debug, Clone, Serialize)]
 pub struct AnalyzeInstrumentRangeResult {
     /// Instrument that was swept.
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     /// Velocity used at every step.
     pub velocity: u8,
     /// Lowest MIDI note in the sweep (`low_note`).
@@ -3278,7 +3278,7 @@ pub struct VelocityResponseIssues {
 /// monotonicity / responsiveness flags.
 #[derive(Debug, Clone, Serialize)]
 pub struct AnalyzeVelocityResponseResult {
-    pub instrument_id: u64,
+    pub instrument_id: InstrumentId,
     /// MIDI note held throughout the sweep.
     pub note: u8,
     /// Lowest velocity in the sweep.

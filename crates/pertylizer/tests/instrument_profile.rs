@@ -46,7 +46,6 @@ fn envelope_module(seq: u16, instance: u16, a: f32, d: f32, s: f32, r: f32) -> M
 fn instrument_snapshot(seq: u16, name: &str, category: InstrumentCategory) -> InstrumentSnapshot {
     InstrumentSnapshot {
         id: instrument_id(seq),
-        seq_instrument_id: seq,
         name: name.to_string(),
         description: String::new(),
         patch_description: None,
@@ -1180,10 +1179,8 @@ fn fx_classification_without_drum_misclassification_skips_override() {
 
 #[test]
 fn name_is_explicit_fx_recognises_extended_vocabulary() {
-    use synth_sequencer::SeqInstrumentId;
     // Spot-check via infer_instrument_profile that the new vocab is wired in.
-    let mut snap = instrument_snapshot(9, "Atmo Drone", InstrumentCategory::Uncategorized);
-    snap.seq_instrument_id = SeqInstrumentId(9).0;
+    let snap = instrument_snapshot(9, "Atmo Drone", InstrumentCategory::Uncategorized);
     let modules = vec![
         module(9, ModuleType::Noise, 1),
         envelope_module(9, 1, 0.001, 0.15, 0.0, 0.2),

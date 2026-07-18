@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use parking_lot::RwLock as PlRwLock;
 use synth_core::audio::SampleRate as HwSampleRate;
-use synth_core::{AudioCallbackContext, AudioProcessor, BipolarValue, Gain};
+use synth_core::{AudioCallbackContext, AudioProcessor, BipolarValue, Gain, InstrumentId};
 use synth_engine::SynthEngine;
 use synth_mcp::bridge::SynthBridge;
 use synth_sequencer::Song;
@@ -412,7 +412,7 @@ fn description_and_color_setters_round_trip_via_bridge() {
 
     let tid = rig
         .bridge
-        .create_track("Bass", Some(2))
+        .create_track("Bass", Some(InstrumentId::new(2)))
         .expect("create track");
     rig.bridge
         .set_track_description(tid, "sidechain source")

@@ -29,9 +29,9 @@ use parking_lot::RwLock;
 
 use synth_core::{ModuleDescriptor, ModuleType};
 use synth_sequencer::{
-    AutoInstrumentParam, AutomationTarget, GlobalParam, MAX_MOD_GRID_NODES, ModConnection,
-    ModGraph, ModGraphId, ModGraphScope, ModNodeConfig, ModNodeId, ModTarget, ModuleNode,
-    SeqInstrumentId, Song, TrackId, TrackParam, TransportNode, TransportSource,
+    AutoInstrumentParam, AutomationTarget, GlobalParam, InstrumentId, MAX_MOD_GRID_NODES,
+    ModConnection, ModGraph, ModGraphId, ModGraphScope, ModNodeConfig, ModNodeId, ModTarget,
+    ModuleNode, Song, TrackId, TrackParam, TransportNode, TransportSource,
 };
 
 use crate::gui::list_panel;
@@ -131,11 +131,11 @@ pub(crate) struct ModGridViewState {
     tracks: Vec<(TrackId, String)>,
     /// The instruments `(id, name)`, snapshotted each frame from the app (the
     /// `Song` has no instrument names) — for the Module-target picker.
-    instruments: Vec<(SeqInstrumentId, String)>,
+    instruments: Vec<(InstrumentId, String)>,
     /// Per-instrument automatable module-param targets, snapshotted each frame
     /// from the live descriptors — the per-module submenus of the Target picker
     /// (shared enumeration, so it matches MCP + the pattern-view lane picker).
-    module_groups: HashMap<SeqInstrumentId, Vec<crate::module_targets::ModuleTargetGroup>>,
+    module_groups: HashMap<InstrumentId, Vec<crate::module_targets::ModuleTargetGroup>>,
     /// The Mod Grid pre-pass CPU load (fraction of the buffer budget), shown in
     /// the canvas header. Snapshotted from the engine each frame.
     cpu_mod_grid: f32,
@@ -157,8 +157,8 @@ pub(crate) fn draw_mod_grid_view(
     song: &Arc<RwLock<Song>>,
     state: &mut ModGridViewState,
     undo_manager: &mut UndoManager,
-    instruments: &[(SeqInstrumentId, String)],
-    module_groups: HashMap<SeqInstrumentId, Vec<crate::module_targets::ModuleTargetGroup>>,
+    instruments: &[(InstrumentId, String)],
+    module_groups: HashMap<InstrumentId, Vec<crate::module_targets::ModuleTargetGroup>>,
     cpu_mod_grid: f32,
 ) {
     // Snapshot the instrument list + per-instrument module targets (names and

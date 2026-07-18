@@ -605,22 +605,11 @@ impl TrackId {
     }
 }
 
-/// Unique identifier for an instrument in the sequencer.
+/// Unique identifier for an instrument.
 ///
-/// This is a compact u16 ID used for pattern data storage.
-/// For engine-level instrument identification, see `engine::instrument::InstrumentId`.
-#[must_use]
-#[derive(
-    Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema,
-)]
-pub struct SeqInstrumentId(pub u16);
-
-impl SeqInstrumentId {
-    /// Create a new sequencer instrument ID.
-    pub fn new(id: u16) -> Self {
-        Self(id)
-    }
-}
+/// Re-exported from `synth_core` so the sequencer data model, engine, project
+/// format, MCP surface, and GUI all share one instrument-id namespace.
+pub use synth_core::InstrumentId;
 
 /// Unique identifier for a return bus (effect-send destination).
 ///

@@ -47,7 +47,7 @@ fn build_bridge() -> (AppSynthBridge, Arc<SynthSession>) {
 /// osc → out, with the single connection using `from_port` as the source port
 /// name. Pass a valid `"out"` for a working build, or a bogus name to make the
 /// one connection (and thus the whole build's wiring) fail.
-fn osc_out(instrument_id: Option<u64>, from_port: &str) -> BridgeInstrumentDef {
+fn osc_out(instrument_id: Option<InstrumentId>, from_port: &str) -> BridgeInstrumentDef {
     BridgeInstrumentDef {
         instrument_id,
         name: "Lead".to_string(),
@@ -92,7 +92,7 @@ fn build_instrument_rolls_back_a_new_instrument_when_all_connections_fail() {
     let ok = bridge
         .build_instrument(&osc_out(None, "out"))
         .expect("valid build after a rolled-back one");
-    assert!(session.instrument_exists(InstrumentId::new(ok.instrument_id)));
+    assert!(session.instrument_exists(ok.instrument_id));
 }
 
 #[test]
@@ -103,7 +103,7 @@ fn build_instrument_keeps_an_existing_instrument_on_all_connections_failed() {
         .build_instrument(&osc_out(None, "out"))
         .expect("valid build");
     let id = ok.instrument_id;
-    assert!(session.instrument_exists(InstrumentId::new(id)));
+    assert!(session.instrument_exists(id));
 
     // Rebuild into the SAME id with all-bad connections. The hard-error +
     // rollback only applies to freshly-created instruments; an existing
@@ -116,7 +116,7 @@ fn build_instrument_keeps_an_existing_instrument_on_all_connections_failed() {
     assert_eq!(result.connection_count, 0);
     assert!(!result.errors.is_empty(), "the failed wiring is reported");
     assert!(
-        session.instrument_exists(InstrumentId::new(id)),
+        session.instrument_exists(id),
         "an existing caller-owned instrument must survive a failed rebuild"
     );
 }
@@ -150,7 +150,7 @@ fn save_patch_reports_an_unknown_instrument() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join("p.json");
     let err = bridge
-        .save_patch(999, path.to_str().expect("utf-8 path"))
+        .save_patch(InstrumentId::new(999), path.to_str().expect("utf-8 path"))
         .expect_err("save should fail for a nonexistent id");
     assert!(err.to_string().contains("not found"), "got: {err}");
 }

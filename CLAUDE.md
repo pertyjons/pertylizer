@@ -195,9 +195,9 @@ fn set_frequency(freq: Hertz) { ... }
 
 | Crate             | Examples                                                                                                                                                                                                      | 
 |-------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `synth_core`      | `Hertz`, `SampleRate`, `Cents`, `Semitones`, `MidiNote`, `Velocity`, `Gain`, `Decibels`, `Seconds`, `Milliseconds`, `Bpm`, `NormalizedValue`, `BipolarValue`, `Phase`, `SampleCount`, `BlockSize`, `PortName`, `Meters`, `MetersPerSecond`, `SampleOffset`, `Position3` |
-| `synth_sequencer` | `PatternId`, `TrackId`, `NoteId`, `Tick`, `PatternTick`, `Duration`, `Pitch`, `TrackIndex`, `RowIndex`, `SeqInstrumentId`, `NoteGraphId`, `NoteModuleId`                                                          |
-| `synth_engine`    | `TransactionId`, `ClientId`, `InstrumentId`, `MidiChannel`, `ConnectionCount`, `ModuleId`                                                                                                                     |
+| `synth_core`      | `Hertz`, `SampleRate`, `Cents`, `Semitones`, `MidiNote`, `Velocity`, `Gain`, `Decibels`, `Seconds`, `Milliseconds`, `Bpm`, `NormalizedValue`, `BipolarValue`, `Phase`, `SampleCount`, `BlockSize`, `PortName`, `Meters`, `MetersPerSecond`, `SampleOffset`, `Position3`, `InstrumentId` |
+| `synth_sequencer` | `PatternId`, `TrackId`, `NoteId`, `Tick`, `PatternTick`, `Duration`, `Pitch`, `TrackIndex`, `RowIndex`, `NoteGraphId`, `NoteModuleId`                                                          |
+| `synth_engine`    | `TransactionId`, `ClientId`, `MidiChannel`, `ConnectionCount`, `ModuleId` (instrument ids use `synth_core::InstrumentId`)                                                                                                                     |
 
 ---
 

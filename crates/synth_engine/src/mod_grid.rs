@@ -19,8 +19,7 @@ use synth_core::{
     AudioBuffer, DestAddr, PortName, ProcessContext, SampleCount, SampleRate, Semitones,
 };
 use synth_sequencer::{
-    AutoInstrumentParam, AutomationTarget, CombineMode, ModGraphId, SeqInstrumentId, TrackId,
-    TransportSource,
+    AutoInstrumentParam, AutomationTarget, CombineMode, ModGraphId, TrackId, TransportSource,
 };
 
 use crate::{InstrumentId, ModuleId};
@@ -186,10 +185,10 @@ pub struct ModGridRuntime {
     /// (never inserts / allocates on the audio thread). Values reset each block.
     pub track_offsets: HashMap<TrackId, GridTrackOffset>,
     /// Per-instrument channel Volume/Pan offset accumulators, keyed by
-    /// **`SeqInstrumentId`** (known off-thread, so building the slot needs no
+    /// **`InstrumentId`** (known off-thread, so building the slot needs no
     /// engine mapping — the offline-export ordering trap can't recur). Values
     /// reset each block; the channel-bus stage maps its engine id back to seq.
-    pub instrument_offsets: HashMap<SeqInstrumentId, GridInstrumentOffset>,
+    pub instrument_offsets: HashMap<InstrumentId, GridInstrumentOffset>,
 }
 
 impl ModGridRuntime {
@@ -213,7 +212,7 @@ impl ModGridRuntime {
     /// Pre-create the offset accumulator slot for every `Track`/`Instrument`
     /// Volume/Pan target, so the audio-thread pre-pass only ever `get_mut`s.
     /// Called **off the audio thread** at build time (allocates). Instrument slots
-    /// are keyed by `SeqInstrumentId` — no engine mapping needed, so pre-keying is
+    /// are keyed by `InstrumentId` — no engine mapping needed, so pre-keying is
     /// order-independent (the channel-bus stage maps engine id → seq at read time).
     pub fn prekey_offsets(&mut self) {
         for inst in &self.instances {

@@ -23,7 +23,6 @@ pub mod event_priority;
 pub mod graph;
 pub mod hub;
 pub mod instrument;
-pub mod instrument_mapping;
 pub mod metering;
 pub mod mod_grid;
 pub mod recording;
@@ -66,7 +65,6 @@ pub use event_priority::{
 pub use graph::{Connection, GraphError, ModuleGraph};
 pub use hub::{ClientHandle, ClientId, ClientPermissions, ClientType, EngineHub, HubError};
 pub use instrument::{Instrument, InstrumentCategory, InstrumentId, MidiChannel};
-pub use instrument_mapping::InstrumentMapping;
 pub use metering::*;
 pub use recording::RecordingState;
 pub use return_bus::ReturnBusChannel;

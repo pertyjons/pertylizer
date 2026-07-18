@@ -24,7 +24,7 @@ use parking_lot::RwLock;
 
 use synth_core::{BipolarValue, Gain, ModuleType, NormalizedValue, Param};
 use synth_engine::{EngineCommand, EngineHandle, InstrumentId, ModuleId};
-use synth_sequencer::{ReturnBusId, SeqInstrumentId, Song, TrackId, TrackSend};
+use synth_sequencer::{ReturnBusId, Song, TrackId, TrackSend};
 
 use crate::gui::module_panel::category_color;
 use crate::gui::theme::theme;
@@ -88,7 +88,7 @@ pub struct MixerViewState {
 pub enum MixerViewAction {
     /// Open the Rack patch editor focused on this track's instrument (to edit
     /// the channel's insert effects, which live on the instrument).
-    EditChannelFx(SeqInstrumentId),
+    EditChannelFx(InstrumentId),
 }
 
 /// A track channel strip, snapshotted from the song under a short read lock.
@@ -96,7 +96,7 @@ struct ChannelSnapshot {
     id: TrackId,
     name: String,
     color: Color32,
-    instrument: SeqInstrumentId,
+    instrument: InstrumentId,
     volume: f32,
     pan: f32,
     mute: bool,
@@ -305,7 +305,7 @@ pub fn draw_mixer_view(
                         for ch in &snapshot.channels {
                             let eng_id = instruments
                                 .iter()
-                                .find(|i| i.id.0 == u64::from(ch.instrument.0))
+                                .find(|i| i.id.0 == ch.instrument.0)
                                 .map(|i| i.id);
                             if draw_channel_strip(
                                 ui,
