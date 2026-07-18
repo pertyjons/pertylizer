@@ -40,7 +40,10 @@ pub mod time;
 pub mod track;
 
 // Re-export commonly used types
-pub use automation::{AutoInstrumentParam, GlobalParam, TrackParam};
+pub use automation::{
+    AutoInstrumentParam, GlobalParam, TRACK_PITCH_RANGE, TrackParam, track_pitch_normalized,
+    track_pitch_semitones,
+};
 pub use automation::{AutomationLane, AutomationPoint, AutomationTarget, CurveType, ParamId};
 pub use events::SequencerEvent;
 pub use ids::{

@@ -886,8 +886,22 @@ impl Song {
 
     /// Delete a track.
     pub fn delete_track(&mut self, id: TrackId) -> Option<SequencerTrack> {
+        use super::automation::AutomationTarget;
         // Also remove placements on this track
         self.arrangement.retain(|p| p.track_id != id);
+        // Strip automation lanes pinned to this track — a dangling
+        // `Track { Some(deleted) }` lane would silently automate nothing and
+        // re-serialize as invisible cruft. Host-track lanes (`track: None`)
+        // stay: they follow whatever track their pattern is placed on.
+        // Mirrors `delete_return_bus`'s send strip.
+        for pattern in &mut self.patterns {
+            pattern.automation.retain(|lane| {
+                !matches!(
+                    lane.target,
+                    AutomationTarget::Track { track: Some(t), .. } if t == id
+                )
+            });
+        }
         self.bump_structure();
         let pos = self.tracks.iter().position(|t| t.id == id)?;
         Some(self.tracks.remove(pos))
@@ -1446,6 +1460,48 @@ mod tests {
             0,
             "sends targeting a deleted return bus must be removed"
         );
+    }
+
+    #[test]
+    fn delete_track_strips_pinned_lanes_keeps_host_lanes() {
+        use crate::automation::{AutomationLane, AutomationTarget, TrackParam};
+
+        let mut song = Song::new("gc");
+        let keep = song.create_track("keep");
+        let doomed = song.create_track("doomed");
+        let pid = song.create_pattern(Duration(960));
+        let pattern = song.pattern_mut(pid).unwrap();
+        pattern
+            .automation
+            .push(AutomationLane::new(AutomationTarget::Track {
+                track: Some(doomed),
+                param: TrackParam::Volume,
+            }));
+        pattern
+            .automation
+            .push(AutomationLane::new(AutomationTarget::Track {
+                track: Some(keep),
+                param: TrackParam::Pan,
+            }));
+        pattern
+            .automation
+            .push(AutomationLane::new(AutomationTarget::Track {
+                track: None,
+                param: TrackParam::Volume,
+            }));
+
+        song.delete_track(doomed);
+
+        let lanes = &song.pattern(pid).unwrap().automation;
+        assert_eq!(
+            lanes.len(),
+            2,
+            "only the lane pinned to the deleted track is stripped"
+        );
+        assert!(lanes.iter().all(|l| !matches!(
+            l.target,
+            AutomationTarget::Track { track: Some(t), .. } if t == doomed
+        )));
     }
 
     #[test]

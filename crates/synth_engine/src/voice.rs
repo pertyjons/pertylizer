@@ -25,6 +25,7 @@ use synth_core::{
     Semitones, Velocity,
 };
 use synth_core::{MAX_MOD_MATRIX_SLOTS, ModuleType, OscillatorParam, Param};
+use synth_sequencer::TrackId;
 
 /// Unique identifier for a voice within an instrument's voice pool.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -129,8 +130,10 @@ pub enum VoiceState {
         fade_counter: SampleCount,
         /// Total fade samples (for calculating fade ratio)
         fade_total: SampleCount,
-        /// Pending note to trigger after fade-out completes.
-        pending_note: Option<(MidiNote, Velocity, SamplePosition)>,
+        /// Pending note to trigger after fade-out completes, with the full
+        /// trigger so the retrigger keeps its track tag and per-note
+        /// legato/glide/vibrato.
+        pending_note: Option<(MidiNote, Velocity, SamplePosition, NoteTrigger)>,
     },
 }
 
@@ -309,7 +312,7 @@ impl GlideState {
 /// the note's *own* target pitch — so it is key/transpose invariant and the
 /// engine never needs the sequencer's `GlideFrom`. Built at the sequencer-event
 /// consumer from `synth_sequencer::Glide`.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GlideSpec {
     /// Source pitch as a signed semitone offset from the target note.
     pub from_offset: Semitones,
@@ -348,7 +351,7 @@ fn lfo_shape_value(shape: LfoWaveform, phase: Phase) -> f32 {
 /// overrides of a per-patch destination (the deferred A2 "two controllers, one
 /// param" problem). The shape math is shared via `synth_core::Phase`
 /// (`lfo_shape_value`) so the two never visually/audibly diverge.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct VibratoSpec {
     /// Peak pitch deviation.
     pub depth: Semitones,
@@ -365,7 +368,7 @@ pub struct VibratoSpec {
 ///
 /// `Copy`/alloc-free so it threads through the audio-thread trigger path without
 /// allocation. Default = no per-note expression (current behavior).
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy, Default, PartialEq)]
 pub struct NoteTrigger {
     /// Force legato (no envelope retrigger), overriding the allocation mode
     /// (taxonomy primitive 2).
@@ -375,6 +378,10 @@ pub struct NoteTrigger {
     pub glide: Option<GlideSpec>,
     /// Optional per-note vibrato (taxonomy primitive 1).
     pub vibrato: Option<VibratoSpec>,
+    /// Track whose placement spawned the note; `None` for preview/live input.
+    /// Stored on the voice so track-scoped state (`TrackParam::Pitch`) lands
+    /// on exactly the voices playing on that track.
+    pub track: Option<TrackId>,
 }
 
 /// Default pitch bend range in semitones (standard MIDI is ±2).
@@ -470,6 +477,15 @@ pub struct Voice {
     /// and read in `process_audio` (mirrors the glide-update pattern).
     pub(crate) vibrato_offset: Semitones,
 
+    /// Track whose placement spawned the current note (`None` = preview/live
+    /// input). Set from the trigger at note-on; lets track-scoped state find
+    /// exactly the voices playing on a track.
+    pub(crate) track: Option<TrackId>,
+    /// Track-pitch offset from `TrackParam::Pitch` automation, refreshed from
+    /// the sequencer's `track_auto` map by the engine each block and folded
+    /// into `VoicePitch.expr` alongside bend and vibrato.
+    pub(crate) track_pitch: Semitones,
+
     /// Cached output module ID for stereo output extraction.
     /// Priority: StereoOutput > Amplifier > Mixer
     output_module_id: Option<crate::ModuleId>,
@@ -535,6 +551,8 @@ impl Voice {
             vibrato_phase: Phase::ZERO,
             vibrato_elapsed: Seconds::ZERO,
             vibrato_offset: Semitones::ZERO,
+            track: None,
+            track_pitch: Semitones::ZERO,
             output_module_id: None,
             mod_matrix_id: None,
             script_module_ids: Vec::new(),
@@ -578,6 +596,8 @@ impl Voice {
             vibrato_phase: Phase::ZERO,
             vibrato_elapsed: Seconds::ZERO,
             vibrato_offset: Semitones::ZERO,
+            track: None,
+            track_pitch: Semitones::ZERO,
             output_module_id: output_id,
             mod_matrix_id,
             script_module_ids,
@@ -726,6 +746,10 @@ impl Voice {
         let was_active = matches!(self.state, VoiceState::Active { .. });
         self.seed_glide(target_freq, was_active, trigger.glide);
         self.seed_vibrato(trigger.vibrato);
+        // Tag the voice with its source track and drop any previous track-pitch
+        // offset; the engine refreshes it from `track_auto` every block.
+        self.track = trigger.track;
+        self.track_pitch = Semitones::ZERO;
 
         // Set state with embedded note data
         self.state = VoiceState::Active {
@@ -768,8 +792,15 @@ impl Voice {
     ) {
         let target_freq = Hertz::new(self.note_to_freq(new_note));
         // Re-seed vibrato for the new (legato) note so its per-note vibrato takes
-        // effect even though the envelope isn't retriggered.
+        // effect even though the envelope isn't retriggered. Re-tag the track
+        // (a legato successor may come from a different placement) and drop the
+        // old offset on a cross-track move so the previous track's pitch never
+        // leaks into this voice's block.
         self.seed_vibrato(trigger.vibrato);
+        if self.track != trigger.track {
+            self.track_pitch = Semitones::ZERO;
+        }
+        self.track = trigger.track;
 
         match trigger.glide {
             Some(g) => {
@@ -891,11 +922,20 @@ impl Voice {
     }
 
     /// Start voice stealing with a pending note to trigger after fade-out.
-    pub fn steal_for(&mut self, note: MidiNote, velocity: Velocity, time: SamplePosition) {
+    pub fn steal_for(
+        &mut self,
+        note: MidiNote,
+        velocity: Velocity,
+        time: SamplePosition,
+        trigger: NoteTrigger,
+    ) {
+        // The full trigger rides the pending note so the post-fade retrigger
+        // keeps its track tag and per-note legato/glide/vibrato instead of
+        // falling back to defaults.
         self.state = VoiceState::Stealing {
             fade_counter: self.steal_fade_samples,
             fade_total: self.steal_fade_samples,
-            pending_note: Some((note, velocity, time)),
+            pending_note: Some((note, velocity, time, trigger)),
         };
     }
 
@@ -935,6 +975,8 @@ impl Voice {
         self.vibrato_phase = Phase::ZERO;
         self.vibrato_elapsed = Seconds::ZERO;
         self.vibrato_offset = Semitones::ZERO;
+        self.track = None;
+        self.track_pitch = Semitones::ZERO;
         // Note: We don't reset macro controllers here since they are channel-wide,
         // not per-voice. They persist across notes.
 
@@ -966,11 +1008,14 @@ impl Voice {
         // destination still adds its own offset to the oscillator afterwards, so
         // mod-matrix vibrato and per-note vibrato compose additively.
         let bend_semitones = self.expression.pitch_bend_range * self.pitch_bend.as_f32();
-        // Pitch-bend + per-note vibrato as one additive semitone offset. Folded
-        // into `freq` (the finished playing pitch) for everyone, and handed over
-        // separately in `expr` so a module running its own glide can re-apply it
-        // *after* smoothing (the glide never smears vibrato / lags the bend).
-        let expr = bend_semitones + self.vibrato_offset;
+        // Pitch-bend + per-note vibrato + track pitch as one additive semitone
+        // offset. Folded into `freq` (the finished playing pitch) for everyone,
+        // and handed over separately in `expr` so a module running its own
+        // glide can re-apply it *after* smoothing (the glide never smears
+        // vibrato / lags the bend). `track_pitch` is the `TrackParam::Pitch`
+        // automation refreshed from `track_auto` each block — per voice, so
+        // two tracks layering one instrument stay independent.
+        let expr = bend_semitones + self.vibrato_offset + self.track_pitch;
         let freq = expr.apply(base_freq);
 
         // Deliver the decomposed note pitch to every pitch-tracking sound source
@@ -1501,6 +1546,8 @@ impl Voice {
             vibrato_phase: Phase::ZERO,
             vibrato_elapsed: Seconds::ZERO,
             vibrato_offset: Semitones::ZERO,
+            track: None,
+            track_pitch: Semitones::ZERO,
             output_module_id: output_id,
             mod_matrix_id,
             script_module_ids,
@@ -1617,6 +1664,7 @@ mod tests {
                 fade_in: Seconds::new(fade_in),
                 shape: LfoWaveform::Sine,
             }),
+            track: None,
         }
     }
 

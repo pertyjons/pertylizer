@@ -13,12 +13,18 @@ use synth_core::{BipolarValue, Bpm, NormalizedValue, SampleCount, SampleRate, Se
 use synth_sequencer::{
     AutomationTarget, ExpandedNote, ExpansionBuffer, Glide, GlideFrom, HostKey, NoteExpression,
     NoteScopeCtx, PatternId, PatternTick, Pitch, SeqInstrumentId, SequencerEvent, Song,
-    TICKS_PER_QUARTER, Tick, TrackId, TrackParam, Velocity,
+    TICKS_PER_QUARTER, Tick, TrackId, TrackParam, Velocity, track_pitch_semitones,
 };
 
 /// Minimum change threshold for automation value deduplication.
 /// Values changing less than this are considered unchanged and won't emit events.
 const AUTOMATION_DEDUP_THRESHOLD: f32 = 0.001;
+
+/// Dedup threshold for `TrackParam::Pitch` lanes. Pitch maps one normalized
+/// unit onto 96 semitones (±[`synth_sequencer::TRACK_PITCH_RANGE`]), so the
+/// generic threshold would quantize smooth portamento into ~9.6-cent stairs.
+/// This finer bound keeps steps under ~0.1 cent — inaudible.
+const PITCH_AUTOMATION_DEDUP_THRESHOLD: f32 = 0.000_01;
 
 /// Live automation overrides for one track's fader, applied *over* the track's
 /// stored (static) volume/pan/mute. A `None` field means "no automation —
@@ -38,6 +44,9 @@ pub struct TrackAutoOverride {
     pub pan: Option<BipolarValue>,
     /// Automated track mute (`true` = silenced).
     pub muted: Option<bool>,
+    /// Automated track pitch offset (semitones, bipolar around 0). Applied
+    /// per voice via the `VoicePitch` path — never to the mixer strip.
+    pub pitch: Option<Semitones>,
 }
 
 /// Playback state of the sequencer.
@@ -82,6 +91,9 @@ struct PendingNote {
     /// Per-note expression block (vibrato + note-shape scalars). Probability has
     /// already been resolved before this note was collected.
     expression: Option<NoteExpression>,
+    /// Track whose placement produced this note; `None` in the placement-less
+    /// preview. Rides the emitted `NoteOn` so the voice can be track-tagged.
+    track: Option<TrackId>,
 }
 
 /// Deterministic pseudo-random value in `[0, 1)` from a 64-bit seed.
@@ -154,6 +166,7 @@ fn make_pending_note(
     instrument: SeqInstrumentId,
     transpose: Semitones,
     start_tick: u64,
+    track: Option<TrackId>,
 ) -> PendingNote {
     let pitch = expanded
         .pitch
@@ -184,6 +197,7 @@ fn make_pending_note(
         legato: expanded.legato,
         glide,
         expression: expanded.expression,
+        track,
     }
 }
 
@@ -744,9 +758,19 @@ impl SequencerEngine {
                         self.preview_instrument,
                         Semitones::new(0.0),
                         self.current_tick.0,
+                        // No placement — preview voices carry no track tag.
+                        None,
                     ));
                 }
                 for lane in &pattern.automation {
+                    // The placement-less preview has no track: a host-track
+                    // lane cannot resolve, and letting a concrete Track lane
+                    // override a real track's fader from an audition would
+                    // reach into the live mix (and stick until the next
+                    // transport reset). Skip every Track lane here.
+                    if matches!(lane.target, AutomationTarget::Track { .. }) {
+                        continue;
+                    }
                     if let Some(value) = lane.value_at(PatternTick(pattern_tick)) {
                         self.scratch_automation.push((lane.target.clone(), value));
                     }
@@ -769,13 +793,15 @@ impl SequencerEngine {
                     continue;
                 }
 
-                // Skip muted/non-soloed tracks
                 let Some(track) = song.track(placement.track_id) else {
                     continue;
                 };
-                if !track.is_audible(any_solo) {
-                    continue;
-                }
+                // Mute/solo gates the NOTES only (below). Automation still
+                // runs on an inaudible track: muting a host track must not
+                // kill the fades it carries — for itself or, via cross-track
+                // `Track { Some(other) }` lanes, for other tracks. Like other
+                // DAWs, mute silences audio, not envelopes.
+                let audible = track.is_audible(any_solo);
 
                 let Some(pattern) = song.pattern(placement.pattern_id) else {
                     continue;
@@ -797,69 +823,79 @@ impl SequencerEngine {
                 let track_instrument = track.instrument;
 
                 // Collect (and Model-B expand) notes that start at this pattern
-                // tick. The gate resolves per-note trigger probability here
-                // (sequencer-side, deterministic), so a losing roll simply omits
-                // the note — the audio thread never runs an RNG. Absolute song
-                // tick seeds it, so a looped section varies roll-to-roll yet
-                // stays reproducible. The pattern's processor rack then runs in
-                // pattern space (placement transpose applies after).
-                let placement_start = placement.start.0;
-                let roll_nonce = self.roll_nonce;
-                // Seed the roll by the note's *own* absolute start, not the
-                // expansion tick. For a plain note (gated only at its start) this
-                // is identical to the current tick; for a multi-tick ornament it
-                // keeps the figure's roll consistent across all the ticks it
-                // spans. The closure captures only Copy values, so it is reused
-                // across the graph / rack branch below.
-                let gate = |note: &synth_sequencer::Note| {
-                    let note_start = Tick(placement_start + u64::from(note.start.0));
-                    note_passes_probability(note, note_start, roll_nonce)
-                };
-                // A bound Note Grid graph takes precedence over the rack; a
-                // dangling id falls back to the rack (pass-through).
-                // Each note's own note-scope graph (plan §2.1) resolves during
-                // source seeding, decorrelated by NoteId, then the pattern-scope
-                // graph / rack processes the articulated stream. Disjoint
-                // self-field borrows: note-scope scratch vs. the outer buffer.
-                let mut ns_ctx = NoteScopeCtx {
-                    pool: song.note_graph_pool(),
-                    scratch: &mut self.scratch_note_scope,
-                };
-                match pattern.note_graph().and_then(|gid| song.note_graph(gid)) {
-                    Some(graph) => graph.expand_at_tick(
-                        pattern.notes(),
-                        PatternTick(pattern_tick),
-                        HostKey::from(pattern.id),
-                        self.cached_tempo,
-                        gate,
-                        Some(&mut ns_ctx),
-                        Some(&mut self.scratch_lookback),
-                        &mut self.scratch_expansion,
-                    ),
-                    None => pattern.expand_at_tick(
-                        PatternTick(pattern_tick),
-                        gate,
-                        self.cached_tempo,
-                        Some(&mut ns_ctx),
-                        &mut self.scratch_expansion,
-                    ),
-                }
-                self.expansion_drops += u64::from(self.scratch_expansion.dropped());
+                // tick — only when the track is audible; automation below runs
+                // regardless. The gate resolves per-note trigger probability
+                // here (sequencer-side, deterministic), so a losing roll simply
+                // omits the note — the audio thread never runs an RNG. Absolute
+                // song tick seeds it, so a looped section varies roll-to-roll
+                // yet stays reproducible. The pattern's processor rack then
+                // runs in pattern space (placement transpose applies after).
+                if audible {
+                    let placement_start = placement.start.0;
+                    let roll_nonce = self.roll_nonce;
+                    // Seed the roll by the note's *own* absolute start, not the
+                    // expansion tick. For a plain note (gated only at its start)
+                    // this is identical to the current tick; for a multi-tick
+                    // ornament it keeps the figure's roll consistent across all
+                    // the ticks it spans. The closure captures only Copy values,
+                    // so it is reused across the graph / rack branch below.
+                    let gate = |note: &synth_sequencer::Note| {
+                        let note_start = Tick(placement_start + u64::from(note.start.0));
+                        note_passes_probability(note, note_start, roll_nonce)
+                    };
+                    // A bound Note Grid graph takes precedence over the rack; a
+                    // dangling id falls back to the rack (pass-through).
+                    // Each note's own note-scope graph (plan §2.1) resolves
+                    // during source seeding, decorrelated by NoteId, then the
+                    // pattern-scope graph / rack processes the articulated
+                    // stream. Disjoint self-field borrows: note-scope scratch
+                    // vs. the outer buffer.
+                    let mut ns_ctx = NoteScopeCtx {
+                        pool: song.note_graph_pool(),
+                        scratch: &mut self.scratch_note_scope,
+                    };
+                    match pattern.note_graph().and_then(|gid| song.note_graph(gid)) {
+                        Some(graph) => graph.expand_at_tick(
+                            pattern.notes(),
+                            PatternTick(pattern_tick),
+                            HostKey::from(pattern.id),
+                            self.cached_tempo,
+                            gate,
+                            Some(&mut ns_ctx),
+                            Some(&mut self.scratch_lookback),
+                            &mut self.scratch_expansion,
+                        ),
+                        None => pattern.expand_at_tick(
+                            PatternTick(pattern_tick),
+                            gate,
+                            self.cached_tempo,
+                            Some(&mut ns_ctx),
+                            &mut self.scratch_expansion,
+                        ),
+                    }
+                    self.expansion_drops += u64::from(self.scratch_expansion.dropped());
 
-                for i in 0..self.scratch_expansion.notes().len() {
-                    let expanded = self.scratch_expansion.notes()[i];
-                    self.scratch_notes.push(make_pending_note(
-                        expanded,
-                        track_instrument,
-                        placement.transpose,
-                        placement.start.0 + u64::from(pattern_tick),
-                    ));
+                    for i in 0..self.scratch_expansion.notes().len() {
+                        let expanded = self.scratch_expansion.notes()[i];
+                        self.scratch_notes.push(make_pending_note(
+                            expanded,
+                            track_instrument,
+                            placement.transpose,
+                            placement.start.0 + u64::from(pattern_tick),
+                            Some(placement.track_id),
+                        ));
+                    }
                 }
 
-                // Collect automation values at this tick
+                // Collect automation values at this tick. Host-track lanes
+                // resolve to the track this placement sits on
+                // (`AutomationTarget::resolved`), so only concrete targets
+                // flow through dedup and `track_auto` downstream.
                 for lane in &pattern.automation {
-                    if let Some(value) = lane.value_at(PatternTick(pattern_tick)) {
-                        self.scratch_automation.push((lane.target.clone(), value));
+                    if let Some(value) = lane.value_at(PatternTick(pattern_tick))
+                        && let Some(target) = lane.target.resolved(Some(placement.track_id))
+                    {
+                        self.scratch_automation.push((target, value));
                     }
                 }
             }
@@ -889,6 +925,7 @@ impl SequencerEngine {
                 legato,
                 glide,
                 expression,
+                track,
             } = self.scratch_notes[i];
 
             // A legato successor may extend an active note of a *different*
@@ -914,6 +951,7 @@ impl SequencerEngine {
                         legato: true,
                         glide,
                         expression,
+                        track,
                     });
                 }
                 continue;
@@ -933,36 +971,65 @@ impl SequencerEngine {
                 legato,
                 glide,
                 expression,
+                track,
             });
         }
 
         // Emit automation parameter events (deduplicated)
         for i in 0..self.scratch_automation.len() {
             let (ref target, value) = self.scratch_automation[i];
-            let changed = self.last_automation_values.get(target).is_none_or(|last| {
-                (value.as_f32() - last.as_f32()).abs() > AUTOMATION_DEDUP_THRESHOLD
-            });
+            let threshold = match target {
+                AutomationTarget::Track {
+                    param: TrackParam::Pitch,
+                    ..
+                } => PITCH_AUTOMATION_DEDUP_THRESHOLD,
+                _ => AUTOMATION_DEDUP_THRESHOLD,
+            };
+            let changed = self
+                .last_automation_values
+                .get(target)
+                .is_none_or(|last| (value.as_f32() - last.as_f32()).abs() > threshold);
 
             if changed {
                 self.last_automation_values.insert(target.clone(), value);
-                if let AutomationTarget::Track { track, param } = target {
-                    // Track automation updates the override map directly rather
-                    // than emitting an event — the channel-bus stage reads it.
-                    let entry = self.track_auto.entry(*track).or_default();
-                    match param {
-                        TrackParam::Volume => entry.volume = Some(value),
-                        TrackParam::Pan => {
-                            // Map normalized 0.0-1.0 to bipolar -1.0..1.0.
-                            entry.pan = Some(BipolarValue::new(value.as_f32() * 2.0 - 1.0));
+                match target {
+                    AutomationTarget::Track {
+                        track: Some(track),
+                        param,
+                    } => {
+                        // Track automation updates the override map directly
+                        // rather than emitting an event — the channel-bus
+                        // stage reads it.
+                        let entry = self.track_auto.entry(*track).or_default();
+                        match param {
+                            TrackParam::Volume => entry.volume = Some(value),
+                            TrackParam::Pan => {
+                                entry.pan = Some(value.to_bipolar());
+                            }
+                            TrackParam::Mute => entry.muted = Some(value.as_f32() >= 0.5),
+                            TrackParam::Pitch => {
+                                entry.pitch = Some(track_pitch_semitones(value));
+                            }
                         }
-                        TrackParam::Mute => entry.muted = Some(value.as_f32() >= 0.5),
                     }
-                } else {
-                    events.push(SequencerEvent::Parameter {
-                        tick: self.current_tick,
-                        target: target.clone(),
-                        value,
-                    });
+                    // Unreachable by construction: the placement walk resolves
+                    // host-track lanes via `AutomationTarget::resolved`, and
+                    // the placement-less preview drops every Track lane at
+                    // collection. Kept explicit (not folded into `_`) so an
+                    // unresolved target can never masquerade as a Parameter
+                    // event; the assert makes a future collection path that
+                    // forgets to resolve fail loudly in tests instead of
+                    // silently dropping automation.
+                    AutomationTarget::Track { track: None, .. } => {
+                        debug_assert!(false, "unresolved host-track lane reached the drain");
+                    }
+                    _ => {
+                        events.push(SequencerEvent::Parameter {
+                            tick: self.current_tick,
+                            target: target.clone(),
+                            value,
+                        });
+                    }
                 }
             }
         }

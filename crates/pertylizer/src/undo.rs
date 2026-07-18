@@ -249,6 +249,15 @@ pub(crate) enum UndoAction {
         new_value: synth_core::NormalizedValue,
         curve: synth_sequencer::CurveType,
     },
+    /// An automation point's curve type was changed in place (same tick/value).
+    SetAutomationPointCurve {
+        pattern_id: PatternId,
+        target: synth_sequencer::AutomationTarget,
+        tick: PatternTick,
+        value: synth_core::NormalizedValue,
+        old_curve: synth_sequencer::CurveType,
+        new_curve: synth_sequencer::CurveType,
+    },
     /// A whole automation lane was added (e.g. a new empty tracker column).
     AddAutomationLane {
         pattern_id: PatternId,
@@ -698,6 +707,21 @@ impl UndoManager {
                 new_value: *old_value,
                 curve: *curve,
             },
+            UndoAction::SetAutomationPointCurve {
+                pattern_id,
+                target,
+                tick,
+                value,
+                old_curve,
+                new_curve,
+            } => UndoAction::SetAutomationPointCurve {
+                pattern_id: *pattern_id,
+                target: target.clone(),
+                tick: *tick,
+                value: *value,
+                old_curve: *new_curve,
+                new_curve: *old_curve,
+            },
             UndoAction::AddAutomationLane { pattern_id, lane } => {
                 UndoAction::RemoveAutomationLane {
                     pattern_id: *pattern_id,
@@ -925,6 +949,34 @@ mod tests {
             assert_eq!(new_start, PatternTick(0));
         } else {
             panic!("Expected MoveNote inverse");
+        }
+    }
+
+    #[test]
+    fn test_inverse_of_set_automation_point_curve_swaps_curves() {
+        use synth_sequencer::{AutomationTarget, CurveType, GlobalParam, PatternTick};
+        let apply = UndoAction::SetAutomationPointCurve {
+            pattern_id: PatternId(1),
+            target: AutomationTarget::Global(GlobalParam::MasterVolume),
+            tick: PatternTick(480),
+            value: synth_core::NormalizedValue::new(0.5),
+            old_curve: CurveType::Linear,
+            new_curve: CurveType::Step,
+        };
+        let inv = UndoManager::inverse(&apply);
+        if let UndoAction::SetAutomationPointCurve {
+            old_curve,
+            new_curve,
+            tick,
+            ..
+        } = inv
+        {
+            // Inverse swaps the curves and keeps the same tick/value/target.
+            assert_eq!(old_curve, CurveType::Step);
+            assert_eq!(new_curve, CurveType::Linear);
+            assert_eq!(tick, PatternTick(480));
+        } else {
+            panic!("Expected SetAutomationPointCurve inverse");
         }
     }
 

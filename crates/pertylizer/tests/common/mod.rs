@@ -169,6 +169,23 @@ pub fn build_arpeggio_song() -> Arc<RwLock<Song>> {
     build_single_pattern_song("Arpeggio", &notes)
 }
 
+/// Count sign changes in a stereo-interleaved buffer's left channel — a cheap
+/// fundamental-frequency proxy for a simple periodic patch.
+pub fn left_zero_crossings(stereo: &[f32]) -> usize {
+    let mut frames = stereo.chunks_exact(2).map(|f| f[0]);
+    let Some(mut prev) = frames.next() else {
+        return 0;
+    };
+    let mut crossings = 0;
+    for s in frames {
+        if (s > 0.0 && prev <= 0.0) || (s < 0.0 && prev >= 0.0) {
+            crossings += 1;
+        }
+        prev = s;
+    }
+    crossings
+}
+
 /// RMS of a stereo-interleaved buffer's left channel.
 pub fn left_rms(stereo: &[f32]) -> f32 {
     let lefts: Vec<f32> = stereo.chunks_exact(2).map(|f| f[0]).collect();

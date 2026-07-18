@@ -10,7 +10,7 @@ mod common;
 
 use synth_core::{BipolarValue, Gain, ModuleType};
 use synth_engine::instrument::InstrumentId;
-use synth_sequencer::{AutomationTarget, GlobalParam, SeqInstrumentId, TrackParam};
+use synth_sequencer::{AutomationTarget, GlobalParam, SeqInstrumentId, TrackId, TrackParam};
 
 use pertylizer::audio::arrangement_render::{OfflineEngineSession, render_arrangement_to_buffer};
 use pertylizer::audio::mix_analysis::analyze_mix_buffer;
@@ -19,8 +19,8 @@ use pertylizer::patch::{ModuleBuilder, Patch};
 
 use common::{
     add_env_amp_out_tail, add_ramp_automation, assert_bit_exact, build_arpeggio_song,
-    build_sustained_note_song, left_rms, process_block, right_rms, set_first_track_fader,
-    setup_with_patch, sustain_patch,
+    build_sustained_note_song, left_rms, left_zero_crossings, process_block, right_rms,
+    set_first_track_fader, setup_with_patch, sustain_patch,
 };
 
 #[test]
@@ -425,20 +425,19 @@ fn track_volume_scales_output() {
 // 1.0 -> 0.0 across the pattern and assert the first half is louder than the
 // second — proof the automation reaches audio.
 
-#[test]
-fn track_volume_automation_ramps_down() {
+/// Shared body for the ramp-down guards: build the sustained-note song, attach
+/// a 1.0 → 0.0 ramp on `target_for(track_id)`, render, and assert the first
+/// half is clearly louder than the second — proof the lane reaches audio. The
+/// stereo-frame-aligned split and the 1.5× loudness bar are shared so the four
+/// target kinds are tested under identical conditions.
+fn assert_ramp_down_reaches_audio(
+    song_name: &str,
+    label: &str,
+    target_for: impl FnOnce(TrackId) -> AutomationTarget,
+) {
     let rig = setup_with_patch(&sustain_patch());
-    let (song, pattern_id, track_id) = build_sustained_note_song("TrackVolRamp");
-    add_ramp_automation(
-        &song,
-        pattern_id,
-        AutomationTarget::Track {
-            track: track_id,
-            param: TrackParam::Volume,
-        },
-        1.0,
-        0.0,
-    );
+    let (song, pattern_id, track_id) = build_sustained_note_song(song_name);
+    add_ramp_automation(&song, pattern_id, target_for(track_id), 1.0, 0.0);
     let shared = McpSharedState::with_song(song);
 
     let out = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
@@ -447,73 +446,104 @@ fn track_volume_automation_ramps_down() {
     let mid = (out.samples.len() / 2) & !1; // keep stereo-frame aligned
     let first = left_rms(&out.samples[..mid]);
     let second = left_rms(&out.samples[mid..]);
-    assert!(first > 0.0, "first half should be audible");
+    assert!(first > 0.0, "{label}: first half should be audible");
     assert!(
         first > second * 1.5,
-        "track-volume ramp-down: first half louder (first={first}, second={second})"
+        "{label}: first half louder (first={first}, second={second})"
+    );
+}
+
+// TrackParam::Pitch automation must repitch the HELD voice on the lane's
+// track: a constant +12 st host-track pitch lane doubles the rendered
+// fundamental (~2x the zero crossings) without retriggering the note.
+#[test]
+fn track_pitch_automation_repitches_held_voice() {
+    // Encoding: +12 st = 0.5 + 12/(2*48) = 0.625 (see TRACK_PITCH_RANGE).
+    // One rig renders both songs: render_arrangement_to_buffer builds a fresh
+    // offline session per call, so render state is independent.
+    let rig = setup_with_patch(&sustain_patch());
+    let (song, pattern_id, _track_id) = build_sustained_note_song("TrackPitchUp");
+    add_ramp_automation(
+        &song,
+        pattern_id,
+        AutomationTarget::Track {
+            track: None,
+            param: TrackParam::Pitch,
+        },
+        0.625,
+        0.625,
+    );
+    let shared = McpSharedState::with_song(song);
+    let up = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
+        .expect("render up");
+
+    let (song, _pattern_id, _track_id) = build_sustained_note_song("TrackPitchRef");
+    let shared = McpSharedState::with_song(song);
+    let base = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
+        .expect("render base");
+
+    // Compare the steady second halves so the attack transient doesn't bias
+    // the crossing count.
+    let up_mid = (up.samples.len() / 2) & !1;
+    let base_mid = (base.samples.len() / 2) & !1;
+    let up_cross = left_zero_crossings(&up.samples[up_mid..]);
+    let base_cross = left_zero_crossings(&base.samples[base_mid..]);
+    assert!(base_cross > 0, "reference render should oscillate");
+    let ratio = up_cross as f32 / base_cross as f32;
+    assert!(
+        (1.8..=2.2).contains(&ratio),
+        "+12 st track pitch should double the fundamental \
+         (base={base_cross}, up={up_cross}, ratio={ratio})"
+    );
+}
+
+#[test]
+fn track_volume_automation_ramps_down() {
+    assert_ramp_down_reaches_audio("TrackVolRamp", "track-volume ramp-down", |track_id| {
+        AutomationTarget::Track {
+            track: Some(track_id),
+            param: TrackParam::Volume,
+        }
+    });
+}
+
+// A host-track lane (`track: None`) must behave exactly like a lane that
+// names the hosting placement's track: the sequencer resolves it during the
+// placement walk. Same ramp as above, but the lane never names the track.
+#[test]
+fn host_track_volume_automation_resolves_to_placement_track() {
+    assert_ramp_down_reaches_audio(
+        "HostTrackVolRamp",
+        "host-track ramp-down must reach the placement's track",
+        |_| AutomationTarget::Track {
+            track: None,
+            param: TrackParam::Volume,
+        },
     );
 }
 
 #[test]
 fn global_master_volume_automation_ramps_down() {
-    let rig = setup_with_patch(&sustain_patch());
-    let (song, pattern_id, _track_id) = build_sustained_note_song("MasterVolRamp");
-    add_ramp_automation(
-        &song,
-        pattern_id,
-        AutomationTarget::Global(GlobalParam::MasterVolume),
-        1.0,
-        0.0,
-    );
-    let shared = McpSharedState::with_song(song);
-
-    let out = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
-        .expect("render");
-
-    let mid = (out.samples.len() / 2) & !1;
-    let first = left_rms(&out.samples[..mid]);
-    let second = left_rms(&out.samples[mid..]);
-    assert!(first > 0.0, "first half should be audible");
-    assert!(
-        first > second * 1.5,
-        "master-volume ramp-down: first half louder (first={first}, second={second})"
-    );
+    assert_ramp_down_reaches_audio("MasterVolRamp", "master-volume ramp-down", |_| {
+        AutomationTarget::Global(GlobalParam::MasterVolume)
+    });
 }
 
 // F4: per-module automation (`AutomationTarget::Module`) must reach the offline
 // render too — the `analyze_*` path runs the same engine `process()` (Play→Seek→
 // process), which routes sequencer Parameter events through the override layer.
 // This is the case the roadmap pitfall worried analysis "reads base values" for;
-// it does not. Ramps the amplifier's `level` param 1.0 → 0.0 via a Module lane
-// and asserts the rendered first half is clearly louder than the second.
+// it does not. Ramps the amplifier's `level` param 1.0 → 0.0 via a Module lane.
 #[test]
 fn module_param_automation_ramps_down() {
-    let rig = setup_with_patch(&sustain_patch());
-    let (song, pattern_id, _track_id) = build_sustained_note_song("ModuleLevelRamp");
-    add_ramp_automation(
-        &song,
-        pattern_id,
-        AutomationTarget::Module {
+    assert_ramp_down_reaches_audio(
+        "ModuleLevelRamp",
+        "module-param (amp level) ramp-down must reach the offline render",
+        |_| AutomationTarget::Module {
             instrument: SeqInstrumentId(0),
             module_type: ModuleType::Amplifier,
             instance: 1,
             param_id: "level".into(),
         },
-        1.0,
-        0.0,
-    );
-    let shared = McpSharedState::with_song(song);
-
-    let out = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
-        .expect("render");
-
-    let mid = (out.samples.len() / 2) & !1;
-    let first = left_rms(&out.samples[..mid]);
-    let second = left_rms(&out.samples[mid..]);
-    assert!(first > 0.0, "first half should be audible");
-    assert!(
-        first > second * 1.5,
-        "module-param (amp level) ramp-down must reach the offline render: \
-         first={first}, second={second}"
     );
 }

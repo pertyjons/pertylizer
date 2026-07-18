@@ -8,6 +8,26 @@
 use super::*;
 use crate::gui::widgets::{expose, icon_button, solo_toggle};
 
+/// Ordered automation targets shown as stacked zones: every existing lane,
+/// plus the edit-selected target if it has no lane yet (so a brand-new lane
+/// still gets a zone to draw into). Lane order first, the new target last.
+pub(super) fn displayed_automation_targets(
+    data: &PianoRollData,
+    view_state: &SequencerViewState,
+) -> Vec<AutomationTarget> {
+    let mut targets: Vec<AutomationTarget> = data
+        .automation_lanes
+        .iter()
+        .map(|l| l.target.clone())
+        .collect();
+    if let Some(sel) = &view_state.selected_automation
+        && !targets.iter().any(|t| t == sel)
+    {
+        targets.push(sel.clone());
+    }
+    targets
+}
+
 /// Collect piano roll data from song (short read-lock, then release).
 pub(crate) fn collect_piano_roll_data(
     song: &Arc<RwLock<Song>>,
@@ -82,6 +102,9 @@ pub(crate) fn collect_piano_roll_data(
             track_overrides.push(track.instrument);
         }
     }
+    // Every track (id, name) — the cross-track lane targets in the picker.
+    let all_tracks: Vec<(TrackId, String)> =
+        song.tracks().map(|t| (t.id, t.name.clone())).collect();
 
     Some(PianoRollData {
         pattern_name: if pattern.name.is_empty() {
@@ -99,6 +122,7 @@ pub(crate) fn collect_piano_roll_data(
         automation_lanes,
         time_sig,
         track_overrides,
+        all_tracks,
     })
 }
 
@@ -161,6 +185,40 @@ fn has_note_at(notes: &[PianoRollNote], tick: PatternTick, pitch: Pitch) -> bool
             && n.start_tick <= tick
             && n.end_tick.unwrap_or(PatternTick(u32::MAX)) > tick
     })
+}
+
+/// Horizontal pick radius (points) for hitting a note's velocity bar.
+const VELOCITY_HIT_PX: f32 = 15.0;
+
+/// The velocity-edit zone rect, directly below the note grid.
+fn velocity_zone_rect(grid_rect: Rect) -> Rect {
+    Rect::from_min_size(
+        Pos2::new(grid_rect.min.x, grid_rect.max.y),
+        Vec2::new(grid_rect.width(), VELOCITY_ZONE_HEIGHT),
+    )
+}
+
+/// Map a pointer Y inside the velocity zone (top = `vel_zone_top`) to a
+/// normalized velocity — top ≈ 1.0, bottom ≈ 0. Shared by the velocity click
+/// and drag paths so they stay in lockstep.
+fn velocity_from_pos_y(pos_y: f32, vel_zone_top: f32) -> f32 {
+    (1.0 - (pos_y - vel_zone_top) / VELOCITY_ZONE_HEIGHT).clamp(0.01, 1.0)
+}
+
+/// The note whose velocity bar is nearest the pointer X, if within
+/// [`VELOCITY_HIT_PX`]. Bars are drawn at each note's start-tick x, so distance
+/// is measured there — matching the bar rendering and both edit paths.
+fn nearest_velocity_note<'a>(
+    notes: &'a [PianoRollNote],
+    pos_x: f32,
+    tick_to_x: &dyn Fn(PatternTick) -> f32,
+) -> Option<&'a PianoRollNote> {
+    notes
+        .iter()
+        .map(|n| (n, (tick_to_x(n.start_tick) - pos_x).abs()))
+        .filter(|(_, dist)| *dist < VELOCITY_HIT_PX)
+        .min_by(|(_, a), (_, b)| a.total_cmp(b))
+        .map(|(n, _)| n)
 }
 
 /// Selection inspector row: shows pitch / start / length of the selected notes
@@ -849,6 +907,10 @@ fn draw_piano_roll_selection_inspector(
 /// they belong to another instrument), every instrument param, and the automatable
 /// module params of the selected instrument. Used by both the piano-roll toolbar and
 /// the tracker's "add automation column" control.
+/// Minimum width for the automation-picker submenus so short param names
+/// ("Pan", "Rate") don't collapse them to a sliver.
+const SUBMENU_MIN_WIDTH: f32 = 150.0;
+
 pub(crate) fn draw_automation_target_selector(
     ui: &mut egui::Ui,
     view_state: &mut SequencerViewState,
@@ -864,9 +926,15 @@ pub(crate) fn draw_automation_target_selector(
         .as_ref()
         .map_or_else(|| "None".to_owned(), AutomationTarget::display_name);
 
-    tree_picker_button(ui, "auto_lane_select", 160.0, auto_label, |ui| {
+    tree_picker_button(ui, "auto_lane_select", 200.0, auto_label, |ui| {
+        // Keep the popup at least as wide as the button so long target names
+        // ("This Track: Pitch", "module:flt:1:cutoff") don't collapse it.
+        ui.set_min_width(200.0);
+        // Grow to fit all rows (egui clamps the popup to the window, so a
+        // generous cap effectively means "show everything, scroll only if the
+        // menu is taller than the screen").
         egui::ScrollArea::vertical()
-            .max_height(360.0)
+            .max_height(900.0)
             .show(ui, |ui| {
                 // "None" clears the selection (hides the automation zone).
                 if ui
@@ -877,67 +945,19 @@ pub(crate) fn draw_automation_target_selector(
                     ui.close();
                 }
 
-                // 1. Existing lanes with points (any instrument), flat at the top
-                //    so the user can hop between active automations quickly. A
-                //    badge marks lanes that belong to a different instrument.
-                let mut shown_any_existing = false;
-                for lane in &data.automation_lanes {
-                    if lane.points.is_empty() {
-                        continue;
-                    }
-                    let target = &lane.target;
-                    let is_foreign = match target {
-                        AutomationTarget::Instrument { instrument, .. }
-                        | AutomationTarget::Module { instrument, .. } => {
-                            *instrument != view_state.selected_instrument
-                        }
-                        _ => false,
-                    };
-                    let inst_name = match target {
-                        AutomationTarget::Instrument { instrument, .. }
-                        | AutomationTarget::Module { instrument, .. } => instruments
-                            .iter()
-                            .find(|inst| inst.id == (*instrument).into())
-                            .map(|inst| inst.name.clone()),
-                        _ => None,
-                    };
-                    let base = target.display_name();
-                    let arrow = egui_remixicon::icons::ARROW_RIGHT_S_LINE;
-                    let label = if is_foreign {
-                        match inst_name {
-                            Some(name) => format!("* {base}  {arrow} {name}"),
-                            None => format!("* {base}"),
-                        }
-                    } else {
-                        format!("* {base}")
-                    };
-                    let is_selected = view_state.selected_automation.as_ref() == Some(target);
-                    if ui.selectable_label(is_selected, &label).clicked() {
-                        view_state.selected_automation = Some(target.clone());
-                        ui.close();
-                    }
-                    shown_any_existing = true;
-                }
-                if shown_any_existing {
-                    ui.separator();
-                }
+                // Category submenus at the top — Instrument / Track / Global —
+                // then a separator, then the per-module parameters below. (Active
+                // lanes are no longer flat-listed here: every lane is a clickable
+                // stacked zone, so the list would duplicate them.)
 
-                // 2. All instrument-level params for the selected instrument,
-                //    grouped under an "Instrument" submenu (empty + with-points
-                //    alike), so the user can create new lanes.
+                // Instrument-level macros for the selected instrument.
                 ui.menu_button("Instrument", |ui| {
+                    ui.set_min_width(SUBMENU_MIN_WIDTH);
                     for param in AutoInstrumentParam::ALL {
                         let target = AutomationTarget::Instrument {
                             instrument: view_state.selected_instrument,
                             param: *param,
                         };
-                        let already_shown = data
-                            .automation_lanes
-                            .iter()
-                            .any(|l| l.target == target && !l.points.is_empty());
-                        if already_shown {
-                            continue;
-                        }
                         let label = param.display_name().to_owned();
                         let is_selected = view_state.selected_automation.as_ref() == Some(&target);
                         if ui.selectable_label(is_selected, &label).clicked() {
@@ -947,10 +967,76 @@ pub(crate) fn draw_automation_target_selector(
                     }
                 });
 
-                // 3. Per-module parameters of the selected instrument (generic A2
-                //    targets), filtered to the automatable allowlist and grouped
-                //    into one submenu per module. Lets the user automate any
-                //    continuous, RT-safe module parameter.
+                // Track params. The default authoring form is a host-track lane
+                //    (`Track { None }`), which follows whatever track the pattern
+                //    is placed on — offered flat as "This Track: <param>". A
+                //    "Cross-track" submenu lists explicit tracks for the rare
+                //    deliberate case of automating another track from here.
+                ui.menu_button("Track", |ui| {
+                    ui.set_min_width(SUBMENU_MIN_WIDTH);
+                    for param in TrackParam::ALL {
+                        let target = AutomationTarget::Track {
+                            track: None,
+                            param: *param,
+                        };
+                        let label = format!("This Track: {}", param.display_name());
+                        let is_selected = view_state.selected_automation.as_ref() == Some(&target);
+                        if ui.selectable_label(is_selected, &label).clicked() {
+                            view_state.selected_automation = Some(target);
+                            ui.close();
+                        }
+                    }
+                    // Cross-track: name a specific track. Only meaningful when
+                    // the song has tracks to point at.
+                    if !data.all_tracks.is_empty() {
+                        ui.separator();
+                        ui.menu_button("Cross-track", |ui| {
+                            ui.set_min_width(SUBMENU_MIN_WIDTH);
+                            for (track_id, track_name) in &data.all_tracks {
+                                ui.menu_button(track_name, |ui| {
+                                    ui.set_min_width(SUBMENU_MIN_WIDTH);
+                                    for param in TrackParam::ALL {
+                                        let target = AutomationTarget::Track {
+                                            track: Some(*track_id),
+                                            param: *param,
+                                        };
+                                        let is_selected = view_state.selected_automation.as_ref()
+                                            == Some(&target);
+                                        if ui
+                                            .selectable_label(is_selected, param.display_name())
+                                            .clicked()
+                                        {
+                                            view_state.selected_automation = Some(target);
+                                            ui.close();
+                                        }
+                                    }
+                                });
+                            }
+                        });
+                    }
+                });
+
+                // Global params (master volume). Song-spanning, so authoring
+                //    one here hosts the lane on this pattern.
+                ui.menu_button("Global", |ui| {
+                    ui.set_min_width(SUBMENU_MIN_WIDTH);
+                    let target = AutomationTarget::Global(GlobalParam::MasterVolume);
+                    let is_selected = view_state.selected_automation.as_ref() == Some(&target);
+                    if ui
+                        .selectable_label(is_selected, target.display_name())
+                        .clicked()
+                    {
+                        view_state.selected_automation = Some(target);
+                        ui.close();
+                    }
+                });
+
+                ui.separator();
+
+                // Per-module parameters of the selected instrument (generic
+                //    module targets), filtered to the automatable allowlist and
+                //    grouped into one submenu per module. Lets the user automate
+                //    any continuous, RT-safe module parameter.
                 if let Some(inst) = instruments
                     .iter()
                     .find(|i| i.id == view_state.selected_instrument.into())
@@ -968,6 +1054,7 @@ pub(crate) fn draw_automation_target_selector(
                         }
                         let module_label = format!("{} {}", desc.name, module_id.instance);
                         ui.menu_button(module_label, |ui| {
+                            ui.set_min_width(SUBMENU_MIN_WIDTH);
                             for param in &desc.parameters {
                                 if !param.is_automatable() {
                                     continue;
@@ -1008,6 +1095,20 @@ pub(super) fn draw_pattern_instrument_transport(
 ) {
     let t = theme();
 
+    // Snap the working instrument to the first instrument the pattern's tracks
+    // play through (track_overrides is ordered by placement/track). Re-fires
+    // whenever the open pattern OR that first-used instrument changes — so
+    // placing/moving the pattern onto a track after it was already open updates
+    // the pick too — but not every frame, so a manual pick sticks while the
+    // placement is unchanged.
+    let auto_key = (data.pattern_id, data.track_overrides.first().copied());
+    if view_state.last_auto_instrument != Some(auto_key) {
+        view_state.last_auto_instrument = Some(auto_key);
+        if let Some(first) = auto_key.1 {
+            view_state.selected_instrument = first;
+        }
+    }
+
     // Instrument selector for new notes
     {
         let selected_label = instruments
@@ -1017,15 +1118,46 @@ pub(super) fn draw_pattern_instrument_transport(
         egui::ComboBox::from_id_salt(ui.id().with("piano_roll_instrument"))
             .selected_text(RichText::new(&selected_label).size(12.0))
             .width(100.0)
+            .height(700.0)
             .show_ui(ui, |ui| {
-                for inst in instruments {
+                // Instruments the pattern actually plays through (its tracks'
+                // instruments) float to the top, marked with a dot; the rest
+                // follow after a separator.
+                let used = &data.track_overrides;
+                let render = |ui: &mut egui::Ui,
+                              inst: &crate::gui::instrument_rack::InstrumentUiState,
+                              view_state: &mut SequencerViewState,
+                              mark: bool| {
                     let Ok(seq_id) = SeqInstrumentId::try_from(inst.id) else {
-                        continue;
+                        return;
                     };
                     let selected = view_state.selected_instrument == seq_id;
-                    if ui.selectable_label(selected, &inst.name).clicked() {
+                    let label = if mark {
+                        format!("• {}", inst.name)
+                    } else {
+                        inst.name.clone()
+                    };
+                    if ui.selectable_label(selected, label).clicked() {
                         view_state.selected_instrument = seq_id;
                     }
+                };
+                let mut any_used = false;
+                for seq_id in used {
+                    if let Some(inst) = instruments.iter().find(|i| i.id == (*seq_id).into()) {
+                        render(ui, inst, view_state, true);
+                        any_used = true;
+                    }
+                }
+                if any_used {
+                    ui.separator();
+                }
+                for inst in instruments {
+                    let is_used =
+                        SeqInstrumentId::try_from(inst.id).is_ok_and(|sid| used.contains(&sid));
+                    if is_used {
+                        continue; // already shown at the top
+                    }
+                    render(ui, inst, view_state, false);
                 }
             });
 
@@ -1396,11 +1528,9 @@ pub(crate) fn draw_piano_roll(
     let pr_pixels_per_beat = DEFAULT_PR_PIXELS_PER_BEAT * view_state.pr_zoom_x;
 
     let grid_height = pitch_range as f32 * note_row_height;
-    let auto_height = if view_state.selected_automation.is_some() {
-        AUTOMATION_ZONE_HEIGHT
-    } else {
-        0.0
-    };
+    // Every automation lane gets its own stacked zone below the velocity zone.
+    let auto_zone_targets = displayed_automation_targets(data, view_state);
+    let auto_height = auto_zone_targets.len() as f32 * AUTOMATION_ZONE_HEIGHT;
     let total_content_height = grid_height + VELOCITY_ZONE_HEIGHT + auto_height;
 
     // Timeline width: use max of pattern length and furthest note end
@@ -2153,21 +2283,36 @@ fn draw_piano_roll_grid(
         }
     }
 
-    // ── Automation zone (below velocity) ──
-    let auto_y = vel_y + VELOCITY_ZONE_HEIGHT;
-    if let Some(selected_target) = &view_state.selected_automation {
+    // ── Automation zones (stacked below velocity, one per lane) ──
+    // Same ordered list the layout used for `auto_height` (pure helper).
+    let auto_zone_targets = displayed_automation_targets(data, view_state);
+    let auto_height = auto_zone_targets.len() as f32 * AUTOMATION_ZONE_HEIGHT;
+    let auto_base_y = vel_y + VELOCITY_ZONE_HEIGHT;
+    for (i, target) in auto_zone_targets.iter().enumerate() {
+        let zone_y = auto_base_y + i as f32 * AUTOMATION_ZONE_HEIGHT;
+        let is_selected = view_state.selected_automation.as_ref() == Some(target);
         draw_automation_zone(
             &painter,
             data,
             view_state,
-            selected_target,
+            target,
             grid_x,
-            auto_y,
+            zone_y,
             grid_width,
             &tick_to_x,
             &t,
+            is_selected,
         );
     }
+    // The edit-focused lane's zone top — the interaction handler resolves
+    // pointer Y against every band, but this is the y the tools draw at.
+    let selected_zone_index = view_state
+        .selected_automation
+        .as_ref()
+        .and_then(|sel| auto_zone_targets.iter().position(|t| t == sel));
+    let auto_y = selected_zone_index.map_or(auto_base_y, |i| {
+        auto_base_y + i as f32 * AUTOMATION_ZONE_HEIGHT
+    });
 
     // ── Playhead (only if this pattern is actually playing) ──
     if let Some(pattern_tick) = playhead_tick {
@@ -2219,20 +2364,25 @@ fn draw_piano_roll_grid(
         Stroke::new(1.0, t.colors.border),
     );
 
-    // Automation zone rect (for hit-testing)
-    let auto_rect = if view_state.selected_automation.is_some() {
-        Some(Rect::from_min_size(
+    // Hit-test rect for the edit-focused lane's zone (at its stacked y).
+    let auto_rect = selected_zone_index.map(|_| {
+        Rect::from_min_size(
             Pos2::new(grid_x, auto_y),
             Vec2::new(grid_width, AUTOMATION_ZONE_HEIGHT),
-        ))
-    } else {
-        None
-    };
+        )
+    });
+    // Full stacked-zones band, for resolving focus-click on any lane.
+    let auto_stack_rect = (!auto_zone_targets.is_empty()).then(|| {
+        Rect::from_min_size(
+            Pos2::new(grid_x, auto_base_y),
+            Vec2::new(grid_width, auto_height),
+        )
+    });
 
     // ── Hover and cursor ──
     if let Some(pos) = ui.ctx().pointer_hover_pos() {
-        // Check automation zone hover first
-        if auto_rect.is_some_and(|r| r.contains(pos)) {
+        // Crosshair over any stacked automation zone.
+        if auto_stack_rect.is_some_and(|r| r.contains(pos)) {
             ui.ctx().set_cursor_icon(CursorIcon::Crosshair);
         } else if grid_rect.contains(pos) {
             let vp_min = view_pitch_min;
@@ -2338,7 +2488,15 @@ fn draw_piano_roll_grid(
     // ── Mouse interaction ──
     let mut ctx = PianoRollCtx::new(data, song, view_state, handle, undo_manager, instruments);
     handle_piano_roll_interaction(
-        &mut ctx, &response, ui, grid_rect, auto_rect, auto_y, &coords,
+        &mut ctx,
+        &response,
+        ui,
+        grid_rect,
+        auto_rect,
+        auto_y,
+        auto_base_y,
+        &auto_zone_targets,
+        &coords,
     );
 }
 
@@ -2807,6 +2965,29 @@ fn draw_piano_roll_toolbar(
         // Automation lane selector (shared with the tracker view).
         draw_automation_target_selector(ui, view_state, data, instruments);
 
+        // Curve-type brush for newly drawn points (only while a lane is shown).
+        // A point's type is changed after the fact from its right-click menu.
+        if view_state.selected_automation.is_some() {
+            egui::ComboBox::from_id_salt("auto_curve")
+                .selected_text(format!("~{}", view_state.automation_curve.display_name()))
+                .width(90.0)
+                .show_ui(ui, |ui| {
+                    for kind in CurveType::MENU_KINDS {
+                        if ui
+                            .selectable_label(
+                                view_state.automation_curve.same_kind(kind),
+                                kind.display_name(),
+                            )
+                            .clicked()
+                        {
+                            view_state.automation_curve = *kind;
+                        }
+                    }
+                })
+                .response
+                .on_hover_text("Curve applied to newly drawn automation points");
+        }
+
         ui.separator();
 
         // ── Grid resolution selector ──
@@ -3043,6 +3224,7 @@ fn draw_piano_roll_toolbar(
     keep_open
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_piano_roll_interaction(
     ctx: &mut PianoRollCtx<'_>,
     response: &egui::Response,
@@ -3050,6 +3232,8 @@ fn handle_piano_roll_interaction(
     grid_rect: Rect,
     auto_rect: Option<Rect>,
     auto_y: f32,
+    auto_base_y: f32,
+    auto_zone_targets: &[AutomationTarget],
     coords: &PianoRollCoords,
 ) {
     let data = ctx.data;
@@ -3074,6 +3258,31 @@ fn handle_piano_roll_interaction(
 
     let shift_held = ui.input(|i| i.modifiers.shift);
 
+    // Which stacked automation zone a Y coordinate falls in (0 = top zone).
+    // Callers bound-check against `auto_zone_targets` via `.get(band)`.
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+    let band_at = |y: f32| ((y - auto_base_y) / AUTOMATION_ZONE_HEIGHT) as usize;
+
+    // ── Focus-click: click a different stacked lane's zone to edit it ──
+    // Only inside the stacked band's x/y extent, and never on the already-
+    // focused lane's rect (that click falls through to the add-point handler
+    // below) — so the two are mutually exclusive even at a shared zone edge.
+    let auto_stack_bottom = auto_base_y + auto_zone_targets.len() as f32 * AUTOMATION_ZONE_HEIGHT;
+    if response.clicked()
+        && !auto_zone_targets.is_empty()
+        && let Some(pos) = response.interact_pointer_pos()
+        && (grid_rect.min.x..=grid_rect.max.x).contains(&pos.x)
+        && (auto_base_y..auto_stack_bottom).contains(&pos.y)
+        && !auto_rect.is_some_and(|r| r.contains(pos))
+    {
+        let band = band_at(pos.y);
+        if let Some(target) = auto_zone_targets.get(band)
+            && view_state.selected_automation.as_ref() != Some(target)
+        {
+            view_state.selected_automation = Some(target.clone());
+        }
+    }
+
     // ── Automation click handling ──
     if response.clicked()
         && let Some(pos) = response.interact_pointer_pos()
@@ -3087,8 +3296,8 @@ fn handle_piano_roll_interaction(
         let value =
             NormalizedValue::new((1.0 - (pos.y - auto_y) / AUTOMATION_ZONE_HEIGHT).clamp(0.0, 1.0));
 
-        let new_point = AutomationPoint::new(tick, value);
-        let curve = new_point.curve;
+        let curve = view_state.automation_curve;
+        let new_point = AutomationPoint::new(tick, value).with_curve(curve);
         {
             let mut song_w = song.write();
             if let Some(pattern) = song_w.pattern_mut(data.pattern_id) {
@@ -3105,39 +3314,144 @@ fn handle_piano_roll_interaction(
         });
     }
 
-    // ── Automation right-click (delete point) ──
-    if response.secondary_clicked()
-        && let Some(pos) = response.interact_pointer_pos()
+    // ── Automation right-click → context menu (works on ANY stacked lane) ──
+    // Resolve which stacked zone the click landed in (not just the focused
+    // lane), then whether it hit a point in that zone. `Some(tick)` → a point
+    // (curve/delete-point items); `None` → empty zone (lane items only).
+    if response.secondary_clicked() {
+        view_state.automation_ctx_point = response
+            .interact_pointer_pos()
+            .filter(|pos| {
+                (grid_rect.min.x..=grid_rect.max.x).contains(&pos.x)
+                    && pos.y >= auto_base_y
+                    && !auto_zone_targets.is_empty()
+            })
+            .and_then(|pos| {
+                let band = band_at(pos.y);
+                let target = auto_zone_targets.get(band)?;
+                let zone_y = auto_base_y + band as f32 * AUTOMATION_ZONE_HEIGHT;
+                let hit_tick = data
+                    .automation_lanes
+                    .iter()
+                    .find(|l| &l.target == target)
+                    .and_then(|lane| {
+                        automation_point_at_pos(lane, pos, tick_to_x, zone_y)
+                            .map(|idx| lane.points[idx].tick)
+                    });
+                Some((target.clone(), hit_tick))
+            });
+    }
+
+    response.context_menu(|ui| {
+        let Some((target, hit_tick)) = view_state.automation_ctx_point.clone() else {
+            ui.close();
+            return;
+        };
+        ui.set_min_width(140.0);
+
+        // Point items (only when the right-click actually hit a point).
+        if let Some(tick) = hit_tick
+            && let Some(pt) = data
+                .automation_lanes
+                .iter()
+                .find(|l| l.target == target)
+                .and_then(|l| l.points.iter().find(|p| p.tick == tick))
+        {
+            let value = pt.value;
+            let old_curve = pt.curve;
+            ui.label("Curve");
+            for kind in CurveType::MENU_KINDS {
+                if ui
+                    .selectable_label(old_curve.same_kind(kind), kind.display_name())
+                    .clicked()
+                {
+                    if !old_curve.same_kind(kind) {
+                        {
+                            let mut song_w = song.write();
+                            if let Some(pattern) = song_w.pattern_mut(data.pattern_id) {
+                                let lane = pattern.get_or_create_automation(target.clone());
+                                lane.add_point(AutomationPoint::new(tick, value).with_curve(*kind));
+                            }
+                        }
+                        undo_manager.push(crate::undo::UndoAction::SetAutomationPointCurve {
+                            pattern_id: data.pattern_id,
+                            target: target.clone(),
+                            tick,
+                            value,
+                            old_curve,
+                            new_curve: *kind,
+                        });
+                    }
+                    ui.close();
+                }
+            }
+            ui.separator();
+            if ui.button("Delete point").clicked() {
+                {
+                    let mut song_w = song.write();
+                    if let Some(pattern) = song_w.pattern_mut(data.pattern_id)
+                        && let Some(lane) =
+                            pattern.automation.iter_mut().find(|l| l.target == target)
+                    {
+                        lane.remove_point(tick);
+                    }
+                }
+                undo_manager.push(crate::undo::UndoAction::RemoveAutomationPoint {
+                    pattern_id: data.pattern_id,
+                    target: target.clone(),
+                    tick,
+                    value,
+                    curve: old_curve,
+                });
+                ui.close();
+            }
+            ui.separator();
+        }
+
+        // Lane-level: delete the whole lane (captures the full lane for undo).
+        if danger_button(ui, format!("Delete lane: {}", target.display_name())).clicked() {
+            let removed = {
+                let mut song_w = song.write();
+                song_w
+                    .pattern_mut(data.pattern_id)
+                    .and_then(|pattern| pattern.remove_automation_lane(&target))
+            };
+            if let Some(lane) = removed {
+                // If the deleted lane was the edit focus, clear it.
+                if view_state.selected_automation.as_ref() == Some(&target) {
+                    view_state.selected_automation = None;
+                }
+                undo_manager.push(crate::undo::UndoAction::RemoveAutomationLane {
+                    pattern_id: data.pattern_id,
+                    lane,
+                });
+            }
+            ui.close();
+        }
+    });
+
+    // ── Automation point hover tooltip (names the point's curve type) ──
+    // `response.hovered()` is false when a higher layer (e.g. the point's
+    // just-opened context menu) sits under the pointer, so the tooltip does
+    // not overlap the menu on the right-click frame.
+    if view_state.drag.is_none()
+        && response.hovered()
+        && let Some(pos) = ui.pointer_latest_pos()
         && let Some(ar) = auto_rect
         && ar.contains(pos)
         && let Some(target) = &view_state.selected_automation
+        && let Some(lane) = data.automation_lanes.iter().find(|l| &l.target == target)
+        && let Some(idx) = automation_point_at_pos(lane, pos, tick_to_x, auto_y)
     {
-        let target = target.clone();
-        // Find the lane snapshot to hit-test against
-        if let Some(lane) = data.automation_lanes.iter().find(|l| l.target == target)
-            && let Some(idx) = automation_point_at_pos(lane, pos, tick_to_x, auto_y)
-        {
-            let pt = &lane.points[idx];
-            let point_tick = pt.tick;
-            let point_value = pt.value;
-            let point_curve = pt.curve;
-            {
-                let mut song_w = song.write();
-                if let Some(pattern) = song_w.pattern_mut(data.pattern_id)
-                    && let Some(auto_lane) =
-                        pattern.automation.iter_mut().find(|l| l.target == target)
-                {
-                    auto_lane.remove_point(point_tick);
-                }
-            }
-            undo_manager.push(crate::undo::UndoAction::RemoveAutomationPoint {
-                pattern_id: data.pattern_id,
-                target,
-                tick: point_tick,
-                value: point_value,
-                curve: point_curve,
-            });
-        }
+        let curve = lane.points[idx].curve;
+        egui::Tooltip::always_open(
+            ui.ctx().clone(),
+            ui.layer_id(),
+            egui::Id::new("auto_point_curve_tip"),
+            pos,
+        )
+        .at_pointer()
+        .show(|ui| ui.label(format!("{} point", curve.display_name())));
     }
 
     // ── Click handling ──
@@ -3212,43 +3526,75 @@ fn handle_piano_roll_interaction(
         }
     }
 
-    // ── Automation drag start ──
+    // ── Automation point drag start (any stacked lane, not just the focused
+    // one) ── Resolve which zone the press landed in, hit-test a point there,
+    // and start the drag against that zone's own top y. Also focus the lane so
+    // its zone renders as selected while dragging.
     if response.drag_started()
+        && !auto_zone_targets.is_empty()
         && let Some(pos) = ui.input(|i| i.pointer.press_origin())
-        && let Some(ar) = auto_rect
-        && ar.contains(pos)
-        && let Some(target) = &view_state.selected_automation
+        && (grid_rect.min.x..=grid_rect.max.x).contains(&pos.x)
+        && (auto_base_y..auto_stack_bottom).contains(&pos.y)
     {
-        let target = target.clone();
-        if let Some(lane) = data.automation_lanes.iter().find(|l| l.target == target)
-            && let Some(idx) = automation_point_at_pos(lane, pos, tick_to_x, auto_y)
+        let band = band_at(pos.y);
+        let zone_y = auto_base_y + band as f32 * AUTOMATION_ZONE_HEIGHT;
+        if let Some(target) = auto_zone_targets.get(band).cloned()
+            && let Some(lane) = data.automation_lanes.iter().find(|l| l.target == target)
+            && let Some(idx) = automation_point_at_pos(lane, pos, tick_to_x, zone_y)
         {
             let pt = &lane.points[idx];
+            view_state.selected_automation = Some(target.clone());
             view_state.drag = Some(DragState::DragAutomationPoint {
                 target,
                 original_tick: pt.tick,
                 original_value: pt.value,
                 current_tick: pt.tick,
                 current_value: pt.value,
+                curve: pt.curve,
+                zone_y,
             });
+        }
+    }
+
+    // ── Velocity click: set the nearest note's velocity from the click height
+    // (a plain click, no drag needed — mirrors the drag-paint apply below).
+    if response.clicked()
+        && let Some(pos) = response.interact_pointer_pos()
+    {
+        let vel_rect = velocity_zone_rect(grid_rect);
+        if vel_rect.contains(pos)
+            && let Some(note) = nearest_velocity_note(&data.notes, pos.x, tick_to_x)
+        {
+            let old_velocity = note.velocity;
+            let new_velocity = Velocity::new(velocity_from_pos_y(pos.y, vel_rect.min.y));
+            // Skip a click that doesn't move the value — no silent no-op
+            // undo entry.
+            if new_velocity != old_velocity {
+                {
+                    let mut song_w = song.write();
+                    if let Some(pattern) = song_w.pattern_mut(data.pattern_id) {
+                        pattern.set_note_velocity(note.note_id, new_velocity);
+                    }
+                }
+                undo_manager.push(crate::undo::UndoAction::SetNoteVelocity {
+                    pattern_id: data.pattern_id,
+                    note_id: note.note_id,
+                    old_velocity,
+                    new_velocity,
+                });
+            }
         }
     }
 
     // ── Velocity drag start ──
     if response.drag_started()
         && let Some(pos) = ui.input(|i| i.pointer.press_origin())
+        && velocity_zone_rect(grid_rect).contains(pos)
     {
-        let vel_y = grid_rect.max.y;
-        let vel_rect = Rect::from_min_size(
-            Pos2::new(grid_rect.min.x, vel_y),
-            Vec2::new(grid_rect.width(), VELOCITY_ZONE_HEIGHT),
-        );
-        if vel_rect.contains(pos) {
-            view_state.drag = Some(DragState::DragVelocity {
-                last_note_id: None,
-                initial_velocities: std::collections::HashMap::new(),
-            });
-        }
+        view_state.drag = Some(DragState::DragVelocity {
+            last_note_id: None,
+            initial_velocities: std::collections::HashMap::new(),
+        });
     }
 
     // ── Drag start ──
@@ -3390,12 +3736,13 @@ fn handle_piano_roll_interaction(
             Some(DragState::DragAutomationPoint {
                 current_tick,
                 current_value,
+                zone_y,
                 ..
             }) => {
                 let raw_tick = x_to_tick(pos.x);
                 *current_tick = quantize_tick(raw_tick, data.ticks_per_row);
                 *current_value = NormalizedValue::new(
-                    (1.0 - (pos.y - auto_y) / AUTOMATION_ZONE_HEIGHT).clamp(0.0, 1.0),
+                    (1.0 - (pos.y - *zone_y) / AUTOMATION_ZONE_HEIGHT).clamp(0.0, 1.0),
                 );
             }
             Some(DragState::DragVelocity { .. }) => {
@@ -3414,27 +3761,16 @@ fn handle_piano_roll_interaction(
     }) = &mut view_state.drag
         && let Some(pos) = ui.pointer_latest_pos()
     {
-        // vel_y is grid_rect.max.y, VELOCITY_ZONE_HEIGHT below
-        let vel_y = grid_rect.max.y;
-        let new_vel = (1.0 - (pos.y - vel_y) / VELOCITY_ZONE_HEIGHT).clamp(0.01, 1.0);
-        // Find note at this x position
-        let click_tick = x_to_tick(pos.x);
-        let nearest_note = data.notes.iter().min_by_key(|n| {
-            let mid = n.start_tick.0 + n.end_tick.map_or(0, |e| (e.0 - n.start_tick.0) / 2);
-            (mid as i64 - click_tick.0 as i64).unsigned_abs()
-        });
-        if let Some(note) = nearest_note {
-            let note_x = tick_to_x(note.start_tick);
-            if (note_x - pos.x).abs() < 15.0 {
-                *last_note_id = Some(note.note_id);
-                initial_velocities
-                    .entry(note.note_id)
-                    .or_insert(note.velocity);
-                {
-                    let mut song_w = song.write();
-                    if let Some(pattern) = song_w.pattern_mut(data.pattern_id) {
-                        pattern.set_note_velocity(note.note_id, Velocity::new(new_vel));
-                    }
+        let new_vel = velocity_from_pos_y(pos.y, grid_rect.max.y);
+        if let Some(note) = nearest_velocity_note(&data.notes, pos.x, tick_to_x) {
+            *last_note_id = Some(note.note_id);
+            initial_velocities
+                .entry(note.note_id)
+                .or_insert(note.velocity);
+            {
+                let mut song_w = song.write();
+                if let Some(pattern) = song_w.pattern_mut(data.pattern_id) {
+                    pattern.set_note_velocity(note.note_id, Velocity::new(new_vel));
                 }
             }
         }
@@ -3565,13 +3901,15 @@ fn handle_piano_roll_interaction(
                 original_value,
                 current_tick,
                 current_value,
+                curve,
+                zone_y: _,
             } => {
-                // Apply automation point move
+                // Apply automation point move — the point keeps its own curve.
                 if current_tick != original_tick
                     || (current_value.as_f32() - original_value.as_f32()).abs() > f32::EPSILON
                 {
-                    let new_point = AutomationPoint::new(current_tick, current_value);
-                    let curve = new_point.curve;
+                    let new_point =
+                        AutomationPoint::new(current_tick, current_value).with_curve(curve);
                     {
                         let mut song_w = song.write();
                         if let Some(pattern) = song_w.pattern_mut(data.pattern_id) {

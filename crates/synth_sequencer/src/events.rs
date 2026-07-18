@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use synth_core::NormalizedValue;
 
 use super::automation::AutomationTarget;
-use super::ids::SeqInstrumentId;
+use super::ids::{SeqInstrumentId, TrackId};
 use super::note::{Glide, NoteExpression};
 use super::pitch::{Pitch, Velocity};
 use super::time::Tick;
@@ -38,6 +38,14 @@ pub enum SequencerEvent {
         /// consumes only the remaining fields (note-shape scalars in C3, vibrato
         /// in C4).
         expression: Option<NoteExpression>,
+        /// Track whose placement spawned this note, `None` for the
+        /// placement-less preview and live input. The voice stores it so
+        /// track-scoped state (`TrackParam::Pitch`, later per-voice faders)
+        /// lands on exactly the voices playing on that track. `serde(default)`
+        /// so any externally captured pre-platform event stream still parses
+        /// (events are never persisted by the app itself).
+        #[serde(default)]
+        track: Option<TrackId>,
     },
     /// Note off event.
     NoteOff {
@@ -134,6 +142,7 @@ mod tests {
             legato: false,
             glide: None,
             expression: None,
+            track: None,
         };
         assert_eq!(event.tick().0, 1000);
     }
@@ -148,6 +157,7 @@ mod tests {
             legato: false,
             glide: None,
             expression: None,
+            track: None,
         };
         assert!(note_on.is_note_on());
         assert!(!note_on.is_note_off());
@@ -172,6 +182,7 @@ mod tests {
                 legato: false,
                 glide: None,
                 expression: None,
+                track: None,
             },
             SequencerEvent::NoteOn {
                 tick: Tick(100),
@@ -181,6 +192,7 @@ mod tests {
                 legato: false,
                 glide: None,
                 expression: None,
+                track: None,
             },
             SequencerEvent::NoteOff {
                 tick: Tick(300),
@@ -205,6 +217,7 @@ mod tests {
             legato: false,
             glide: None,
             expression: None,
+            track: None,
         };
         assert_eq!(note.instrument(), Some(SeqInstrumentId(5)));
     }

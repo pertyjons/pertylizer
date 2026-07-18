@@ -14,9 +14,9 @@ use synth_core::{BipolarValue, Bpm, Hertz, MidiNote, Milliseconds, NormalizedVal
 use synth_engine::{EngineCommand, EngineHandle, InstrumentId, RecordingState};
 use synth_sequencer::{
     AutoInstrumentParam, AutomationPoint, AutomationTarget, CurveType, Duration as SeqDuration,
-    ExpansionBuffer, Glide, GlideFrom, GlideInterp, Note, NoteExpression, NoteId, NoteLane,
-    NoteName, NoteProcessor, Ornament, PatternId, PatternTick, Pitch, SeqInstrumentId, Song, Tick,
-    TimeSignature, TrackId, Velocity, Vibrato, VibratoShape,
+    ExpansionBuffer, Glide, GlideFrom, GlideInterp, GlobalParam, Note, NoteExpression, NoteId,
+    NoteLane, NoteName, NoteProcessor, Ornament, PatternId, PatternTick, Pitch, SeqInstrumentId,
+    Song, Tick, TimeSignature, TrackId, TrackParam, Velocity, Vibrato, VibratoShape,
 };
 
 use crate::gui::input::KEY_MAP;
@@ -98,6 +98,14 @@ enum DragState {
         original_value: NormalizedValue,
         current_tick: PatternTick,
         current_value: NormalizedValue,
+        /// The dragged point's curve, preserved across the move (a move must
+        /// not reset the point's type to the default).
+        curve: CurveType,
+        /// Top Y of the stacked zone this point lives in. Captured at drag
+        /// start so the value math stays correct even when the dragged lane
+        /// isn't the focused one (drag works on any stacked lane, not just the
+        /// focused zone's `auto_y`).
+        zone_y: f32,
     },
     /// Drag-edit a velocity bar.
     DragVelocity {
@@ -199,6 +207,22 @@ pub struct SequencerViewState {
     drag: Option<DragState>,
     /// Currently selected automation lane (None = automation zone hidden).
     selected_automation: Option<AutomationTarget>,
+    /// Curve type applied to newly drawn automation points (the "brush"). A
+    /// point's type is changed after the fact from its right-click menu.
+    automation_curve: CurveType,
+    /// `(pattern, first-used-instrument)` the working instrument was last
+    /// auto-selected for. The working instrument snaps to the first instrument
+    /// the pattern's tracks play through whenever the open pattern OR that
+    /// first-used instrument changes (e.g. a placement is added/moved to a
+    /// different track after the pattern was already open) — but not on every
+    /// frame, so a manual change while the placement is unchanged still sticks.
+    last_auto_instrument: Option<(PatternId, Option<SeqInstrumentId>)>,
+    /// The automation lane whose right-click context menu is open, if any:
+    /// the lane target plus the point tick under the cursor (`Some` = a point
+    /// was hit → curve/delete-point items; `None` = empty zone → lane-level
+    /// items only). Both cases also offer "Delete lane". Set on secondary
+    /// click, resolved against whichever stacked zone the click landed in.
+    automation_ctx_point: Option<(AutomationTarget, Option<PatternTick>)>,
     /// Track currently being renamed (inline text edit).
     editing_track_name: Option<(TrackId, String)>,
     /// Pattern currently being renamed (inline text edit). Shared between
@@ -327,6 +351,9 @@ impl SequencerViewState {
             edit_tool: EditTool::Draw,
             drag: None,
             selected_automation: None,
+            automation_curve: CurveType::Linear,
+            automation_ctx_point: None,
+            last_auto_instrument: None,
             editing_track_name: None,
             editing_pattern_name: None,
             editing_pattern_description: None,
@@ -921,6 +948,9 @@ pub(crate) struct PianoRollData {
     /// no host track has `track.instrument` set — in that case the
     /// per-note instrument is used at playback.
     track_overrides: Vec<SeqInstrumentId>,
+    /// Every track in the song, `(id, name)` — the cross-track lane targets
+    /// (`Track { Some(id) }`) offered under the automation picker's submenu.
+    all_tracks: Vec<(TrackId, String)>,
 }
 
 /// Floor-snap a tick to a multiple of `step`. `step == 0` is a no-op.

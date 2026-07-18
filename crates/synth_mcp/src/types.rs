@@ -942,10 +942,15 @@ pub struct PlacementInfo {
 /// Information about an automation lane in a pattern.
 #[derive(Debug, Clone, Serialize)]
 pub struct AutomationLaneInfo {
-    /// Target parameter name (e.g. "Volume", "Pan").
+    /// Round-trippable target string (e.g. "Volume", "module:flt:1:cutoff",
+    /// "track:Pitch", "track:Volume:2", "global:MasterVolume") — pass it back
+    /// to the automation tools to address this lane.
     pub target: String,
-    /// Instrument ID (if instrument-targeted).
+    /// Instrument ID (instrument- and module-scoped lanes only; `None` for
+    /// track/global lanes).
     pub instrument_id: Option<u16>,
+    /// Lane scope: `instrument`, `module`, `track`, or `global`.
+    pub scope: String,
     /// Number of automation points.
     pub point_count: usize,
 }

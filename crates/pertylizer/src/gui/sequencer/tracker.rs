@@ -1138,8 +1138,8 @@ fn edit_automation_cell(
         {
             let value = NormalizedValue::new(parsed.clamp(0.0, 1.0));
             // Preserve an existing point's curve on replace; new points get the
-            // default curve.
-            let curve = existing.map_or_else(CurveType::default, |(_, c)| c);
+            // toolbar's brush curve.
+            let curve = existing.map_or(view_state.automation_curve, |(_, c)| c);
             let mut song_w = song.write();
             if let Some(pattern) = song_w.pattern_mut(data.pattern_id) {
                 let auto_lane = pattern.get_or_create_automation(target.clone());

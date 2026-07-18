@@ -24,7 +24,10 @@ pub(super) fn automation_point_at_pos(
     None
 }
 
-/// Draw the automation zone below the velocity zone.
+/// Draw one automation lane's zone. Zones are stacked (one per lane); the
+/// caller positions each at its own `auto_y`. The zone shows a dimmed caption
+/// naming its `target`, and the currently-selected (edit-focused) lane is
+/// highlighted so it reads as the one the tools act on.
 #[allow(clippy::too_many_arguments)]
 pub(super) fn draw_automation_zone(
     painter: &egui::Painter,
@@ -36,17 +39,28 @@ pub(super) fn draw_automation_zone(
     grid_width: f32,
     tick_to_x: &dyn Fn(PatternTick) -> f32,
     t: &crate::gui::theme::Theme,
+    is_selected: bool,
 ) {
-    let auto_color = AUTOMATION_ORANGE; // Orange
+    // The edit-focused lane draws in full accent; the others are dimmed so the
+    // focused lane stands out (but every lane's curve stays legible).
+    let auto_color = if is_selected {
+        AUTOMATION_ORANGE
+    } else {
+        AUTOMATION_ORANGE.gamma_multiply(0.55)
+    };
 
-    // Background
+    // Background — the focused lane gets a subtly brighter fill.
     painter.rect_filled(
         Rect::from_min_size(
             Pos2::new(grid_x, auto_y),
             Vec2::new(grid_width, AUTOMATION_ZONE_HEIGHT),
         ),
         0.0,
-        AUTOMATION_ZONE_BG,
+        if is_selected {
+            AUTOMATION_ZONE_BG.gamma_multiply(1.6)
+        } else {
+            AUTOMATION_ZONE_BG
+        },
     );
 
     // Separator line
@@ -58,13 +72,26 @@ pub(super) fn draw_automation_zone(
         Stroke::new(1.0, t.colors.border),
     );
 
-    // Label
+    // One "AUTO" gutter tag on the focused lane (mirrors the "VEL" tag above),
+    // plus every zone's target long-form name dimmed at the top-right corner —
+    // right-aligned so it clears leading high-value points near tick 0.
+    if is_selected {
+        painter.text(
+            Pos2::new(grid_x - KEY_WIDTH + 2.0, auto_y + 2.0),
+            egui::Align2::LEFT_TOP,
+            "AUTO",
+            egui::FontId::proportional(9.0),
+            t.colors.text_dim,
+        );
+    }
     painter.text(
-        Pos2::new(grid_x - KEY_WIDTH + 2.0, auto_y + 2.0),
-        egui::Align2::LEFT_TOP,
-        "AUTO",
+        Pos2::new(grid_x + grid_width - 4.0, auto_y + 2.0),
+        egui::Align2::RIGHT_TOP,
+        selected_target.display_name(),
         egui::FontId::proportional(9.0),
-        t.colors.text_dim,
+        t.colors
+            .text_dim
+            .gamma_multiply(if is_selected { 1.0 } else { 0.7 }),
     );
 
     // Reference lines (25%, 50%, 75%)
@@ -174,6 +201,19 @@ pub(super) fn draw_automation_zone(
             Pos2::new(px, py),
             AUTOMATION_POINT_RADIUS + 1.0,
             Stroke::new(1.0, Color32::WHITE),
+        );
+    }
+
+    // Focus outline on the edit-selected lane.
+    if is_selected {
+        painter.rect_stroke(
+            Rect::from_min_size(
+                Pos2::new(grid_x, auto_y),
+                Vec2::new(grid_width, AUTOMATION_ZONE_HEIGHT),
+            ),
+            0.0,
+            Stroke::new(1.0, AUTOMATION_ORANGE.gamma_multiply(0.8)),
+            egui::StrokeKind::Inside,
         );
     }
 }

@@ -367,7 +367,7 @@
         },
         {
           "additionalProperties": false,
-          "description": "Track parameter.",
+          "description": "Track parameter.\n\n`track: None` means \"the track hosting the placement\": the lane follows\nwhatever track its pattern is placed on, resolved by the sequencer\nduring the placement walk. This is the default authoring form — a\npooled pattern should not hard-code a track. `Some(id)` deliberately\nautomates a specific track regardless of where the pattern is placed\n(cross-track automation, e.g. song-spanning fades hosted on a\ndedicated automation track).",
           "properties": {
             "Track": {
               "properties": {
@@ -375,11 +375,17 @@
                   "$ref": "#/$defs/TrackParam"
                 },
                 "track": {
-                  "$ref": "#/$defs/TrackId"
+                  "anyOf": [
+                    {
+                      "$ref": "#/$defs/TrackId"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
                 }
               },
               "required": [
-                "track",
                 "param"
               ],
               "type": "object"
@@ -10602,12 +10608,21 @@
     },
     "TrackParam": {
       "description": "Automatable track parameters.",
-      "enum": [
-        "Volume",
-        "Pan",
-        "Mute"
-      ],
-      "type": "string"
+      "oneOf": [
+        {
+          "enum": [
+            "Volume",
+            "Pan",
+            "Mute"
+          ],
+          "type": "string"
+        },
+        {
+          "const": "Pitch",
+          "description": "Continuous track-pitch offset applied to the voices playing on the\ntrack — channel-scoped pitch state (portamento, arpeggio, track\nvibrato) that may begin, change, or stop while a note is held. Lane\nvalues use the bipolar encoding: see [`TRACK_PITCH_RANGE`],\n[`track_pitch_semitones`], and [`track_pitch_normalized`].",
+          "type": "string"
+        }
+      ]
     },
     "TrackSend": {
       "description": "A send tap from a track's channel to a return bus.\n\nThe channel's signal is summed into the target return bus scaled by `level`.\n`pre_fader` selects whether the tap is taken before (`true`) or after\n(`false`, the default) the channel fader/pan — post-fader is the common case\n(the send follows the fader), pre-fader keeps the send constant regardless of\nthe channel level (e.g. a fully-wet cue/monitor send).",

@@ -2734,6 +2734,20 @@ pub enum AutomationTargetInput {
         /// Macro name.
         param: String,
     },
+    /// A track-scoped parameter: Volume, Pan, Mute, Pitch. Omit `track_id` for
+    /// a host-track lane (follows whichever track the pattern is placed on —
+    /// the usual form); set it to automate a specific track (cross-track).
+    Track {
+        /// Track parameter name.
+        param: String,
+        /// Target track id; omitted = the pattern's host track.
+        track_id: Option<u16>,
+    },
+    /// A song-global parameter: MasterVolume.
+    Global {
+        /// Global parameter name.
+        param: String,
+    },
 }
 
 impl AutomationTargetInput {
@@ -2746,6 +2760,15 @@ impl AutomationTargetInput {
                 param_id,
             } => format!("module:{module_type}:{instance}:{param_id}"),
             Self::Instrument { param } => param.clone(),
+            Self::Track {
+                param,
+                track_id: Some(id),
+            } => format!("track:{param}:{id}"),
+            Self::Track {
+                param,
+                track_id: None,
+            } => format!("track:{param}"),
+            Self::Global { param } => format!("global:{param}"),
         }
     }
 }
@@ -2754,7 +2777,7 @@ impl AutomationTargetInput {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AutomationPointInput {
     #[schemars(
-        description = "Target as a DSL string: an instrument macro (Volume, Pan, FilterCutoff, FilterResonance, Attack, Decay, Sustain, Release) or 'module:<type>:<instance>:<param>' (e.g. 'module:flt:1:cutoff'). Provide this OR the structured 'target'."
+        description = "Target as a DSL string: an instrument macro (Volume, Pan, FilterCutoff, FilterResonance, Attack, Decay, Sustain, Release); 'module:<type>:<instance>:<param>' (e.g. 'module:flt:1:cutoff'); a track lane 'track:<param>' (Volume/Pan/Mute/Pitch, host track) or 'track:<param>:<track_id>' (a specific track); or a global lane 'global:MasterVolume'. Provide this OR the structured 'target'."
     )]
     pub param: Option<String>,
     #[schemars(
@@ -2798,7 +2821,9 @@ pub struct AddAutomationPointsParam {
 pub struct GetAutomationPointsParam {
     #[schemars(description = "Pattern ID")]
     pub pattern_id: u32,
-    #[schemars(description = "Target parameter name (e.g. Volume, Pan, FilterCutoff)")]
+    #[schemars(
+        description = "Target DSL: instrument macro (Volume/Pan/FilterCutoff/FilterResonance/Attack/Decay/Sustain/Release), module:<type>:<instance>:<param>, track:<param>[:<track_id>], or global:MasterVolume. From list_automation_lanes, pass the lane target string back verbatim."
+    )]
     pub target: String,
     #[schemars(description = "Instrument index (default 0)")]
     pub instrument_id: Option<u16>,
@@ -2808,7 +2833,9 @@ pub struct GetAutomationPointsParam {
 pub struct RemoveAutomationPointsParam {
     #[schemars(description = "Pattern ID")]
     pub pattern_id: u32,
-    #[schemars(description = "Target parameter name (e.g. Volume, Pan)")]
+    #[schemars(
+        description = "Target DSL: instrument macro (Volume/Pan/FilterCutoff/FilterResonance/Attack/Decay/Sustain/Release), module:<type>:<instance>:<param>, track:<param>[:<track_id>], or global:MasterVolume. From list_automation_lanes, pass the lane target string back verbatim."
+    )]
     pub target: String,
     #[schemars(description = "Instrument index (default 0)")]
     pub instrument_id: Option<u16>,
@@ -2820,7 +2847,9 @@ pub struct RemoveAutomationPointsParam {
 pub struct ClearAutomationLaneInput {
     #[schemars(description = "Pattern ID")]
     pub pattern_id: u32,
-    #[schemars(description = "Target parameter name (e.g. Volume, Pan)")]
+    #[schemars(
+        description = "Target DSL: instrument macro (Volume/Pan/FilterCutoff/FilterResonance/Attack/Decay/Sustain/Release), module:<type>:<instance>:<param>, track:<param>[:<track_id>], or global:MasterVolume. From list_automation_lanes, pass the lane target string back verbatim."
+    )]
     pub target: String,
     #[schemars(description = "Instrument index (default 0)")]
     pub instrument_id: Option<u16>,

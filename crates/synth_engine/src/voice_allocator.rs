@@ -375,12 +375,21 @@ impl VoiceAllocator {
                     if let Some(voice) = self.voices.iter_mut().find(|v| v.is_active()) {
                         voice.set_glide_time(self.config.glide_time);
 
+                        // The fallback repitch must keep the voice's track
+                        // tag: the still-held note belongs to the same
+                        // channel, and the default trigger would strip it —
+                        // dropping TrackParam::Pitch mid-phrase on exactly
+                        // the mono/legato tracks that use it most.
+                        let keep_track = NoteTrigger {
+                            track: voice.track,
+                            ..NoteTrigger::default()
+                        };
                         if self.config.mode == AllocationMode::Legato {
                             // Legato: just glide pitch, don't retrigger
-                            voice.glide_to_note(prev_note, prev_vel);
+                            voice.glide_to_note_expr(prev_note, prev_vel, keep_track);
                         } else {
                             // Mono: retrigger with glide
-                            voice.note_on(prev_note, prev_vel, self.time);
+                            voice.note_on_expr(prev_note, prev_vel, self.time, keep_track);
                         }
                     }
                 } else {
@@ -540,8 +549,9 @@ impl VoiceAllocator {
         let voice = &mut self.voices[voice_idx];
 
         // Start fade-out with pending note; instrument.rs will trigger
-        // note_on once the fade completes.
-        voice.steal_for(note, velocity, self.time);
+        // note_on once the fade completes. The trigger rides along so the
+        // stolen voice keeps its track tag + per-note expression.
+        voice.steal_for(note, velocity, self.time, trigger);
         self.last_note = Some(note);
         Some(voice.id)
     }
@@ -827,6 +837,36 @@ mod tests {
     }
 
     #[test]
+    fn mono_note_off_fallback_preserves_track_tag() {
+        use crate::voice::NoteTrigger;
+        use synth_sequencer::TrackId;
+
+        // A mono track carrying TrackParam::Pitch relies on the still-held
+        // note keeping its track tag when the newer note releases — else the
+        // fallback would drop track pitch mid-phrase.
+        let config = AllocatorConfig {
+            max_voices: VoiceCount::QUAD,
+            mode: AllocationMode::Mono,
+            ..Default::default()
+        };
+        let mut allocator = VoiceAllocator::new(config);
+        let track = Some(TrackId(7));
+        let tagged = NoteTrigger {
+            track,
+            ..NoteTrigger::default()
+        };
+
+        allocator.note_on_expr(MidiNote::C4, Velocity::new(0.8), tagged);
+        allocator.note_on_expr(MidiNote::new(64), Velocity::new(0.8), tagged);
+        // Release the newer note → falls back to the still-held C4.
+        allocator.note_off(MidiNote::new(64));
+
+        let active = allocator.voices.iter().find(|v| v.is_active()).unwrap();
+        assert_eq!(active.note(), Some(MidiNote::C4));
+        assert_eq!(active.track, track, "fallback must keep the track tag");
+    }
+
+    #[test]
     fn test_per_note_legato_overrides_poly_no_retrigger() {
         use crate::voice::NoteTrigger;
 
@@ -846,6 +886,7 @@ mod tests {
             legato: true,
             glide: None,
             vibrato: None,
+            track: None,
         };
         allocator.note_on_expr(MidiNote::new(64), Velocity::new(0.8), legato);
 
@@ -878,6 +919,7 @@ mod tests {
             legato: true,
             glide: None,
             vibrato: None,
+            track: None,
         };
         let (d5, d6) = (MidiNote::new(74), MidiNote::new(86));
         // D5,D6,D5,D6,D5 — the figure ends on D5, so the lone NoteOff is D5.
@@ -926,6 +968,7 @@ mod tests {
                 stepped: false,
             }),
             vibrato: None,
+            track: None,
         };
         allocator.note_on_expr(MidiNote::new(81), Velocity::new(0.8), trigger);
 

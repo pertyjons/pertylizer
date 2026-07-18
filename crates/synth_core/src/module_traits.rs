@@ -36,9 +36,11 @@ pub struct VoicePitch {
     /// Raw note target: the destination note frequency with **no** glide, bend or
     /// vibrato applied. A module gliding itself smooths toward this.
     pub note_target: Hertz,
-    /// Pitch-bend + per-note vibrato as a single additive semitone offset, to be
-    /// applied *after* a module's own glide so expression rides on top
-    /// un-smoothed.
+    /// Pitch-bend + per-note vibrato + track pitch (`TrackParam::Pitch`
+    /// automation) as a single additive semitone offset, to be applied *after*
+    /// a module's own glide so expression rides on top un-smoothed. Note the
+    /// magnitude: bend/vibrato are small (default bend range ±2 st) but track
+    /// pitch spans ±48 st, so consumers must not assume a narrow range.
     pub expr: Semitones,
     /// The sounding MIDI note (before continuous modulation). Lets note-aware
     /// sources read the note without back-solving it from `played`.

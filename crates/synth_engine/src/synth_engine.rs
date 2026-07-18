@@ -2116,6 +2116,30 @@ impl SynthEngine {
     // MIDI controller handlers
     // ========================================================================
 
+    /// Push per-track pitch overrides (`TrackParam::Pitch`) onto the active
+    /// voices — the pitch sibling of [`Self::update_track_controls`]. Each
+    /// voice carries the `TrackId` of the placement that spawned it, so pitch
+    /// lands per voice (two tracks layering one instrument stay independent)
+    /// and preview/live voices (no tag) sit at zero offset. The unconditional
+    /// overwrite is load-bearing: it is what returns voices to 0 st when
+    /// `track_auto` empties at a transport reset — do not add an is-empty
+    /// early-out. RT-safe: read-only map lookups, no allocation.
+    fn update_track_pitch(&mut self) {
+        let track_auto = self.sequencer.track_auto();
+        for instrument in &mut self.instruments {
+            for voice in instrument.allocator_mut().voices_mut() {
+                if !voice.is_active() {
+                    continue;
+                }
+                voice.track_pitch = voice
+                    .track
+                    .and_then(|t| track_auto.get(&t))
+                    .and_then(|o| o.pitch)
+                    .unwrap_or(Semitones::ZERO);
+            }
+        }
+    }
+
     fn handle_pitch_bend(&mut self, value: synth_core::BipolarValue, channel: MidiChannel) {
         let channel_raw = channel.as_zero_indexed();
         self.instruments
@@ -3142,6 +3166,10 @@ impl SynthEngine {
         // 48 kHz) — well below typical compressor attack times. The
         // benefit is that processing order doesn't matter: A can
         // sidechain B and B can sidechain A without circular reads.
+        // Per-track override map, read-only for the block — lets a stolen
+        // note seed its track pitch at retrigger (disjoint field borrow from
+        // `self.instruments`).
+        let track_auto = self.sequencer.track_auto();
         for instrument in &mut self.instruments {
             // Skip this instrument if:
             // - Any instrument is soloed AND this one is not soloed
@@ -3156,7 +3184,7 @@ impl SynthEngine {
                 instrument.feed_sidechain_inputs(prev.as_slice());
             }
 
-            active_count += instrument.process(context);
+            active_count += instrument.process(context, track_auto);
         }
 
         // Clear each return bus's send-accumulation buffer for this block before
@@ -3483,6 +3511,7 @@ fn note_trigger(
     glide: &Option<Glide>,
     expression: &Option<NoteExpression>,
     target: synth_sequencer::Pitch,
+    track: Option<synth_sequencer::TrackId>,
 ) -> crate::voice::NoteTrigger {
     let glide_spec = glide.map(|g| {
         let from_offset = match g.from {
@@ -3518,6 +3547,7 @@ fn note_trigger(
         legato,
         glide: glide_spec,
         vibrato: vibrato_spec,
+        track,
     }
 }
 
@@ -3541,11 +3571,12 @@ fn route_sequencer_events(
                 legato,
                 glide,
                 expression,
+                track,
                 ..
             } => {
                 let note = MidiNote::new(pitch.as_midi());
                 let vel = *velocity;
-                let trigger = note_trigger(*legato, glide, expression, *pitch);
+                let trigger = note_trigger(*legato, glide, expression, *pitch, *track);
 
                 if let Some(idx) = resolve_instrument_index(instrument, mapping, instruments) {
                     instruments[idx].note_on_expr(note, vel, trigger);
@@ -3819,6 +3850,9 @@ impl AudioProcessor for SynthEngine {
         // channel-bus stage (inside process_voices) reads them. Track-fader
         // automation is folded in here via SequencerEngine::track_auto.
         self.update_track_controls();
+        // Push per-track pitch overrides (TrackParam::Pitch) onto the active
+        // voices — per voice via the track tag, never the shared strip.
+        self.update_track_pitch();
         // Resolve bus-to-bus send routing + processing order before the return
         // stage (inside process_voices) consumes it.
         self.resolve_return_routing();

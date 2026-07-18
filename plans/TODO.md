@@ -803,6 +803,25 @@ enough to be driven by an actual observed symptom. Ordered by likely impact.
   guarantees smooth transitions. An **audible-quality** fix (effectively a small
   feature). **Trigger: when you hear clicks on cutoff/CV moves.**
 
+#### B6. Per-voice track fader — channel-strip "Phase 8" (shared-instrument correctness)
+
+- [ ] **Apply the composed track volume/pan/mute per voice, not per engine
+  instrument.** Today `update_track_controls` (`synth_engine.rs`) writes
+  `track_controls` keyed by the track's engine instrument id, so when two tracks
+  share one instrument the **last track in `tracks()` order wins** the fader and
+  sends. With the automation platform's voice→track tagging in place (A2 of the
+  now-landed `automation-platform` work), apply the composed track
+  volume/pan/mute as a **per-voice** gain where velocity/expression already scale
+  the voice, **before** the instrument's shared effect chain, and re-key
+  `track_controls` by `TrackId`. The dry signal becomes fully track-correct;
+  shared FX still react to the sum (the same limitation as multitimbral racks in
+  other DAWs), and full isolation stays available by duplicating the instrument.
+  Per-track accumulators for pre-FX sends and metering ride the same
+  infrastructure. Landing this also removes the tracker importer's
+  clone-at-import workaround. **Trigger: when a shared-instrument project needs
+  independent track faders.** (Was A5 in `plans/automation-platform-plan.md`;
+  moved here 2026-07-18.)
+
 ---
 
 ## 6. Future features (harvested from retired plan docs)

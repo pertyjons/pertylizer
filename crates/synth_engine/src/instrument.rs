@@ -1209,7 +1209,16 @@ impl Instrument {
     /// # Returns
     /// The number of active voices processed.
     #[allow(clippy::too_many_lines)]
-    pub fn process(&mut self, context: &ProcessContext) -> u32 {
+    /// Process one block. `track_auto` is the sequencer's per-track override
+    /// map, used to seed [`TrackParam::Pitch`] onto a voice the instant a
+    /// stolen note (re)triggers here — the block-level `update_track_pitch`
+    /// already ran, so without this the stolen note's first block would sound
+    /// at zero track pitch.
+    pub fn process(
+        &mut self,
+        context: &ProcessContext,
+        track_auto: &HashMap<synth_sequencer::TrackId, crate::sequencer_engine::TrackAutoOverride>,
+    ) -> u32 {
         if self.mute_state.is_muted() {
             return 0;
         }
@@ -1280,10 +1289,21 @@ impl Instrument {
                 } = voice.state
                     && fade_counter.as_usize() == 0
                 {
-                    if let Some((note, velocity, time)) = pending_note {
-                        // Fade-out done: trigger the pending note on this voice
+                    if let Some((note, velocity, time, trigger)) = pending_note {
+                        // Fade-out done: trigger the pending note on this
+                        // voice with its original trigger (track tag +
+                        // per-note expression survive the steal).
                         voice.reset();
-                        voice.note_on(note, velocity, time);
+                        voice.note_on_expr(note, velocity, time, trigger);
+                        // Re-seed track pitch for THIS block: note_on_expr
+                        // zeroed it and the block's update_track_pitch already
+                        // ran, so a stolen note would otherwise render its
+                        // onset at zero track pitch.
+                        voice.track_pitch = voice
+                            .track
+                            .and_then(|t| track_auto.get(&t))
+                            .and_then(|o| o.pitch)
+                            .unwrap_or(synth_core::Semitones::ZERO);
                     } else {
                         voice.reset();
                         continue;
@@ -1407,10 +1427,21 @@ impl Instrument {
                 } = voice.state
                     && fade_counter.as_usize() == 0
                 {
-                    if let Some((note, velocity, time)) = pending_note {
-                        // Fade-out done: trigger the pending note on this voice
+                    if let Some((note, velocity, time, trigger)) = pending_note {
+                        // Fade-out done: trigger the pending note on this
+                        // voice with its original trigger (track tag +
+                        // per-note expression survive the steal).
                         voice.reset();
-                        voice.note_on(note, velocity, time);
+                        voice.note_on_expr(note, velocity, time, trigger);
+                        // Re-seed track pitch for THIS block: note_on_expr
+                        // zeroed it and the block's update_track_pitch already
+                        // ran, so a stolen note would otherwise render its
+                        // onset at zero track pitch.
+                        voice.track_pitch = voice
+                            .track
+                            .and_then(|t| track_auto.get(&t))
+                            .and_then(|o| o.pitch)
+                            .unwrap_or(synth_core::Semitones::ZERO);
                     } else {
                         voice.reset();
                         continue;

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use serde::{Deserialize, Serialize};
-use synth_core::{ModuleType, NormalizedValue};
+use synth_core::{ModuleType, NormalizedValue, Semitones};
 
 use super::ids::{SeqInstrumentId, TrackId};
 use super::time::PatternTick;
@@ -106,6 +106,39 @@ pub enum CurveType {
 }
 
 impl CurveType {
+    /// Short display name for GUI labels (ignores the `Exponential` strength).
+    #[must_use]
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Linear => "Linear",
+            Self::Step => "Step",
+            Self::Exponential(_) => "Exponential",
+            Self::SCurve => "S-Curve",
+        }
+    }
+
+    /// Representative variants for GUI menus. `Exponential` carries a moderate
+    /// default strength (positive = ease-out) so a menu pick is usable as-is.
+    pub const MENU_KINDS: &[Self] = &[
+        Self::Linear,
+        Self::Step,
+        Self::Exponential(64),
+        Self::SCurve,
+    ];
+
+    /// Same *kind* as `other`, ignoring the `Exponential` strength — so a menu
+    /// highlights the active kind regardless of the stored strength value.
+    #[must_use]
+    pub fn same_kind(&self, other: &Self) -> bool {
+        matches!(
+            (self, other),
+            (Self::Linear, Self::Linear)
+                | (Self::Step, Self::Step)
+                | (Self::Exponential(_), Self::Exponential(_))
+                | (Self::SCurve, Self::SCurve)
+        )
+    }
+
     /// Interpolate between two values using this curve type.
     /// `t` is the normalized position (0.0 to 1.0).
     #[must_use]
@@ -249,7 +282,19 @@ pub enum AutomationTarget {
         param: AutoInstrumentParam,
     },
     /// Track parameter.
-    Track { track: TrackId, param: TrackParam },
+    ///
+    /// `track: None` means "the track hosting the placement": the lane follows
+    /// whatever track its pattern is placed on, resolved by the sequencer
+    /// during the placement walk. This is the default authoring form — a
+    /// pooled pattern should not hard-code a track. `Some(id)` deliberately
+    /// automates a specific track regardless of where the pattern is placed
+    /// (cross-track automation, e.g. song-spanning fades hosted on a
+    /// dedicated automation track).
+    Track {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        track: Option<TrackId>,
+        param: TrackParam,
+    },
     /// Global parameter.
     Global(GlobalParam),
     /// A parameter on a specific module within an instrument's graph (the
@@ -288,9 +333,10 @@ impl AutomationTarget {
             Self::Instrument { instrument, param } => {
                 format!("Inst {} {}", instrument.0, param.display_name())
             }
-            Self::Track { track, param } => {
-                format!("Track {} {param:?}", track.0)
-            }
+            Self::Track { track, param } => match track {
+                Some(track) => format!("Track {} {}", track.0, param.display_name()),
+                None => format!("This Track {}", param.display_name()),
+            },
             Self::Global(param) => format!("{param:?}"),
             Self::Module {
                 instrument,
@@ -303,6 +349,27 @@ impl AutomationTarget {
                     instrument.0
                 )
             }
+        }
+    }
+
+    /// Resolve this target against the track hosting the placement being
+    /// played. A host-track lane (`Track { track: None, .. }`) becomes a
+    /// concrete `Track { track: Some(host), .. }`; with no host to resolve
+    /// against (`host_track: None` — the placement-less preview) it yields
+    /// `None` so the caller drops the lane. Every other target passes through
+    /// unchanged. This method is the single source of host-track semantics —
+    /// collection sites must not re-derive it inline.
+    ///
+    /// RT-safe: the `Track` arm is stack-only; the pass-through clone is at
+    /// worst an `Arc` refcount bump (see [`ParamId`]).
+    #[must_use]
+    pub fn resolved(&self, host_track: Option<TrackId>) -> Option<Self> {
+        match self {
+            Self::Track { track: None, param } => host_track.map(|host| Self::Track {
+                track: Some(host),
+                param: *param,
+            }),
+            other => Some(other.clone()),
         }
     }
 }
@@ -359,6 +426,47 @@ pub enum TrackParam {
     Volume,
     Pan,
     Mute,
+    /// Continuous track-pitch offset applied to the voices playing on the
+    /// track — channel-scoped pitch state (portamento, arpeggio, track
+    /// vibrato) that may begin, change, or stop while a note is held. Lane
+    /// values use the bipolar encoding: see [`TRACK_PITCH_RANGE`],
+    /// [`track_pitch_semitones`], and [`track_pitch_normalized`].
+    Pitch,
+}
+
+impl TrackParam {
+    /// Display name for GUI labels.
+    #[must_use]
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Volume => "Volume",
+            Self::Pan => "Pan",
+            Self::Mute => "Mute",
+            Self::Pitch => "Pitch",
+        }
+    }
+
+    /// All variants for GUI enumeration.
+    pub const ALL: &[Self] = &[Self::Volume, Self::Pan, Self::Mute, Self::Pitch];
+}
+
+/// Semitone span of the bipolar [`TrackParam::Pitch`] lane encoding: lane
+/// value 0.0 = −48 st, 0.5 = 0 st (no offset), 1.0 = +48 st. ±48 st covers
+/// the largest tracker portamento spans (four octaves each way).
+pub const TRACK_PITCH_RANGE: Semitones = Semitones(48.0);
+
+/// Decode a normalized [`TrackParam::Pitch`] lane value into a semitone
+/// offset (bipolar around 0 at lane value 0.5).
+#[must_use]
+pub fn track_pitch_semitones(value: NormalizedValue) -> Semitones {
+    Semitones(value.to_bipolar().as_f32() * TRACK_PITCH_RANGE.0)
+}
+
+/// Encode a semitone offset into the normalized [`TrackParam::Pitch`] lane
+/// form, clamped to the representable ±[`TRACK_PITCH_RANGE`].
+#[must_use]
+pub fn track_pitch_normalized(semitones: Semitones) -> NormalizedValue {
+    NormalizedValue::from_range(semitones.0, -TRACK_PITCH_RANGE.0, TRACK_PITCH_RANGE.0)
 }
 
 /// Automatable global parameters.
@@ -502,6 +610,61 @@ mod tests {
 
         assert_eq!(lane.len(), 1);
         assert_eq!(lane.points()[0].value, NormalizedValue::new(0.8));
+    }
+
+    #[test]
+    fn track_pitch_encoding_round_trips_and_clamps() {
+        // Midpoint = no offset.
+        assert!(track_pitch_semitones(NormalizedValue::new(0.5)).0.abs() < 1e-4);
+        // Round trips inside the range.
+        for st in [-48.0, -12.0, 0.0, 7.0, 48.0] {
+            let decoded = track_pitch_semitones(track_pitch_normalized(Semitones(st)));
+            assert!(
+                (decoded.0 - st).abs() < 1e-3,
+                "round trip {st} st, got {}",
+                decoded.0
+            );
+        }
+        // Beyond the range clamps to the boundary.
+        let clamped = track_pitch_semitones(track_pitch_normalized(Semitones(120.0)));
+        assert!((clamped.0 - TRACK_PITCH_RANGE.0).abs() < 1e-3);
+        // The extremes decode to the documented boundaries.
+        assert!((track_pitch_semitones(NormalizedValue::new(1.0)).0 - 48.0).abs() < 1e-3);
+        assert!((track_pitch_semitones(NormalizedValue::new(0.0)).0 + 48.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn track_target_serde_round_trip_and_legacy_form() {
+        // Host-track ("this track") form round-trips.
+        let host = AutomationTarget::Track {
+            track: None,
+            param: TrackParam::Volume,
+        };
+        let json = serde_json::to_string(&host).unwrap();
+        // The host form omits the field entirely (no `"track": null`), keeping
+        // the on-disk shape minimal.
+        assert!(
+            !json.contains("track"),
+            "host-track form must omit the track field, got: {json}"
+        );
+        let decoded: AutomationTarget = serde_json::from_str(&json).unwrap();
+        assert_eq!(decoded, host);
+
+        // Pre-platform files stored a bare track id — still loads, now Some.
+        let legacy = r#"{"Track":{"track":2,"param":"Volume"}}"#;
+        let decoded: AutomationTarget = serde_json::from_str(legacy).unwrap();
+        assert_eq!(
+            decoded,
+            AutomationTarget::Track {
+                track: Some(TrackId(2)),
+                param: TrackParam::Volume,
+            }
+        );
+
+        // A file omitting the field entirely defaults to the host track.
+        let missing = r#"{"Track":{"param":"Volume"}}"#;
+        let decoded: AutomationTarget = serde_json::from_str(missing).unwrap();
+        assert_eq!(decoded, host);
     }
 
     #[test]

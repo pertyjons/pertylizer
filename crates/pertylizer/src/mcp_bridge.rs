@@ -3240,7 +3240,7 @@ impl SynthBridge for AppSynthBridge {
                     song.pattern_mut(synth_sequencer::PatternId(orphan.pattern_id))
                 {
                     pattern.automation.retain(|lane| {
-                        let (target, lane_inst) = automation_target_info(&lane.target);
+                        let (target, lane_inst, _scope) = automation_target_info(&lane.target);
                         !(lane_inst == Some(inst_u16) && target == orphan.target)
                     });
                 }
@@ -3378,10 +3378,11 @@ impl SynthBridge for AppSynthBridge {
             .automation
             .iter()
             .map(|lane| {
-                let (target_name, instrument_id) = automation_target_info(&lane.target);
+                let (target_name, instrument_id, scope) = automation_target_info(&lane.target);
                 AutomationLaneInfo {
                     target: target_name,
                     instrument_id,
+                    scope: scope.to_string(),
                     point_count: lane.len(),
                 }
             })
@@ -6928,6 +6929,28 @@ fn parse_auto_instrument_param(name: &str) -> Option<synth_sequencer::AutoInstru
     }
 }
 
+/// Parse a track-parameter name (case-sensitive, matching `TrackParam`'s
+/// `Debug`/`display_name`): `Volume`, `Pan`, `Mute`, `Pitch`.
+fn parse_track_param(name: &str) -> Option<synth_sequencer::TrackParam> {
+    use synth_sequencer::TrackParam;
+    match name {
+        "Volume" => Some(TrackParam::Volume),
+        "Pan" => Some(TrackParam::Pan),
+        "Mute" => Some(TrackParam::Mute),
+        "Pitch" => Some(TrackParam::Pitch),
+        _ => None,
+    }
+}
+
+/// Parse a global-parameter name: `MasterVolume`.
+fn parse_global_param(name: &str) -> Option<synth_sequencer::GlobalParam> {
+    use synth_sequencer::GlobalParam;
+    match name {
+        "MasterVolume" => Some(GlobalParam::MasterVolume),
+        _ => None,
+    }
+}
+
 /// Map a bridge [`CurveKind`](synth_mcp::bridge::CurveKind) plus optional
 /// strength to the sequencer's `CurveType`. The strength is only meaningful for
 /// `Exponential` (clamped to its `i8` domain by the type); it defaults to 0.
@@ -6984,6 +7007,30 @@ fn build_automation_target(
 
     if let Some(rest) = target.strip_prefix("module:") {
         return build_module_automation_target(rest, instrument, valid_modules);
+    }
+
+    // Track lane: `track:<param>` (host track — follows the placement) or
+    // `track:<param>:<track_id>` (a specific track, cross-track automation).
+    if let Some(rest) = target.strip_prefix("track:") {
+        let (param_str, track) = match rest.split_once(':') {
+            Some((p, id_str)) => {
+                let id: u16 = id_str.parse().map_err(|_| {
+                    McpBridgeError::Other(format!("invalid track id in target: '{id_str}'"))
+                })?;
+                (p, Some(synth_sequencer::TrackId(id)))
+            }
+            None => (rest, None),
+        };
+        let param = parse_track_param(param_str)
+            .ok_or_else(|| McpBridgeError::Other(format!("unknown track param: '{param_str}'")))?;
+        return Ok(synth_sequencer::AutomationTarget::Track { track, param });
+    }
+
+    // Global lane: `global:<param>` (e.g. `global:MasterVolume`).
+    if let Some(rest) = target.strip_prefix("global:") {
+        let param = parse_global_param(rest)
+            .ok_or_else(|| McpBridgeError::Other(format!("unknown global param: '{rest}'")))?;
+        return Ok(synth_sequencer::AutomationTarget::Global(param));
     }
 
     let param = parse_auto_instrument_param(target)
@@ -7059,8 +7106,13 @@ fn build_module_automation_target(
     })
 }
 
-/// Extract target name and optional instrument ID from an `AutomationTarget`.
-fn automation_target_info(target: &synth_sequencer::AutomationTarget) -> (String, Option<u16>) {
+/// Extract a round-trippable target string, optional instrument ID, and scope
+/// tag (`instrument`/`module`/`track`/`global`) from an `AutomationTarget`.
+/// The string is parseable back by [`build_automation_target`], so a lane read
+/// from `list_automation_lanes` can be addressed by the other automation tools.
+fn automation_target_info(
+    target: &synth_sequencer::AutomationTarget,
+) -> (String, Option<u16>, &'static str) {
     use synth_sequencer::AutoInstrumentParam;
     match target {
         synth_sequencer::AutomationTarget::Instrument { instrument, param } => {
@@ -7074,12 +7126,27 @@ fn automation_target_info(target: &synth_sequencer::AutomationTarget) -> (String
                 AutoInstrumentParam::Sustain => "Sustain",
                 AutoInstrumentParam::Release => "Release",
             };
-            (name.to_string(), Some(instrument.0))
+            (name.to_string(), Some(instrument.0), "instrument")
         }
         synth_sequencer::AutomationTarget::Track { track, param } => {
-            (format!("{param:?}"), Some(track.0))
+            // `track:<param>` (host) or `track:<param>:<id>` (specific track).
+            // Track lanes are not instrument-scoped, so instrument_id is None.
+            let name = param.display_name();
+            let s = match track {
+                Some(t) => format!("track:{name}:{}", t.0),
+                None => format!("track:{name}"),
+            };
+            (s, None, "track")
         }
-        synth_sequencer::AutomationTarget::Global(param) => (format!("{param:?}"), None),
+        synth_sequencer::AutomationTarget::Global(param) => {
+            // Explicit token (not Debug) so the wire form stays decoupled from
+            // the enum's Debug output — mirrors the Instrument arm and pairs
+            // with `parse_global_param`.
+            let name = match param {
+                synth_sequencer::GlobalParam::MasterVolume => "MasterVolume",
+            };
+            (format!("global:{name}"), None, "global")
+        }
         synth_sequencer::AutomationTarget::Module {
             instrument,
             module_type,
@@ -7089,6 +7156,7 @@ fn automation_target_info(target: &synth_sequencer::AutomationTarget) -> (String
             // Canonical, round-trippable form parsed by `build_automation_target`.
             format!("module:{}:{instance}:{param_id}", module_type.prefix()),
             Some(instrument.0),
+            "module",
         ),
     }
 }
@@ -13444,11 +13512,36 @@ mod automation_target_tests {
             instance: 2,
             param_id: "resonance".into(),
         };
-        let (name, inst) = automation_target_info(&target);
+        let (name, inst, scope) = automation_target_info(&target);
         assert_eq!(inst, Some(5));
+        assert_eq!(scope, "module");
         let modules = vec![ModuleId::new(synth_core::ModuleType::Filter, 2)];
         let rebuilt = build_automation_target(&name, inst.unwrap(), &modules).unwrap();
         assert_eq!(rebuilt, target);
+    }
+
+    #[test]
+    fn track_and_global_targets_round_trip_through_build() {
+        use synth_sequencer::{GlobalParam, TrackId, TrackParam};
+        let cases = [
+            AutomationTarget::Track {
+                track: None,
+                param: TrackParam::Pitch,
+            },
+            AutomationTarget::Track {
+                track: Some(TrackId(3)),
+                param: TrackParam::Volume,
+            },
+            AutomationTarget::Global(GlobalParam::MasterVolume),
+        ];
+        let expected_scope = ["track", "track", "global"];
+        for (target, want_scope) in cases.iter().zip(expected_scope) {
+            let (name, inst, scope) = automation_target_info(target);
+            assert_eq!(scope, want_scope, "scope for {name}");
+            // instrument_id is meaningless for track/global; build ignores it.
+            let rebuilt = build_automation_target(&name, inst.unwrap_or(0), &[]).unwrap();
+            assert_eq!(&rebuilt, target, "round trip for {name}");
+        }
     }
 }
 

@@ -4681,6 +4681,23 @@ impl SynthApp {
                     lane.add_point(point);
                 }
             }
+            UndoAction::SetAutomationPointCurve {
+                pattern_id,
+                target,
+                tick,
+                value,
+                new_curve,
+                ..
+            } => {
+                let mut song_w = self.song.write();
+                if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
+                    // add_point replaces the point at the same tick in place.
+                    let lane = pattern.get_or_create_automation(target.clone());
+                    lane.add_point(
+                        synth_sequencer::AutomationPoint::new(*tick, *value).with_curve(*new_curve),
+                    );
+                }
+            }
             UndoAction::AddAutomationLane { pattern_id, lane } => {
                 let mut song_w = self.song.write();
                 if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
