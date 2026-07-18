@@ -28,6 +28,7 @@ use synth_mcp::types::{
     CompareMixResult, ConnectionCheckResult, ConnectionInfo, DiagnosticSeverity, EngineStatus,
     ExamplePatchInfo, GraphDiagnostic, HarmonyChordEvent, HarmonyKeyEstimate, HarmonyScope,
     HarmonyStats, InstrumentInfo, MaskingPair, MatrixRoutingInfo, MixBusMetrics, MixDelta,
+    ModGraphConnectionInfo, ModGraphDetail, ModGraphInfo, ModGraphNodeInfo, ModTargetInfo,
     ModuleInfo, ModuleSearchResult, ModuleTypeBrief, ModuleTypeInfo, NoteGraphConnectionInfo,
     NoteGraphDetail, NoteGraphInfo, NoteGraphModuleInfo, NoteInfo, OptimizeResult, ParamTypeInfo,
     ParameterInfo, PatchModuleInfo, PatchParamInfo, PatchParamValue, PatchResourceData,
@@ -2347,6 +2348,242 @@ impl SynthBridge for AppSynthBridge {
         Ok(())
     }
 
+    // === Sequencer: Mod Grid (pooled control-rate modulator graphs) ===
+
+    fn list_mod_graphs(&self) -> Result<Vec<ModGraphInfo>, McpBridgeError> {
+        let song = self.shared.song.read();
+        Ok(song.mod_graphs().map(mod_graph_info).collect())
+    }
+
+    fn get_mod_graph(&self, graph_id: u32) -> Result<ModGraphDetail, McpBridgeError> {
+        let song = self.shared.song.read();
+        let gid = synth_sequencer::ModGraphId::new(graph_id);
+        let graph = song
+            .mod_graph(gid)
+            .ok_or(McpBridgeError::ModGraphNotFound(graph_id))?;
+        let nodes = graph
+            .nodes
+            .iter()
+            .map(|(id, cfg)| {
+                Ok(ModGraphNodeInfo {
+                    id: id.0,
+                    kind: cfg.kind().to_string(),
+                    config: serde_json::to_value(cfg)
+                        .map_err(|e| McpBridgeError::Other(e.to_string()))?,
+                })
+            })
+            .collect::<Result<Vec<_>, McpBridgeError>>()?;
+        let connections = graph
+            .connections
+            .iter()
+            .map(|c| ModGraphConnectionInfo {
+                from: c.from.0,
+                from_port: c.from_port.clone(),
+                to: c.to.0,
+                to_port: c.to_port.clone(),
+            })
+            .collect();
+        Ok(ModGraphDetail {
+            info: mod_graph_info(graph),
+            nodes,
+            connections,
+        })
+    }
+
+    fn create_mod_graph(
+        &self,
+        name: String,
+        description: Option<String>,
+        scope: Option<String>,
+    ) -> Result<u32, McpBridgeError> {
+        if name.trim().is_empty() {
+            return Err(McpBridgeError::EmptyName { kind: "mod graph" });
+        }
+        let description = description.unwrap_or_default();
+        let len = description.chars().count();
+        if len > MAX_MODULE_DESCRIPTION_LEN {
+            return Err(McpBridgeError::DescriptionTooLong {
+                len,
+                max: MAX_MODULE_DESCRIPTION_LEN,
+            });
+        }
+        let scope = parse_mod_graph_scope(scope.as_deref())?;
+        let mut song = self.shared.song.write();
+        let gid = song.create_mod_graph(name);
+        song.set_mod_graph_scope(gid, scope);
+        if let Some(graph) = song.mod_graph_mut(gid) {
+            graph.description = description;
+        }
+        Ok(gid.0)
+    }
+
+    fn delete_mod_graph(&self, graph_id: u32) -> Result<(), McpBridgeError> {
+        let mut song = self.shared.song.write();
+        let gid = synth_sequencer::ModGraphId::new(graph_id);
+        song.remove_mod_graph(gid)
+            .ok_or(McpBridgeError::ModGraphNotFound(graph_id))?;
+        Ok(())
+    }
+
+    fn set_mod_graph_scope(&self, graph_id: u32, scope: String) -> Result<(), McpBridgeError> {
+        let scope = parse_mod_graph_scope(Some(scope.as_str()))?;
+        let mut song = self.shared.song.write();
+        let gid = synth_sequencer::ModGraphId::new(graph_id);
+        if song.set_mod_graph_scope(gid, scope) {
+            Ok(())
+        } else {
+            Err(McpBridgeError::ModGraphNotFound(graph_id))
+        }
+    }
+
+    fn assign_mod_graph(&self, graph_id: u32, tracks: Vec<u32>) -> Result<(), McpBridgeError> {
+        let tracks: Vec<synth_sequencer::TrackId> = tracks
+            .into_iter()
+            .map(|t| synth_sequencer::TrackId(t as u16))
+            .collect();
+        let mut song = self.shared.song.write();
+        let gid = synth_sequencer::ModGraphId::new(graph_id);
+        if song.assign_mod_graph(gid, &tracks) {
+            Ok(())
+        } else {
+            Err(McpBridgeError::ModGraphNotFound(graph_id))
+        }
+    }
+
+    fn add_mod_graph_node(
+        &self,
+        graph_id: u32,
+        node: serde_json::Value,
+    ) -> Result<u32, McpBridgeError> {
+        let config = parse_mod_node(node)?;
+        let mut song = self.shared.song.write();
+        let gid = synth_sequencer::ModGraphId::new(graph_id);
+        let graph = song
+            .mod_graph_mut(gid)
+            .ok_or(McpBridgeError::ModGraphNotFound(graph_id))?;
+        let node_id = graph.next_node_id();
+        graph
+            .try_insert_node(node_id, config)
+            .map_err(|e| McpBridgeError::Other(e.to_string()))?;
+        Ok(node_id.0)
+    }
+
+    fn remove_mod_graph_node(&self, graph_id: u32, node_id: u32) -> Result<(), McpBridgeError> {
+        let mut song = self.shared.song.write();
+        let gid = synth_sequencer::ModGraphId::new(graph_id);
+        let graph = song
+            .mod_graph_mut(gid)
+            .ok_or(McpBridgeError::ModGraphNotFound(graph_id))?;
+        graph
+            .remove_node(synth_sequencer::ModNodeId::new(node_id))
+            .ok_or(McpBridgeError::ModGraphNodeNotFound { graph_id, node_id })?;
+        Ok(())
+    }
+
+    fn connect_mod_graph(
+        &self,
+        graph_id: u32,
+        from: u32,
+        from_port: String,
+        to: u32,
+        to_port: String,
+    ) -> Result<(), McpBridgeError> {
+        let mut song = self.shared.song.write();
+        let gid = synth_sequencer::ModGraphId::new(graph_id);
+        let graph = song
+            .mod_graph_mut(gid)
+            .ok_or(McpBridgeError::ModGraphNotFound(graph_id))?;
+        let cable = synth_sequencer::ModConnection::new(
+            synth_sequencer::ModNodeId::new(from),
+            from_port,
+            synth_sequencer::ModNodeId::new(to),
+            to_port,
+        );
+        graph
+            .try_connect(cable)
+            .map_err(|e| McpBridgeError::Other(e.to_string()))
+    }
+
+    fn disconnect_mod_graph(
+        &self,
+        graph_id: u32,
+        from: u32,
+        from_port: String,
+        to: u32,
+        to_port: String,
+    ) -> Result<(), McpBridgeError> {
+        let mut song = self.shared.song.write();
+        let gid = synth_sequencer::ModGraphId::new(graph_id);
+        let graph = song
+            .mod_graph_mut(gid)
+            .ok_or(McpBridgeError::ModGraphNotFound(graph_id))?;
+        let cable = synth_sequencer::ModConnection::new(
+            synth_sequencer::ModNodeId::new(from),
+            from_port,
+            synth_sequencer::ModNodeId::new(to),
+            to_port,
+        );
+        if graph.disconnect(&cable) {
+            Ok(())
+        } else {
+            Err(McpBridgeError::Other(format!(
+                "no cable {from}.{} → {to}.{} in graph {graph_id}",
+                cable.from_port, cable.to_port
+            )))
+        }
+    }
+
+    fn set_mod_graph_node(
+        &self,
+        graph_id: u32,
+        node_id: u32,
+        node: serde_json::Value,
+    ) -> Result<(), McpBridgeError> {
+        let config = parse_mod_node(node)?;
+        let mut song = self.shared.song.write();
+        let gid = synth_sequencer::ModGraphId::new(graph_id);
+        let graph = song
+            .mod_graph_mut(gid)
+            .ok_or(McpBridgeError::ModGraphNotFound(graph_id))?;
+        let nid = synth_sequencer::ModNodeId::new(node_id);
+        // Edit-in-place, not create: the node must already exist.
+        if !graph.nodes.contains_key(&nid) {
+            return Err(McpBridgeError::ModGraphNodeNotFound { graph_id, node_id });
+        }
+        // `try_insert_node` replaces the config, keeps the id and its cables, and
+        // re-validates (rolling back on rejection).
+        graph
+            .try_insert_node(nid, config)
+            .map_err(|e| McpBridgeError::Other(e.to_string()))
+    }
+
+    fn list_mod_targets(
+        &self,
+        graph_id: Option<u32>,
+    ) -> Result<Vec<ModTargetInfo>, McpBridgeError> {
+        let song = self.shared.song.read();
+        let mut out = Vec::new();
+        for graph in song.mod_graphs() {
+            if let Some(want) = graph_id
+                && graph.id.0 != want
+            {
+                continue;
+            }
+            for (node_id, cfg) in &graph.nodes {
+                if let synth_sequencer::ModNodeConfig::Target(t) = cfg {
+                    out.push(ModTargetInfo {
+                        graph_id: graph.id.0,
+                        graph_name: graph.name.clone(),
+                        node_id: node_id.0,
+                        target: t.target.display_name(),
+                        amount: t.amount,
+                    });
+                }
+            }
+        }
+        Ok(out)
+    }
+
     fn set_note_ornament(
         &self,
         pattern_id: u32,
@@ -3399,32 +3636,39 @@ impl SynthBridge for AppSynthBridge {
 
         // Read from the session's synchronous registry (carries the live
         // descriptors), so freshly-added modules appear and we don't rebuild a
-        // descriptor per module. Sort for deterministic output.
+        // descriptor per module.
         let inst_id = InstrumentId::new(instrument_id);
-        let mut modules: Vec<(synth_engine::ModuleId, synth_core::ModuleDescriptor)> = self
-            .session
-            .all_modules_for_instrument(inst_id)
-            .into_iter()
-            .collect();
-        modules.sort_by_key(|(id, _)| *id);
+        let modules = self.session.all_modules_for_instrument(inst_id);
 
         let has_filter = modules
-            .iter()
-            .any(|(id, _)| id.module_type == ModuleType::Filter);
+            .keys()
+            .any(|id| id.module_type == ModuleType::Filter);
         let has_envelope = modules
-            .iter()
-            .any(|(id, _)| id.module_type == ModuleType::Envelope);
+            .keys()
+            .any(|id| id.module_type == ModuleType::Envelope);
 
         let mut targets = Vec::new();
 
-        // Per-module automatable parameters.
-        for (mid, descriptor) in &modules {
-            let prefix = mid.module_type.prefix();
-            let module_id = mid.to_string();
-            for pd in descriptor.parameters.iter().filter(|p| p.is_automatable()) {
+        // Per-module automatable parameters — enumerated by the shared helper
+        // (single source of truth for the automatable filter + positional
+        // identity, so the GUI Mod Grid picker and this tool never diverge),
+        // enriched with unit/range/curve from the descriptor.
+        for group in crate::module_targets::module_target_groups(&modules) {
+            let prefix = group.module_id.module_type.prefix();
+            let module_id = group.module_id.to_string();
+            let Some(descriptor) = modules.get(&group.module_id) else {
+                continue;
+            };
+            for (type_id, _) in &group.params {
+                let Some(pd) = descriptor.parameters.iter().find(|p| &p.type_id == type_id) else {
+                    continue;
+                };
                 let unit = pd.unit.suffix().trim();
                 targets.push(AutomationTargetInfo {
-                    target: format!("module:{prefix}:{}:{}", mid.instance, pd.type_id),
+                    target: format!(
+                        "module:{prefix}:{}:{}",
+                        group.module_id.instance, pd.type_id
+                    ),
                     kind: "module".to_string(),
                     module_id: Some(module_id.clone()),
                     param_id: Some(pd.type_id.clone()),
@@ -6877,6 +7121,55 @@ fn note_graph_info(
         connection_count: graph.connections.len(),
         used_by_patterns: song.note_graph_usage(graph.id),
     }
+}
+
+/// Build the summary `ModGraphInfo` for a pooled mod graph.
+fn mod_graph_info(graph: &synth_sequencer::ModGraph) -> ModGraphInfo {
+    ModGraphInfo {
+        id: graph.id.0,
+        name: graph.name.clone(),
+        description: graph.description.clone(),
+        scope: match graph.scope {
+            synth_sequencer::ModGraphScope::Global => "global".to_string(),
+            synth_sequencer::ModGraphScope::Track => "track".to_string(),
+        },
+        assigned_tracks: graph
+            .assigned_tracks
+            .iter()
+            .map(|t| u32::from(t.0))
+            .collect(),
+        color: graph.color.map(|c| c.to_hex()),
+        node_count: graph.node_count(),
+        connection_count: graph.connections.len(),
+    }
+}
+
+/// Parse a mod-graph scope name (`global` / `track`), defaulting to `global`.
+fn parse_mod_graph_scope(
+    scope: Option<&str>,
+) -> Result<synth_sequencer::ModGraphScope, McpBridgeError> {
+    match scope.map(str::trim) {
+        None | Some("") | Some("global") => Ok(synth_sequencer::ModGraphScope::Global),
+        Some("track") => Ok(synth_sequencer::ModGraphScope::Track),
+        Some(other) => Err(McpBridgeError::Other(format!(
+            "invalid scope '{other}' (expected one of: global, track)"
+        ))),
+    }
+}
+
+/// Parse an externally-tagged `ModNodeConfig` (accepting a stringified-JSON
+/// payload for LLM clients that send the config as a string).
+fn parse_mod_node(
+    value: serde_json::Value,
+) -> Result<synth_sequencer::ModNodeConfig, McpBridgeError> {
+    let value = match value {
+        serde_json::Value::String(s) => {
+            serde_json::from_str(&s).unwrap_or(serde_json::Value::String(s))
+        }
+        other => other,
+    };
+    serde_json::from_value(value)
+        .map_err(|e| McpBridgeError::Other(format!("invalid mod graph node: {e}")))
 }
 
 fn note_to_info(n: &synth_sequencer::Note) -> NoteInfo {

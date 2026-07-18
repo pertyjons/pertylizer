@@ -22,6 +22,12 @@ pub struct AppSettings {
     #[cfg(feature = "gui-egui")]
     pub theme: ThemePreset,
 
+    /// Selected monospace font family name (one of the bundled fonts). `None`
+    /// uses the built-in default. Resolved via `gui::egui_backend::resolve_font`,
+    /// so an unknown/removed font falls back gracefully.
+    #[cfg(feature = "gui-egui")]
+    pub font: Option<String>,
+
     /// Composer / author information.
     pub author: Author,
 

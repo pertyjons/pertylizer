@@ -951,6 +951,17 @@ impl Voice {
         self.state.is_active()
     }
 
+    /// Apply an additive modulation offset to a module in this voice's graph,
+    /// addressed by `addr`. The Mod Grid's per-voice write path (the graph field
+    /// is private, so the pre-pass reaches it through here). RT-safe: forwards to
+    /// [`ModuleGraph::apply_mod_offset_addr`], a map lookup + accumulate. The
+    /// offset is consumed and cleared by this voice's own `process_audio` in the
+    /// same block, so it never latches.
+    #[inline]
+    pub fn apply_mod_offset_addr(&mut self, addr: DestAddr, value: f32) {
+        self.graph.apply_mod_offset_addr(addr, value);
+    }
+
     /// Get the note this voice is playing, if any.
     #[inline]
     pub fn note(&self) -> Option<MidiNote> {
@@ -1077,10 +1088,14 @@ impl Voice {
         // Process the entire graph
         self.graph.process(&mut self.mono_buffer, context);
 
-        // Clear mod offsets after processing
-        if self.mod_matrix_id.is_some() {
-            self.graph.clear_mod_offsets();
-        }
+        // Clear mod offsets after processing — unconditional. The mod matrix is
+        // no longer the only writer of additive param offsets: the Mod Grid can
+        // write offsets into a voice graph that has no Mod Matrix module. Because
+        // `set_mod_offset` accumulates (`+=`), a gated clear would let those grid
+        // offsets latch forever on such voices. Clearing every block (a cheap
+        // RT-safe scan, no-op when nothing is registered) mirrors the same
+        // "must not leave state stuck" reasoning as `note_on_block` above.
+        self.graph.clear_mod_offsets();
 
         // Extract stereo output from the output module if available
         if let Some(out_id) = self.output_module_id {

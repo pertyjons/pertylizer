@@ -408,6 +408,11 @@ impl EngineCommand {
                 value: *value,
                 channel: *channel,
             },
+            Self::ControlChange { channel, cc, value } => Self::ControlChange {
+                channel: *channel,
+                cc: *cc,
+                value: *value,
+            },
             Self::Aftertouch { value, channel } => Self::Aftertouch {
                 value: *value,
                 channel: *channel,
@@ -649,7 +654,8 @@ impl EngineCommand {
             | Self::AddModuleInstance { .. }
             | Self::AddEffectInstance { .. }
             | Self::AddReturnEffect { .. }
-            | Self::AddVisualizer { .. } => return None,
+            | Self::AddVisualizer { .. }
+            | Self::SetModGrid { .. } => return None,
 
             // Recording commands
             Self::ArmRecord {

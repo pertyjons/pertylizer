@@ -27,7 +27,9 @@ pub mod io;
 pub mod mcp_bridge;
 #[cfg(feature = "mcp")]
 pub mod mcp_shared;
+pub mod mod_grid_build;
 pub mod module_factory;
+pub mod module_targets;
 pub mod panic_hook;
 pub mod patch;
 pub mod patches;

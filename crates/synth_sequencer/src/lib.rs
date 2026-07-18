@@ -30,6 +30,7 @@ pub mod automation;
 pub mod events;
 pub mod ids;
 pub mod input;
+pub mod mod_grid;
 pub mod note;
 pub mod note_graph;
 pub mod note_processor;
@@ -47,10 +48,15 @@ pub use automation::{
 pub use automation::{AutomationLane, AutomationPoint, AutomationTarget, CurveType, ParamId};
 pub use events::SequencerEvent;
 pub use ids::{
-    NoteGraphId, NoteId, NoteLane, NoteModuleId, PatternId, ReturnBusId, RowCount, RowIndex,
-    SeqInstrumentId, TicksPerRow, TrackCount, TrackId, TrackIndex,
+    ModGraphId, ModNodeId, NoteGraphId, NoteId, NoteLane, NoteModuleId, PatternId, ReturnBusId,
+    RowCount, RowIndex, SeqInstrumentId, TicksPerRow, TrackCount, TrackId, TrackIndex,
 };
 pub use input::{InputCommand, InputMultiplexer, InputSource, KeyboardInputSource};
+pub use mod_grid::{
+    AudioTapNode, AudioTapSource, CombineMode, MAX_MOD_GRID_NODES, MacroNode, MidiCcNode,
+    ModConnection, ModGraph, ModGraphError, ModGraphScope, ModNodeConfig, ModTarget, ModuleNode,
+    TARGET_INPUT_PORT, TransportNode, TransportSource,
+};
 pub use note::{
     Glide, GlideFrom, GlideInterp, Note, NoteExpression, Ornament, OrnamentDynamics,
     OrnamentPlacement, OrnamentSpacing, Vibrato, VibratoShape,

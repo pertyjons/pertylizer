@@ -80,6 +80,59 @@ impl NoteModuleId {
     }
 }
 
+/// Unique identifier for a Mod Grid graph in the project pool.
+#[must_use]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
+pub struct ModGraphId(pub u32);
+
+impl ModGraphId {
+    /// Create a new mod-graph ID.
+    #[inline]
+    pub const fn new(id: u32) -> Self {
+        Self(id)
+    }
+}
+
+/// Unique identifier for a node within a single [`ModGraphId`] graph.
+///
+/// Only unique within its owning graph — different graphs reuse the same small
+/// id space.
+#[must_use]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
+pub struct ModNodeId(pub u32);
+
+impl ModNodeId {
+    /// Create a new mod-node ID.
+    #[inline]
+    pub const fn new(id: u32) -> Self {
+        Self(id)
+    }
+}
+
 // ============================================================================
 // INDEX TYPES
 // ============================================================================

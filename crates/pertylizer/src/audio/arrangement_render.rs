@@ -502,6 +502,12 @@ impl OfflineEngineSession {
         self.handle.send_blocking(EngineCommand::SetSong {
             song: Arc::clone(song),
         });
+        // Ship the Mod Grid runtime for this song so control-rate modulation is
+        // present in the offline render (matches the live engine's pre-pass).
+        let mod_grid = crate::mod_grid_build::build_mod_grid_runtime(&song.read());
+        self.handle.send_blocking(EngineCommand::SetModGrid {
+            runtime: Box::new(mod_grid),
+        });
 
         // Reconstruct the song's return-bus channels so sends route correctly
         // in the offline render. Reset first so channels from a prior render of

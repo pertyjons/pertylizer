@@ -25,6 +25,7 @@ pub mod hub;
 pub mod instrument;
 pub mod instrument_mapping;
 pub mod metering;
+pub mod mod_grid;
 pub mod recording;
 pub mod return_bus;
 pub mod sequencer_engine;

@@ -514,6 +514,8 @@ pub struct EngineState {
     pub cpu_voices: AtomicF32,
     pub cpu_module_graph: AtomicF32,
     pub cpu_master_fx: AtomicF32,
+    /// The Mod Grid control-rate pre-pass (all running instances).
+    pub cpu_mod_grid: AtomicF32,
     /// Sample rate.
     pub sample_rate: AtomicU32,
     /// Focused instrument for keyboard input (stores `InstrumentId` as u64).
@@ -556,6 +558,7 @@ impl EngineState {
             cpu_voices: AtomicF32::new(0.0),
             cpu_module_graph: AtomicF32::new(0.0),
             cpu_master_fx: AtomicF32::new(0.0),
+            cpu_mod_grid: AtomicF32::new(0.0),
             sample_rate: AtomicU32::new(48000),
             focused_instrument: AtomicU64::new(NO_FOCUSED_INSTRUMENT),
             master_scope: VisualizationBuffer::new(4096),
@@ -625,6 +628,7 @@ impl Default for EngineState {
             cpu_voices: AtomicF32::new(0.0),
             cpu_module_graph: AtomicF32::new(0.0),
             cpu_master_fx: AtomicF32::new(0.0),
+            cpu_mod_grid: AtomicF32::new(0.0),
             sample_rate: AtomicU32::new(48000),
             focused_instrument: AtomicU64::new(NO_FOCUSED_INSTRUMENT),
             master_scope: VisualizationBuffer::new(4096),

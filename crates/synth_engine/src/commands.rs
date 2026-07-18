@@ -431,6 +431,16 @@ pub enum EngineCommand {
         channel: MidiChannel,
     },
 
+    /// A generic MIDI Control Change. Feeds the engine's live CC state that Mod
+    /// Grid `MidiCc` sources read. `cc` is the 0..127 controller number; `value`
+    /// is the normalized 0..1 amount. (CC1 also arrives as [`Self::ModWheel`] for
+    /// the per-voice mod-wheel path; both update the CC state.)
+    ControlChange {
+        channel: MidiChannel,
+        cc: u8,
+        value: NormalizedValue,
+    },
+
     /// Aftertouch (channel pressure) - type-safe normalized value.
     Aftertouch {
         value: NormalizedValue,
@@ -699,6 +709,14 @@ pub enum EngineCommand {
     /// The sequencer will stop and reset when a new song is set.
     SetSong {
         song: std::sync::Arc<parking_lot::RwLock<synth_sequencer::Song>>,
+    },
+
+    /// Replace the running Mod Grid instances wholesale. Built off the audio
+    /// thread (the modules allocate) from the current `Song` mod-graph pool and
+    /// shipped pre-assembled; the audio thread only swaps the box in. Sent when
+    /// `Song::mod_grid_generation` changes.
+    SetModGrid {
+        runtime: Box<crate::mod_grid::ModGridRuntime>,
     },
 
     // === Recording ===
@@ -1162,6 +1180,12 @@ impl std::fmt::Debug for EngineCommand {
                 .field("value", value)
                 .field("channel", channel)
                 .finish(),
+            Self::ControlChange { channel, cc, value } => f
+                .debug_struct("ControlChange")
+                .field("channel", channel)
+                .field("cc", cc)
+                .field("value", value)
+                .finish(),
             Self::Aftertouch { value, channel } => f
                 .debug_struct("Aftertouch")
                 .field("value", value)
@@ -1381,6 +1405,7 @@ impl std::fmt::Debug for EngineCommand {
             Self::SetMetronome(enabled) => write!(f, "SetMetronome({enabled})"),
             Self::SetMetronomeVolume(vol) => write!(f, "SetMetronomeVolume({vol})"),
             Self::SetSong { .. } => write!(f, "SetSong"),
+            Self::SetModGrid { .. } => write!(f, "SetModGrid"),
             Self::SetAudioInputConsumer { .. } => f.debug_struct("SetAudioInputConsumer").finish(),
             Self::ClearAudioInputConsumer => write!(f, "ClearAudioInputConsumer"),
             Self::LoadSampleData {

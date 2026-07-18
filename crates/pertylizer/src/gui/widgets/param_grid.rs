@@ -36,6 +36,10 @@ pub enum ModMarker {
     AudioScriptSource,
     /// A Mod Matrix slot modulates this parameter (destination).
     MatrixDest,
+    /// A Mod Grid graph writes this parameter (destination). Shares the
+    /// bottom-left destination corner with [`Self::MatrixDest`], stacked just
+    /// above it (both can be active at once), told apart by glyph + colour.
+    GridDest,
 }
 
 impl ModMarker {
@@ -47,6 +51,8 @@ impl ModMarker {
             Self::MatrixSource => ri::ARROW_RIGHT_UP_LINE,
             Self::ScriptSource | Self::AudioScriptSource => ri::FUNCTION_LINE,
             Self::MatrixDest => ri::ARROW_LEFT_DOWN_LINE,
+            // The Mod Grid's identity glyph (matches the Mod tab / graph list).
+            Self::GridDest => ri::PULSE_LINE,
         }
     }
 
@@ -67,17 +73,24 @@ impl ModMarker {
     pub fn corner(self, rect: egui::Rect, outside: bool) -> (egui::Pos2, egui::Align2) {
         use egui::{Align2, vec2};
         const G: f32 = 1.0;
+        // One glyph-height's vertical stack, so the second destination marker
+        // (grid) sits just above the first (matrix) instead of overlapping it.
+        const STACK: f32 = 12.0;
         match (self, outside) {
             (Self::MatrixSource, false) => (rect.right_top(), Align2::RIGHT_TOP),
             (Self::ScriptSource, false) => (rect.left_top(), Align2::LEFT_TOP),
             (Self::AudioScriptSource, false) => (rect.right_bottom(), Align2::RIGHT_BOTTOM),
             (Self::MatrixDest, false) => (rect.left_bottom(), Align2::LEFT_BOTTOM),
+            (Self::GridDest, false) => {
+                (rect.left_bottom() + vec2(0.0, -STACK), Align2::LEFT_BOTTOM)
+            }
             (Self::MatrixSource, true) => (rect.right_top() + vec2(G, 0.0), Align2::LEFT_TOP),
             (Self::ScriptSource, true) => (rect.left_top() + vec2(-G, 0.0), Align2::RIGHT_TOP),
             (Self::AudioScriptSource, true) => {
                 (rect.right_bottom() + vec2(G, 0.0), Align2::LEFT_BOTTOM)
             }
             (Self::MatrixDest, true) => (rect.left_bottom() + vec2(-G, 0.0), Align2::RIGHT_BOTTOM),
+            (Self::GridDest, true) => (rect.left_bottom() + vec2(-G, -STACK), Align2::RIGHT_BOTTOM),
         }
     }
 
@@ -90,6 +103,7 @@ impl ModMarker {
             Self::MatrixSource | Self::MatrixDest => c.accent_purple,
             Self::ScriptSource => c.accent_cyan,
             Self::AudioScriptSource => c.accent_yellow,
+            Self::GridDest => c.accent_green,
         }
     }
 
@@ -105,6 +119,7 @@ impl ModMarker {
             Self::MatrixDest => {
                 "Mod Matrix destination\nA Mod Matrix slot modulates this parameter."
             }
+            Self::GridDest => "Mod Grid destination\nA Mod Grid graph writes this parameter.",
         }
     }
 
@@ -123,6 +138,9 @@ impl ModMarker {
             Self::MatrixDest => {
                 "Mod Matrix destination\nA Mod Matrix slot modulates a parameter on this module."
             }
+            Self::GridDest => {
+                "Mod Grid destination\nA Mod Grid graph writes a parameter on this module."
+            }
         }
     }
 }
@@ -136,16 +154,21 @@ pub struct ModMarkers {
     pub script_source: bool,
     pub audio_script_source: bool,
     pub matrix_dest: bool,
+    pub grid_dest: bool,
 }
 
 impl ModMarkers {
     /// `true` when no marker is active (draw nothing).
     #[must_use]
     pub fn is_empty(self) -> bool {
-        !(self.matrix_source || self.script_source || self.audio_script_source || self.matrix_dest)
+        !(self.matrix_source
+            || self.script_source
+            || self.audio_script_source
+            || self.matrix_dest
+            || self.grid_dest)
     }
 
-    /// The active markers in a stable draw order (sources first, then destination).
+    /// The active markers in a stable draw order (sources first, then destinations).
     pub fn iter(self) -> impl Iterator<Item = ModMarker> {
         [
             self.matrix_source.then_some(ModMarker::MatrixSource),
@@ -153,6 +176,7 @@ impl ModMarkers {
             self.audio_script_source
                 .then_some(ModMarker::AudioScriptSource),
             self.matrix_dest.then_some(ModMarker::MatrixDest),
+            self.grid_dest.then_some(ModMarker::GridDest),
         ]
         .into_iter()
         .flatten()

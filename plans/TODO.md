@@ -474,6 +474,155 @@ green; final full-branch review clean. Plan doc deleted with the merge.
   voice glides stay voice-level; a per-osc glide is always continuous. Mirror them
   per-oscillator only if a use case appears.
 
+### 2.9 Mod Grid follow-ups
+
+**Shipped (branch `feat/mod-grid`, 11 commits, gate green dev + release, final
+full-branch review clean — NOT merged, NOT eyeballed in-app).** A third node view
+beside the patch editor and Note Grid: a pool of control-rate modulator graphs
+(`ModGraph`, `ModGraphScope::{Global, Track}`) whose outputs write additive
+block-constant offsets into the automation target space. Landed: data model +
+`Song` pool + `mod_grid_generation` counter; engine control-rate pre-pass
+(`process_mod_grid`) running before instruments with **track (volume/pan/pitch) +
+global (master volume)** write paths composed additively over lanes; cheap value
+sources **Macro / Transport / Audio-tap** (`ModSource` enum, tap follows an
+instrument/master RMS through a one-pole so it ducks directly); app-side builder
+(`mod_grid_build`) + GUI generation-watch sync shipping the runtime via
+`EngineCommand::SetModGrid` (old runtime freed off-thread); MCP tool family
+(pool/nodes/cables/`list_mod_targets` provenance); the GUI node view (pool +
+Scene canvas, named descriptor ports, module→module cables, scope toggle +
+per-track assignment, `UndoAction::SetModGraph`); persistence + offline-render
+wiring; and a lane provenance chip + jump + `＋ Mod Grid` quick-assign. Plan doc
+`plans/mod-grid-plan.md` marked IMPLEMENTED. Also folded in the fix-first
+`clear_mod_offsets`-unconditional bug (an offset writer without a Mod Matrix
+module used to latch offsets forever).
+
+- [x] **RESOLVED (2026-07-18): track-scope modulation "not working" was an orphaned
+  track→instrument link, not a Mod Grid bug.** A live session showed a `Track · Volume`
+  target having zero effect while `Global(MasterVolume)` worked. Root cause traced end
+  to end: the song's track referenced `SeqInstrumentId(0)`, but the only instrument
+  ("Sub Bass") had `id 1`. `update_track_controls` maps `track.instrument → engine_id`
+  and skips the track when it doesn't resolve — so **no** track-level control reached
+  the sound instrument (not the grid offset *and not even the base fader*; the note
+  played at unity, which is why nothing I changed on the track mattered). Master works
+  because it's global. Fixing the track's instrument (`set_track_instrument`) made the
+  live A/B unambiguous: assigned peak 0.303 vs unassigned 0.157 (×1.93 = the +0.34
+  Macro offset on the 0.4 fader). Mod-grid logic is correct — now guarded by tests
+  `mod_grid_track_volume_offset_accumulates` (engine, full `process()`),
+  `track_scope_volume_modulation_changes_the_render` + `track_scope_macro_to_relative_volume_resolves`
+  (pertylizer, real render path + builder resolution).
+- [ ] **Robustness follow-up: surface orphaned tracks (track→instrument that doesn't
+  exist).** Such a track silently drops **all** track-level control (fader, mute,
+  automation lanes, *and* Mod Grid), yet its notes still play (at unity) — a confusing
+  silent trap (it cost a long debugging session above). Options: a `lint_project`
+  warning, a GUI badge on the track header, and/or repointing/clearing the reference on
+  load. General track-management, not Mod-Grid-specific. **S–M.**
+**Follow-ups shipped 2026-07-18** (branch `feat/mod-grid`, one commit each, gate
+green + per-step reviews). The six deferred items are done:
+
+- [x] **MCP gap `disconnect_mod_graph`** (`d054267f`) — array-capable, removes a
+  named `(from, from_port, to, to_port)` cable, errors on a missing one.
+- [x] **MCP gap `set_mod_graph_node`** (`d054267f`) — in-place node-config edit
+  keeping the id + cables, re-validating; errors if the node is absent.
+- [x] **MidiCc live-CC pipeline** (`38a9c6b6`) — `EngineCommand::ControlChange`
+  from the MIDI handler (every non-bespoke CC, incl. sustain; CC1 stays ModWheel
+  and mirrors in), a boxed `MidiCcState` (per-channel + omni) read in
+  `process_mod_grid`; `ModSource::MidiCc { cc, channel }`; GUI add-node entry +
+  cc/omni/channel editor. Offline render has no live CC → reads 0 (live-only).
+- [x] **Module-param grid write targets** (`87f7e7cc`) — `AutomationTarget::Module`
+  applies an additive offset to each active voice via `Voice::apply_mod_offset_addr`;
+  `DestAddr` pre-interned off-thread; skips muted/soloed-out instruments (else the
+  offset latches). A grid LFO can now sweep a filter cutoff. (Instrument-level
+  Volume/Pan targets stay a no-op — see the leftover below.)
+- [x] **Cheap→module cable injection** (`670114a0`) — `ModuleGraph` gained a
+  pre-created input-injection slot list (`push_input_injection` off-thread,
+  `set_input_injection_value` RT); the builder records cheap→module cables; the
+  GUI validator now allows the drop. `Macro → LFO.rate_cv` works.
+- [x] **Per-node `seed` application** (`b7f4d66c`) — `PolyModule::set_seed` (default
+  no-op) implemented for RandomGates + TuringMachine; the builder folds the host
+  track into the seed to decorrelate instances. (DriftGenerator was a no-op here;
+  its per-instance RNG landed later in §7.4 `f32c4302`.)
+
+**§7 follow-ups shipped 2026-07-18** (branch `feat/mod-grid`, one commit each,
+gate green + per-step + final review; see `plans/mod-grid-plan.md` §7):
+
+- [x] **Instrument-level grid targets (Volume/Pan + module-backed)** (`38ae6913`) —
+  `grid_instrument_offsets` store folded into the channel-bus fader/pan; module-
+  backed params (FilterCutoff/ADSR) map to a `DestAddr` and reuse the per-voice path.
+- [x] **DriftGenerator per-instance RNG** (`f32c4302`) — xorshift `rng_state` +
+  `set_seed`/`set_voice_index`; closes the decorrelation *and* offline-determinism
+  gaps (supersedes the "stays a no-op" note above).
+- [x] **Sustain-pedal (CC64) note-hold** (`5c462033`) — per-channel pedal state,
+  deferred NoteOffs while held, released on lift, re-press reclaims.
+- [x] **Patch-editor grid dest markers — Alt A** (`2e7b9971`) — `ModMarker::GridDest`
+  (PULSE_LINE/green) stacked above MatrixDest; `PatchAnalysis.grid_dest_params`.
+- [x] **GUI Module-target picker** (`d2a62c92`, validated `07ee2c1e`, hierarchical
+  menu `0b7919e6`) — the Target node now uses the **same nested `tree_picker_button`
+  menu as the pattern-view "Auto:" selector** (This Track / Global at top, then a
+  submenu per instrument with its Volume/Pan macros + a submenu per automatable
+  module → params), driven by the shared `module_targets::module_target_groups`
+  helper (which also now backs MCP `get_instrument_automation_targets`).
+- [x] **Mod Grid CPU readout** (`cf145877`) — canvas-header % + status-bar breakdown row.
+
+- [x] **In-app eyeball (2026-07-18): checked live, "good enough".** The §7 GUI
+  (Module-target menu, grid-dest markers, CPU readout) was clicked through in-app and
+  looks fine. A fuller pass of every §6 exit-gate scenario (below) can still be done,
+  but the GUI is no longer the blocker.
+- [x] **Persistence round-trip + schema-regen guard + exit gate (2026-07-18).**
+  `mod_graph_survives_json_round_trip` (song.rs) builds a Track-scope graph exercising
+  every node kind (hosted module w/ params + seed, MidiCc, AudioTap, Transport, Macro,
+  two Target sinks), cables, assignment, description, color and node positions, then
+  asserts the whole `ModGraph` survives JSON save/load and the restored pool keeps the
+  id allocator ahead. `schemas/project.schema.json` includes the Mod Grid types and the
+  `schemas_validate_examples` guard confirms it is current. Full gate green.
+- [x] **RT-safety hardening from two branch reviews (2026-07-18).** `SetModGrid` is now
+  a pure `mem::replace` pointer move — offset accumulators moved into `ModGridRuntime`
+  and pre-keyed off the audio thread by the builder, so no map insertion/allocation on
+  the callback; instrument offsets keyed by `SeqInstrumentId` (order-independent, kills
+  the offline-export ordering trap at its root); a single-slot `mod_grid_pending_drop`
+  backstop guarantees no DSP is dropped on the audio thread on a full trash channel.
+  Also: `tap_coeff` takes `SampleCount`/`SampleRate` newtypes and is `pub(crate)`;
+  sustain-hold uses a boxed `[[bool;128];16]` bitfield; AudioTap follower is now
+  block-size-independent (`TAP_TAU_SECONDS` time constant).
+
+Remaining Mod Grid leftovers + §7 refinements:
+
+- [ ] **Optional: fuller §6 exit-gate walk-through.** Not blocking (the GUI was
+  eyeballed above). If you want an exhaustive live pass: `LFO → Track 2 volume` with
+  no lane; a Track graph on two tracks; `LFO → Pitch` host-only; an Audio-tap duck;
+  routing-removal returns to base; a seeded render matches live; `Macro → LFO.rate_cv`;
+  a live `MidiCc`; sustain hold+release.
+- [ ] **Cache the Module-target snapshot (7.1 refinement).** `egui_backend` rebuilds
+  the per-instrument `module_target_groups` for **every** instrument every frame the
+  Mod Grid view is open (a registry lock + descriptor clone each). Fine for a handful
+  of instruments (egui repaints on demand), but cache it on a structure-generation
+  bump — or build only for the target's selected instrument — for large projects. **S.**
+- [ ] **Per-graph CPU attribution (7.6 refinement).** The header CPU is total across
+  all running instances (reuses the per-stage timing). Per-graph cost needs separate
+  instrumentation (time each `ModGridInstance` and map to its `ModGraphId`, exposed to
+  the GUI). **M.**
+- [ ] **Per-voice decorrelation for RandomGates / TuringMachine (optional).**
+  DriftGenerator now decorrelates per voice via `set_voice_index`; RandomGates and
+  TuringMachine still run in lockstep across a patch's voices (they don't override it).
+  Add `set_voice_index` to them too if per-voice variation is wanted — but it may be
+  intentional for rhythmic modules (a consistent gate pattern), so decide per module. **S.**
+- [ ] **Full sustain-pedal is CC64-specific.** The pedal path only handles CC64; other
+  hold-type pedals (sostenuto CC66, soft CC67) are not modelled. Low priority. **S.**
+- [ ] **Descriptor-aware port validation for `ModGraph` (review finding 4).**
+  `ModGraph::validate` checks nodes/dupes/cycles but **not** port existence/direction
+  (the crate is descriptor-free), and the runtime build ignores `dsp.connect()` errors
+  (`mod_grid_build.rs`), so an MCP/import-authored cable with a bad port saves clean but
+  silently doesn't wire (cheap→module injections have the same gap on `to_port`). Add an
+  app-layer validator that checks port names/directions against module descriptors, and
+  have `build_mod_grid_runtime` surface dropped-connection diagnostics instead of
+  discarding them. **M.**
+- [ ] **CPU metering uses `Instant::now()` every audio callback (review finding 5).**
+  The mod-grid stage timing follows the *pre-existing* per-stage pattern (voices /
+  module-graph / master-fx already do 4 clock reads per callback). `Instant::now()`
+  isn't guaranteed to be a syscall-free vDSO read on every platform, which the RT rules
+  frown on, and the reads happen even when the CPU tooltip is hidden. Consider making the
+  whole metering opt-in/off-by-default or sampling it sparsely — a cross-cutting change to
+  the existing metering subsystem, not mod-grid-specific. **S–M.**
+
 ---
 
 ## 3. UI & Visual Polish

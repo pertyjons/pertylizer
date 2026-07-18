@@ -1515,6 +1515,14 @@ pub trait PolyModule: Describable + Send {
         }
     }
 
+    /// Re-seed this module's internal RNG so random-family modules can be
+    /// decorrelated across instances (a Mod Grid graph assigned to several
+    /// tracks, say). Default no-op — a deterministic module has nothing to seed.
+    /// Implementors set their PRNG state deterministically from `seed` so an
+    /// offline render reproduces the live result. Called off the audio thread at
+    /// build time, before the module processes.
+    fn set_seed(&mut self, _seed: u64) {}
+
     /// Expose this module's generic [`ParamModOffsets`] store, if it has one.
     ///
     /// A module opts into descriptor-driven modulation of **every** `modulatable`

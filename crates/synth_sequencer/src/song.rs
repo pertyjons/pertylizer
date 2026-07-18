@@ -3,8 +3,9 @@
 use serde::{Deserialize, Serialize};
 
 use super::ids::{
-    NoteGraphId, NoteId, NoteModuleId, PatternId, ReturnBusId, SeqInstrumentId, TrackId,
+    ModGraphId, NoteGraphId, NoteId, NoteModuleId, PatternId, ReturnBusId, SeqInstrumentId, TrackId,
 };
+use super::mod_grid::{ModGraph, ModGraphScope};
 use super::note::Note;
 use super::note_graph::{HostKey, NoteConnection, NoteGraph, NoteModuleConfig, NoteScopeCtx};
 use super::note_processor::{ExpansionBuffer, NoteProcessor, note_scope_strum_tail};
@@ -230,6 +231,16 @@ pub struct Song {
     #[serde(default)]
     next_note_graph_id: u32,
 
+    /// Pooled Mod Grid graphs — control-rate modulator graphs referenced by
+    /// [`ModGraphId`]. Global graphs run one always-on instance; Track graphs
+    /// run one instance per assigned track. The engine (re)builds running
+    /// instances off the audio thread whenever [`Self::mod_grid_generation`]
+    /// changes.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    mod_graphs: Vec<ModGraph>,
+    #[serde(default)]
+    next_mod_graph_id: u32,
+
     /// Persisted transport loop region. The runtime loop lives in the sequencer
     /// engine (which the audio thread owns); this is the save/load carrier only,
     /// synced engine→here at save and here→engine at load. `None` = no loop set.
@@ -244,6 +255,14 @@ pub struct Song {
     /// its cache unconditionally (see `SequencerEngine::set_song`).
     #[serde(skip)]
     structure_generation: u64,
+
+    /// Monotonic counter bumped on every Mod Grid mutation (graph/node/cable/
+    /// target/assignment/scope edit). The audio engine compares this per block
+    /// and rebuilds its running mod-grid instances — off the hot path — only
+    /// when it changes. Not persisted — resets to 0 on load, where the engine
+    /// refreshes its instances unconditionally (see `SequencerEngine::set_song`).
+    #[serde(skip)]
+    mod_grid_generation: u64,
 }
 
 impl Song {
@@ -268,8 +287,11 @@ impl Song {
             next_return_bus_id: 0,
             note_graphs: Vec::new(),
             next_note_graph_id: 0,
+            mod_graphs: Vec::new(),
+            next_mod_graph_id: 0,
             transport_loop: None,
             structure_generation: 0,
+            mod_grid_generation: 0,
         }
     }
 
@@ -423,6 +445,162 @@ impl Song {
             graph.sanitize_connections();
             let _ = graph.rebuild_derived();
         }
+    }
+
+    // === Mod Grid pool ===
+
+    /// Current Mod Grid generation — bumped on every mod-graph mutation. The
+    /// audio engine rebuilds its running instances only when this changes.
+    #[must_use]
+    pub fn mod_grid_generation(&self) -> u64 {
+        self.mod_grid_generation
+    }
+
+    /// Mark the Mod Grid as changed so the engine rebuilds running instances on
+    /// the next block. Conservative: any structural or value edit bumps it.
+    fn bump_mod_grid(&mut self) {
+        self.mod_grid_generation = self.mod_grid_generation.wrapping_add(1);
+    }
+
+    /// Create a new empty Mod Grid graph in the pool, returning its id.
+    pub fn create_mod_graph(&mut self, name: impl Into<String>) -> ModGraphId {
+        let id = ModGraphId(self.next_mod_graph_id);
+        self.next_mod_graph_id = self.next_mod_graph_id.saturating_add(1);
+        self.mod_graphs.push(ModGraph::new(id, name));
+        self.bump_mod_grid();
+        id
+    }
+
+    /// Insert a pre-built graph, keeping `next_mod_graph_id` ahead of restored
+    /// ids. Returns false if a graph with that id already exists.
+    pub fn insert_mod_graph(&mut self, graph: ModGraph) -> bool {
+        if self.mod_graphs.iter().any(|g| g.id == graph.id) {
+            return false;
+        }
+        if graph.id.0 >= self.next_mod_graph_id {
+            self.next_mod_graph_id = graph.id.0.saturating_add(1);
+        }
+        self.mod_graphs.push(graph);
+        self.bump_mod_grid();
+        true
+    }
+
+    /// Get a pooled mod graph by id.
+    #[must_use]
+    pub fn mod_graph(&self, id: ModGraphId) -> Option<&ModGraph> {
+        self.mod_graphs.iter().find(|g| g.id == id)
+    }
+
+    /// Get a pooled mod graph mutably by id, bumping the generation so the engine
+    /// rebuilds its instance (conservative — the handout may mutate anything).
+    pub fn mod_graph_mut(&mut self, id: ModGraphId) -> Option<&mut ModGraph> {
+        let found = self.mod_graphs.iter_mut().find(|g| g.id == id);
+        if found.is_some() {
+            self.mod_grid_generation = self.mod_grid_generation.wrapping_add(1);
+        }
+        found
+    }
+
+    /// All pooled mod graphs, in insertion order.
+    pub fn mod_graphs(&self) -> impl Iterator<Item = &ModGraph> {
+        self.mod_graphs.iter()
+    }
+
+    /// The pooled mod graphs as a slice — the engine's instance-build source.
+    #[must_use]
+    pub fn mod_graph_pool(&self) -> &[ModGraph] {
+        &self.mod_graphs
+    }
+
+    /// All pooled mod graphs, mutably — for a non-RT resync step after load.
+    /// Bumps the generation so the engine rebuilds all instances.
+    pub fn mod_graphs_mut(&mut self) -> impl Iterator<Item = &mut ModGraph> {
+        self.mod_grid_generation = self.mod_grid_generation.wrapping_add(1);
+        self.mod_graphs.iter_mut()
+    }
+
+    /// Set a mod graph's scope. Returns false if the id is absent.
+    pub fn set_mod_graph_scope(&mut self, id: ModGraphId, scope: ModGraphScope) -> bool {
+        let Some(graph) = self.mod_graphs.iter_mut().find(|g| g.id == id) else {
+            return false;
+        };
+        graph.scope = scope;
+        // Global graphs have no per-track assignments.
+        if scope == ModGraphScope::Global {
+            graph.assigned_tracks.clear();
+        }
+        self.bump_mod_grid();
+        true
+    }
+
+    /// Replace a mod graph's track assignments (deduplicated, only tracks that
+    /// exist). Returns false if the id is absent.
+    pub fn assign_mod_graph(&mut self, id: ModGraphId, tracks: &[TrackId]) -> bool {
+        let existing: Vec<TrackId> = self.tracks.iter().map(|t| t.id).collect();
+        let Some(graph) = self.mod_graphs.iter_mut().find(|g| g.id == id) else {
+            return false;
+        };
+        let mut assigned: Vec<TrackId> = Vec::new();
+        for &t in tracks {
+            if existing.contains(&t) && !assigned.contains(&t) {
+                assigned.push(t);
+            }
+        }
+        graph.assigned_tracks = assigned;
+        self.bump_mod_grid();
+        true
+    }
+
+    /// How many tracks currently have `id` assigned — the pool-view usage count.
+    /// Global graphs report 1 (the single always-on instance).
+    #[must_use]
+    pub fn mod_graph_usage(&self, id: ModGraphId) -> usize {
+        match self.mod_graphs.iter().find(|g| g.id == id) {
+            Some(g) if g.scope == ModGraphScope::Global => 1,
+            Some(g) => g.assigned_tracks.len(),
+            None => 0,
+        }
+    }
+
+    /// Remove a mod graph from the pool. Returns the removed graph, or `None` if
+    /// absent.
+    pub fn remove_mod_graph(&mut self, id: ModGraphId) -> Option<ModGraph> {
+        let idx = self.mod_graphs.iter().position(|g| g.id == id)?;
+        let removed = self.mod_graphs.remove(idx);
+        self.bump_mod_grid();
+        Some(removed)
+    }
+
+    /// Duplicate a pooled mod graph (name suffixed `" copy"`), returning a clone
+    /// of the new graph, or `None` if the source is absent.
+    pub fn duplicate_mod_graph(&mut self, src: ModGraphId) -> Option<ModGraph> {
+        let source = self.mod_graphs.iter().find(|g| g.id == src)?.clone();
+        let id = ModGraphId(self.next_mod_graph_id);
+        self.next_mod_graph_id = self.next_mod_graph_id.saturating_add(1);
+        let mut graph = source;
+        graph.id = id;
+        graph.name = format!("{} copy", graph.name);
+        self.mod_graphs.push(graph.clone());
+        self.bump_mod_grid();
+        Some(graph)
+    }
+
+    /// Sanitize every pooled mod graph on load: drop any cable that fails
+    /// validation (unknown node, duplicate, cycle) so a corrupt save loads
+    /// playable instead of failing. Also bumps the generation so the engine
+    /// builds fresh instances.
+    pub fn rebuild_mod_graphs(&mut self) {
+        for graph in &mut self.mod_graphs {
+            if graph.validate().is_err() {
+                // Rebuild the connection set incrementally, dropping edges the
+                // validator rejects — mirrors `rebuild_note_graphs`' tolerance.
+                let candidates = std::mem::take(&mut graph.connections);
+                for c in candidates {
+                    let _ = graph.try_connect(c);
+                }
+            }
+        }
+        self.bump_mod_grid();
     }
 
     /// Convert a pattern's linear `NoteProcessor` rack into a new pooled Note
@@ -1899,6 +2077,139 @@ mod tests {
     }
 
     #[test]
+    fn mod_graph_survives_json_round_trip() {
+        use crate::automation::{AutomationTarget, TrackParam};
+        use crate::ids::{ModNodeId, SeqInstrumentId};
+        use crate::mod_grid::{
+            AudioTapNode, AudioTapSource, CombineMode, MacroNode, MidiCcNode, ModConnection,
+            ModNodeConfig, ModTarget, ModuleNode, TransportNode, TransportSource,
+        };
+        use crate::note_graph::NodePosition;
+        use crate::track::TrackColor;
+        use std::collections::BTreeMap;
+        use synth_core::ModuleType;
+
+        let mut song = Song::new("t");
+        // A track the Track-scope graph is assigned to.
+        let tid = song.create_track("lead");
+        let gid = song.create_mod_graph("wobble");
+
+        {
+            let g = song.mod_graph_mut(gid).expect("graph exists");
+            g.scope = ModGraphScope::Track;
+            g.assigned_tracks = vec![tid];
+            g.description = "test graph".into();
+            g.color = Some(TrackColor {
+                r: 10,
+                g: 20,
+                b: 30,
+            });
+
+            // A hosted LFO with a param map and an explicit seed (random-family
+            // offline determinism).
+            let mut params = BTreeMap::new();
+            params.insert("rate".to_string(), 3.5);
+            g.try_insert_node(
+                ModNodeId::new(0),
+                ModNodeConfig::Module(ModuleNode {
+                    module_type: ModuleType::Lfo,
+                    params,
+                    seed: Some(0xDEAD_BEEF),
+                }),
+            )
+            .unwrap();
+            // The cheap grid-native sources: MIDI CC, audio tap, transport, macro.
+            g.try_insert_node(
+                ModNodeId::new(1),
+                ModNodeConfig::MidiCc(MidiCcNode {
+                    cc: 74,
+                    channel: Some(2),
+                }),
+            )
+            .unwrap();
+            g.try_insert_node(
+                ModNodeId::new(2),
+                ModNodeConfig::AudioTap(AudioTapNode {
+                    source: AudioTapSource::Master,
+                }),
+            )
+            .unwrap();
+            g.try_insert_node(
+                ModNodeId::new(3),
+                ModNodeConfig::Transport(TransportNode {
+                    source: TransportSource::BarPhase,
+                }),
+            )
+            .unwrap();
+            g.try_insert_node(
+                ModNodeId::new(4),
+                ModNodeConfig::Macro(MacroNode {
+                    name: "depth".into(),
+                    value: 0.6,
+                }),
+            )
+            .unwrap();
+            // Two routing sinks: a relative "this track" volume and a module param.
+            g.try_insert_node(
+                ModNodeId::new(5),
+                ModNodeConfig::Target(ModTarget {
+                    target: AutomationTarget::Track {
+                        track: None,
+                        param: TrackParam::Volume,
+                    },
+                    amount: 0.34,
+                    combine: CombineMode::Add,
+                }),
+            )
+            .unwrap();
+            g.try_insert_node(
+                ModNodeId::new(6),
+                ModNodeConfig::Target(ModTarget {
+                    target: AutomationTarget::Module {
+                        instrument: SeqInstrumentId::new(0),
+                        module_type: ModuleType::Filter,
+                        instance: 1,
+                        param_id: "cutoff".into(),
+                    },
+                    amount: 1.0,
+                    combine: CombineMode::Add,
+                }),
+            )
+            .unwrap();
+            // Cables: LFO → track-volume target, MIDI CC → module-cutoff target.
+            g.try_connect(ModConnection::new(
+                ModNodeId::new(0),
+                "out",
+                ModNodeId::new(5),
+                "in",
+            ))
+            .unwrap();
+            g.try_connect(ModConnection::new(
+                ModNodeId::new(1),
+                "out",
+                ModNodeId::new(6),
+                "in",
+            ))
+            .unwrap();
+            // Canvas layout metadata for one node.
+            g.node_positions
+                .insert(ModNodeId::new(0), NodePosition { x: 12.0, y: 34.0 });
+        }
+
+        let original = song.mod_graph(gid).unwrap().clone();
+
+        let json = serde_json::to_string(&song).unwrap();
+        let mut back: Song = serde_json::from_str(&json).unwrap();
+
+        // The whole graph survives (nodes, cables, scope, assignment, description,
+        // color, positions, per-node params + seed).
+        assert_eq!(back.mod_graph(gid), Some(&original));
+        // The restored pool keeps the id allocator ahead — a fresh graph gets a
+        // new id, not a collision with the restored one.
+        assert_ne!(back.create_mod_graph("second"), gid);
+    }
+
+    #[test]
     fn dangling_note_graph_reference_resolves_to_none() {
         let mut song = Song::new("t");
         let pid = song.create_pattern(Duration(960));
@@ -2452,5 +2763,109 @@ mod tests {
         assert_eq!(clone.node_positions, src.node_positions);
         assert_eq!(clone.processing_order, src.processing_order);
         assert!(song.duplicate_note_graph(NoteGraphId::new(999)).is_none());
+    }
+
+    #[test]
+    fn mod_graph_pool_crud_bumps_generation() {
+        use crate::automation::AutomationTarget;
+        use crate::ids::ModNodeId;
+        use crate::mod_grid::{ModGraphScope, ModNodeConfig, ModTarget, ModuleNode};
+        let mut song = Song::new("t");
+        assert_eq!(song.mod_grid_generation(), 0);
+
+        let gid = song.create_mod_graph("wobble");
+        assert!(song.mod_grid_generation() > 0);
+        let after_create = song.mod_grid_generation();
+
+        // A track to assign, plus a Track-scope switch.
+        let t0 = song.create_track("lead");
+        assert!(song.set_mod_graph_scope(gid, ModGraphScope::Track));
+        assert!(song.assign_mod_graph(gid, &[t0]));
+        assert!(song.mod_grid_generation() > after_create);
+        assert_eq!(song.mod_graph_usage(gid), 1);
+
+        // Assigning an unknown track id is filtered out.
+        assert!(song.assign_mod_graph(gid, &[t0, TrackId(9999)]));
+        assert_eq!(song.mod_graph(gid).unwrap().assigned_tracks, vec![t0]);
+
+        // Switching back to Global clears assignments and reports one instance.
+        assert!(song.set_mod_graph_scope(gid, ModGraphScope::Global));
+        assert!(song.mod_graph(gid).unwrap().assigned_tracks.is_empty());
+        assert_eq!(song.mod_graph_usage(gid), 1);
+
+        // Populate a node so serde has content to carry.
+        {
+            let g = song.mod_graph_mut(gid).unwrap();
+            g.try_insert_node(
+                ModNodeId::new(0),
+                ModNodeConfig::Module(ModuleNode {
+                    module_type: synth_core::ModuleType::Lfo,
+                    params: Default::default(),
+                    seed: None,
+                }),
+            )
+            .unwrap();
+            g.try_insert_node(
+                ModNodeId::new(1),
+                ModNodeConfig::Target(ModTarget {
+                    target: AutomationTarget::Track {
+                        track: None,
+                        param: crate::automation::TrackParam::Volume,
+                    },
+                    amount: 0.5,
+                    combine: crate::mod_grid::CombineMode::Add,
+                }),
+            )
+            .unwrap();
+        }
+
+        // Round-trip through JSON: the generation counter is #[serde(skip)] and
+        // resets to 0, but the pool data survives intact.
+        let json = serde_json::to_string(&song).unwrap();
+        let mut restored: Song = serde_json::from_str(&json).unwrap();
+        assert_eq!(restored.mod_grid_generation(), 0);
+        assert_eq!(restored.mod_graph_pool().len(), 1);
+        assert_eq!(restored.mod_graph(gid).unwrap().nodes.len(), 2);
+        // next_mod_graph_id survives, so a fresh create doesn't collide with gid.
+        let fresh = restored.create_mod_graph("second");
+        assert_ne!(fresh, gid);
+
+        assert!(song.remove_mod_graph(gid).is_some());
+        assert!(song.mod_graph(gid).is_none());
+        assert_eq!(song.mod_graph_usage(gid), 0);
+    }
+
+    #[test]
+    fn rebuild_mod_graphs_sanitizes_corrupt_cables() {
+        use crate::ids::ModNodeId;
+        use crate::mod_grid::{ModConnection, ModNodeConfig, ModuleNode};
+        let mut song = Song::new("t");
+        let gid = song.create_mod_graph("g");
+        {
+            let g = song.mod_graph_mut(gid).unwrap();
+            for i in 0..2 {
+                g.try_insert_node(
+                    ModNodeId::new(i),
+                    ModNodeConfig::Module(ModuleNode {
+                        module_type: synth_core::ModuleType::Lfo,
+                        params: Default::default(),
+                        seed: None,
+                    }),
+                )
+                .unwrap();
+            }
+            // Inject a cyclic cable set directly (bypassing try_connect), as a
+            // corrupt save would carry. validate() would reject it.
+            g.connections = vec![
+                ModConnection::new(ModNodeId::new(0), "out", ModNodeId::new(1), "rate_cv"),
+                ModConnection::new(ModNodeId::new(1), "out", ModNodeId::new(0), "rate_cv"),
+            ];
+            assert!(g.validate().is_err());
+        }
+        song.rebuild_mod_graphs();
+        // One edge of the cycle is dropped so the graph validates again.
+        let g = song.mod_graph(gid).unwrap();
+        assert!(g.validate().is_ok());
+        assert_eq!(g.connections.len(), 1);
     }
 }

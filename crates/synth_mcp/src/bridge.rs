@@ -22,11 +22,11 @@ use crate::types::{
     ConnectionCheckResult, ConnectionInfo, CreateChordProgressionResult, DetailedSampleInfo,
     DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic, InputDeviceInfo,
     InputStateInfo, InsertModuleResult, InstrumentInfo, InstrumentProfileResult, MatrixRoutingInfo,
-    ModuleInfo, ModuleSearchResult, ModuleTypeBrief, ModuleTypeInfo, NoteGraphDetail,
-    NoteGraphInfo, NoteInfo, OptimizeResult, ParameterInfo, PatchResourceData, PatternInfo,
-    PlacementInfo, ProjectLintEntry, ProjectLintReport, ProjectSchemaInfo, ReturnBusInfo,
-    ReturnEffectInfo, SampleInfo, SamplerStateInfo, SetSongResult, SongInfo, TempoPoint, TrackInfo,
-    UiSnapshot, VersionInfo,
+    ModGraphDetail, ModGraphInfo, ModTargetInfo, ModuleInfo, ModuleSearchResult, ModuleTypeBrief,
+    ModuleTypeInfo, NoteGraphDetail, NoteGraphInfo, NoteInfo, OptimizeResult, ParameterInfo,
+    PatchResourceData, PatternInfo, PlacementInfo, ProjectLintEntry, ProjectLintReport,
+    ProjectSchemaInfo, ReturnBusInfo, ReturnEffectInfo, SampleInfo, SamplerStateInfo,
+    SetSongResult, SongInfo, TempoPoint, TrackInfo, UiSnapshot, VersionInfo,
 };
 
 // === Bridge-level data structures for batch operations ===
@@ -1131,6 +1131,88 @@ pub trait SynthBridge: Send + Sync + 'static {
         note_id: u64,
         graph_id: Option<u32>,
     ) -> Result<(), McpBridgeError>;
+
+    // === Sequencer: Mod Grid (pooled control-rate modulator graphs) ===
+
+    /// List every pooled mod graph in summary form (id, name, scope, counts).
+    fn list_mod_graphs(&self) -> Result<Vec<ModGraphInfo>, McpBridgeError>;
+
+    /// Full detail of one mod graph — its nodes and cables.
+    fn get_mod_graph(&self, graph_id: u32) -> Result<ModGraphDetail, McpBridgeError>;
+
+    /// Create an empty pooled mod graph. `scope` is `global` (default) or
+    /// `track`. Returns the new graph id.
+    fn create_mod_graph(
+        &self,
+        name: String,
+        description: Option<String>,
+        scope: Option<String>,
+    ) -> Result<u32, McpBridgeError>;
+
+    /// Delete a pooled mod graph (removing its running instances).
+    fn delete_mod_graph(&self, graph_id: u32) -> Result<(), McpBridgeError>;
+
+    /// Set a mod graph's scope (`global` or `track`). Switching to `global`
+    /// clears any track assignments.
+    fn set_mod_graph_scope(&self, graph_id: u32, scope: String) -> Result<(), McpBridgeError>;
+
+    /// Assign a Track-scope mod graph to a set of tracks (one running instance
+    /// per track). Replaces the current assignment; unknown track ids are
+    /// dropped.
+    fn assign_mod_graph(&self, graph_id: u32, tracks: Vec<u32>) -> Result<(), McpBridgeError>;
+
+    /// Add a node to a graph. `node` is externally-tagged `ModNodeConfig` JSON
+    /// (e.g. `{"Module":{"module_type":"lfo","params":{...}}}` — `module_type` is
+    /// the snake_case module key — or `{"Target":{"target":{...},"amount":0.5}}`).
+    /// Returns the new node id.
+    fn add_mod_graph_node(
+        &self,
+        graph_id: u32,
+        node: serde_json::Value,
+    ) -> Result<u32, McpBridgeError>;
+
+    /// Remove a node and every cable touching it.
+    fn remove_mod_graph_node(&self, graph_id: u32, node_id: u32) -> Result<(), McpBridgeError>;
+
+    /// Connect two nodes' named ports (e.g. a source module `out` → a Target
+    /// node `in`). Validated (endpoints, single-source-per-input, acyclicity).
+    fn connect_mod_graph(
+        &self,
+        graph_id: u32,
+        from: u32,
+        from_port: String,
+        to: u32,
+        to_port: String,
+    ) -> Result<(), McpBridgeError>;
+
+    /// Remove a single named cable (the inverse of [`Self::connect_mod_graph`]),
+    /// leaving both endpoint nodes and every other cable intact. Errors if no
+    /// such cable exists.
+    fn disconnect_mod_graph(
+        &self,
+        graph_id: u32,
+        from: u32,
+        from_port: String,
+        to: u32,
+        to_port: String,
+    ) -> Result<(), McpBridgeError>;
+
+    /// Replace an existing node's config in place, keeping its id and every cable
+    /// touching it, re-validating the graph (a replace that turns a source into a
+    /// Target with outgoing cables is rejected). `node` is externally-tagged
+    /// `ModNodeConfig` JSON, same shape as [`Self::add_mod_graph_node`].
+    fn set_mod_graph_node(
+        &self,
+        graph_id: u32,
+        node_id: u32,
+        node: serde_json::Value,
+    ) -> Result<(), McpBridgeError>;
+
+    /// List routing sinks ("what writes to a target") across all mod graphs, or
+    /// just one when `graph_id` is set — the provenance answer to "why is this
+    /// parameter moving?".
+    fn list_mod_targets(&self, graph_id: Option<u32>)
+    -> Result<Vec<ModTargetInfo>, McpBridgeError>;
 
     /// Set or clear a note's per-note timed-repeat ornament
     /// (flam/drag/ruff/roll/grace). `ornament` is the `Ornament` JSON to set,

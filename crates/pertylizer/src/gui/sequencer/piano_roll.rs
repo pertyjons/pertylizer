@@ -1440,6 +1440,173 @@ impl<'a> PianoRollCtx<'a> {
     }
 }
 
+/// Provenance (which mod graphs write this lane's target) + a quick-assign menu
+/// that wires an LFO to it in ~3 clicks. Only shown when a lane is focused.
+fn draw_mod_grid_lane_tools(
+    ui: &mut egui::Ui,
+    song: &std::sync::Arc<parking_lot::RwLock<synth_sequencer::Song>>,
+    data: &PianoRollData,
+    view_state: &mut SequencerViewState,
+    undo_manager: &mut crate::undo::UndoManager,
+) {
+    let Some(sel) = view_state.selected_automation.clone() else {
+        return;
+    };
+    // Provenance chips: the mod graphs whose Target nodes write this param.
+    let writers: Vec<(synth_sequencer::ModGraphId, String)> = {
+        let Some(s) = song.try_read() else {
+            return;
+        };
+        s.mod_graphs()
+            .filter(|g| {
+                g.nodes.values().any(|n| match n {
+                    synth_sequencer::ModNodeConfig::Target(t) => {
+                        mod_target_matches(&t.target, &sel)
+                    }
+                    _ => false,
+                })
+            })
+            .map(|g| (g.id, g.name.clone()))
+            .collect()
+    };
+    for (gid, name) in &writers {
+        if ui
+            .small_button(format!("⬲ {name}"))
+            .on_hover_text("This mod graph modulates the focused target — open it")
+            .clicked()
+        {
+            view_state.jump_to_mod_graph = Some(*gid);
+        }
+    }
+
+    // Quick-assign: add an LFO wired to this target, in a new or existing graph.
+    ui.menu_button(
+        format!("{} Mod Grid", egui_remixicon::icons::ADD_LINE),
+        |ui| {
+            dim_label(ui, "Add an LFO modulating this target");
+            let graphs: Vec<(synth_sequencer::ModGraphId, String)> = song
+                .try_read()
+                .map(|s| s.mod_graphs().map(|g| (g.id, g.name.clone())).collect())
+                .unwrap_or_default();
+            if ui.button("New graph + LFO").clicked() {
+                quick_assign_mod_grid(song, undo_manager, view_state, data, None, &sel);
+                ui.close();
+            }
+            if !graphs.is_empty() {
+                ui.separator();
+            }
+            for (gid, name) in graphs {
+                if ui.button(name).clicked() {
+                    quick_assign_mod_grid(song, undo_manager, view_state, data, Some(gid), &sel);
+                    ui.close();
+                }
+            }
+        },
+    );
+}
+
+/// Loose provenance match: a grid Target writes a lane's target when they name
+/// the same param (track/instrument/global), ignoring the specific track so a
+/// relative "this track" lane still shows its modulators.
+fn mod_target_matches(grid: &AutomationTarget, sel: &AutomationTarget) -> bool {
+    use AutomationTarget::{Global, Instrument, Module, Track};
+    match (grid, sel) {
+        (Track { param: a, .. }, Track { param: b, .. }) => a == b,
+        (Global(a), Global(b)) => a == b,
+        (
+            Instrument {
+                instrument: ia,
+                param: pa,
+            },
+            Instrument {
+                instrument: ib,
+                param: pb,
+            },
+        ) => ia == ib && pa == pb,
+        (Module { .. }, Module { .. }) => grid == sel,
+        _ => false,
+    }
+}
+
+/// Create (or reuse) a mod graph with an LFO wired to `sel`, and jump to it. For
+/// a relative track target the graph is Track-scoped and assigned to the
+/// pattern's host track so it resolves and modulates immediately.
+fn quick_assign_mod_grid(
+    song: &std::sync::Arc<parking_lot::RwLock<synth_sequencer::Song>>,
+    undo_manager: &mut crate::undo::UndoManager,
+    view_state: &mut SequencerViewState,
+    data: &PianoRollData,
+    existing: Option<synth_sequencer::ModGraphId>,
+    sel: &AutomationTarget,
+) {
+    use synth_sequencer::{ModConnection, ModGraphScope, ModNodeConfig, ModTarget, ModuleNode};
+    // The pattern's first host track — used to resolve a relative track target.
+    let host_track = {
+        let Some(s) = song.try_read() else {
+            return;
+        };
+        s.arrangement()
+            .iter()
+            .find(|p| p.pattern_id == data.pattern_id)
+            .map(|p| p.track_id)
+    };
+    let is_relative_track = matches!(sel, AutomationTarget::Track { track: None, .. });
+
+    let (gid, before, after) = {
+        let mut s = song.write();
+        let gid = existing.unwrap_or_else(|| s.create_mod_graph("Quick Mod"));
+        let before = existing.and(s.mod_graph(gid).cloned());
+        // Auto-scope + assign so a relative track target resolves — but only for
+        // a freshly-created graph, never re-scoping an existing one the user set
+        // up (which could break its other routings).
+        if existing.is_none()
+            && is_relative_track
+            && let Some(track) = host_track
+        {
+            s.set_mod_graph_scope(gid, ModGraphScope::Track);
+            let mut assigned: Vec<_> = s
+                .mod_graph(gid)
+                .map(|g| g.assigned_tracks.clone())
+                .unwrap_or_default();
+            if !assigned.contains(&track) {
+                assigned.push(track);
+            }
+            s.assign_mod_graph(gid, &assigned);
+        }
+        if let Some(g) = s.mod_graph_mut(gid) {
+            let lfo = g.next_node_id();
+            let _ = g.try_insert_node(
+                lfo,
+                ModNodeConfig::Module(ModuleNode {
+                    module_type: synth_core::ModuleType::Lfo,
+                    params: Default::default(),
+                    seed: None,
+                }),
+            );
+            let tgt = g.next_node_id();
+            let _ = g.try_insert_node(
+                tgt,
+                ModNodeConfig::Target(ModTarget {
+                    target: sel.clone(),
+                    amount: 0.25,
+                    combine: synth_sequencer::CombineMode::default(),
+                }),
+            );
+            let _ = g.try_connect(ModConnection::new(lfo, "out", tgt, "in"));
+        }
+        let after = s.mod_graph(gid).cloned();
+        (gid, before, after)
+    };
+    if after.is_some() {
+        undo_manager.push(crate::undo::UndoAction::SetModGraph {
+            graph_id: gid,
+            old: before,
+            new: after,
+        });
+    }
+    view_state.jump_to_mod_graph = Some(gid);
+}
+
 /// Draw the piano roll in a bottom panel.
 /// Returns false if the close button was clicked.
 #[allow(clippy::too_many_lines, clippy::too_many_arguments)]
@@ -2964,6 +3131,8 @@ fn draw_piano_roll_toolbar(
 
         // Automation lane selector (shared with the tracker view).
         draw_automation_target_selector(ui, view_state, data, instruments);
+        // Mod Grid provenance + quick-assign for the focused lane's target.
+        draw_mod_grid_lane_tools(ui, song, data, view_state, undo_manager);
 
         // Curve-type brush for newly drawn points (only while a lane is shown).
         // A point's type is changed after the fact from its right-click menu.

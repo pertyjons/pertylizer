@@ -8,10 +8,11 @@ use std::path::{Path, PathBuf};
 use eframe::egui::{self, Pos2, RichText};
 use egui_file_dialog::{FileDialog, Filter};
 
-use super::egui_backend::setup_custom_style;
+use super::egui_backend::{BUNDLED_FONTS, apply_fonts, resolve_font, setup_custom_style};
 use super::theme::{ThemePreset, theme};
 use super::widgets::{
-    CaptionTone, DialogButton, caption, dialog_button_row, labeled_row, modal_window, strong_label,
+    CaptionTone, DialogButton, caption, dialog_button_row, enum_combo, labeled_row, modal_window,
+    strong_label,
 };
 use crate::io::settings::{AppSettings, settings_path};
 use crate::io::{GroupTemplateInfo, GroupTemplateManager, GroupTemplateSource, PatchManager};
@@ -425,6 +426,26 @@ pub fn show_settings_dialog(
                         }
                     }
                 });
+
+            ui.add_space(theme().spacing.lg);
+            ui.separator();
+
+            // --- Font ---
+            ui.heading("Font");
+            ui.add_space(theme().spacing.xs);
+
+            // The whole UI is monospace; this picks which bundled mono font.
+            // Options come straight from the generated `BUNDLED_FONTS` table.
+            let current_font = resolve_font(settings.font.as_deref());
+            let mut chosen = current_font;
+            let font_options: Vec<(&str, &str)> =
+                BUNDLED_FONTS.iter().map(|f| (f.0, f.0)).collect();
+            enum_combo(ui, "font_combo", &mut chosen, &font_options);
+            if chosen != current_font {
+                settings.font = Some(chosen.to_owned());
+                apply_fonts(ctx, chosen);
+                changed = true;
+            }
 
             ui.add_space(theme().spacing.lg);
             ui.separator();

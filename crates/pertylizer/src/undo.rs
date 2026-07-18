@@ -321,6 +321,14 @@ pub(crate) enum UndoAction {
         old: Option<synth_sequencer::NoteGraph>,
         new: Option<synth_sequencer::NoteGraph>,
     },
+    /// A Mod Grid graph was created (`old: None`), edited, or deleted
+    /// (`new: None`) — full-snapshot on each side, mirroring [`Self::SetNoteGraph`].
+    /// Applying writes the `new` side into the `Song` mod-grid pool.
+    SetModGraph {
+        graph_id: synth_sequencer::ModGraphId,
+        old: Option<synth_sequencer::ModGraph>,
+        new: Option<synth_sequencer::ModGraph>,
+    },
     /// A pattern's note-graph binding changed.
     SetPatternNoteGraph {
         pattern_id: PatternId,
@@ -789,6 +797,11 @@ impl UndoManager {
                 connection: *connection,
             },
             UndoAction::SetNoteGraph { graph_id, old, new } => UndoAction::SetNoteGraph {
+                graph_id: *graph_id,
+                old: new.clone(),
+                new: old.clone(),
+            },
+            UndoAction::SetModGraph { graph_id, old, new } => UndoAction::SetModGraph {
                 graph_id: *graph_id,
                 old: new.clone(),
                 new: old.clone(),

@@ -255,6 +255,18 @@ fn render_to_wav(
     // 4. Load all instruments and their patches into the engine
     let warnings = load_project_into_engine(project, &session, &mut handle)?;
 
+    // Build and ship the Mod Grid runtime so an offline render reproduces the
+    // live control-rate modulation (seeded random nodes render bit-identically).
+    // Sent *after* the instruments so their SeqInstrumentId → InstrumentId mapping
+    // exists when `SetModGrid` pre-creates the per-instrument offset slots for
+    // `Instrument { Volume | Pan }` targets — otherwise those resolve to nothing
+    // and the channel modulation silently drops (the track-scope path needs no
+    // mapping, so it was unaffected).
+    let mod_grid = crate::mod_grid_build::build_mod_grid_runtime(&song.read());
+    handle.send_blocking(EngineCommand::SetModGrid {
+        runtime: Box::new(mod_grid),
+    });
+
     // 5. Apply global settings
     handle.send_blocking(EngineCommand::SetMasterVolume(project.global.master_volume));
     handle.send_blocking(EngineCommand::SetGlideTime(project.global.glide_time));

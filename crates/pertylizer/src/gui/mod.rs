@@ -36,6 +36,9 @@ pub(crate) mod script_editor;
 pub(crate) mod note_grid_view;
 
 #[cfg(feature = "gui-egui")]
+pub(crate) mod mod_grid_view;
+
+#[cfg(feature = "gui-egui")]
 pub mod theme;
 
 #[cfg(feature = "gui-egui")]

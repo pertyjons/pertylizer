@@ -788,6 +788,79 @@ pub struct NoteGraphDetail {
     pub connections: Vec<NoteGraphConnectionInfo>,
 }
 
+/// A pooled Mod Grid graph in summary form (pool-list view).
+#[derive(Debug, Clone, Serialize)]
+pub struct ModGraphInfo {
+    /// Pool-unique graph id (address for every mod-graph tool).
+    pub id: u32,
+    /// User-facing name.
+    pub name: String,
+    /// Free-text description.
+    pub description: String,
+    /// `global` (one always-on instance) or `track` (one per assigned track).
+    pub scope: String,
+    /// For `track` scope, the assigned track ids (one running instance each).
+    pub assigned_tracks: Vec<u32>,
+    /// RGB color as `#rrggbb`, or `None` if unset.
+    pub color: Option<String>,
+    /// Number of nodes in the graph.
+    pub node_count: usize,
+    /// Number of cables.
+    pub connection_count: usize,
+}
+
+/// One node in a mod graph, as surfaced to MCP readers.
+#[derive(Debug, Clone, Serialize)]
+pub struct ModGraphNodeInfo {
+    /// Graph-local node id (address for connect / remove).
+    pub id: u32,
+    /// Kind tag (`module`, `macro`, `transport`, `midi_cc`, `audio_tap`,
+    /// `target`).
+    pub kind: String,
+    /// Full config as externally-tagged JSON — the shape `add_mod_graph_node`
+    /// accepts, so it round-trips.
+    pub config: serde_json::Value,
+}
+
+/// One cable in a mod graph, as surfaced to MCP readers.
+#[derive(Debug, Clone, Serialize)]
+pub struct ModGraphConnectionInfo {
+    /// Source node id.
+    pub from: u32,
+    /// Source output port name.
+    pub from_port: String,
+    /// Destination node id.
+    pub to: u32,
+    /// Destination input port name.
+    pub to_port: String,
+}
+
+/// A mod graph in full detail (nodes + cables), for `get_mod_graph`.
+#[derive(Debug, Clone, Serialize)]
+pub struct ModGraphDetail {
+    /// Summary metadata.
+    pub info: ModGraphInfo,
+    /// Nodes in id order.
+    pub nodes: Vec<ModGraphNodeInfo>,
+    /// Cables.
+    pub connections: Vec<ModGraphConnectionInfo>,
+}
+
+/// One routing sink ("what writes to a target"), for `list_mod_targets`.
+#[derive(Debug, Clone, Serialize)]
+pub struct ModTargetInfo {
+    /// The graph that owns this routing.
+    pub graph_id: u32,
+    /// The graph's name (for readability).
+    pub graph_name: String,
+    /// The Target node's id within the graph.
+    pub node_id: u32,
+    /// The automation target's human-readable address.
+    pub target: String,
+    /// Routing depth in the target's units.
+    pub amount: f32,
+}
+
 /// Information about a note in a pattern.
 #[derive(Debug, Clone, Serialize)]
 pub struct NoteInfo {

@@ -36,10 +36,10 @@ mod status {
     pub const PITCH_BEND: u8 = 0xE0;
 }
 
-/// MIDI CC numbers.
+/// MIDI CC numbers with bespoke handling. Every other CC (including the sustain
+/// pedal, CC64) flows through as a generic `ControlChange`.
 mod cc {
     pub const MOD_WHEEL: u8 = 1;
-    pub const SUSTAIN_PEDAL: u8 = 64;
     pub const ALL_NOTES_OFF: u8 = 123;
 }
 
@@ -105,20 +105,21 @@ pub fn parse_midi(bytes: &[u8]) -> Option<EngineCommand> {
                     let value = NormalizedValue::new(cc_value as f32 / 127.0);
                     Some(EngineCommand::ModWheel { value, channel })
                 }
-                cc::SUSTAIN_PEDAL => {
-                    // Sustain pedal (CC 64): >= 64 is on, < 64 is off.
-                    //
-                    // Full sustain-pedal semantics require the engine to:
-                    //  1. Track which notes are held while the pedal is down.
-                    //  2. Suppress NoteOff for held notes until the pedal is released.
-                    //  3. Send deferred NoteOff events when the pedal goes off.
-                    // This needs a ControlChange EngineCommand variant and
-                    // voice-level tracking, neither of which exist yet.
-                    // Ignored for now — the pedal message is intentionally dropped.
-                    None
-                }
                 cc::ALL_NOTES_OFF => Some(EngineCommand::AllNotesOff),
-                _ => None,
+                // Every other CC — including the sustain pedal (CC64) — feeds the
+                // engine's live CC state, which Mod Grid `MidiCc` sources read.
+                // (CC1 is handled above as `ModWheel`, which also mirrors into the
+                // CC state for a grid source on CC1.) Full sustain-pedal note-hold
+                // semantics (defer NoteOff while the pedal is down) are still a
+                // separate TODO — the value reaches the grid, but not voices.
+                _ => {
+                    let value = NormalizedValue::new(cc_value as f32 / 127.0);
+                    Some(EngineCommand::ControlChange {
+                        channel,
+                        cc: cc_number,
+                        value,
+                    })
+                }
             }
         }
 
@@ -451,10 +452,18 @@ mod tests {
     }
 
     #[test]
-    fn test_parse_unknown_cc_returns_none() {
-        // Unknown CC number
+    fn test_parse_generic_cc_becomes_control_change() {
+        // A CC with no bespoke mapping now feeds the engine's live CC state via a
+        // generic ControlChange (read by Mod Grid MidiCc sources).
         let msg = [0xB0, 42, 100];
-        assert!(parse_midi(&msg).is_none());
+        match parse_midi(&msg).expect("generic CC should parse") {
+            EngineCommand::ControlChange { channel, cc, value } => {
+                assert_eq!(channel.as_zero_indexed(), 0);
+                assert_eq!(cc, 42);
+                assert!((value.as_f32() - 100.0 / 127.0).abs() < 1e-6);
+            }
+            other => panic!("expected ControlChange, got {other:?}"),
+        }
     }
 
     #[test]

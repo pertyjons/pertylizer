@@ -102,6 +102,12 @@ pub struct ModuleGraph {
     /// Pre-allocated input buffers for processing (avoid allocations in audio thread).
     /// Vec of (port_name, buffer) pairs - allows creating a reference slice without allocation.
     input_buffers: Vec<(PortName, AudioBuffer)>,
+    /// Cheap Mod-Grid sources injected into a hosted module's control input port
+    /// as a block-constant value (`Macro → LFO.rate_cv`). Slots are pre-created
+    /// off the audio thread ([`Self::push_input_injection`]); the pre-pass only
+    /// updates values ([`Self::set_input_injection_value`], no allocation). Empty
+    /// for every non-Mod-Grid graph, so `process_module` skips the scan.
+    input_injections: Vec<(ModuleId, PortName, f32)>,
     /// Pre-built incoming connection lookup: module_id → Vec<(from_module, from_port, to_port)>.
     /// Rebuilt when graph topology changes (order_dirty), not per frame.
     /// Each Vec is sorted in `calculate_processing_order` so input-summation
@@ -137,6 +143,7 @@ impl ModuleGraph {
             order_dirty: true,
             buffer_size: synth_core::BlockSize::new(256),
             input_buffers: Vec::with_capacity(8),
+            input_injections: Vec::new(),
             incoming_map: HashMap::new(),
             incoming_cache: Vec::with_capacity(16),
             cached_output_id: None,
@@ -156,6 +163,7 @@ impl ModuleGraph {
         self.instance_counters.clear();
         self.order_dirty = true;
         self.input_buffers.clear();
+        self.input_injections.clear();
         self.incoming_map.clear();
         self.incoming_cache.clear();
         self.cached_output_id = None;
@@ -572,6 +580,33 @@ impl ModuleGraph {
         }
     }
 
+    /// Pre-create an input-injection slot for `(module, port)` (off the audio
+    /// thread — allocates). Idempotent: a `(module, port)` already present is left
+    /// untouched. The pre-pass then only *updates* the value with
+    /// [`Self::set_input_injection_value`], never inserts, so it stays RT-safe.
+    pub fn push_input_injection(&mut self, module: ModuleId, port: PortName) {
+        if !self
+            .input_injections
+            .iter()
+            .any(|(m, p, _)| *m == module && *p == port)
+        {
+            self.input_injections.push((module, port, 0.0));
+        }
+    }
+
+    /// Set the block-constant value of a pre-created injection slot (RT-safe:
+    /// linear find + write, no allocation). A `(module, port)` with no slot is a
+    /// silent no-op — slots are created at build time.
+    pub fn set_input_injection_value(&mut self, module: ModuleId, port: PortName, value: f32) {
+        if let Some((_, _, v)) = self
+            .input_injections
+            .iter_mut()
+            .find(|(m, p, _)| *m == module && *p == port)
+        {
+            *v = value;
+        }
+    }
+
     /// Apply a transient automation override to a specific module.
     ///
     /// Routes to the module with the given id and replaces the targeted
@@ -903,6 +938,43 @@ impl ModuleGraph {
             }
         }
 
+        // Cheap Mod-Grid sources injected into this module's control input ports
+        // (`Macro → LFO.rate_cv`). Added like a connection — summed into an
+        // existing buffer, or filled into a fresh one. The graph validator forbids
+        // a second driver on a port, so a port is either connected or injected.
+        // The whole vec is empty for non-Mod-Grid graphs (the common case).
+        if !self.input_injections.is_empty() {
+            let n = context.samples.as_usize();
+            for &(m, port, value) in &self.input_injections {
+                if m != module_id {
+                    continue;
+                }
+                if let Some((_, existing)) = self
+                    .input_buffers
+                    .iter_mut()
+                    .find(|(name, _)| *name == port)
+                {
+                    if existing.len() < n {
+                        existing.resize(n);
+                    }
+                    for s in existing.as_mut_slice() {
+                        *s += value;
+                    }
+                } else {
+                    let mut buf = if let Some(mut pooled) = self.buffer_pool.pop() {
+                        pooled.resize(n);
+                        pooled
+                    } else {
+                        AudioBuffer::new(n)
+                    };
+                    for s in buf.as_mut_slice() {
+                        *s = value;
+                    }
+                    self.input_buffers.push((port, buf));
+                }
+            }
+        }
+
         // Build InputPorts directly from owned buffers (zero allocation)
         let inputs = InputPorts::from_owned(&self.input_buffers);
 
@@ -1027,6 +1099,47 @@ mod tests {
             graph
                 .incoming_connections(ModuleId::new(ModuleType::Filter, 99))
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn input_injection_feeds_a_module_control_port() {
+        use synth_modules::Lfo;
+        // An LFO at 1 Hz base rate. Injecting a value into its `rate_cv` control
+        // input makes `is_connected()` true and applies FM, so the block's final
+        // sample diverges from the un-injected run — proving the injection reached
+        // the module's input port.
+        let ctx = ProcessContext {
+            samples: SampleCount::new(256),
+            sample_rate: SampleRate::DVD_QUALITY,
+            ..ProcessContext::default()
+        };
+        let last_sample = |inject: Option<f32>| -> f32 {
+            let mut graph = ModuleGraph::new();
+            let lfo = graph.add_module(Box::new(Lfo::new()));
+            graph.set_param(
+                lfo,
+                Param::Lfo(synth_core::LfoParam::Rate(synth_core::Hertz::new(1.0))),
+            );
+            if let Some(v) = inject {
+                graph.push_input_injection(lfo, PortName::RATE_CV);
+                graph.set_input_injection_value(lfo, PortName::RATE_CV, v);
+            }
+            let mut out = AudioBuffer::new(256);
+            // A few blocks so the phase difference accumulates.
+            for _ in 0..8 {
+                graph.process(&mut out, &ctx);
+            }
+            graph
+                .get_module_output(lfo, PortName::OUT)
+                .and_then(|b| b.as_slice().last().copied())
+                .unwrap_or(0.0)
+        };
+        let base = last_sample(None);
+        let injected = last_sample(Some(1.0));
+        assert!(
+            (base - injected).abs() > 1e-3,
+            "injected rate_cv should change the LFO output: base={base}, injected={injected}"
         );
     }
 

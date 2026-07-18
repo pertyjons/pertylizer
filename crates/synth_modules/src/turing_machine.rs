@@ -324,6 +324,13 @@ impl PolyModule for TuringMachine {
         self.gate_active = false;
     }
 
+    fn set_seed(&mut self, seed: u64) {
+        // Both the LFSR shift register and the xorshift RNG must be non-zero;
+        // `| 1` guarantees it. `reset` leaves these untouched, so the seed sticks.
+        self.shift_register = (seed as u16) | 1;
+        self.rng_state = ((seed >> 16) as u32) | 1;
+    }
+
     fn note_on(&mut self, _note: MidiNote, _velocity: Velocity) {
         self.reset();
     }

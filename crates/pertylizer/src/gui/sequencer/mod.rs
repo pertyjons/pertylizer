@@ -319,6 +319,9 @@ pub struct SequencerViewState {
     /// One-shot request from the Note FX panel's "edit" affordance: the backend
     /// takes this and switches to the Note Grid view with the graph loaded.
     pub(crate) jump_to_note_graph: Option<synth_sequencer::NoteGraphId>,
+    /// One-shot request from an automation lane's provenance chip: the backend
+    /// takes this and switches to the Mod Grid view with the graph loaded.
+    pub(crate) jump_to_mod_graph: Option<synth_sequencer::ModGraphId>,
     /// Open per-note ornament editor popup (target note + baseline + working
     /// copy). `None` when the popup is closed; one coalesced undo entry is pushed
     /// when it closes.
@@ -390,6 +393,7 @@ impl SequencerViewState {
             tracker: tracker::TrackerViewState::default(),
             note_fx_panel_open: false,
             jump_to_note_graph: None,
+            jump_to_mod_graph: None,
             editing_ornament: None,
             editing_note_graph: None,
             show_note_fx_ghosts: false,

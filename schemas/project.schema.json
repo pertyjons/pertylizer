@@ -249,6 +249,41 @@
       },
       "type": "object"
     },
+    "AudioTapNode": {
+      "description": "A grid-native pre-fader level tap (source only; one-block latency).",
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/AudioTapSource"
+        }
+      },
+      "required": [
+        "source"
+      ],
+      "type": "object"
+    },
+    "AudioTapSource": {
+      "description": "What a [`AudioTapNode`] reads a pre-fader level from.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "A sequencer track's pre-fader instrument output.",
+          "properties": {
+            "Track": {
+              "$ref": "#/$defs/TrackId"
+            }
+          },
+          "required": [
+            "Track"
+          ],
+          "type": "object"
+        },
+        {
+          "const": "Master",
+          "description": "The master bus.",
+          "type": "string"
+        }
+      ]
+    },
     "Author": {
       "description": "Author information embedded in patch, project, and preset files.",
       "examples": [
@@ -525,6 +560,16 @@
         }
       },
       "type": "object"
+    },
+    "CombineMode": {
+      "description": "How a [`ModTarget`] contribution composes with the target's current value\n(base value or authored lane value). Additive-only for now.",
+      "oneOf": [
+        {
+          "const": "Add",
+          "description": "`result = current + amount * source`, clamped to the target's range.",
+          "type": "string"
+        }
+      ]
     },
     "ConnectionState": {
       "description": "Connection between two modules.",
@@ -1069,10 +1114,290 @@
       ],
       "type": "object"
     },
+    "MacroNode": {
+      "description": "A grid-native named knob — the song-level macro bank.",
+      "properties": {
+        "name": {
+          "description": "Display name of the macro.",
+          "type": "string"
+        },
+        "value": {
+          "default": 0.0,
+          "description": "Current value, `0.0..=1.0`.",
+          "format": "float",
+          "type": "number"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "type": "object"
+    },
+    "MidiCcNode": {
+      "description": "A grid-native MIDI CC input source node.",
+      "properties": {
+        "cc": {
+          "default": 0,
+          "description": "Controller number, `0..=127`.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "channel": {
+          "description": "MIDI channel to listen on, or `None` for omni.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "type": "object"
+    },
     "Milliseconds": {
       "description": "Duration in milliseconds.\n\nConvenience type for UI display and input.",
       "format": "float",
       "type": "number"
+    },
+    "ModConnection": {
+      "description": "A control-signal cable between two nodes' named ports.",
+      "properties": {
+        "from": {
+          "$ref": "#/$defs/ModNodeId",
+          "description": "Source node."
+        },
+        "from_port": {
+          "description": "Output port name on the source node (e.g. `\"out\"`).",
+          "type": "string"
+        },
+        "to": {
+          "$ref": "#/$defs/ModNodeId",
+          "description": "Destination node."
+        },
+        "to_port": {
+          "description": "Input port name on the destination node (e.g. `\"in\"`, `\"rate_cv\"`).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "from",
+        "from_port",
+        "to",
+        "to_port"
+      ],
+      "type": "object"
+    },
+    "ModGraph": {
+      "description": "Static mod-graph configuration — a pooled project asset.",
+      "properties": {
+        "assigned_tracks": {
+          "description": "Tracks this graph is assigned to (Track scope only). One running instance\nper assigned track; \"this track\" targets resolve to each host.",
+          "items": {
+            "$ref": "#/$defs/TrackId"
+          },
+          "type": "array"
+        },
+        "color": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TrackColor"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "Sequencer-side color (RGB), never egui's `Color32` — this crate has no\negui dependency."
+        },
+        "connections": {
+          "default": [],
+          "description": "Cables, kept as a sorted `Vec` for deterministic serialization.",
+          "items": {
+            "$ref": "#/$defs/ModConnection"
+          },
+          "type": "array"
+        },
+        "description": {
+          "default": "",
+          "description": "Free-text description.",
+          "type": "string"
+        },
+        "id": {
+          "$ref": "#/$defs/ModGraphId",
+          "description": "Pool-unique id."
+        },
+        "name": {
+          "description": "User-facing name, shown in the pool view.",
+          "type": "string"
+        },
+        "node_positions": {
+          "additionalProperties": false,
+          "description": "Editor canvas positions per node (layout metadata; nodes without one are\nauto-laid-out). Persisted so an arranged canvas survives reload.",
+          "patternProperties": {
+            "^\\d+$": {
+              "$ref": "#/$defs/NodePosition"
+            }
+          },
+          "type": "object"
+        },
+        "nodes": {
+          "additionalProperties": false,
+          "default": {},
+          "description": "Nodes keyed by graph-local id.",
+          "patternProperties": {
+            "^\\d+$": {
+              "$ref": "#/$defs/ModNodeConfig"
+            }
+          },
+          "type": "object"
+        },
+        "scope": {
+          "$ref": "#/$defs/ModGraphScope",
+          "default": "Global",
+          "description": "Global (one always-on instance) or Track (one instance per assignment)."
+        }
+      },
+      "required": [
+        "id",
+        "name"
+      ],
+      "type": "object"
+    },
+    "ModGraphId": {
+      "description": "Unique identifier for a Mod Grid graph in the project pool.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "ModGraphScope": {
+      "description": "Where a mod graph runs and how \"this track\" targets resolve.",
+      "oneOf": [
+        {
+          "const": "Global",
+          "description": "Exactly one running instance, always on. Relative `Track { track: None }`\ntargets cannot resolve (no host) and are dropped.",
+          "type": "string"
+        },
+        {
+          "const": "Track",
+          "description": "Pooled and assigned to zero or more tracks; one running instance per\nassignment, and relative \"this track\" targets resolve to the host track.",
+          "type": "string"
+        }
+      ]
+    },
+    "ModNodeConfig": {
+      "description": "A single node's configuration.",
+      "oneOf": [
+        {
+          "additionalProperties": false,
+          "description": "A hosted control-rate audio module (LFO, MSEG, envelope follower, …).",
+          "properties": {
+            "Module": {
+              "$ref": "#/$defs/ModuleNode"
+            }
+          },
+          "required": [
+            "Module"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A song-level macro knob.",
+          "properties": {
+            "Macro": {
+              "$ref": "#/$defs/MacroNode"
+            }
+          },
+          "required": [
+            "Macro"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A transport-derived source (beat/bar phase, tempo, position).",
+          "properties": {
+            "Transport": {
+              "$ref": "#/$defs/TransportNode"
+            }
+          },
+          "required": [
+            "Transport"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A MIDI CC input source.",
+          "properties": {
+            "MidiCc": {
+              "$ref": "#/$defs/MidiCcNode"
+            }
+          },
+          "required": [
+            "MidiCc"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A pre-fader level tap of a track or the master bus.",
+          "properties": {
+            "AudioTap": {
+              "$ref": "#/$defs/AudioTapNode"
+            }
+          },
+          "required": [
+            "AudioTap"
+          ],
+          "type": "object"
+        },
+        {
+          "additionalProperties": false,
+          "description": "A routing sink into an [`AutomationTarget`].",
+          "properties": {
+            "Target": {
+              "$ref": "#/$defs/ModTarget"
+            }
+          },
+          "required": [
+            "Target"
+          ],
+          "type": "object"
+        }
+      ]
+    },
+    "ModNodeId": {
+      "description": "Unique identifier for a node within a single [`ModGraphId`] graph.\n\nOnly unique within its owning graph — different graphs reuse the same small\nid space.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "ModTarget": {
+      "description": "A routing sink: writes its input control signal into an automation target.",
+      "properties": {
+        "amount": {
+          "default": 0.0,
+          "description": "Depth in the target's own units (semitones for pitch, `0..1` for a\nnormalized param, etc.). The input signal is multiplied by this.",
+          "format": "float",
+          "type": "number"
+        },
+        "combine": {
+          "$ref": "#/$defs/CombineMode",
+          "default": "Add",
+          "description": "How the contribution composes with the target's current value."
+        },
+        "target": {
+          "$ref": "#/$defs/AutomationTarget",
+          "description": "The address written to. Relative `Track { track: None }` resolves to the\ninstance's host track (Track scope) or is dropped (Global scope)."
+        }
+      },
+      "required": [
+        "target"
+      ],
+      "type": "object"
     },
     "ModuleGroupState": {
       "description": "Group of modules in the patch editor (UI-level metadata).",
@@ -1123,6 +1448,37 @@
         "members",
         "collapsed",
         "position"
+      ],
+      "type": "object"
+    },
+    "ModuleNode": {
+      "description": "A hosted control-rate audio module, run mono by the grid harness.",
+      "properties": {
+        "module_type": {
+          "$ref": "#/$defs/ModuleType",
+          "description": "Which module type to host (e.g. `Lfo`, `Mseg`, `EnvelopeFollower`)."
+        },
+        "params": {
+          "additionalProperties": {
+            "format": "float",
+            "type": "number"
+          },
+          "default": {},
+          "description": "Parameter values, keyed by descriptor `type_id`. Stored as `f32` (the\nsame boundary the MCP `set_parameter` uses); choice params encode as\ntheir choice index.",
+          "type": "object"
+        },
+        "seed": {
+          "description": "Explicit persisted seed for random-family modules, so an offline render\nreproduces the live result bit-for-bit. `None` for deterministic modules.",
+          "format": "uint64",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "module_type"
       ],
       "type": "object"
     },
@@ -10313,9 +10669,22 @@
           "description": "Free-text description capturing intent (what the song is for, its mood\nor production notes). Empty by default; readable/writable via MCP and GUI.",
           "type": "string"
         },
+        "mod_graphs": {
+          "description": "Pooled Mod Grid graphs — control-rate modulator graphs referenced by\n[`ModGraphId`]. Global graphs run one always-on instance; Track graphs\nrun one instance per assigned track. The engine (re)builds running\ninstances off the audio thread whenever [`Self::mod_grid_generation`]\nchanges.",
+          "items": {
+            "$ref": "#/$defs/ModGraph"
+          },
+          "type": "array"
+        },
         "name": {
           "description": "Song name.",
           "type": "string"
+        },
+        "next_mod_graph_id": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
         },
         "next_note_graph_id": {
           "default": 0,
@@ -10651,6 +11020,41 @@
         "level"
       ],
       "type": "object"
+    },
+    "TransportNode": {
+      "description": "A grid-native transport source node.",
+      "properties": {
+        "source": {
+          "$ref": "#/$defs/TransportSource",
+          "default": "BeatPhase"
+        }
+      },
+      "type": "object"
+    },
+    "TransportSource": {
+      "description": "Which transport-derived signal a [`TransportNode`] emits.",
+      "oneOf": [
+        {
+          "const": "BeatPhase",
+          "description": "Ramp 0→1 across each beat.",
+          "type": "string"
+        },
+        {
+          "const": "BarPhase",
+          "description": "Ramp 0→1 across each bar.",
+          "type": "string"
+        },
+        {
+          "const": "Tempo",
+          "description": "Current tempo, normalized against a nominal 20..300 BPM span.",
+          "type": "string"
+        },
+        {
+          "const": "PositionBeats",
+          "description": "Absolute song position in beats (unnormalized).",
+          "type": "string"
+        }
+      ]
     },
     "Velocity": {
       "description": "MIDI velocity (0-127, normalized to 0.0-1.0).\n\nRepresents how hard a note was played.\nStored internally as normalized f32 for smooth processing.",

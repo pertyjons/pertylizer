@@ -2686,6 +2686,122 @@ pub struct SetNoteNoteGraphParam {
     pub items: Vec<SetNoteNoteGraphInput>,
 }
 
+// === Mod Grid (pooled control-rate modulator graphs) ===
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ModGraphIdParam {
+    #[schemars(description = "Mod graph id (from list_mod_graphs)")]
+    pub graph_id: u32,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct CreateModGraphParam {
+    #[schemars(description = "Name for the new mod graph")]
+    pub name: String,
+    #[schemars(description = "Optional free-text description")]
+    pub description: Option<String>,
+    #[schemars(
+        description = "Scope: 'global' (one always-on instance, default) or 'track' (one instance per assigned track; assign with assign_mod_graph)."
+    )]
+    pub scope: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct DeleteModGraphParam {
+    #[schemars(description = "Mod graph ids to delete (one or many).")]
+    pub graph_ids: Vec<u32>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetModGraphScopeParam {
+    #[schemars(description = "Mod graph id")]
+    pub graph_id: u32,
+    #[schemars(description = "New scope: 'global' or 'track'.")]
+    pub scope: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AssignModGraphParam {
+    #[schemars(description = "Mod graph id (must be 'track' scope to run)")]
+    pub graph_id: u32,
+    #[schemars(
+        description = "Track ids to assign (replaces the current set; one running instance per track). Unknown ids are dropped."
+    )]
+    pub tracks: Vec<u32>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AddModGraphNodeInput {
+    #[schemars(description = "Mod graph id to add the node to")]
+    pub graph_id: u32,
+    #[schemars(
+        description = "Node as externally-tagged ModNodeConfig JSON. module_type uses the snake_case module key (e.g. 'lfo', 'mseg', 'envelope_follower'). Examples: {\"Module\":{\"module_type\":\"lfo\",\"params\":{\"rate\":2.0}}} (a hosted control-rate module), {\"Macro\":{\"name\":\"...\",\"value\":0.5}}, {\"Transport\":{\"source\":\"BeatPhase\"}}, {\"MidiCc\":{\"cc\":1}}, {\"AudioTap\":{\"source\":{\"Track\":0}}}, or {\"Target\":{\"target\":{\"Track\":{\"param\":\"Volume\"}},\"amount\":0.25}} (a routing sink; connect a source's out to its 'in' port). Read existing nodes with get_mod_graph to see the exact shape."
+    )]
+    pub node: serde_json::Value,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct AddModGraphNodeParam {
+    #[schemars(description = "Nodes to add (one or many). Returns each new node id.")]
+    pub items: Vec<AddModGraphNodeInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct RemoveModGraphNodeParam {
+    #[schemars(description = "Mod graph id")]
+    pub graph_id: u32,
+    #[schemars(description = "Node id to remove (drops every cable touching it)")]
+    pub node_id: u32,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ConnectModGraphInput {
+    #[schemars(description = "Mod graph id")]
+    pub graph_id: u32,
+    #[schemars(description = "Source node id")]
+    pub from: u32,
+    #[schemars(description = "Source output port name (e.g. 'out')")]
+    pub from_port: String,
+    #[schemars(description = "Destination node id")]
+    pub to: u32,
+    #[schemars(description = "Destination input port name (e.g. 'in', 'rate_cv')")]
+    pub to_port: String,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ConnectModGraphParam {
+    #[schemars(description = "Cables to add (one or many).")]
+    pub items: Vec<ConnectModGraphInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct DisconnectModGraphParam {
+    #[schemars(
+        description = "Cables to remove (one or many), each the exact (graph_id, from, from_port, to, to_port) of an existing cable — the inverse of connect_mod_graph."
+    )]
+    pub items: Vec<ConnectModGraphInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetModGraphNodeParam {
+    #[schemars(description = "Mod graph id")]
+    pub graph_id: u32,
+    #[schemars(description = "Existing node id to edit in place")]
+    pub node_id: u32,
+    #[schemars(
+        description = "Replacement node as externally-tagged ModNodeConfig JSON (same shape as add_mod_graph_node). Keeps the node id and every cable touching it; the graph is re-validated (e.g. replacing a source that has outgoing cables with a Target is rejected). Read the current shape with get_mod_graph first."
+    )]
+    pub node: serde_json::Value,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct ListModTargetsParam {
+    #[schemars(
+        description = "Restrict to one graph's routings, or null/omit for every graph's routings."
+    )]
+    pub graph_id: Option<u32>,
+}
+
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct NoteOrnamentInput {
     #[schemars(description = "Pattern ID containing the note")]
@@ -4252,6 +4368,20 @@ impl SynthMcpServer {
             "connect_note_graph" => connect_note_graph(ConnectNoteGraphParam),
             "set_pattern_note_graph" => set_pattern_note_graph(SetPatternNoteGraphParam),
             "set_note_note_graph" => set_note_note_graph(SetNoteNoteGraphParam),
+
+            // Mod Grid
+            "list_mod_graphs" => list_mod_graphs(NoParams),
+            "get_mod_graph" => get_mod_graph(ModGraphIdParam),
+            "create_mod_graph" => create_mod_graph(CreateModGraphParam),
+            "delete_mod_graph" => delete_mod_graph(DeleteModGraphParam),
+            "set_mod_graph_scope" => set_mod_graph_scope(SetModGraphScopeParam),
+            "assign_mod_graph" => assign_mod_graph(AssignModGraphParam),
+            "add_mod_graph_node" => add_mod_graph_node(AddModGraphNodeParam),
+            "remove_mod_graph_node" => remove_mod_graph_node(RemoveModGraphNodeParam),
+            "set_mod_graph_node" => set_mod_graph_node(SetModGraphNodeParam),
+            "connect_mod_graph" => connect_mod_graph(ConnectModGraphParam),
+            "disconnect_mod_graph" => disconnect_mod_graph(DisconnectModGraphParam),
+            "list_mod_targets" => list_mod_targets(ListModTargetsParam),
 
             // Tracks
             "list_tracks" => list_tracks(NoParams),
@@ -6783,6 +6913,166 @@ impl SynthMcpServer {
             }
         }
         batch_msg(ok_count, "note note-graph bindings updated", &[], &errors)
+    }
+
+    // === Sequencer: Mod Grid (pooled control-rate modulator graphs) ===
+
+    #[tool(
+        description = "List every pooled Mod Grid graph in summary form (id, name, scope, assigned tracks, node/cable counts)."
+    )]
+    async fn list_mod_graphs(&self, _params: Parameters<NoParams>) -> String {
+        match self.bridge.list_mod_graphs() {
+            Ok(graphs) => to_json(&graphs),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Full detail of one Mod Grid graph: its nodes (with round-trippable ModNodeConfig JSON) and cables."
+    )]
+    async fn get_mod_graph(&self, params: Parameters<ModGraphIdParam>) -> String {
+        match self.bridge.get_mod_graph(params.0.graph_id) {
+            Ok(detail) => to_json(&detail),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Create an empty pooled Mod Grid graph (a control-rate modulator graph whose outputs write into the automation target space). scope is 'global' (one always-on instance, default) or 'track'. Returns the new graph id."
+    )]
+    async fn create_mod_graph(&self, params: Parameters<CreateModGraphParam>) -> String {
+        let p = params.0;
+        match self.bridge.create_mod_graph(p.name, p.description, p.scope) {
+            Ok(id) => to_json(&serde_json::json!({ "graph_id": id })),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Delete one or more pooled Mod Grid graphs (removing their running instances)."
+    )]
+    async fn delete_mod_graph(&self, params: Parameters<DeleteModGraphParam>) -> String {
+        let mut oks = Vec::new();
+        let mut errors = Vec::new();
+        for graph_id in params.0.graph_ids {
+            match self.bridge.delete_mod_graph(graph_id) {
+                Ok(()) => oks.push(format!("graph {graph_id}")),
+                Err(e) => errors.push(format!("{graph_id}: {e}")),
+            }
+        }
+        batch_msg(oks.len(), "mod graphs deleted", &oks, &errors)
+    }
+
+    #[tool(
+        description = "Set a Mod Grid graph's scope: 'global' (one always-on instance) or 'track' (one instance per assigned track). Switching to 'global' clears any track assignments."
+    )]
+    async fn set_mod_graph_scope(&self, params: Parameters<SetModGraphScopeParam>) -> String {
+        let p = params.0;
+        match self.bridge.set_mod_graph_scope(p.graph_id, p.scope) {
+            Ok(()) => format!("Graph {} scope updated", p.graph_id),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Assign a track-scope Mod Grid graph to a set of tracks (one running instance per track; relative 'this track' targets resolve to each host). Replaces the current assignment; unknown track ids are dropped."
+    )]
+    async fn assign_mod_graph(&self, params: Parameters<AssignModGraphParam>) -> String {
+        let p = params.0;
+        match self.bridge.assign_mod_graph(p.graph_id, p.tracks) {
+            Ok(()) => format!("Graph {} assignments updated", p.graph_id),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Add one or more nodes to Mod Grid graphs. Each node is externally-tagged ModNodeConfig JSON: a hosted Module (lfo/mseg/envelope_follower/etc.), a Macro/Transport/MidiCc/AudioTap source, or a Target routing sink. Connect a source's output to a Target's 'in' port with connect_mod_graph. Returns each new node id."
+    )]
+    async fn add_mod_graph_node(&self, params: Parameters<AddModGraphNodeParam>) -> String {
+        let mut oks = Vec::new();
+        let mut errors = Vec::new();
+        for it in params.0.items {
+            let graph_id = it.graph_id;
+            match self.bridge.add_mod_graph_node(graph_id, it.node) {
+                Ok(node_id) => oks.push(format!("graph {graph_id} @ node {node_id}")),
+                Err(e) => errors.push(format!("{graph_id}: {e}")),
+            }
+        }
+        batch_msg(oks.len(), "mod graph nodes added", &oks, &errors)
+    }
+
+    #[tool(description = "Remove a Mod Grid node and every cable touching it.")]
+    async fn remove_mod_graph_node(&self, params: Parameters<RemoveModGraphNodeParam>) -> String {
+        let p = params.0;
+        match self.bridge.remove_mod_graph_node(p.graph_id, p.node_id) {
+            Ok(()) => format!("Node {} removed from graph {}", p.node_id, p.graph_id),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Connect one or more Mod Grid cables between named ports (e.g. a source module's 'out' to a Target node's 'in'). Validated: endpoints exist, a target isn't used as a source, single source per input port, no cycle."
+    )]
+    async fn connect_mod_graph(&self, params: Parameters<ConnectModGraphParam>) -> String {
+        let mut oks = Vec::new();
+        let mut errors = Vec::new();
+        for it in params.0.items {
+            let graph_id = it.graph_id;
+            match self
+                .bridge
+                .connect_mod_graph(graph_id, it.from, it.from_port, it.to, it.to_port)
+            {
+                Ok(()) => oks.push(format!("graph {graph_id}: {} → {}", it.from, it.to)),
+                Err(e) => errors.push(format!("{graph_id}: {e}")),
+            }
+        }
+        batch_msg(oks.len(), "mod graph cables added", &oks, &errors)
+    }
+
+    #[tool(
+        description = "Remove one or more Mod Grid cables by their exact endpoints (the inverse of connect_mod_graph), leaving both nodes and every other cable intact. Use this to rewire a source without remove/re-add (which would drop the node's other cables and change its id)."
+    )]
+    async fn disconnect_mod_graph(&self, params: Parameters<DisconnectModGraphParam>) -> String {
+        let mut oks = Vec::new();
+        let mut errors = Vec::new();
+        for it in params.0.items {
+            let graph_id = it.graph_id;
+            match self.bridge.disconnect_mod_graph(
+                graph_id,
+                it.from,
+                it.from_port,
+                it.to,
+                it.to_port,
+            ) {
+                Ok(()) => oks.push(format!("graph {graph_id}: {} ↛ {}", it.from, it.to)),
+                Err(e) => errors.push(format!("{graph_id}: {e}")),
+            }
+        }
+        batch_msg(oks.len(), "mod graph cables removed", &oks, &errors)
+    }
+
+    #[tool(
+        description = "Edit a Mod Grid node's config in place, keeping its id and every cable touching it (unlike remove + re-add, which changes the id and drops its cables). Use to change a Target's address/amount, a Macro's value, or a hosted module's params. The graph is re-validated. `node` is externally-tagged ModNodeConfig JSON."
+    )]
+    async fn set_mod_graph_node(&self, params: Parameters<SetModGraphNodeParam>) -> String {
+        let p = params.0;
+        match self
+            .bridge
+            .set_mod_graph_node(p.graph_id, p.node_id, p.node)
+        {
+            Ok(()) => format!("Node {} updated on graph {}", p.node_id, p.graph_id),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "List Mod Grid routing sinks — 'what writes to a target' — across all graphs, or just one when graph_id is set. The provenance answer to 'why is this parameter moving?'."
+    )]
+    async fn list_mod_targets(&self, params: Parameters<ListModTargetsParam>) -> String {
+        match self.bridge.list_mod_targets(params.0.graph_id) {
+            Ok(targets) => to_json(&targets),
+            Err(e) => format!("Error: {e}"),
+        }
     }
 
     // === Sequencer: Tracks ===

@@ -35,7 +35,7 @@ use synth_core::{
 };
 use synth_sequencer::{
     AutoInstrumentParam, AutomationTarget, Glide, GlideFrom, GlideInterp, GlobalParam,
-    NoteExpression, ReturnBusId, SequencerEvent, VibratoShape,
+    NoteExpression, ReturnBusId, SeqInstrumentId, SequencerEvent, TrackParam, VibratoShape,
 };
 
 /// Size of the command ring buffer.
@@ -176,6 +176,8 @@ pub struct CpuStageBreakdown {
     pub module_graph: f32,
     /// The master effect chain.
     pub master_fx: f32,
+    /// The Mod Grid control-rate pre-pass (all running instances).
+    pub mod_grid: f32,
     /// Overall audio-callback load (the status-bar number).
     pub total: f32,
 }
@@ -201,6 +203,10 @@ pub struct EngineHandle {
     /// Receive replaced graph-node descriptors from the audio thread so the old
     /// `ModuleDescriptor` frees here, on the main thread (see `handle_set_mod_script`).
     descriptor_trash_consumer: ringbuf::HeapCons<Arc<synth_core::ModuleDescriptor>>,
+    /// Receive replaced Mod Grid runtimes from the audio thread so the old
+    /// runtime's modules free here, on the main thread, never on the audio
+    /// thread (see the `SetModGrid` handler).
+    mod_grid_trash_consumer: ringbuf::HeapCons<Box<crate::mod_grid::ModGridRuntime>>,
     /// Shared state for reading meters, etc.
     pub state: Arc<EngineState>,
     /// Visualization buffers keyed by module ID (shared with engine via Arc).
@@ -255,6 +261,9 @@ impl EngineHandle {
         // Clean up replaced graph-node descriptors — their String/Vec fields free
         // here on the main thread, never on the audio thread.
         while self.descriptor_trash_consumer.try_pop().is_some() {}
+        // Clean up replaced Mod Grid runtimes — their `Box<dyn PolyModule>` DSP
+        // frees here on the main thread, never on the audio thread.
+        while self.mod_grid_trash_consumer.try_pop().is_some() {}
     }
 
     /// Send a note on event to the default channel.
@@ -382,6 +391,7 @@ impl EngineHandle {
             voices: self.state.cpu_voices.load(),
             module_graph: self.state.cpu_module_graph.load(),
             master_fx: self.state.cpu_master_fx.load(),
+            mod_grid: self.state.cpu_mod_grid.load(),
             total: self.state.cpu_usage.load(),
         }
     }
@@ -435,6 +445,9 @@ impl EngineHandle {
         self.state.get_focused_instrument()
     }
 }
+
+/// MIDI CC number of the sustain (damper) pedal.
+const CC_SUSTAIN_PEDAL: u8 = 64;
 
 /// The main synthesizer engine with polyphony.
 pub struct SynthEngine {
@@ -559,6 +572,36 @@ pub struct SynthEngine {
     /// Pre-allocated buffer for audio input (stereo interleaved, block_size * 2).
     audio_input_buffer: Vec<f32>,
 
+    // === Mod Grid ===
+    /// Running mod-grid instances, swapped wholesale via `SetModGrid`.
+    mod_grid: Box<crate::mod_grid::ModGridRuntime>,
+    /// Scratch output buffer for driving each instance's `ModuleGraph::process`
+    /// (the graph's designated output is unused — targets read named ports).
+    mod_grid_scratch: AudioBuffer,
+    /// Additive master-volume offset from the mod grid for this block. (The
+    /// per-track and per-instrument offset accumulators live in `mod_grid` itself,
+    /// pre-keyed off the audio thread, so the pre-pass never allocates.)
+    grid_master_volume_offset: f32,
+    /// Live MIDI CC state, read by Mod Grid `MidiCc` sources. Boxed to keep the
+    /// engine struct small (the state is ~8 KB of fixed arrays).
+    midi_cc: Box<crate::mod_grid::MidiCcState>,
+    /// Sustain-pedal (CC64) state per MIDI channel (0..15). While a channel's
+    /// pedal is down, its NoteOffs are deferred (see `sustained_notes`).
+    sustain_pedal_down: [bool; 16],
+    /// `sustained_notes[channel][note]` = a NoteOff arrived while the pedal was
+    /// held, so the note is sustained until the pedal lifts. A fixed bitfield
+    /// (never allocates on the audio thread, constant-time set/clear, and inherent
+    /// deduplication); boxed to keep the engine struct small (~2 KB).
+    sustained_notes: Box<[[bool; 128]; 16]>,
+    /// Producer end of the mod-grid trash channel: the old runtime is pushed here
+    /// on a `SetModGrid` swap so its modules are dropped off the audio thread.
+    mod_grid_trash_producer: ringbuf::HeapProd<Box<crate::mod_grid::ModGridRuntime>>,
+    /// A single-slot backstop for the (practically unreachable) case where the
+    /// trash channel is full at swap time: the old runtime is parked here instead
+    /// of being dropped on the audio thread, and flushed into the channel on the
+    /// next swap. Guarantees no DSP is destructed on the audio thread.
+    mod_grid_pending_drop: Option<Box<crate::mod_grid::ModGridRuntime>>,
+
     // === Performance monitoring ===
     callback_duration_sum: f32,
     callback_count: u32,
@@ -568,6 +611,7 @@ pub struct SynthEngine {
     stage_voices_sum: f32,
     stage_module_graph_sum: f32,
     stage_master_fx_sum: f32,
+    stage_mod_grid_sum: f32,
 }
 
 impl SynthEngine {
@@ -619,6 +663,12 @@ impl SynthEngine {
             HeapRb::<Arc<synth_core::ModuleDescriptor>>::new(SCRIPT_TRASH_BUFFER_SIZE);
         let (descriptor_trash_producer, descriptor_trash_consumer) = descriptor_trash_rb.split();
 
+        // Trash channel for replaced Mod Grid runtimes (their DSP frees off the
+        // audio thread). A small depth is plenty — swaps are user-paced.
+        let mod_grid_trash_rb =
+            HeapRb::<Box<crate::mod_grid::ModGridRuntime>>::new(RETURN_BUFFER_SIZE);
+        let (mod_grid_trash_producer, mod_grid_trash_consumer) = mod_grid_trash_rb.split();
+
         let instrument_mapping = InstrumentMapping::new();
 
         let mut engine = Self {
@@ -662,9 +712,18 @@ impl SynthEngine {
             audio_input_buffer: vec![0.0; synth_core::MAX_BLOCK_SIZE * 2],
             callback_duration_sum: 0.0,
             callback_count: 0,
+            mod_grid: Box::default(),
+            mod_grid_scratch: AudioBuffer::new(512),
+            grid_master_volume_offset: 0.0,
+            midi_cc: Box::default(),
+            sustain_pedal_down: [false; 16],
+            sustained_notes: Box::new([[false; 128]; 16]),
+            mod_grid_trash_producer,
+            mod_grid_pending_drop: None,
             stage_voices_sum: 0.0,
             stage_module_graph_sum: 0.0,
             stage_master_fx_sum: 0.0,
+            stage_mod_grid_sum: 0.0,
         };
 
         // Hand the sequencer the producer end of the automation-trash channel so
@@ -684,6 +743,7 @@ impl SynthEngine {
             automation_trash_consumer,
             script_trash_consumer,
             descriptor_trash_consumer,
+            mod_grid_trash_consumer,
             state,
             visualization_buffers: HashMap::new(),
             note_event_consumer: Some(note_event_consumer),
@@ -1085,11 +1145,33 @@ impl SynthEngine {
             }
             EngineCommand::ModWheel { value, channel } => {
                 self.handle_mod_wheel(value, channel);
+                // Keep the live CC state in sync so a Mod Grid `MidiCc` source on
+                // CC1 sees the mod wheel too (the per-voice path above is separate).
+                self.midi_cc
+                    .set(channel.as_zero_indexed(), 1, value.as_f32());
                 self.push_note_event(NoteEvent::Cc {
                     cc: CcNumber::MOD_WHEEL,
                     value,
                     channel,
                 });
+            }
+            EngineCommand::ControlChange { channel, cc, value } => {
+                // Feed the live CC state read by Mod Grid `MidiCc` sources (CC1
+                // still arrives as `ModWheel` for the per-voice mod-wheel path,
+                // which mirrors into the CC state too).
+                self.midi_cc
+                    .set(channel.as_zero_indexed(), cc, value.as_f32());
+                // CC64 is the sustain pedal: while down, defer NoteOffs; on the
+                // down→up edge, release every note held on this channel.
+                if cc == CC_SUSTAIN_PEDAL {
+                    let ch = usize::from(channel.as_zero_indexed());
+                    let down = value.as_f32() >= 0.5;
+                    let was_down = self.sustain_pedal_down[ch];
+                    self.sustain_pedal_down[ch] = down;
+                    if was_down && !down {
+                        self.release_sustained_notes(channel);
+                    }
+                }
             }
             EngineCommand::Aftertouch { value, channel } => {
                 self.handle_aftertouch(value, channel);
@@ -1491,6 +1573,40 @@ impl SynthEngine {
                 self.clear_preview();
             }
 
+            EngineCommand::SetModGrid { runtime } => {
+                // Swap in the pre-built runtime as a plain `Box` pointer move — no
+                // heap op on the audio thread (the incoming box is not deref-moved,
+                // and the old box is pushed to the trash channel as-is, not re-
+                // boxed). Its `Box<dyn PolyModule>` DSP frees off the audio thread
+                // when the main thread drains that channel. If the channel is full
+                // (never, in practice) the old box drops here — a rare, bounded
+                // cost on a user-paced swap.
+                let old = std::mem::replace(&mut self.mod_grid, runtime);
+                // First flush any previously-parked box into the channel, then hand
+                // over `old`. On a full channel the box is parked in the single-slot
+                // backstop instead of being dropped here — no DSP is ever destructed
+                // on the audio thread. (The offset accumulator slots were pre-keyed
+                // in the runtime off the audio thread by the builder, so nothing to
+                // insert here either.)
+                if let Some(pending) = self.mod_grid_pending_drop.take()
+                    && let Err(back) = self.mod_grid_trash_producer.try_push(pending)
+                {
+                    self.mod_grid_pending_drop = Some(back);
+                }
+                if let Err(back) = self.mod_grid_trash_producer.try_push(old) {
+                    if self.mod_grid_pending_drop.is_none() {
+                        // Common overflow: park it, flushed on the next swap.
+                        self.mod_grid_pending_drop = Some(back);
+                    } else {
+                        // Degenerate double-overflow (both the channel and the
+                        // single backstop are full) — only reachable if the main
+                        // thread stopped draining entirely. Dropping here is the
+                        // bounded last resort; a 1-deep slot can't hold two.
+                        drop(back);
+                    }
+                }
+            }
+
             // Recording commands
             EngineCommand::ArmRecord {
                 pattern_id,
@@ -1881,6 +1997,10 @@ impl SynthEngine {
         let channel_raw = channel.as_zero_indexed();
         let mut note_triggered = false;
 
+        // A re-press reclaims a pedal-held note: drop any deferred release so
+        // lifting the pedal won't cut off the newly-struck note.
+        self.sustained_notes[usize::from(channel_raw)][usize::from(note.as_u8())] = false;
+
         // Check if there's a focused instrument for keyboard input (by InstrumentId)
         let focused_id = self.state.get_focused_instrument();
 
@@ -1956,6 +2076,15 @@ impl SynthEngine {
 
     fn handle_note_off(&mut self, note: MidiNote, channel: MidiChannel) {
         let channel_raw = channel.as_zero_indexed();
+
+        // Sustain pedal held on this channel: defer the release until the pedal
+        // lifts (a re-press reclaims the note in `handle_note_on`). Skip the whole
+        // release — the note is still sounding, so no NoteOff event / recording.
+        if self.sustain_pedal_down[usize::from(channel_raw)] {
+            self.sustained_notes[usize::from(channel_raw)][usize::from(note.as_u8())] = true;
+            return;
+        }
+
         let focused_id = self.state.get_focused_instrument();
 
         for instrument in self.instruments.iter_mut() {
@@ -2019,10 +2148,27 @@ impl SynthEngine {
         if self.use_modular_routing {
             self.module_graph.reset();
         }
+        // A panic / stop clears any pedal hold too — nothing is left deferred.
+        *self.sustained_notes = [[false; 128]; 16];
+        self.sustain_pedal_down = [false; 16];
         // Transport stop reverts automation overrides to their base values.
         self.clear_all_param_overrides();
 
         let _ = self.event_producer.try_push(EngineEvent::AllNotesReleased);
+    }
+
+    /// Release every note held by the sustain pedal on `channel` (called on the
+    /// pedal's down→up edge). Clears each held bit *before* the real release — the
+    /// pedal is already up, so `handle_note_off` won't re-defer. RT-safe: a fixed
+    /// 128-entry scan, no allocation.
+    fn release_sustained_notes(&mut self, channel: MidiChannel) {
+        let ch = usize::from(channel.as_zero_indexed());
+        for note in 0u8..128 {
+            if self.sustained_notes[ch][usize::from(note)] {
+                self.sustained_notes[ch][usize::from(note)] = false;
+                self.handle_note_off(MidiNote::new(note), channel);
+            }
+        }
     }
 
     /// Hard-reset the per-instrument signal path's DSP state to silence instantly
@@ -2131,11 +2277,212 @@ impl SynthEngine {
                 if !voice.is_active() {
                     continue;
                 }
-                voice.track_pitch = voice
+                let lane_pitch = voice
                     .track
                     .and_then(|t| track_auto.get(&t))
                     .and_then(|o| o.pitch)
                     .unwrap_or(Semitones::ZERO);
+                // Add the Mod Grid's per-track pitch offset (semitones) on top of
+                // the lane pitch — additive, and cleared each block so removing
+                // the routing returns the voice to the lane/zero value.
+                let grid_pitch = voice
+                    .track
+                    .and_then(|t| self.mod_grid.track_offsets.get(&t))
+                    .map_or(Semitones::ZERO, |o| o.pitch);
+                voice.track_pitch = Semitones(lane_pitch.0 + grid_pitch.0);
+            }
+        }
+    }
+
+    /// Mod-grid pre-pass: process every running instance's control-rate DSP once
+    /// for this block and accumulate its routings as additive, block-constant
+    /// offsets into `grid_track_offsets` / `grid_master_volume_offset`. Runs
+    /// before instruments and before track-control composition.
+    ///
+    /// RT-safe: the runtime is pre-built (no allocation here — `mem::take` swaps
+    /// with an empty `Vec`), no locks. Offsets are cleared and recomputed every
+    /// block, so removing a routing returns its target to base with no latch.
+    fn process_mod_grid(&mut self, context: &ProcessContext<'_>) {
+        // Reset this block's accumulators unconditionally (load-bearing: an
+        // emptied routing must fall back to base, like `update_track_pitch`).
+        self.grid_master_volume_offset = 0.0;
+        self.mod_grid.reset_offsets();
+        if self.mod_grid.is_empty() {
+            return;
+        }
+        // A module offset is applied here but *cleared* by the target voice's own
+        // `process_audio`. An instrument that won't be processed this block (muted,
+        // or not soloed while another is) would never clear it, so the additive
+        // offset would latch and grow — mirror the two skip gates in `process()`
+        // (mute inside `Instrument::process`, solo in the instrument loop) and
+        // never write into an instrument that won't run this block.
+        let any_soloed = self.instruments.iter().any(|i| i.is_solo());
+        // Move the instances out to free the `self` borrow, so the DSP scratch
+        // and the offset accumulators (disjoint fields) are freely reachable.
+        // Block-size-independent audio-tap follower coefficient (once per block).
+        let tap = crate::mod_grid::tap_coeff(context.samples, context.sample_rate);
+        let mut instances = std::mem::take(&mut self.mod_grid.instances);
+        for instance in &mut instances {
+            // Cheap→module input injections: feed a Macro/Transport/AudioTap value
+            // into a hosted module's control input *before* the graph processes.
+            for i in 0..instance.injections.len() {
+                let inj = &mut instance.injections[i];
+                let (module, port) = (inj.module, inj.port);
+                let value = match &inj.source {
+                    crate::mod_grid::ModSource::Constant(v) => *v,
+                    crate::mod_grid::ModSource::Transport(kind) => {
+                        crate::mod_grid::transport_value(*kind, context)
+                    }
+                    crate::mod_grid::ModSource::InstrumentLevel(id) => {
+                        let level = self
+                            .instruments
+                            .iter()
+                            .find(|inst| inst.id() == *id)
+                            .map_or(0.0, |inst| {
+                                crate::mod_grid::buffer_level(inst.last_output_interleaved())
+                            });
+                        inj.follow(level, tap)
+                    }
+                    crate::mod_grid::ModSource::MasterLevel => {
+                        let level = crate::mod_grid::buffer_level(self.mix_buffer.as_slice());
+                        inj.follow(level, tap)
+                    }
+                    crate::mod_grid::ModSource::MidiCc { cc, channel } => {
+                        self.midi_cc.get(*cc, *channel)
+                    }
+                    // A Dsp source is a real DSP cable, never an injection.
+                    crate::mod_grid::ModSource::Dsp(..) => 0.0,
+                };
+                instance.dsp.set_input_injection_value(module, port, value);
+            }
+            instance.dsp.process(&mut self.mod_grid_scratch, context);
+            for routing in &mut instance.targets {
+                let cv = match &routing.source {
+                    None => continue,
+                    Some(crate::mod_grid::ModSource::Dsp(module, port)) => {
+                        crate::mod_grid::read_source_value(
+                            instance.dsp.get_module_output(*module, *port),
+                        )
+                    }
+                    Some(crate::mod_grid::ModSource::Constant(v)) => *v,
+                    Some(crate::mod_grid::ModSource::Transport(kind)) => {
+                        crate::mod_grid::transport_value(*kind, context)
+                    }
+                    Some(crate::mod_grid::ModSource::InstrumentLevel(id)) => {
+                        let level = self
+                            .instruments
+                            .iter()
+                            .find(|i| i.id() == *id)
+                            .map_or(0.0, |i| {
+                                crate::mod_grid::buffer_level(i.last_output_interleaved())
+                            });
+                        routing.follow(level, tap)
+                    }
+                    Some(crate::mod_grid::ModSource::MasterLevel) => {
+                        let level = crate::mod_grid::buffer_level(self.mix_buffer.as_slice());
+                        routing.follow(level, tap)
+                    }
+                    Some(crate::mod_grid::ModSource::MidiCc { cc, channel }) => {
+                        self.midi_cc.get(*cc, *channel)
+                    }
+                };
+                let contribution = cv * routing.amount;
+                if contribution == 0.0 {
+                    continue;
+                }
+                match &routing.target {
+                    AutomationTarget::Global(GlobalParam::MasterVolume) => {
+                        self.grid_master_volume_offset += contribution;
+                    }
+                    AutomationTarget::Track {
+                        track: Some(track),
+                        param,
+                    } => {
+                        // `get_mut` only — the slot was pre-keyed in the runtime
+                        // off the audio thread, so this never allocates. A missing
+                        // slot is skipped.
+                        if let Some(entry) = self.mod_grid.track_offsets.get_mut(track) {
+                            match param {
+                                TrackParam::Volume => entry.volume += contribution,
+                                TrackParam::Pan => entry.pan += contribution,
+                                TrackParam::Pitch => {
+                                    entry.pitch = Semitones(entry.pitch.0 + contribution);
+                                }
+                                // Mute is excluded from grid targets initially.
+                                TrackParam::Mute => {}
+                            }
+                        }
+                    }
+                    // A module-param target: apply the offset additively to every
+                    // active voice of the owning instrument (address interned
+                    // off-thread as `dest_addr`; the voice clears it same-block).
+                    AutomationTarget::Module { instrument, .. } => {
+                        if let Some(addr) = routing.dest_addr {
+                            self.apply_grid_module_offset(
+                                *instrument,
+                                addr,
+                                contribution,
+                                any_soloed,
+                            );
+                        }
+                    }
+                    // An instrument target: a module-backed param (FilterCutoff,
+                    // ADSR, …) carries a `dest_addr` and uses the same per-voice
+                    // path; Volume/Pan are channel-level and accumulate into the
+                    // per-instrument offset (keyed by `SeqInstrumentId`, so no
+                    // mapping lookup here — the channel-bus stage maps back) folded
+                    // in at the channel-bus stage.
+                    AutomationTarget::Instrument { instrument, param } => {
+                        if let Some(addr) = routing.dest_addr {
+                            self.apply_grid_module_offset(
+                                *instrument,
+                                addr,
+                                contribution,
+                                any_soloed,
+                            );
+                        } else if let Some(entry) =
+                            self.mod_grid.instrument_offsets.get_mut(instrument)
+                        {
+                            match param {
+                                AutoInstrumentParam::Volume => entry.volume += contribution,
+                                AutoInstrumentParam::Pan => entry.pan += contribution,
+                                // Module-backed params took the `dest_addr` branch.
+                                _ => {}
+                            }
+                        }
+                    }
+                    // Relative track targets are resolved (or dropped) at build
+                    // time and never arrive here unresolved.
+                    _ => {}
+                }
+            }
+        }
+        self.mod_grid.instances = instances;
+    }
+
+    /// Apply a grid module-param offset to every active voice of the instrument
+    /// the `SeqInstrumentId` maps to — the shared per-voice write path for
+    /// `Module` and module-backed `Instrument` targets. Skips an instrument that
+    /// won't process this block (muted, or not soloed while another is), or the
+    /// additive offset would latch (the voice clears it only when it runs).
+    fn apply_grid_module_offset(
+        &mut self,
+        instrument: synth_sequencer::SeqInstrumentId,
+        addr: synth_core::DestAddr,
+        contribution: f32,
+        any_soloed: bool,
+    ) {
+        let Some(engine_id) = self.instrument_mapping.engine_id(instrument) else {
+            return;
+        };
+        let Some(inst) = self.instruments.iter_mut().find(|i| i.id() == engine_id) else {
+            return;
+        };
+        if inst.is_enabled() && (!any_soloed || inst.is_solo()) {
+            for voice in inst.allocator_mut().voices_mut() {
+                if voice.is_active() {
+                    voice.apply_mod_offset_addr(addr, contribution);
+                }
             }
         }
     }
@@ -2970,10 +3317,20 @@ impl SynthEngine {
             };
             if let Some(control) = self.track_controls.get_mut(&engine_id) {
                 // Live automation overrides the stored fader; absent → static.
+                // The Mod Grid then adds its block-constant offset on top (lane
+                // or base value + grid offset, clamped) — additive composition.
                 let auto = track_auto.get(&track.id).copied().unwrap_or_default();
+                let grid = self
+                    .mod_grid
+                    .track_offsets
+                    .get(&track.id)
+                    .copied()
+                    .unwrap_or_default();
+                let base_volume = auto.volume.unwrap_or(track.volume).as_f32();
+                let base_pan = auto.pan.unwrap_or(track.pan).as_f32();
                 *control = TrackControl {
-                    volume: auto.volume.unwrap_or(track.volume),
-                    pan: auto.pan.unwrap_or(track.pan),
+                    volume: NormalizedValue::new((base_volume + grid.volume).clamp(0.0, 1.0)),
+                    pan: BipolarValue::new((base_pan + grid.pan).clamp(-1.0, 1.0)),
                     audible: track.is_audible(any_solo) && !auto.muted.unwrap_or(false),
                 };
             }
@@ -3200,8 +3557,12 @@ impl SynthEngine {
         mix_channel_busses(
             &self.instruments,
             any_soloed,
-            &self.track_controls,
-            &self.channel_sends,
+            ChannelControls {
+                track: &self.track_controls,
+                grid_offsets: &self.mod_grid.instrument_offsets,
+                mapping: &self.instrument_mapping,
+                sends: &self.channel_sends,
+            },
             &mut self.return_busses,
             &mut self.mix_buffer,
             &self.state.channel_meters,
@@ -3364,6 +3725,20 @@ struct ResolvedReturnSend {
     level: f32,
 }
 
+/// The per-instrument control maps the channel-bus stage reads together: the
+/// resolved track fader/pan, the Mod Grid's per-instrument Volume/Pan offset, and
+/// the configured sends. Grouped to keep [`mix_channel_busses`]'s arity in check.
+struct ChannelControls<'a> {
+    track: &'a std::collections::HashMap<InstrumentId, TrackControl>,
+    /// Mod Grid per-instrument Volume/Pan offsets, keyed by `SeqInstrumentId`
+    /// (pre-keyed off the audio thread); `mapping` resolves each channel's engine
+    /// id back to its seq id to look up.
+    grid_offsets:
+        &'a std::collections::HashMap<SeqInstrumentId, crate::mod_grid::GridInstrumentOffset>,
+    mapping: &'a InstrumentMapping,
+    sends: &'a std::collections::HashMap<InstrumentId, Vec<ChannelSend>>,
+}
+
 /// Channel-bus stage: mix every instrument's channel into the master buffer.
 ///
 /// Channel-strip model: each instrument is a channel whose post-effect,
@@ -3388,8 +3763,7 @@ struct ResolvedReturnSend {
 fn mix_channel_busses(
     instruments: &[Box<Instrument>],
     any_soloed: bool,
-    track_controls: &std::collections::HashMap<InstrumentId, TrackControl>,
-    channel_sends: &std::collections::HashMap<InstrumentId, Vec<ChannelSend>>,
+    controls: ChannelControls<'_>,
     return_busses: &mut [ReturnBusChannel],
     mix_buffer: &mut AudioBuffer,
     channel_meters: &crate::state::ChannelMeterBank,
@@ -3399,7 +3773,8 @@ fn mix_channel_busses(
     // so the GUI can show a level on every strip.
     for (i, instrument) in instruments.iter().enumerate() {
         let soloed_out = any_soloed && !instrument.is_solo();
-        let track = track_controls
+        let track = controls
+            .track
             .get(&instrument.id())
             .copied()
             .unwrap_or(TrackControl::NEUTRAL);
@@ -3407,10 +3782,19 @@ fn mix_channel_busses(
 
         let peak = if audible {
             // Compose instrument fader with track fader. Additive pan through one
-            // constant-power law; multiplicative volume.
-            let pan = BipolarValue::new(instrument.pan().as_f32() + track.pan.as_f32());
+            // constant-power law; multiplicative volume. The Mod Grid's
+            // per-instrument offset composes additively onto the instrument fader
+            // (volume clamped to a valid gain, pan clamped by `BipolarValue`).
+            let grid = controls
+                .mapping
+                .seq_id(instrument.id())
+                .and_then(|seq| controls.grid_offsets.get(&seq))
+                .copied()
+                .unwrap_or_default();
+            let pan = BipolarValue::new(instrument.pan().as_f32() + grid.pan + track.pan.as_f32());
             let (pan_left, pan_right) = Gain::from_pan(pan);
-            let volume = instrument.volume().as_f32() * track.volume.as_f32();
+            let volume = (instrument.volume().as_f32() + grid.volume).clamp(0.0, 2.0)
+                * track.volume.as_f32();
             let left_gain = pan_left.as_f32() * volume;
             let right_gain = pan_right.as_f32() * volume;
 
@@ -3420,7 +3804,7 @@ fn mix_channel_busses(
             // signal; post-fader taps after the channel fader/pan (the common
             // case, so the send tracks the fader). Linear sum — soft-clip is
             // applied only on the return's own output, not per-tap.
-            if let Some(sends) = channel_sends.get(&instrument.id()) {
+            if let Some(sends) = controls.sends.get(&instrument.id()) {
                 for send in sends {
                     if let Some(bus) = return_busses.get_mut(send.return_index) {
                         apply_send_tap(src, left_gain, right_gain, *send, bus.input_mut());
@@ -3846,6 +4230,13 @@ impl AudioProcessor for SynthEngine {
         // Apply global automation (master volume) for this block.
         self.apply_global_automation();
 
+        // Mod Grid pre-pass: run the always-on control-rate modulator graphs
+        // once and accumulate their additive offsets, before instruments read
+        // them and before track-control composition folds the track offsets in.
+        let t_stage = Instant::now();
+        self.process_mod_grid(&process_context);
+        self.stage_mod_grid_sum += t_stage.elapsed().as_secs_f32();
+
         // Refresh per-instrument track controls from the Song before the
         // channel-bus stage (inside process_voices) reads them. Track-fader
         // automation is folded in here via SequencerEngine::track_auto.
@@ -3881,7 +4272,10 @@ impl AudioProcessor for SynthEngine {
         // Process master-level visualizers after master effects (final signal)
         self.master_effects.process_visualizers(&self.mix_buffer);
 
-        // Copy to output with master volume
+        // Copy to output with master volume. The Mod Grid's block-constant
+        // master-volume offset composes on top of the fader/lane value without
+        // mutating the persistent `master_volume` (which would drift).
+        let master_volume = (self.master_volume + self.grid_master_volume_offset).clamp(0.0, 2.0);
         let channels = context.channels as usize;
         for (i, frame) in output.chunks_mut(channels).enumerate() {
             let left = self
@@ -3898,10 +4292,10 @@ impl AudioProcessor for SynthEngine {
                 .unwrap_or(left);
 
             if channels >= 2 {
-                frame[0] = (left * self.master_volume).clamp(-1.0, 1.0);
-                frame[1] = (right * self.master_volume).clamp(-1.0, 1.0);
+                frame[0] = (left * master_volume).clamp(-1.0, 1.0);
+                frame[1] = (right * master_volume).clamp(-1.0, 1.0);
             } else if channels == 1 {
-                frame[0] = ((left + right) * 0.5 * self.master_volume).clamp(-1.0, 1.0);
+                frame[0] = ((left + right) * 0.5 * master_volume).clamp(-1.0, 1.0);
             }
         }
 
@@ -3939,11 +4333,15 @@ impl AudioProcessor for SynthEngine {
             self.state
                 .cpu_master_fx
                 .store((self.stage_master_fx_sum / n) / buffer_duration);
+            self.state
+                .cpu_mod_grid
+                .store((self.stage_mod_grid_sum / n) / buffer_duration);
             self.callback_duration_sum = 0.0;
             self.callback_count = 0;
             self.stage_voices_sum = 0.0;
             self.stage_module_graph_sum = 0.0;
             self.stage_master_fx_sum = 0.0;
+            self.stage_mod_grid_sum = 0.0;
         }
     }
 
@@ -4427,6 +4825,328 @@ mod tests {
         // Entering preview clears solo.
         enter_preview(&mut engine, &mut handle);
         assert_eq!(engine.sequencer.solo_pattern(), None);
+    }
+
+    #[test]
+    fn mod_grid_track_volume_offset_accumulates() {
+        use crate::mod_grid::{ModGridInstance, ModGridRuntime, ModSource, ResolvedTarget};
+        use synth_core::{NormalizedValue, SampleCount, SampleRate};
+        use synth_sequencer::{
+            AutomationTarget, CombineMode, ModGraphId, SeqInstrumentId, Song, TrackId, TrackParam,
+        };
+
+        let (mut engine, mut handle) = SynthEngine::new();
+        // An instrument on track 0 (SeqInstrumentId(0) ↔ InstrumentId::FIRST).
+        handle.send(EngineCommand::AddInstrument {
+            instrument: Box::new(Instrument::new(InstrumentId::FIRST, "d")),
+        });
+        // A song with one track at base volume 0.4.
+        let mut song = Song::new("t");
+        let tid = song.create_track("t");
+        song.track_mut(tid).unwrap().volume = NormalizedValue::new(0.4);
+        handle.send(EngineCommand::SetSong {
+            song: std::sync::Arc::new(parking_lot::RwLock::new(song)),
+        });
+
+        // A Constant(1.0) source → this-track Volume (already resolved to track 0)
+        // at amount 0.5 → the pre-pass adds 0.5 to track 0's volume offset, which
+        // update_track_controls folds onto the 0.4 base (clamped to 0.9).
+        let target = ResolvedTarget {
+            source: Some(ModSource::Constant(1.0)),
+            target: AutomationTarget::Track {
+                track: Some(TrackId(0)),
+                param: TrackParam::Volume,
+            },
+            amount: 0.5,
+            combine: CombineMode::Add,
+            smooth: 0.0,
+            dest_addr: None,
+        };
+        let mut runtime = ModGridRuntime {
+            instances: vec![ModGridInstance {
+                graph_id: ModGraphId::new(0),
+                host_track: Some(TrackId(0)),
+                dsp: crate::graph::ModuleGraph::new(),
+                injections: Vec::new(),
+                targets: vec![target],
+            }],
+            ..Default::default()
+        };
+        runtime.prekey_offsets();
+        handle.send(EngineCommand::SetModGrid {
+            runtime: Box::new(runtime),
+        });
+        engine.process_commands();
+
+        let ctx = ProcessContext {
+            samples: SampleCount::new(256),
+            sample_rate: SampleRate::DVD_QUALITY,
+            ..ProcessContext::default()
+        };
+        engine.process_mod_grid(&ctx);
+
+        // Write path: the offset accumulated.
+        let off = engine
+            .mod_grid
+            .track_offsets
+            .get(&TrackId(0))
+            .copied()
+            .unwrap_or_default();
+        assert!(
+            (off.volume - 0.5).abs() < 1e-6,
+            "expected track-0 volume offset 0.5, got {}",
+            off.volume
+        );
+
+        // Composition path: update_track_controls folds it onto the base fader.
+        engine.update_track_controls();
+        let engine_id = engine
+            .instrument_mapping
+            .engine_id(SeqInstrumentId(0))
+            .expect("track instrument mapped");
+        let ctrl = engine
+            .track_controls
+            .get(&engine_id)
+            .copied()
+            .expect("track control present");
+        assert!(
+            (ctrl.volume.as_f32() - 0.9).abs() < 1e-4,
+            "expected composed track fader 0.9 (0.4 + 0.5), got {}",
+            ctrl.volume.as_f32()
+        );
+
+        // Full-flow path: drive the real process() and re-check the fader. This
+        // is what the live engine / offline render actually run.
+        let context = AudioCallbackContext {
+            sample_rate: synth_core::audio::SampleRate(48000),
+            frames: 256,
+            channels: 2,
+            stream_time: 0.0,
+            sample_position: 0,
+            output_latency: Seconds::ZERO,
+        };
+        let mut out = vec![0.0f32; 256 * 2];
+        engine.process(&mut out, &context);
+        let ctrl2 = engine.track_controls.get(&engine_id).copied().unwrap();
+        assert!(
+            (ctrl2.volume.as_f32() - 0.9).abs() < 1e-4,
+            "after process(): expected composed track fader 0.9, got {}",
+            ctrl2.volume.as_f32()
+        );
+    }
+
+    #[test]
+    fn mod_grid_instrument_volume_offset_is_order_independent() {
+        use crate::mod_grid::{ModGridInstance, ModGridRuntime, ModSource, ResolvedTarget};
+        use synth_core::{SampleCount, SampleRate};
+        use synth_sequencer::{
+            AutoInstrumentParam, AutomationTarget, CombineMode, ModGraphId, SeqInstrumentId,
+        };
+
+        // A Constant(1.0) → Instrument 0 Volume runtime at amount 0.5, with its
+        // offset slot pre-keyed by SeqInstrumentId off the audio thread (as the
+        // builder does). Because the slot needs no engine mapping, SetModGrid works
+        // regardless of whether the instrument is loaded first — the old
+        // offline-export ordering trap is gone.
+        let make_runtime = || {
+            let mut rt = ModGridRuntime {
+                instances: vec![ModGridInstance {
+                    graph_id: ModGraphId::new(0),
+                    host_track: None,
+                    dsp: crate::graph::ModuleGraph::new(),
+                    injections: Vec::new(),
+                    targets: vec![ResolvedTarget {
+                        source: Some(ModSource::Constant(1.0)),
+                        target: AutomationTarget::Instrument {
+                            instrument: SeqInstrumentId(0),
+                            param: AutoInstrumentParam::Volume,
+                        },
+                        amount: 0.5,
+                        combine: CombineMode::Add,
+                        smooth: 0.0,
+                        dest_addr: None,
+                    }],
+                }],
+                ..Default::default()
+            };
+            rt.prekey_offsets();
+            Box::new(rt)
+        };
+        let ctx = ProcessContext {
+            samples: SampleCount::new(256),
+            sample_rate: SampleRate::DVD_QUALITY,
+            ..ProcessContext::default()
+        };
+        let written = |engine: &SynthEngine| -> f32 {
+            engine
+                .mod_grid
+                .instrument_offsets
+                .get(&SeqInstrumentId(0))
+                .copied()
+                .unwrap_or_default()
+                .volume
+        };
+
+        // SetModGrid *before* the instrument (the former trap) — still writes 0.5.
+        let (mut e1, mut h1) = SynthEngine::new();
+        h1.send(EngineCommand::SetModGrid {
+            runtime: make_runtime(),
+        });
+        h1.send(EngineCommand::AddInstrument {
+            instrument: Box::new(Instrument::new(InstrumentId::FIRST, "d")),
+        });
+        e1.process_commands();
+        e1.process_mod_grid(&ctx);
+        assert!(
+            (written(&e1) - 0.5).abs() < 1e-6,
+            "SetModGrid-before-instrument must still write the offset, got {}",
+            written(&e1)
+        );
+
+        // Instrument first (what export.rs now does) — also writes 0.5.
+        let (mut e2, mut h2) = SynthEngine::new();
+        h2.send(EngineCommand::AddInstrument {
+            instrument: Box::new(Instrument::new(InstrumentId::FIRST, "d")),
+        });
+        h2.send(EngineCommand::SetModGrid {
+            runtime: make_runtime(),
+        });
+        e2.process_commands();
+        e2.process_mod_grid(&ctx);
+        assert!(
+            (written(&e2) - 0.5).abs() < 1e-6,
+            "instrument-first must write the offset, got {}",
+            written(&e2)
+        );
+    }
+
+    #[test]
+    fn mod_grid_midi_cc_source_reads_live_cc_state() {
+        use crate::instrument::MidiChannel;
+        use crate::mod_grid::{ModGridInstance, ModGridRuntime, ModSource, ResolvedTarget};
+        use synth_core::{NormalizedValue, SampleCount, SampleRate};
+        use synth_sequencer::{AutomationTarget, CombineMode, GlobalParam, ModGraphId};
+
+        let (mut engine, mut handle) = SynthEngine::new();
+        // A grid MidiCc source (CC74, channel 0) → master volume at amount 0.5.
+        let target = ResolvedTarget {
+            source: Some(ModSource::MidiCc {
+                cc: 74,
+                channel: Some(0),
+            }),
+            target: AutomationTarget::Global(GlobalParam::MasterVolume),
+            amount: 0.5,
+            combine: CombineMode::Add,
+            smooth: 0.0,
+            dest_addr: None,
+        };
+        handle.send(EngineCommand::SetModGrid {
+            runtime: Box::new(ModGridRuntime {
+                instances: vec![ModGridInstance {
+                    graph_id: ModGraphId::new(0),
+                    host_track: None,
+                    dsp: crate::graph::ModuleGraph::new(),
+                    injections: Vec::new(),
+                    targets: vec![target],
+                }],
+                ..Default::default()
+            }),
+        });
+        // A live CC message on channel 1 (zero-indexed 0), full value.
+        handle.send(EngineCommand::ControlChange {
+            channel: MidiChannel::from_zero_indexed(0).expect("valid channel"),
+            cc: 74,
+            value: NormalizedValue::new(1.0),
+        });
+        engine.process_commands();
+
+        let ctx = ProcessContext {
+            samples: SampleCount::new(256),
+            sample_rate: SampleRate::DVD_QUALITY,
+            ..ProcessContext::default()
+        };
+        engine.process_mod_grid(&ctx);
+        // cv (1.0) × amount (0.5) → the master-volume offset.
+        assert!(
+            (engine.grid_master_volume_offset - 0.5).abs() < 1e-6,
+            "expected master offset 0.5 from CC74=1.0, got {}",
+            engine.grid_master_volume_offset
+        );
+    }
+
+    #[test]
+    fn sustain_pedal_holds_note_off_and_releases_on_lift() {
+        use crate::instrument::MidiChannel;
+        use synth_core::{MidiNote, NormalizedValue, Velocity};
+
+        let (mut engine, mut handle) = SynthEngine::new();
+        let ch = MidiChannel::from_zero_indexed(0).expect("valid channel");
+        let note = MidiNote::new(60);
+        let cc64 = |v: f32| EngineCommand::ControlChange {
+            channel: ch,
+            cc: 64,
+            value: NormalizedValue::new(v),
+        };
+
+        // Pedal down, then play + release the key.
+        handle.send(cc64(1.0));
+        handle.send(EngineCommand::NoteOn {
+            note,
+            velocity: Velocity::MF,
+            channel: ch,
+        });
+        handle.send(EngineCommand::NoteOff { note, channel: ch });
+        engine.process_commands();
+        assert!(engine.sustain_pedal_down[0], "pedal recorded as down");
+        assert!(
+            engine.sustained_notes[0][usize::from(note.as_u8())],
+            "the NoteOff is deferred while the pedal is held"
+        );
+
+        // Lifting the pedal releases the held note.
+        handle.send(cc64(0.0));
+        engine.process_commands();
+        assert!(!engine.sustain_pedal_down[0]);
+        assert!(
+            !engine.sustained_notes[0][usize::from(note.as_u8())],
+            "lifting the pedal releases every held note"
+        );
+    }
+
+    #[test]
+    fn sustain_pedal_repress_reclaims_the_held_note() {
+        use crate::instrument::MidiChannel;
+        use synth_core::{MidiNote, NormalizedValue, Velocity};
+
+        let (mut engine, mut handle) = SynthEngine::new();
+        let ch = MidiChannel::from_zero_indexed(0).expect("valid channel");
+        let note = MidiNote::new(60);
+
+        handle.send(EngineCommand::ControlChange {
+            channel: ch,
+            cc: 64,
+            value: NormalizedValue::new(1.0),
+        });
+        handle.send(EngineCommand::NoteOn {
+            note,
+            velocity: Velocity::MF,
+            channel: ch,
+        });
+        handle.send(EngineCommand::NoteOff { note, channel: ch });
+        engine.process_commands();
+        assert!(engine.sustained_notes[0][usize::from(note.as_u8())]);
+
+        // Re-striking the same key reclaims it, so a later pedal-up won't cut it.
+        handle.send(EngineCommand::NoteOn {
+            note,
+            velocity: Velocity::MF,
+            channel: ch,
+        });
+        engine.process_commands();
+        assert!(
+            !engine.sustained_notes[0][usize::from(note.as_u8())],
+            "a re-press must reclaim the pedal-held note"
+        );
     }
 
     #[test]

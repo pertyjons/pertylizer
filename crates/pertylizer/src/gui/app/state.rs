@@ -19,6 +19,8 @@ pub enum AppView {
     Rack,
     /// Note Grid view (pooled note-processing graphs: pool list + node canvas).
     NoteGraph,
+    /// Mod Grid view (pooled control-rate modulator graphs: pool list + node canvas).
+    ModGrid,
     /// Pattern browser and editor view (orphan patterns + full-window piano roll).
     Pattern,
     /// Sequencer view (piano roll / arrangement).

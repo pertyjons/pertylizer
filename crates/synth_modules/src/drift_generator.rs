@@ -30,6 +30,11 @@ pub struct DriftGenerator {
     target: f32,
     /// Phase for controlling when to pick new target
     phase: Phase,
+    /// Per-instance xorshift RNG state. Replaces the former global `fastrand`, so
+    /// an offline render reproduces the live wander and a Mod Grid node's `seed`
+    /// (or a voice index) decorrelates instances. Never zero (xorshift stalls at
+    /// 0); seeded via [`PolyModule::set_seed`] / [`PolyModule::set_voice_index`].
+    rng_state: u32,
     /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
     mod_offsets: ParamModOffsets,
     output_buffer: AudioBuffer,
@@ -45,16 +50,17 @@ impl DriftGenerator {
             current: 0.0,
             target: 0.0,
             phase: Phase::ZERO,
+            rng_state: 0x9E37_79B9,
             mod_offsets: ParamModOffsets::new(),
             output_buffer: AudioBuffer::new(1024),
         }
     }
 
-    /// Generate a new random target using sine-warped random walk.
+    /// Generate a new random target using sine-warped random walk. Advances the
+    /// per-instance RNG (RT-safe, deterministic — offline render matches live).
     #[inline]
-    fn new_target(&self) -> f32 {
-        // Bounded random: use fastrand for RT-safe random
-        let r = fastrand::f32() * 2.0 - 1.0;
+    fn new_target(&mut self) -> f32 {
+        let r = crate::math::xorshift32(&mut self.rng_state) * 2.0 - 1.0;
         // Sine-warp for more natural distribution (more time near center)
         (r * std::f32::consts::FRAC_PI_2).sin()
     }
@@ -222,6 +228,17 @@ impl PolyModule for DriftGenerator {
         self.phase = Phase::ZERO;
     }
 
+    fn set_seed(&mut self, seed: u64) {
+        // Non-zero (xorshift stalls at 0). Used by the Mod Grid per-node seed.
+        self.rng_state = (seed as u32).max(1);
+    }
+
+    fn set_voice_index(&mut self, voice_index: u32) {
+        // Decorrelate per voice so a patch's drift isn't in lockstep across
+        // voices (the graph already folds the module id into `voice_index`).
+        self.rng_state = voice_index.max(1);
+    }
+
     fn note_on(&mut self, _note: MidiNote, _velocity: Velocity) {}
     fn note_off(&mut self) {}
 
@@ -272,6 +289,33 @@ mod tests {
 
         drift.clear_mod_offsets();
         assert!(peak(&mut drift, &ctx) > silent, "clearing restores depth");
+    }
+
+    /// The per-instance RNG makes the wander deterministic (offline == live) and
+    /// seedable: the same seed reproduces the output, different seeds decorrelate.
+    #[test]
+    fn set_seed_is_deterministic_and_decorrelates() {
+        let sum = |seed: u64| -> f32 {
+            let mut drift = DriftGenerator::new();
+            drift.set_seed(seed);
+            drift.depth = NormalizedValue::MAX;
+            // Fast rate so several targets are drawn within the window.
+            drift.rate = Hertz::new(5.0);
+            let ctx = ProcessContext {
+                samples: synth_core::SampleCount::new(64000),
+                ..ProcessContext::default()
+            };
+            let mut outs = HashMap::new();
+            outs.insert(PortName::OUT, AudioBuffer::new(64000));
+            drift.process(InputPorts::empty(), &mut outs, &ctx);
+            let b = &outs[&PortName::OUT];
+            (0..b.len()).map(|i| b[i]).sum::<f32>()
+        };
+        assert_eq!(sum(42), sum(42), "same seed must reproduce the wander");
+        assert!(
+            (sum(42) - sum(999)).abs() > 1e-3,
+            "different seeds must decorrelate the wander"
+        );
     }
 
     #[test]

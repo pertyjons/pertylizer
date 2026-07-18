@@ -298,6 +298,13 @@ impl PolyModule for RandomGates {
         self.rng_state = self.seed.max(1);
     }
 
+    fn set_seed(&mut self, seed: u64) {
+        // Fold the 64-bit seed into the 32-bit generator; `reset` re-derives
+        // `rng_state` from `self.seed`, so store both.
+        self.seed = seed as u32;
+        self.rng_state = self.seed.max(1);
+    }
+
     fn note_on(&mut self, _note: MidiNote, _velocity: Velocity) {
         self.reset();
     }
@@ -363,5 +370,35 @@ mod tests {
         let v1 = rg1.next_random();
         let v2 = rg2.next_random();
         assert_eq!(v1, v2, "Same seed should produce same random values");
+    }
+
+    /// `set_seed` re-seeds the RNG so two instances decorrelate (the Mod Grid's
+    /// per-node seed path), while the same seed stays reproducible.
+    #[test]
+    fn set_seed_decorrelates_and_reproduces() {
+        let n = 64000;
+        let cv_sum = |seed: u64| -> f32 {
+            let mut rg = RandomGates::new();
+            rg.set_seed(seed);
+            let ctx = ProcessContext {
+                samples: synth_core::SampleCount::new(n),
+                ..ProcessContext::default()
+            };
+            let mut outs = HashMap::new();
+            outs.insert(PortName::GATE, AudioBuffer::new(n));
+            outs.insert(PortName::CV, AudioBuffer::new(n));
+            rg.process(InputPorts::empty(), &mut outs, &ctx);
+            let b = &outs[&PortName::CV];
+            (0..b.len()).map(|i| b[i]).sum::<f32>()
+        };
+        assert!(
+            (cv_sum(12345) - cv_sum(999)).abs() > 1e-6,
+            "different seeds should decorrelate the CV output"
+        );
+        assert_eq!(
+            cv_sum(777),
+            cv_sum(777),
+            "the same seed must reproduce the same sequence"
+        );
     }
 }

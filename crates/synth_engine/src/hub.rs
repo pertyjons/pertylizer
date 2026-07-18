@@ -358,7 +358,8 @@ impl EngineHub {
             | EngineCommand::RemoveReturnEffect { .. }
             | EngineCommand::ReorderReturnEffect { .. }
             | EngineCommand::ClearMasterEffects
-            | EngineCommand::ClearAllModules => perms.can_modify_topology,
+            | EngineCommand::ClearAllModules
+            | EngineCommand::SetModGrid { .. } => perms.can_modify_topology,
 
             // Transport control
             EngineCommand::Play
@@ -382,6 +383,7 @@ impl EngineHub {
             | EngineCommand::ResetDsp
             | EngineCommand::PitchBend { .. }
             | EngineCommand::ModWheel { .. }
+            | EngineCommand::ControlChange { .. }
             | EngineCommand::Aftertouch { .. }
             | EngineCommand::PolyAftertouch { .. } => perms.can_modify_params,
 

@@ -108,6 +108,11 @@ pub fn apply_project(
         // too, so a just-loaded script node is pass-through until recompiled from
         // its `source`. Same reasoning as the rebuild above — no `SetSong` here.
         recompile_note_graph_scripts(&mut s);
+        // Sanitize the Mod Grid pool the same way: drop any cable a just-loaded
+        // graph can't validate (unknown node / cycle) so a corrupt save loads
+        // playable, and bump `mod_grid_generation` so the GUI's per-frame sync
+        // rebuilds and ships the running instances for the loaded pool.
+        s.rebuild_mod_graphs();
     }
 
     // Restore the saved transport loop into the engine's sequencer (runtime

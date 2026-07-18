@@ -195,7 +195,9 @@ impl SourceKinds {
             matrix_source: self.matrix,
             script_source: self.script,
             audio_script_source: self.audio_script,
+            // Destinations are set by `markers_for_param`, not source-kind roll-up.
             matrix_dest: false,
+            grid_dest: false,
         }
     }
 }
@@ -233,6 +235,11 @@ pub(crate) struct PatchAnalysis {
     /// consumer kinds per macro (S1.5b). Macros have no `ModuleId` to badge, so
     /// they get the macro-source rail.
     macros: HashMap<MacroSource, SourceKinds>,
+    /// Parameters written by a Mod Grid graph, keyed by module, with the set of
+    /// modulated `type_id`s (the grid sibling of `mod_matrix_destinations`).
+    /// Supplied by the caller (it needs the song's mod-graph pool + the edited
+    /// instrument id, which `from_panels` doesn't otherwise see).
+    grid_dest_params: HashMap<ModuleId, HashSet<String>>,
 }
 
 /// Extracted script-read sources for one scripted slot: the module params/ports
@@ -309,6 +316,7 @@ impl PatchAnalysis {
     fn from_panels(
         panels: &HashMap<ModuleId, ModulePanelState>,
         cache: &mut ScriptSourceCache,
+        grid_dest_params: HashMap<ModuleId, HashSet<String>>,
     ) -> Self {
         let mut module_counts: HashMap<ModuleType, u16> = HashMap::new();
         for id in panels.keys() {
@@ -438,6 +446,7 @@ impl PatchAnalysis {
             sources,
             mod_matrix_destinations,
             macros,
+            grid_dest_params,
         }
     }
 
@@ -494,6 +503,10 @@ impl PatchAnalysis {
             .mod_matrix_destinations
             .get(&module_id)
             .is_some_and(|params| params.contains(param_type_id));
+        markers.grid_dest = self
+            .grid_dest_params
+            .get(&module_id)
+            .is_some_and(|params| params.contains(param_type_id));
         markers
     }
 
@@ -521,6 +534,7 @@ impl PatchAnalysis {
             }
         }
         markers.matrix_dest = self.is_mod_matrix_destination(module_id);
+        markers.grid_dest = self.grid_dest_params.contains_key(&module_id);
         markers
     }
 }
@@ -2139,9 +2153,9 @@ impl PatchEditor {
         instrument_id: u64,
         effect_chain_order: &[ModuleId],
         audio_input_snapshot: &AudioInputSnapshot,
-        // Modules referenced by a sequencer automation lane (this instrument);
-        // drawn with an "automated" header badge. Empty if none.
-        automated_modules: &HashSet<ModuleId>,
+        // Modulation provenance for this instrument's modules (automation-lane
+        // badges + Mod Grid dest markers). Empty maps if none.
+        provenance: PatchModProvenance,
     ) -> PatchEditorResult {
         let mut result = PatchEditorResult::default();
 
@@ -2150,7 +2164,11 @@ impl PatchEditor {
         self.recompute_drag_cycle_blocked();
 
         self.realign_effect_chain_if_changed(effect_chain_order);
-        let analysis = PatchAnalysis::from_panels(&self.panels, &mut self.source_ref_cache);
+        let analysis = PatchAnalysis::from_panels(
+            &self.panels,
+            &mut self.source_ref_cache,
+            provenance.grid_dest_params,
+        );
         self.realign_mod_matrix_attachments_if_changed(&analysis);
 
         // Addressing targets for the Mod Matrix pickers (S1.5c) and the Script
@@ -2371,7 +2389,7 @@ impl PatchEditor {
                 // Get processing info for this module
                 let is_source = self.is_source(module_id);
                 let is_sink = self.is_sink(module_id);
-                let is_automated = automated_modules.contains(&module_id);
+                let is_automated = provenance.automated_modules.contains(&module_id);
                 let is_inline_monitor = descriptor.type_id.0 == "inline_signal_monitor";
 
                 // Place the module at its WORLD position — no egui::Area (an Area
@@ -2940,7 +2958,10 @@ impl PatchEditor {
     /// `realign_mod_matrix_attachments_if_changed()` call is a no-op.
     /// Use after loading a project so saved positions survive.
     pub fn mark_mod_matrix_attachments_aligned(&mut self) {
-        let analysis = PatchAnalysis::from_panels(&self.panels, &mut self.source_ref_cache);
+        // Layout-only analysis (module counts / mod-matrix attachments); grid
+        // dest markers are irrelevant here, so pass an empty map.
+        let analysis =
+            PatchAnalysis::from_panels(&self.panels, &mut self.source_ref_cache, HashMap::new());
         self.prev_mod_matrix_attachments = self.collect_mod_matrix_attachments(&analysis);
     }
 
@@ -3253,7 +3274,10 @@ impl PatchEditor {
         // the Modulation zone by category, but matrix attachments belong
         // beneath the matrix.
         self.prev_mod_matrix_attachments.clear();
-        let analysis = PatchAnalysis::from_panels(&self.panels, &mut self.source_ref_cache);
+        // Layout-only analysis (module counts / mod-matrix attachments); grid
+        // dest markers are irrelevant here, so pass an empty map.
+        let analysis =
+            PatchAnalysis::from_panels(&self.panels, &mut self.source_ref_cache, HashMap::new());
         self.realign_mod_matrix_attachments_if_changed(&analysis);
 
         // Reframe the camera on the next show() — same as the view controls'
@@ -3267,6 +3291,18 @@ impl Default for PatchEditor {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Modulation-provenance inputs the patch editor badges modules with: the
+/// automation-lane modules and the Mod-Grid-written params for this instrument.
+/// Bundled so [`PatchEditor::show`] stays within the argument-count lint; the
+/// caller computes both from the song once per frame.
+#[derive(Default)]
+pub struct PatchModProvenance {
+    /// Modules referenced by a sequencer automation lane (this instrument).
+    pub automated_modules: HashSet<ModuleId>,
+    /// Params written by a Mod Grid graph, keyed by module → set of `type_id`s.
+    pub grid_dest_params: HashMap<ModuleId, HashSet<String>>,
 }
 
 /// Result from drawing the rack view.
@@ -4728,7 +4764,7 @@ mod patch_analysis_tests {
             panels.insert(id, state);
         }
 
-        let analysis = PatchAnalysis::from_panels(&panels, &mut HashMap::new());
+        let analysis = PatchAnalysis::from_panels(&panels, &mut HashMap::new(), HashMap::new());
         assert!(analysis.is_mod_matrix_source(ModuleId::new(ModuleType::Envelope, 6)));
         assert!(analysis.is_mod_matrix_destination(ModuleId::new(ModuleType::Filter, 3)));
         // Per-parameter destination marker (S1.5a): only the addressed param
@@ -4765,7 +4801,7 @@ mod patch_analysis_tests {
         ] {
             panels.insert(id, state);
         }
-        let analysis = PatchAnalysis::from_panels(&panels, &mut HashMap::new());
+        let analysis = PatchAnalysis::from_panels(&panels, &mut HashMap::new(), HashMap::new());
         assert!(!analysis.is_mod_matrix_source(ModuleId::new(ModuleType::Lfo, 1)));
         assert!(!analysis.is_mod_matrix_destination(ModuleId::new(ModuleType::Oscillator, 1)));
     }
@@ -4788,9 +4824,31 @@ mod patch_analysis_tests {
         let (lfo_id, lfo_state) = stub_panel(ModuleType::Lfo, 1);
         panels.insert(lfo_id, lfo_state);
 
-        let analysis = PatchAnalysis::from_panels(&panels, &mut HashMap::new());
+        let analysis = PatchAnalysis::from_panels(&panels, &mut HashMap::new(), HashMap::new());
         assert!(analysis.markers_for_module(lfo_id).is_empty());
         assert!(analysis.markers_for_macro(MacroSource::Velocity).is_empty());
+    }
+
+    /// A parameter written by a Mod Grid graph is marked as a grid destination
+    /// (per-param and in the module roll-up), independent of the Mod Matrix.
+    #[test]
+    fn grid_dest_params_mark_the_parameter() {
+        let flt = ModuleId::new(ModuleType::Filter, 1);
+        let mut grid: HashMap<ModuleId, std::collections::HashSet<String>> = HashMap::new();
+        grid.entry(flt).or_default().insert("cutoff".to_string());
+
+        let analysis = PatchAnalysis::from_panels(&HashMap::new(), &mut HashMap::new(), grid);
+        let cutoff = analysis.markers_for_param(flt, "cutoff");
+        assert!(cutoff.grid_dest, "cutoff must be a grid destination");
+        assert!(!cutoff.matrix_dest, "and not a mod-matrix destination");
+        assert!(
+            !analysis.markers_for_param(flt, "resonance").grid_dest,
+            "an unmodulated param is not marked"
+        );
+        assert!(
+            analysis.markers_for_module(flt).grid_dest,
+            "the module roll-up reflects the grid destination"
+        );
     }
 
     /// A control-rate Script module marks the modules/macros its script reads as
@@ -4814,7 +4872,7 @@ mod patch_analysis_tests {
         ] {
             panels.insert(id, state);
         }
-        let analysis = PatchAnalysis::from_panels(&panels, &mut HashMap::new());
+        let analysis = PatchAnalysis::from_panels(&panels, &mut HashMap::new(), HashMap::new());
 
         // The LFO's output port is read by a Script, not the Mod Matrix.
         let lfo = analysis.markers_for_module(ModuleId::new(ModuleType::Lfo, 1));
@@ -4849,7 +4907,7 @@ mod patch_analysis_tests {
         let (lfo_id, lfo_state) = stub_panel(ModuleType::Lfo, 1);
         panels.insert(lfo_id, lfo_state);
 
-        let analysis = PatchAnalysis::from_panels(&panels, &mut HashMap::new());
+        let analysis = PatchAnalysis::from_panels(&panels, &mut HashMap::new(), HashMap::new());
         let lfo = analysis.markers_for_module(lfo_id);
         assert!(
             lfo.audio_script_source,

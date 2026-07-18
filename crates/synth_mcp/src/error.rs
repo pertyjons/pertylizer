@@ -147,6 +147,19 @@ pub enum McpBridgeError {
         module_id: u32,
     },
 
+    /// Mod-graph (Mod Grid pool asset) not found.
+    #[error("mod graph not found: {0}")]
+    ModGraphNotFound(u32),
+
+    /// Mod-graph node not found within a graph.
+    #[error("mod graph {graph_id} has no node {node_id}")]
+    ModGraphNodeNotFound {
+        /// The graph that was searched.
+        graph_id: u32,
+        /// The node id that was absent.
+        node_id: u32,
+    },
+
     /// Generic error — use sparingly; prefer a specific variant when the failure
     /// mode is known so MCP clients can programmatically handle it.
     #[error("{0}")]
