@@ -4710,6 +4710,7 @@ dependencies = [
  "serde_json",
  "synth_core",
  "synth_script",
+ "synth_sequencer",
  "thiserror 2.0.18",
  "tokio",
  "tokio-util",

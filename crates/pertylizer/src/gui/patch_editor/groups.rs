@@ -15,7 +15,8 @@ use synth_engine::ModuleId;
 use crate::gui::module_panel::PortPosition;
 use crate::gui::theme::theme;
 use crate::gui::widgets::{
-    WidgetPortDirection, draw_module_header, expose, icon_button, labeled_row,
+    ModMarkers, ModulePort, WidgetPortDirection, draw_module_header, draw_module_port_column,
+    expose, icon_button, labeled_row, module_port_accessible_label,
 };
 use crate::patch::{GroupId, HexColor};
 
@@ -24,7 +25,7 @@ use crate::gui::node_canvas;
 use super::{
     GROUP_HEADER_HEIGHT, GROUP_PADDING, GROUP_PORT_MARGIN, GroupContextMenuState, GroupLayout,
     GroupPortKey, GroupTemplateAction, ModuleGroup, PatchEditor, PatchEditorResult, PatchPort,
-    PortRenderInfo, color32_to_hex, parse_hex_color, screen_to_world, snap_to_grid,
+    color32_to_hex, parse_hex_color, screen_to_world, snap_to_grid,
 };
 
 pub(super) fn collapsed_group_size(group: &ModuleGroup) -> Vec2 {
@@ -247,64 +248,76 @@ impl PatchEditor {
             WidgetPortDirection::Output => &group.exposed_outputs,
         };
 
-        let ports: Vec<PortRenderInfo> = ports
+        let pending_info = self.pending_wire_source();
+        let cycle_blocked = &self.drag_cycle_blocked;
+        let ports: Vec<ModulePort<PatchPort>> = ports
             .iter()
-            .map(|p| PortRenderInfo {
-                module_id: p.module_id,
-                port_name: p.port_name,
-                label: p.label.clone(),
-                description: String::new(),
-                port_type: self.port_widget_type(p.module_id, p.port_name),
-                is_connected: self.has_external_connection_for_port(
-                    group.id,
-                    p.module_id,
-                    p.port_name,
+            .map(|p| {
+                let port_type = self.port_widget_type(p.module_id, p.port_name);
+                let highlighted = pending_info.is_some_and(|(from_module, from_type, from_dir)| {
+                    let (out_type, in_type) = if from_dir == WidgetPortDirection::Output {
+                        (from_type, port_type)
+                    } else {
+                        (port_type, from_type)
+                    };
+                    from_module != p.module_id
+                        && from_dir != direction
+                        && out_type.can_drive(in_type)
+                        && !cycle_blocked.contains(&p.module_id)
+                });
+                let endpoint = PatchPort {
+                    module: p.module_id,
+                    port: p.port_name,
                     direction,
-                ),
-                // Collapsed group ports don't carry modulation markers yet — the
-                // per-module ports (see node.rs) do. Follow-up if groups need them.
-                markers: crate::gui::widgets::ModMarkers::default(),
+                    port_type,
+                };
+                let accessible_label = module_port_accessible_label(
+                    &p.module_id.to_string(),
+                    p.port_name.as_str(),
+                    &p.label,
+                    port_type,
+                    direction,
+                );
+                ModulePort::new(
+                    endpoint,
+                    p.label.as_str(),
+                    accessible_label,
+                    "",
+                    self.has_external_connection_for_port(
+                        group.id,
+                        p.module_id,
+                        p.port_name,
+                        direction,
+                    ),
+                    highlighted,
+                    // Collapsed group ports do not carry modulation markers yet.
+                    ModMarkers::default(),
+                )
             })
             .collect();
 
-        let pending_info = self.pending_wire_source();
-        // Group columns expose ports from several member modules; the shared
-        // per-frame set already covers them all.
-        let cycle_blocked = &self.drag_cycle_blocked;
         let wire_events = &mut self.wire_events;
-        Self::draw_port_column_with(
-            ui,
-            direction,
-            &ports,
-            pending_info,
-            cycle_blocked,
-            |port, center, response| {
-                new_positions.insert(
-                    GroupPortKey {
-                        group_id: group.id,
-                        module_id: port.module_id,
-                        port_name: port.port_name,
-                        direction,
-                    },
-                    PortPosition {
-                        module_id: port.module_id,
-                        port_name: port.port_name,
-                        position: center,
-                        port_type: port.port_type,
-                        direction,
-                    },
-                );
-                // A collapsed-group exposed port wires like any other port; the
-                // connection uses its underlying (module, port) endpoint.
-                let pp = PatchPort {
-                    module: port.module_id,
-                    port: port.port_name,
+        draw_module_port_column(ui, direction, &ports, |port, center, response| {
+            let endpoint = port.endpoint();
+            new_positions.insert(
+                GroupPortKey {
+                    group_id: group.id,
+                    module_id: endpoint.module,
+                    port_name: endpoint.port,
                     direction,
-                    port_type: port.port_type,
-                };
-                node_canvas::push_port_event(wire_events, response, pp, center);
-            },
-        );
+                },
+                PortPosition {
+                    module_id: endpoint.module,
+                    port_name: endpoint.port,
+                    position: center,
+                    port_type: port.port_type(),
+                    direction,
+                },
+            );
+            // A collapsed-group exposed port wires like any other port; the
+            // connection uses its underlying (module, port) endpoint.
+            node_canvas::push_port_event(wire_events, response, endpoint, center);
+        });
     }
 
     pub(super) fn draw_group_frames(

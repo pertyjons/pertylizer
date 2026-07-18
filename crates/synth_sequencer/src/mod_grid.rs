@@ -275,6 +275,9 @@ pub struct ModGraph {
     /// Nodes keyed by graph-local id.
     #[serde(default)]
     pub nodes: BTreeMap<ModNodeId, ModNodeConfig>,
+    /// Pedagogical/user intent per node, kept separate from DSP configs.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub node_descriptions: BTreeMap<ModNodeId, String>,
     /// Cables, kept as a sorted `Vec` for deterministic serialization.
     #[serde(default)]
     pub connections: Vec<ModConnection>,
@@ -296,6 +299,7 @@ impl ModGraph {
             description: String::new(),
             color: None,
             nodes: BTreeMap::new(),
+            node_descriptions: BTreeMap::new(),
             connections: Vec::new(),
             node_positions: BTreeMap::new(),
         }
@@ -359,6 +363,7 @@ impl ModGraph {
         let removed = self.nodes.remove(&id)?;
         self.connections.retain(|c| c.from != id && c.to != id);
         self.node_positions.remove(&id);
+        self.node_descriptions.remove(&id);
         Some(removed)
     }
 

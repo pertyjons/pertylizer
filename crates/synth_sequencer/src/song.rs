@@ -693,6 +693,7 @@ impl Song {
             dst.description = src.description;
             dst.color = src.color;
             dst.nodes = src.nodes;
+            dst.node_descriptions = src.node_descriptions;
             dst.connections = src.connections;
             dst.node_positions = src.node_positions;
             // A copy of a valid graph revalidates identically.
@@ -2040,7 +2041,6 @@ mod tests {
         assert_eq!(song.note_graphs().count(), 1);
         assert!(song.note_graph(gid).is_some());
         build_chain(&mut song, gid);
-
         let pid = song.create_pattern(Duration(960));
         song.pattern_mut(pid).unwrap().set_note_graph(Some(gid));
         assert_eq!(song.note_graph_usage(gid), 1);
@@ -2058,6 +2058,10 @@ mod tests {
         let mut song = Song::new("t");
         let gid = song.create_note_graph("chain");
         build_chain(&mut song, gid);
+        song.note_graph_mut(gid)
+            .unwrap()
+            .node_descriptions
+            .insert(NoteModuleId::new(1), "First transform".to_owned());
         let pid = song.create_pattern(Duration(960));
         song.pattern_mut(pid).unwrap().set_note_graph(Some(gid));
 
@@ -2070,6 +2074,10 @@ mod tests {
         assert_eq!(
             back.note_graph(gid).unwrap().processing_order,
             vec![NoteModuleId::new(1), NoteModuleId::new(2)]
+        );
+        assert_eq!(
+            back.note_graph(gid).unwrap().node_descriptions[&NoteModuleId::new(1)],
+            "First transform"
         );
         // Binding survived, and next_note_graph_id stayed ahead of restored ids.
         assert_eq!(back.pattern(pid).unwrap().note_graph(), Some(gid));
@@ -2194,6 +2202,8 @@ mod tests {
             // Canvas layout metadata for one node.
             g.node_positions
                 .insert(ModNodeId::new(0), NodePosition { x: 12.0, y: 34.0 });
+            g.node_descriptions
+                .insert(ModNodeId::new(0), "Slow movement source".to_owned());
         }
 
         let original = song.mod_graph(gid).unwrap().clone();
@@ -2749,6 +2759,8 @@ mod tests {
                 NoteModuleId::new(1),
                 crate::note_graph::NodePosition { x: 64.0, y: 32.0 },
             );
+            g.node_descriptions
+                .insert(NoteModuleId::new(1), "Pulse source".to_owned());
         }
 
         let clone = song.duplicate_note_graph(gid).expect("source exists");
@@ -2761,6 +2773,7 @@ mod tests {
         assert_eq!(clone.nodes, src.nodes);
         assert_eq!(clone.connections, src.connections);
         assert_eq!(clone.node_positions, src.node_positions);
+        assert_eq!(clone.node_descriptions, src.node_descriptions);
         assert_eq!(clone.processing_order, src.processing_order);
         assert!(song.duplicate_note_graph(NoteGraphId::new(999)).is_none());
     }

@@ -28,8 +28,8 @@ use crate::patch::{
 use super::module_panel::{ModulePanelState, PortPosition, category_color};
 use super::theme::theme;
 use super::widgets::{
-    CaptionTone, ModMarkers, ModuleFrame, WidgetPortDirection, WidgetPortType, cable_color,
-    caption, draw_cable_dragging, draw_module_footer, draw_module_header, tree_picker_button,
+    CaptionTone, ModMarkers, ModuleCard, WidgetPortDirection, WidgetPortType, cable_color, caption,
+    draw_cable_dragging, tree_picker_button,
 };
 
 mod canvas;
@@ -1017,20 +1017,6 @@ struct GroupPortKey {
     direction: WidgetPortDirection,
 }
 
-#[derive(Debug, Clone)]
-struct PortRenderInfo {
-    module_id: ModuleId,
-    port_name: PortName,
-    label: String,
-    description: String,
-    port_type: WidgetPortType,
-    is_connected: bool,
-    /// Modulation source markers for this port (S1.5, port variant) — painted as a
-    /// corner glyph cluster inside the port's fixed box. Only output ports can be a
-    /// source, so input ports always carry an empty set.
-    markers: ModMarkers,
-}
-
 /// One endpoint on the patch canvas — a module's port, self-describing so the
 /// shared wire FSM ([`node_canvas::wiring`]) and its validation closure never
 /// need to look a port back up. `(module, port)` alone identifies it (a port is
@@ -1042,6 +1028,12 @@ pub(crate) struct PatchPort {
     pub(crate) port: PortName,
     pub(crate) direction: WidgetPortDirection,
     pub(crate) port_type: WidgetPortType,
+}
+
+impl crate::gui::widgets::ModulePortEndpoint for PatchPort {
+    fn widget_port_type(self) -> WidgetPortType {
+        self.port_type
+    }
 }
 
 /// A port interaction gathered while drawing the nodes, resolved afterwards by
@@ -2358,11 +2350,11 @@ impl PatchEditor {
                 // Include instrument_id in the hash to prevent ID collisions across instruments
                 let window_id =
                     egui::Id::new((instrument_id, "module_window", module_id.to_string()));
-                // Create frame with dimming for disconnected modules
-                let frame = ModuleFrame::new(dimmed_accent)
+                // Configure the shared Rack-led card chrome with dimming for
+                // disconnected modules.
+                let card = ModuleCard::new(dimmed_accent)
                     .selected(is_selected)
-                    .opacity(opacity)
-                    .build(&ui.global_style());
+                    .opacity(opacity);
 
                 // Check if this module needs repositioning (after auto-layout)
                 let needs_reposition = self.needs_reposition.contains(&module_id);
@@ -2403,9 +2395,6 @@ impl PatchEditor {
                 // body widget.
                 let node_response =
                     ui.interact(node_rect, window_id.with("card"), Sense::click_and_drag());
-                // Expose the node card to AccessKit / the egui-inspection MCP:
-                // the stable id + human name, so a driver can locate a specific
-                // module card by name. Reused by the Note Grid Scene canvas.
                 crate::gui::widgets::expose(
                     &node_response,
                     egui::WidgetType::Button,
@@ -2502,46 +2491,33 @@ impl PatchEditor {
                             &mut result,
                         );
                     } else {
-                        frame.show(ui, |ui| {
-                            // Pin the body to the fixed width bucket up front, so
-                            // the header and 3-column body lay out at a deliberate,
-                            // grid-aligned width instead of stretching to their
-                            // widest row. (8 px = ModuleFrame's inner margin/side.)
-                            ui.set_width(module_w - 16.0);
-
-                            // Built once: the header's interactive controls and
-                            // the bottom status bar's badges read the same flags.
-                            let header_ctx = ModuleHeaderCtx {
-                                module_id,
-                                descriptor,
-                                is_source,
-                                is_sink,
-                                is_automated,
-                                is_bypassed,
-                                is_global_module,
-                                connectivity: connectivity_status,
-                            };
-
-                            // Title bar: name + interactive controls (single row)
-                            draw_module_header(
-                                ui,
-                                dimmed_accent,
-                                &title,
-                                Some(tooltip),
-                                false,
-                                |ui| {
-                                    self.draw_module_header_actions(
-                                        ui,
-                                        &header_ctx,
-                                        effect_chain_order,
-                                        &mut result,
-                                        &mut open,
-                                    );
-                                },
-                            );
-
+                        // Built once: the header's interactive controls and the
+                        // bottom status bar's badges read the same flags.
+                        let header_ctx = ModuleHeaderCtx {
+                            module_id,
+                            descriptor,
+                            is_source,
+                            is_sink,
+                            is_automated,
+                            is_bypassed,
+                            is_global_module,
+                            connectivity: connectivity_status,
+                        };
+                        // Pin the card to the fixed width bucket. The shared
+                        // surface owns header/body/footer composition; Rack keeps
+                        // domain actions and body rendering in these closures.
+                        card.module_width(descriptor.width).show(ui, |card| {
+                            card.header(&title, Some(tooltip), false, |ui| {
+                                self.draw_module_header_actions(
+                                    ui,
+                                    &header_ctx,
+                                    effect_chain_order,
+                                    &mut result,
+                                    &mut open,
+                                );
+                            });
                             self.draw_module_body(
-                                ui,
+                                card.body(),
                                 ModuleBodyCtx {
                                     module_id,
                                     descriptor,
@@ -2556,10 +2532,7 @@ impl PatchEditor {
                                 handle,
                                 &mut result,
                             );
-
-                            // Bottom status bar: the non-interactive badges,
-                            // mirroring the header at the foot of the frame.
-                            draw_module_footer(ui, |ui| {
+                            card.footer(|ui| {
                                 Self::draw_module_status_badges(ui, &header_ctx, &analysis);
                             });
                         });

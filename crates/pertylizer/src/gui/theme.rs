@@ -637,6 +637,12 @@ pub struct Sizes {
     pub port_column_width: f32,
     /// Vertical spacing between ports in a column.
     pub port_vertical_spacing: f32,
+    /// Horizontal gap between a port column and the module body.
+    pub module_port_gap: f32,
+    /// Standard module-card inner margin.
+    pub module_inner_margin: f32,
+    /// Compact module-card inner margin used by graph nodes.
+    pub module_compact_inner_margin: f32,
     /// Minimum width for module content area (between port columns).
     pub module_content_min_width: f32,
 
@@ -675,6 +681,9 @@ impl Sizes {
             port_size: 12.0,
             port_column_width: 28.0,
             port_vertical_spacing: 24.0,
+            module_port_gap: 4.0,
+            module_inner_margin: 8.0,
+            module_compact_inner_margin: 6.0,
             module_content_min_width: 100.0,
 
             module_min_width: 180.0,

@@ -2102,6 +2102,7 @@ impl SynthBridge for AppSynthBridge {
                 Ok(NoteGraphModuleInfo {
                     id: id.0,
                     kind: cfg.kind().to_string(),
+                    description: graph.node_descriptions.get(id).cloned().unwrap_or_default(),
                     config: serde_json::to_value(cfg)
                         .map_err(|e| McpBridgeError::Other(e.to_string()))?,
                 })
@@ -2177,7 +2178,9 @@ impl SynthBridge for AppSynthBridge {
         &self,
         graph_id: u32,
         module: serde_json::Value,
+        description: Option<String>,
     ) -> Result<u32, McpBridgeError> {
+        let description = validated_description(description)?;
         let config = parse_note_module(module)?;
         let mut song = self.shared.song.write();
         let gid = synth_sequencer::NoteGraphId::new(graph_id);
@@ -2188,6 +2191,9 @@ impl SynthBridge for AppSynthBridge {
         graph
             .try_insert_node(module_id, config)
             .map_err(|e| McpBridgeError::Other(e.to_string()))?;
+        if !description.is_empty() {
+            graph.node_descriptions.insert(module_id, description);
+        }
         // A serde-built `NoteScriptTransform` carries only its `source` (the
         // compiled program is `#[serde(skip)]`), so compile it now or the node
         // would be silently pass-through.
@@ -2200,7 +2206,11 @@ impl SynthBridge for AppSynthBridge {
         graph_id: u32,
         module_id: u32,
         module: serde_json::Value,
+        description: Option<String>,
     ) -> Result<(), McpBridgeError> {
+        let description = description
+            .map(|value| validated_description(Some(value)))
+            .transpose()?;
         let config = parse_note_module(module)?;
         let mut song = self.shared.song.write();
         let gid = synth_sequencer::NoteGraphId::new(graph_id);
@@ -2219,8 +2229,59 @@ impl SynthBridge for AppSynthBridge {
         graph
             .try_insert_node(mid, config)
             .map_err(|e| McpBridgeError::Other(e.to_string()))?;
+        if let Some(description) = description {
+            if description.is_empty() {
+                graph.node_descriptions.remove(&mid);
+            } else {
+                graph.node_descriptions.insert(mid, description);
+            }
+        }
         // Compile a replaced `NoteScriptTransform`'s program (serde drops it).
         crate::project_apply::recompile_graph_scripts(graph);
+        Ok(())
+    }
+
+    fn set_note_graph_metadata(
+        &self,
+        graph_id: u32,
+        name: Option<String>,
+        description: Option<String>,
+        color: Option<String>,
+    ) -> Result<(), McpBridgeError> {
+        let description = description
+            .map(|value| validated_description(Some(value)))
+            .transpose()?;
+        if name.as_ref().is_some_and(|value| value.trim().is_empty()) {
+            return Err(McpBridgeError::EmptyName { kind: "note graph" });
+        }
+        let color = color
+            .map(|hex| {
+                if hex.is_empty() {
+                    Ok(None)
+                } else {
+                    synth_sequencer::TrackColor::from_hex(&hex)
+                        .map(Some)
+                        .ok_or_else(|| {
+                            McpBridgeError::Other(format!(
+                                "invalid color '{hex}' (expected #rrggbb or empty to clear)"
+                            ))
+                        })
+                }
+            })
+            .transpose()?;
+        let mut song = self.shared.song.write();
+        let graph = song
+            .note_graph_mut(synth_sequencer::NoteGraphId::new(graph_id))
+            .ok_or(McpBridgeError::NoteGraphNotFound(graph_id))?;
+        if let Some(name) = name {
+            graph.name = name;
+        }
+        if let Some(description) = description {
+            graph.description = description;
+        }
+        if let Some(color) = color {
+            graph.color = color;
+        }
         Ok(())
     }
 
@@ -2387,6 +2448,7 @@ impl SynthBridge for AppSynthBridge {
                 Ok(ModGraphNodeInfo {
                     id: id.0,
                     kind: cfg.kind().to_string(),
+                    description: graph.node_descriptions.get(id).cloned().unwrap_or_default(),
                     config: serde_json::to_value(cfg)
                         .map_err(|e| McpBridgeError::Other(e.to_string()))?,
                 })
@@ -2473,7 +2535,9 @@ impl SynthBridge for AppSynthBridge {
         &self,
         graph_id: u32,
         node: serde_json::Value,
+        description: Option<String>,
     ) -> Result<u32, McpBridgeError> {
+        let description = validated_description(description)?;
         let config = parse_mod_node(node)?;
         let mut song = self.shared.song.write();
         let gid = synth_sequencer::ModGraphId::new(graph_id);
@@ -2484,7 +2548,54 @@ impl SynthBridge for AppSynthBridge {
         graph
             .try_insert_node(node_id, config)
             .map_err(|e| McpBridgeError::Other(e.to_string()))?;
+        if !description.is_empty() {
+            graph.node_descriptions.insert(node_id, description);
+        }
         Ok(node_id.0)
+    }
+
+    fn set_mod_graph_metadata(
+        &self,
+        graph_id: u32,
+        name: Option<String>,
+        description: Option<String>,
+        color: Option<String>,
+    ) -> Result<(), McpBridgeError> {
+        let description = description
+            .map(|value| validated_description(Some(value)))
+            .transpose()?;
+        if name.as_ref().is_some_and(|value| value.trim().is_empty()) {
+            return Err(McpBridgeError::EmptyName { kind: "mod graph" });
+        }
+        let color = color
+            .map(|hex| {
+                if hex.is_empty() {
+                    Ok(None)
+                } else {
+                    synth_sequencer::TrackColor::from_hex(&hex)
+                        .map(Some)
+                        .ok_or_else(|| {
+                            McpBridgeError::Other(format!(
+                                "invalid color '{hex}' (expected #rrggbb or empty to clear)"
+                            ))
+                        })
+                }
+            })
+            .transpose()?;
+        let mut song = self.shared.song.write();
+        let graph = song
+            .mod_graph_mut(synth_sequencer::ModGraphId::new(graph_id))
+            .ok_or(McpBridgeError::ModGraphNotFound(graph_id))?;
+        if let Some(name) = name {
+            graph.name = name;
+        }
+        if let Some(description) = description {
+            graph.description = description;
+        }
+        if let Some(color) = color {
+            graph.color = color;
+        }
+        Ok(())
     }
 
     fn remove_mod_graph_node(&self, graph_id: u32, node_id: u32) -> Result<(), McpBridgeError> {
@@ -2557,7 +2668,11 @@ impl SynthBridge for AppSynthBridge {
         graph_id: u32,
         node_id: u32,
         node: serde_json::Value,
+        description: Option<String>,
     ) -> Result<(), McpBridgeError> {
+        let description = description
+            .map(|value| validated_description(Some(value)))
+            .transpose()?;
         let config = parse_mod_node(node)?;
         let mut song = self.shared.song.write();
         let gid = synth_sequencer::ModGraphId::new(graph_id);
@@ -2573,7 +2688,15 @@ impl SynthBridge for AppSynthBridge {
         // re-validates (rolling back on rejection).
         graph
             .try_insert_node(nid, config)
-            .map_err(|e| McpBridgeError::Other(e.to_string()))
+            .map_err(|e| McpBridgeError::Other(e.to_string()))?;
+        if let Some(description) = description {
+            if description.is_empty() {
+                graph.node_descriptions.remove(&nid);
+            } else {
+                graph.node_descriptions.insert(nid, description);
+            }
+        }
+        Ok(())
     }
 
     fn list_mod_targets(
@@ -7119,6 +7242,18 @@ fn note_port_to_str(port: synth_sequencer::NotePortType) -> &'static str {
         synth_sequencer::NotePortType::Value => "value",
         synth_sequencer::NotePortType::Gate => "gate",
     }
+}
+
+fn validated_description(description: Option<String>) -> Result<String, McpBridgeError> {
+    let description = description.unwrap_or_default();
+    let len = description.chars().count();
+    if len > MAX_MODULE_DESCRIPTION_LEN {
+        return Err(McpBridgeError::DescriptionTooLong {
+            len,
+            max: MAX_MODULE_DESCRIPTION_LEN,
+        });
+    }
+    Ok(description)
 }
 
 /// Build the summary `NoteGraphInfo` for a pooled graph.

@@ -1112,6 +1112,9 @@ pub struct NoteGraph {
     /// Nodes keyed by graph-local id.
     #[serde(default)]
     pub nodes: BTreeMap<NoteModuleId, NoteModuleConfig>,
+    /// Pedagogical/user intent per node, kept separate from DSP configs.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub node_descriptions: BTreeMap<NoteModuleId, String>,
     /// Connections, kept as a sorted `Vec` for deterministic serialization and
     /// iteration. v1: `NoteStream` axis validated linear; `Value`/`Gate` edges
     /// permitted once modulators exist.
@@ -1143,6 +1146,7 @@ impl NoteGraph {
             description: String::new(),
             color: None,
             nodes: BTreeMap::new(),
+            node_descriptions: BTreeMap::new(),
             connections: Vec::new(),
             node_positions: BTreeMap::new(),
             processing_order: Vec::new(),
@@ -1188,6 +1192,7 @@ impl NoteGraph {
         let removed = self.nodes.remove(&id)?;
         self.connections.retain(|c| c.from != id && c.to != id);
         self.node_positions.remove(&id);
+        self.node_descriptions.remove(&id);
         // Removing nodes/edges only relaxes constraints — rebuild is infallible.
         let _ = self.rebuild_derived();
         Some(removed)

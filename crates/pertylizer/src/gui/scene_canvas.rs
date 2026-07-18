@@ -55,22 +55,30 @@ pub(crate) fn draw_grid(ui: &Ui, rect: Rect) {
     painter.rect_filled(rect, 0.0, theme().colors.bg_dark);
 
     let stroke = egui::Stroke::new(1.0, GRID_LINE_COLOR);
-    let mut x = rect.left();
-    while x < rect.right() {
+    // Anchor visible lines to the same world-space origin as `snap_to_grid`.
+    // Starting at `rect.left/top` made the painted grid change phase whenever
+    // the camera panned or zoomed even though snapped nodes stayed on multiples
+    // of `GRID_SIZE`.
+    let mut x = first_visible_grid_line(rect.left());
+    while x <= rect.right() {
         painter.line_segment(
             [Pos2::new(x, rect.top()), Pos2::new(x, rect.bottom())],
             stroke,
         );
         x += GRID_SIZE;
     }
-    let mut y = rect.top();
-    while y < rect.bottom() {
+    let mut y = first_visible_grid_line(rect.top());
+    while y <= rect.bottom() {
         painter.line_segment(
             [Pos2::new(rect.left(), y), Pos2::new(rect.right(), y)],
             stroke,
         );
         y += GRID_SIZE;
     }
+}
+
+fn first_visible_grid_line(min: f32) -> f32 {
+    (min / GRID_SIZE).ceil() * GRID_SIZE
 }
 
 /// Frame the given node rects (padded) for the first `Scene` frame. Falls back
@@ -165,6 +173,22 @@ pub(crate) fn apply_view_action(
         SceneViewAction::Fit => fit_bounds(),
         SceneViewAction::OneToOne => {
             Rect::from_center_size(scene_rect.center(), visible_rect.size())
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn painted_grid_phase_matches_snap_grid_for_any_camera_origin() {
+        for origin in [-97.5, -32.0, -0.5, 0.0, 17.0, 63.9, 512.25] {
+            let line = first_visible_grid_line(origin);
+            assert!(line >= origin);
+            assert!((line / GRID_SIZE - (line / GRID_SIZE).round()).abs() < f32::EPSILON);
+            let point = Pos2::new(line, line);
+            assert_eq!(snap_to_grid(point), point);
         }
     }
 }

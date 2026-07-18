@@ -27,37 +27,33 @@ use eframe::egui::{self, Color32, Pos2, Rect, RichText, Sense, Vec2};
 use egui_remixicon::icons as ri;
 use parking_lot::RwLock;
 
-use synth_core::{ModuleDescriptor, ModuleType};
+use synth_core::{ModuleCategory, ModuleDescriptor, ModuleType, ModuleWidth};
+use synth_engine::ModuleId;
 use synth_sequencer::{
     AutoInstrumentParam, AutomationTarget, GlobalParam, InstrumentId, MAX_MOD_GRID_NODES,
     ModConnection, ModGraph, ModGraphId, ModGraphScope, ModNodeConfig, ModNodeId, ModTarget,
     ModuleNode, Song, TrackId, TrackParam, TransportNode, TransportSource,
 };
 
+use crate::gui::auto_layout::{LayoutConnection, ModuleInfo, calculate_free_flow_layout};
 use crate::gui::list_panel;
+use crate::gui::module_panel::category_color;
 use crate::gui::node_canvas;
 use crate::gui::scene_canvas;
 use crate::gui::theme::theme;
 use crate::gui::toolbar;
 use crate::gui::widgets::{
-    CaptionTone, ModuleFrame, PortWidget, WidgetPortType, caption, danger_button, dim_label,
-    draw_cable, draw_cable_dragging, draw_cable_highlighted, draw_module_header, expose,
-    icon_button, tree_picker_button,
+    ModMarkers, ModuleCard, ModuleCardGeometry, ModuleColumn, ModulePort, ModulePortEndpoint,
+    PortWidget, WidgetPortDirection, WidgetPortType, danger_button, dim_label, draw_cable,
+    draw_cable_dragging, draw_cable_highlighted, draw_module_port_column, draw_module_port_layout,
+    draw_parameter_grid, expose, icon_button, module_port_accessible_label, tree_picker_button,
 };
 use crate::undo::{UndoAction, UndoManager};
 
-/// Chrome a node card spends outside its content band.
-const NODE_CHROME: f32 = 16.0;
 /// Card height before the first frame has measured the real one.
 const DEFAULT_NODE_HEIGHT: f32 = 120.0;
-/// Content-band width of a node card (the flanking port columns add to this).
-const NODE_BAND: f32 = 168.0;
-/// Horizontal gap between auto-laid-out nodes.
-const NODE_GAP: f32 = 56.0;
-/// Gap between a node's port column and its content band.
-const PORT_COL_GAP: f32 = 4.0;
-/// The auto-layout row (world y) sinks sit on, below the sources.
-const TARGET_ROW_Y: f32 = 260.0;
+/// Compact graph-card margin shared with Note Grid.
+const NODE_MARGIN: f32 = 6.0;
 /// Hit radius (world units) for dropping a dragged wire on a port.
 const WIRE_DROP_RADIUS: f32 = 16.0;
 
@@ -66,6 +62,20 @@ const WIRE_DROP_RADIUS: f32 = 16.0;
 /// of a same-named port (rare) and orients wiring.
 type PortRef = (ModNodeId, synth_core::PortName, bool);
 type WireEvent = node_canvas::WireEvent<PortRef>;
+
+/// Immutable domain context needed to present one side of a Mod Grid node.
+struct ModPortColumn<'a> {
+    graph: &'a ModGraph,
+    node_id: ModNodeId,
+    config: &'a ModNodeConfig,
+    ports: &'a [(synth_core::PortName, bool, String)],
+}
+
+impl ModulePortEndpoint for PortRef {
+    fn widget_port_type(self) -> WidgetPortType {
+        WidgetPortType::Control
+    }
+}
 
 /// The ports a node exposes: `(name, is_output, label)`. Hosted modules take
 /// theirs from the descriptor (outputs + non-MIDI inputs); cheap sources expose
@@ -580,7 +590,7 @@ fn draw_graph_canvas(
         state.scene_rects.remove(&graph_id);
     }
 
-    let positions = layout_positions(&graph);
+    let positions = layout_positions(state, &graph);
     let visible_rect = ui.available_rect_before_wrap();
     let mut scene_rect = state
         .scene_rects
@@ -695,33 +705,61 @@ fn node_rects<'a>(
 ) -> impl Iterator<Item = Rect> + 'a {
     graph.nodes.keys().filter_map(move |id| {
         let pos = positions.get(id)?;
+        let config = graph.nodes.get(id)?;
         let size = state
             .sizes
             .get(&(graph.id, *id))
             .copied()
-            .unwrap_or_else(|| Vec2::new(node_px(), DEFAULT_NODE_HEIGHT));
+            .unwrap_or_else(|| Vec2::new(node_geometry(config).outer_width, DEFAULT_NODE_HEIGHT));
         Some(Rect::from_min_size(*pos, size))
     })
 }
 
-/// Effective node positions: persisted positions, with deterministic auto-layout
-/// for nodes that have none. Sources sit on the top row, Target sinks below.
-fn layout_positions(graph: &ModGraph) -> HashMap<ModNodeId, Pos2> {
-    let mut source_x = 0.0_f32;
-    let mut target_x = 0.0_f32;
-    let mut positions = HashMap::with_capacity(graph.nodes.len());
-    for (&id, config) in &graph.nodes {
-        let (cursor, row_y) = if config.is_target() {
-            (&mut target_x, TARGET_ROW_Y)
-        } else {
-            (&mut source_x, 0.0)
-        };
-        let pos = graph.node_positions.get(&id).map_or_else(
-            || scene_canvas::snap_to_grid(Pos2::new(*cursor, row_y)),
-            |p| Pos2::new(p.x, p.y),
-        );
-        positions.insert(id, pos);
-        *cursor += node_px() + NODE_GAP;
+/// Effective positions from the shared Sugiyama flow layout, overridden by any
+/// manually persisted positions. Unlike Rack, no category zones are imposed.
+fn layout_positions(state: &ModGridViewState, graph: &ModGraph) -> HashMap<ModNodeId, Pos2> {
+    let mut domain_to_layout = HashMap::with_capacity(graph.nodes.len());
+    let mut layout_to_domain = HashMap::with_capacity(graph.nodes.len());
+    let modules: Vec<ModuleInfo> = graph
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (&id, config))| {
+            let instance = u16::try_from(index).ok()?;
+            let layout_id = ModuleId::new(ModuleType::Oscillator, instance);
+            domain_to_layout.insert(id, layout_id);
+            layout_to_domain.insert(layout_id, id);
+            let geometry = node_geometry(config);
+            let size = state
+                .sizes
+                .get(&(graph.id, id))
+                .copied()
+                .unwrap_or_else(|| Vec2::new(geometry.outer_width, DEFAULT_NODE_HEIGHT));
+            Some(ModuleInfo {
+                id: layout_id,
+                category: ModuleCategory::Oscillator,
+                size,
+            })
+        })
+        .collect();
+    let connections: Vec<LayoutConnection> = graph
+        .connections
+        .iter()
+        .filter_map(|connection| {
+            Some(LayoutConnection {
+                from_module: *domain_to_layout.get(&connection.from)?,
+                to_module: *domain_to_layout.get(&connection.to)?,
+            })
+        })
+        .collect();
+    let flow = calculate_free_flow_layout(&modules, &connections);
+    let mut positions: HashMap<ModNodeId, Pos2> = flow
+        .positions
+        .into_iter()
+        .filter_map(|(layout_id, position)| Some((*layout_to_domain.get(&layout_id)?, position)))
+        .collect();
+    for (&id, position) in &graph.node_positions {
+        positions.insert(id, Pos2::new(position.x, position.y));
     }
     positions
 }
@@ -730,8 +768,29 @@ fn layout_positions(graph: &ModGraph) -> HashMap<ModNodeId, Pos2> {
 // Node cards
 // ============================================================================
 
-const fn node_px() -> f32 {
-    NODE_BAND
+fn node_width(config: &ModNodeConfig) -> ModuleWidth {
+    match config {
+        // Keep hosted nodes aligned with the width declared by their Rack
+        // descriptors. These are the module types offered by the Mod Grid.
+        ModNodeConfig::Module(module) => match module.module_type {
+            ModuleType::Lfo => ModuleWidth::Large,
+            ModuleType::Mseg => ModuleWidth::ExtraLarge,
+            ModuleType::EnvelopeFollower | ModuleType::Euclidean | ModuleType::RandomGates => {
+                ModuleWidth::Medium
+            }
+            _ => ModuleWidth::Medium,
+        },
+        // Macro and Target contain full-width text/picker controls; Small and
+        // ExtraSmall cannot contain them without overflowing the card body.
+        ModNodeConfig::Macro(_) | ModNodeConfig::Target(_) => ModuleWidth::Medium,
+        ModNodeConfig::Transport(_) | ModNodeConfig::MidiCc(_) | ModNodeConfig::AudioTap(_) => {
+            ModuleWidth::Small
+        }
+    }
+}
+
+fn node_geometry(config: &ModNodeConfig) -> ModuleCardGeometry {
+    ModuleCardGeometry::ported(node_width(config), NODE_MARGIN)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -751,14 +810,12 @@ fn draw_node(
     let Some(mut pos) = positions.get(&node_id).copied() else {
         return;
     };
-    let col_w = theme().sizes.port_column_width;
-    let band = node_px() - NODE_CHROME;
-    let width = node_px() + 2.0 * (col_w + PORT_COL_GAP);
+    let geometry = node_geometry(config);
     let size = state
         .sizes
         .get(&key)
         .copied()
-        .unwrap_or_else(|| Vec2::new(width, DEFAULT_NODE_HEIGHT));
+        .unwrap_or_else(|| Vec2::new(geometry.outer_width, DEFAULT_NODE_HEIGHT));
 
     let card_id = egui::Id::new(("mod_grid_node", graph.id.0, node_id.0));
     let node_rect = Rect::from_min_size(pos, size);
@@ -782,38 +839,69 @@ fn draw_node(
     }
 
     let accent = node_accent(config);
-    let frame = ModuleFrame::new(accent)
-        .inner_margin(6.0)
-        .build(&ui.global_style());
+    let card = ModuleCard::new(accent)
+        .inner_margin(NODE_MARGIN)
+        .body_module_width(node_width(config));
     let mut child = ui.new_child(
         egui::UiBuilder::new()
             .id(card_id)
-            .max_rect(Rect::from_min_size(pos, Vec2::new(width, 600.0)))
+            .max_rect(Rect::from_min_size(
+                pos,
+                Vec2::new(geometry.outer_width, 600.0),
+            ))
             .layout(egui::Layout::top_down(egui::Align::Min)),
     );
     let title = node_name(config);
-    frame.show(&mut child, |ui| {
-        ui.set_width(width - NODE_CHROME);
-        draw_module_header(ui, accent, &title, None, false, |ui| {
+    card.show(&mut child, |card| {
+        let description = graph.node_descriptions.get(&node_id).cloned();
+        card.header(&title, description, false, |ui| {
             if icon_button(ui, ri::CLOSE_LINE, theme().colors.text_dim, "Remove node").clicked() {
                 propose_edit(edit, GraphEdit::RemoveNode(node_id));
             }
         });
 
         let ports = node_ports(state, config);
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = PORT_COL_GAP;
-            draw_port_column(ui, state, graph, node_id, &ports, true, wire_events);
-            ui.vertical(|ui| {
-                ui.set_width(band);
-                let mut cfg = config.clone();
-                edit_node_body(ui, state, &mut cfg, any_dragged);
-                if cfg != *config {
-                    propose_edit(edit, GraphEdit::SetNode(node_id, cfg));
+        draw_module_port_layout(
+            card.body(),
+            geometry.body_width,
+            |column, ui| match column {
+                ModuleColumn::Input => {
+                    draw_port_column(
+                        ui,
+                        state,
+                        ModPortColumn {
+                            graph,
+                            node_id,
+                            config,
+                            ports: &ports,
+                        },
+                        true,
+                        wire_events,
+                    );
                 }
-            });
-            draw_port_column(ui, state, graph, node_id, &ports, false, wire_events);
-        });
+                ModuleColumn::Body => {
+                    let mut cfg = config.clone();
+                    edit_node_body(ui, state, &mut cfg, any_dragged);
+                    if cfg != *config {
+                        propose_edit(edit, GraphEdit::SetNode(node_id, cfg));
+                    }
+                }
+                ModuleColumn::Output => {
+                    draw_port_column(
+                        ui,
+                        state,
+                        ModPortColumn {
+                            graph,
+                            node_id,
+                            config,
+                            ports: &ports,
+                        },
+                        false,
+                        wire_events,
+                    );
+                }
+            },
+        );
     });
     state.sizes.insert(key, child.min_rect().size());
 }
@@ -824,92 +912,75 @@ fn draw_node(
 fn draw_port_column(
     ui: &mut egui::Ui,
     state: &mut ModGridViewState,
-    graph: &ModGraph,
-    node_id: ModNodeId,
-    ports: &[(synth_core::PortName, bool, String)],
+    column: ModPortColumn<'_>,
     is_input: bool,
     wire_events: &mut Vec<WireEvent>,
 ) {
-    let t = theme();
-    let col_w = t.sizes.port_column_width;
-    let spacing = t.sizes.port_vertical_spacing;
-    let side: Vec<&(synth_core::PortName, bool, String)> = ports
+    let direction = if is_input {
+        WidgetPortDirection::Input
+    } else {
+        WidgetPortDirection::Output
+    };
+    let owner = format!(
+        "Mod Grid graph {}, {} node {}",
+        column.graph.id.0,
+        node_name(column.config),
+        column.node_id.0
+    );
+    let side: Vec<ModulePort<PortRef>> = column
+        .ports
         .iter()
         .filter(|(_, is_out, _)| *is_out != is_input)
-        .collect();
-
-    ui.vertical(|ui| {
-        ui.set_width(col_w);
-        if side.is_empty() {
-            return; // reserve the column width, draw nothing
-        }
-        ui.vertical_centered(|ui| {
-            caption(ui, if is_input { "IN" } else { "OUT" }, CaptionTone::Dim);
-        });
-        for (port, is_out, label) in side {
-            let connected = graph.connections.iter().any(|c| {
-                if *is_out {
-                    c.from == node_id && synth_core::PortName::from(c.from_port.as_str()) == *port
+        .map(|(port, is_output, label)| {
+            let display_label = sentence_case(label);
+            let endpoint = (column.node_id, *port, *is_output);
+            let connected = column.graph.connections.iter().any(|c| {
+                if *is_output {
+                    c.from == column.node_id
+                        && synth_core::PortName::from(c.from_port.as_str()) == *port
                 } else {
-                    c.to == node_id && synth_core::PortName::from(c.to_port.as_str()) == *port
+                    c.to == column.node_id
+                        && synth_core::PortName::from(c.to_port.as_str()) == *port
                 }
             });
-            ui.vertical_centered(|ui| {
-                ui.allocate_ui(Vec2::new(col_w, spacing), |ui| {
-                    ui.centered_and_justified(|ui| {
-                        port_widget(
-                            ui,
-                            state,
-                            graph,
-                            node_id,
-                            *port,
-                            *is_out,
-                            connected,
-                            label,
-                            wire_events,
-                        );
-                    });
-                });
+            let highlighted = state.pending_wire.as_ref().is_some_and(|pending| {
+                open_connection(column.graph, pending.from, endpoint).is_some()
             });
-        }
+            let accessible_label = module_port_accessible_label(
+                &owner,
+                port.as_str(),
+                &display_label,
+                WidgetPortType::Control,
+                direction,
+            );
+            ModulePort::new(
+                endpoint,
+                display_label,
+                accessible_label,
+                "Mod Grid control signal",
+                connected,
+                highlighted,
+                ModMarkers::default(),
+            )
+        })
+        .collect();
+    draw_module_port_column(ui, direction, &side, |port, center, response| {
+        let endpoint = port.endpoint();
+        state.port_positions.insert(endpoint, center);
+        node_canvas::push_port_event(wire_events, response, endpoint, center);
     });
-}
-
-#[allow(clippy::too_many_arguments)]
-fn port_widget(
-    ui: &mut egui::Ui,
-    state: &mut ModGridViewState,
-    graph: &ModGraph,
-    node_id: ModNodeId,
-    port: synth_core::PortName,
-    is_output: bool,
-    connected: bool,
-    label: &str,
-    wire_events: &mut Vec<WireEvent>,
-) {
-    let endpoint = (node_id, port, is_output);
-    let highlighted = state
-        .pending_wire
-        .as_ref()
-        .is_some_and(|p| open_connection(graph, p.from, endpoint).is_some());
-    let (response, center) = PortWidget::new(WidgetPortType::Control)
-        .connected(connected)
-        .highlighted(highlighted)
-        .show(ui);
-    expose(
-        &response,
-        egui::WidgetType::Other,
-        format!("port {label} node {}", node_id.0),
-        None,
-    );
-    let response = response.on_hover_text(format!("{label} (control)"));
-    state.port_positions.insert(endpoint, center);
-    node_canvas::push_port_event(wire_events, &response, endpoint, center);
 }
 
 // ============================================================================
 // Node body editors
 // ============================================================================
+
+fn sentence_case(label: &str) -> String {
+    let mut chars = label.chars();
+    chars.next().map_or_else(String::new, |first| {
+        first.to_uppercase().chain(chars).collect()
+    })
+}
 
 fn edit_node_body(
     ui: &mut egui::Ui,
@@ -921,10 +992,10 @@ fn edit_node_body(
         ModNodeConfig::Module(m) => edit_module_body(ui, state, m, any_dragged),
         ModNodeConfig::Macro(m) => {
             ui.horizontal(|ui| {
-                ui.label("name");
+                ui.label("Name");
                 ui.text_edit_singleline(&mut m.name);
             });
-            let r = ui.add(egui::Slider::new(&mut m.value, 0.0..=1.0).text("value"));
+            let r = ui.add(egui::Slider::new(&mut m.value, 0.0..=1.0).text("Value"));
             *any_dragged |= r.dragged();
         }
         ModNodeConfig::Transport(tn) => {
@@ -934,11 +1005,11 @@ fn edit_node_body(
             let r = ui.add(egui::DragValue::new(&mut m.cc).range(0..=127).prefix("CC "));
             *any_dragged |= r.dragged();
             let mut omni = m.channel.is_none();
-            if ui.checkbox(&mut omni, "omni").changed() {
+            if ui.checkbox(&mut omni, "Omni").changed() {
                 m.channel = if omni { None } else { Some(0) };
             }
             if let Some(ch) = &mut m.channel {
-                let r = ui.add(egui::DragValue::new(ch).range(0..=15).prefix("ch "));
+                let r = ui.add(egui::DragValue::new(ch).range(0..=15).prefix("Ch "));
                 *any_dragged |= r.dragged();
             }
         }
@@ -965,37 +1036,29 @@ fn edit_module_body(
     let Some(desc) = desc.as_ref() else {
         return;
     };
-    // A compact editor for each numeric parameter, bound to the node's param map
-    // (keyed by descriptor type_id). Choice params edit by index.
-    egui::ScrollArea::vertical()
-        .max_height(160.0)
-        .auto_shrink([false, true])
-        .show(ui, |ui| {
-            for param in &desc.parameters {
-                // Show the stored value or the descriptor default WITHOUT writing
-                // the default into the config — writing it on mere render would
-                // fire a spurious SetNode (undo entry + runtime rebuild) every
-                // time a fresh module node is first drawn. Persist only on edit.
-                let mut value = m
-                    .params
-                    .get(&param.type_id)
-                    .copied()
-                    .unwrap_or_else(|| param.default_value());
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new(&param.name).size(10.0));
-                    let range = param.range.min..=param.range.max;
-                    let r = ui.add(
-                        egui::DragValue::new(&mut value)
-                            .range(range)
-                            .speed(((param.range.max - param.range.min) / 200.0).max(0.001)),
-                    );
-                    *any_dragged |= r.dragged();
-                    if r.changed() {
-                        m.params.insert(param.type_id.clone(), value);
-                    }
-                });
-            }
-        });
+    // Use the same descriptor-driven controls as Rack: waveform icons, choice
+    // dropdowns, toggles, sliders and knobs all follow the module's WidgetHint.
+    // Reading a missing value falls back to the descriptor default without
+    // mutating the graph merely because it was rendered.
+    let changes = draw_parameter_grid(
+        ui,
+        desc,
+        category_color(desc.category),
+        |param| {
+            m.params
+                .get(&param.type_id)
+                .copied()
+                .unwrap_or_else(|| param.default_value())
+        },
+        |_, _| true,
+        |_| ModMarkers::default(),
+    );
+    if !changes.is_empty() {
+        *any_dragged |= ui.input(|input| input.pointer.primary_down());
+    }
+    for (param, value) in changes {
+        m.params.insert(param.type_id.clone(), value);
+    }
 }
 
 fn audio_tap_combo(
@@ -1012,7 +1075,7 @@ fn audio_tap_combo(
             .find(|(id, _)| id == tid)
             .map_or_else(|| format!("Track {}", tid.0), |(_, n)| n.clone()),
     };
-    ui.label(RichText::new("smoothed level of").size(10.0));
+    ui.label(RichText::new("Smoothed level of").size(10.0));
     egui::ComboBox::from_id_salt("audio_tap_src")
         .selected_text(label_for(&a.source))
         .show_ui(ui, |ui| {
@@ -1137,7 +1200,7 @@ fn edit_target_body(
     });
 
     ui.horizontal(|ui| {
-        ui.label("amount");
+        ui.label("Amount");
         let r = ui.add(egui::DragValue::new(&mut target.amount).speed(0.01));
         *any_dragged |= r.dragged();
     });

@@ -81,7 +81,7 @@ async fn mod_grid_create_route_enumerate_delete() {
         &server,
         "add_mod_graph_node",
         serde_json::json!({ "items": [
-            { "graph_id": graph_id, "node": { "Module": { "module_type": "lfo", "params": {} } } },
+            { "graph_id": graph_id, "description": "Slow movement source", "node": { "Module": { "module_type": "lfo", "params": {} } } },
             { "graph_id": graph_id, "node": { "Target": { "target": { "Track": { "param": "Volume" } }, "amount": 0.25 } } },
         ] }),
     )
@@ -114,9 +114,34 @@ async fn mod_grid_create_route_enumerate_delete() {
     .await;
     let detail: serde_json::Value = serde_json::from_str(&detail).unwrap();
     assert_eq!(detail["nodes"].as_array().unwrap().len(), 2);
+    assert_eq!(detail["nodes"][0]["description"], "Slow movement source");
     assert_eq!(detail["connections"].as_array().unwrap().len(), 1);
     assert_eq!(detail["info"]["scope"], "track");
     assert_eq!(detail["info"]["assigned_tracks"][0], track_id);
+
+    let metadata = call(
+        &server,
+        "set_mod_graph_metadata",
+        serde_json::json!({ "items": [{
+            "graph_id": graph_id,
+            "name": "updated wobble",
+            "description": "Updated graph intent",
+            "color": "#334455"
+        }] }),
+    )
+    .await;
+    assert!(!metadata.contains("failed"), "metadata: {metadata}");
+
+    let bulk = call(
+        &server,
+        "get_mod_graphs",
+        serde_json::json!({ "graph_ids": [graph_id, 999] }),
+    )
+    .await;
+    let bulk: serde_json::Value = serde_json::from_str(&bulk).expect("bulk returns JSON");
+    assert_eq!(bulk[0]["detail"]["info"]["name"], "updated wobble");
+    assert_eq!(bulk[1]["graph_id"], 999);
+    assert!(bulk[1]["error"].is_string());
 
     // 6. Provenance: exactly one routing sink, on this graph.
     let targets = call(
@@ -200,10 +225,10 @@ async fn mod_grid_set_node_and_disconnect() {
     let edited = call(
         &server,
         "set_mod_graph_node",
-        serde_json::json!({
-            "graph_id": graph_id, "node_id": 1,
-            "node": { "Target": { "target": { "Global": "MasterVolume" }, "amount": 0.9 } },
-        }),
+        serde_json::json!({ "items": [{
+            "graph_id": graph_id, "node_id": 1, "description": "Master movement sink",
+            "node": { "Target": { "target": { "Global": "MasterVolume" }, "amount": 0.9 } }
+        }] }),
     )
     .await;
     assert!(!edited.starts_with("Error"), "set failed: {edited}");
@@ -234,10 +259,10 @@ async fn mod_grid_set_node_and_disconnect() {
     let missing = call(
         &server,
         "set_mod_graph_node",
-        serde_json::json!({
+        serde_json::json!({ "items": [{
             "graph_id": graph_id, "node_id": 99,
-            "node": { "Macro": { "name": "x", "value": 0.0 } },
-        }),
+            "node": { "Macro": { "name": "x", "value": 0.0 } }
+        }] }),
     )
     .await;
     assert!(

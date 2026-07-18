@@ -72,6 +72,75 @@ pub struct LayoutResult {
     pub positions: HashMap<ModuleId, Pos2>,
 }
 
+/// Lay out an arbitrary node graph with the Rack's Sugiyama flow algorithm,
+/// without applying any Rack-specific category zones.
+///
+/// Every supplied node participates in longest-path layer assignment and the
+/// median crossing-reduction sweeps. Pixel placement uses each node's measured
+/// size, so callers such as Note Grid and Mod Grid get a free flow layout while
+/// sharing Rack's graph analysis.
+#[must_use]
+pub(crate) fn calculate_free_flow_layout(
+    modules: &[ModuleInfo],
+    connections: &[LayoutConnection],
+) -> LayoutResult {
+    let ids: Vec<ModuleId> = modules.iter().map(|module| module.id).collect();
+    let id_set: HashSet<ModuleId> = ids.iter().copied().collect();
+    let mut outgoing: HashMap<ModuleId, Vec<ModuleId>> =
+        ids.iter().map(|&id| (id, Vec::new())).collect();
+    let mut incoming: HashMap<ModuleId, Vec<ModuleId>> =
+        ids.iter().map(|&id| (id, Vec::new())).collect();
+    for connection in connections {
+        if id_set.contains(&connection.from_module) && id_set.contains(&connection.to_module) {
+            outgoing
+                .entry(connection.from_module)
+                .or_default()
+                .push(connection.to_module);
+            incoming
+                .entry(connection.to_module)
+                .or_default()
+                .push(connection.from_module);
+        }
+    }
+
+    let depth = assign_layers(&ids, &outgoing, &incoming);
+    let mut columns = build_columns(&depth, &ids);
+    order_within_columns(&mut columns, &outgoing, &incoming, &depth);
+    let sizes: HashMap<ModuleId, Vec2> = modules
+        .iter()
+        .map(|module| (module.id, module.size))
+        .collect();
+    let num_columns = columns.keys().copied().max().map_or(0, |max| max + 1);
+    let mut col_widths = vec![0.0_f32; num_columns];
+    for (&column, module_ids) in &columns {
+        let width = module_ids
+            .iter()
+            .map(|id| snap_size_to_grid(sizes.get(id).copied().unwrap_or(DEFAULT_SIZE)).x)
+            .fold(0.0_f32, f32::max);
+        if let Some(slot) = col_widths.get_mut(column) {
+            *slot = width + GAP;
+        }
+    }
+    let mut col_x = vec![GRID; num_columns];
+    for column in 1..num_columns {
+        col_x[column] = col_x[column - 1] + col_widths[column - 1];
+    }
+
+    let mut result = LayoutResult::default();
+    for column in 0..num_columns {
+        let Some(module_ids) = columns.get(&column) else {
+            continue;
+        };
+        let mut y = GRID;
+        for &id in module_ids {
+            let size = snap_size_to_grid(sizes.get(&id).copied().unwrap_or(DEFAULT_SIZE));
+            result.positions.insert(id, Pos2::new(col_x[column], y));
+            y += size.y + GAP;
+        }
+    }
+    result
+}
+
 /// Prepare layout inputs that fold collapsed groups into single nodes.
 ///
 /// - Removes any module whose id is listed as a member of a collapsed
@@ -889,6 +958,46 @@ mod tests {
     fn test_empty_layout() {
         let result = calculate_layout(&[], &[]);
         assert!(result.positions.is_empty());
+    }
+
+    #[test]
+    fn free_flow_uses_connections_and_measured_widths() {
+        let source = make_id(ModuleType::Oscillator, 1);
+        let middle = make_id(ModuleType::Oscillator, 2);
+        let sink = make_id(ModuleType::Oscillator, 3);
+        let modules = vec![
+            ModuleInfo {
+                id: source,
+                category: ModuleCategory::Oscillator,
+                size: Vec2::new(337.0, 140.0),
+            },
+            ModuleInfo {
+                id: middle,
+                category: ModuleCategory::Oscillator,
+                size: Vec2::new(173.0, 220.0),
+            },
+            make_module(sink, ModuleCategory::Oscillator),
+        ];
+        let connections = vec![
+            LayoutConnection {
+                from_module: source,
+                to_module: middle,
+            },
+            LayoutConnection {
+                from_module: middle,
+                to_module: sink,
+            },
+        ];
+
+        let result = calculate_free_flow_layout(&modules, &connections);
+        let source_pos = result.positions.get(&source).unwrap();
+        let middle_pos = result.positions.get(&middle).unwrap();
+        let sink_pos = result.positions.get(&sink).unwrap();
+
+        assert!(source_pos.x < middle_pos.x);
+        assert!(middle_pos.x < sink_pos.x);
+        assert!(middle_pos.x - source_pos.x >= 337.0 + GAP);
+        assert!(sink_pos.x - middle_pos.x >= 173.0 + GAP);
     }
 
     #[test]

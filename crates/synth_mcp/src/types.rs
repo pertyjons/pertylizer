@@ -758,6 +758,9 @@ pub struct NoteGraphModuleInfo {
     pub id: u32,
     /// Kind tag (`scale_quantize`, `euclidean`, `note_lfo`, …).
     pub kind: String,
+    /// Per-node pedagogical/user intent text.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub description: String,
     /// Full config as externally-tagged JSON — the shape
     /// `add_note_graph_module` / `set_note_graph_module` accept, so it
     /// round-trips.
@@ -817,6 +820,9 @@ pub struct ModGraphNodeInfo {
     /// Kind tag (`module`, `macro`, `transport`, `midi_cc`, `audio_tap`,
     /// `target`).
     pub kind: String,
+    /// Per-node pedagogical/user intent text.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub description: String,
     /// Full config as externally-tagged JSON — the shape `add_mod_graph_node`
     /// accepts, so it round-trips.
     pub config: serde_json::Value,

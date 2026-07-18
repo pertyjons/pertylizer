@@ -4,8 +4,6 @@
 //! (compact oscilloscope with tiny IN/OUT ports) and the generic vertical port
 //! column. Extracted verbatim from `patch_editor.rs` — no behavior change.
 
-use std::collections::HashSet;
-
 use eframe::egui::{self, Color32, Pos2, Rect, Sense, Ui, Vec2};
 use egui_remixicon::icons as ri;
 
@@ -14,15 +12,13 @@ use synth_engine::{EngineHandle, ModuleId};
 
 use crate::gui::module_panel::PortPosition;
 use crate::gui::theme::theme;
-use crate::gui::widgets::{
-    PortWidget, WidgetPortDirection, WidgetPortType, draw_oscilloscope, expose,
-};
+use crate::gui::widgets::{WidgetPortDirection, WidgetPortType, draw_oscilloscope, expose};
 
 use crate::gui::node_canvas;
 
 use super::{
     CLOSE_BUTTON_HOVER_RED, CLOSE_BUTTON_IDLE, PatchEditor, PatchEditorResult, PatchPort,
-    PortRenderInfo, trim_sweep_to_complete_cycles,
+    trim_sweep_to_complete_cycles,
 };
 
 impl PatchEditor {
@@ -230,112 +226,5 @@ impl PatchEditor {
 
         // Request continuous repaint so the waveform updates
         ui.request_repaint();
-    }
-
-    pub(super) fn draw_port_column_with<F>(
-        ui: &mut Ui,
-        direction: WidgetPortDirection,
-        ports: &[PortRenderInfo],
-        pending_info: Option<(ModuleId, WidgetPortType, WidgetPortDirection)>,
-        cycle_blocked: &HashSet<ModuleId>,
-        mut store_position: F,
-    ) where
-        F: FnMut(&PortRenderInfo, Pos2, &egui::Response),
-    {
-        let t = theme();
-        let col_width = t.sizes.port_column_width;
-        let spacing = t.sizes.port_vertical_spacing;
-
-        ui.vertical(|ui| {
-            let label = match direction {
-                WidgetPortDirection::Input => "IN",
-                WidgetPortDirection::Output => "OUT",
-            };
-            if !ports.is_empty() {
-                ui.vertical_centered(|ui| {
-                    ui.label(
-                        egui::RichText::new(label)
-                            .size(8.0)
-                            .color(t.colors.text_dim),
-                    );
-                });
-
-                let rail_x = ui.cursor().min.x + col_width * 0.5;
-                let rail_top = ui.cursor().min.y + 3.0;
-                let rail_bottom = rail_top + ports.len() as f32 * spacing - 6.0;
-                ui.painter().line_segment(
-                    [Pos2::new(rail_x, rail_top), Pos2::new(rail_x, rail_bottom)],
-                    egui::Stroke::new(1.0, t.colors.border.gamma_multiply(0.55)),
-                );
-            }
-
-            for port in ports {
-                let is_highlighted = pending_info
-                    .map(|(from_module, from_type, from_dir)| {
-                        // Signal always flows output → input; pick whichever side
-                        // is the output so directional compatibility is correct.
-                        let (out_type, in_type) = if from_dir == WidgetPortDirection::Output {
-                            (from_type, port.port_type)
-                        } else {
-                            (port.port_type, from_type)
-                        };
-                        from_module != port.module_id
-                            && from_dir != direction
-                            && out_type.can_drive(in_type)
-                            && !cycle_blocked.contains(&port.module_id)
-                    })
-                    .unwrap_or(false);
-
-                ui.vertical_centered(|ui| {
-                    ui.allocate_ui(Vec2::new(col_width, spacing), |ui| {
-                        ui.centered_and_justified(|ui| {
-                            let (response, center) = PortWidget::new(port.port_type)
-                                .connected(port.is_connected)
-                                .highlighted(is_highlighted)
-                                .markers(port.markers)
-                                .show(ui);
-
-                            store_position(port, center, &response);
-
-                            // Expose to AccessKit / the egui-inspection MCP so a
-                            // driver can locate a port by name+type+direction (the
-                            // node name isn't threaded into this column, so the
-                            // label is port-scoped).
-                            let type_str = match port.port_type {
-                                WidgetPortType::Audio => "audio",
-                                WidgetPortType::Control => "cv",
-                                WidgetPortType::Gate => "gate",
-                                WidgetPortType::Midi => "midi",
-                                WidgetPortType::NoteStream => "notes",
-                            };
-                            let dir_str = match direction {
-                                WidgetPortDirection::Input => "in",
-                                WidgetPortDirection::Output => "out",
-                            };
-                            expose(
-                                &response,
-                                egui::WidgetType::Other,
-                                format!("{} {type_str} {dir_str}", port.label),
-                                None,
-                            );
-
-                            // Single egui tooltip (positioned correctly inside the
-                            // Scene transform): port name + signal type, plus the
-                            // longer description when present. Built lazily inside
-                            // `on_hover_ui` so we don't format a throwaway String
-                            // for every port on every frame — only when hovered.
-                            response.on_hover_ui(|ui| {
-                                let mut tip = format!("{} ({type_str})", port.label);
-                                if !port.description.is_empty() {
-                                    tip.push('\n');
-                                    tip.push_str(&port.description);
-                                }
-                                ui.label(tip);
-                            });
-                        });
-                    });
-                });
-            }
-        });
     }
 }

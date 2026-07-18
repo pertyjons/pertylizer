@@ -1232,6 +1232,16 @@
           "description": "User-facing name, shown in the pool view.",
           "type": "string"
         },
+        "node_descriptions": {
+          "additionalProperties": false,
+          "description": "Pedagogical/user intent per node, kept separate from DSP configs.",
+          "patternProperties": {
+            "^\\d+$": {
+              "type": "string"
+            }
+          },
+          "type": "object"
+        },
         "node_positions": {
           "additionalProperties": false,
           "description": "Editor canvas positions per node (layout metadata; nodes without one are\nauto-laid-out). Persisted so an arranged canvas survives reload.",
@@ -9643,6 +9653,16 @@
         "name": {
           "description": "User-facing name, shown in the pool view.",
           "type": "string"
+        },
+        "node_descriptions": {
+          "additionalProperties": false,
+          "description": "Pedagogical/user intent per node, kept separate from DSP configs.",
+          "patternProperties": {
+            "^\\d+$": {
+              "type": "string"
+            }
+          },
+          "type": "object"
         },
         "node_positions": {
           "additionalProperties": false,

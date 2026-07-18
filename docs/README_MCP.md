@@ -66,6 +66,19 @@ while you hear the changes immediately.
 
 The HTTP transport supports multiple concurrent clients via session tracking.
 
+#### Local loopback access from sandboxed agents
+
+Some agent command sandboxes block network syscalls even for `127.0.0.1`. In that case a raw
+`curl http://127.0.0.1:9850/mcp` can fail with `curl: (7) failed to open socket: Operation not
+permitted` although Pertylizer is running correctly. This is a client/sandbox restriction, not an
+MCP server failure.
+
+Prefer the client's configured Pertylizer MCP connector, which uses its approved transport path.
+If direct shell probing is necessary, grant the command the client's explicit network/loopback
+approval when that facility is available; if policy forbids approval, run the probe outside the
+sandbox or use the connector instead. Verify the process and endpoint from the host before filing
+a Pertylizer server bug.
+
 ### Stdio (headless mode)
 
 ```bash

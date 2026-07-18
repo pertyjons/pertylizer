@@ -26,7 +26,8 @@ use eframe::egui::{self, Color32, Pos2, Rect, RichText, Sense, Vec2};
 use egui_remixicon::icons as ri;
 use parking_lot::RwLock;
 
-use synth_core::{ModuleWidth, NormalizedValue};
+use synth_core::{ModuleCategory, ModuleType, ModuleWidth, NormalizedValue};
+use synth_engine::ModuleId;
 use synth_sequencer::{
     Arpeggiator, Chord, Duration as SeqDuration, EnvelopeTrigger, EuclideanGenerator, Humanize,
     LfoShape, MAX_DELAY_REPEATS, MAX_NOTE_DELAY_TICKS, MAX_RATCHET_SUBDIVISIONS,
@@ -35,6 +36,7 @@ use synth_sequencer::{
     Pitch, ProbabilityGate, Ratchet, ScaleQuantize, Song, StepLfo, TrackColor, Velocity,
 };
 
+use crate::gui::auto_layout::{LayoutConnection, ModuleInfo, calculate_free_flow_layout};
 use crate::gui::list_panel;
 use crate::gui::node_canvas;
 use crate::gui::scene_canvas;
@@ -43,27 +45,18 @@ use crate::gui::sequencer::note_fx;
 use crate::gui::theme::theme;
 use crate::gui::toolbar;
 use crate::gui::widgets::{
-    CaptionTone, Knob, ModuleFrame, PortWidget, WidgetPortType, caption, count_drag_value,
+    CaptionTone, Knob, ModMarkers, ModuleCard, ModuleCardGeometry, ModuleColumn, ModulePort,
+    ModulePortEndpoint, PortWidget, WidgetPortDirection, WidgetPortType, caption, count_drag_value,
     danger_button, dim_label, draw_cable, draw_cable_dragging, draw_cable_highlighted,
-    draw_flow_particles, draw_module_header, enum_combo, expose, icon_button, knob_normalized,
-    labeled_row, seed_reroll,
+    draw_flow_particles, draw_module_port_column, draw_module_port_layout, enum_combo, expose,
+    icon_button, knob_normalized, labeled_row, module_port_accessible_label, seed_reroll,
 };
 use crate::undo::{UndoAction, UndoManager};
 
-/// Chrome a note node card spends outside its content band (the `ModuleFrame`
-/// inner margins) — the content *band* width is `module_px − this`. The two
-/// flanking IN/OUT port columns are added on top of the band (see `draw_node`),
-/// so the full card is wider than `module_px`.
-const NODE_CHROME: f32 = 16.0;
 /// Card height before the first frame has measured the real one.
 const DEFAULT_NODE_HEIGHT: f32 = 140.0;
-/// Horizontal gap between auto-laid-out nodes.
-const NODE_GAP: f32 = 48.0;
 /// Gap between a node's IN/OUT port column and its content band (the rack uses
 /// the same 4 px so the columns don't eat the body's width).
-const PORT_COL_GAP: f32 = 4.0;
-/// Vertical offset of the modulation-source row below the spine.
-const LAYOUT_VALUE_ROW_Y: f32 = 288.0;
 /// Hit radius (world units) for dropping a dragged wire on a port.
 const WIRE_DROP_RADIUS: f32 = 16.0;
 
@@ -77,6 +70,12 @@ enum NodePort {
     ValueIn(u8),
 }
 
+impl ModulePortEndpoint for NodePort {
+    fn widget_port_type(self) -> WidgetPortType {
+        self.widget_type()
+    }
+}
+
 impl NodePort {
     const fn is_output(self) -> bool {
         matches!(self, Self::StreamOut | Self::ValueOut)
@@ -86,6 +85,15 @@ impl NodePort {
         match self {
             Self::StreamIn | Self::StreamOut => WidgetPortType::NoteStream,
             Self::ValueOut | Self::ValueIn(_) => WidgetPortType::Control,
+        }
+    }
+
+    fn stable_id(self) -> String {
+        match self {
+            Self::StreamIn => "stream-in".to_string(),
+            Self::StreamOut => "stream-out".to_string(),
+            Self::ValueOut => "value-out".to_string(),
+            Self::ValueIn(input) => format!("value-in-{input}"),
         }
     }
 }
@@ -873,7 +881,7 @@ fn draw_graph_canvas(
         state.scene_rects.remove(&graph_id);
     }
 
-    let positions = layout_positions(&graph);
+    let positions = layout_positions(state, &graph);
 
     let visible_rect = ui.available_rect_before_wrap();
     let mut scene_rect = state
@@ -1012,7 +1020,11 @@ fn node_rects<'a>(
             .sizes
             .get(&(graph.id, *id))
             .copied()
-            .unwrap_or_else(|| Vec2::new(node_px(config), DEFAULT_NODE_HEIGHT));
+            .unwrap_or_else(|| {
+                let margin = theme().sizes.module_compact_inner_margin;
+                let geometry = ModuleCardGeometry::ported(node_width(config), margin);
+                Vec2::new(geometry.outer_width, DEFAULT_NODE_HEIGHT)
+            });
         Some(Rect::from_min_size(*pos, size))
     })
 }
@@ -1027,39 +1039,53 @@ fn off_spine_stream_nodes(graph: &NoteGraph) -> usize {
         .count()
 }
 
-/// Effective node positions for this frame: the graph's persisted positions,
-/// with deterministic auto-layout defaults for nodes that have none. The stream
-/// spine runs left→right in processing order; `Value` sources sit on a row
-/// below. Each row's running x advances by the node's own width (nodes have
-/// per-kind widths now), so wider cards don't overlap their neighbours.
-fn layout_positions(graph: &NoteGraph) -> HashMap<NoteModuleId, Pos2> {
-    let mut spine_x = 0.0_f32;
-    let mut value_x = 0.0_f32;
-    // `processing_order` covers every node of a valid graph; fall back to key
-    // order for a graph whose order failed to build.
-    let order: Vec<NoteModuleId> = if graph.processing_order.len() == graph.nodes.len() {
-        graph.processing_order.clone()
-    } else {
-        graph.nodes.keys().copied().collect()
-    };
-    let mut positions = HashMap::with_capacity(order.len());
-    for id in order {
-        let Some(config) = graph.nodes.get(&id) else {
-            continue;
-        };
-        let (cursor, row_y) = if config.is_value_source() {
-            (&mut value_x, LAYOUT_VALUE_ROW_Y)
-        } else {
-            (&mut spine_x, 0.0)
-        };
-        let pos = graph.node_positions.get(&id).map_or_else(
-            || scene_canvas::snap_to_grid(Pos2::new(*cursor, row_y)),
-            |p| Pos2::new(p.x, p.y),
-        );
-        positions.insert(id, pos);
-        // Advance the row cursor past this card (default slot only; a persisted
-        // position doesn't shift the auto-laid-out neighbours' spacing).
-        *cursor += node_px(config) + NODE_GAP;
+/// Effective positions from the shared Sugiyama flow layout, overridden by any
+/// manually persisted positions. The free graph layout uses the measured outer
+/// card dimensions, including both port columns.
+fn layout_positions(state: &NoteGridViewState, graph: &NoteGraph) -> HashMap<NoteModuleId, Pos2> {
+    let mut domain_to_layout = HashMap::with_capacity(graph.nodes.len());
+    let mut layout_to_domain = HashMap::with_capacity(graph.nodes.len());
+    let modules: Vec<ModuleInfo> = graph
+        .nodes
+        .iter()
+        .enumerate()
+        .filter_map(|(index, (&id, config))| {
+            let instance = u16::try_from(index).ok()?;
+            let layout_id = ModuleId::new(ModuleType::Oscillator, instance);
+            domain_to_layout.insert(id, layout_id);
+            layout_to_domain.insert(layout_id, id);
+            let compact_margin = theme().sizes.module_compact_inner_margin;
+            let geometry = ModuleCardGeometry::ported(node_width(config), compact_margin);
+            let size = state
+                .sizes
+                .get(&(graph.id, id))
+                .copied()
+                .unwrap_or_else(|| Vec2::new(geometry.outer_width, DEFAULT_NODE_HEIGHT));
+            Some(ModuleInfo {
+                id: layout_id,
+                category: ModuleCategory::Oscillator,
+                size,
+            })
+        })
+        .collect();
+    let connections: Vec<LayoutConnection> = graph
+        .connections
+        .iter()
+        .filter_map(|connection| {
+            Some(LayoutConnection {
+                from_module: *domain_to_layout.get(&connection.from)?,
+                to_module: *domain_to_layout.get(&connection.to)?,
+            })
+        })
+        .collect();
+    let flow = calculate_free_flow_layout(&modules, &connections);
+    let mut positions: HashMap<NoteModuleId, Pos2> = flow
+        .positions
+        .into_iter()
+        .filter_map(|(layout_id, position)| Some((*layout_to_domain.get(&layout_id)?, position)))
+        .collect();
+    for (&id, position) in &graph.node_positions {
+        positions.insert(id, Pos2::new(position.x, position.y));
     }
     positions
 }
@@ -1087,14 +1113,13 @@ fn draw_node(
     };
     // Rack `IN | body | OUT` layout: the content band keeps its bucket width and
     // the card grows by the two flanking port columns (+ their gaps).
-    let col_w = theme().sizes.port_column_width;
-    let band = node_px(config) - NODE_CHROME;
-    let width = node_px(config) + 2.0 * (col_w + PORT_COL_GAP);
+    let compact_margin = theme().sizes.module_compact_inner_margin;
+    let geometry = ModuleCardGeometry::ported(node_width(config), compact_margin);
     let size = state
         .sizes
         .get(&key)
         .copied()
-        .unwrap_or_else(|| Vec2::new(width, DEFAULT_NODE_HEIGHT));
+        .unwrap_or_else(|| Vec2::new(geometry.outer_width, DEFAULT_NODE_HEIGHT));
 
     // Drag handle over the whole card, registered BEFORE the body so the
     // body's widgets (drawn on top) keep their own clicks/drags. Inside a
@@ -1123,21 +1148,24 @@ fn draw_node(
     }
 
     let accent = node_accent(config);
-    let frame = ModuleFrame::new(accent)
-        .inner_margin(6.0)
-        .build(&ui.global_style());
+    let card = ModuleCard::new(accent)
+        .inner_margin(compact_margin)
+        .body_module_width(node_width(config));
 
     // Card content in a child Ui at the node's world position. Global-scope id
     // keeps inner widget ids independent of draw order (patch-editor idiom).
     let mut child = ui.new_child(
         egui::UiBuilder::new()
             .id(card_id)
-            .max_rect(Rect::from_min_size(pos, Vec2::new(width, 600.0)))
+            .max_rect(Rect::from_min_size(
+                pos,
+                Vec2::new(geometry.outer_width, 600.0),
+            ))
             .layout(egui::Layout::top_down(egui::Align::Min)),
     );
-    frame.show(&mut child, |ui| {
-        ui.set_width(width - NODE_CHROME);
-        draw_module_header(ui, accent, node_name(config), None, false, |ui| {
+    card.show(&mut child, |card| {
+        let description = graph.node_descriptions.get(&node_id).cloned();
+        card.header(node_name(config), description, false, |ui| {
             if icon_button(ui, ri::CLOSE_LINE, theme().colors.text_dim, "Remove node").clicked() {
                 propose_edit(edit, GraphEdit::RemoveNode(node_id));
             }
@@ -1146,33 +1174,37 @@ fn draw_node(
         // Rack `IN | body | OUT` three-column layout: the input port column, the
         // config body sized to the bucket band, then the output port column
         // anchored to the right edge.
-        ui.horizontal(|ui| {
-            ui.spacing_mut().item_spacing.x = PORT_COL_GAP;
-            draw_note_port_column(ui, state, graph, node_id, config, true, wire_events);
-            ui.vertical(|ui| {
-                // Fixed (not min) so the body can't overrun into the OUT column,
-                // which is laid out after it (rack idiom).
-                ui.set_width(band);
-                // Config editor into a working copy; a diff drives the live apply.
-                let mut cfg = config.clone();
-                let mut open_script = false;
-                edit_node_config(ui, node_id, &mut cfg, any_dragged, &mut open_script);
-                if cfg != *config {
-                    propose_edit(edit, GraphEdit::SetNode(node_id, cfg));
+        draw_module_port_layout(
+            card.body(),
+            geometry.body_width,
+            |column, ui| match column {
+                ModuleColumn::Input => {
+                    draw_note_port_column(ui, state, graph, node_id, config, true, wire_events);
                 }
-                // A `NoteScriptTransform` node's ƒx button requests the shared
-                // script editor popup, seeded from the node's live source (§10.4).
-                if open_script && let NoteModuleConfig::NoteScriptTransform(t) = config {
-                    state.script_editing = Some(NoteScriptEditState {
-                        graph: graph.id,
-                        node: node_id,
-                        draft: t.source().to_string(),
-                        show_help: false,
-                    });
+                ModuleColumn::Body => {
+                    // Config editor into a working copy; a diff drives the live apply.
+                    let mut cfg = config.clone();
+                    let mut open_script = false;
+                    edit_node_config(ui, node_id, &mut cfg, any_dragged, &mut open_script);
+                    if cfg != *config {
+                        propose_edit(edit, GraphEdit::SetNode(node_id, cfg));
+                    }
+                    // A `NoteScriptTransform` node's ƒx button requests the shared
+                    // script editor popup, seeded from the node's live source (§10.4).
+                    if open_script && let NoteModuleConfig::NoteScriptTransform(t) = config {
+                        state.script_editing = Some(NoteScriptEditState {
+                            graph: graph.id,
+                            node: node_id,
+                            draft: t.source().to_string(),
+                            show_help: false,
+                        });
+                    }
                 }
-            });
-            draw_note_port_column(ui, state, graph, node_id, config, false, wire_events);
-        });
+                ModuleColumn::Output => {
+                    draw_note_port_column(ui, state, graph, node_id, config, false, wire_events);
+                }
+            },
+        );
 
         // An arp / strummed chord rebuilds its stream from the source notes
         // through pitch transforms only, so an upstream script / gate / generator
@@ -1193,7 +1225,7 @@ fn draw_node(
 /// A rack-style vertical port column for one side of a node (`is_input` picks
 /// the IN vs OUT side): an `IN`/`OUT` header, a rail, and the side's ports
 /// stacked as dots — the port name/type/description live in the hover tooltip,
-/// exactly like the patch editor's `draw_port_column_with`. The column always
+/// exactly like the patch editor's shared module-port column. The column always
 /// reserves its width so the body stays centred even when a side has no ports.
 /// Anchors are recorded for cables; interactions become [`WireEvent`]s.
 fn draw_note_port_column(
@@ -1205,10 +1237,6 @@ fn draw_note_port_column(
     is_input: bool,
     wire_events: &mut Vec<WireEvent>,
 ) {
-    let t = theme();
-    let col_w = t.sizes.port_column_width;
-    let spacing = t.sizes.port_vertical_spacing;
-
     // The ports on this side: (port, connected, name, description). A stream node
     // has one stream port per side; script / probability-gate inputs add their
     // value inputs; value sources emit a single `value out`.
@@ -1262,41 +1290,40 @@ fn draw_note_port_column(
         ));
     }
 
-    ui.vertical(|ui| {
-        ui.set_width(col_w);
-        if ports.is_empty() {
-            return; // reserve the column width, draw nothing
-        }
-        ui.vertical_centered(|ui| {
-            caption(ui, if is_input { "IN" } else { "OUT" }, CaptionTone::Dim);
-        });
-        // Vertical rail behind the stacked port dots (patch-editor idiom).
-        let rail_x = ui.cursor().min.x + col_w * 0.5;
-        let rail_top = ui.cursor().min.y + 3.0;
-        let rail_bottom = rail_top + ports.len() as f32 * spacing - 6.0;
-        ui.painter().line_segment(
-            [Pos2::new(rail_x, rail_top), Pos2::new(rail_x, rail_bottom)],
-            egui::Stroke::new(1.0, t.colors.border.gamma_multiply(0.55)),
-        );
-        for (port, connected, name, desc) in &ports {
-            ui.vertical_centered(|ui| {
-                ui.allocate_ui(Vec2::new(col_w, spacing), |ui| {
-                    ui.centered_and_justified(|ui| {
-                        port_widget(
-                            ui,
-                            state,
-                            graph,
-                            node_id,
-                            *port,
-                            *connected,
-                            name,
-                            desc,
-                            wire_events,
-                        );
-                    });
-                });
+    let direction = if is_input {
+        WidgetPortDirection::Input
+    } else {
+        WidgetPortDirection::Output
+    };
+    let ports: Vec<ModulePort<NodePort>> = ports
+        .into_iter()
+        .map(|(port, connected, label, description)| {
+            let highlighted = state.pending_wire.as_ref().is_some_and(|pending| {
+                open_connection(graph, pending.from, (node_id, port)).is_some()
             });
-        }
+            let accessible_label = module_port_accessible_label(
+                &format!("{} node {}", node_name(config), node_id.0),
+                &port.stable_id(),
+                &label,
+                port.widget_type(),
+                direction,
+            );
+            ModulePort::new(
+                port,
+                label,
+                accessible_label,
+                description,
+                connected,
+                highlighted,
+                ModMarkers::default(),
+            )
+        })
+        .collect();
+    draw_module_port_column(ui, direction, &ports, |port, center, response| {
+        state
+            .port_positions
+            .insert((node_id, port.endpoint()), center);
+        node_canvas::push_port_event(wire_events, response, (node_id, port.endpoint()), center);
     });
 }
 
@@ -1341,57 +1368,6 @@ fn value_input_desc(config: &NoteModuleConfig) -> &'static str {
         }
         _ => "Modulation input (0..1).",
     }
-}
-
-/// One port: draw, record the anchor, translate clicks/drags to [`WireEvent`]s.
-/// `name` is the port's short label; `desc` its longer explanation — together
-/// they form the hover tooltip (name + signal type + description), matching the
-/// patch editor's port tooltips (§10.2).
-#[allow(clippy::too_many_arguments)]
-fn port_widget(
-    ui: &mut egui::Ui,
-    state: &mut NoteGridViewState,
-    graph: &NoteGraph,
-    node_id: NoteModuleId,
-    port: NodePort,
-    connected: bool,
-    name: &str,
-    desc: &str,
-    wire_events: &mut Vec<WireEvent>,
-) {
-    // Highlight only drops that would actually connect (type-compatible AND
-    // not duplicating / double-feeding an occupied port).
-    let highlighted = state
-        .pending_wire
-        .as_ref()
-        .is_some_and(|p| open_connection(graph, p.from, (node_id, port)).is_some());
-    let (response, center) = PortWidget::new(port.widget_type())
-        .connected(connected)
-        .highlighted(highlighted)
-        .show(ui);
-    expose(
-        &response,
-        egui::WidgetType::Other,
-        format!("port {name} node {}", node_id.0),
-        None,
-    );
-    // Rich tooltip: port name + signal type, plus the longer description.
-    // Built lazily inside `on_hover_ui` (positioned correctly inside the Scene
-    // transform) so no throwaway String is formatted unless the port is hovered.
-    let kind = match port.widget_type() {
-        WidgetPortType::NoteStream => "notes",
-        _ => "value",
-    };
-    let response = response.on_hover_ui(|ui| {
-        let mut tip = format!("{name} ({kind})");
-        if !desc.is_empty() {
-            tip.push('\n');
-            tip.push_str(desc);
-        }
-        ui.label(tip);
-    });
-    state.port_positions.insert((node_id, port), center);
-    node_canvas::push_port_event(wire_events, &response, (node_id, port), center);
 }
 
 /// Record a proposed edit for this frame (one edit applies per frame).
@@ -1848,7 +1824,7 @@ fn node_accent(config: &NoteModuleConfig) -> Color32 {
 
 /// The fixed card width bucket for a node kind — reuses the audio patch
 /// editor's [`ModuleWidth`] so note nodes have defined, consistent sizes (the
-/// content is pinned to `module_px − NODE_CHROME`). Buckets are chosen to fit
+/// body is pinned to the bucket minus the compact card margins). Buckets fit
 /// each kind's widest non-wrapping row without overflow, measured in-app: the
 /// Arpeggiator's `Octaves / Vel / Latch / Legato` row needs `ExtraLarge`;
 /// combo/multi-field rows (Scale Quantize, Chord, Euclidean, LFOs) need
@@ -1871,11 +1847,6 @@ fn node_width(config: &NoteModuleConfig) -> ModuleWidth {
         | NoteModuleConfig::StepLfo(_)
         | NoteModuleConfig::NoteScriptTransform(_) => ModuleWidth::Large,
     }
-}
-
-/// Card width in world px for a node kind.
-fn node_px(config: &NoteModuleConfig) -> f32 {
-    node_width(config).module_px()
 }
 
 /// Render the per-kind editor into `config` (a working copy the caller diffs).

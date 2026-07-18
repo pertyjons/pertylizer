@@ -152,7 +152,8 @@ impl Describable for Lfo {
                     "Waveform",
                     LfoWaveform::to_choices(),
                 )
-                .description("LFO waveform"),
+                .description("LFO waveform")
+                .widget(WidgetHint::WaveformSelector),
             )
             .parameter(
                 ParameterDescriptor::float(

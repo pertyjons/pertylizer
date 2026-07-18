@@ -9,6 +9,7 @@ mod envelope;
 mod frame;
 mod knob;
 mod meter;
+mod module_port;
 mod param_grid;
 mod port;
 mod scope;
@@ -34,9 +35,14 @@ pub use controls::{
     unit_drag_value,
 };
 pub use envelope::{EnvelopeChanges, EnvelopeEditor, draw_adsr_curve};
+pub(crate) use frame::{ModuleCard, ModuleCardGeometry};
 pub use frame::{ModuleFrame, blend_rgb, draw_module_footer, draw_module_header};
 pub use knob::Knob;
 pub use meter::{Meter, draw_level_meter, draw_stereo_meter, level_color};
+pub(crate) use module_port::{
+    ModuleColumn, ModulePort, ModulePortEndpoint, draw_module_port_column, draw_module_port_layout,
+    module_port_accessible_label,
+};
 pub use param_grid::{ModMarker, ModMarkers, ParamChange, draw_knobs, draw_parameter_grid};
 pub use port::{PortWidget, WidgetPortDirection, WidgetPortType};
 pub use scope::{draw_oscilloscope, draw_oscilloscope_with_trigger};

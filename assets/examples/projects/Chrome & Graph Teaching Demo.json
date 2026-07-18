@@ -1,0 +1,839 @@
+{
+  "file_type": "project",
+  "version": "1.1",
+  "instruments": [
+    {
+      "id": 1,
+      "name": "Teaching Synth Rack",
+      "channel": 1,
+      "volume": 0.7,
+      "pan": 0.0,
+      "muted": false,
+      "solo": false,
+      "key_range": [
+        0,
+        127
+      ],
+      "transpose": 0.0,
+      "oversampling": 1,
+      "category": 0,
+      "description": "A deliberately conventional subtractive rack used to inspect shared ModuleCard headers, ports, body widths and descriptions.",
+      "allocation_mode": "Polyphonic",
+      "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
+      "max_voices": 8,
+      "velocity_amp_sensitivity": 1.0,
+      "velocity_filter_sensitivity": 0.5,
+      "patch": {
+        "name": "Teaching Synth Rack",
+        "version": "1.0",
+        "modules": [
+          {
+            "id": "osc-1",
+            "type": "oscillator",
+            "position": {
+              "x": 32.0,
+              "y": 32.0
+            },
+            "description": "Sound source: a bright saw wave. Follow its OUT cable into the filter.",
+            "parameters": {
+              "anti_alias": "polyblep",
+              "detune": 0.0,
+              "fm_amt": 1.0,
+              "fm_mode": "exponential",
+              "frequency": 440.0,
+              "glide_time": 0.0,
+              "level": 1.0,
+              "octave": 0.0,
+              "phase": 0.0,
+              "pulse_width": 0.5,
+              "uni_detune": 10.0,
+              "uni_phase": 1.0,
+              "uni_spread": 0.5,
+              "unison": 1,
+              "waveform": "sawtooth",
+              "x_mod": 0.0
+            }
+          },
+          {
+            "id": "flt-1",
+            "type": "filter",
+            "position": {
+              "x": 544.0,
+              "y": 32.0
+            },
+            "description": "Tone shaper: removes high frequencies. Compare this Rack port layout with graph cards.",
+            "parameters": {
+              "cutoff": 1000.0,
+              "cv_amt": 1.0,
+              "drive": 1.0,
+              "env_amt": 0.25,
+              "key_track": 0.0,
+              "model": "standard",
+              "morph": 0.0,
+              "resonance": 0.0,
+              "type": "lowpass"
+            }
+          },
+          {
+            "id": "env-1",
+            "type": "envelope",
+            "position": {
+              "x": 544.0,
+              "y": 352.0
+            },
+            "description": "Control source: creates the note amplitude contour and drives amp-1 CV.",
+            "parameters": {
+              "atk_curve": 0.0,
+              "attack": 0.01,
+              "dec_curve": 0.0,
+              "decay": 0.1,
+              "rel_curve": 0.0,
+              "release": 0.3,
+              "sustain": 0.7,
+              "vel_sens": 1.0
+            }
+          },
+          {
+            "id": "amp-1",
+            "type": "amplifier",
+            "position": {
+              "x": 960.0,
+              "y": 32.0
+            },
+            "description": "Level stage: audio enters IN while the envelope drives CV to shape each note.",
+            "parameters": {
+              "cv_bipolar": false,
+              "level": 1.0,
+              "pan": 0.0
+            }
+          },
+          {
+            "id": "out-1",
+            "type": "stereo_output",
+            "position": {
+              "x": 1280.0,
+              "y": 32.0
+            },
+            "description": "Final voice output: sends the completed signal to the instrument channel.",
+            "parameters": {
+              "dither": false,
+              "limit": true,
+              "master": 0.8,
+              "mute": false,
+              "pan": 0.0
+            }
+          }
+        ],
+        "connections": [
+          {
+            "from": [
+              "osc-1",
+              "out"
+            ],
+            "to": [
+              "flt-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "flt-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "env-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "cv"
+            ]
+          },
+          {
+            "from": [
+              "amp-1",
+              "out"
+            ],
+            "to": [
+              "out-1",
+              "in"
+            ]
+          }
+        ],
+        "settings": {
+          "master_volume": 0.8,
+          "bpm": 120.0,
+          "octave_offset": 0,
+          "glide_time": 0.0,
+          "canvas_size": {
+            "width": 1730.0,
+            "height": 852.0
+          }
+        }
+      }
+    }
+  ],
+  "active_instrument_id": 1,
+  "author": {
+    "name": "Per Jonsson",
+    "email": "pertyjons@gmail.com",
+    "website": "https://github.com/pertyjons"
+  },
+  "song": {
+    "name": "Chrome & Graph Teaching Demo",
+    "author": "",
+    "description": "Small UI and graph demo for shared module chrome. Compare raw pattern A with Note Grid pattern B; inspect Rack module descriptions, then follow Macro → LFO → track volume in Mod Grid. Intentionally minimal so it can be extended later.",
+    "patterns": [
+      {
+        "id": 0,
+        "name": "01 Raw C minor motif",
+        "description": "Four raw C-minor notes. Use this as the unprocessed comparison when inspecting Note Grid behavior.",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 720,
+            "pitch": 60,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 960,
+            "duration": 720,
+            "pitch": 63,
+            "velocity": 0.72440946,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 2,
+            "start": 1920,
+            "duration": 720,
+            "pitch": 67,
+            "velocity": 0.81889766,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 3,
+            "start": 2880,
+            "duration": 720,
+            "pitch": 70,
+            "velocity": 0.6929134,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [],
+        "next_note_id": 4
+      },
+      {
+        "id": 1,
+        "name": "02 Processed variation",
+        "description": "Four simple bass-register notes bound to Teaching Note Flow; placed only on track B.",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 960,
+            "pitch": 48,
+            "velocity": 0.7480315,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 960,
+            "duration": 960,
+            "pitch": 55,
+            "velocity": 0.70866144,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 2,
+            "start": 1920,
+            "duration": 960,
+            "pitch": 51,
+            "velocity": 0.77165353,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 3,
+            "start": 2880,
+            "duration": 960,
+            "pitch": 58,
+            "velocity": 0.70866144,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [],
+        "note_graph": 1,
+        "next_note_id": 4
+      },
+      {
+        "id": 2,
+        "name": "03 Ratchet pulse",
+        "description": "",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 720,
+            "pitch": 48,
+            "velocity": 0.81889766,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 960,
+            "duration": 720,
+            "pitch": 51,
+            "velocity": 0.7401575,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 2,
+            "start": 1920,
+            "duration": 720,
+            "pitch": 55,
+            "velocity": 0.8503937,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 3,
+            "start": 2880,
+            "duration": 720,
+            "pitch": 58,
+            "velocity": 0.77165353,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [],
+        "note_graph": 2,
+        "next_note_id": 4
+      },
+      {
+        "id": 3,
+        "name": "04 Echo motion · Note + Mod",
+        "description": "",
+        "length": 3840,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 480,
+            "pitch": 60,
+            "velocity": 0.7559055,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 960,
+            "duration": 480,
+            "pitch": 63,
+            "velocity": 0.8031496,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 2,
+            "start": 1920,
+            "duration": 480,
+            "pitch": 67,
+            "velocity": 0.86614174,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 3,
+            "start": 2880,
+            "duration": 480,
+            "pitch": 70,
+            "velocity": 0.78740156,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [],
+        "note_graph": 3,
+        "next_note_id": 4
+      }
+    ],
+    "next_pattern_id": 4,
+    "tracks": [
+      {
+        "id": 0,
+        "name": "A · Raw notes",
+        "description": "Dry reference: the raw four-note motif repeats twice without a Note Grid.",
+        "instrument": 1,
+        "volume": 1.0,
+        "pan": 0.0,
+        "mute": false,
+        "solo": false,
+        "color": {
+          "r": 100,
+          "g": 100,
+          "b": 255
+        },
+        "mode": "Polyphonic"
+      },
+      {
+        "id": 1,
+        "name": "B · Note Grid variation",
+        "description": "Processed example: pattern 02 is bound to Teaching Note Flow and this track is assigned Teaching Mod Flow.",
+        "instrument": 1,
+        "volume": 1.0,
+        "pan": 0.0,
+        "mute": false,
+        "solo": false,
+        "color": {
+          "r": 100,
+          "g": 100,
+          "b": 255
+        },
+        "mode": "Polyphonic"
+      },
+      {
+        "id": 2,
+        "name": "C · Ratchet pulse",
+        "description": "",
+        "instrument": 1,
+        "volume": 1.0,
+        "pan": 0.0,
+        "mute": false,
+        "solo": false,
+        "color": {
+          "r": 100,
+          "g": 100,
+          "b": 255
+        },
+        "mode": "Polyphonic"
+      },
+      {
+        "id": 3,
+        "name": "D · Combined Note + Mod",
+        "description": "",
+        "instrument": 1,
+        "volume": 1.0,
+        "pan": 0.0,
+        "mute": false,
+        "solo": false,
+        "color": {
+          "r": 100,
+          "g": 100,
+          "b": 255
+        },
+        "mode": "Polyphonic"
+      }
+    ],
+    "next_track_id": 4,
+    "arrangement": [
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 0,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 3840,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 1,
+        "track_id": 1,
+        "start": 7680,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 1,
+        "track_id": 1,
+        "start": 11520,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 2,
+        "track_id": 2,
+        "start": 15360,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      },
+      {
+        "pattern_id": 3,
+        "track_id": 3,
+        "start": 19200,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null
+      }
+    ],
+    "tempo_changes": [],
+    "time_signature_changes": [],
+    "default_tempo": 120.0,
+    "default_time_signature": {
+      "numerator": 4,
+      "denominator": 4
+    },
+    "row_resolution": {
+      "rows": 64,
+      "ticks_per_row": 240
+    },
+    "next_return_bus_id": 0,
+    "note_graphs": [
+      {
+        "id": 1,
+        "name": "Teaching Note Flow · feel → chance",
+        "description": "Pedagogical Note Grid: Humanize gently varies the authored notes, Probability Gate thins them, and a unipolar Note LFO modulates the gate threshold. Beat 2 reaches threshold 1.0, guaranteeing an audible reference note.",
+        "color": {
+          "r": 85,
+          "g": 204,
+          "b": 136
+        },
+        "nodes": {
+          "0": {
+            "Processor": {
+              "Humanize": {
+                "velocity": 0.12,
+                "gate": 0.05,
+                "seed": 42
+              }
+            }
+          },
+          "1": {
+            "ProbabilityGate": {
+              "probability": 1.0,
+              "seed": 42
+            }
+          },
+          "2": {
+            "NoteLfo": {
+              "shape": "Sine",
+              "period": 3840,
+              "phase": 0.0,
+              "depth": 1.0
+            }
+          }
+        },
+        "connections": [
+          {
+            "from": 0,
+            "to": 1,
+            "port": "NoteStream",
+            "to_input": 0
+          },
+          {
+            "from": 2,
+            "to": 1,
+            "port": "Value",
+            "to_input": 0
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "name": "Ratchet Feel · humanize → ratchet",
+        "description": "Humanizes velocity and gate, then turns each authored bass note into a short four-hit ratchet.",
+        "color": {
+          "r": 224,
+          "g": 138,
+          "b": 78
+        },
+        "nodes": {
+          "0": {
+            "Processor": {
+              "Humanize": {
+                "velocity": 0.1,
+                "gate": 0.08,
+                "seed": 73
+              }
+            }
+          },
+          "1": {
+            "Ratchet": {
+              "sub_ticks": 120,
+              "count": 4,
+              "decay": 0.82
+            }
+          }
+        },
+        "connections": [
+          {
+            "from": 0,
+            "to": 1,
+            "port": "NoteStream",
+            "to_input": 0
+          }
+        ]
+      },
+      {
+        "id": 3,
+        "name": "Echo Motion Notes · humanize → delay",
+        "description": "Combined demo note path: subtle humanization followed by two decaying eighth-note echoes.",
+        "color": {
+          "r": 85,
+          "g": 170,
+          "b": 221
+        },
+        "nodes": {
+          "0": {
+            "Processor": {
+              "Humanize": {
+                "velocity": 0.08,
+                "gate": 0.04,
+                "seed": 91
+              }
+            }
+          },
+          "1": {
+            "NoteDelay": {
+              "delay_ticks": 480,
+              "repeats": 2,
+              "feedback": 0.58
+            }
+          }
+        },
+        "connections": [
+          {
+            "from": 0,
+            "to": 1,
+            "port": "NoteStream",
+            "to_input": 0
+          }
+        ]
+      }
+    ],
+    "next_note_graph_id": 4,
+    "mod_graphs": [
+      {
+        "id": 0,
+        "name": "Teaching Mod Flow · macro → LFO → volume",
+        "scope": "Track",
+        "assigned_tracks": [
+          1
+        ],
+        "description": "Pedagogical Mod Grid assigned to track B: Macro controls LFO rate; LFO writes a subtle additive offset to this track volume. Drag cables and inspect shared card/port chrome.",
+        "nodes": {
+          "0": {
+            "Macro": {
+              "name": "Rate macro",
+              "value": 0.35
+            }
+          },
+          "1": {
+            "Module": {
+              "module_type": "lfo",
+              "params": {
+                "rate": 0.4
+              }
+            }
+          },
+          "2": {
+            "Target": {
+              "target": {
+                "Track": {
+                  "param": "Volume"
+                }
+              },
+              "amount": 0.18,
+              "combine": "Add"
+            }
+          }
+        },
+        "connections": [
+          {
+            "from": 0,
+            "from_port": "out",
+            "to": 1,
+            "to_port": "rate_cv"
+          },
+          {
+            "from": 1,
+            "from_port": "out",
+            "to": 2,
+            "to_port": "in"
+          }
+        ]
+      },
+      {
+        "id": 1,
+        "name": "Ratchet Drift · macro → pan",
+        "scope": "Track",
+        "assigned_tracks": [
+          2
+        ],
+        "description": "Track-scoped steady pan offset for the ratchet pattern, kept simple to contrast with the combined LFO example.",
+        "nodes": {
+          "0": {
+            "Macro": {
+              "name": "Pan drift",
+              "value": 0.62
+            }
+          },
+          "1": {
+            "Target": {
+              "target": {
+                "Track": {
+                  "param": "Pan"
+                }
+              },
+              "amount": 0.22,
+              "combine": "Add"
+            }
+          }
+        },
+        "connections": [
+          {
+            "from": 0,
+            "from_port": "out",
+            "to": 1,
+            "to_port": "in"
+          }
+        ]
+      },
+      {
+        "id": 2,
+        "name": "Echo Motion Mod · LFO → volume",
+        "scope": "Track",
+        "assigned_tracks": [
+          3
+        ],
+        "description": "Combined demo modulation path: a slow LFO adds gentle volume motion while the pattern's Note Graph creates echoes.",
+        "nodes": {
+          "0": {
+            "Module": {
+              "module_type": "lfo",
+              "params": {
+                "depth": 0.7,
+                "rate": 0.22
+              }
+            }
+          },
+          "1": {
+            "Target": {
+              "target": {
+                "Track": {
+                  "param": "Volume"
+                }
+              },
+              "amount": 0.14,
+              "combine": "Add"
+            }
+          }
+        },
+        "connections": [
+          {
+            "from": 0,
+            "from_port": "out",
+            "to": 1,
+            "to_port": "in"
+          }
+        ]
+      }
+    ],
+    "next_mod_graph_id": 3
+  },
+  "global": {
+    "master_volume": 0.8,
+    "octave_offset": 0,
+    "glide_time": 0.0
+  }
+}

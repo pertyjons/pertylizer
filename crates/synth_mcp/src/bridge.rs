@@ -1118,6 +1118,7 @@ pub trait SynthBridge: Send + Sync + 'static {
         &self,
         graph_id: u32,
         module: serde_json::Value,
+        description: Option<String>,
     ) -> Result<u32, McpBridgeError>;
 
     /// Replace a module's config in place (same JSON shape as
@@ -1127,6 +1128,16 @@ pub trait SynthBridge: Send + Sync + 'static {
         graph_id: u32,
         module_id: u32,
         module: serde_json::Value,
+        description: Option<String>,
+    ) -> Result<(), McpBridgeError>;
+
+    /// Partially update graph-level name, description, and color metadata.
+    fn set_note_graph_metadata(
+        &self,
+        graph_id: u32,
+        name: Option<String>,
+        description: Option<String>,
+        color: Option<String>,
     ) -> Result<(), McpBridgeError>;
 
     /// Set a `NoteScriptTransform` node's YAMS `note_event` source, compile it,
@@ -1213,7 +1224,17 @@ pub trait SynthBridge: Send + Sync + 'static {
         &self,
         graph_id: u32,
         node: serde_json::Value,
+        description: Option<String>,
     ) -> Result<u32, McpBridgeError>;
+
+    /// Partially update graph-level name, description, and color metadata.
+    fn set_mod_graph_metadata(
+        &self,
+        graph_id: u32,
+        name: Option<String>,
+        description: Option<String>,
+        color: Option<String>,
+    ) -> Result<(), McpBridgeError>;
 
     /// Remove a node and every cable touching it.
     fn remove_mod_graph_node(&self, graph_id: u32, node_id: u32) -> Result<(), McpBridgeError>;
@@ -1250,6 +1271,7 @@ pub trait SynthBridge: Send + Sync + 'static {
         graph_id: u32,
         node_id: u32,
         node: serde_json::Value,
+        description: Option<String>,
     ) -> Result<(), McpBridgeError>;
 
     /// List routing sinks ("what writes to a target") across all mod graphs, or

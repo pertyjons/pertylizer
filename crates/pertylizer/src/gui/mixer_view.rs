@@ -34,19 +34,18 @@ use crate::gui::theme::theme;
 #[cfg(test)]
 const CLIP_WARN_ORANGE: Color32 = Color32::from_rgb(200, 120, 40);
 use crate::gui::widgets::{
-    CaptionTone, ModuleFrame, bypass_toggle, caption, draw_module_header, icon_button, level_color,
-    mute_toggle, solo_toggle, strong_label,
+    CaptionTone, ModuleCard, bypass_toggle, caption, icon_button, level_color, mute_toggle,
+    solo_toggle, strong_label,
 };
 
-/// Width of a single channel strip, in points. Uses the `ModuleWidth::Small`
-/// bucket (192 px) — the same defined module widths the patch editor uses — so
+/// Width of a single channel strip, in points. Uses the `ModuleWidth::Medium`
+/// bucket (256 px) — the same defined module widths the patch editor uses — so
 /// the shared module header fits its title plus the right-aligned mute/solo/link
 /// icons, with comfortable room for the strip's sends and controls.
-const STRIP_WIDTH: f32 = synth_core::ModuleWidth::Small.module_px();
+const STRIP_WIDTH: f32 = synth_core::ModuleWidth::Medium.module_px();
 /// Width of a return-bus insert module (and thus the return column), in points.
-/// Uses the `ModuleWidth::Medium` bucket (256 px) — one step wider than a strip
-/// so the shared Rack parameter widgets (knobs, labelled sliders, dropdowns) get
-/// room.
+/// Uses the same `ModuleWidth::Medium` bucket as its parent strip so the shared
+/// Rack parameter widgets (knobs, labelled sliders, dropdowns) get room.
 const INSERT_WIDTH: f32 = synth_core::ModuleWidth::Medium.module_px();
 /// Height of the big volume fader (and the level meter beside it), in points.
 const FADER_HEIGHT: f32 = 160.0;
@@ -468,15 +467,14 @@ fn vertical_fader(ui: &mut egui::Ui, value: &mut f32) -> egui::Response {
 }
 
 /// The styled frame shared by every strip — the same rounded, accent-tinted
-/// module look as the patch editor (via [`ModuleFrame`]). `accent` drives the
+/// module look as the patch editor (via [`ModuleCard`]). `accent` drives the
 /// tint and stroke; `base_fill` is the strip's background tier (track / return
 /// / master). Keeps the strip's tight 6 pt inner margin so `center_pad` stays
 /// accurate.
-fn strip_frame(ui: &egui::Ui, accent: Color32, base_fill: Color32) -> egui::Frame {
-    ModuleFrame::new(accent)
+fn strip_card(accent: Color32, base_fill: Color32) -> ModuleCard {
+    ModuleCard::new(accent)
         .base_fill(base_fill)
         .inner_margin(6.0)
-        .build(&ui.global_style())
 }
 
 /// Leading space to centre `content_width` points of controls within a strip
@@ -527,15 +525,15 @@ fn draw_channel_strip(
     let mut edit_fx = false;
     ui.allocate_ui(egui::vec2(STRIP_WIDTH, 0.0), |ui| {
         ui.set_width(STRIP_WIDTH);
-        strip_frame(ui, ch.color, t.colors.bg_module).show(ui, |ui| {
+        strip_card(ch.color, t.colors.bg_module).show(ui, |card| {
             // The frame inherits the horizontal_top layout of the strip row, so
             // wrap everything in a vertical layout to stack the header above the
             // controls (and give the column the full strip width).
-            ui.vertical(|ui| {
+            card.vertical(|card| {
                 // Channel name in the accent-tinted module header, with the
                 // mute/solo toggles living in the header bar the same way the
                 // patch-module "Active" toggle does.
-                draw_module_header(ui, ch.color, &ch.name, None, false, |ui| {
+                card.header(&ch.name, None, false, |ui| {
                     // Emitted right-to-left (see `draw_module_header`), so reverse
                     // reading order: link · solo · mute → renders mute · solo · link.
                     // Inserts live on the instrument and are edited in the Rack; the
@@ -562,6 +560,7 @@ fn draw_channel_strip(
                         tr.toggle_mute();
                     }
                 });
+                let ui = card.body();
 
                 // Sends to each return bus.
                 if !return_ids.is_empty() {
@@ -853,11 +852,11 @@ fn draw_return_strip(
         ui.vertical(|ui| {
             ui.allocate_ui(egui::vec2(STRIP_WIDTH, 0.0), |ui| {
                 ui.set_width(STRIP_WIDTH);
-                strip_frame(ui, t.colors.accent_green, t.colors.bg_panel).show(ui, |ui| {
+                strip_card(t.colors.accent_green, t.colors.bg_panel).show(ui, |card| {
                     // The frame inherits the horizontal_top layout of the strip row, so
                     // wrap everything in a vertical layout to stack the header above the
                     // controls (and give the column the full strip width).
-                    ui.vertical(|ui| {
+                    card.vertical(|card| {
                         // Name — click the header to rename inline.
                         let editing = state
                             .editing_return_name
@@ -865,7 +864,7 @@ fn draw_return_strip(
                             .is_some_and(|(id, _)| *id == rb.id);
                         if editing {
                             if let Some((_, buf)) = state.editing_return_name.as_mut() {
-                                let resp = ui.add(
+                                let resp = card.body().add(
                                     egui::TextEdit::singleline(buf)
                                         .desired_width(STRIP_WIDTH - 16.0)
                                         .hint_text("Name"),
@@ -881,10 +880,9 @@ fn draw_return_strip(
                                 }
                             }
                         } else {
-                            let resp = draw_module_header(
-                                ui,
+                            let resp = card.header_with_accent(
                                 rb.color,
-                                &format!("⮌ {}", rb.name),
+                                &format!("{} {}", ri::CORNER_DOWN_LEFT_LINE, rb.name),
                                 Some("Click to rename".to_owned()),
                                 true,
                                 |ui| {
@@ -918,6 +916,7 @@ fn draw_return_strip(
                                 state.editing_return_name = Some((rb.id, rb.name.clone()));
                             }
                         }
+                        let ui = card.body();
 
                         ui.add_space(t.spacing.xs);
 
@@ -989,7 +988,7 @@ fn draw_return_strip(
 }
 
 /// Draw one return-bus effect as a Rack-style module box: the shared
-/// [`ModuleFrame`] tinted by the effect's category, a [`draw_module_header`]
+/// [`ModuleCard`] tinted by the effect's category, with a standard header
 /// carrying the bypass toggle and remove button, then the shared descriptor-
 /// driven parameter grid (knobs/sliders/dropdowns/toggles — identical to the
 /// patch editor). Bypassed effects are dimmed. Stacked vertically beneath the
@@ -1006,17 +1005,16 @@ fn draw_effect_module(
     let accent = descriptor
         .as_ref()
         .map_or(t.colors.accent_cyan, |d| category_color(d.category));
-    let frame = ModuleFrame::new(accent)
+    let card = ModuleCard::new(accent)
         .opacity(if fx.bypassed { 0.55 } else { 1.0 })
         .inner_margin(6.0)
-        .build(&ui.global_style());
-    frame.show(ui, |ui| {
+        .module_width(synth_core::ModuleWidth::Medium);
+    card.show(ui, |card| {
         // A unique id scope per effect so two inserts of the same type on a bus
         // (and the same type across busses / master) don't collide on widget ids.
-        ui.push_id((target.id_seed(), fx.module_id), |ui| {
-            ui.vertical(|ui| {
-                ui.set_width(INSERT_WIDTH - 12.0);
-                draw_module_header(ui, accent, fx.module_type.name(), None, false, |ui| {
+        card.push_id((target.id_seed(), fx.module_id), |card| {
+            card.vertical(|card| {
+                card.header(fx.module_type.name(), None, false, |ui| {
                     // Emitted right-to-left (see `draw_module_header`), so reverse
                     // reading order: close · power → renders power · close, matching
                     // the patch module header (same power/bypass button, no checkbox).
@@ -1037,7 +1035,7 @@ fn draw_effect_module(
                 // is shown (no mod-matrix filtering on an effect).
                 if let Some(descriptor) = descriptor.as_deref() {
                     let changes = crate::gui::widgets::draw_parameter_grid(
-                        ui,
+                        card.body(),
                         descriptor,
                         accent,
                         |p| {
@@ -1090,9 +1088,10 @@ fn draw_master_strip(ui: &mut egui::Ui, handle: &mut EngineHandle, effects: &[Ef
     ui.vertical(|ui| {
         ui.allocate_ui(egui::vec2(STRIP_WIDTH, 0.0), |ui| {
             ui.set_width(STRIP_WIDTH);
-            strip_frame(ui, t.colors.accent_primary, t.colors.bg_widget).show(ui, |ui| {
-                ui.vertical(|ui| {
-                    draw_module_header(ui, t.colors.accent_primary, "Master", None, false, |_| {});
+            strip_card(t.colors.accent_primary, t.colors.bg_widget).show(ui, |card| {
+                card.vertical(|card| {
+                    card.header("Master", None, false, |_| {});
+                    let ui = card.body();
                     ui.add_space(t.spacing.xs);
 
                     ui.horizontal(|ui| {

@@ -17,6 +17,8 @@ pub enum WaveformType {
     Pulse,
     DsfSaw,
     Noise,
+    SampleAndHold,
+    SmoothRandom,
 }
 
 impl WaveformType {
@@ -42,6 +44,8 @@ impl WaveformType {
             Self::Pulse => "Pulse",
             Self::DsfSaw => "DSF Saw",
             Self::Noise => "Noise",
+            Self::SampleAndHold => "Sample & Hold",
+            Self::SmoothRandom => "Smooth Random",
         }
     }
 
@@ -56,6 +60,8 @@ impl WaveformType {
             "pulse" | "pulse25" => Some(Self::Pulse),
             "dsf_saw" => Some(Self::DsfSaw),
             "noise" => Some(Self::Noise),
+            "sample_and_hold" => Some(Self::SampleAndHold),
+            "smooth_random" => Some(Self::SmoothRandom),
             _ => None,
         }
     }
@@ -102,6 +108,24 @@ impl WaveformType {
                 // which pushed the line outside the button.
                 let h = (x * 12.9898).sin() * 43758.547;
                 (h.rem_euclid(1.0) * 2.0 - 1.0) * 0.8
+            }
+            Self::SampleAndHold => {
+                let step = (x * 6.0).floor();
+                let h = (step * 12.9898).sin() * 43758.547;
+                (h.rem_euclid(1.0) * 2.0 - 1.0) * 0.8
+            }
+            Self::SmoothRandom => {
+                let position = x * 4.0;
+                let step = position.floor();
+                let fraction = position - step;
+                let random_at = |index: f32| {
+                    let h = (index * 12.9898).sin() * 43758.547;
+                    (h.rem_euclid(1.0) * 2.0 - 1.0) * 0.8
+                };
+                let from = random_at(step);
+                let to = random_at(step + 1.0);
+                let smooth = fraction * fraction * (3.0 - 2.0 * fraction);
+                from + (to - from) * smooth
             }
         }
     }

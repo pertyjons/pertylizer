@@ -2586,7 +2586,9 @@ pub struct AddNoteGraphModuleInput {
     #[schemars(
         description = "Module as externally-tagged NoteModuleConfig JSON: one of {\"Processor\":{...}} (ScaleQuantize/Chord/Arpeggiator/Humanize), {\"Euclidean\":{...}}, {\"ProbabilityGate\":{...}}, {\"NoteLfo\":{...}}, {\"StepLfo\":{...}}, {\"NoteEnvelope\":{...}} (optional \"trigger\": \"SourceOnset\"|\"StreamOnset\"), {\"NoteScriptTransform\":{\"source\":\"...\"}} (a YAMS note_event script — set/compile the source afterwards with set_note_graph_script), {\"NoteDelay\":{...}} (decaying echoes; repeats clamp to 16 at playback), or {\"Ratchet\":{...}} (subdivides notes into retriggers; count clamps to 16). Read existing modules with get_note_graph to see the exact shape."
     )]
-    pub module: serde_json::Value,
+    pub module: synth_sequencer::NoteModuleConfig,
+    #[schemars(description = "Optional per-node pedagogical intent text")]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2596,7 +2598,7 @@ pub struct AddNoteGraphModuleParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetNoteGraphModuleParam {
+pub struct SetNoteGraphModuleInput {
     #[schemars(description = "Note graph id")]
     pub graph_id: u32,
     #[schemars(description = "Module id to replace (from get_note_graph)")]
@@ -2604,7 +2606,17 @@ pub struct SetNoteGraphModuleParam {
     #[schemars(
         description = "Replacement module as externally-tagged NoteModuleConfig JSON (same shape as add_note_graph_module). The id and its connections are preserved."
     )]
-    pub module: serde_json::Value,
+    pub module: synth_sequencer::NoteModuleConfig,
+    #[schemars(
+        description = "Optional replacement per-node description; omitted keeps it unchanged"
+    )]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetNoteGraphModuleParam {
+    #[schemars(description = "Modules to update (one or many)")]
+    pub items: Vec<SetNoteGraphModuleInput>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2651,6 +2663,26 @@ pub struct ConnectNoteGraphParam {
         description = "Connections to add (one or many). Each is validated for linearity, acyclicity, and endpoint types."
     )]
     pub items: Vec<ConnectNoteGraphInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GetNoteGraphsParam {
+    #[schemars(description = "Graph ids to read, or omit/null to read every graph")]
+    pub graph_ids: Option<Vec<u32>>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetNoteGraphMetadataInput {
+    pub graph_id: u32,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    #[schemars(description = "Replacement #rrggbb color; null/omitted keeps the current color")]
+    pub color: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetNoteGraphMetadataParam {
+    pub items: Vec<SetNoteGraphMetadataInput>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2738,7 +2770,9 @@ pub struct AddModGraphNodeInput {
     #[schemars(
         description = "Node as externally-tagged ModNodeConfig JSON. module_type uses the snake_case module key (e.g. 'lfo', 'mseg', 'envelope_follower'). Examples: {\"Module\":{\"module_type\":\"lfo\",\"params\":{\"rate\":2.0}}} (a hosted control-rate module), {\"Macro\":{\"name\":\"...\",\"value\":0.5}}, {\"Transport\":{\"source\":\"BeatPhase\"}}, {\"MidiCc\":{\"cc\":1}}, {\"AudioTap\":{\"source\":{\"Track\":0}}}, or {\"Target\":{\"target\":{\"Track\":{\"param\":\"Volume\"}},\"amount\":0.25}} (a routing sink; connect a source's out to its 'in' port). Read existing nodes with get_mod_graph to see the exact shape."
     )]
-    pub node: serde_json::Value,
+    pub node: synth_sequencer::ModNodeConfig,
+    #[schemars(description = "Optional per-node pedagogical intent text")]
+    pub description: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2784,7 +2818,7 @@ pub struct DisconnectModGraphParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct SetModGraphNodeParam {
+pub struct SetModGraphNodeInput {
     #[schemars(description = "Mod graph id")]
     pub graph_id: u32,
     #[schemars(description = "Existing node id to edit in place")]
@@ -2792,7 +2826,37 @@ pub struct SetModGraphNodeParam {
     #[schemars(
         description = "Replacement node as externally-tagged ModNodeConfig JSON (same shape as add_mod_graph_node). Keeps the node id and every cable touching it; the graph is re-validated (e.g. replacing a source that has outgoing cables with a Target is rejected). Read the current shape with get_mod_graph first."
     )]
-    pub node: serde_json::Value,
+    pub node: synth_sequencer::ModNodeConfig,
+    #[schemars(
+        description = "Optional replacement per-node description; omitted keeps it unchanged"
+    )]
+    pub description: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetModGraphNodeParam {
+    #[schemars(description = "Nodes to update (one or many)")]
+    pub items: Vec<SetModGraphNodeInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct GetModGraphsParam {
+    #[schemars(description = "Graph ids to read, or omit/null to read every graph")]
+    pub graph_ids: Option<Vec<u32>>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetModGraphMetadataInput {
+    pub graph_id: u32,
+    pub name: Option<String>,
+    pub description: Option<String>,
+    #[schemars(description = "Replacement #rrggbb color; null/omitted keeps the current color")]
+    pub color: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetModGraphMetadataParam {
+    pub items: Vec<SetModGraphMetadataInput>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -4359,7 +4423,9 @@ impl SynthMcpServer {
             // Note Grid (pooled note-processing graphs)
             "list_note_graphs" => list_note_graphs(NoParams),
             "get_note_graph" => get_note_graph(NoteGraphIdParam),
+            "get_note_graphs" => get_note_graphs(GetNoteGraphsParam),
             "create_note_graph" => create_note_graph(CreateNoteGraphParam),
+            "set_note_graph_metadata" => set_note_graph_metadata(SetNoteGraphMetadataParam),
             "duplicate_note_graph" => duplicate_note_graph(NoteGraphIdParam),
             "delete_note_graph" => delete_note_graph(DeleteNoteGraphParam),
             "add_note_graph_module" => add_note_graph_module(AddNoteGraphModuleParam),
@@ -4373,7 +4439,9 @@ impl SynthMcpServer {
             // Mod Grid
             "list_mod_graphs" => list_mod_graphs(NoParams),
             "get_mod_graph" => get_mod_graph(ModGraphIdParam),
+            "get_mod_graphs" => get_mod_graphs(GetModGraphsParam),
             "create_mod_graph" => create_mod_graph(CreateModGraphParam),
+            "set_mod_graph_metadata" => set_mod_graph_metadata(SetModGraphMetadataParam),
             "delete_mod_graph" => delete_mod_graph(DeleteModGraphParam),
             "set_mod_graph_scope" => set_mod_graph_scope(SetModGraphScopeParam),
             "assign_mod_graph" => assign_mod_graph(AssignModGraphParam),
@@ -6755,6 +6823,29 @@ impl SynthMcpServer {
     }
 
     #[tool(
+        description = "Get full detail for selected Note Grid graphs, or every graph when graph_ids is omitted. Returns stable graph-id order and a per-graph detail/error result."
+    )]
+    async fn get_note_graphs(&self, params: Parameters<GetNoteGraphsParam>) -> String {
+        let mut ids = match params.0.graph_ids {
+            Some(ids) => ids,
+            None => match self.bridge.list_note_graphs() {
+                Ok(graphs) => graphs.into_iter().map(|graph| graph.id).collect(),
+                Err(e) => return format!("Error: {e}"),
+            },
+        };
+        ids.sort_unstable();
+        ids.dedup();
+        let results: Vec<_> = ids
+            .into_iter()
+            .map(|graph_id| match self.bridge.get_note_graph(graph_id) {
+                Ok(detail) => serde_json::json!({"graph_id": graph_id, "detail": detail}),
+                Err(e) => serde_json::json!({"graph_id": graph_id, "error": e.to_string()}),
+            })
+            .collect();
+        to_json(&results)
+    }
+
+    #[tool(
         description = "Create an empty pooled Note Grid graph. Returns the new graph id. Add modules with add_note_graph_module, wire them with connect_note_graph, then bind it to a pattern with set_pattern_note_graph."
     )]
     async fn create_note_graph(&self, params: Parameters<CreateNoteGraphParam>) -> String {
@@ -6766,6 +6857,29 @@ impl SynthMcpServer {
             Ok(id) => to_json(&serde_json::json!({ "graph_id": id })),
             Err(e) => format!("Error: {e}"),
         }
+    }
+
+    #[tool(
+        description = "Partially update name, description, and color for one or more Note Grid graphs."
+    )]
+    async fn set_note_graph_metadata(
+        &self,
+        params: Parameters<SetNoteGraphMetadataParam>,
+    ) -> String {
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for item in params.0.items {
+            match self.bridge.set_note_graph_metadata(
+                item.graph_id,
+                item.name,
+                item.description,
+                item.color,
+            ) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("graph {}: {e}", item.graph_id)),
+            }
+        }
+        batch_msg(ok_count, "note graph metadata updated", &[], &errors)
     }
 
     #[tool(
@@ -6801,7 +6915,17 @@ impl SynthMcpServer {
         let mut errors = Vec::new();
         for it in params.0.items {
             let graph_id = it.graph_id;
-            match self.bridge.add_note_graph_module(graph_id, it.module) {
+            let module = match serde_json::to_value(it.module) {
+                Ok(module) => module,
+                Err(e) => {
+                    errors.push(format!("{graph_id}: {e}"));
+                    continue;
+                }
+            };
+            match self
+                .bridge
+                .add_note_graph_module(graph_id, module, it.description)
+            {
                 Ok(module_id) => oks.push(format!("graph {graph_id} @ module {module_id}")),
                 Err(e) => errors.push(format!("{graph_id}: {e}")),
             }
@@ -6813,14 +6937,33 @@ impl SynthMcpServer {
         description = "Replace a Note Grid module's config in place (config edit), keeping its id and connections. A change that would orphan an existing connection is rejected."
     )]
     async fn set_note_graph_module(&self, params: Parameters<SetNoteGraphModuleParam>) -> String {
-        let p = params.0;
-        match self
-            .bridge
-            .set_note_graph_module(p.graph_id, p.module_id, p.module)
-        {
-            Ok(()) => format!("Module {} updated on graph {}", p.module_id, p.graph_id),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for item in params.0.items {
+            let module = match serde_json::to_value(item.module) {
+                Ok(module) => module,
+                Err(e) => {
+                    errors.push(format!(
+                        "graph {} module {}: {e}",
+                        item.graph_id, item.module_id
+                    ));
+                    continue;
+                }
+            };
+            match self.bridge.set_note_graph_module(
+                item.graph_id,
+                item.module_id,
+                module,
+                item.description,
+            ) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!(
+                    "graph {} module {}: {e}",
+                    item.graph_id, item.module_id
+                )),
+            }
         }
+        batch_msg(ok_count, "note graph modules updated", &[], &errors)
     }
 
     #[tool(
@@ -6939,6 +7082,29 @@ impl SynthMcpServer {
     }
 
     #[tool(
+        description = "Get full detail for selected Mod Grid graphs, or every graph when graph_ids is omitted. Returns stable graph-id order and a per-graph detail/error result."
+    )]
+    async fn get_mod_graphs(&self, params: Parameters<GetModGraphsParam>) -> String {
+        let mut ids = match params.0.graph_ids {
+            Some(ids) => ids,
+            None => match self.bridge.list_mod_graphs() {
+                Ok(graphs) => graphs.into_iter().map(|graph| graph.id).collect(),
+                Err(e) => return format!("Error: {e}"),
+            },
+        };
+        ids.sort_unstable();
+        ids.dedup();
+        let results: Vec<_> = ids
+            .into_iter()
+            .map(|graph_id| match self.bridge.get_mod_graph(graph_id) {
+                Ok(detail) => serde_json::json!({"graph_id": graph_id, "detail": detail}),
+                Err(e) => serde_json::json!({"graph_id": graph_id, "error": e.to_string()}),
+            })
+            .collect();
+        to_json(&results)
+    }
+
+    #[tool(
         description = "Create an empty pooled Mod Grid graph (a control-rate modulator graph whose outputs write into the automation target space). scope is 'global' (one always-on instance, default) or 'track'. Returns the new graph id."
     )]
     async fn create_mod_graph(&self, params: Parameters<CreateModGraphParam>) -> String {
@@ -6947,6 +7113,26 @@ impl SynthMcpServer {
             Ok(id) => to_json(&serde_json::json!({ "graph_id": id })),
             Err(e) => format!("Error: {e}"),
         }
+    }
+
+    #[tool(
+        description = "Partially update name, description, and color for one or more Mod Grid graphs."
+    )]
+    async fn set_mod_graph_metadata(&self, params: Parameters<SetModGraphMetadataParam>) -> String {
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for item in params.0.items {
+            match self.bridge.set_mod_graph_metadata(
+                item.graph_id,
+                item.name,
+                item.description,
+                item.color,
+            ) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!("graph {}: {e}", item.graph_id)),
+            }
+        }
+        batch_msg(ok_count, "mod graph metadata updated", &[], &errors)
     }
 
     #[tool(
@@ -6994,7 +7180,17 @@ impl SynthMcpServer {
         let mut errors = Vec::new();
         for it in params.0.items {
             let graph_id = it.graph_id;
-            match self.bridge.add_mod_graph_node(graph_id, it.node) {
+            let node = match serde_json::to_value(it.node) {
+                Ok(node) => node,
+                Err(e) => {
+                    errors.push(format!("{graph_id}: {e}"));
+                    continue;
+                }
+            };
+            match self
+                .bridge
+                .add_mod_graph_node(graph_id, node, it.description)
+            {
                 Ok(node_id) => oks.push(format!("graph {graph_id} @ node {node_id}")),
                 Err(e) => errors.push(format!("{graph_id}: {e}")),
             }
@@ -7056,14 +7252,33 @@ impl SynthMcpServer {
         description = "Edit a Mod Grid node's config in place, keeping its id and every cable touching it (unlike remove + re-add, which changes the id and drops its cables). Use to change a Target's address/amount, a Macro's value, or a hosted module's params. The graph is re-validated. `node` is externally-tagged ModNodeConfig JSON."
     )]
     async fn set_mod_graph_node(&self, params: Parameters<SetModGraphNodeParam>) -> String {
-        let p = params.0;
-        match self
-            .bridge
-            .set_mod_graph_node(p.graph_id, p.node_id, p.node)
-        {
-            Ok(()) => format!("Node {} updated on graph {}", p.node_id, p.graph_id),
-            Err(e) => format!("Error: {e}"),
+        let mut ok_count = 0usize;
+        let mut errors = Vec::new();
+        for item in params.0.items {
+            let node = match serde_json::to_value(item.node) {
+                Ok(node) => node,
+                Err(e) => {
+                    errors.push(format!(
+                        "graph {} node {}: {e}",
+                        item.graph_id, item.node_id
+                    ));
+                    continue;
+                }
+            };
+            match self.bridge.set_mod_graph_node(
+                item.graph_id,
+                item.node_id,
+                node,
+                item.description,
+            ) {
+                Ok(()) => ok_count += 1,
+                Err(e) => errors.push(format!(
+                    "graph {} node {}: {e}",
+                    item.graph_id, item.node_id
+                )),
+            }
         }
+        batch_msg(ok_count, "mod graph nodes updated", &[], &errors)
     }
 
     #[tool(
@@ -9444,5 +9659,38 @@ mod schema_range_tests {
             channel.contains("\"maximum\":16") && channel.contains("\"minimum\":1"),
             "channel 1..=16 bounds missing: {channel}"
         );
+    }
+
+    #[test]
+    fn batch_item_schemas_are_concrete() {
+        fn schema_text<T: schemars::JsonSchema>() -> String {
+            serde_json::to_string(&schemars::schema_for!(T)).unwrap()
+        }
+
+        let pattern = schema_text::<CreatePatternsParam>();
+        assert!(pattern.contains("length_beats") && pattern.contains("start_beat"));
+        let notes = schema_text::<AddNotesParam>();
+        assert!(notes.contains("pitch") && notes.contains("duration_beats"));
+        let tracks = schema_text::<CreateTracksParam>();
+        assert!(tracks.contains("instrument_id"));
+        let placements = schema_text::<PlacePatternsParam>();
+        assert!(placements.contains("pattern_id") && placements.contains("track_id"));
+
+        let note_modules = schema_text::<AddNoteGraphModuleParam>();
+        assert!(
+            note_modules.contains("graph_id")
+                && note_modules.contains("ProbabilityGate")
+                && note_modules.contains("NoteDelay")
+        );
+        let note_connections = schema_text::<ConnectNoteGraphParam>();
+        assert!(note_connections.contains("from") && note_connections.contains("to_input"));
+        let mod_nodes = schema_text::<AddModGraphNodeParam>();
+        assert!(
+            mod_nodes.contains("graph_id")
+                && mod_nodes.contains("Macro")
+                && mod_nodes.contains("Target")
+        );
+        let mod_connections = schema_text::<ConnectModGraphParam>();
+        assert!(mod_connections.contains("from_port") && mod_connections.contains("to_port"));
     }
 }

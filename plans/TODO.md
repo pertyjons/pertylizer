@@ -1107,6 +1107,16 @@ enough to be driven by an actual observed symptom. Ordered by likely impact.
 ### 6.6 Pertylizer MCP gaps
 *(from `plans/pertylizer-mcp-feedback.md`; the live running log continues in the sid-analyzer session memory. Only Pertylizer-side open items harvested.)*
 
+- [ ] **Set `CallToolResult.isError` on total tool failure.** Many tools return a
+  normal text result beginning with `Error:`, while the MCP protocol result still has
+  `isError: false`; clients that rely on the protocol flag therefore treat failures as
+  successes. Centralize result construction so total failures set `isError: true`, while
+  preserving structured partial-success responses for batch tools.
+- [ ] **Document or normalize omitted empty description fields.** Graph node/module
+  `description` values are currently skipped during JSON serialization when empty, but
+  the MCP tool descriptions do not state that omission means an empty description.
+  Either always serialize `description: ""` for a stable response shape, or document the
+  omission consistently in the schemas and tool descriptions.
 - [ ] **`compare_spectra` energy-masked distance (option b).** Restrict the distance
   to frames where the *target* has energy; whole-window and 500 ms RMS both failed to
   rank candidates on sparse staccato material where an external numpy energy-mask

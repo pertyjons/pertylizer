@@ -14,14 +14,17 @@ use synth_engine::{EngineHandle, ModuleId};
 use crate::audio::input::InputState;
 use crate::gui::module_panel::{ModulePanelState, PortPosition};
 use crate::gui::theme::theme;
-use crate::gui::widgets::{CaptionTone, ModMarkers, WidgetPortDirection, caption, expose};
+use crate::gui::widgets::{
+    CaptionTone, ModMarkers, ModuleColumn, ModulePort, WidgetPortDirection, caption,
+    draw_module_port_column, draw_module_port_layout, expose, module_port_accessible_label,
+};
 
 use crate::gui::node_canvas;
 
 use super::{
     AudioInputAction, AudioInputSnapshot, EFFECT_CHAIN_AMBER, ModAddrCatalog, ModuleBodyCtx,
-    PanelParamsResult, PatchAnalysis, PatchEditor, PatchEditorResult, PatchPort, PortRenderInfo,
-    ScriptDepGraph, convert_port_type, draw_audio_script_module_grid, draw_mod_matrix_grid,
+    PanelParamsResult, PatchAnalysis, PatchEditor, PatchEditorResult, PatchPort, ScriptDepGraph,
+    convert_port_type, draw_audio_script_module_grid, draw_mod_matrix_grid,
     draw_script_module_grid, draw_visualizer_display, trim_sweep_to_complete_cycles,
 };
 
@@ -136,30 +139,10 @@ impl PatchEditor {
             // Normal modules: three-column layout (IN ports | content | OUT ports)
             let col_w = theme().sizes.port_column_width;
 
-            ui.horizontal(|ui| {
-                // Tighten the gaps between the port columns and the content band.
-                // The default item spacing (8 px) on both sides eats enough width
-                // to drop a Medium module below three knobs per row; 4 px keeps the
-                // content band wide enough for its bucket's intended knob count
-                // while still separating the ports.
-                ui.spacing_mut().item_spacing.x = 4.0;
-                let spacing_x = ui.spacing().item_spacing.x;
-
-                // Size the content column to exactly the space between the two port
-                // columns so IN + content + OUT span the header width, anchoring OUT
-                // to the right edge. `set_width` (not `set_min_width`) is deliberate:
-                // the OUT column is drawn *after* the content, so it isn't reserved
-                // yet — with only a minimum, `available_width()` inside the content
-                // would run all the way to the row's right edge (an extra
-                // `col_w + spacing`), and fill-width widgets (sliders, the knob-grid
-                // column count) would overrun into the OUT port column. Capping the
-                // width keeps them inside the content band; fixed content that is
-                // genuinely wider still overflows and pushes OUT out as before.
-                let content_w = (header_width - 2.0 * col_w - 2.0 * spacing_x).max(0.0);
-
-                // Left port column (IN) - fixed width
-                ui.vertical(|ui| {
-                    ui.set_width(col_w);
+            let gap = theme().sizes.module_port_gap;
+            let content_w = (header_width - 2.0 * col_w - 2.0 * gap).max(0.0);
+            draw_module_port_layout(ui, content_w, |column, ui| match column {
+                ModuleColumn::Input => {
                     self.draw_port_column(
                         ui,
                         module_id,
@@ -168,11 +151,8 @@ impl PatchEditor {
                         connected_ports,
                         analysis,
                     );
-                });
-
-                // Content column - stretched to anchor OUT at the edge
-                ui.vertical(|ui| {
-                    ui.set_width(content_w);
+                }
+                ModuleColumn::Body => {
                     if let Some(panel_state) = self.panels.get_mut(&module_id) {
                         let vis_buffer = handle.get_visualization_buffer(module_id);
                         let panel_result = draw_module_panel_params(
@@ -197,11 +177,8 @@ impl PatchEditor {
                             result.mod_script_actions.push((module_id, slot, src));
                         }
                     }
-                });
-
-                // Right port column (OUT) - fixed width
-                ui.vertical(|ui| {
-                    ui.set_width(col_w);
+                }
+                ModuleColumn::Output => {
                     self.draw_port_column(
                         ui,
                         module_id,
@@ -210,7 +187,7 @@ impl PatchEditor {
                         connected_ports,
                         analysis,
                     );
-                });
+                }
             });
         }
     }
@@ -231,60 +208,72 @@ impl PatchEditor {
             WidgetPortDirection::Output => CorePortDirection::Output,
         };
 
-        let ports: Vec<PortRenderInfo> = descriptor
+        let pending_info = self.pending_wire_source();
+        let ports: Vec<ModulePort<PatchPort>> = descriptor
             .ports
             .iter()
             .filter(|p| p.direction == core_dir)
-            .map(|p| PortRenderInfo {
-                module_id,
-                port_name: p.name,
-                label: p.label.clone(),
-                description: p.description.clone(),
-                port_type: convert_port_type(p.port_type),
-                is_connected: connected_ports.contains(&p.name),
-                // Only output ports can be read as a modulation source.
-                markers: match direction {
-                    WidgetPortDirection::Output => {
-                        analysis.markers_for_port(module_id, p.name.as_str())
-                    }
-                    WidgetPortDirection::Input => ModMarkers::default(),
-                },
+            .map(|p| {
+                let port_type = convert_port_type(p.port_type);
+                let highlighted = pending_info.is_some_and(|(from_module, from_type, from_dir)| {
+                    let (out_type, in_type) = if from_dir == WidgetPortDirection::Output {
+                        (from_type, port_type)
+                    } else {
+                        (port_type, from_type)
+                    };
+                    from_module != module_id
+                        && from_dir != direction
+                        && out_type.can_drive(in_type)
+                        && !self.drag_cycle_blocked.contains(&module_id)
+                });
+                let endpoint = PatchPort {
+                    module: module_id,
+                    port: p.name,
+                    direction,
+                    port_type,
+                };
+                let accessible_label = module_port_accessible_label(
+                    &module_id.to_string(),
+                    p.name.as_str(),
+                    &p.label,
+                    port_type,
+                    direction,
+                );
+                ModulePort::new(
+                    endpoint,
+                    p.label.as_str(),
+                    accessible_label,
+                    p.description.as_str(),
+                    connected_ports.contains(&p.name),
+                    highlighted,
+                    // Only output ports can be read as a modulation source.
+                    match direction {
+                        WidgetPortDirection::Output => {
+                            analysis.markers_for_port(module_id, p.name.as_str())
+                        }
+                        WidgetPortDirection::Input => ModMarkers::default(),
+                    },
+                )
             })
             .collect();
 
-        let pending_info = self.pending_wire_source();
-        // Cycle-blocked targets were computed once for this frame; the highlight
-        // just looks each module up.
-        let cycle_blocked = &self.drag_cycle_blocked;
         let port_positions = &mut self.port_positions;
         let wire_events = &mut self.wire_events;
-        Self::draw_port_column_with(
-            ui,
-            direction,
-            &ports,
-            pending_info,
-            cycle_blocked,
-            |port, center, response| {
-                port_positions.insert(
-                    (module_id, port.port_name),
-                    PortPosition {
-                        module_id,
-                        port_name: port.port_name,
-                        position: center,
-                        port_type: port.port_type,
-                        direction,
-                    },
-                );
-                // Feed the shared wire FSM (drag-to-connect / click-click).
-                let pp = PatchPort {
-                    module: module_id,
-                    port: port.port_name,
+        draw_module_port_column(ui, direction, &ports, |port, center, response| {
+            let endpoint = port.endpoint();
+            port_positions.insert(
+                (module_id, endpoint.port),
+                PortPosition {
+                    module_id,
+                    port_name: endpoint.port,
+                    position: center,
+                    port_type: port.port_type(),
                     direction,
-                    port_type: port.port_type,
-                };
-                node_canvas::push_port_event(wire_events, response, pp, center);
-            },
-        );
+                },
+            );
+            // Feed the shared wire FSM (drag-to-connect / click-click).
+            node_canvas::push_port_event(wire_events, response, endpoint, center);
+        });
     }
 }
 

@@ -82,7 +82,7 @@ async fn note_graph_round_trip_through_mcp() {
         &server,
         "add_note_graph_module",
         serde_json::json!({ "items": [
-            { "graph_id": graph_id, "module": { "Euclidean": {
+            { "graph_id": graph_id, "description": "Generates the pulse stream", "module": { "Euclidean": {
                 "steps": 16, "pulses": 8, "rotation": 0,
                 "step_len": 240, "pitch": 60, "velocity": 0.7 } } },
             { "graph_id": graph_id, "module": { "ProbabilityGate": {
@@ -160,6 +160,10 @@ async fn note_graph_round_trip_through_mcp() {
     let detail: serde_json::Value = serde_json::from_str(&resp).expect("get returns JSON");
     assert_eq!(detail["info"]["used_by_patterns"], 1);
     assert_eq!(detail["modules"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        detail["modules"][0]["description"],
+        "Generates the pulse stream"
+    );
     assert_eq!(detail["connections"].as_array().unwrap().len(), 2);
     assert_eq!(
         detail["info"]["color"]
@@ -167,6 +171,44 @@ async fn note_graph_round_trip_through_mcp() {
             .map(str::to_ascii_lowercase),
         Some("#ff8800".to_string())
     );
+
+    let updated = call(
+        &server,
+        "set_note_graph_module",
+        serde_json::json!({ "items": [{
+            "graph_id": graph_id,
+            "module_id": 1,
+            "description": "Keeps roughly three quarters of events",
+            "module": { "ProbabilityGate": { "probability": 0.75, "seed": 1 } }
+        }] }),
+    )
+    .await;
+    assert!(!updated.contains("failed"), "update: {updated}");
+
+    let metadata = call(
+        &server,
+        "set_note_graph_metadata",
+        serde_json::json!({ "items": [{
+            "graph_id": graph_id,
+            "name": "Updated Arp",
+            "description": "Updated graph intent",
+            "color": "#112233"
+        }] }),
+    )
+    .await;
+    assert!(!metadata.contains("failed"), "metadata: {metadata}");
+
+    let bulk = call(
+        &server,
+        "get_note_graphs",
+        serde_json::json!({ "graph_ids": [graph_id, 999] }),
+    )
+    .await;
+    let bulk: serde_json::Value = serde_json::from_str(&bulk).expect("bulk returns JSON");
+    assert_eq!(bulk[0]["graph_id"], graph_id);
+    assert_eq!(bulk[0]["detail"]["info"]["name"], "Updated Arp");
+    assert_eq!(bulk[1]["graph_id"], 999);
+    assert!(bulk[1]["error"].is_string());
 
     // Duplicate it: a fresh id with the same content and layout.
     let resp = call(

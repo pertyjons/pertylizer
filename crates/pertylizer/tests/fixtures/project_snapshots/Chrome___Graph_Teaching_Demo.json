@@ -1,0 +1,61 @@
+{
+  "file_type": "project",
+  "version": "1.1",
+  "instrument_count": 1,
+  "active_instrument_id": 1,
+  "author_present": true,
+  "instruments": [
+    {
+      "id": 1,
+      "name": "Teaching Synth Rack",
+      "channel": 1,
+      "volume": 0.7,
+      "pan": 0.0,
+      "muted": false,
+      "solo": false,
+      "key_range": [
+        0,
+        127
+      ],
+      "transpose_semitones": 0.0,
+      "oversampling": 1,
+      "category": 0,
+      "description_len": 124,
+      "color_present": false,
+      "allocation_mode": "Polyphonic",
+      "unison_detune_cents": 10.0,
+      "unison_spread": 0.0,
+      "max_voices": 8,
+      "velocity_amp_sensitivity": 1.0,
+      "velocity_filter_sensitivity": 0.5,
+      "sidechain_source_id": null,
+      "patch_name": "Teaching Synth Rack",
+      "patch_description_present": false,
+      "module_count": 5,
+      "connection_count": 4,
+      "effect_chain_order_len": 0,
+      "group_count": 0
+    }
+  ],
+  "song": {
+    "name": "Chrome & Graph Teaching Demo",
+    "author": "",
+    "default_tempo_bpm": 120.0,
+    "time_signature_numerator": 4,
+    "time_signature_denominator": 4,
+    "pattern_count": 4,
+    "track_count": 4,
+    "placement_count": 6,
+    "total_notes": 16,
+    "tempo_change_count": 0
+  },
+  "global": {
+    "master_volume": 0.8,
+    "octave_offset": 0,
+    "glide_time_seconds": 0.0
+  },
+  "samples": {
+    "count": 0,
+    "total_frames": 0
+  }
+}
