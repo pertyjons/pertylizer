@@ -6,6 +6,10 @@ Origin: design discussion 2026-07-18, growing out of the automation-platform
 plan ("could a patch LFO drive an automation lane?"). UI mockup reference:
 https://claude.ai/code/artifact/d612e28b-d0f5-4fbe-9992-e571a3f8a14f
 
+External review 2026-07-18, verified against the code: its two technical
+findings (stale-offset clearing, instance-rebuild sync) are folded into §4.3
+and its recommendations resolve most of §5.
+
 ## 1. Goal
 
 A third node view beside the patch editor and the Note Grid: a pool of
@@ -18,17 +22,19 @@ controllers, Ableton M4L LFO/Envelope Follower, Reason CV.
 Lanes stay pure authored **data**; the Mod Grid is live **signal**. Both write
 to the same targets and compose additively.
 
-## 2. Prerequisites (hard ordering)
+## 2. Prerequisites — SATISFIED (verified 2026-07-18)
 
-Builds on `plans/automation-platform-plan.md`:
+The automation platform landed in `main` (`c926650e`):
 
-- **A1** — relative Track targets (`Option<TrackId>`, "this track") is the
-  semantics track-scoped graphs reuse.
-- **A2** — `TrackParam::Pitch` + voice→track tagging + the per-block
-  `set_voice_pitch` application path is what makes pitch a grid target.
+- **A1** — relative Track targets (`AutomationTarget::Track { track:
+  Option<TrackId> }` + `resolved(host_track)`, `automation.rs:295`/`:366`) is
+  the semantics track-scoped graphs reuse.
+- **A2** — `TrackParam::Pitch` (`automation.rs:434`, bipolar ±48 st encoding)
+  plus voice→track tagging with per-block pitch application are in.
 
-Land the automation platform (and the tracker-import DAW mapping that waits on
-it) first; Mod Grid is its own branch from `main` afterwards.
+Mod Grid can start on its own branch from `main` at any time; sequencing it
+against the tracker-import DAW mapping is a prioritization call, not a
+dependency.
 
 `plans/user-macros.md` is complementary, not a dependency: per-instrument
 macros travel with the patch; the Mod Grid's Macro node (§4.2) is the
@@ -41,10 +47,11 @@ song-level bank that plan's §6 explicitly deferred.
   shared by two views; the Note Grid proved the pool + scope + assignment
   pattern this copies.
 - **Write path for module params** — the generic `ParamModOffsets` store
-  (landed with the dynamic mod matrix work) accepts external additive offsets
-  on all voice modules.
+  (`synth_core/src/module_traits.rs`, landed with the dynamic mod matrix
+  work) accepts external additive offsets on all voice modules, applied via
+  `graph.apply_mod_offset_addr` (`graph.rs:561`).
 - **Write path for track params** — `update_track_controls`
-  (`synth_engine.rs:2945`) composes `track_auto` per block; the grid becomes a
+  (`synth_engine.rs:2953`) composes `track_auto` per block; the grid becomes a
   second contributor into that composition (and A2's pitch path).
 - **Target addressing** — `AutomationTarget`
   (`synth_sequencer/src/automation.rs`) is the shared address space; the GUI
@@ -88,10 +95,23 @@ cheap nodes: **Macro** (named knob — the song-level macro bank), **Transport**
   the audio thread, before instruments and before `update_track_controls`**.
   Control-rate, pre-allocated, lock-free — normal RT discipline.
 - Outputs land as block-constant offsets: module params via the
-  `ParamModOffsets` path (uniform across voices), track params into the
-  `track_auto` composition, globals into their existing per-block reads.
-  Composition rule everywhere: `lane value (or base value) + grid offset`,
-  clamped. A lane need not exist for a routing to apply.
+  `ParamModOffsets` path (`apply_mod_offset_addr` per active voice — uniform
+  across voices), track params into the `track_auto` composition, globals
+  into their existing per-block reads. Composition rule everywhere: `lane
+  value (or base value) + grid offset`, clamped. A lane need not exist for a
+  routing to apply.
+- **Fix first — unconditional offset clearing** (review finding):
+  `voice.rs:1081` runs `graph.clear_mod_offsets()` only when
+  `mod_matrix_id.is_some()`, so a grid routing into a patch without a Mod
+  Matrix module would leave stale offsets forever. Make the clear
+  unconditional before wiring any grid writes.
+- **Instance-rebuild sync** (review finding): add `mod_grid_generation: u64`
+  to `Song`, mirroring `structure_generation` (`song.rs:246`) — bumped on any
+  graph/assignment mutation; the audio thread compares it per block and
+  rebuilds running instances off the hot path.
+- **Audio tap**: pre-fader, via `Instrument::last_output_interleaved()`
+  (`instrument.rs:724`). Pre-fader so a grid-ducked fader cannot re-duck its
+  own detector (feedback); lock-free by construction.
 - No added latency for pure-control chains; only audio-derived sources (tap →
   env follower) read the previous block.
 - **Determinism**: random-family nodes get explicit seeds (persisted), so
@@ -135,17 +155,23 @@ House style: array-capable, descriptor-validated.
 
 ### 4.6 Persistence
 
-Graph pool + assignments + seeds in the project save; schema + upgrade-free
-(additive). Save/load round-trip is part of the exit gate.
+Graph pool + assignments + seeds in the project save; upgrade-free
+(additive). The schema propagates by regenerating (`cargo run -p pertylizer
+--bin gen_schemas`). Save/load round-trip is part of the exit gate.
 
 ## 5. Open questions
 
-- **Zipper control** — offsets are block-constant; decide whether target
-  application reuses existing param smoothing or needs a one-pole per target.
-- **Macro node vs user-macros GUI** — one shared knob-rail widget? Decide
-  when both exist.
-- **Audio tap points** — track post-fader vs pre-fader; start with one
-  (post-fader) and a fixed tap list.
+Resolved by the 2026-07-18 review:
+
+- **Zipper control** — reuse the modules' existing per-block smoothing;
+  block-constant offsets match mod-matrix behavior. No per-target one-poles.
+- **Macro node vs user-macros GUI** — shared knob-rail widget, visually
+  distinct groups ("Song Macros" vs "Instrument Macros").
+- **Audio tap points** — pre-fader (`last_output_interleaved`), fixed tap
+  list to start; feedback rationale in §4.3.
+
+Still open:
+
 - **Instance CPU budget** — show per-graph cost in the canvas header; decide
   a soft cap on assignments if needed.
 
@@ -163,6 +189,9 @@ Graph pool + assignments + seeds in the project save; schema + upgrade-free
 - Env-follower graph tapping the drum track ducks another track's volume —
   sidechain without audio re-routing.
 - Seeded random node renders bit-identically live vs `render_to_wav`.
+- Removing a grid routing (or the whole graph) returns every target to its
+  base value — no stale offsets, including on patches without a Mod Matrix
+  module (the §4.3 clearing fix).
 - Full round-trip: save/load, MCP create→route→enumerate, quick-assign from
   the lane side, provenance listing answers "what writes to this target".
 - Workspace green (`build` / `clippy --all-targets` / `test` / `fmt
