@@ -1,0 +1,42 @@
+# cargo-about configuration for generating THIRD-PARTY-LICENSES.md.
+# Regenerate: cargo about generate --manifest-path crates/pertylizer/Cargo.toml \
+#             about.hbs -o THIRD-PARTY-LICENSES.md
+
+# SPDX license ids we accept for shipped dependencies. Generation fails if a
+# dependency uses a license not in this list — that is the point: it forces a
+# human decision before an unexpected license ships.
+accepted = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "MPL-2.0",
+    "Unicode-DFS-2016",
+    "Unicode-3.0",
+    "CC0-1.0",
+    "BSL-1.0",
+    "0BSD",
+    "OpenSSL",
+    # Bundled fonts (egui/epaint default fonts): SIL Open Font License and the
+    # Ubuntu Font License. Both permit redistribution with attribution.
+    "OFL-1.1",
+    "Ubuntu-font-1.0",
+]
+
+# Attribute dependencies for every platform the release workflow builds for,
+# so platform-specific crates (winit backends, windows-sys, core-foundation …)
+# are all captured.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "x86_64-pc-windows-msvc",
+    "x86_64-apple-darwin",
+    "aarch64-apple-darwin",
+]
+
+# Only crates that actually ship in the binary — build- and test-only crates
+# are not distributed.
+ignore-build-dependencies = true
+ignore-dev-dependencies = true
