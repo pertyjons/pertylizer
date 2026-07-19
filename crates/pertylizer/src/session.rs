@@ -1272,10 +1272,14 @@ impl SynthSession {
                         // legacy multi-slot patch keeps slot 1 and drops the rest
                         // with a note — graceful migration, no panic (the engine's
                         // set_script would silently no-op the higher slots anyway).
-                        if module_id.module_type == ModuleType::Script && slot != 0 {
+                        if matches!(
+                            module_id.module_type,
+                            ModuleType::Script | ModuleType::AudioScript
+                        ) && slot != 0
+                        {
                             result.errors.push(format!(
-                                "{module_id} slot {slot_key} script dropped: the Script \
-                                 module is now one program (slot 1 only)"
+                                "{module_id} slot {slot_key} script dropped: this module has \
+                                 one program (slot 1 only)"
                             ));
                             continue;
                         }
@@ -1579,6 +1583,21 @@ mod tests {
         assert!(
             !result.errors.iter().any(|e| e.contains("slot 1 script:")),
             "slot 1 must install cleanly: {:?}",
+            result.errors
+        );
+
+        let mut patch = Patch::new("Legacy audio");
+        let mut asc = ModuleBuilder::new(1, ModuleType::AudioScript).build();
+        asc.scripts.insert("1".to_string(), "out = in".to_string());
+        asc.scripts.insert("2".to_string(), "out = in".to_string());
+        patch.add_module(asc);
+        let result = session.apply_patch(InstrumentId::FIRST, &patch);
+        assert!(
+            result
+                .errors
+                .iter()
+                .any(|e| e.contains("asc-1") && e.contains("slot 2") && e.contains("dropped")),
+            "legacy AudioScript slot 2 must be dropped with a note: {:?}",
             result.errors
         );
     }

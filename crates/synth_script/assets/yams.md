@@ -1,24 +1,32 @@
 # YAMS — Yet Another Modulation Script
 
-YAMS is Pertylizer's small control-rate expression language. A YAMS program is
-what a **Mod Matrix slot** holds when its modulation amount is an *expression*
-instead of a plain scalar. The program reads modulation sources (other modules'
-outputs, MIDI macros, per-voice context), computes a single value, and assigns
-it to `out`. That value is the **normalized-space additive offset** applied to
-the slot's destination parameter — the exact same write channel a scalar amount
-uses (summed across slots, run through the param curve, clamped).
+YAMS is Pertylizer's bounded real-time scripting language. The same parser and
+bytecode VM serve four host-specific dialects:
+
+- a **Mod Matrix slot** computes one normalized modulation offset with `out`;
+- a **Script** module runs one control-rate program with four CV inputs
+  (`in1..in4`) and four CV outputs (`out1..out4`);
+- an **AudioScript** module processes stereo audio once per sample;
+- a Note Grid **Script** node transforms one note event at a time.
+
+A Mod Matrix program reads modulation sources (other modules' outputs, MIDI
+macros, per-voice context), computes a single value, and assigns it to `out`.
+That value is the **normalized-space additive offset** applied to the slot's
+destination parameter — the exact same write channel a scalar amount uses
+(summed across slots, run through the param curve, clamped).
 
 In short: a scalar slot says *"this source, scaled by this knob."* A YAMS slot
 says *"compute the offset however you like — from any combination of sources,
 math, curves, and per-voice state."*
 
-The same language also drives two standalone modules: the **Script** module
-(control-rate, exposes its slots as output ports) and the **AudioScript** module,
-which runs *per sample* to script audio DSP (see
-[Audio-rate scripts](#audio-rate-scripts-the-audioscript-module)).
+See [Control-port scripts](#control-port-scripts-the-script-module),
+[Audio-rate scripts](#audio-rate-scripts-the-audioscript-module), and
+[Note-event scripts](#note-event-scripts-the-notescripttransform-module) for
+the host-specific inputs, outputs, and restrictions.
 
-- **Runs per voice, at control rate** (`cr`, typically a few hundred Hz — not
-  audio rate). One independent copy of the script's state per sounding voice.
+- **Host-defined evaluation rate.** Mod Matrix and Script programs run per voice
+  at control rate (`cr`, typically a few hundred Hz); AudioScript runs per sample;
+  note-event scripts run once for each transformed note.
 - **Compiled offline, evaluated in real time.** The UI/MCP thread compiles the
   source text to a flat bytecode program; the audio thread only ever runs the
   bytecode over a pre-allocated register file (no allocation, no recursion).
@@ -36,13 +44,16 @@ src vib = lfo-1.out          # header: bind a module output to a clean name
 out = vib * lerp(0.05, 0.4, mod_wheel)   # body: compute the offset
 ```
 
-Every program has two parts:
+The basic Mod Matrix form has two parts:
 
 1. **Header** — zero or more `src` bindings (each aliasing a module address to
-   an identifier) and zero or more `arr` const-table declarations, in any order.
+   an identifier), `arr` const tables, and `state` declarations, in any order.
 2. **Body** — zero or more `let` locals, then **exactly one** `out = …`.
 
-The header and body are separated by a blank line in canonical form.
+Script and AudioScript programs may also declare `param` knobs in the header.
+Their output contracts differ from the single-output form and are documented in
+their sections below. The header and body are separated by a blank line in
+canonical form.
 
 ### Why the `src` header exists
 
@@ -335,6 +346,35 @@ out = y              # read it
   on note-on. The initializer must be `0` today; seed a non-zero value from
   `first_sample` in an audio-rate script (below).
 
+### Declared parameter knobs (`param`)
+
+Script and AudioScript modules can expose user-facing parameters directly from
+their program. A declaration has this form:
+
+```yams
+param drive = 0.5 [0, 2] "Drive" "Input gain before saturation"
+```
+
+The default declaration is `param name = default`; the `[min, max]` range,
+display label, and tooltip are optional and positional. Defaults and range
+bounds must be compile-time constants. With no explicit range, the knob uses
+`0..1`; with no label, the identifier is humanized for display.
+
+Declared knobs are real module parameters: they appear on the faceplate and in
+MCP discovery, persist with the patch, and can be automated or targeted by the
+Mod Matrix and Mod Grid. The program reads the parameter by its declared name:
+
+```yams
+param rate = 2 [0.05, 20] "Rate" "Modulation rate in Hz"
+param depth = 0.25
+
+out1 = sin(phasor(rate) * tau) * depth
+```
+
+`param` is rejected in Mod Matrix and note-event scripts because those hosts do
+not own module knobs. A Script or AudioScript program may declare at most 32
+parameters.
+
 ---
 
 ## Numbers, units, comments
@@ -364,8 +404,9 @@ The rules you'll notice:
 
 - 4-space indent, LF endings, one trailing newline, no trailing whitespace.
 - One statement per line; `;` terminators removed.
-- All `src` bindings first (author order kept, **not** sorted), then exactly one
-  blank line, then the body (`let`s, then the single `out`).
+- Header declarations (`src`, `arr`, `state`, and `param`) remain in author
+  order, followed by exactly one blank line and then the body. Output assignments
+  are kept in author order at the end of the body.
 - One space around binary operators (`a + b`); unary tight (`-x`, `!c`);
   ternary `c ? a : b`; calls `f(a, b)` with no space before `(`.
 - Numbers canonicalize: `.5` → `0.5`, `1.50` → `1.5`, `1.0` → `1`, `1E3` →
@@ -450,35 +491,65 @@ out = lag(mod_wheel, 50ms) + sah(white(), gate_on) * 0.3
 
 ---
 
+## Control-port scripts (the Script module)
+
+The **Script** module is one control-rate YAMS program, not a rack of independent
+script slots. It has four fixed CV inputs and four fixed CV outputs:
+
+- `in1`, `in2`, `in3`, `in4` read the corresponding input-port values;
+- `out1`, `out2`, `out3`, `out4` write the corresponding output ports;
+- a bare `out = expr` is shorthand for `out1 = expr`.
+
+One program can share `src` bindings, declared knobs, state, and local
+calculations across several outputs:
+
+```yams
+param rate = 2 [0.05, 20] "Rate"
+param depth = 0.5
+
+let phase = phasor(rate)
+let wave = sin(phase * tau)
+out1 = wave * depth
+out2 = unipolar(wave)
+out3 = in1 * depth
+out4 = in2 > 0.5 ? 1 : 0
+```
+
+At least one output assignment is required. Each output may be assigned at most
+once, and only `out1..out4` exist. The four inputs and numbered outputs are
+compile errors in a Mod Matrix or AudioScript program. Add another Script module
+when independent program state or more ports are needed.
+
+---
+
 ## Authoring scripts
 
 ### In the GUI
 
-Open a Mod Matrix module, pick a slot's source and destination, then open the
-**ƒx** expression editor on that slot. Type YAMS, and the live compile status
-shows errors with line/column spans. The text is formatted and committed on
-apply.
+Open a Mod Matrix slot's **ƒx** editor, or open the editor on a Script,
+AudioScript, or Note Grid Script node. The host selects the dialect. Live compile
+status shows errors with line/column spans, and Apply stores canonical YAMS.
 
 ### Over MCP
 
-Use `set_mod_matrix_script` to install or clear a script on a slot. Despite the
-name, the host may be a **Mod Matrix** (`mmx-N`) *or* a **Script module**
-(`scr-N`) — on a Mod Matrix the script's `out` is the slot's modulation offset;
-on a Script module it is the value of that slot's `outN` output port:
+Use `set_mod_matrix_script` to install or clear a program on a Mod Matrix,
+Script, or AudioScript module. Despite the tool's historical name, the module id
+selects the dialect:
 
-| Field           | Meaning                                                                           |
-|-----------------|-----------------------------------------------------------------------------------|
-| `instrument_id` | instrument (0 = default)                                                          |
-| `module_id`     | the host module — a Mod Matrix (`mmx-1`) or Script module (`scr-1`)               |
-| `slot`          | 1-based slot — Mod Matrix `1..=16`, Script module `1..=8` (drives `out1`..`out8`) |
-| `source`        | YAMS source text; **empty string clears** the slot back to scalar                 |
+| Field           | Meaning                                                                                         |
+|-----------------|-------------------------------------------------------------------------------------------------|
+| `instrument_id` | instrument (0 = default)                                                                        |
+| `module_id`     | Mod Matrix (`mmx-N`), Script (`scr-N`), or AudioScript (`asc-N`)                  |
+| `slot`          | 1-based: Mod Matrix `1..=16`; Script and AudioScript **must use `1`**             |
+| `source`        | YAMS source text; an **empty string clears** the selected slot/program            |
 
 A compile error comes back with diagnostics (all errors, not just the first).
 Read back installed scripts with `get_mod_matrix_routings` (Mod Matrix — a slot
 with a script reports its `script` text and its offset is the script's `out`, not
-`amount × source`) or with `get_module_info` (a Script module exposes a `scripts`
-array of `{slot, output_port, source}`). `get_yams_reference` returns this
-document over MCP.
+`amount × source`) or with `get_module_info` (Script and AudioScript expose a
+`scripts` array). For a Note Grid Script node, use `set_note_graph_script` after
+creating the `NoteScriptTransform`; `get_note_graph` reads it back.
+`get_yams_reference` returns this document over MCP.
 
 ---
 
@@ -491,6 +562,7 @@ it compiles):
 - 256 instructions, 64 registers (≤32 sources, ≤16 state, ≤16 scratch)
 - 32 source bindings, 32 nesting depth, 4 KiB source text
 - 16 arrays, 256 array elements total (across all `arr` declarations)
+- 32 declared `param` knobs (Script and AudioScript modules only)
 
 Diagnostics carry text spans and **all** errors are reported in one pass (better
 for the editor and for tooling). Distinctions:

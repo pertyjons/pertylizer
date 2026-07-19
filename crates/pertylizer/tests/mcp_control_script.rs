@@ -231,6 +231,12 @@ fn script_module_readback_via_get_module_info() {
         err.is_err(),
         "scr slot 2 must be rejected — the Script module has one program (slot 1)"
     );
+
+    let err = bridge.set_mod_matrix_script(InstrumentId::FIRST, "asc-1", 2, "out = in");
+    assert!(
+        err.is_err(),
+        "asc slot 2 must be rejected — AudioScript has one program (slot 1)"
+    );
 }
 
 #[test]

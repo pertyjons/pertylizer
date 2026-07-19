@@ -824,7 +824,7 @@ impl SynthBridge for AppSynthBridge {
         // type — a Script (`scr`) module is now a single program (slot 1 only),
         // so a too-large slot is rejected up front instead of being a silent no-op.
         let max = match mid.module_type {
-            ModuleType::Script => 1,
+            ModuleType::Script | ModuleType::AudioScript => 1,
             _ => synth_core::MAX_MOD_MATRIX_SLOTS as u8,
         };
         if !(1..=max).contains(&slot) {

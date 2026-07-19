@@ -1,7 +1,7 @@
 # Pertylizer × MCP — AI Agent Integration Guide
 
 Pertylizer ships with a built-in [Model Context Protocol](https://modelcontextprotocol.io) server that exposes
-**175+ tools** for full remote control of the synth, sequencer, and sample library. Any
+**200+ tools** for remote control of the synth, sequencer, graph pools, mixer, and sample library. Any
 MCP-capable client — Claude Code, Claude Desktop, custom agents — can use it to build instruments, compose songs,
 edit patterns, render audio, and analyze the result, all while the synth keeps running.
 
@@ -147,8 +147,9 @@ Claude Code instead.
 
 ## Tool Catalog
 
-Tools are grouped by purpose. Each tool returns typed JSON; arguments are validated and errors are returned as
-structured messages so agents can recover.
+Tools are grouped by purpose below. Each tool returns typed JSON; arguments are validated and errors are returned as
+structured messages so agents can recover. This guide highlights the public workflow surface rather than duplicating
+every schema field. The MCP client's live tool list and JSON Schemas are authoritative for the running build.
 
 ### Discovery & Introspection
 
@@ -173,6 +174,7 @@ Read the current state of instruments, modules, ports, parameters, and the audio
 | `get_project_schema` | Authoritative on-disk `.pertyproj` JSON Schema + format/build version (validate/diff project files without introspection drift) |
 | `get_ui_snapshot` | Current GUI focus, selection, view |
 | `get_engine_status` | Sample rate, transport state, BPM, voice count |
+| `get_version` | Application version, build profile, target, and git revision |
 
 ### Patch & Sound Design
 
@@ -197,13 +199,15 @@ Play notes and drive the sequencer.
 |------|---------|
 | `note_on`, `note_off` | MIDI input from the agent |
 | `seq_play`, `seq_stop`, `seq_seek` | Transport control |
+| `set_transport_loop`, `clear_transport_loop` | Set or clear the persisted arrangement loop region |
 
 ### Song & Project
 
 | Tool | Purpose |
 |------|---------|
 | `get_song_info`, `set_song_name`, `set_song_author` | Metadata |
-| `set_song_tempo`, `set_song_time_signature` | Timing |
+| `set_song_tempo`, `set_song_time_signature` | Default timing |
+| `get_tempo_map`, `set_tempo_at`, `remove_tempo_at` | Position-specific tempo points and ramps |
 | `new_project`, `load_project`, `save_project` | Project I/O |
 | `set_song` | Load a complete arrangement in one call |
 
@@ -219,6 +223,7 @@ Non-realtime composition.
 | `list_notes`, `add_note` | Note entry (`add_note` takes one or many) |
 | `update_note`, `replace_notes`, `remove_note` | Edits (`update_note` takes one or many) |
 | `clear_pattern` | Wipe a pattern |
+| `freeze_pattern` | Bake the played note-processing result into ordinary notes |
 
 **Per-note expression (`add_note`).** Each note in `add_note` accepts two
 optional fields beyond pitch/start/duration/velocity:
@@ -242,6 +247,46 @@ optional fields beyond pitch/start/duration/velocity:
   - `vibrato` — `{ depth (semitones), rate (Hz), delay_ms (depth fade-in),
     shape: sine|triangle|square|saw }`.
 
+### Note Grid
+
+Pooled Note Grid graphs transform note streams at playback time. A graph can be
+shared by patterns, overridden on individual notes, duplicated before diverging,
+or frozen into concrete notes.
+
+| Tool | Purpose |
+|------|---------|
+| `list_note_graphs`, `get_note_graph` | Discover graphs and inspect nodes, connections, metadata, and usage |
+| `create_note_graph`, `duplicate_note_graph`, `delete_note_graph` | Graph lifecycle |
+| `set_note_graph_metadata` | Update graph name, description, and color |
+| `add_note_graph_module`, `set_note_graph_module`, `remove_note_graph_module` | Edit nodes |
+| `connect_note_graph` | Connect the linear note-stream spine or Value/Gate modulation edges |
+| `set_note_graph_script` | Compile/install a YAMS `note_event` program on a Script node |
+| `set_pattern_note_graph`, `set_note_note_graph` | Bind or clear graph references at pattern or note scope |
+
+The node catalog includes Scale Quantize, Chord, Arpeggiator, Humanize,
+Euclidean Generator, Probability Gate, Note/Step LFO, Note Envelope, Script,
+Delay/Echo, and Ratchet. Read `get_note_graph` before editing to reuse the exact
+externally-tagged node configuration shape.
+
+### Mod Grid
+
+Pooled Mod Grid graphs run continuously at control rate and write additive
+offsets into the same target space used by automation. A global graph has one
+instance; a track-scope graph has one independent instance per assigned track.
+
+| Tool | Purpose |
+|------|---------|
+| `list_mod_graphs`, `get_mod_graph` | Discover graphs and inspect nodes, cables, scope, and assignments |
+| `create_mod_graph`, `duplicate_mod_graph`, `delete_mod_graph` | Graph lifecycle |
+| `set_mod_graph_metadata`, `set_mod_graph_scope`, `assign_mod_graph` | Metadata and execution scope |
+| `add_mod_graph_node`, `set_mod_graph_node`, `remove_mod_graph_node` | Edit hosted modules, sources, and Target nodes |
+| `connect_mod_graph`, `disconnect_mod_graph` | Edit validated control cables |
+| `list_mod_targets` | Discover writable global, track, instrument, and module targets |
+
+Source nodes include macros, transport, MIDI CC, and smoothed audio taps;
+hosted module nodes reuse compatible control modules such as LFO/MSEG. Target
+nodes identify their destination by stable address.
+
 ### Tracks & Arrangement
 
 | Tool | Purpose |
@@ -257,6 +302,19 @@ optional fields beyond pitch/start/duration/velocity:
 |------|---------|
 | `set_instrument_mixer` | Volume / pan / muted / solo / enabled per instrument, array of updates |
 | `set_instrument_midi_channel` | Multitimbral routing (one or many) |
+
+### Mixer, Returns & Master Effects
+
+| Tool | Purpose |
+|------|---------|
+| `list_return_busses`, `create_return_bus`, `delete_return_bus`, `rename_return_bus` | Return-bus lifecycle |
+| `set_track_send`, `set_return_send`, `remove_track_send`, `remove_return_send` | Track-to-return and return-to-return routing |
+| `set_return_bus_mixer`, `set_return_bus_description`, `set_return_bus_color` | Return metadata and channel controls |
+| `list_return_busses`, `add_return_effect`, `remove_return_effect`, `reorder_return_effect` | Inspect and edit return insert chains |
+| `set_return_effect_parameter`, `set_return_effect_enabled` | Return-effect control |
+| `list_master_effects`, `add_master_effect`, `remove_master_effect`, `reorder_master_effect` | Master insert chain |
+| `set_master_effect_parameter`, `set_master_effect_enabled` | Master-effect control |
+| `get_master_volume`, `set_master_volume` | Master output level |
 
 ### Automation
 
@@ -283,8 +341,28 @@ Offline-rendered, deterministic, quantitative feedback. These let an agent hear 
 | `analyze_mix_bus` | LUFS-I, peak, RMS, crest factor, 4-band frequency balance, stereo correlation, mid/side energy, mono-compat score, clipped-sample count |
 | `analyze_section` | Same as `analyze_mix_bus` plus per-track contribution breakdown (via soloing) |
 
-All three are bit-exact reproducible across calls — `fastrand` is reseeded and `BTreeMap` is used for module
-iteration.
+All three are bit-exact reproducible across calls — `fastrand` is reseeded and
+`BTreeMap` is used for module iteration.
+
+Additional tools cover spectra and spectrograms, note and patch sweeps,
+arrangement/form/motif/tension analysis, drum groove and bass-drum lock,
+masking, return/master-chain contribution, gain staging, and before/after mix
+comparison. Discover their exact inputs from the live schemas rather than
+assuming all analysis tools share the same scope fields.
+
+### YAMS Scripting
+
+| Tool | Purpose |
+|------|---------|
+| `get_yams_reference` | Return the canonical YAMS reference used by this build |
+| `set_mod_matrix_script` | Install/clear YAMS on a Mod Matrix, Script, or AudioScript module |
+| `set_note_graph_script` | Install/clear the note-event dialect on a Note Grid Script node |
+
+`set_mod_matrix_script.slot` is 1-based: Mod Matrix accepts `1..=16`; Script
+and AudioScript are each one program and require slot `1`. Script exposes
+`in1..in4` and `out1..out4`; AudioScript processes stereo audio per sample.
+Both module hosts may declare persistent, automatable `param` knobs. See
+[`docs/yams.md`](yams.md) before authoring programs.
 
 ### Samples & Sampler
 
@@ -451,15 +529,16 @@ mod-matrix slot-source mismatches. Run it after any patch edit to catch broken g
                          ▼
 ┌─────────────────────────────────────────────────────────┐
 │  synth_mcp::server (rmcp + axum)                        │
-│  • 175+ #[tool] handlers                                │
+│  • 200+ validated tool handlers                         │
 │  • Validates JSON params, serializes results            │
 └────────────────────────┬────────────────────────────────┘
                          │  SynthBridge trait (primitive types only)
                          ▼
 ┌─────────────────────────────────────────────────────────┐
 │  AppSynthBridge (in pertylizer crate)                   │
-│  • Reads EngineState snapshots (Arc<RwLock<…>>)         │
-│  • Sends EngineCommands via lock-free MPSC              │
+│  • Reads shared atomics and immutable project snapshots │
+│  • Publishes edits through SharedSong / ArcSwap         │
+│  • Sends EngineCommands through a lock-free ring buffer │
 └────────────────────────┬────────────────────────────────┘
                          │  Non-blocking channel send / snapshot read
                          ▼
@@ -478,8 +557,9 @@ rendered to a buffer. The live engine is untouched.
 
 ### Real-time safety guarantees
 
-- All MCP→engine writes go through an MPSC `EngineCommand` queue (non-blocking send).
-- All engine→MCP reads go through `EngineState` snapshots (non-blocking `RwLock` read).
+- Real-time MCP→engine writes go through the lock-free `EngineCommand` ring buffer.
+- Engine status is read from shared atomics; sequencer readers use immutable
+  `Arc<Song>` snapshots published by `SharedSong` through `ArcSwap`.
 - Heavy work (offline render, sample loading, project I/O) happens on the MCP thread, never on the audio thread.
 
 ---
@@ -519,5 +599,6 @@ rendered to a buffer. The live engine is untouched.
 ## See Also
 
 - [`README.md`](../README.md) — main project overview
+- [`docs/yams.md`](yams.md) — canonical YAMS language and host-dialect reference
 - [`docs/history.md`](history.md) — version history including MCP tool additions
 - [Model Context Protocol spec](https://modelcontextprotocol.io)

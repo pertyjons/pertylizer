@@ -5229,7 +5229,7 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Install or clear a YAMS script on a Mod Matrix (`mmx-N`), Script (`scr-N`), OR AudioScript (`asc-N`) module slot (Step 2) — despite the name, `module_id` may be any of the three. With a non-empty `source`, the script is compiled (a compile error is returned with diagnostics) and its `out` value becomes the slot's output: a Mod Matrix slot's modulation offset (replacing amount × source), a Script module's `outN` port value, or an AudioScript module's per-sample audio-rate program. An empty `source` clears the slot back to scalar/silent behaviour (an `asc` with no script passes 0). `slot` is 1-based, matching get_mod_matrix_routings (Mod Matrix: 1..=16; Script module: 1..=8, driving out1..out8; AudioScript: slot 1). YAMS reads `src`-bound module outputs/params (e.g. `src lfo = lfo-1.out`) plus macros (velocity, mod_wheel, …) and context (gate, age, cr, sr, note_hz), and assigns a normalized value to `out`. Read installed scripts back via get_mod_matrix_routings (mmx) or get_module_info (scr/asc `scripts` array); see get_yams_reference for the language."
+        description = "Install or clear YAMS on a Mod Matrix (`mmx-N`), Script (`scr-N`), or AudioScript (`asc-N`) module. Despite the historical tool name, `module_id` selects the dialect. A Mod Matrix program writes one normalized offset with `out`; a Script is one control-rate program with `in1..in4` and `out1..out4` (bare `out` aliases `out1`); an AudioScript is one per-sample stereo program. `param` declarations expose real knobs on Script and AudioScript modules. An empty `source` clears the selected slot/program. `slot` is 1-based: Mod Matrix accepts 1..=16; Script and AudioScript require slot 1. Read back with get_mod_matrix_routings (mmx) or get_module_info (scr/asc); see get_yams_reference for the complete language."
     )]
     async fn set_mod_matrix_script(&self, params: Parameters<SetModMatrixScriptParam>) -> String {
         let p = params.0;
@@ -9606,13 +9606,7 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Get the full YAMS (Yet Another Modulation Script) language reference as \
-                       Markdown: grammar, statements (src/let/out, arr lookup tables), the function \
-                       set, context variables, macros, and the array index / OOB rules. Read this \
-                       before authoring a script for `set_mod_matrix_script`, which installs YAMS on \
-                       a Mod Matrix OR Script (scr) module slot. Read back installed scripts via \
-                       `get_module_info` (Script modules expose a `scripts` array) or \
-                       `get_mod_matrix_routings` (Mod Matrix slots expose `script`)."
+        description = "Get the full YAMS (Yet Another Modulation Script) Markdown reference: shared grammar, functions, arrays, state and `param` knobs, plus the Mod Matrix, Script (4 CV inputs/outputs), AudioScript, and Note Grid note-event dialects. Read this before using set_mod_matrix_script or set_note_graph_script."
     )]
     async fn get_yams_reference(&self, _params: Parameters<NoParams>) -> String {
         synth_script::REFERENCE.to_string()
