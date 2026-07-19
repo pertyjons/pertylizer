@@ -1158,7 +1158,7 @@ fn edit_target_body(
             ui.separator();
         }
         for (seq_id, name) in &state.instruments {
-            ui.menu_button(format!("{}: {name}", seq_id.0), |ui| {
+            ui.menu_button(format!("{}: {name}", seq_id.as_u64()), |ui| {
                 ui.set_min_width(150.0);
                 for param in [AutoInstrumentParam::Volume, AutoInstrumentParam::Pan] {
                     let t = AutomationTarget::Instrument {

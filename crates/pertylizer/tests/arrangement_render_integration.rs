@@ -437,8 +437,8 @@ fn render_fails_when_no_instruments_loaded() {
     let (mut engine, handle) = SynthEngine::new();
     let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
     let stream_info = synth_core::StreamInfo {
-        sample_rate: HwSampleRate(TEST_SR),
-        buffer_size: synth_core::BufferSize(256),
+        sample_rate: HwSampleRate::new(TEST_SR),
+        buffer_size: synth_core::BufferSize::new(256),
         channels: synth_core::ChannelCount::Stereo,
         output_latency: std::time::Duration::ZERO,
         input_latency: None,

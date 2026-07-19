@@ -814,8 +814,8 @@ mod tests {
             start_beat: 1,
             end_bar: 1,
             end_beat: 1,
-            start_tick: 0,
-            end_tick: 0,
+            start_tick: synth_sequencer::Tick::ZERO,
+            end_tick: synth_sequencer::Tick::ZERO,
             metrics: MixBusMetrics {
                 sample_rate: 44100,
                 duration_seconds: 1.0,
@@ -852,7 +852,9 @@ mod tests {
 
     fn empty_harmony() -> AnalyzeHarmonyResult {
         AnalyzeHarmonyResult {
-            scope: HarmonyScope::Pattern { pattern_id: 0 },
+            scope: HarmonyScope::Pattern {
+                pattern_id: synth_sequencer::PatternId::new(0),
+            },
             chords: Vec::new(),
             inferred_key: Some(HarmonyKeyEstimate {
                 tonic: 0,

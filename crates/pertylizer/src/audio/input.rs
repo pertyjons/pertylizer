@@ -124,7 +124,7 @@ impl AudioInputManager {
     pub fn start_recording(&mut self) {
         if self.state == InputState::Monitoring {
             // Pre-allocate for ~30 seconds of stereo audio
-            let capacity = self.sample_rate.0 as usize * self.channels as usize * 30;
+            let capacity = self.sample_rate.as_u32() as usize * self.channels as usize * 30;
             self.record_buffer = Vec::with_capacity(capacity);
             self.state = InputState::Recording;
         }
@@ -192,10 +192,10 @@ impl AudioInputManager {
 
     /// Get the recording duration in seconds.
     pub fn recorded_seconds(&self) -> f64 {
-        if self.sample_rate.0 == 0 {
+        if self.sample_rate.as_u32() == 0 {
             return 0.0;
         }
-        self.recorded_frames() as f64 / f64::from(self.sample_rate.0)
+        self.recorded_frames() as f64 / f64::from(self.sample_rate.as_u32())
     }
 
     /// Get the number of channels.

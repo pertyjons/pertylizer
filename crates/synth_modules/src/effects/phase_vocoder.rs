@@ -70,7 +70,7 @@ impl PhaseVocoder {
         };
 
         Self {
-            pitch_shift: Semitones(0.0),
+            pitch_shift: Semitones::ZERO,
             freeze: false,
             fft_size_option: FftSizeOption::Fft1024,
             mix: NormalizedValue::MAX,
@@ -195,7 +195,7 @@ impl Describable for PhaseVocoder {
             .parameter(
                 ParameterDescriptor::float(
                     "pitch_shift",
-                    Param::PhaseVocoder(PhaseVocoderParam::PitchShift(Semitones(0.0))),
+                    Param::PhaseVocoder(PhaseVocoderParam::PitchShift(Semitones::ZERO)),
                     "Pitch Shift",
                 )
                 .description("Pitch shift in semitones")
@@ -242,7 +242,7 @@ impl AudioEffect for PhaseVocoder {
     fn process(&mut self, input: &[f32], output: &mut [f32], _context: &ProcessContext<'_>) {
         let num_frames = input.len() / 2;
         let mix = self.mix.as_f32();
-        let shift_ratio = 2.0f32.powf(self.pitch_shift.0 / 12.0);
+        let shift_ratio = 2.0f32.powf(self.pitch_shift.as_f32() / 12.0);
         let freeze = self.freeze;
         let fft_size = self.fft_size_option.size();
         let hop_size = fft_size / 4;
@@ -382,7 +382,7 @@ impl AudioEffect for PhaseVocoder {
         if let Param::PhaseVocoder(p) = param {
             #[allow(clippy::cast_precision_loss)]
             Some(match p {
-                PhaseVocoderParam::PitchShift(_) => self.pitch_shift.0,
+                PhaseVocoderParam::PitchShift(_) => self.pitch_shift.as_f32(),
                 PhaseVocoderParam::Freeze(_) => {
                     if self.freeze {
                         1.0
@@ -448,7 +448,7 @@ mod tests {
     fn fft_size_switch_and_freeze_stays_finite() {
         let mut pv = PhaseVocoder::new();
         pv.set_param(Param::PhaseVocoder(PhaseVocoderParam::PitchShift(
-            Semitones(7.0),
+            Semitones::new(7.0),
         )));
         let frames = 400usize;
         let input: Vec<f32> = (0..frames * 2)

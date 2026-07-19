@@ -103,7 +103,7 @@ impl PlaybackSpeed {
     /// `speed = 2^((target_note - root_note) / 12.0)`
     #[inline]
     pub fn from_note_offset(target: MidiNote, root: MidiNote) -> Self {
-        let semitones = f64::from(target.0) - f64::from(root.0);
+        let semitones = f64::from(target.as_u8()) - f64::from(root.as_u8());
         Self(2.0_f64.powf(semitones / 12.0))
     }
 }
@@ -200,9 +200,9 @@ impl SampleMeta {
     /// Duration in seconds.
     #[inline]
     pub fn duration_seconds(&self) -> f64 {
-        if self.sample_rate.0 == 0 {
+        if self.sample_rate.as_u32() == 0 {
             return 0.0;
         }
-        self.frame_count.as_usize() as f64 / f64::from(self.sample_rate.0)
+        self.frame_count.as_usize() as f64 / f64::from(self.sample_rate.as_u32())
     }
 }

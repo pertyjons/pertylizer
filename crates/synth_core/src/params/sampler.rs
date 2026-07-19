@@ -12,7 +12,19 @@ use crate::{Cents, Gain, NormalizedValue};
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
 #[repr(transparent)]
-pub struct SampleId(pub u64);
+pub struct SampleId(u64);
+
+impl SampleId {
+    #[must_use]
+    pub const fn new(id: u64) -> Self {
+        Self(id)
+    }
+
+    #[must_use]
+    pub const fn as_u64(self) -> u64 {
+        self.0
+    }
+}
 
 /// Playback mode — how the sample responds to `NoteOn`/`NoteOff`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -62,7 +74,7 @@ impl SamplerParam {
     /// Saves call sites from spelling out `SampleSelect(SampleId(id))`.
     #[must_use]
     pub const fn sample_select(id: u64) -> Self {
-        Self::SampleSelect(SampleId(id))
+        Self::SampleSelect(SampleId::new(id))
     }
 
     /// Check if two params are the same kind (ignoring values).
@@ -101,7 +113,7 @@ impl SamplerParam {
             Self::PlayMode(m) => *m as u8 as f32,
             Self::Direction(d) => *d as u8 as f32,
             Self::VelocitySensitivity(v) => v.as_f32(),
-            Self::FineTune(c) => c.0,
+            Self::FineTune(c) => c.as_f32(),
             Self::StartOffset(v) => v.as_f32(),
         }
     }
@@ -109,7 +121,7 @@ impl SamplerParam {
     /// Create same param type with new f32 value.
     pub fn with_f32(&self, value: f32) -> Self {
         match self {
-            Self::SampleSelect(_) => Self::SampleSelect(SampleId(value as u64)),
+            Self::SampleSelect(_) => Self::SampleSelect(SampleId::new(value as u64)),
             Self::PitchTracking(_) => Self::PitchTracking(value > 0.5),
             Self::Level(_) => Self::Level(Gain::new(value)),
             Self::PlayMode(_) => {

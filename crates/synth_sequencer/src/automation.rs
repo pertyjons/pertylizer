@@ -331,7 +331,7 @@ impl AutomationTarget {
     pub fn display_name(&self) -> String {
         match self {
             Self::Instrument { instrument, param } => {
-                format!("Inst {} {}", instrument.0, param.display_name())
+                format!("Inst {} {}", instrument.as_u64(), param.display_name())
             }
             Self::Track { track, param } => match track {
                 Some(track) => format!("Track {} {}", track.0, param.display_name()),
@@ -346,7 +346,7 @@ impl AutomationTarget {
             } => {
                 format!(
                     "Inst {} {module_type:?} {instance} {param_id}",
-                    instrument.0
+                    instrument.as_u64()
                 )
             }
         }
@@ -453,20 +453,24 @@ impl TrackParam {
 /// Semitone span of the bipolar [`TrackParam::Pitch`] lane encoding: lane
 /// value 0.0 = −48 st, 0.5 = 0 st (no offset), 1.0 = +48 st. ±48 st covers
 /// the largest tracker portamento spans (four octaves each way).
-pub const TRACK_PITCH_RANGE: Semitones = Semitones(48.0);
+pub const TRACK_PITCH_RANGE: Semitones = Semitones::new(48.0);
 
 /// Decode a normalized [`TrackParam::Pitch`] lane value into a semitone
 /// offset (bipolar around 0 at lane value 0.5).
 #[must_use]
 pub fn track_pitch_semitones(value: NormalizedValue) -> Semitones {
-    Semitones(value.to_bipolar().as_f32() * TRACK_PITCH_RANGE.0)
+    Semitones::new(value.to_bipolar().as_f32() * TRACK_PITCH_RANGE.as_f32())
 }
 
 /// Encode a semitone offset into the normalized [`TrackParam::Pitch`] lane
 /// form, clamped to the representable ±[`TRACK_PITCH_RANGE`].
 #[must_use]
 pub fn track_pitch_normalized(semitones: Semitones) -> NormalizedValue {
-    NormalizedValue::from_range(semitones.0, -TRACK_PITCH_RANGE.0, TRACK_PITCH_RANGE.0)
+    NormalizedValue::from_range(
+        semitones.as_f32(),
+        -TRACK_PITCH_RANGE.as_f32(),
+        TRACK_PITCH_RANGE.as_f32(),
+    )
 }
 
 /// Automatable global parameters.
@@ -615,22 +619,27 @@ mod tests {
     #[test]
     fn track_pitch_encoding_round_trips_and_clamps() {
         // Midpoint = no offset.
-        assert!(track_pitch_semitones(NormalizedValue::new(0.5)).0.abs() < 1e-4);
+        assert!(
+            track_pitch_semitones(NormalizedValue::new(0.5))
+                .as_f32()
+                .abs()
+                < 1e-4
+        );
         // Round trips inside the range.
         for st in [-48.0, -12.0, 0.0, 7.0, 48.0] {
-            let decoded = track_pitch_semitones(track_pitch_normalized(Semitones(st)));
+            let decoded = track_pitch_semitones(track_pitch_normalized(Semitones::new(st)));
             assert!(
-                (decoded.0 - st).abs() < 1e-3,
+                (decoded.as_f32() - st).abs() < 1e-3,
                 "round trip {st} st, got {}",
-                decoded.0
+                decoded.as_f32()
             );
         }
         // Beyond the range clamps to the boundary.
-        let clamped = track_pitch_semitones(track_pitch_normalized(Semitones(120.0)));
-        assert!((clamped.0 - TRACK_PITCH_RANGE.0).abs() < 1e-3);
+        let clamped = track_pitch_semitones(track_pitch_normalized(Semitones::new(120.0)));
+        assert!((clamped.as_f32() - TRACK_PITCH_RANGE.as_f32()).abs() < 1e-3);
         // The extremes decode to the documented boundaries.
-        assert!((track_pitch_semitones(NormalizedValue::new(1.0)).0 - 48.0).abs() < 1e-3);
-        assert!((track_pitch_semitones(NormalizedValue::new(0.0)).0 + 48.0).abs() < 1e-3);
+        assert!((track_pitch_semitones(NormalizedValue::new(1.0)).as_f32() - 48.0).abs() < 1e-3);
+        assert!((track_pitch_semitones(NormalizedValue::new(0.0)).as_f32() + 48.0).abs() < 1e-3);
     }
 
     #[test]

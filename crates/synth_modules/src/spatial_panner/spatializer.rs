@@ -196,7 +196,7 @@ mod tests {
     use super::*;
     use synth_core::Meters;
 
-    const SAMPLE_RATE: SampleRate = SampleRate(48_000.0);
+    const SAMPLE_RATE: SampleRate = SampleRate::new_unchecked(48_000.0);
     const SPEED_OF_SOUND: MetersPerSecond = MetersPerSecond::new(343.0);
 
     fn pos(x: f32, y: f32, z: f32) -> Position3 {

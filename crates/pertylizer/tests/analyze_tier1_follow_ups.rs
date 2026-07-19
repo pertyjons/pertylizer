@@ -21,7 +21,8 @@ use synth_core::{
 };
 use synth_engine::{EngineCommand, InstrumentCategory, ModuleId, SynthEngine};
 use synth_sequencer::{
-    Duration as SeqDuration, InstrumentId, PatternTick, Pitch, Song, Tick, TrackSend, Velocity,
+    Duration as SeqDuration, InstrumentId, PatternId, PatternTick, Pitch, Song, Tick, TrackId,
+    TrackSend, Velocity,
 };
 
 use pertylizer::mcp_bridge::{
@@ -129,8 +130,8 @@ fn setup_two_instruments(drum_category: InstrumentCategory) -> TwoInstrumentRig 
         .expect("set drum category");
 
     let stream_info = synth_core::StreamInfo {
-        sample_rate: HwSampleRate(TEST_SR),
-        buffer_size: synth_core::BufferSize(256),
+        sample_rate: HwSampleRate::new(TEST_SR),
+        buffer_size: synth_core::BufferSize::new(256),
         channels: synth_core::ChannelCount::Stereo,
         output_latency: std::time::Duration::ZERO,
         input_latency: None,
@@ -139,7 +140,7 @@ fn setup_two_instruments(drum_category: InstrumentCategory) -> TwoInstrumentRig 
 
     let mut block = vec![0.0f32; 256 * 2];
     let context = AudioCallbackContext {
-        sample_rate: HwSampleRate(TEST_SR),
+        sample_rate: HwSampleRate::new(TEST_SR),
         frames: 256,
         channels: 2,
         stream_time: 0.0,
@@ -213,8 +214,8 @@ fn setup_pad_and_uncategorized_kick() -> TwoInstrumentRig {
         .expect("add drum instrument");
 
     let stream_info = synth_core::StreamInfo {
-        sample_rate: HwSampleRate(TEST_SR),
-        buffer_size: synth_core::BufferSize(256),
+        sample_rate: HwSampleRate::new(TEST_SR),
+        buffer_size: synth_core::BufferSize::new(256),
         channels: synth_core::ChannelCount::Stereo,
         output_latency: std::time::Duration::ZERO,
         input_latency: None,
@@ -223,7 +224,7 @@ fn setup_pad_and_uncategorized_kick() -> TwoInstrumentRig {
 
     let mut block = vec![0.0f32; 256 * 2];
     let context = AudioCallbackContext {
-        sample_rate: HwSampleRate(TEST_SR),
+        sample_rate: HwSampleRate::new(TEST_SR),
         frames: 256,
         channels: 2,
         stream_time: 0.0,
@@ -267,8 +268,8 @@ fn setup_pad_and_uncategorized_sampler_kick() -> TwoInstrumentRig {
         .expect("add drum instrument");
 
     let stream_info = synth_core::StreamInfo {
-        sample_rate: HwSampleRate(TEST_SR),
-        buffer_size: synth_core::BufferSize(256),
+        sample_rate: HwSampleRate::new(TEST_SR),
+        buffer_size: synth_core::BufferSize::new(256),
         channels: synth_core::ChannelCount::Stereo,
         output_latency: std::time::Duration::ZERO,
         input_latency: None,
@@ -277,7 +278,7 @@ fn setup_pad_and_uncategorized_sampler_kick() -> TwoInstrumentRig {
 
     let mut block = vec![0.0f32; 256 * 2];
     let context = AudioCallbackContext {
-        sample_rate: HwSampleRate(TEST_SR),
+        sample_rate: HwSampleRate::new(TEST_SR),
         frames: 256,
         channels: 2,
         stream_time: 0.0,
@@ -331,7 +332,7 @@ fn build_drum_pollution_song() -> Arc<RwLock<Song>> {
     {
         let pat = song.pattern_mut(drum_pattern_id).expect("drum pattern");
         // Deliberately set the note's instrument to a value that does NOT
-        // match the drum track's instrument (InstrumentId(1)). Real
+        // match the drum track's instrument (InstrumentId::new(1)). Real
         // projects routinely leave `Note.instrument` at a default that
         // doesn't correspond to the placement's track — routing is decided
         // by the track, not the note. The inference path must not rely on
@@ -349,11 +350,11 @@ fn build_drum_pollution_song() -> Arc<RwLock<Song>> {
 
     let pad_track = song.create_track("Pad");
     if let Some(t) = song.track_mut(pad_track) {
-        t.instrument = InstrumentId(0);
+        t.instrument = InstrumentId::new(0);
     }
     let drum_track = song.create_track("Drums");
     if let Some(t) = song.track_mut(drum_track) {
-        t.instrument = InstrumentId(1);
+        t.instrument = InstrumentId::new(1);
     }
 
     song.place_pattern(pad_pattern_id, pad_track, Tick(0));
@@ -372,8 +373,8 @@ fn analyze_harmony_default_excludes_drum_tracks() {
         &rig.session,
         &shared,
         HarmonyQuery::Arrangement {
-            start_tick: Some(0),
-            end_tick: Some(3840),
+            start_tick: Some(Tick(0)),
+            end_tick: Some(Tick(3840)),
             exclude_drums: true,
             exclude_track_ids: vec![],
         },
@@ -422,8 +423,8 @@ fn analyze_harmony_default_excludes_uncategorized_inferred_drums() {
         &rig.session,
         &shared,
         HarmonyQuery::Arrangement {
-            start_tick: Some(0),
-            end_tick: Some(3840),
+            start_tick: Some(Tick(0)),
+            end_tick: Some(Tick(3840)),
             exclude_drums: true,
             exclude_track_ids: vec![],
         },
@@ -475,8 +476,8 @@ fn analyze_harmony_default_excludes_uncategorized_sampler_drums() {
         &rig.session,
         &shared,
         HarmonyQuery::Arrangement {
-            start_tick: Some(0),
-            end_tick: Some(3840),
+            start_tick: Some(Tick(0)),
+            end_tick: Some(Tick(3840)),
             exclude_drums: true,
             exclude_track_ids: vec![],
         },
@@ -519,8 +520,8 @@ fn analyze_harmony_explicit_disable_lets_drums_pollute() {
         &rig.session,
         &shared,
         HarmonyQuery::Arrangement {
-            start_tick: Some(0),
-            end_tick: Some(3840),
+            start_tick: Some(Tick(0)),
+            end_tick: Some(Tick(3840)),
             exclude_drums: false, // explicitly disable drum filter
             exclude_track_ids: vec![],
         },
@@ -555,10 +556,10 @@ fn analyze_harmony_excludes_by_track_id() {
         &rig.session,
         &shared,
         HarmonyQuery::Arrangement {
-            start_tick: Some(0),
-            end_tick: Some(3840),
+            start_tick: Some(Tick(0)),
+            end_tick: Some(Tick(3840)),
             exclude_drums: false, // category-based filter off
-            exclude_track_ids: vec![drum_track_id],
+            exclude_track_ids: vec![TrackId(drum_track_id)],
         },
         Some(3840),
     )
@@ -581,8 +582,19 @@ fn harmony_query_warns_exclude_options_in_pattern_scope() {
     // The flat→query mapper must WARN (not silently no-op) when a pattern id is
     // paired with them, and build a Pattern query that structurally omits them —
     // so internal callers can never express the nonsensical combo.
-    let (q, warns) = harmony_query_from_flat(Some(7), None, None, Some(false), Some(vec![1]));
-    assert!(matches!(q, HarmonyQuery::Pattern { pattern_id: 7 }));
+    let (q, warns) = harmony_query_from_flat(
+        Some(PatternId(7)),
+        None,
+        None,
+        Some(false),
+        Some(vec![TrackId(1)]),
+    );
+    assert!(matches!(
+        q,
+        HarmonyQuery::Pattern {
+            pattern_id: PatternId(7)
+        }
+    ));
     assert!(
         warns
             .iter()
@@ -597,13 +609,18 @@ fn harmony_query_warns_exclude_options_in_pattern_scope() {
     );
 
     // Default (None) exclude_drums + no track ids → no warnings.
-    let (q2, warns2) = harmony_query_from_flat(Some(7), None, None, None, None);
+    let (q2, warns2) = harmony_query_from_flat(Some(PatternId(7)), None, None, None, None);
     assert!(matches!(q2, HarmonyQuery::Pattern { .. }));
     assert!(warns2.is_empty(), "defaults must not warn: {warns2:?}");
 
     // Arrangement scope (no pattern id) never warns and carries the options.
-    let (q3, warns3) =
-        harmony_query_from_flat(None, Some(0), Some(3840), Some(false), Some(vec![2]));
+    let (q3, warns3) = harmony_query_from_flat(
+        None,
+        Some(Tick(0)),
+        Some(Tick(3840)),
+        Some(false),
+        Some(vec![TrackId(2)]),
+    );
     assert!(matches!(
         q3,
         HarmonyQuery::Arrangement {
@@ -651,11 +668,11 @@ fn build_two_track_song() -> Arc<RwLock<Song>> {
 
     let pad_track = song.create_track("Pad");
     if let Some(t) = song.track_mut(pad_track) {
-        t.instrument = InstrumentId(0);
+        t.instrument = InstrumentId::new(0);
     }
     let bass_track = song.create_track("Bass");
     if let Some(t) = song.track_mut(bass_track) {
-        t.instrument = InstrumentId(1);
+        t.instrument = InstrumentId::new(1);
     }
     song.place_pattern(pad_pattern_id, pad_track, Tick(0));
     song.place_pattern(bass_pattern_id, bass_track, Tick(0));
@@ -673,8 +690,8 @@ fn analyze_section_per_track_breakdown_emits_one_entry_per_track() {
         &rig.session,
         &rig.sample_library,
         &shared,
-        0,
-        3840,
+        Tick(0),
+        Tick(3840),
         Some(true),
         synth_mcp::AnalysisScope::default(),
     )
@@ -727,7 +744,7 @@ fn analyze_mix_bus_per_track_breakdown_emits_one_entry_per_track() {
         &rig.sample_library,
         &shared,
         10.0,
-        Some(0),
+        Some(Tick(0)),
         Some(true),
         synth_mcp::AnalysisScope::default(),
     )
@@ -751,7 +768,7 @@ fn analyze_mix_bus_per_track_breakdown_emits_one_entry_per_track() {
         &rig.sample_library,
         &shared,
         10.0,
-        Some(0),
+        Some(Tick(0)),
         None,
         synth_mcp::AnalysisScope::default(),
     )
@@ -775,7 +792,7 @@ fn analyze_master_chain_empty_chain_has_no_stages() {
         &rig.sample_library,
         &shared,
         10.0,
-        Some(0),
+        Some(Tick(0)),
         synth_mcp::AnalysisScope::default(),
     )
     .expect("master-chain analysis should succeed");
@@ -818,7 +835,7 @@ fn analyze_return_busses_reports_per_return_contribution() {
     }
     let pad_track = song.create_track("Pad");
     if let Some(t) = song.track_mut(pad_track) {
-        t.instrument = InstrumentId(0);
+        t.instrument = InstrumentId::new(0);
     }
     song.place_pattern(pad_pattern_id, pad_track, Tick(0));
 
@@ -836,14 +853,14 @@ fn analyze_return_busses_reports_per_return_contribution() {
         &rig.sample_library,
         &shared,
         1.0,
-        Some(0),
+        Some(Tick(0)),
         synth_mcp::AnalysisScope::default(),
     )
     .expect("return-bus analysis should succeed");
 
     assert_eq!(result.returns.len(), 1, "one return bus → one contribution");
     let c = &result.returns[0];
-    assert_eq!(c.return_id, rid.0);
+    assert_eq!(c.return_id, rid);
     assert_eq!(c.return_name, "Reverb");
     assert!(
         c.rms_delta_db > 0.0,
@@ -867,7 +884,7 @@ fn compare_mix_before_after_capture_then_compare_reports_deltas() {
         &shared,
         "capture",
         1.0,
-        Some(0),
+        Some(Tick(0)),
         Some("before".to_string()),
         synth_mcp::AnalysisScope::default(),
     )
@@ -893,7 +910,7 @@ fn compare_mix_before_after_capture_then_compare_reports_deltas() {
         &shared,
         "compare",
         1.0,
-        Some(0),
+        Some(Tick(0)),
         None,
         synth_mcp::AnalysisScope::default(),
     )
@@ -928,7 +945,7 @@ fn compare_mix_before_after_without_baseline_errors() {
         &shared,
         "compare",
         1.0,
-        Some(0),
+        Some(Tick(0)),
         None,
         synth_mcp::AnalysisScope::default(),
     )
@@ -951,7 +968,7 @@ fn analyze_return_busses_without_busses_warns() {
         &rig.sample_library,
         &shared,
         1.0,
-        Some(0),
+        Some(Tick(0)),
         synth_mcp::AnalysisScope::default(),
     )
     .expect("return-bus analysis should succeed");
@@ -980,8 +997,8 @@ fn analyze_section_per_track_pre_master_peak_compensates_for_pan_law() {
         &rig.session,
         &rig.sample_library,
         &shared,
-        0,
-        3840,
+        Tick(0),
+        Tick(3840),
         Some(true),
         synth_mcp::AnalysisScope::default(),
     )
@@ -1028,8 +1045,8 @@ fn analyze_section_without_per_track_flag_returns_empty_breakdown() {
         &rig.session,
         &rig.sample_library,
         &shared,
-        0,
-        3840,
+        Tick(0),
+        Tick(3840),
         None,
         synth_mcp::AnalysisScope::default(),
     )
@@ -1043,8 +1060,8 @@ fn analyze_section_without_per_track_flag_returns_empty_breakdown() {
         &rig.session,
         &rig.sample_library,
         &shared,
-        0,
-        3840,
+        Tick(0),
+        Tick(3840),
         Some(false),
         synth_mcp::AnalysisScope::default(),
     )
@@ -1068,8 +1085,8 @@ fn analyze_section_per_track_is_bit_exact_across_calls() {
         &rig.session,
         &rig.sample_library,
         &shared,
-        0,
-        3840,
+        Tick(0),
+        Tick(3840),
         Some(true),
         synth_mcp::AnalysisScope::default(),
     )
@@ -1078,8 +1095,8 @@ fn analyze_section_per_track_is_bit_exact_across_calls() {
         &rig.session,
         &rig.sample_library,
         &shared,
-        0,
-        3840,
+        Tick(0),
+        Tick(3840),
         Some(true),
         synth_mcp::AnalysisScope::default(),
     )
@@ -1135,8 +1152,8 @@ fn analyze_section_render_quality_controls_sample_rate() {
         &rig.session,
         &rig.sample_library,
         &shared,
-        0,
-        3840,
+        Tick(0),
+        Tick(3840),
         Some(true),
         synth_mcp::AnalysisScope::from_flags(None, None, None, synth_mcp::RenderQuality::Full),
     )
@@ -1158,8 +1175,8 @@ fn analyze_section_render_quality_controls_sample_rate() {
         &rig.session,
         &rig.sample_library,
         &shared,
-        0,
-        3840,
+        Tick(0),
+        Tick(3840),
         Some(true),
         synth_mcp::AnalysisScope::from_flags(None, None, None, synth_mcp::RenderQuality::Draft),
     )
@@ -1197,8 +1214,8 @@ fn analyze_masking_matrix_emits_pair_with_well_formed_bands() {
         &rig.session,
         &rig.sample_library,
         &shared,
-        Some(0),
-        Some(3840),
+        Some(Tick(0)),
+        Some(Tick(3840)),
         None,
         synth_mcp::AnalysisScope::default(),
     )
@@ -1265,8 +1282,8 @@ fn analyze_masking_matrix_is_deterministic_across_calls() {
         &rig.session,
         &rig.sample_library,
         &shared,
-        Some(0),
-        Some(3840),
+        Some(Tick(0)),
+        Some(Tick(3840)),
         None,
         synth_mcp::AnalysisScope::default(),
     )
@@ -1275,8 +1292,8 @@ fn analyze_masking_matrix_is_deterministic_across_calls() {
         &rig.session,
         &rig.sample_library,
         &shared,
-        Some(0),
-        Some(3840),
+        Some(Tick(0)),
+        Some(Tick(3840)),
         None,
         synth_mcp::AnalysisScope::default(),
     )
@@ -1321,8 +1338,8 @@ fn analyze_masking_matrix_rejects_inverted_range() {
         &rig.session,
         &rig.sample_library,
         &shared,
-        Some(3840),
-        Some(1920),
+        Some(Tick(3840)),
+        Some(Tick(1920)),
         None,
         synth_mcp::AnalysisScope::default(),
     )
@@ -1350,7 +1367,7 @@ fn analyze_masking_matrix_with_single_track_returns_no_pairs() {
     }
     let pad_track = song.create_track("Pad");
     if let Some(t) = song.track_mut(pad_track) {
-        t.instrument = InstrumentId(0);
+        t.instrument = InstrumentId::new(0);
     }
     song.place_pattern(pad_pattern_id, pad_track, Tick(0));
     let shared = McpSharedState::with_song(Arc::new(RwLock::new(song)));
@@ -1359,8 +1376,8 @@ fn analyze_masking_matrix_with_single_track_returns_no_pairs() {
         &rig.session,
         &rig.sample_library,
         &shared,
-        Some(0),
-        Some(3840),
+        Some(Tick(0)),
+        Some(Tick(3840)),
         None,
         synth_mcp::AnalysisScope::default(),
     )
@@ -1394,8 +1411,8 @@ fn analyze_masking_matrix_defaults_to_full_arrangement_when_range_omitted() {
     )
     .expect("default range should succeed");
     // The two-track fixture spans [0, 3840) — explicit and default ranges agree.
-    assert_eq!(result.start_tick, 0);
-    assert_eq!(result.end_tick, 3840);
+    assert_eq!(result.start_tick, Tick(0));
+    assert_eq!(result.end_tick, Tick(3840));
     assert_eq!(result.track_count, 2);
 }
 
@@ -1428,8 +1445,8 @@ fn analyze_section_master_effects_scope_reconstructs_live_master_chain() {
         .expect("add pad instrument");
 
     let stream_info = synth_core::StreamInfo {
-        sample_rate: HwSampleRate(TEST_SR),
-        buffer_size: synth_core::BufferSize(256),
+        sample_rate: HwSampleRate::new(TEST_SR),
+        buffer_size: synth_core::BufferSize::new(256),
         channels: synth_core::ChannelCount::Stereo,
         output_latency: std::time::Duration::ZERO,
         input_latency: None,
@@ -1438,7 +1455,7 @@ fn analyze_section_master_effects_scope_reconstructs_live_master_chain() {
 
     let mut block = vec![0.0f32; 256 * 2];
     let context = AudioCallbackContext {
-        sample_rate: HwSampleRate(TEST_SR),
+        sample_rate: HwSampleRate::new(TEST_SR),
         frames: 256,
         channels: 2,
         stream_time: 0.0,
@@ -1466,7 +1483,7 @@ fn analyze_section_master_effects_scope_reconstructs_live_master_chain() {
     }
     let pad_track = song.create_track("Pad");
     if let Some(t) = song.track_mut(pad_track) {
-        t.instrument = InstrumentId(0);
+        t.instrument = InstrumentId::new(0);
     }
     song.place_pattern(pad_pattern_id, pad_track, Tick(0));
     let shared = McpSharedState::with_song(Arc::new(RwLock::new(song)));
@@ -1476,8 +1493,8 @@ fn analyze_section_master_effects_scope_reconstructs_live_master_chain() {
         &session,
         &sample_library,
         &shared,
-        0,
-        3840,
+        Tick(0),
+        Tick(3840),
         None,
         synth_mcp::AnalysisScope::default(),
     )
@@ -1527,8 +1544,8 @@ fn analyze_section_master_effects_scope_reconstructs_live_master_chain() {
         &session,
         &sample_library,
         &shared,
-        0,
-        3840,
+        Tick(0),
+        Tick(3840),
         None,
         synth_mcp::AnalysisScope {
             master_effects: true,
@@ -1574,8 +1591,8 @@ fn analyze_master_chain_isolates_single_effect_contribution() {
         .expect("add pad instrument");
 
     let stream_info = synth_core::StreamInfo {
-        sample_rate: HwSampleRate(TEST_SR),
-        buffer_size: synth_core::BufferSize(256),
+        sample_rate: HwSampleRate::new(TEST_SR),
+        buffer_size: synth_core::BufferSize::new(256),
         channels: synth_core::ChannelCount::Stereo,
         output_latency: std::time::Duration::ZERO,
         input_latency: None,
@@ -1584,7 +1601,7 @@ fn analyze_master_chain_isolates_single_effect_contribution() {
 
     let mut block = vec![0.0f32; 256 * 2];
     let context = AudioCallbackContext {
-        sample_rate: HwSampleRate(TEST_SR),
+        sample_rate: HwSampleRate::new(TEST_SR),
         frames: 256,
         channels: 2,
         stream_time: 0.0,
@@ -1611,7 +1628,7 @@ fn analyze_master_chain_isolates_single_effect_contribution() {
     }
     let pad_track = song.create_track("Pad");
     if let Some(t) = song.track_mut(pad_track) {
-        t.instrument = InstrumentId(0);
+        t.instrument = InstrumentId::new(0);
     }
     song.place_pattern(pad_pattern_id, pad_track, Tick(0));
     let shared = McpSharedState::with_song(Arc::new(RwLock::new(song)));
@@ -1642,7 +1659,7 @@ fn analyze_master_chain_isolates_single_effect_contribution() {
         &sample_library,
         &shared,
         1.0,
-        Some(0),
+        Some(Tick(0)),
         synth_mcp::AnalysisScope::default(),
     )
     .expect("master-chain analysis should succeed");

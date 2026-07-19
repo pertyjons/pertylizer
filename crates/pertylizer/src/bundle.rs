@@ -127,10 +127,10 @@ pub fn save_bundle(
         metadata.samples.push(BundleSampleEntry {
             id,
             name: sample_meta.name.clone(),
-            sample_rate: sample_meta.sample_rate.0,
+            sample_rate: sample_meta.sample_rate.as_u32(),
             channels: sample_meta.channels.count(),
             frame_count: sample_meta.frame_count.as_usize(),
-            root_note: sample_meta.root_note.map(|n| n.0),
+            root_note: sample_meta.root_note.map(synth_core::MidiNote::as_u8),
             loop_region: sample_meta.loop_region.map(|l| BundleLoopRegion {
                 start: l.start.0,
                 end: l.end.0,
@@ -248,7 +248,7 @@ pub fn load_bundle(path: &Path, library: &mut SampleLibrary) -> Result<ProjectFi
                 // Apply metadata if available
                 if let Some(meta_entry) = meta_map.get(&sample_id) {
                     sample.meta.name = meta_entry.name.clone();
-                    sample.meta.root_note = meta_entry.root_note.map(synth_core::MidiNote);
+                    sample.meta.root_note = meta_entry.root_note.map(synth_core::MidiNote::new);
                     sample.meta.loop_region =
                         meta_entry.loop_region.map(|l| synth_sampler::LoopRegion {
                             start: synth_sampler::FrameIndex::new(l.start),
@@ -277,7 +277,7 @@ fn sample_to_wav_bytes(sample: &Sample) -> Result<Vec<u8>, synth_sampler::Sample
     let mut cursor = Cursor::new(Vec::new());
     let spec = hound::WavSpec {
         channels: sample.meta.channels.count(),
-        sample_rate: sample.meta.sample_rate.0,
+        sample_rate: sample.meta.sample_rate.as_u32(),
         bits_per_sample: 32,
         sample_format: hound::SampleFormat::Float,
     };
@@ -334,7 +334,7 @@ fn load_wav_from_bytes(
         id: synth_sampler::SampleId::new(0),
         name: "imported".to_string(),
         description: String::new(),
-        sample_rate: SampleRate(spec.sample_rate),
+        sample_rate: SampleRate::new(spec.sample_rate),
         channels,
         frame_count: SampleCount::new(frame_count),
         root_note: None,

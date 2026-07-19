@@ -97,8 +97,9 @@ fn fine_envelope_window_resolves_a_fast_attack() {
     });
     let rendered = make_mono_rendered(samples, note_frames, total_frames, SAMPLE_RATE);
 
-    let coarse = analyze_rendered_buffer(&rendered, 57, 100, 700, None); // default 50 ms
-    let fine = analyze_rendered_buffer_with_window(&rendered, 57, 100, 700, None, 2.0);
+    let coarse = analyze_rendered_buffer(&rendered, MidiNote::new(57), 100, 700, None); // default 50 ms
+    let fine =
+        analyze_rendered_buffer_with_window(&rendered, MidiNote::new(57), 100, 700, None, 2.0);
 
     // The chosen resolution is echoed back and drives the envelope length.
     assert_eq!(coarse.envelope_window_ms, 50.0);
@@ -138,7 +139,7 @@ fn stereo_width_high_for_antiphase_signal() {
         (s, -s)
     });
     let rendered = make_stereo_rendered(samples, note_frames, total_frames, SAMPLE_RATE);
-    let result = analyze_rendered_buffer(&rendered, 57, 100, 700, None);
+    let result = analyze_rendered_buffer(&rendered, MidiNote::new(57), 100, 700, None);
 
     let width = result.stereo_width.expect("stereo_width should be set");
     assert!(
@@ -161,7 +162,7 @@ fn stereo_width_zero_for_mono() {
         (TAU * 220.0 * t).sin() * 0.5
     });
     let rendered = make_mono_rendered(samples, note_frames, total_frames, SAMPLE_RATE);
-    let result = analyze_rendered_buffer(&rendered, 57, 100, 700, None);
+    let result = analyze_rendered_buffer(&rendered, MidiNote::new(57), 100, 700, None);
 
     assert!(
         result.stereo_width.is_none(),
@@ -182,7 +183,7 @@ fn stereo_width_zero_for_identical_lr() {
         (s, s)
     });
     let rendered = make_stereo_rendered(samples, note_frames, total_frames, SAMPLE_RATE);
-    let result = analyze_rendered_buffer(&rendered, 57, 100, 700, None);
+    let result = analyze_rendered_buffer(&rendered, MidiNote::new(57), 100, 700, None);
 
     let width = result.stereo_width.expect("stereo_width should be set");
     assert!(
@@ -219,7 +220,7 @@ fn release_window_does_not_cross_note_off_on_short_tail() {
         (s, s)
     });
     let rendered = make_stereo_rendered(samples, note_frames, total_frames, sr);
-    let result = analyze_rendered_buffer(&rendered, 57, 100, note_ms, None);
+    let result = analyze_rendered_buffer(&rendered, MidiNote::new(57), 100, note_ms, None);
 
     let release_start_ms = result
         .release_window_start_ms
@@ -263,7 +264,7 @@ fn release_window_offset_applied_when_tail_allows() {
         (s, s)
     });
     let rendered = make_stereo_rendered(samples, note_frames, total_frames, sr);
-    let result = analyze_rendered_buffer(&rendered, 57, 100, note_ms, None);
+    let result = analyze_rendered_buffer(&rendered, MidiNote::new(57), 100, note_ms, None);
 
     let release_start_ms = result
         .release_window_start_ms
@@ -300,7 +301,7 @@ fn fundamental_detected_for_antiphase_tonal_signal() {
     });
     let rendered = make_stereo_rendered(samples, note_frames, total_frames, sr);
     // expected_note=A3 (57) so the fundamental search is anchored at 220 Hz.
-    let result = analyze_rendered_buffer(&rendered, 57, 100, note_ms, Some(57));
+    let result = analyze_rendered_buffer(&rendered, MidiNote::new(57), 100, note_ms, Some(57));
 
     let f0 = result.fundamental_hz;
     assert!(
@@ -344,7 +345,7 @@ fn fundamental_per_channel_distinct_tones() {
     });
     let rendered = make_stereo_rendered(samples, note_frames, total_frames, sr);
     // No `expected_note` — the wide search range catches both tones.
-    let result = analyze_rendered_buffer(&rendered, 57, 100, note_ms, None);
+    let result = analyze_rendered_buffer(&rendered, MidiNote::new(57), 100, note_ms, None);
 
     assert_eq!(
         result.analysis_signal_mode,
@@ -411,7 +412,7 @@ fn analysis_signal_mode_mono_for_mono_input() {
         (TAU * 220.0 * t).sin() * 0.5
     });
     let rendered = make_mono_rendered(samples, note_frames, total_frames, SAMPLE_RATE);
-    let result = analyze_rendered_buffer(&rendered, 57, 100, 700, None);
+    let result = analyze_rendered_buffer(&rendered, MidiNote::new(57), 100, 700, None);
 
     assert_eq!(
         result.analysis_signal_mode,
@@ -454,7 +455,7 @@ fn analysis_signal_mode_stereo_for_stereo_input() {
         (s, -s)
     });
     let rendered = make_stereo_rendered(samples, note_frames, total_frames, sr);
-    let result = analyze_rendered_buffer(&rendered, 57, 100, note_ms, Some(57));
+    let result = analyze_rendered_buffer(&rendered, MidiNote::new(57), 100, note_ms, Some(57));
 
     assert_eq!(
         result.analysis_signal_mode,
@@ -503,7 +504,7 @@ fn fundamental_per_channel_confidence_drops_for_noisy_channel() {
         (left, right)
     });
     let rendered = make_stereo_rendered(samples, note_frames, total_frames, sr);
-    let result = analyze_rendered_buffer(&rendered, 57, 100, note_ms, Some(57));
+    let result = analyze_rendered_buffer(&rendered, MidiNote::new(57), 100, note_ms, Some(57));
 
     let c_l = result
         .fundamental_left_confidence

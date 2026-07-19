@@ -1,20 +1,13 @@
 //! Bridge trait for connecting the MCP server to the synth engine.
 //!
 //! Implementors provide read access to engine state and write access
-//! via the command sender. The trait uses primitive types to avoid
-//! leaking synth_engine types into the MCP crate.
-//!
-//! # Design: raw primitives at the serialization boundary
-//!
-//! All bridge methods accept and return raw primitives (`f32`, `u8`, `u64`, etc.)
-//! rather than domain newtypes (`Hertz`, `BipolarValue`, `NormalizedValue`, etc.).
-//! This is intentional: the MCP protocol exchanges JSON, so the bridge sits at the
-//! serialization boundary where type-safe wrappers add friction without safety.
-//! Validation of ranges and semantics happens in `server.rs` (the MCP tool layer)
-//! before values reach the bridge, and conversion to domain newtypes happens in the
-//! bridge implementation (`mcp_bridge.rs` in the `pertylizer` crate).
+//! via the command sender. Domain concepts use their newtypes throughout the MCP
+//! boundary while serde keeps the JSON representation compact.
 
-use synth_core::InstrumentId;
+use synth_core::{BipolarValue, Bpm, Gain, InstrumentId, MidiChannel, MidiNote, Semitones};
+use synth_sequencer::{
+    ModGraphId, ModNodeId, NoteGraphId, NoteId, NoteModuleId, PatternId, ReturnBusId, Tick, TrackId,
+};
 
 use crate::error::McpBridgeError;
 use crate::types::{
@@ -81,7 +74,7 @@ pub struct BridgeExpression {
 /// Note data for batch add/replace operations.
 pub struct BridgeNoteData {
     /// MIDI pitch (0-127).
-    pub pitch: u8,
+    pub pitch: MidiNote,
     /// Start position in beats.
     pub start_beat: f32,
     /// Duration in beats.
@@ -100,9 +93,9 @@ pub struct BridgeNoteData {
 /// Note update for batch update operations.
 pub struct BridgeNoteUpdate {
     /// Note ID to update.
-    pub note_id: u64,
+    pub note_id: NoteId,
     /// New pitch, or None to keep current.
-    pub pitch: Option<u8>,
+    pub pitch: Option<MidiNote>,
     /// New start position in beats, or None to keep current.
     pub start_beat: Option<f32>,
     /// New duration in beats, or None to keep current.
@@ -134,11 +127,11 @@ pub struct BridgeTrackData {
 /// Placement data for batch arrange operations.
 pub struct BridgePlacementData {
     /// Pattern ID.
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     /// Track ID.
-    pub track_id: u16,
+    pub track_id: TrackId,
     /// Exact start position in ticks.
-    pub start_tick: u64,
+    pub start_tick: Tick,
     /// Transposition in semitones.
     pub transpose_semitones: f32,
     /// Linear placement gain.
@@ -149,11 +142,11 @@ pub struct BridgePlacementData {
 
 /// Partial update to one existing arrangement placement.
 pub struct BridgePlacementUpdate {
-    pub pattern_id: u32,
-    pub track_id: u16,
-    pub start_tick: u64,
-    pub new_track_id: Option<u16>,
-    pub new_start_tick: Option<u64>,
+    pub pattern_id: PatternId,
+    pub track_id: TrackId,
+    pub start_tick: Tick,
+    pub new_track_id: Option<TrackId>,
+    pub new_start_tick: Option<Tick>,
     pub transpose_semitones: Option<f32>,
     pub gain: Option<f32>,
     /// Omitted means unchanged; `Some(None)` clears the override.
@@ -167,7 +160,7 @@ pub struct BridgeSongPlacement {
     /// Index into the tracks array.
     pub track_index: usize,
     /// Exact start position in ticks.
-    pub start_tick: u64,
+    pub start_tick: Tick,
     pub transpose_semitones: f32,
     pub gain: f32,
     pub length_ticks: Option<u32>,
@@ -222,11 +215,11 @@ pub struct BridgeInstrumentDef {
     /// Instrument name.
     pub name: String,
     /// Optional MIDI channel (1-16).
-    pub midi_channel: Option<u8>,
+    pub midi_channel: Option<MidiChannel>,
     /// Optional volume (0.0-2.0).
-    pub volume: Option<f32>,
+    pub volume: Option<Gain>,
     /// Optional pan (-1.0 = left, 0.0 = center, 1.0 = right).
-    pub pan: Option<f32>,
+    pub pan: Option<BipolarValue>,
     /// Modules to create.
     pub modules: Vec<BridgeModuleDef>,
     /// Connections between modules (using array indices).
@@ -317,7 +310,7 @@ pub struct SpectrumSource {
     /// (Render only) solo this instrument; `None` = full mix.
     pub instrument_id: Option<InstrumentId>,
     /// (Render only) absolute start tick (default 0).
-    pub start_tick: Option<u64>,
+    pub start_tick: Option<Tick>,
     /// (Render only) seconds to render (default 10).
     pub duration_seconds: Option<f32>,
     /// (Sample only) offset into the decoded sample to start analysing, in ms
@@ -681,14 +674,14 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn set_instrument_volume(
         &self,
         instrument_id: InstrumentId,
-        volume: f32,
+        volume: Gain,
     ) -> Result<(), McpBridgeError>;
 
     /// Set instrument pan (-1.0 = left, 0.0 = center, 1.0 = right).
     fn set_instrument_pan(
         &self,
         instrument_id: InstrumentId,
-        pan: f32,
+        pan: BipolarValue,
     ) -> Result<(), McpBridgeError>;
 
     /// Set instrument mute state.
@@ -709,7 +702,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn set_instrument_midi_channel(
         &self,
         instrument_id: InstrumentId,
-        channel: u8,
+        channel: MidiChannel,
     ) -> Result<(), McpBridgeError>;
 
     /// Set instrument enabled state.
@@ -778,10 +771,15 @@ pub trait SynthBridge: Send + Sync + 'static {
     ) -> Result<ParameterInfo, McpBridgeError>;
 
     /// Send a MIDI note on.
-    fn note_on(&self, note: u8, velocity: u8, channel: u8) -> Result<(), McpBridgeError>;
+    fn note_on(
+        &self,
+        note: MidiNote,
+        velocity: u8,
+        channel: MidiChannel,
+    ) -> Result<(), McpBridgeError>;
 
     /// Send a MIDI note off.
-    fn note_off(&self, note: u8, channel: u8) -> Result<(), McpBridgeError>;
+    fn note_off(&self, note: MidiNote, channel: MidiChannel) -> Result<(), McpBridgeError>;
 
     // === Example patches ===
 
@@ -1023,18 +1021,18 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn get_song_info(&self) -> Result<SongInfo, McpBridgeError>;
 
     /// Set the song tempo in BPM.
-    fn set_song_tempo(&self, bpm: f32) -> Result<(), McpBridgeError>;
+    fn set_song_tempo(&self, bpm: Bpm) -> Result<(), McpBridgeError>;
 
     /// Add or replace tempo-map points as `(tick, bpm, ramp)`. Each point
     /// replaces any existing change at the same tick; `ramp` selects a linear
     /// ramp toward the next point (`true`) or a step change (`false`). This
     /// edits the tempo *map*, not the global default tempo (see
     /// [`Self::set_song_tempo`]).
-    fn set_tempo_at(&self, points: &[(u64, f32, bool)]) -> Result<(), McpBridgeError>;
+    fn set_tempo_at(&self, points: &[(Tick, f32, bool)]) -> Result<(), McpBridgeError>;
 
     /// Remove tempo-map points at the given absolute ticks. Returns how many
     /// were actually removed.
-    fn remove_tempo_at(&self, ticks: &[u64]) -> Result<usize, McpBridgeError>;
+    fn remove_tempo_at(&self, ticks: &[Tick]) -> Result<usize, McpBridgeError>;
 
     /// Read the full tempo map, sorted by tick. Does not include the global
     /// default tempo.
@@ -1061,36 +1059,36 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn list_patterns(&self) -> Result<Vec<PatternInfo>, McpBridgeError>;
 
     /// Create a new pattern with the given name and length in beats.
-    fn create_pattern(&self, name: &str, length_beats: f32) -> Result<u32, McpBridgeError>;
+    fn create_pattern(&self, name: &str, length_beats: f32) -> Result<PatternId, McpBridgeError>;
 
     /// Delete a pattern by ID.
-    fn delete_pattern(&self, pattern_id: u32) -> Result<(), McpBridgeError>;
+    fn delete_pattern(&self, pattern_id: PatternId) -> Result<(), McpBridgeError>;
 
     // === Sequencer: Notes ===
 
     /// List all notes in a pattern.
-    fn list_notes(&self, pattern_id: u32) -> Result<Vec<NoteInfo>, McpBridgeError>;
+    fn list_notes(&self, pattern_id: PatternId) -> Result<Vec<NoteInfo>, McpBridgeError>;
 
     /// Add a note to a pattern. Returns the created note info.
     /// The note routes through its track's instrument at arrangement time.
     fn add_note(
         &self,
-        pattern_id: u32,
-        pitch: u8,
+        pattern_id: PatternId,
+        pitch: MidiNote,
         start_beat: f32,
         duration_beats: f32,
         velocity: u8,
     ) -> Result<NoteInfo, McpBridgeError>;
 
     /// Remove a note from a pattern.
-    fn remove_note(&self, pattern_id: u32, note_id: u64) -> Result<(), McpBridgeError>;
+    fn remove_note(&self, pattern_id: PatternId, note_id: NoteId) -> Result<(), McpBridgeError>;
 
     /// Update a note's properties (only provided fields are changed). Returns updated note info.
     fn update_note(
         &self,
-        pattern_id: u32,
-        note_id: u64,
-        pitch: Option<u8>,
+        pattern_id: PatternId,
+        note_id: NoteId,
+        pitch: Option<MidiNote>,
         start_beat: Option<f32>,
         duration_beats: Option<f32>,
         velocity: Option<u8>,
@@ -1105,7 +1103,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Freeze a pattern's note processing to plain notes. Returns
     /// `(note_count, dropped_events)` — `dropped_events > 0` means a graph node
     /// hit the 128-event expansion cap during the bake (plan §7).
-    fn freeze_pattern(&self, pattern_id: u32) -> Result<(usize, u32), McpBridgeError>;
+    fn freeze_pattern(&self, pattern_id: PatternId) -> Result<(usize, u32), McpBridgeError>;
 
     // === Sequencer: Note Grid (pooled note-processing graphs) ===
 
@@ -1114,7 +1112,7 @@ pub trait SynthBridge: Send + Sync + 'static {
 
     /// Full detail of one note graph — its modules (in processing order) and
     /// connections.
-    fn get_note_graph(&self, graph_id: u32) -> Result<NoteGraphDetail, McpBridgeError>;
+    fn get_note_graph(&self, graph_id: NoteGraphId) -> Result<NoteGraphDetail, McpBridgeError>;
 
     /// Create an empty pooled note graph. Returns the new graph id.
     fn create_note_graph(
@@ -1122,33 +1120,33 @@ pub trait SynthBridge: Send + Sync + 'static {
         name: String,
         description: Option<String>,
         color: Option<String>,
-    ) -> Result<u32, McpBridgeError>;
+    ) -> Result<NoteGraphId, McpBridgeError>;
 
     /// Duplicate a pooled note graph — nodes, connections, metadata, and
     /// editor layout — as `"<name> copy"`. Returns the new graph's id.
-    fn duplicate_note_graph(&self, graph_id: u32) -> Result<u32, McpBridgeError>;
+    fn duplicate_note_graph(&self, graph_id: NoteGraphId) -> Result<NoteGraphId, McpBridgeError>;
 
     /// Delete a pooled note graph, clearing every pattern reference to it (those
     /// patterns fall back to dry playback). Returns how many patterns were
     /// unbound.
-    fn delete_note_graph(&self, graph_id: u32) -> Result<usize, McpBridgeError>;
+    fn delete_note_graph(&self, graph_id: NoteGraphId) -> Result<usize, McpBridgeError>;
 
     /// Add a module to a graph. `module` is externally-tagged `NoteModuleConfig`
     /// JSON (e.g. `{"Euclidean": {...}}`, `{"NoteLfo": {...}}`). Returns the new
     /// module id.
     fn add_note_graph_module(
         &self,
-        graph_id: u32,
+        graph_id: NoteGraphId,
         module: serde_json::Value,
         description: Option<String>,
-    ) -> Result<u32, McpBridgeError>;
+    ) -> Result<NoteModuleId, McpBridgeError>;
 
     /// Replace a module's config in place (same JSON shape as
     /// `add_note_graph_module`), keeping its id and connections.
     fn set_note_graph_module(
         &self,
-        graph_id: u32,
-        module_id: u32,
+        graph_id: NoteGraphId,
+        module_id: NoteModuleId,
         module: serde_json::Value,
         description: Option<String>,
     ) -> Result<(), McpBridgeError>;
@@ -1156,7 +1154,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Partially update graph-level name, description, and color metadata.
     fn set_note_graph_metadata(
         &self,
-        graph_id: u32,
+        graph_id: NoteGraphId,
         name: Option<String>,
         description: Option<String>,
         color: Option<String>,
@@ -1169,23 +1167,26 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// an error). Errors only for an unknown graph/module or a non-script node.
     fn set_note_graph_script(
         &self,
-        graph_id: u32,
-        module_id: u32,
+        graph_id: NoteGraphId,
+        module_id: NoteModuleId,
         source: String,
     ) -> Result<String, McpBridgeError>;
 
     /// Remove a module and every connection touching it.
-    fn remove_note_graph_module(&self, graph_id: u32, module_id: u32)
-    -> Result<(), McpBridgeError>;
+    fn remove_note_graph_module(
+        &self,
+        graph_id: NoteGraphId,
+        module_id: NoteModuleId,
+    ) -> Result<(), McpBridgeError>;
 
     /// Connect two modules. `port` is `note_stream` (the linear spine),
     /// `value`, or `gate`; `to_input` selects the target's value-input port for
     /// modulation edges. Validated (linearity, acyclicity, endpoint types).
     fn connect_note_graph(
         &self,
-        graph_id: u32,
-        from: u32,
-        to: u32,
+        graph_id: NoteGraphId,
+        from: NoteModuleId,
+        to: NoteModuleId,
         port: String,
         to_input: u8,
     ) -> Result<(), McpBridgeError>;
@@ -1194,8 +1195,8 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// pattern's raw notes + per-note ornaments play).
     fn set_pattern_note_graph(
         &self,
-        pattern_id: u32,
-        graph_id: Option<u32>,
+        pattern_id: PatternId,
+        graph_id: Option<NoteGraphId>,
     ) -> Result<(), McpBridgeError>;
 
     /// Bind a single note to a note graph (or clear the binding with `None`) for
@@ -1204,9 +1205,9 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// dangling `graph_id` is rejected.
     fn set_note_note_graph(
         &self,
-        pattern_id: u32,
-        note_id: u64,
-        graph_id: Option<u32>,
+        pattern_id: PatternId,
+        note_id: NoteId,
+        graph_id: Option<NoteGraphId>,
     ) -> Result<(), McpBridgeError>;
 
     // === Sequencer: Mod Grid (pooled control-rate modulator graphs) ===
@@ -1215,7 +1216,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn list_mod_graphs(&self) -> Result<Vec<ModGraphInfo>, McpBridgeError>;
 
     /// Full detail of one mod graph — its nodes and cables.
-    fn get_mod_graph(&self, graph_id: u32) -> Result<ModGraphDetail, McpBridgeError>;
+    fn get_mod_graph(&self, graph_id: ModGraphId) -> Result<ModGraphDetail, McpBridgeError>;
 
     /// Create an empty pooled mod graph. `scope` is `global` (default) or
     /// `track`. Returns the new graph id.
@@ -1224,19 +1225,27 @@ pub trait SynthBridge: Send + Sync + 'static {
         name: String,
         description: Option<String>,
         scope: Option<String>,
-    ) -> Result<u32, McpBridgeError>;
+    ) -> Result<ModGraphId, McpBridgeError>;
 
     /// Delete a pooled mod graph (removing its running instances).
-    fn delete_mod_graph(&self, graph_id: u32) -> Result<(), McpBridgeError>;
+    fn delete_mod_graph(&self, graph_id: ModGraphId) -> Result<(), McpBridgeError>;
 
     /// Set a mod graph's scope (`global` or `track`). Switching to `global`
     /// clears any track assignments.
-    fn set_mod_graph_scope(&self, graph_id: u32, scope: String) -> Result<(), McpBridgeError>;
+    fn set_mod_graph_scope(
+        &self,
+        graph_id: ModGraphId,
+        scope: String,
+    ) -> Result<(), McpBridgeError>;
 
     /// Assign a Track-scope mod graph to a set of tracks (one running instance
     /// per track). Replaces the current assignment; unknown track ids are
     /// dropped.
-    fn assign_mod_graph(&self, graph_id: u32, tracks: Vec<u32>) -> Result<(), McpBridgeError>;
+    fn assign_mod_graph(
+        &self,
+        graph_id: ModGraphId,
+        tracks: Vec<TrackId>,
+    ) -> Result<(), McpBridgeError>;
 
     /// Add a node to a graph. `node` is externally-tagged `ModNodeConfig` JSON
     /// (e.g. `{"Module":{"module_type":"lfo","params":{...}}}` — `module_type` is
@@ -1244,31 +1253,35 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Returns the new node id.
     fn add_mod_graph_node(
         &self,
-        graph_id: u32,
+        graph_id: ModGraphId,
         node: serde_json::Value,
         description: Option<String>,
-    ) -> Result<u32, McpBridgeError>;
+    ) -> Result<ModNodeId, McpBridgeError>;
 
     /// Partially update graph-level name, description, and color metadata.
     fn set_mod_graph_metadata(
         &self,
-        graph_id: u32,
+        graph_id: ModGraphId,
         name: Option<String>,
         description: Option<String>,
         color: Option<String>,
     ) -> Result<(), McpBridgeError>;
 
     /// Remove a node and every cable touching it.
-    fn remove_mod_graph_node(&self, graph_id: u32, node_id: u32) -> Result<(), McpBridgeError>;
+    fn remove_mod_graph_node(
+        &self,
+        graph_id: ModGraphId,
+        node_id: ModNodeId,
+    ) -> Result<(), McpBridgeError>;
 
     /// Connect two nodes' named ports (e.g. a source module `out` → a Target
     /// node `in`). Validated (endpoints, single-source-per-input, acyclicity).
     fn connect_mod_graph(
         &self,
-        graph_id: u32,
-        from: u32,
+        graph_id: ModGraphId,
+        from: ModNodeId,
         from_port: String,
-        to: u32,
+        to: ModNodeId,
         to_port: String,
     ) -> Result<(), McpBridgeError>;
 
@@ -1277,10 +1290,10 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// such cable exists.
     fn disconnect_mod_graph(
         &self,
-        graph_id: u32,
-        from: u32,
+        graph_id: ModGraphId,
+        from: ModNodeId,
         from_port: String,
-        to: u32,
+        to: ModNodeId,
         to_port: String,
     ) -> Result<(), McpBridgeError>;
 
@@ -1290,8 +1303,8 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// `ModNodeConfig` JSON, same shape as [`Self::add_mod_graph_node`].
     fn set_mod_graph_node(
         &self,
-        graph_id: u32,
-        node_id: u32,
+        graph_id: ModGraphId,
+        node_id: ModNodeId,
         node: serde_json::Value,
         description: Option<String>,
     ) -> Result<(), McpBridgeError>;
@@ -1299,16 +1312,18 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// List routing sinks ("what writes to a target") across all mod graphs, or
     /// just one when `graph_id` is set — the provenance answer to "why is this
     /// parameter moving?".
-    fn list_mod_targets(&self, graph_id: Option<u32>)
-    -> Result<Vec<ModTargetInfo>, McpBridgeError>;
+    fn list_mod_targets(
+        &self,
+        graph_id: Option<ModGraphId>,
+    ) -> Result<Vec<ModTargetInfo>, McpBridgeError>;
 
     /// Set or clear a note's per-note timed-repeat ornament
     /// (flam/drag/ruff/roll/grace). `ornament` is the `Ornament` JSON to set,
     /// or `None`/`null` to clear it.
     fn set_note_ornament(
         &self,
-        pattern_id: u32,
-        note_id: u64,
+        pattern_id: PatternId,
+        note_id: NoteId,
         ornament: Option<serde_json::Value>,
     ) -> Result<(), McpBridgeError>;
 
@@ -1322,7 +1337,7 @@ pub trait SynthBridge: Send + Sync + 'static {
         &self,
         name: &str,
         instrument_id: Option<InstrumentId>,
-    ) -> Result<u16, McpBridgeError>;
+    ) -> Result<TrackId, McpBridgeError>;
 
     // === Sequencer: Arrangement ===
 
@@ -1332,9 +1347,9 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Remove a pattern placement.
     fn remove_placement(
         &self,
-        pattern_id: u32,
-        track_id: u16,
-        start_tick: u64,
+        pattern_id: PatternId,
+        track_id: TrackId,
+        start_tick: Tick,
     ) -> Result<(), McpBridgeError>;
 
     /// List all pattern placements in the arrangement.
@@ -1356,26 +1371,26 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Add multiple notes to a pattern in one call.
     fn add_notes(
         &self,
-        pattern_id: u32,
+        pattern_id: PatternId,
         notes: &[BridgeNoteData],
     ) -> Result<BatchResult, McpBridgeError>;
 
     /// Update multiple notes in a pattern in one call.
     fn update_notes(
         &self,
-        pattern_id: u32,
+        pattern_id: PatternId,
         updates: &[BridgeNoteUpdate],
     ) -> Result<BatchResult, McpBridgeError>;
 
     /// Replace all notes in a pattern (clear + add).
     fn replace_notes(
         &self,
-        pattern_id: u32,
+        pattern_id: PatternId,
         notes: &[BridgeNoteData],
     ) -> Result<BatchResult, McpBridgeError>;
 
     /// Clear all notes from a pattern. Returns the number of notes removed.
-    fn clear_pattern(&self, pattern_id: u32) -> Result<usize, McpBridgeError>;
+    fn clear_pattern(&self, pattern_id: PatternId) -> Result<usize, McpBridgeError>;
 
     /// Create multiple patterns (with optional inline notes).
     fn create_patterns(
@@ -1454,14 +1469,14 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Add automation points to a pattern.
     fn add_automation_points(
         &self,
-        pattern_id: u32,
+        pattern_id: PatternId,
         points: &[BridgeAutomationPointData],
     ) -> Result<BatchResult, McpBridgeError>;
 
     /// List all automation lanes in a pattern.
     fn list_automation_lanes(
         &self,
-        pattern_id: u32,
+        pattern_id: PatternId,
     ) -> Result<Vec<AutomationLaneInfo>, McpBridgeError>;
 
     /// List the valid automation targets for an instrument: every automatable
@@ -1476,7 +1491,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Get all automation points for a specific lane.
     fn get_automation_points(
         &self,
-        pattern_id: u32,
+        pattern_id: PatternId,
         target: &str,
         instrument_id: InstrumentId,
     ) -> Result<Vec<AutomationPointInfo>, McpBridgeError>;
@@ -1484,7 +1499,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Remove automation points at specific beats.
     fn remove_automation_points(
         &self,
-        pattern_id: u32,
+        pattern_id: PatternId,
         target: &str,
         instrument_id: InstrumentId,
         beats: &[f32],
@@ -1493,7 +1508,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Clear all points in an automation lane.
     fn clear_automation_lane(
         &self,
-        pattern_id: u32,
+        pattern_id: PatternId,
         target: &str,
         instrument_id: InstrumentId,
     ) -> Result<usize, McpBridgeError>;
@@ -1504,7 +1519,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// number of points transformed. Errors if the lane does not exist.
     fn transform_automation_lane(
         &self,
-        pattern_id: u32,
+        pattern_id: PatternId,
         target: &str,
         instrument_id: InstrumentId,
         scale: f32,
@@ -1519,10 +1534,10 @@ pub trait SynthBridge: Send + Sync + 'static {
     #[allow(clippy::too_many_arguments)]
     fn copy_automation_lane(
         &self,
-        from_pattern_id: u32,
+        from_pattern_id: PatternId,
         from_target: &str,
         from_instrument_id: InstrumentId,
-        to_pattern_id: u32,
+        to_pattern_id: PatternId,
         to_target: &str,
         to_instrument_id: InstrumentId,
         scale: f32,
@@ -1591,36 +1606,43 @@ pub trait SynthBridge: Send + Sync + 'static {
     // === Track control ===
 
     /// Set track volume (0.0-1.0).
-    fn set_track_volume(&self, track_id: u16, volume: f32) -> Result<(), McpBridgeError>;
+    fn set_track_volume(
+        &self,
+        track_id: TrackId,
+        volume: synth_core::NormalizedValue,
+    ) -> Result<(), McpBridgeError>;
 
     /// Set track pan (-1.0 = left, 0.0 = center, 1.0 = right).
-    fn set_track_pan(&self, track_id: u16, pan: f32) -> Result<(), McpBridgeError>;
+    fn set_track_pan(&self, track_id: TrackId, pan: BipolarValue) -> Result<(), McpBridgeError>;
 
     /// Mute or unmute a track.
-    fn set_track_mute(&self, track_id: u16, muted: bool) -> Result<(), McpBridgeError>;
+    fn set_track_mute(&self, track_id: TrackId, muted: bool) -> Result<(), McpBridgeError>;
 
     /// Solo or unsolo a track.
-    fn set_track_solo(&self, track_id: u16, solo: bool) -> Result<(), McpBridgeError>;
+    fn set_track_solo(&self, track_id: TrackId, solo: bool) -> Result<(), McpBridgeError>;
 
     /// Set the instrument assigned to a track (None to unassign).
     fn set_track_instrument(
         &self,
-        track_id: u16,
+        track_id: TrackId,
         instrument_id: Option<InstrumentId>,
     ) -> Result<(), McpBridgeError>;
 
     /// Rename a track.
-    fn rename_track(&self, track_id: u16, name: &str) -> Result<(), McpBridgeError>;
+    fn rename_track(&self, track_id: TrackId, name: &str) -> Result<(), McpBridgeError>;
 
     /// Set a track's free-text description / intent (`""` clears it).
-    fn set_track_description(&self, track_id: u16, description: &str)
-    -> Result<(), McpBridgeError>;
+    fn set_track_description(
+        &self,
+        track_id: TrackId,
+        description: &str,
+    ) -> Result<(), McpBridgeError>;
 
     /// Set a track's display color from a `"#RRGGBB"` / `"#RRGGBBAA"` hex string.
-    fn set_track_color(&self, track_id: u16, color: &str) -> Result<(), McpBridgeError>;
+    fn set_track_color(&self, track_id: TrackId, color: &str) -> Result<(), McpBridgeError>;
 
     /// Delete a track and its placements.
-    fn delete_track(&self, track_id: u16) -> Result<(), McpBridgeError>;
+    fn delete_track(&self, track_id: TrackId) -> Result<(), McpBridgeError>;
 
     // === Return busses (effect sends) ===
 
@@ -1628,55 +1650,76 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn list_return_busses(&self) -> Result<Vec<ReturnBusInfo>, McpBridgeError>;
 
     /// Create a new return bus; returns its id.
-    fn create_return_bus(&self, name: &str) -> Result<u16, McpBridgeError>;
+    fn create_return_bus(&self, name: &str) -> Result<ReturnBusId, McpBridgeError>;
 
     /// Delete a return bus and strip every track send that targeted it.
-    fn delete_return_bus(&self, return_id: u16) -> Result<(), McpBridgeError>;
+    fn delete_return_bus(&self, return_id: ReturnBusId) -> Result<(), McpBridgeError>;
 
     /// Set a return bus's output volume (0.0-1.0).
-    fn set_return_bus_volume(&self, return_id: u16, volume: f32) -> Result<(), McpBridgeError>;
+    fn set_return_bus_volume(
+        &self,
+        return_id: ReturnBusId,
+        volume: synth_core::NormalizedValue,
+    ) -> Result<(), McpBridgeError>;
 
     /// Set a return bus's output pan (-1.0 = left, 0.0 = center, 1.0 = right).
-    fn set_return_bus_pan(&self, return_id: u16, pan: f32) -> Result<(), McpBridgeError>;
+    fn set_return_bus_pan(
+        &self,
+        return_id: ReturnBusId,
+        pan: BipolarValue,
+    ) -> Result<(), McpBridgeError>;
 
     /// Mute or unmute a return bus.
-    fn set_return_bus_mute(&self, return_id: u16, muted: bool) -> Result<(), McpBridgeError>;
+    fn set_return_bus_mute(
+        &self,
+        return_id: ReturnBusId,
+        muted: bool,
+    ) -> Result<(), McpBridgeError>;
 
     /// Solo or unsolo a return bus. When any return is soloed, only soloed
     /// returns reach the master mix.
-    fn set_return_bus_solo(&self, return_id: u16, solo: bool) -> Result<(), McpBridgeError>;
+    fn set_return_bus_solo(&self, return_id: ReturnBusId, solo: bool)
+    -> Result<(), McpBridgeError>;
 
     /// Set a return bus's display color from a `"#RRGGBB"` / `"#RRGGBBAA"` hex string.
-    fn set_return_bus_color(&self, return_id: u16, color: &str) -> Result<(), McpBridgeError>;
+    fn set_return_bus_color(
+        &self,
+        return_id: ReturnBusId,
+        color: &str,
+    ) -> Result<(), McpBridgeError>;
 
     /// Set a return bus's free-text description / intent (`""` clears it).
     fn set_return_bus_description(
         &self,
-        return_id: u16,
+        return_id: ReturnBusId,
         description: &str,
     ) -> Result<(), McpBridgeError>;
 
     /// Rename a return bus.
-    fn rename_return_bus(&self, return_id: u16, name: &str) -> Result<(), McpBridgeError>;
+    fn rename_return_bus(&self, return_id: ReturnBusId, name: &str) -> Result<(), McpBridgeError>;
 
     /// Add an insert effect to a return bus's effect chain. `effect_type` is a
     /// module-type token (e.g. "rev", "delay", "chorus"). Returns the created
     /// effect's module-id string (e.g. "rev-2"), which is unique within the bus.
     fn add_return_effect(
         &self,
-        return_id: u16,
+        return_id: ReturnBusId,
         effect_type: &str,
     ) -> Result<String, McpBridgeError>;
 
     /// Remove an insert effect from a return bus's effect chain by module id.
-    fn remove_return_effect(&self, return_id: u16, module_id: &str) -> Result<(), McpBridgeError>;
+    fn remove_return_effect(
+        &self,
+        return_id: ReturnBusId,
+        module_id: &str,
+    ) -> Result<(), McpBridgeError>;
 
     /// Set a parameter on a return-bus insert effect. `param_name` matches the
     /// effect descriptor's `type_id` or display name; `value` may be a number,
     /// boolean, or choice string. Returns the resolved parameter info.
     fn set_return_effect_parameter(
         &self,
-        return_id: u16,
+        return_id: ReturnBusId,
         module_id: &str,
         param_name: &str,
         value: BridgeParamValue,
@@ -1685,7 +1728,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Enable or bypass a return-bus insert effect (`true` = active, `false` = bypassed).
     fn set_return_effect_enabled(
         &self,
-        return_id: u16,
+        return_id: ReturnBusId,
         module_id: &str,
         enabled: bool,
     ) -> Result<(), McpBridgeError>;
@@ -1693,7 +1736,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Move a return-bus insert effect one slot up or down in the chain.
     fn reorder_return_effect(
         &self,
-        return_id: u16,
+        return_id: ReturnBusId,
         module_id: &str,
         direction: ReturnEffectMove,
     ) -> Result<(), McpBridgeError>;
@@ -1702,29 +1745,37 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// `enabled = false` bypasses the send non-destructively (keeps its level/tap).
     fn set_track_send(
         &self,
-        track_id: u16,
-        return_id: u16,
-        level: f32,
+        track_id: TrackId,
+        return_id: ReturnBusId,
+        level: synth_core::NormalizedValue,
         pre_fader: bool,
         enabled: bool,
     ) -> Result<(), McpBridgeError>;
 
     /// Remove a track's send to a return bus.
-    fn remove_track_send(&self, track_id: u16, return_id: u16) -> Result<(), McpBridgeError>;
+    fn remove_track_send(
+        &self,
+        track_id: TrackId,
+        return_id: ReturnBusId,
+    ) -> Result<(), McpBridgeError>;
 
     /// Add or update a bus-to-bus send from one return bus into another (upsert
     /// by target). Rejected if it would create a routing cycle. `enabled = false`
     /// bypasses the send non-destructively.
     fn set_return_send(
         &self,
-        from_id: u16,
-        to_id: u16,
-        level: f32,
+        from_id: ReturnBusId,
+        to_id: ReturnBusId,
+        level: synth_core::NormalizedValue,
         enabled: bool,
     ) -> Result<(), McpBridgeError>;
 
     /// Remove a bus-to-bus send from one return bus into another.
-    fn remove_return_send(&self, from_id: u16, to_id: u16) -> Result<(), McpBridgeError>;
+    fn remove_return_send(
+        &self,
+        from_id: ReturnBusId,
+        to_id: ReturnBusId,
+    ) -> Result<(), McpBridgeError>;
 
     // === Master bus ===
 
@@ -1732,7 +1783,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn get_master_volume(&self) -> Result<f32, McpBridgeError>;
 
     /// Set the master output volume (0.0 = silent, 1.0 = unity).
-    fn set_master_volume(&self, volume: f32) -> Result<(), McpBridgeError>;
+    fn set_master_volume(&self, volume: Gain) -> Result<(), McpBridgeError>;
 
     /// List the master-bus insert effects in processing order.
     fn list_master_effects(&self) -> Result<Vec<ReturnEffectInfo>, McpBridgeError>;
@@ -1769,20 +1820,24 @@ pub trait SynthBridge: Send + Sync + 'static {
     // === Pattern management ===
 
     /// Rename a pattern.
-    fn rename_pattern(&self, pattern_id: u32, name: &str) -> Result<(), McpBridgeError>;
+    fn rename_pattern(&self, pattern_id: PatternId, name: &str) -> Result<(), McpBridgeError>;
 
     /// Set a pattern's free-text description / intent (`""` clears it).
     fn set_pattern_description(
         &self,
-        pattern_id: u32,
+        pattern_id: PatternId,
         description: &str,
     ) -> Result<(), McpBridgeError>;
 
     /// Set pattern length in beats.
-    fn set_pattern_length(&self, pattern_id: u32, length_beats: f32) -> Result<(), McpBridgeError>;
+    fn set_pattern_length(
+        &self,
+        pattern_id: PatternId,
+        length_beats: f32,
+    ) -> Result<(), McpBridgeError>;
 
     /// Duplicate a pattern (notes + automation). Returns new pattern ID.
-    fn duplicate_pattern(&self, pattern_id: u32) -> Result<u32, McpBridgeError>;
+    fn duplicate_pattern(&self, pattern_id: PatternId) -> Result<u32, McpBridgeError>;
 
     // === Song metadata ===
 
@@ -1838,7 +1893,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn render_note_preview(
         &self,
         instrument_id: InstrumentId,
-        note: u8,
+        note: MidiNote,
         velocity: u8,
         duration_ms: u32,
         tail_ms: u32,
@@ -1864,7 +1919,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn analyze_note(
         &self,
         instrument_id: InstrumentId,
-        note: u8,
+        note: MidiNote,
         velocity: u8,
         duration_ms: u32,
         tail_ms: u32,
@@ -1893,12 +1948,12 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// of track IDs to drop in addition. Both apply only to arrangement scope.
     fn analyze_harmony(
         &self,
-        pattern_id: Option<u32>,
-        arrangement_start_tick: Option<u64>,
-        arrangement_end_tick: Option<u64>,
+        pattern_id: Option<PatternId>,
+        arrangement_start_tick: Option<Tick>,
+        arrangement_end_tick: Option<Tick>,
         grouping_ticks: Option<u32>,
         exclude_drums: Option<bool>,
-        exclude_track_ids: Option<Vec<u16>>,
+        exclude_track_ids: Option<Vec<TrackId>>,
     ) -> Result<crate::types::AnalyzeHarmonyResult, McpBridgeError>;
 
     /// Symbolic structural analysis of a single pattern.
@@ -1914,7 +1969,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// `length_bars` / `notes_per_bar` use the song's default time signature.
     fn analyze_pattern(
         &self,
-        pattern_id: u32,
+        pattern_id: PatternId,
     ) -> Result<crate::types::AnalyzePatternResult, McpBridgeError>;
 
     /// Symbolic drum-feel diagnostics. Identifies drum tracks via the same
@@ -1932,9 +1987,9 @@ pub trait SynthBridge: Send + Sync + 'static {
     ///   `None`, the full arrangement is analyzed.
     fn analyze_drum_groove(
         &self,
-        pattern_id: Option<u32>,
-        arrangement_start_tick: Option<u64>,
-        arrangement_end_tick: Option<u64>,
+        pattern_id: Option<PatternId>,
+        arrangement_start_tick: Option<Tick>,
+        arrangement_end_tick: Option<Tick>,
     ) -> Result<crate::types::AnalyzeDrumGrooveResult, McpBridgeError>;
 
     /// Symbolic kick/bass-lock diagnostics. Pure symbolic — no audio
@@ -1953,9 +2008,9 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// rhythm-section patterns that are stored as a single combined pattern.
     fn analyze_bass_drum_lock(
         &self,
-        pattern_id: Option<u32>,
-        arrangement_start_tick: Option<u64>,
-        arrangement_end_tick: Option<u64>,
+        pattern_id: Option<PatternId>,
+        arrangement_start_tick: Option<Tick>,
+        arrangement_end_tick: Option<Tick>,
         onset_tolerance_ticks: Option<u32>,
     ) -> Result<crate::types::AnalyzeBassDrumLockResult, McpBridgeError>;
 
@@ -1970,12 +2025,12 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// `pattern_id = Some(p)`, arrangement range otherwise.
     fn analyze_harmonic_function(
         &self,
-        pattern_id: Option<u32>,
-        arrangement_start_tick: Option<u64>,
-        arrangement_end_tick: Option<u64>,
+        pattern_id: Option<PatternId>,
+        arrangement_start_tick: Option<Tick>,
+        arrangement_end_tick: Option<Tick>,
         grouping_ticks: Option<u32>,
         exclude_drums: Option<bool>,
-        exclude_track_ids: Option<Vec<u16>>,
+        exclude_track_ids: Option<Vec<TrackId>>,
     ) -> Result<crate::types::AnalyzeHarmonicFunctionResult, McpBridgeError>;
 
     /// Section-level form diagnostic. Walks the analyzed scope one bar at a
@@ -1988,13 +2043,13 @@ pub trait SynthBridge: Send + Sync + 'static {
     #[allow(clippy::too_many_arguments)]
     fn analyze_arrangement(
         &self,
-        pattern_id: Option<u32>,
-        arrangement_start_tick: Option<u64>,
-        arrangement_end_tick: Option<u64>,
+        pattern_id: Option<PatternId>,
+        arrangement_start_tick: Option<Tick>,
+        arrangement_end_tick: Option<Tick>,
         similarity_threshold: Option<f32>,
         section_min_bars: Option<u32>,
         exclude_drums: Option<bool>,
-        exclude_track_ids: Option<Vec<u16>>,
+        exclude_track_ids: Option<Vec<TrackId>>,
     ) -> Result<crate::types::AnalyzeArrangementResult, McpBridgeError>;
 
     /// Compact view of the same clustering as `analyze_arrangement`: one
@@ -2003,13 +2058,13 @@ pub trait SynthBridge: Send + Sync + 'static {
     #[allow(clippy::too_many_arguments)]
     fn analyze_form_map(
         &self,
-        pattern_id: Option<u32>,
-        arrangement_start_tick: Option<u64>,
-        arrangement_end_tick: Option<u64>,
+        pattern_id: Option<PatternId>,
+        arrangement_start_tick: Option<Tick>,
+        arrangement_end_tick: Option<Tick>,
         similarity_threshold: Option<f32>,
         section_min_bars: Option<u32>,
         exclude_drums: Option<bool>,
-        exclude_track_ids: Option<Vec<u16>>,
+        exclude_track_ids: Option<Vec<TrackId>>,
     ) -> Result<crate::types::AnalyzeFormMapResult, McpBridgeError>;
 
     /// Find recurring pitch-interval motifs in the scope. Converts each
@@ -2020,16 +2075,16 @@ pub trait SynthBridge: Send + Sync + 'static {
     #[allow(clippy::too_many_arguments)]
     fn find_motifs(
         &self,
-        pattern_id: Option<u32>,
-        arrangement_start_tick: Option<u64>,
-        arrangement_end_tick: Option<u64>,
+        pattern_id: Option<PatternId>,
+        arrangement_start_tick: Option<Tick>,
+        arrangement_end_tick: Option<Tick>,
         min_interval_length: Option<u8>,
         max_interval_length: Option<u8>,
         min_count: Option<u32>,
         top_n: Option<u32>,
         max_occurrences_per_motif: Option<u32>,
         exclude_drums: Option<bool>,
-        exclude_track_ids: Option<Vec<u16>>,
+        exclude_track_ids: Option<Vec<TrackId>>,
     ) -> Result<crate::types::FindMotifsResult, McpBridgeError>;
 
     /// Hook-strength diagnostic. Runs the motif finder internally and
@@ -2038,14 +2093,14 @@ pub trait SynthBridge: Send + Sync + 'static {
     #[allow(clippy::too_many_arguments)]
     fn analyze_hook_strength(
         &self,
-        pattern_id: Option<u32>,
-        arrangement_start_tick: Option<u64>,
-        arrangement_end_tick: Option<u64>,
+        pattern_id: Option<PatternId>,
+        arrangement_start_tick: Option<Tick>,
+        arrangement_end_tick: Option<Tick>,
         min_interval_length: Option<u8>,
         min_count: Option<u32>,
         max_occurrences_per_motif: Option<u32>,
         exclude_drums: Option<bool>,
-        exclude_track_ids: Option<Vec<u16>>,
+        exclude_track_ids: Option<Vec<TrackId>>,
     ) -> Result<crate::types::AnalyzeHookStrengthResult, McpBridgeError>;
 
     /// Render `duration_seconds` of the master bus offline and return
@@ -2061,7 +2116,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn analyze_mix_bus(
         &self,
         duration_seconds: f32,
-        start_tick: Option<u64>,
+        start_tick: Option<Tick>,
         include_per_track: Option<bool>,
         scope: AnalysisScope,
     ) -> Result<crate::types::AnalyzeMixBusResult, McpBridgeError>;
@@ -2080,7 +2135,7 @@ pub trait SynthBridge: Send + Sync + 'static {
         &self,
         path: String,
         duration_seconds: f32,
-        start_tick: Option<u64>,
+        start_tick: Option<Tick>,
         instrument_id: Option<InstrumentId>,
         scope: AnalysisScope,
     ) -> Result<crate::types::RenderToWavResult, McpBridgeError>;
@@ -2099,7 +2154,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn analyze_spectrum(
         &self,
         duration_seconds: f32,
-        start_tick: Option<u64>,
+        start_tick: Option<Tick>,
         instrument_id: Option<InstrumentId>,
         f0_hint: Option<f32>,
         max_partials: Option<u32>,
@@ -2116,7 +2171,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn analyze_spectrogram(
         &self,
         duration_seconds: f32,
-        start_tick: Option<u64>,
+        start_tick: Option<Tick>,
         instrument_id: Option<InstrumentId>,
         f0_hint: Option<f32>,
         max_partials: Option<u32>,
@@ -2208,7 +2263,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn analyze_master_chain(
         &self,
         duration_seconds: f32,
-        start_tick: Option<u64>,
+        start_tick: Option<Tick>,
         scope: AnalysisScope,
     ) -> Result<crate::types::AnalyzeMasterChainResult, McpBridgeError>;
 
@@ -2221,7 +2276,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn analyze_return_busses(
         &self,
         duration_seconds: f32,
-        start_tick: Option<u64>,
+        start_tick: Option<Tick>,
         scope: AnalysisScope,
     ) -> Result<crate::types::AnalyzeReturnBussesResult, McpBridgeError>;
 
@@ -2235,7 +2290,7 @@ pub trait SynthBridge: Send + Sync + 'static {
         &self,
         action: &str,
         duration_seconds: f32,
-        start_tick: Option<u64>,
+        start_tick: Option<Tick>,
         label: Option<String>,
         scope: AnalysisScope,
     ) -> Result<crate::types::CompareMixResult, McpBridgeError>;
@@ -2275,7 +2330,7 @@ pub trait SynthBridge: Send + Sync + 'static {
         target_lufs: f32,
         true_peak_ceiling_dbtp: f32,
         duration_seconds: f32,
-        start_tick: Option<u64>,
+        start_tick: Option<Tick>,
     ) -> Result<AutoGainStageResult, McpBridgeError>;
 
     /// Render an explicit arrangement range `[start_tick, end_tick)` offline
@@ -2288,8 +2343,8 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// the track count of the section.
     fn analyze_section(
         &self,
-        start_tick: u64,
-        end_tick: u64,
+        start_tick: Tick,
+        end_tick: Tick,
         include_per_track: Option<bool>,
         scope: AnalysisScope,
     ) -> Result<crate::types::AnalyzeSectionResult, McpBridgeError>;
@@ -2303,8 +2358,8 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// first.
     fn analyze_masking_matrix(
         &self,
-        arrangement_start_tick: Option<u64>,
-        arrangement_end_tick: Option<u64>,
+        arrangement_start_tick: Option<Tick>,
+        arrangement_end_tick: Option<Tick>,
         top_pairs: Option<u32>,
         scope: AnalysisScope,
     ) -> Result<crate::types::AnalyzeMaskingMatrixResult, McpBridgeError>;
@@ -2336,7 +2391,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn analyze_velocity_response(
         &self,
         instrument_id: InstrumentId,
-        note: u8,
+        note: MidiNote,
         velocity_low: Option<u8>,
         velocity_high: Option<u8>,
         velocity_step: Option<u8>,
@@ -2362,14 +2417,14 @@ pub trait SynthBridge: Send + Sync + 'static {
     #[allow(clippy::too_many_arguments)]
     fn analyze_tension_curve(
         &self,
-        pattern_id: Option<u32>,
-        arrangement_start_tick: Option<u64>,
-        arrangement_end_tick: Option<u64>,
+        pattern_id: Option<PatternId>,
+        arrangement_start_tick: Option<Tick>,
+        arrangement_end_tick: Option<Tick>,
         include_audio: Option<bool>,
         similarity_threshold: Option<f32>,
         section_min_bars: Option<u32>,
         exclude_drums: Option<bool>,
-        exclude_track_ids: Option<Vec<u16>>,
+        exclude_track_ids: Option<Vec<TrackId>>,
     ) -> Result<crate::types::AnalyzeTensionCurveResult, McpBridgeError>;
 
     /// Meta-analysis: runs the relevant analyzers over the scope, applies
@@ -2388,14 +2443,14 @@ pub trait SynthBridge: Send + Sync + 'static {
     #[allow(clippy::too_many_arguments)]
     fn suggest_music_fixes(
         &self,
-        pattern_id: Option<u32>,
-        arrangement_start_tick: Option<u64>,
-        arrangement_end_tick: Option<u64>,
+        pattern_id: Option<PatternId>,
+        arrangement_start_tick: Option<Tick>,
+        arrangement_end_tick: Option<Tick>,
         categories: Option<Vec<String>>,
         include_audio: Option<bool>,
         max_suggestions: Option<u32>,
         exclude_drums: Option<bool>,
-        exclude_track_ids: Option<Vec<u16>>,
+        exclude_track_ids: Option<Vec<TrackId>>,
     ) -> Result<crate::types::SuggestMusicFixesResult, McpBridgeError>;
 
     // === Composition helpers (symbolic — no audio rendering) ===
@@ -2455,7 +2510,7 @@ pub trait SynthBridge: Send + Sync + 'static {
             }
             for &pitch in &chord.notes {
                 notes.push(BridgeNoteData {
-                    pitch,
+                    pitch: MidiNote::new(pitch),
                     start_beat,
                     duration_beats: beats_per_chord,
                     velocity,
@@ -2490,8 +2545,8 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// default `"up"`).
     fn transpose_notes(
         &self,
-        pattern_id: u32,
-        semitones: i32,
+        pattern_id: PatternId,
+        semitones: Semitones,
         scale_tonic: Option<u8>,
         scale_name: Option<&str>,
         tie_break: Option<&str>,
@@ -2501,7 +2556,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// key/scale. Notes already in scale are left untouched.
     fn quantize_notes_to_scale(
         &self,
-        pattern_id: u32,
+        pattern_id: PatternId,
         scale_tonic: u8,
         scale_name: &str,
         tie_break: Option<&str>,
@@ -2514,7 +2569,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     #[allow(clippy::too_many_arguments)]
     fn quantize_notes_to_grid(
         &self,
-        pattern_id: u32,
+        pattern_id: PatternId,
         grid_ticks: u32,
         strength: Option<f32>,
         swing: Option<f32>,
@@ -2545,7 +2600,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn set_sample_description(&self, id: u64, description: &str) -> Result<(), McpBridgeError>;
 
     /// Set the root note for a sample.
-    fn set_sample_root_note(&self, id: u64, note: u8) -> Result<(), McpBridgeError>;
+    fn set_sample_root_note(&self, id: u64, note: MidiNote) -> Result<(), McpBridgeError>;
 
     /// Normalize sample peak to 0 dB.
     fn normalize_sample(&self, id: u64) -> Result<(), McpBridgeError>;
@@ -2775,7 +2830,7 @@ mod lint_report_tests {
     fn tallies_all_severities_but_entries_are_actionable_only() {
         let report = build_lint_report(vec![
             (
-                InstrumentId(1),
+                InstrumentId::new(1),
                 "Bass".to_string(),
                 vec![
                     diag(DiagnosticSeverity::Warning),
@@ -2783,11 +2838,11 @@ mod lint_report_tests {
                 ],
             ),
             // A clean instrument: counted in instruments_checked, absent from entries.
-            (InstrumentId(2), "Lead".to_string(), vec![]),
+            (InstrumentId::new(2), "Lead".to_string(), vec![]),
             // Info-only (e.g. empty graph): counted in info_count, but NOT in
             // entries — it isn't actionable.
             (
-                InstrumentId(3),
+                InstrumentId::new(3),
                 "Pad".to_string(),
                 vec![diag(DiagnosticSeverity::Info)],
             ),
@@ -2800,13 +2855,13 @@ mod lint_report_tests {
         // from entries — so the counts are not derivable from entries alone.
         assert_eq!(report.info_count, 1);
         assert_eq!(report.entries.len(), 1);
-        assert_eq!(report.entries[0].instrument_id, InstrumentId(1));
+        assert_eq!(report.entries[0].instrument_id, InstrumentId::new(1));
     }
 
     #[test]
     fn actionable_entry_keeps_its_info_diagnostics_for_context() {
         let report = build_lint_report(vec![(
-            InstrumentId(1),
+            InstrumentId::new(1),
             "Bass".to_string(),
             vec![
                 diag(DiagnosticSeverity::Info),

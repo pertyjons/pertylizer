@@ -16,7 +16,7 @@ use super::{BipolarValue, Clampable, ValueRange};
 )]
 #[serde(transparent)]
 #[repr(transparent)]
-pub struct Gain(pub f32);
+pub struct Gain(f32);
 
 impl Gain {
     /// Create a new gain value.
@@ -147,7 +147,7 @@ impl std::fmt::Display for Gain {
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
 #[repr(transparent)]
-pub struct Decibels(pub f32);
+pub struct Decibels(f32);
 
 impl Decibels {
     /// Create a new dB value.
@@ -307,7 +307,7 @@ impl std::fmt::Display for Decibels {
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
 #[repr(transparent)]
-pub struct Ratio(pub f32);
+pub struct Ratio(f32);
 
 impl Ratio {
     /// Create a new compression ratio.

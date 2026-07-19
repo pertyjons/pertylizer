@@ -7,12 +7,13 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use synth_core::{
-    BipolarValue, DestAddr, Gain, MidiNote, ModMatrixParam, ModuleType, NormalizedValue, Param,
-    ParameterUnit, PortDescriptor, PortDirection, PortName, SampleCount, SrcAddr, Velocity,
+    BipolarValue, Bpm, DestAddr, Gain, MidiChannel, MidiNote, ModMatrixParam, ModuleType,
+    NormalizedValue, Param, ParameterUnit, PortDescriptor, PortDirection, PortName, SampleCount,
+    Semitones, SrcAddr, Velocity,
 };
 use synth_engine::EngineCommand;
 use synth_engine::commands::ModuleId;
-use synth_engine::instrument::{InstrumentId, MidiChannel};
+use synth_engine::instrument::{InstrumentId, MidiChannel as EngineMidiChannel};
 use synth_mcp::bridge::SynthBridge;
 use synth_mcp::bridge::{
     BridgeAutomationPointData, BridgeExpression, BridgeGlide, BridgeInstrumentDef, BridgeNoteData,
@@ -35,6 +36,9 @@ use synth_mcp::types::{
     PatternInfo, PlacementInfo, ProjectSchemaInfo, RebuildInstrumentResult, RenderToWavResult,
     SetSongResult, SongInfo, TempoPoint, TrackInfo, UiConnectionInfo, UiModuleInfo, UiOverlap,
     UiSnapshot, VersionInfo,
+};
+use synth_sequencer::{
+    ModGraphId, ModNodeId, NoteGraphId, NoteId, NoteModuleId, PatternId, ReturnBusId, Tick, TrackId,
 };
 
 use crate::mcp_shared::McpSharedState;
@@ -74,7 +78,7 @@ pub struct AppSynthBridge {
     /// two effects of the same type to one bus would otherwise read a stale
     /// snapshot and assign both the same `ModuleId`. Bumping a high-water mark on
     /// every add keeps instance numbers unique without waiting for the audio thread.
-    return_effect_hw: parking_lot::Mutex<HashMap<(u16, ModuleType), u16>>,
+    return_effect_hw: parking_lot::Mutex<HashMap<(ReturnBusId, ModuleType), u16>>,
     /// Master-effect counterpart of [`Self::return_effect_hw`] (the master chain
     /// has no bus id, so it gets its own per-effect-type high-water map).
     master_effect_hw: parking_lot::Mutex<HashMap<ModuleType, u16>>,
@@ -180,7 +184,7 @@ impl AppSynthBridge {
         {
             Ok(())
         } else {
-            Err(McpBridgeError::ReturnBusNotFound(return_id.0))
+            Err(McpBridgeError::ReturnBusNotFound(return_id))
         }
     }
 
@@ -211,7 +215,7 @@ impl AppSynthBridge {
             .unwrap_or(0);
 
         let mut hw = self.return_effect_hw.lock();
-        let key = (return_id.0, module_type);
+        let key = (return_id, module_type);
         let next = snapshot_max
             .max(hw.get(&key).copied().unwrap_or(0))
             .saturating_add(1);
@@ -378,9 +382,9 @@ impl AppSynthBridge {
             patch_color: snap.patch_color.clone().unwrap_or_default(),
             sidechain_source_id: snap.sidechain_source_id.map(|id| id.as_u64()),
             category: snap.category.name().to_owned(),
-            midi_channel: snap.midi_channel.as_u8(),
-            volume: snap.volume.as_f32(),
-            pan: snap.pan.as_f32(),
+            midi_channel: MidiChannel::new(snap.midi_channel.as_u8()),
+            volume: snap.volume,
+            pan: snap.pan,
             enabled: snap.enabled,
             muted: snap.muted,
             solo: snap.solo,
@@ -388,7 +392,7 @@ impl AppSynthBridge {
             effect_count: snap.effect_count,
             allocation_mode: snap.allocation_mode.to_string(),
             stealing_strategy: snap.stealing_strategy.to_string(),
-            unison_detune: snap.unison_detune.0,
+            unison_detune: snap.unison_detune.as_f32(),
             unison_spread: snap.unison_spread.as_f32(),
             max_voices: u32::from(snap.max_voices.as_u8()),
         }
@@ -969,9 +973,9 @@ impl SynthBridge for AppSynthBridge {
             color: String::new(),
             patch_color: String::new(),
             sidechain_source_id: None,
-            midi_channel: 1,
-            volume: 1.0,
-            pan: 0.0,
+            midi_channel: MidiChannel::CH1,
+            volume: Gain::UNITY,
+            pan: BipolarValue::CENTER,
             enabled: true,
             muted: false,
             solo: false,
@@ -980,7 +984,7 @@ impl SynthBridge for AppSynthBridge {
             category: "uncategorized".to_owned(),
             allocation_mode: alloc.mode.to_string(),
             stealing_strategy: alloc.stealing.to_string(),
-            unison_detune: alloc.unison_detune.0,
+            unison_detune: alloc.unison_detune.as_f32(),
             unison_spread: alloc.unison_spread.as_f32(),
             max_voices: u32::from(alloc.max_voices.as_u8()),
         })
@@ -1139,11 +1143,11 @@ impl SynthBridge for AppSynthBridge {
     fn set_instrument_volume(
         &self,
         instrument_id: InstrumentId,
-        volume: f32,
+        volume: Gain,
     ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
         self.session
-            .set_instrument_volume(instrument_id, synth_core::Gain::new(volume))
+            .set_instrument_volume(instrument_id, volume)
             .map_err(|_| McpBridgeError::CommandSendFailed {
                 command: "set_instrument_volume",
             })
@@ -1152,11 +1156,11 @@ impl SynthBridge for AppSynthBridge {
     fn set_instrument_pan(
         &self,
         instrument_id: InstrumentId,
-        pan: f32,
+        pan: BipolarValue,
     ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
         self.session
-            .set_instrument_pan(instrument_id, synth_core::BipolarValue::new(pan))
+            .set_instrument_pan(instrument_id, pan)
             .map_err(|_| McpBridgeError::CommandSendFailed {
                 command: "set_instrument_pan",
             })
@@ -1191,12 +1195,11 @@ impl SynthBridge for AppSynthBridge {
     fn set_instrument_midi_channel(
         &self,
         instrument_id: InstrumentId,
-        channel: u8,
+        channel: MidiChannel,
     ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
-        let midi_channel = MidiChannel::from_one_indexed(channel).ok_or_else(|| {
-            McpBridgeError::Other(format!("invalid MIDI channel {channel}, must be 1-16"))
-        })?;
+        let midi_channel =
+            EngineMidiChannel::from_one_indexed(channel.as_u8()).unwrap_or(EngineMidiChannel::CH1);
         self.session
             .set_instrument_midi_channel(instrument_id, midi_channel)
             .map_err(|_| McpBridgeError::CommandSendFailed {
@@ -1269,7 +1272,7 @@ impl SynthBridge for AppSynthBridge {
     ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
         self.session
-            .set_instrument_unison_detune(instrument_id, synth_core::Cents(cents))
+            .set_instrument_unison_detune(instrument_id, synth_core::Cents::new(cents))
             .map_err(|_| McpBridgeError::CommandSendFailed {
                 command: "set_instrument_unison_detune",
             })
@@ -1448,13 +1451,16 @@ impl SynthBridge for AppSynthBridge {
         })
     }
 
-    fn note_on(&self, note: u8, velocity: u8, channel: u8) -> Result<(), McpBridgeError> {
-        let midi_channel = MidiChannel::from_one_indexed(channel).unwrap_or_else(|| {
-            eprintln!("mcp_bridge: invalid MIDI channel {channel}, falling back to CH1");
-            MidiChannel::CH1
-        });
+    fn note_on(
+        &self,
+        note: MidiNote,
+        velocity: u8,
+        channel: MidiChannel,
+    ) -> Result<(), McpBridgeError> {
+        let midi_channel =
+            EngineMidiChannel::from_one_indexed(channel.as_u8()).unwrap_or(EngineMidiChannel::CH1);
         if self.session.command_sender().send(EngineCommand::NoteOn {
-            note: MidiNote::new(note),
+            note,
             velocity: Velocity::from_midi(velocity),
             channel: midi_channel,
         }) {
@@ -1464,13 +1470,11 @@ impl SynthBridge for AppSynthBridge {
         }
     }
 
-    fn note_off(&self, note: u8, channel: u8) -> Result<(), McpBridgeError> {
-        let midi_channel = MidiChannel::from_one_indexed(channel).unwrap_or_else(|| {
-            eprintln!("mcp_bridge: invalid MIDI channel {channel}, falling back to CH1");
-            MidiChannel::CH1
-        });
+    fn note_off(&self, note: MidiNote, channel: MidiChannel) -> Result<(), McpBridgeError> {
+        let midi_channel =
+            EngineMidiChannel::from_one_indexed(channel.as_u8()).unwrap_or(EngineMidiChannel::CH1);
         if self.session.command_sender().send(EngineCommand::NoteOff {
-            note: MidiNote::new(note),
+            note,
             channel: midi_channel,
         }) {
             Ok(())
@@ -1796,7 +1800,7 @@ impl SynthBridge for AppSynthBridge {
             name: song.name.clone(),
             author: song.author.clone(),
             description: song.description.clone(),
-            tempo: song.default_tempo.0,
+            tempo: song.default_tempo.as_f32(),
             time_signature: format!("{}/{}", ts.numerator, ts.denominator),
             length_seconds: song.length_seconds(),
             pattern_count: song.pattern_count(),
@@ -1836,16 +1840,16 @@ impl SynthBridge for AppSynthBridge {
             .map_err(|e| McpBridgeError::Other(e.to_string()))
     }
 
-    fn set_song_tempo(&self, bpm: f32) -> Result<(), McpBridgeError> {
+    fn set_song_tempo(&self, bpm: Bpm) -> Result<(), McpBridgeError> {
         {
             let mut song = self.shared.song.write();
-            song.default_tempo = synth_core::Bpm::new(bpm);
+            song.default_tempo = bpm;
         }
         // Also update engine transport tempo
         if !self
             .session
             .command_sender()
-            .send(EngineCommand::SetTempo(synth_core::Bpm::new(bpm)))
+            .send(EngineCommand::SetTempo(bpm))
         {
             return Err(McpBridgeError::CommandSendFailed {
                 command: "SetTempo",
@@ -1854,22 +1858,22 @@ impl SynthBridge for AppSynthBridge {
         Ok(())
     }
 
-    fn set_tempo_at(&self, points: &[(u64, f32, bool)]) -> Result<(), McpBridgeError> {
+    fn set_tempo_at(&self, points: &[(Tick, f32, bool)]) -> Result<(), McpBridgeError> {
         // The engine reads the tempo map live via `Song::tempo_at` each tick,
         // so mutating it under the shared-song lock is enough — no
         // `EngineCommand::SetTempo` (that is only for the global default).
         let mut song = self.shared.song.write();
         for &(tick, bpm, ramp) in points {
-            song.set_tempo_ramp_at(synth_sequencer::Tick(tick), synth_core::Bpm::new(bpm), ramp);
+            song.set_tempo_ramp_at(tick, synth_core::Bpm::new(bpm), ramp);
         }
         Ok(())
     }
 
-    fn remove_tempo_at(&self, ticks: &[u64]) -> Result<usize, McpBridgeError> {
+    fn remove_tempo_at(&self, ticks: &[Tick]) -> Result<usize, McpBridgeError> {
         let mut song = self.shared.song.write();
         let removed = ticks
             .iter()
-            .filter(|&&tick| song.remove_tempo_change(synth_sequencer::Tick(tick)))
+            .filter(|&&tick| song.remove_tempo_change(tick))
             .count();
         Ok(removed)
     }
@@ -1892,7 +1896,7 @@ impl SynthBridge for AppSynthBridge {
         let mut patterns: Vec<PatternInfo> = song
             .patterns()
             .map(|p| PatternInfo {
-                id: p.id.0,
+                id: p.id,
                 name: p.name.clone(),
                 description: p.description.clone(),
                 length_beats: ticks_to_beats(p.length.0),
@@ -1903,7 +1907,7 @@ impl SynthBridge for AppSynthBridge {
         Ok(patterns)
     }
 
-    fn create_pattern(&self, name: &str, length_beats: f32) -> Result<u32, McpBridgeError> {
+    fn create_pattern(&self, name: &str, length_beats: f32) -> Result<PatternId, McpBridgeError> {
         if length_beats <= 0.0 {
             return Err(McpBridgeError::Other(format!(
                 "length_beats must be positive, got {length_beats}"
@@ -1915,12 +1919,12 @@ impl SynthBridge for AppSynthBridge {
         if let Some(pattern) = song.pattern_mut(id) {
             pattern.name = name.to_string();
         }
-        Ok(id.0)
+        Ok(id)
     }
 
-    fn delete_pattern(&self, pattern_id: u32) -> Result<(), McpBridgeError> {
+    fn delete_pattern(&self, pattern_id: PatternId) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
-        let id = synth_sequencer::PatternId::new(pattern_id);
+        let id = pattern_id;
         song.delete_pattern(id)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
         Ok(())
@@ -1928,9 +1932,9 @@ impl SynthBridge for AppSynthBridge {
 
     // === Sequencer: Notes ===
 
-    fn list_notes(&self, pattern_id: u32) -> Result<Vec<NoteInfo>, McpBridgeError> {
+    fn list_notes(&self, pattern_id: PatternId) -> Result<Vec<NoteInfo>, McpBridgeError> {
         let song = self.shared.song.read();
-        let id = synth_sequencer::PatternId::new(pattern_id);
+        let id = pattern_id;
         let pattern = song
             .pattern(id)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
@@ -1939,8 +1943,8 @@ impl SynthBridge for AppSynthBridge {
 
     fn add_note(
         &self,
-        pattern_id: u32,
-        pitch: u8,
+        pattern_id: PatternId,
+        pitch: MidiNote,
         start_beat: f32,
         duration_beats: f32,
         velocity: u8,
@@ -1956,12 +1960,12 @@ impl SynthBridge for AppSynthBridge {
             )));
         }
         let mut song = self.shared.song.write();
-        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pid = pattern_id;
         let pattern = song
             .pattern_mut(pid)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
 
-        let p = synth_sequencer::Pitch::new(pitch).ok_or_else(|| {
+        let p = synth_sequencer::Pitch::new(pitch.as_u8()).ok_or_else(|| {
             McpBridgeError::Other(format!("invalid pitch {pitch}, must be 0-127"))
         })?;
         let start = synth_sequencer::PatternTick(beats_to_ticks(start_beat));
@@ -1978,7 +1982,7 @@ impl SynthBridge for AppSynthBridge {
         let note_id = pattern.insert_note(note);
         // Read back the inserted note to return full info
         Ok(pattern.note(note_id).map(note_to_info).unwrap_or(NoteInfo {
-            id: note_id.0,
+            id: note_id,
             pitch,
             pitch_name: p.to_string(),
             start_beat,
@@ -1989,13 +1993,13 @@ impl SynthBridge for AppSynthBridge {
         }))
     }
 
-    fn remove_note(&self, pattern_id: u32, note_id: u64) -> Result<(), McpBridgeError> {
+    fn remove_note(&self, pattern_id: PatternId, note_id: NoteId) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
-        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pid = pattern_id;
         let pattern = song
             .pattern_mut(pid)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
-        let nid = synth_sequencer::NoteId(note_id);
+        let nid = note_id;
         pattern
             .remove_note(nid)
             .ok_or(McpBridgeError::NoteNotFound(note_id))?;
@@ -2004,9 +2008,9 @@ impl SynthBridge for AppSynthBridge {
 
     fn update_note(
         &self,
-        pattern_id: u32,
-        note_id: u64,
-        pitch: Option<u8>,
+        pattern_id: PatternId,
+        note_id: NoteId,
+        pitch: Option<MidiNote>,
         start_beat: Option<f32>,
         duration_beats: Option<f32>,
         velocity: Option<u8>,
@@ -2026,17 +2030,17 @@ impl SynthBridge for AppSynthBridge {
             )));
         }
         let mut song = self.shared.song.write();
-        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pid = pattern_id;
         let pattern = song
             .pattern_mut(pid)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
-        let nid = synth_sequencer::NoteId(note_id);
+        let nid = note_id;
         let note = pattern
             .note_mut(nid)
             .ok_or(McpBridgeError::NoteNotFound(note_id))?;
 
         if let Some(p) = pitch {
-            if let Some(new_pitch) = synth_sequencer::Pitch::new(p) {
+            if let Some(new_pitch) = synth_sequencer::Pitch::new(p.as_u8()) {
                 note.pitch = new_pitch;
             } else {
                 return Err(McpBridgeError::Other(format!(
@@ -2059,10 +2063,10 @@ impl SynthBridge for AppSynthBridge {
 
     // === Sequencer: pattern freeze ===
 
-    fn freeze_pattern(&self, pattern_id: u32) -> Result<(usize, u32), McpBridgeError> {
+    fn freeze_pattern(&self, pattern_id: PatternId) -> Result<(usize, u32), McpBridgeError> {
         let mut song = self.shared.song.write();
         let bpm = song.tempo_at(synth_sequencer::Tick(0));
-        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pid = pattern_id;
         if song.pattern(pid).is_none() {
             return Err(McpBridgeError::PatternNotFound(pattern_id));
         }
@@ -2082,9 +2086,9 @@ impl SynthBridge for AppSynthBridge {
             .collect())
     }
 
-    fn get_note_graph(&self, graph_id: u32) -> Result<NoteGraphDetail, McpBridgeError> {
+    fn get_note_graph(&self, graph_id: NoteGraphId) -> Result<NoteGraphDetail, McpBridgeError> {
         let song = self.shared.song.read();
-        let gid = synth_sequencer::NoteGraphId::new(graph_id);
+        let gid = graph_id;
         let graph = song
             .note_graph(gid)
             .ok_or(McpBridgeError::NoteGraphNotFound(graph_id))?;
@@ -2100,7 +2104,7 @@ impl SynthBridge for AppSynthBridge {
             .filter_map(|id| graph.nodes.get(id).map(|cfg| (id, cfg)))
             .map(|(id, cfg)| {
                 Ok(NoteGraphModuleInfo {
-                    id: id.0,
+                    id: *id,
                     kind: cfg.kind().to_string(),
                     description: graph.node_descriptions.get(id).cloned().unwrap_or_default(),
                     config: serde_json::to_value(cfg)
@@ -2112,8 +2116,8 @@ impl SynthBridge for AppSynthBridge {
             .connections
             .iter()
             .map(|c| NoteGraphConnectionInfo {
-                from: c.from.0,
-                to: c.to.0,
+                from: c.from,
+                to: c.to,
                 port: note_port_to_str(c.port).to_string(),
                 to_input: c.to_input,
             })
@@ -2130,7 +2134,7 @@ impl SynthBridge for AppSynthBridge {
         name: String,
         description: Option<String>,
         color: Option<String>,
-    ) -> Result<u32, McpBridgeError> {
+    ) -> Result<NoteGraphId, McpBridgeError> {
         if name.trim().is_empty() {
             return Err(McpBridgeError::EmptyName { kind: "note graph" });
         }
@@ -2154,20 +2158,20 @@ impl SynthBridge for AppSynthBridge {
             graph.description = description;
             graph.color = color;
         }
-        Ok(gid.0)
+        Ok(gid)
     }
 
-    fn duplicate_note_graph(&self, graph_id: u32) -> Result<u32, McpBridgeError> {
+    fn duplicate_note_graph(&self, graph_id: NoteGraphId) -> Result<NoteGraphId, McpBridgeError> {
         let mut song = self.shared.song.write();
-        let gid = synth_sequencer::NoteGraphId::new(graph_id);
+        let gid = graph_id;
         song.duplicate_note_graph(gid)
-            .map(|graph| graph.id.0)
+            .map(|graph| graph.id)
             .ok_or(McpBridgeError::NoteGraphNotFound(graph_id))
     }
 
-    fn delete_note_graph(&self, graph_id: u32) -> Result<usize, McpBridgeError> {
+    fn delete_note_graph(&self, graph_id: NoteGraphId) -> Result<usize, McpBridgeError> {
         let mut song = self.shared.song.write();
-        let gid = synth_sequencer::NoteGraphId::new(graph_id);
+        let gid = graph_id;
         let usage = song.note_graph_usage(gid);
         song.remove_note_graph(gid)
             .ok_or(McpBridgeError::NoteGraphNotFound(graph_id))?;
@@ -2176,14 +2180,14 @@ impl SynthBridge for AppSynthBridge {
 
     fn add_note_graph_module(
         &self,
-        graph_id: u32,
+        graph_id: NoteGraphId,
         module: serde_json::Value,
         description: Option<String>,
-    ) -> Result<u32, McpBridgeError> {
+    ) -> Result<NoteModuleId, McpBridgeError> {
         let description = validated_description(description)?;
         let config = parse_note_module(module)?;
         let mut song = self.shared.song.write();
-        let gid = synth_sequencer::NoteGraphId::new(graph_id);
+        let gid = graph_id;
         let graph = song
             .note_graph_mut(gid)
             .ok_or(McpBridgeError::NoteGraphNotFound(graph_id))?;
@@ -2198,13 +2202,13 @@ impl SynthBridge for AppSynthBridge {
         // compiled program is `#[serde(skip)]`), so compile it now or the node
         // would be silently pass-through.
         crate::project_apply::recompile_graph_scripts(graph);
-        Ok(module_id.0)
+        Ok(module_id)
     }
 
     fn set_note_graph_module(
         &self,
-        graph_id: u32,
-        module_id: u32,
+        graph_id: NoteGraphId,
+        module_id: NoteModuleId,
         module: serde_json::Value,
         description: Option<String>,
     ) -> Result<(), McpBridgeError> {
@@ -2213,11 +2217,11 @@ impl SynthBridge for AppSynthBridge {
             .transpose()?;
         let config = parse_note_module(module)?;
         let mut song = self.shared.song.write();
-        let gid = synth_sequencer::NoteGraphId::new(graph_id);
+        let gid = graph_id;
         let graph = song
             .note_graph_mut(gid)
             .ok_or(McpBridgeError::NoteGraphNotFound(graph_id))?;
-        let mid = synth_sequencer::NoteModuleId::new(module_id);
+        let mid = module_id;
         if !graph.nodes.contains_key(&mid) {
             return Err(McpBridgeError::NoteGraphModuleNotFound {
                 graph_id,
@@ -2243,7 +2247,7 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_note_graph_metadata(
         &self,
-        graph_id: u32,
+        graph_id: NoteGraphId,
         name: Option<String>,
         description: Option<String>,
         color: Option<String>,
@@ -2271,7 +2275,7 @@ impl SynthBridge for AppSynthBridge {
             .transpose()?;
         let mut song = self.shared.song.write();
         let graph = song
-            .note_graph_mut(synth_sequencer::NoteGraphId::new(graph_id))
+            .note_graph_mut(graph_id)
             .ok_or(McpBridgeError::NoteGraphNotFound(graph_id))?;
         if let Some(name) = name {
             graph.name = name;
@@ -2287,16 +2291,16 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_note_graph_script(
         &self,
-        graph_id: u32,
-        module_id: u32,
+        graph_id: NoteGraphId,
+        module_id: NoteModuleId,
         source: String,
     ) -> Result<String, McpBridgeError> {
         let mut song = self.shared.song.write();
-        let gid = synth_sequencer::NoteGraphId::new(graph_id);
+        let gid = graph_id;
         let graph = song
             .note_graph_mut(gid)
             .ok_or(McpBridgeError::NoteGraphNotFound(graph_id))?;
-        let mid = synth_sequencer::NoteModuleId::new(module_id);
+        let mid = module_id;
         let node = graph
             .nodes
             .get_mut(&mid)
@@ -2337,15 +2341,15 @@ impl SynthBridge for AppSynthBridge {
 
     fn remove_note_graph_module(
         &self,
-        graph_id: u32,
-        module_id: u32,
+        graph_id: NoteGraphId,
+        module_id: NoteModuleId,
     ) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
-        let gid = synth_sequencer::NoteGraphId::new(graph_id);
+        let gid = graph_id;
         let graph = song
             .note_graph_mut(gid)
             .ok_or(McpBridgeError::NoteGraphNotFound(graph_id))?;
-        let mid = synth_sequencer::NoteModuleId::new(module_id);
+        let mid = module_id;
         graph
             .remove_node(mid)
             .map(|_| ())
@@ -2357,20 +2361,17 @@ impl SynthBridge for AppSynthBridge {
 
     fn connect_note_graph(
         &self,
-        graph_id: u32,
-        from: u32,
-        to: u32,
+        graph_id: NoteGraphId,
+        from: NoteModuleId,
+        to: NoteModuleId,
         port: String,
         to_input: u8,
     ) -> Result<(), McpBridgeError> {
         let port = parse_note_port(&port)?;
         let mut song = self.shared.song.write();
-        let gid = synth_sequencer::NoteGraphId::new(graph_id);
         let graph = song
-            .note_graph_mut(gid)
+            .note_graph_mut(graph_id)
             .ok_or(McpBridgeError::NoteGraphNotFound(graph_id))?;
-        let from = synth_sequencer::NoteModuleId::new(from);
-        let to = synth_sequencer::NoteModuleId::new(to);
         let connection = synth_sequencer::NoteConnection {
             from,
             to,
@@ -2384,47 +2385,47 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_pattern_note_graph(
         &self,
-        pattern_id: u32,
-        graph_id: Option<u32>,
+        pattern_id: PatternId,
+        graph_id: Option<NoteGraphId>,
     ) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
         // Reject a dangling reference up-front so binding is never silently dry.
         if let Some(id) = graph_id {
-            let gid = synth_sequencer::NoteGraphId::new(id);
+            let gid = id;
             if song.note_graph(gid).is_none() {
                 return Err(McpBridgeError::NoteGraphNotFound(id));
             }
         }
-        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pid = pattern_id;
         let pattern = song
             .pattern_mut(pid)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
-        pattern.set_note_graph(graph_id.map(synth_sequencer::NoteGraphId::new));
+        pattern.set_note_graph(graph_id);
         Ok(())
     }
 
     fn set_note_note_graph(
         &self,
-        pattern_id: u32,
-        note_id: u64,
-        graph_id: Option<u32>,
+        pattern_id: PatternId,
+        note_id: NoteId,
+        graph_id: Option<NoteGraphId>,
     ) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
         // Reject a dangling reference up-front so the binding is never silently dry.
         if let Some(id) = graph_id {
-            let gid = synth_sequencer::NoteGraphId::new(id);
+            let gid = id;
             if song.note_graph(gid).is_none() {
                 return Err(McpBridgeError::NoteGraphNotFound(id));
             }
         }
-        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pid = pattern_id;
         let pattern = song
             .pattern_mut(pid)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
         let note = pattern
-            .note_mut(synth_sequencer::NoteId(note_id))
+            .note_mut(note_id)
             .ok_or(McpBridgeError::NoteNotFound(note_id))?;
-        note.note_graph = graph_id.map(synth_sequencer::NoteGraphId::new);
+        note.note_graph = graph_id;
         Ok(())
     }
 
@@ -2435,9 +2436,9 @@ impl SynthBridge for AppSynthBridge {
         Ok(song.mod_graphs().map(mod_graph_info).collect())
     }
 
-    fn get_mod_graph(&self, graph_id: u32) -> Result<ModGraphDetail, McpBridgeError> {
+    fn get_mod_graph(&self, graph_id: ModGraphId) -> Result<ModGraphDetail, McpBridgeError> {
         let song = self.shared.song.read();
-        let gid = synth_sequencer::ModGraphId::new(graph_id);
+        let gid = graph_id;
         let graph = song
             .mod_graph(gid)
             .ok_or(McpBridgeError::ModGraphNotFound(graph_id))?;
@@ -2446,7 +2447,7 @@ impl SynthBridge for AppSynthBridge {
             .iter()
             .map(|(id, cfg)| {
                 Ok(ModGraphNodeInfo {
-                    id: id.0,
+                    id: *id,
                     kind: cfg.kind().to_string(),
                     description: graph.node_descriptions.get(id).cloned().unwrap_or_default(),
                     config: serde_json::to_value(cfg)
@@ -2458,9 +2459,9 @@ impl SynthBridge for AppSynthBridge {
             .connections
             .iter()
             .map(|c| ModGraphConnectionInfo {
-                from: c.from.0,
+                from: c.from,
                 from_port: c.from_port.clone(),
-                to: c.to.0,
+                to: c.to,
                 to_port: c.to_port.clone(),
             })
             .collect();
@@ -2476,7 +2477,7 @@ impl SynthBridge for AppSynthBridge {
         name: String,
         description: Option<String>,
         scope: Option<String>,
-    ) -> Result<u32, McpBridgeError> {
+    ) -> Result<ModGraphId, McpBridgeError> {
         if name.trim().is_empty() {
             return Err(McpBridgeError::EmptyName { kind: "mod graph" });
         }
@@ -2495,21 +2496,25 @@ impl SynthBridge for AppSynthBridge {
         if let Some(graph) = song.mod_graph_mut(gid) {
             graph.description = description;
         }
-        Ok(gid.0)
+        Ok(gid)
     }
 
-    fn delete_mod_graph(&self, graph_id: u32) -> Result<(), McpBridgeError> {
+    fn delete_mod_graph(&self, graph_id: ModGraphId) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
-        let gid = synth_sequencer::ModGraphId::new(graph_id);
+        let gid = graph_id;
         song.remove_mod_graph(gid)
             .ok_or(McpBridgeError::ModGraphNotFound(graph_id))?;
         Ok(())
     }
 
-    fn set_mod_graph_scope(&self, graph_id: u32, scope: String) -> Result<(), McpBridgeError> {
+    fn set_mod_graph_scope(
+        &self,
+        graph_id: ModGraphId,
+        scope: String,
+    ) -> Result<(), McpBridgeError> {
         let scope = parse_mod_graph_scope(Some(scope.as_str()))?;
         let mut song = self.shared.song.write();
-        let gid = synth_sequencer::ModGraphId::new(graph_id);
+        let gid = graph_id;
         if song.set_mod_graph_scope(gid, scope) {
             Ok(())
         } else {
@@ -2517,13 +2522,13 @@ impl SynthBridge for AppSynthBridge {
         }
     }
 
-    fn assign_mod_graph(&self, graph_id: u32, tracks: Vec<u32>) -> Result<(), McpBridgeError> {
-        let tracks: Vec<synth_sequencer::TrackId> = tracks
-            .into_iter()
-            .map(|t| synth_sequencer::TrackId(t as u16))
-            .collect();
+    fn assign_mod_graph(
+        &self,
+        graph_id: ModGraphId,
+        tracks: Vec<TrackId>,
+    ) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
-        let gid = synth_sequencer::ModGraphId::new(graph_id);
+        let gid = graph_id;
         if song.assign_mod_graph(gid, &tracks) {
             Ok(())
         } else {
@@ -2533,14 +2538,14 @@ impl SynthBridge for AppSynthBridge {
 
     fn add_mod_graph_node(
         &self,
-        graph_id: u32,
+        graph_id: ModGraphId,
         node: serde_json::Value,
         description: Option<String>,
-    ) -> Result<u32, McpBridgeError> {
+    ) -> Result<ModNodeId, McpBridgeError> {
         let description = validated_description(description)?;
         let config = parse_mod_node(node)?;
         let mut song = self.shared.song.write();
-        let gid = synth_sequencer::ModGraphId::new(graph_id);
+        let gid = graph_id;
         let graph = song
             .mod_graph_mut(gid)
             .ok_or(McpBridgeError::ModGraphNotFound(graph_id))?;
@@ -2551,12 +2556,12 @@ impl SynthBridge for AppSynthBridge {
         if !description.is_empty() {
             graph.node_descriptions.insert(node_id, description);
         }
-        Ok(node_id.0)
+        Ok(node_id)
     }
 
     fn set_mod_graph_metadata(
         &self,
-        graph_id: u32,
+        graph_id: ModGraphId,
         name: Option<String>,
         description: Option<String>,
         color: Option<String>,
@@ -2584,7 +2589,7 @@ impl SynthBridge for AppSynthBridge {
             .transpose()?;
         let mut song = self.shared.song.write();
         let graph = song
-            .mod_graph_mut(synth_sequencer::ModGraphId::new(graph_id))
+            .mod_graph_mut(graph_id)
             .ok_or(McpBridgeError::ModGraphNotFound(graph_id))?;
         if let Some(name) = name {
             graph.name = name;
@@ -2598,37 +2603,36 @@ impl SynthBridge for AppSynthBridge {
         Ok(())
     }
 
-    fn remove_mod_graph_node(&self, graph_id: u32, node_id: u32) -> Result<(), McpBridgeError> {
+    fn remove_mod_graph_node(
+        &self,
+        graph_id: ModGraphId,
+        node_id: ModNodeId,
+    ) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
-        let gid = synth_sequencer::ModGraphId::new(graph_id);
+        let gid = graph_id;
         let graph = song
             .mod_graph_mut(gid)
             .ok_or(McpBridgeError::ModGraphNotFound(graph_id))?;
         graph
-            .remove_node(synth_sequencer::ModNodeId::new(node_id))
+            .remove_node(node_id)
             .ok_or(McpBridgeError::ModGraphNodeNotFound { graph_id, node_id })?;
         Ok(())
     }
 
     fn connect_mod_graph(
         &self,
-        graph_id: u32,
-        from: u32,
+        graph_id: ModGraphId,
+        from: ModNodeId,
         from_port: String,
-        to: u32,
+        to: ModNodeId,
         to_port: String,
     ) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
-        let gid = synth_sequencer::ModGraphId::new(graph_id);
+        let gid = graph_id;
         let graph = song
             .mod_graph_mut(gid)
             .ok_or(McpBridgeError::ModGraphNotFound(graph_id))?;
-        let cable = synth_sequencer::ModConnection::new(
-            synth_sequencer::ModNodeId::new(from),
-            from_port,
-            synth_sequencer::ModNodeId::new(to),
-            to_port,
-        );
+        let cable = synth_sequencer::ModConnection::new(from, from_port, to, to_port);
         graph
             .try_connect(cable)
             .map_err(|e| McpBridgeError::Other(e.to_string()))
@@ -2636,23 +2640,18 @@ impl SynthBridge for AppSynthBridge {
 
     fn disconnect_mod_graph(
         &self,
-        graph_id: u32,
-        from: u32,
+        graph_id: ModGraphId,
+        from: ModNodeId,
         from_port: String,
-        to: u32,
+        to: ModNodeId,
         to_port: String,
     ) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
-        let gid = synth_sequencer::ModGraphId::new(graph_id);
+        let gid = graph_id;
         let graph = song
             .mod_graph_mut(gid)
             .ok_or(McpBridgeError::ModGraphNotFound(graph_id))?;
-        let cable = synth_sequencer::ModConnection::new(
-            synth_sequencer::ModNodeId::new(from),
-            from_port,
-            synth_sequencer::ModNodeId::new(to),
-            to_port,
-        );
+        let cable = synth_sequencer::ModConnection::new(from, from_port, to, to_port);
         if graph.disconnect(&cable) {
             Ok(())
         } else {
@@ -2665,8 +2664,8 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_mod_graph_node(
         &self,
-        graph_id: u32,
-        node_id: u32,
+        graph_id: ModGraphId,
+        node_id: ModNodeId,
         node: serde_json::Value,
         description: Option<String>,
     ) -> Result<(), McpBridgeError> {
@@ -2675,11 +2674,11 @@ impl SynthBridge for AppSynthBridge {
             .transpose()?;
         let config = parse_mod_node(node)?;
         let mut song = self.shared.song.write();
-        let gid = synth_sequencer::ModGraphId::new(graph_id);
+        let gid = graph_id;
         let graph = song
             .mod_graph_mut(gid)
             .ok_or(McpBridgeError::ModGraphNotFound(graph_id))?;
-        let nid = synth_sequencer::ModNodeId::new(node_id);
+        let nid = node_id;
         // Edit-in-place, not create: the node must already exist.
         if !graph.nodes.contains_key(&nid) {
             return Err(McpBridgeError::ModGraphNodeNotFound { graph_id, node_id });
@@ -2701,22 +2700,22 @@ impl SynthBridge for AppSynthBridge {
 
     fn list_mod_targets(
         &self,
-        graph_id: Option<u32>,
+        graph_id: Option<ModGraphId>,
     ) -> Result<Vec<ModTargetInfo>, McpBridgeError> {
         let song = self.shared.song.read();
         let mut out = Vec::new();
         for graph in song.mod_graphs() {
             if let Some(want) = graph_id
-                && graph.id.0 != want
+                && graph.id != want
             {
                 continue;
             }
             for (node_id, cfg) in &graph.nodes {
                 if let synth_sequencer::ModNodeConfig::Target(t) = cfg {
                     out.push(ModTargetInfo {
-                        graph_id: graph.id.0,
+                        graph_id: graph.id,
                         graph_name: graph.name.clone(),
-                        node_id: node_id.0,
+                        node_id: *node_id,
                         target: t.target.display_name(),
                         amount: t.amount,
                     });
@@ -2728,8 +2727,8 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_note_ornament(
         &self,
-        pattern_id: u32,
-        note_id: u64,
+        pattern_id: PatternId,
+        note_id: NoteId,
         ornament: Option<serde_json::Value>,
     ) -> Result<(), McpBridgeError> {
         // null / omitted clears the ornament; otherwise parse the Ornament.
@@ -2741,12 +2740,12 @@ impl SynthBridge for AppSynthBridge {
             ),
         };
         let mut song = self.shared.song.write();
-        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pid = pattern_id;
         let pattern = song
             .pattern_mut(pid)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
         let note = pattern
-            .note_mut(synth_sequencer::NoteId(note_id))
+            .note_mut(note_id)
             .ok_or(McpBridgeError::NoteNotFound(note_id))?;
         note.ornament = parsed;
         Ok(())
@@ -2759,22 +2758,22 @@ impl SynthBridge for AppSynthBridge {
         let mut tracks: Vec<TrackInfo> = song
             .tracks()
             .map(|t| TrackInfo {
-                id: t.id.0,
+                id: t.id,
                 name: t.name.clone(),
                 description: t.description.clone(),
                 color: t.color.to_hex(),
                 instrument_id: Some(t.instrument),
-                volume: t.volume.as_f32(),
+                volume: t.volume,
                 // Convert normalized (0.0..1.0) to bipolar (-1.0..1.0) for MCP API
-                pan: t.pan.as_f32(),
+                pan: t.pan,
                 mute: t.mute,
                 solo: t.solo,
                 sends: t
                     .sends
                     .iter()
                     .map(|s| synth_mcp::SendInfo {
-                        target: s.target.0,
-                        level: s.level.as_f32(),
+                        target: s.target,
+                        level: s.level,
                         pre_fader: s.pre_fader,
                         enabled: s.enabled,
                     })
@@ -2789,7 +2788,7 @@ impl SynthBridge for AppSynthBridge {
         &self,
         name: &str,
         instrument_id: Option<InstrumentId>,
-    ) -> Result<u16, McpBridgeError> {
+    ) -> Result<TrackId, McpBridgeError> {
         let mut song = self.shared.song.write();
         let id = song.create_track(name);
         if let Some(inst_id) = instrument_id
@@ -2797,15 +2796,15 @@ impl SynthBridge for AppSynthBridge {
         {
             track.instrument = inst_id;
         }
-        Ok(id.0)
+        Ok(id)
     }
 
     // === Sequencer: Arrangement ===
 
     fn place_pattern(&self, data: &BridgePlacementData) -> Result<(), McpBridgeError> {
-        let pid = synth_sequencer::PatternId::new(data.pattern_id);
-        let tid = synth_sequencer::TrackId(data.track_id);
-        let tick = synth_sequencer::Tick(data.start_tick);
+        let pid = data.pattern_id;
+        let tid = data.track_id;
+        let tick = data.start_tick;
 
         let placement_end = {
             let mut song = self.shared.song.write();
@@ -2842,14 +2841,14 @@ impl SynthBridge for AppSynthBridge {
 
     fn remove_placement(
         &self,
-        pattern_id: u32,
-        track_id: u16,
-        start_tick: u64,
+        pattern_id: PatternId,
+        track_id: TrackId,
+        start_tick: Tick,
     ) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
-        let pid = synth_sequencer::PatternId::new(pattern_id);
-        let tid = synth_sequencer::TrackId(track_id);
-        let tick = synth_sequencer::Tick(start_tick);
+        let pid = pattern_id;
+        let tid = track_id;
+        let tick = start_tick;
         if song.remove_placement(pid, tid, tick) {
             Ok(())
         } else {
@@ -2869,17 +2868,17 @@ impl SynthBridge for AppSynthBridge {
                 let pattern_length = song.pattern(p.pattern_id)?.length;
                 let effective_length = p.effective_length(pattern_length);
                 Some(PlacementInfo {
-                    pattern_id: p.pattern_id.0,
-                    track_id: p.track_id.0,
+                    pattern_id: p.pattern_id,
+                    track_id: p.track_id,
                     start_beat: ticks_to_beats_u64(p.start.0),
-                    start_tick: p.start.0,
+                    start_tick: p.start,
                     transpose_semitones: p.transpose.as_f32(),
                     gain: p.gain.as_f32(),
                     length_beats: p.length_override.map(|length| ticks_to_beats(length.0)),
                     length_ticks: p.length_override.map(|length| length.0),
                     effective_length_beats: ticks_to_beats(effective_length.0),
                     effective_length_ticks: effective_length.0,
-                    end_tick: p.end(pattern_length).0,
+                    end_tick: p.end(pattern_length),
                 })
             })
             .collect())
@@ -2889,11 +2888,11 @@ impl SynthBridge for AppSynthBridge {
 
     fn add_notes(
         &self,
-        pattern_id: u32,
+        pattern_id: PatternId,
         notes: &[BridgeNoteData],
     ) -> Result<BatchResult, McpBridgeError> {
         let mut song = self.shared.song.write();
-        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pid = pattern_id;
         let pattern = song
             .pattern_mut(pid)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
@@ -2933,11 +2932,11 @@ impl SynthBridge for AppSynthBridge {
 
     fn update_notes(
         &self,
-        pattern_id: u32,
+        pattern_id: PatternId,
         updates: &[BridgeNoteUpdate],
     ) -> Result<BatchResult, McpBridgeError> {
         let mut song = self.shared.song.write();
-        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pid = pattern_id;
         let pattern = song
             .pattern_mut(pid)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
@@ -2946,10 +2945,10 @@ impl SynthBridge for AppSynthBridge {
         let mut succeeded = 0usize;
 
         for (i, u) in updates.iter().enumerate() {
-            let nid = synth_sequencer::NoteId(u.note_id);
+            let nid = u.note_id;
             if let Some(note) = pattern.note_mut(nid) {
                 if let Some(p) = u.pitch {
-                    if let Some(new_pitch) = synth_sequencer::Pitch::new(p) {
+                    if let Some(new_pitch) = synth_sequencer::Pitch::new(p.as_u8()) {
                         note.pitch = new_pitch;
                     } else {
                         items.push(BatchItemResult {
@@ -2997,11 +2996,11 @@ impl SynthBridge for AppSynthBridge {
 
     fn replace_notes(
         &self,
-        pattern_id: u32,
+        pattern_id: PatternId,
         notes: &[BridgeNoteData],
     ) -> Result<BatchResult, McpBridgeError> {
         let mut song = self.shared.song.write();
-        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pid = pattern_id;
         let pattern = song
             .pattern_mut(pid)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
@@ -3041,9 +3040,9 @@ impl SynthBridge for AppSynthBridge {
         })
     }
 
-    fn clear_pattern(&self, pattern_id: u32) -> Result<usize, McpBridgeError> {
+    fn clear_pattern(&self, pattern_id: PatternId) -> Result<usize, McpBridgeError> {
         let mut song = self.shared.song.write();
-        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pid = pattern_id;
         let pattern = song
             .pattern_mut(pid)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
@@ -3147,9 +3146,9 @@ impl SynthBridge for AppSynthBridge {
             let mut song = self.shared.song.write();
 
             for (i, p) in placements.iter().enumerate() {
-                let pid = synth_sequencer::PatternId::new(p.pattern_id);
-                let tid = synth_sequencer::TrackId(p.track_id);
-                let tick = synth_sequencer::Tick(p.start_tick);
+                let pid = p.pattern_id;
+                let tid = p.track_id;
+                let tick = p.start_tick;
 
                 let Some(pattern_length) = song.pattern(pid).map(|p| p.length) else {
                     items.push(BatchItemResult {
@@ -3232,9 +3231,9 @@ impl SynthBridge for AppSynthBridge {
         let mut max_end = synth_sequencer::Tick::ZERO;
 
         for (index, update) in updates.iter().enumerate() {
-            let pattern_id = synth_sequencer::PatternId::new(update.pattern_id);
-            let track_id = synth_sequencer::TrackId(update.track_id);
-            let start = synth_sequencer::Tick(update.start_tick);
+            let pattern_id = update.pattern_id;
+            let track_id = update.track_id;
+            let start = update.start_tick;
             let Some(mut replacement) = song
                 .arrangement()
                 .iter()
@@ -3254,10 +3253,10 @@ impl SynthBridge for AppSynthBridge {
                 continue;
             };
             if let Some(new_track_id) = update.new_track_id {
-                replacement.track_id = synth_sequencer::TrackId(new_track_id);
+                replacement.track_id = new_track_id;
             }
             if let Some(new_start_tick) = update.new_start_tick {
-                replacement.start = synth_sequencer::Tick(new_start_tick);
+                replacement.start = new_start_tick;
             }
             if let Some(transpose) = update.transpose_semitones {
                 replacement.transpose = synth_core::Semitones::new(transpose);
@@ -3331,7 +3330,7 @@ impl SynthBridge for AppSynthBridge {
         let mut total_notes = 0usize;
 
         // Create patterns with notes
-        let mut pattern_ids: Vec<u32> = Vec::with_capacity(patterns.len());
+        let mut pattern_ids: Vec<PatternId> = Vec::with_capacity(patterns.len());
         for (i, p) in patterns.iter().enumerate() {
             let duration = synth_sequencer::Duration(beats_to_ticks(p.length_beats));
             let id = song.create_pattern(duration);
@@ -3351,11 +3350,11 @@ impl SynthBridge for AppSynthBridge {
             } else {
                 errors.push(format!("failed to access pattern[{i}] after creation"));
             }
-            pattern_ids.push(id.0);
+            pattern_ids.push(id);
         }
 
         // Create tracks
-        let mut track_ids: Vec<u16> = Vec::with_capacity(tracks.len());
+        let mut track_ids: Vec<TrackId> = Vec::with_capacity(tracks.len());
         for t in tracks {
             let id = song.create_track(&t.name);
             if let Some(inst_id) = t.instrument_id
@@ -3363,7 +3362,7 @@ impl SynthBridge for AppSynthBridge {
             {
                 track.instrument = inst_id;
             }
-            track_ids.push(id.0);
+            track_ids.push(id);
         }
 
         // Create arrangement placements (index-based → real IDs)
@@ -3386,11 +3385,11 @@ impl SynthBridge for AppSynthBridge {
                 continue;
             }
 
-            let pid = synth_sequencer::PatternId::new(pattern_ids[pl.pattern_index]);
-            let tid = synth_sequencer::TrackId(track_ids[pl.track_index]);
+            let pid = pattern_ids[pl.pattern_index];
+            let tid = track_ids[pl.track_index];
             let data = BridgePlacementData {
-                pattern_id: pid.0,
-                track_id: tid.0,
+                pattern_id: pid,
+                track_id: tid,
                 start_tick: pl.start_tick,
                 transpose_semitones: pl.transpose_semitones,
                 gain: pl.gain,
@@ -3497,22 +3496,18 @@ impl SynthBridge for AppSynthBridge {
         if let Some(ch) = spec.midi_channel
             && let Err(e) = self.session.set_instrument_midi_channel(
                 inst_id,
-                MidiChannel::from_one_indexed(ch).unwrap_or(MidiChannel::CH1),
+                EngineMidiChannel::from_one_indexed(ch.as_u8()).unwrap_or(EngineMidiChannel::CH1),
             )
         {
             errors.push(format!("midi_channel: {e}"));
         }
         if let Some(vol) = spec.volume
-            && let Err(e) = self
-                .session
-                .set_instrument_volume(inst_id, synth_core::Gain::new(vol))
+            && let Err(e) = self.session.set_instrument_volume(inst_id, vol)
         {
             errors.push(format!("volume: {e}"));
         }
         if let Some(pan) = spec.pan
-            && let Err(e) = self
-                .session
-                .set_instrument_pan(inst_id, synth_core::BipolarValue::new(pan))
+            && let Err(e) = self.session.set_instrument_pan(inst_id, pan)
         {
             errors.push(format!("pan: {e}"));
         }
@@ -3765,9 +3760,7 @@ impl SynthBridge for AppSynthBridge {
         if dropped && !orphaned_lanes.is_empty() {
             let mut song = self.shared.song.write();
             for orphan in &orphaned_lanes {
-                if let Some(pattern) =
-                    song.pattern_mut(synth_sequencer::PatternId(orphan.pattern_id))
-                {
+                if let Some(pattern) = song.pattern_mut(orphan.pattern_id) {
                     pattern.automation.retain(|lane| {
                         let (target, lane_inst, _scope) = automation_target_info(&lane.target);
                         !(lane_inst == Some(id) && target == orphan.target)
@@ -3829,7 +3822,7 @@ impl SynthBridge for AppSynthBridge {
 
     fn add_automation_points(
         &self,
-        pattern_id: u32,
+        pattern_id: PatternId,
         points: &[BridgeAutomationPointData],
     ) -> Result<BatchResult, McpBridgeError> {
         use synth_sequencer::{AutomationPoint, PatternTick};
@@ -3840,7 +3833,7 @@ impl SynthBridge for AppSynthBridge {
         let module_cache = self.module_id_cache(points.iter().map(|pt| pt.instrument_id));
 
         let mut song_w = self.shared.song.write();
-        let pat_id = synth_sequencer::PatternId(pattern_id);
+        let pat_id = pattern_id;
         let pattern = song_w
             .pattern_mut(pat_id)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
@@ -3895,10 +3888,10 @@ impl SynthBridge for AppSynthBridge {
 
     fn list_automation_lanes(
         &self,
-        pattern_id: u32,
+        pattern_id: PatternId,
     ) -> Result<Vec<AutomationLaneInfo>, McpBridgeError> {
         let song = self.shared.song.read();
-        let pat_id = synth_sequencer::PatternId(pattern_id);
+        let pat_id = pattern_id;
         let pattern = song
             .pattern(pat_id)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
@@ -4007,13 +4000,13 @@ impl SynthBridge for AppSynthBridge {
 
     fn get_automation_points(
         &self,
-        pattern_id: u32,
+        pattern_id: PatternId,
         target: &str,
         instrument_id: InstrumentId,
     ) -> Result<Vec<AutomationPointInfo>, McpBridgeError> {
         let valid_modules = self.instrument_module_ids(instrument_id);
         let song = self.shared.song.read();
-        let pat_id = synth_sequencer::PatternId(pattern_id);
+        let pat_id = pattern_id;
         let pattern = song
             .pattern(pat_id)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
@@ -4036,14 +4029,14 @@ impl SynthBridge for AppSynthBridge {
 
     fn remove_automation_points(
         &self,
-        pattern_id: u32,
+        pattern_id: PatternId,
         target: &str,
         instrument_id: InstrumentId,
         beats: &[f32],
     ) -> Result<BatchResult, McpBridgeError> {
         let valid_modules = self.instrument_module_ids(instrument_id);
         let mut song = self.shared.song.write();
-        let pat_id = synth_sequencer::PatternId(pattern_id);
+        let pat_id = pattern_id;
         let pattern = song
             .pattern_mut(pat_id)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
@@ -4085,13 +4078,13 @@ impl SynthBridge for AppSynthBridge {
 
     fn clear_automation_lane(
         &self,
-        pattern_id: u32,
+        pattern_id: PatternId,
         target: &str,
         instrument_id: InstrumentId,
     ) -> Result<usize, McpBridgeError> {
         let valid_modules = self.instrument_module_ids(instrument_id);
         let mut song = self.shared.song.write();
-        let pat_id = synth_sequencer::PatternId(pattern_id);
+        let pat_id = pattern_id;
         let pattern = song
             .pattern_mut(pat_id)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
@@ -4105,7 +4098,7 @@ impl SynthBridge for AppSynthBridge {
 
     fn transform_automation_lane(
         &self,
-        pattern_id: u32,
+        pattern_id: PatternId,
         target: &str,
         instrument_id: InstrumentId,
         scale: f32,
@@ -4116,7 +4109,7 @@ impl SynthBridge for AppSynthBridge {
 
         let valid_modules = self.instrument_module_ids(instrument_id);
         let mut song = self.shared.song.write();
-        let pat_id = synth_sequencer::PatternId(pattern_id);
+        let pat_id = pattern_id;
         let pattern = song
             .pattern_mut(pat_id)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
@@ -4147,10 +4140,10 @@ impl SynthBridge for AppSynthBridge {
 
     fn copy_automation_lane(
         &self,
-        from_pattern_id: u32,
+        from_pattern_id: PatternId,
         from_target: &str,
         from_instrument_id: InstrumentId,
-        to_pattern_id: u32,
+        to_pattern_id: PatternId,
         to_target: &str,
         to_instrument_id: InstrumentId,
         scale: f32,
@@ -4162,8 +4155,8 @@ impl SynthBridge for AppSynthBridge {
         let from_valid = self.instrument_module_ids(from_instrument_id);
         let to_valid = self.instrument_module_ids(to_instrument_id);
         let mut song = self.shared.song.write();
-        let from_pat = synth_sequencer::PatternId(from_pattern_id);
-        let to_pat = synth_sequencer::PatternId(to_pattern_id);
+        let from_pat = from_pattern_id;
+        let to_pat = to_pattern_id;
         let from_at = build_automation_target(from_target, from_instrument_id, &from_valid)?;
         let to_at = build_automation_target(to_target, to_instrument_id, &to_valid)?;
 
@@ -4201,30 +4194,34 @@ impl SynthBridge for AppSynthBridge {
 
     // === Track control ===
 
-    fn set_track_volume(&self, track_id: u16, volume: f32) -> Result<(), McpBridgeError> {
+    fn set_track_volume(
+        &self,
+        track_id: TrackId,
+        volume: NormalizedValue,
+    ) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
-        let tid = synth_sequencer::TrackId(track_id);
+        let tid = track_id;
         let track = song
             .track_mut(tid)
             .ok_or(McpBridgeError::TrackNotFound(track_id))?;
-        track.volume = synth_core::NormalizedValue::new(volume);
+        track.volume = volume;
         Ok(())
     }
 
-    fn set_track_pan(&self, track_id: u16, pan: f32) -> Result<(), McpBridgeError> {
+    fn set_track_pan(&self, track_id: TrackId, pan: BipolarValue) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
-        let tid = synth_sequencer::TrackId(track_id);
+        let tid = track_id;
         let track = song
             .track_mut(tid)
             .ok_or(McpBridgeError::TrackNotFound(track_id))?;
         // Convert bipolar (-1.0..1.0) to normalized (0.0..1.0) for internal storage
-        track.pan = synth_core::BipolarValue::new(pan);
+        track.pan = pan;
         Ok(())
     }
 
-    fn set_track_mute(&self, track_id: u16, muted: bool) -> Result<(), McpBridgeError> {
+    fn set_track_mute(&self, track_id: TrackId, muted: bool) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
-        let tid = synth_sequencer::TrackId(track_id);
+        let tid = track_id;
         let track = song
             .track_mut(tid)
             .ok_or(McpBridgeError::TrackNotFound(track_id))?;
@@ -4232,9 +4229,9 @@ impl SynthBridge for AppSynthBridge {
         Ok(())
     }
 
-    fn set_track_solo(&self, track_id: u16, solo: bool) -> Result<(), McpBridgeError> {
+    fn set_track_solo(&self, track_id: TrackId, solo: bool) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
-        let tid = synth_sequencer::TrackId(track_id);
+        let tid = track_id;
         let track = song
             .track_mut(tid)
             .ok_or(McpBridgeError::TrackNotFound(track_id))?;
@@ -4244,11 +4241,11 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_track_instrument(
         &self,
-        track_id: u16,
+        track_id: TrackId,
         instrument_id: Option<InstrumentId>,
     ) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
-        let tid = synth_sequencer::TrackId(track_id);
+        let tid = track_id;
         let track = song
             .track_mut(tid)
             .ok_or(McpBridgeError::TrackNotFound(track_id))?;
@@ -4260,9 +4257,9 @@ impl SynthBridge for AppSynthBridge {
         Ok(())
     }
 
-    fn rename_track(&self, track_id: u16, name: &str) -> Result<(), McpBridgeError> {
+    fn rename_track(&self, track_id: TrackId, name: &str) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
-        let tid = synth_sequencer::TrackId(track_id);
+        let tid = track_id;
         let track = song
             .track_mut(tid)
             .ok_or(McpBridgeError::TrackNotFound(track_id))?;
@@ -4272,11 +4269,11 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_track_description(
         &self,
-        track_id: u16,
+        track_id: TrackId,
         description: &str,
     ) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
-        let tid = synth_sequencer::TrackId(track_id);
+        let tid = track_id;
         let track = song
             .track_mut(tid)
             .ok_or(McpBridgeError::TrackNotFound(track_id))?;
@@ -4284,14 +4281,14 @@ impl SynthBridge for AppSynthBridge {
         Ok(())
     }
 
-    fn set_track_color(&self, track_id: u16, color: &str) -> Result<(), McpBridgeError> {
+    fn set_track_color(&self, track_id: TrackId, color: &str) -> Result<(), McpBridgeError> {
         let parsed = synth_sequencer::TrackColor::from_hex(color).ok_or_else(|| {
             McpBridgeError::Other(format!(
                 "invalid color {color:?}; expected \"#RRGGBB\" or \"#RRGGBBAA\""
             ))
         })?;
         let mut song = self.shared.song.write();
-        let tid = synth_sequencer::TrackId(track_id);
+        let tid = track_id;
         let track = song
             .track_mut(tid)
             .ok_or(McpBridgeError::TrackNotFound(track_id))?;
@@ -4299,9 +4296,9 @@ impl SynthBridge for AppSynthBridge {
         Ok(())
     }
 
-    fn delete_track(&self, track_id: u16) -> Result<(), McpBridgeError> {
+    fn delete_track(&self, track_id: TrackId) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
-        let tid = synth_sequencer::TrackId(track_id);
+        let tid = track_id;
         song.delete_track(tid)
             .ok_or(McpBridgeError::TrackNotFound(track_id))?;
         Ok(())
@@ -4318,10 +4315,10 @@ impl SynthBridge for AppSynthBridge {
             .return_busses()
             .iter()
             .map(|b| synth_mcp::ReturnBusInfo {
-                id: b.id.0,
+                id: b.id,
                 name: b.name.clone(),
-                volume: b.volume.as_f32(),
-                pan: b.pan.as_f32(),
+                volume: b.volume,
+                pan: b.pan,
                 mute: b.mute,
                 solo: b.solo,
                 color: b.color.to_hex(),
@@ -4331,8 +4328,8 @@ impl SynthBridge for AppSynthBridge {
                     .sends
                     .iter()
                     .map(|s| synth_mcp::ReturnSendInfo {
-                        target: s.target.0,
-                        level: s.level.as_f32(),
+                        target: s.target,
+                        level: s.level,
                         enabled: s.enabled,
                     })
                     .collect(),
@@ -4340,7 +4337,7 @@ impl SynthBridge for AppSynthBridge {
             .collect())
     }
 
-    fn create_return_bus(&self, name: &str) -> Result<u16, McpBridgeError> {
+    fn create_return_bus(&self, name: &str) -> Result<ReturnBusId, McpBridgeError> {
         let id = {
             let mut song = self.shared.song.write();
             song.create_return_bus(name)
@@ -4358,11 +4355,11 @@ impl SynthBridge for AppSynthBridge {
                 command: "CreateReturnBus",
             });
         }
-        Ok(id.0)
+        Ok(id)
     }
 
-    fn delete_return_bus(&self, return_id: u16) -> Result<(), McpBridgeError> {
-        let id = synth_sequencer::ReturnBusId(return_id);
+    fn delete_return_bus(&self, return_id: ReturnBusId) -> Result<(), McpBridgeError> {
+        let id = return_id;
         {
             let mut song = self.shared.song.write();
             song.delete_return_bus(id)
@@ -4380,49 +4377,69 @@ impl SynthBridge for AppSynthBridge {
         Ok(())
     }
 
-    fn set_return_bus_volume(&self, return_id: u16, volume: f32) -> Result<(), McpBridgeError> {
+    fn set_return_bus_volume(
+        &self,
+        return_id: ReturnBusId,
+        volume: NormalizedValue,
+    ) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
         let bus = song
-            .return_bus_mut(synth_sequencer::ReturnBusId(return_id))
+            .return_bus_mut(return_id)
             .ok_or(McpBridgeError::ReturnBusNotFound(return_id))?;
-        bus.volume = synth_core::NormalizedValue::new(volume);
+        bus.volume = volume;
         Ok(())
     }
 
-    fn set_return_bus_pan(&self, return_id: u16, pan: f32) -> Result<(), McpBridgeError> {
+    fn set_return_bus_pan(
+        &self,
+        return_id: ReturnBusId,
+        pan: BipolarValue,
+    ) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
         let bus = song
-            .return_bus_mut(synth_sequencer::ReturnBusId(return_id))
+            .return_bus_mut(return_id)
             .ok_or(McpBridgeError::ReturnBusNotFound(return_id))?;
-        bus.pan = synth_core::BipolarValue::new(pan);
+        bus.pan = pan;
         Ok(())
     }
 
-    fn set_return_bus_mute(&self, return_id: u16, muted: bool) -> Result<(), McpBridgeError> {
+    fn set_return_bus_mute(
+        &self,
+        return_id: ReturnBusId,
+        muted: bool,
+    ) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
         let bus = song
-            .return_bus_mut(synth_sequencer::ReturnBusId(return_id))
+            .return_bus_mut(return_id)
             .ok_or(McpBridgeError::ReturnBusNotFound(return_id))?;
         // Mute clears solo (mutually exclusive), mirroring tracks.
         bus.set_mute(muted);
         Ok(())
     }
 
-    fn set_return_bus_solo(&self, return_id: u16, solo: bool) -> Result<(), McpBridgeError> {
+    fn set_return_bus_solo(
+        &self,
+        return_id: ReturnBusId,
+        solo: bool,
+    ) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
         let bus = song
-            .return_bus_mut(synth_sequencer::ReturnBusId(return_id))
+            .return_bus_mut(return_id)
             .ok_or(McpBridgeError::ReturnBusNotFound(return_id))?;
         bus.set_solo(solo);
         Ok(())
     }
 
-    fn set_return_bus_color(&self, return_id: u16, color: &str) -> Result<(), McpBridgeError> {
+    fn set_return_bus_color(
+        &self,
+        return_id: ReturnBusId,
+        color: &str,
+    ) -> Result<(), McpBridgeError> {
         let parsed = synth_sequencer::TrackColor::from_hex(color)
             .ok_or_else(|| McpBridgeError::Other(format!("invalid color '{color}'")))?;
         let mut song = self.shared.song.write();
         let bus = song
-            .return_bus_mut(synth_sequencer::ReturnBusId(return_id))
+            .return_bus_mut(return_id)
             .ok_or(McpBridgeError::ReturnBusNotFound(return_id))?;
         bus.color = parsed;
         Ok(())
@@ -4430,21 +4447,21 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_return_bus_description(
         &self,
-        return_id: u16,
+        return_id: ReturnBusId,
         description: &str,
     ) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
         let bus = song
-            .return_bus_mut(synth_sequencer::ReturnBusId(return_id))
+            .return_bus_mut(return_id)
             .ok_or(McpBridgeError::ReturnBusNotFound(return_id))?;
         bus.description = description.to_string();
         Ok(())
     }
 
-    fn rename_return_bus(&self, return_id: u16, name: &str) -> Result<(), McpBridgeError> {
+    fn rename_return_bus(&self, return_id: ReturnBusId, name: &str) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
         let bus = song
-            .return_bus_mut(synth_sequencer::ReturnBusId(return_id))
+            .return_bus_mut(return_id)
             .ok_or(McpBridgeError::ReturnBusNotFound(return_id))?;
         bus.name = name.to_string();
         Ok(())
@@ -4452,21 +4469,20 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_track_send(
         &self,
-        track_id: u16,
-        return_id: u16,
-        level: f32,
+        track_id: TrackId,
+        return_id: ReturnBusId,
+        level: NormalizedValue,
         pre_fader: bool,
         enabled: bool,
     ) -> Result<(), McpBridgeError> {
-        let rid = synth_sequencer::ReturnBusId(return_id);
+        let rid = return_id;
         let mut song = self.shared.song.write();
         if !song.return_busses().iter().any(|b| b.id == rid) {
             return Err(McpBridgeError::ReturnBusNotFound(return_id));
         }
         let track = song
-            .track_mut(synth_sequencer::TrackId(track_id))
+            .track_mut(track_id)
             .ok_or(McpBridgeError::TrackNotFound(track_id))?;
-        let level = synth_core::NormalizedValue::new(level);
         if let Some(send) = track.sends.iter_mut().find(|s| s.target == rid) {
             send.level = level;
             send.pre_fader = pre_fader;
@@ -4482,11 +4498,15 @@ impl SynthBridge for AppSynthBridge {
         Ok(())
     }
 
-    fn remove_track_send(&self, track_id: u16, return_id: u16) -> Result<(), McpBridgeError> {
-        let rid = synth_sequencer::ReturnBusId(return_id);
+    fn remove_track_send(
+        &self,
+        track_id: TrackId,
+        return_id: ReturnBusId,
+    ) -> Result<(), McpBridgeError> {
+        let rid = return_id;
         let mut song = self.shared.song.write();
         let track = song
-            .track_mut(synth_sequencer::TrackId(track_id))
+            .track_mut(track_id)
             .ok_or(McpBridgeError::TrackNotFound(track_id))?;
         track.sends.retain(|s| s.target != rid);
         Ok(())
@@ -4494,13 +4514,13 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_return_send(
         &self,
-        from_id: u16,
-        to_id: u16,
-        level: f32,
+        from_id: ReturnBusId,
+        to_id: ReturnBusId,
+        level: NormalizedValue,
         enabled: bool,
     ) -> Result<(), McpBridgeError> {
-        let from = synth_sequencer::ReturnBusId(from_id);
-        let to = synth_sequencer::ReturnBusId(to_id);
+        let from = from_id;
+        let to = to_id;
         let mut song = self.shared.song.write();
         if !song.return_busses().iter().any(|b| b.id == from) {
             return Err(McpBridgeError::ReturnBusNotFound(from_id));
@@ -4515,7 +4535,6 @@ impl SynthBridge for AppSynthBridge {
                 "return send {from_id} -> {to_id} would create a routing cycle"
             )));
         }
-        let level = synth_core::NormalizedValue::new(level);
         let bus = song
             .return_bus_mut(from)
             .ok_or(McpBridgeError::ReturnBusNotFound(from_id))?;
@@ -4532,9 +4551,13 @@ impl SynthBridge for AppSynthBridge {
         Ok(())
     }
 
-    fn remove_return_send(&self, from_id: u16, to_id: u16) -> Result<(), McpBridgeError> {
-        let from = synth_sequencer::ReturnBusId(from_id);
-        let to = synth_sequencer::ReturnBusId(to_id);
+    fn remove_return_send(
+        &self,
+        from_id: ReturnBusId,
+        to_id: ReturnBusId,
+    ) -> Result<(), McpBridgeError> {
+        let from = from_id;
+        let to = to_id;
         let mut song = self.shared.song.write();
         let bus = song
             .return_bus_mut(from)
@@ -4547,10 +4570,10 @@ impl SynthBridge for AppSynthBridge {
         Ok(self.session.state().master_volume.load())
     }
 
-    fn set_master_volume(&self, volume: f32) -> Result<(), McpBridgeError> {
+    fn set_master_volume(&self, volume: Gain) -> Result<(), McpBridgeError> {
         // `Gain::new` does not reject NaN/inf; guard at the boundary so a bad
         // value can't poison the master gain (the MCP tool also range-checks).
-        if !volume.is_finite() {
+        if !volume.as_f32().is_finite() {
             return Err(McpBridgeError::Other(format!(
                 "master volume must be finite, got {volume}"
             )));
@@ -4558,9 +4581,7 @@ impl SynthBridge for AppSynthBridge {
         if self
             .session
             .command_sender()
-            .send(EngineCommand::SetMasterVolume(synth_core::Gain::new(
-                volume,
-            )))
+            .send(EngineCommand::SetMasterVolume(volume))
         {
             Ok(())
         } else {
@@ -4705,10 +4726,10 @@ impl SynthBridge for AppSynthBridge {
 
     fn add_return_effect(
         &self,
-        return_id: u16,
+        return_id: ReturnBusId,
         effect_type: &str,
     ) -> Result<String, McpBridgeError> {
-        let rid = synth_sequencer::ReturnBusId(return_id);
+        let rid = return_id;
         self.require_return_bus(rid)?;
 
         let module_type = parse_module_type(effect_type)
@@ -4741,8 +4762,12 @@ impl SynthBridge for AppSynthBridge {
         Ok(module_id.to_string())
     }
 
-    fn remove_return_effect(&self, return_id: u16, module_id: &str) -> Result<(), McpBridgeError> {
-        let rid = synth_sequencer::ReturnBusId(return_id);
+    fn remove_return_effect(
+        &self,
+        return_id: ReturnBusId,
+        module_id: &str,
+    ) -> Result<(), McpBridgeError> {
+        let rid = return_id;
         self.require_return_bus(rid)?;
         let mid: ModuleId = module_id
             .parse()
@@ -4764,12 +4789,12 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_return_effect_parameter(
         &self,
-        return_id: u16,
+        return_id: ReturnBusId,
         module_id: &str,
         param_name: &str,
         value: BridgeParamValue,
     ) -> Result<ParameterInfo, McpBridgeError> {
-        let rid = synth_sequencer::ReturnBusId(return_id);
+        let rid = return_id;
         self.require_return_bus(rid)?;
         let (mid, param, info) = self.resolve_effect_param(module_id, param_name, value)?;
         if !self
@@ -4790,11 +4815,11 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_return_effect_enabled(
         &self,
-        return_id: u16,
+        return_id: ReturnBusId,
         module_id: &str,
         enabled: bool,
     ) -> Result<(), McpBridgeError> {
-        let rid = synth_sequencer::ReturnBusId(return_id);
+        let rid = return_id;
         self.require_return_bus(rid)?;
         let mid: ModuleId = module_id
             .parse()
@@ -4817,11 +4842,11 @@ impl SynthBridge for AppSynthBridge {
 
     fn reorder_return_effect(
         &self,
-        return_id: u16,
+        return_id: ReturnBusId,
         module_id: &str,
         direction: synth_mcp::bridge::ReturnEffectMove,
     ) -> Result<(), McpBridgeError> {
-        let rid = synth_sequencer::ReturnBusId(return_id);
+        let rid = return_id;
         self.require_return_bus(rid)?;
         let mid: ModuleId = module_id
             .parse()
@@ -4850,9 +4875,9 @@ impl SynthBridge for AppSynthBridge {
 
     // === Pattern management ===
 
-    fn rename_pattern(&self, pattern_id: u32, name: &str) -> Result<(), McpBridgeError> {
+    fn rename_pattern(&self, pattern_id: PatternId, name: &str) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
-        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pid = pattern_id;
         let pattern = song
             .pattern_mut(pid)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
@@ -4862,11 +4887,11 @@ impl SynthBridge for AppSynthBridge {
 
     fn set_pattern_description(
         &self,
-        pattern_id: u32,
+        pattern_id: PatternId,
         description: &str,
     ) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
-        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pid = pattern_id;
         let pattern = song
             .pattern_mut(pid)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
@@ -4874,9 +4899,13 @@ impl SynthBridge for AppSynthBridge {
         Ok(())
     }
 
-    fn set_pattern_length(&self, pattern_id: u32, length_beats: f32) -> Result<(), McpBridgeError> {
+    fn set_pattern_length(
+        &self,
+        pattern_id: PatternId,
+        length_beats: f32,
+    ) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
-        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pid = pattern_id;
         let pattern = song
             .pattern_mut(pid)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
@@ -4884,9 +4913,9 @@ impl SynthBridge for AppSynthBridge {
         Ok(())
     }
 
-    fn duplicate_pattern(&self, pattern_id: u32) -> Result<u32, McpBridgeError> {
+    fn duplicate_pattern(&self, pattern_id: PatternId) -> Result<u32, McpBridgeError> {
         let mut song = self.shared.song.write();
-        let pid = synth_sequencer::PatternId::new(pattern_id);
+        let pid = pattern_id;
         song.duplicate_pattern(pid)
             .map(|new_id| new_id.0)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))
@@ -5036,7 +5065,7 @@ impl SynthBridge for AppSynthBridge {
     fn render_note_preview(
         &self,
         instrument_id: InstrumentId,
-        note: u8,
+        note: MidiNote,
         velocity: u8,
         duration_ms: u32,
         tail_ms: u32,
@@ -5045,7 +5074,7 @@ impl SynthBridge for AppSynthBridge {
             &self.session,
             &self.sample_library,
             instrument_id,
-            MidiNote::new(note),
+            note,
             Velocity::from_midi(velocity),
             duration_ms,
             tail_ms,
@@ -5056,7 +5085,7 @@ impl SynthBridge for AppSynthBridge {
     fn analyze_note(
         &self,
         instrument_id: InstrumentId,
-        note: u8,
+        note: MidiNote,
         velocity: u8,
         duration_ms: u32,
         tail_ms: u32,
@@ -5089,12 +5118,12 @@ impl SynthBridge for AppSynthBridge {
 
     fn analyze_harmony(
         &self,
-        pattern_id: Option<u32>,
-        arrangement_start_tick: Option<u64>,
-        arrangement_end_tick: Option<u64>,
+        pattern_id: Option<PatternId>,
+        arrangement_start_tick: Option<Tick>,
+        arrangement_end_tick: Option<Tick>,
         grouping_ticks: Option<u32>,
         exclude_drums: Option<bool>,
-        exclude_track_ids: Option<Vec<u16>>,
+        exclude_track_ids: Option<Vec<TrackId>>,
     ) -> Result<AnalyzeHarmonyResult, McpBridgeError> {
         let (query, mut scope_warnings) = harmony_query_from_flat(
             pattern_id,
@@ -5110,15 +5139,18 @@ impl SynthBridge for AppSynthBridge {
         Ok(result)
     }
 
-    fn analyze_pattern(&self, pattern_id: u32) -> Result<AnalyzePatternResult, McpBridgeError> {
+    fn analyze_pattern(
+        &self,
+        pattern_id: PatternId,
+    ) -> Result<AnalyzePatternResult, McpBridgeError> {
         analyze_pattern_impl(&self.shared, pattern_id)
     }
 
     fn analyze_drum_groove(
         &self,
-        pattern_id: Option<u32>,
-        arrangement_start_tick: Option<u64>,
-        arrangement_end_tick: Option<u64>,
+        pattern_id: Option<PatternId>,
+        arrangement_start_tick: Option<Tick>,
+        arrangement_end_tick: Option<Tick>,
     ) -> Result<synth_mcp::types::AnalyzeDrumGrooveResult, McpBridgeError> {
         analyze_drum_groove_impl(
             &self.session,
@@ -5131,9 +5163,9 @@ impl SynthBridge for AppSynthBridge {
 
     fn analyze_bass_drum_lock(
         &self,
-        pattern_id: Option<u32>,
-        arrangement_start_tick: Option<u64>,
-        arrangement_end_tick: Option<u64>,
+        pattern_id: Option<PatternId>,
+        arrangement_start_tick: Option<Tick>,
+        arrangement_end_tick: Option<Tick>,
         onset_tolerance_ticks: Option<u32>,
     ) -> Result<synth_mcp::types::AnalyzeBassDrumLockResult, McpBridgeError> {
         analyze_bass_drum_lock_impl(
@@ -5148,12 +5180,12 @@ impl SynthBridge for AppSynthBridge {
 
     fn analyze_harmonic_function(
         &self,
-        pattern_id: Option<u32>,
-        arrangement_start_tick: Option<u64>,
-        arrangement_end_tick: Option<u64>,
+        pattern_id: Option<PatternId>,
+        arrangement_start_tick: Option<Tick>,
+        arrangement_end_tick: Option<Tick>,
         grouping_ticks: Option<u32>,
         exclude_drums: Option<bool>,
-        exclude_track_ids: Option<Vec<u16>>,
+        exclude_track_ids: Option<Vec<TrackId>>,
     ) -> Result<synth_mcp::types::AnalyzeHarmonicFunctionResult, McpBridgeError> {
         analyze_harmonic_function_impl(
             &self.session,
@@ -5169,13 +5201,13 @@ impl SynthBridge for AppSynthBridge {
 
     fn analyze_arrangement(
         &self,
-        pattern_id: Option<u32>,
-        arrangement_start_tick: Option<u64>,
-        arrangement_end_tick: Option<u64>,
+        pattern_id: Option<PatternId>,
+        arrangement_start_tick: Option<Tick>,
+        arrangement_end_tick: Option<Tick>,
         similarity_threshold: Option<f32>,
         section_min_bars: Option<u32>,
         exclude_drums: Option<bool>,
-        exclude_track_ids: Option<Vec<u16>>,
+        exclude_track_ids: Option<Vec<TrackId>>,
     ) -> Result<synth_mcp::types::AnalyzeArrangementResult, McpBridgeError> {
         analyze_arrangement_impl(
             &self.session,
@@ -5192,13 +5224,13 @@ impl SynthBridge for AppSynthBridge {
 
     fn analyze_form_map(
         &self,
-        pattern_id: Option<u32>,
-        arrangement_start_tick: Option<u64>,
-        arrangement_end_tick: Option<u64>,
+        pattern_id: Option<PatternId>,
+        arrangement_start_tick: Option<Tick>,
+        arrangement_end_tick: Option<Tick>,
         similarity_threshold: Option<f32>,
         section_min_bars: Option<u32>,
         exclude_drums: Option<bool>,
-        exclude_track_ids: Option<Vec<u16>>,
+        exclude_track_ids: Option<Vec<TrackId>>,
     ) -> Result<synth_mcp::types::AnalyzeFormMapResult, McpBridgeError> {
         analyze_form_map_impl(
             &self.session,
@@ -5215,16 +5247,16 @@ impl SynthBridge for AppSynthBridge {
 
     fn find_motifs(
         &self,
-        pattern_id: Option<u32>,
-        arrangement_start_tick: Option<u64>,
-        arrangement_end_tick: Option<u64>,
+        pattern_id: Option<PatternId>,
+        arrangement_start_tick: Option<Tick>,
+        arrangement_end_tick: Option<Tick>,
         min_interval_length: Option<u8>,
         max_interval_length: Option<u8>,
         min_count: Option<u32>,
         top_n: Option<u32>,
         max_occurrences_per_motif: Option<u32>,
         exclude_drums: Option<bool>,
-        exclude_track_ids: Option<Vec<u16>>,
+        exclude_track_ids: Option<Vec<TrackId>>,
     ) -> Result<synth_mcp::types::FindMotifsResult, McpBridgeError> {
         find_motifs_impl(
             &self.session,
@@ -5244,14 +5276,14 @@ impl SynthBridge for AppSynthBridge {
 
     fn analyze_hook_strength(
         &self,
-        pattern_id: Option<u32>,
-        arrangement_start_tick: Option<u64>,
-        arrangement_end_tick: Option<u64>,
+        pattern_id: Option<PatternId>,
+        arrangement_start_tick: Option<Tick>,
+        arrangement_end_tick: Option<Tick>,
         min_interval_length: Option<u8>,
         min_count: Option<u32>,
         max_occurrences_per_motif: Option<u32>,
         exclude_drums: Option<bool>,
-        exclude_track_ids: Option<Vec<u16>>,
+        exclude_track_ids: Option<Vec<TrackId>>,
     ) -> Result<synth_mcp::types::AnalyzeHookStrengthResult, McpBridgeError> {
         analyze_hook_strength_impl(
             &self.session,
@@ -5269,14 +5301,14 @@ impl SynthBridge for AppSynthBridge {
 
     fn analyze_tension_curve(
         &self,
-        pattern_id: Option<u32>,
-        arrangement_start_tick: Option<u64>,
-        arrangement_end_tick: Option<u64>,
+        pattern_id: Option<PatternId>,
+        arrangement_start_tick: Option<Tick>,
+        arrangement_end_tick: Option<Tick>,
         include_audio: Option<bool>,
         similarity_threshold: Option<f32>,
         section_min_bars: Option<u32>,
         exclude_drums: Option<bool>,
-        exclude_track_ids: Option<Vec<u16>>,
+        exclude_track_ids: Option<Vec<TrackId>>,
     ) -> Result<synth_mcp::types::AnalyzeTensionCurveResult, McpBridgeError> {
         analyze_tension_curve_impl(
             &self.session,
@@ -5295,14 +5327,14 @@ impl SynthBridge for AppSynthBridge {
 
     fn suggest_music_fixes(
         &self,
-        pattern_id: Option<u32>,
-        arrangement_start_tick: Option<u64>,
-        arrangement_end_tick: Option<u64>,
+        pattern_id: Option<PatternId>,
+        arrangement_start_tick: Option<Tick>,
+        arrangement_end_tick: Option<Tick>,
         categories: Option<Vec<String>>,
         include_audio: Option<bool>,
         max_suggestions: Option<u32>,
         exclude_drums: Option<bool>,
-        exclude_track_ids: Option<Vec<u16>>,
+        exclude_track_ids: Option<Vec<TrackId>>,
     ) -> Result<synth_mcp::types::SuggestMusicFixesResult, McpBridgeError> {
         suggest_music_fixes_impl(
             &self.session,
@@ -5322,7 +5354,7 @@ impl SynthBridge for AppSynthBridge {
     fn analyze_mix_bus(
         &self,
         duration_seconds: f32,
-        start_tick: Option<u64>,
+        start_tick: Option<Tick>,
         include_per_track: Option<bool>,
         scope: synth_mcp::AnalysisScope,
     ) -> Result<AnalyzeMixBusResult, McpBridgeError> {
@@ -5341,7 +5373,7 @@ impl SynthBridge for AppSynthBridge {
         &self,
         path: String,
         duration_seconds: f32,
-        start_tick: Option<u64>,
+        start_tick: Option<Tick>,
         instrument_id: Option<InstrumentId>,
         scope: synth_mcp::AnalysisScope,
     ) -> Result<RenderToWavResult, McpBridgeError> {
@@ -5360,7 +5392,7 @@ impl SynthBridge for AppSynthBridge {
     fn analyze_spectrum(
         &self,
         duration_seconds: f32,
-        start_tick: Option<u64>,
+        start_tick: Option<Tick>,
         instrument_id: Option<InstrumentId>,
         f0_hint: Option<f32>,
         max_partials: Option<u32>,
@@ -5384,7 +5416,7 @@ impl SynthBridge for AppSynthBridge {
     fn analyze_spectrogram(
         &self,
         duration_seconds: f32,
-        start_tick: Option<u64>,
+        start_tick: Option<Tick>,
         instrument_id: Option<InstrumentId>,
         f0_hint: Option<f32>,
         max_partials: Option<u32>,
@@ -5500,7 +5532,7 @@ impl SynthBridge for AppSynthBridge {
     fn analyze_master_chain(
         &self,
         duration_seconds: f32,
-        start_tick: Option<u64>,
+        start_tick: Option<Tick>,
         scope: synth_mcp::AnalysisScope,
     ) -> Result<AnalyzeMasterChainResult, McpBridgeError> {
         analyze_master_chain_impl(
@@ -5516,7 +5548,7 @@ impl SynthBridge for AppSynthBridge {
     fn analyze_return_busses(
         &self,
         duration_seconds: f32,
-        start_tick: Option<u64>,
+        start_tick: Option<Tick>,
         scope: synth_mcp::AnalysisScope,
     ) -> Result<AnalyzeReturnBussesResult, McpBridgeError> {
         analyze_return_busses_impl(
@@ -5533,7 +5565,7 @@ impl SynthBridge for AppSynthBridge {
         &self,
         action: &str,
         duration_seconds: f32,
-        start_tick: Option<u64>,
+        start_tick: Option<Tick>,
         label: Option<String>,
         scope: synth_mcp::AnalysisScope,
     ) -> Result<CompareMixResult, McpBridgeError> {
@@ -5596,8 +5628,8 @@ impl SynthBridge for AppSynthBridge {
 
     fn analyze_section(
         &self,
-        start_tick: u64,
-        end_tick: u64,
+        start_tick: Tick,
+        end_tick: Tick,
         include_per_track: Option<bool>,
         scope: synth_mcp::AnalysisScope,
     ) -> Result<AnalyzeSectionResult, McpBridgeError> {
@@ -5617,7 +5649,7 @@ impl SynthBridge for AppSynthBridge {
         target_lufs: f32,
         true_peak_ceiling_dbtp: f32,
         duration_seconds: f32,
-        start_tick: Option<u64>,
+        start_tick: Option<Tick>,
     ) -> Result<AutoGainStageResult, McpBridgeError> {
         auto_gain_stage_impl(
             &self.session,
@@ -5632,8 +5664,8 @@ impl SynthBridge for AppSynthBridge {
 
     fn analyze_masking_matrix(
         &self,
-        arrangement_start_tick: Option<u64>,
-        arrangement_end_tick: Option<u64>,
+        arrangement_start_tick: Option<Tick>,
+        arrangement_end_tick: Option<Tick>,
         top_pairs: Option<u32>,
         scope: synth_mcp::AnalysisScope,
     ) -> Result<AnalyzeMaskingMatrixResult, McpBridgeError> {
@@ -5674,7 +5706,7 @@ impl SynthBridge for AppSynthBridge {
     fn analyze_velocity_response(
         &self,
         instrument_id: InstrumentId,
-        note: u8,
+        note: MidiNote,
         velocity_low: Option<u8>,
         velocity_high: Option<u8>,
         velocity_step: Option<u8>,
@@ -5705,8 +5737,8 @@ impl SynthBridge for AppSynthBridge {
 
     fn transpose_notes(
         &self,
-        pattern_id: u32,
-        semitones: i32,
+        pattern_id: PatternId,
+        semitones: Semitones,
         scale_tonic: Option<u8>,
         scale_name: Option<&str>,
         tie_break: Option<&str>,
@@ -5723,7 +5755,7 @@ impl SynthBridge for AppSynthBridge {
 
     fn quantize_notes_to_scale(
         &self,
-        pattern_id: u32,
+        pattern_id: PatternId,
         scale_tonic: u8,
         scale_name: &str,
         tie_break: Option<&str>,
@@ -5733,7 +5765,7 @@ impl SynthBridge for AppSynthBridge {
 
     fn quantize_notes_to_grid(
         &self,
-        pattern_id: u32,
+        pattern_id: PatternId,
         grid_ticks: u32,
         strength: Option<f32>,
         swing: Option<f32>,
@@ -5791,7 +5823,7 @@ impl SynthBridge for AppSynthBridge {
             sample.meta.name = n.to_string();
         }
         if let Some(note) = root_note {
-            sample.meta.root_note = Some(synth_core::MidiNote(note));
+            sample.meta.root_note = Some(synth_core::MidiNote::new(note));
         }
         let mut lib = self
             .sample_library
@@ -5846,7 +5878,7 @@ impl SynthBridge for AppSynthBridge {
         Ok(())
     }
 
-    fn set_sample_root_note(&self, id: u64, note: u8) -> Result<(), McpBridgeError> {
+    fn set_sample_root_note(&self, id: u64, note: MidiNote) -> Result<(), McpBridgeError> {
         let mut lib = self
             .sample_library
             .write()
@@ -5857,7 +5889,7 @@ impl SynthBridge for AppSynthBridge {
             .ok_or_else(|| McpBridgeError::Other(format!("Sample not found: {id}")))?
             .clone();
         let mut updated = meta;
-        updated.root_note = Some(synth_core::MidiNote(note));
+        updated.root_note = Some(note);
         lib.update_meta(sample_id, updated);
         Ok(())
     }
@@ -5998,7 +6030,7 @@ impl SynthBridge for AppSynthBridge {
             (peak, rms, dc)
         };
         let memory_bytes = len * std::mem::size_of::<f32>();
-        let sr = f64::from(sample.meta.sample_rate.0);
+        let sr = f64::from(sample.meta.sample_rate.as_u32());
 
         let (loop_start_seconds, loop_end_seconds) = match &sample.meta.loop_region {
             Some(region) => (
@@ -6084,7 +6116,7 @@ impl SynthBridge for AppSynthBridge {
             let sample = lib
                 .get(sample_id)
                 .ok_or_else(|| McpBridgeError::Other(format!("Sample not found: {id}")))?;
-            let sr = f64::from(sample.meta.sample_rate.0);
+            let sr = f64::from(sample.meta.sample_rate.as_u32());
             let start_frame = (start_s * sr) as usize;
             let end_frame = (end_s * sr) as usize;
             let crossfade_frames = crossfade_ms
@@ -6121,7 +6153,7 @@ impl SynthBridge for AppSynthBridge {
             let sample = lib
                 .get(sample_id)
                 .ok_or_else(|| McpBridgeError::Other(format!("Sample not found: {id}")))?;
-            let sr = f64::from(sample.meta.sample_rate.0);
+            let sr = f64::from(sample.meta.sample_rate.as_u32());
             let start_frame = start_seconds.map(|s| (s * sr) as usize).unwrap_or(0);
             let end_frame = end_seconds
                 .map(|s| (s * sr) as usize)
@@ -6260,8 +6292,8 @@ impl SynthBridge for AppSynthBridge {
         for param in &snapshot.parameters {
             if let Param::Sampler(sp) = param {
                 match sp {
-                    SamplerParam::SampleSelect(sid) if sid.0 != 0 => {
-                        sample_id = Some(synth_sampler::SampleId::new(sid.0));
+                    SamplerParam::SampleSelect(sid) if sid.as_u64() != 0 => {
+                        sample_id = Some(synth_sampler::SampleId::new(sid.as_u64()));
                     }
                     SamplerParam::SampleSelect(_) => {}
                     SamplerParam::PitchTracking(b) => pitch_tracking = *b,
@@ -6269,7 +6301,7 @@ impl SynthBridge for AppSynthBridge {
                     SamplerParam::PlayMode(m) => play_mode = *m,
                     SamplerParam::Direction(d) => direction = *d,
                     SamplerParam::VelocitySensitivity(v) => velocity_sensitivity = v.as_f32(),
-                    SamplerParam::FineTune(c) => fine_tune = c.0,
+                    SamplerParam::FineTune(c) => fine_tune = c.as_f32(),
                     SamplerParam::StartOffset(v) => start_offset = v.as_f32(),
                 }
             }
@@ -6303,7 +6335,7 @@ impl SynthBridge for AppSynthBridge {
             sample_id: sample_id.map_or(0, |id| id.0),
             sample_name,
             pitch_tracking,
-            level,
+            level: NormalizedValue::new(level),
             play_mode: play_mode_str,
             direction: direction_str,
             velocity_sensitivity,
@@ -6793,10 +6825,10 @@ fn meta_to_sample_info(meta: &synth_sampler::SampleMeta) -> synth_mcp::types::Sa
         name: meta.name.clone(),
         description: meta.description.clone(),
         duration_seconds: meta.duration_seconds(),
-        sample_rate: meta.sample_rate.0,
+        sample_rate: meta.sample_rate.as_u32(),
         channels: meta.channels.count(),
         frame_count: meta.frame_count.as_usize(),
-        root_note: meta.root_note.map(|n| n.0),
+        root_note: meta.root_note.map(synth_core::MidiNote::as_u8),
         loop_enabled: meta.loop_region.is_some(),
         has_crop: meta.crop.is_some(),
         source: match &meta.source {
@@ -7148,7 +7180,7 @@ fn try_insert_note_into_pattern(
     pattern: &mut synth_sequencer::Pattern,
     n: &BridgeNoteData,
 ) -> Result<u64, String> {
-    let pitch = synth_sequencer::Pitch::new(n.pitch)
+    let pitch = synth_sequencer::Pitch::new(n.pitch.as_u8())
         .ok_or_else(|| format!("invalid pitch: {} (must be 0..=127)", n.pitch))?;
     let start = synth_sequencer::PatternTick(beats_to_ticks(n.start_beat));
     let vel = synth_core::Velocity::from_midi(n.velocity);
@@ -7169,7 +7201,8 @@ fn try_insert_note_into_pattern(
 /// Falls back to middle C for invalid pitches (used in bulk import paths where per-note
 /// errors are not reported).
 fn insert_note_into_pattern(pattern: &mut synth_sequencer::Pattern, n: &BridgeNoteData) -> u64 {
-    let pitch = synth_sequencer::Pitch::new(n.pitch).unwrap_or(synth_sequencer::Pitch::MIDDLE_C);
+    let pitch =
+        synth_sequencer::Pitch::new(n.pitch.as_u8()).unwrap_or(synth_sequencer::Pitch::MIDDLE_C);
     let start = synth_sequencer::PatternTick(beats_to_ticks(n.start_beat));
     let vel = synth_core::Velocity::from_midi(n.velocity);
 
@@ -7192,13 +7225,10 @@ fn beats_to_ticks(beats: f32) -> u32 {
 }
 
 fn placement_from_bridge(data: &BridgePlacementData) -> synth_sequencer::PatternPlacement {
-    let mut placement = synth_sequencer::PatternPlacement::new(
-        synth_sequencer::PatternId::new(data.pattern_id),
-        synth_sequencer::TrackId(data.track_id),
-        synth_sequencer::Tick(data.start_tick),
-    )
-    .with_transpose(synth_core::Semitones::new(data.transpose_semitones))
-    .with_gain(synth_core::Gain::new(data.gain));
+    let mut placement =
+        synth_sequencer::PatternPlacement::new(data.pattern_id, data.track_id, data.start_tick)
+            .with_transpose(synth_core::Semitones::new(data.transpose_semitones))
+            .with_gain(synth_core::Gain::new(data.gain));
     placement.length_override = data.length_ticks.map(synth_sequencer::Duration);
     placement
 }
@@ -7428,7 +7458,7 @@ fn note_graph_info(
     graph: &synth_sequencer::NoteGraph,
 ) -> NoteGraphInfo {
     NoteGraphInfo {
-        id: graph.id.0,
+        id: graph.id,
         name: graph.name.clone(),
         description: graph.description.clone(),
         color: graph.color.map(|c| c.to_hex()),
@@ -7441,18 +7471,14 @@ fn note_graph_info(
 /// Build the summary `ModGraphInfo` for a pooled mod graph.
 fn mod_graph_info(graph: &synth_sequencer::ModGraph) -> ModGraphInfo {
     ModGraphInfo {
-        id: graph.id.0,
+        id: graph.id,
         name: graph.name.clone(),
         description: graph.description.clone(),
         scope: match graph.scope {
             synth_sequencer::ModGraphScope::Global => "global".to_string(),
             synth_sequencer::ModGraphScope::Track => "track".to_string(),
         },
-        assigned_tracks: graph
-            .assigned_tracks
-            .iter()
-            .map(|t| u32::from(t.0))
-            .collect(),
+        assigned_tracks: graph.assigned_tracks.clone(),
         color: graph.color.map(|c| c.to_hex()),
         node_count: graph.node_count(),
         connection_count: graph.connections.len(),
@@ -7489,8 +7515,8 @@ fn parse_mod_node(
 
 fn note_to_info(n: &synth_sequencer::Note) -> NoteInfo {
     NoteInfo {
-        id: n.id.0,
-        pitch: n.pitch.as_midi(),
+        id: n.id,
+        pitch: MidiNote::new(n.pitch.as_midi()),
         pitch_name: n.pitch.to_string(),
         start_beat: ticks_to_beats(n.start.0),
         duration_beats: n.duration.map_or(1.0, |d| ticks_to_beats(d.0)),
@@ -7514,8 +7540,8 @@ fn tempo_points(song: &synth_sequencer::Song) -> Vec<TempoPoint> {
     song.tempo_changes()
         .iter()
         .map(|c| TempoPoint {
-            tick: c.tick.0,
-            bpm: c.bpm.0,
+            tick: c.tick,
+            bpm: c.bpm,
             ramp: c.ramp,
         })
         .collect()
@@ -7625,7 +7651,7 @@ fn build_automation_target(
                 let id: u16 = id_str.parse().map_err(|_| {
                     McpBridgeError::Other(format!("invalid track id in target: '{id_str}'"))
                 })?;
-                (p, Some(synth_sequencer::TrackId(id)))
+                (p, Some(TrackId(id)))
             }
             None => (rest, None),
         };
@@ -7856,7 +7882,7 @@ fn analyze_rendered_note(
     session: &SynthSession,
     sample_library: &crate::audio::preview::SharedSampleLibrary,
     instrument_id: InstrumentId,
-    note: u8,
+    note: MidiNote,
     velocity: u8,
     duration_ms: u32,
     tail_ms: u32,
@@ -7867,7 +7893,7 @@ fn analyze_rendered_note(
         session,
         sample_library,
         instrument_id,
-        MidiNote::new(note),
+        note,
         Velocity::from_midi(velocity),
         duration_ms,
         tail_ms,
@@ -7888,18 +7914,13 @@ fn analyze_rendered_note(
 /// across all its steps instead of building one engine per note/velocity.
 fn analyze_rendered_note_in_session(
     sess: &mut crate::audio::preview::OfflineNoteSession,
-    note: u8,
+    note: MidiNote,
     velocity: u8,
     duration_ms: u32,
     tail_ms: u32,
     expected_note: Option<u8>,
 ) -> Result<synth_mcp::types::AnalyzeNoteResult, McpBridgeError> {
-    let rendered = sess.render(
-        MidiNote::new(note),
-        Velocity::from_midi(velocity),
-        duration_ms,
-        tail_ms,
-    )?;
+    let rendered = sess.render(note, Velocity::from_midi(velocity), duration_ms, tail_ms)?;
 
     Ok(analyze_rendered_buffer(
         &rendered,
@@ -7988,7 +8009,7 @@ pub fn analyze_instrument_range_impl(
     let steps_out = sweep_range(low_note, high_note, step, "note", &mut warnings, |note| {
         let result = analyze_rendered_note_in_session(
             &mut sess,
-            note,
+            MidiNote::new(note),
             velocity,
             duration_ms,
             tail_ms,
@@ -8021,7 +8042,7 @@ pub fn analyze_velocity_response_impl(
     session: &SynthSession,
     sample_library: &crate::audio::preview::SharedSampleLibrary,
     instrument_id: InstrumentId,
-    note: u8,
+    note: MidiNote,
     velocity_low: Option<u8>,
     velocity_high: Option<u8>,
     velocity_step: Option<u8>,
@@ -8062,7 +8083,7 @@ pub fn analyze_velocity_response_impl(
                 velocity,
                 duration_ms,
                 tail_ms,
-                Some(note),
+                Some(note.as_u8()),
             )?;
             Ok(velocity_step_from_analysis(velocity, &result))
         },
@@ -8103,8 +8124,8 @@ fn synthetic_note_end(start: u32, grouping_ticks: u32) -> u32 {
 /// Convert an absolute tick to 1-indexed (bar, beat) under the given time
 /// signature. `Tick::to_bar_beat_tick` returns 0-indexed values; we shift
 /// to 1-indexed for human readability ("Bar 1 beat 1" = song start).
-fn tick_to_bar_beat_1based(tick: u64, time_sig: synth_sequencer::TimeSignature) -> (u32, u32) {
-    let (bar, beat, _) = synth_sequencer::Tick(tick).to_bar_beat_tick(time_sig);
+fn tick_to_bar_beat_1based(tick: Tick, time_sig: synth_sequencer::TimeSignature) -> (u32, u32) {
+    let (bar, beat, _) = tick.to_bar_beat_tick(time_sig);
     (bar + 1, beat + 1)
 }
 
@@ -8141,13 +8162,13 @@ fn merge_consecutive_chord_events(events: Vec<HarmonyChordEvent>) -> Vec<Harmony
 #[doc(hidden)]
 pub enum HarmonyQuery {
     Pattern {
-        pattern_id: u32,
+        pattern_id: PatternId,
     },
     Arrangement {
-        start_tick: Option<u64>,
-        end_tick: Option<u64>,
+        start_tick: Option<Tick>,
+        end_tick: Option<Tick>,
         exclude_drums: bool,
-        exclude_track_ids: Vec<u16>,
+        exclude_track_ids: Vec<TrackId>,
     },
 }
 
@@ -8158,11 +8179,11 @@ pub enum HarmonyQuery {
 #[doc(hidden)]
 #[must_use]
 pub fn harmony_query_from_flat(
-    pattern_id: Option<u32>,
-    arrangement_start_tick: Option<u64>,
-    arrangement_end_tick: Option<u64>,
+    pattern_id: Option<PatternId>,
+    arrangement_start_tick: Option<Tick>,
+    arrangement_end_tick: Option<Tick>,
     exclude_drums: Option<bool>,
-    exclude_track_ids: Option<Vec<u16>>,
+    exclude_track_ids: Option<Vec<TrackId>>,
 ) -> (HarmonyQuery, Vec<String>) {
     match pattern_id {
         Some(pattern_id) => {
@@ -8222,7 +8243,7 @@ pub fn analyze_song_harmony(
         HarmonyQuery::Arrangement {
             start_tick: Some(t),
             ..
-        } => song.time_signature_at(synth_sequencer::Tick(*t)),
+        } => song.time_signature_at(*t),
         _ => default_ts,
     };
 
@@ -8232,7 +8253,7 @@ pub fn analyze_song_harmony(
 
     let (scope, notes, range_start, range_end) = match query {
         HarmonyQuery::Pattern { pattern_id: pid } => {
-            let pid_typed = PatternId(pid);
+            let pid_typed = pid;
             let Some(pattern) = song.pattern(pid_typed) else {
                 return Err(McpBridgeError::Other(format!("Pattern {pid} not found")));
             };
@@ -8269,7 +8290,7 @@ pub fn analyze_song_harmony(
         } => {
             let (start, end) = resolve_arrangement_range(&song, start_tick, end_tick)?;
             let explicit_excluded: std::collections::HashSet<TrackId> =
-                exclude_track_ids.iter().copied().map(TrackId).collect();
+                exclude_track_ids.into_iter().collect();
 
             // Resolve which tracks to skip. A track is excluded when either:
             //   1. It appears in the explicit `exclude_track_ids` list, or
@@ -8386,8 +8407,8 @@ pub fn analyze_song_harmony(
             }
             (
                 HarmonyScope::Arrangement {
-                    start_tick: start,
-                    end_tick: end,
+                    start_tick: Tick(start),
+                    end_tick: Tick(end),
                 },
                 notes,
                 start,
@@ -8427,12 +8448,12 @@ pub fn analyze_song_harmony(
                 None => (None, None, None),
             };
             let (start_bar, start_beat) =
-                tick_to_bar_beat_1based(e.start_tick, scope_time_signature);
+                tick_to_bar_beat_1based(Tick(e.start_tick), scope_time_signature);
             HarmonyChordEvent {
                 start_bar,
                 start_beat,
-                start_tick: e.start_tick,
-                end_tick: e.end_tick,
+                start_tick: Tick(e.start_tick),
+                end_tick: Tick(e.end_tick),
                 midi_notes: e.midi_notes.clone(),
                 symbol,
                 root,
@@ -8493,16 +8514,15 @@ pub fn analyze_song_harmony(
 
 fn analyze_pattern_impl(
     shared: &McpSharedState,
-    pattern_id: u32,
+    pattern_id: PatternId,
 ) -> Result<AnalyzePatternResult, McpBridgeError> {
     use synth_mcp::types::{
         AnalyzePatternResult, PatternDensity, PatternPitch, PatternRepetition, PatternRhythm,
         PatternVelocity,
     };
-    use synth_sequencer::PatternId;
 
     let song = shared.song.read();
-    let pid = PatternId(pattern_id);
+    let pid = pattern_id;
     let Some(pattern) = song.pattern(pid) else {
         return Err(McpBridgeError::Other(format!(
             "Pattern {pattern_id} not found"
@@ -8579,20 +8599,19 @@ fn drum_components_by_track_id(
     infos
         .iter()
         .filter_map(|d| {
-            crate::analysis::DrumComponent::from_track_name(&d.track_name)
-                .map(|c| (synth_sequencer::TrackId(d.track_id), c))
+            crate::analysis::DrumComponent::from_track_name(&d.track_name).map(|c| (d.track_id, c))
         })
         .collect()
 }
 
 fn resolve_arrangement_range(
     song: &synth_sequencer::Song,
-    start: Option<u64>,
-    end: Option<u64>,
+    start: Option<Tick>,
+    end: Option<Tick>,
 ) -> Result<(u64, u64), McpBridgeError> {
     let song_end = song.calculate_length().0;
-    let start = start.unwrap_or(0);
-    let end = end.unwrap_or(song_end);
+    let start = start.map_or(0, |tick| tick.0);
+    let end = end.map_or(song_end, |tick| tick.0);
     if end <= start {
         return Err(McpBridgeError::Other(format!(
             "Arrangement range invalid: end ({end}) must be greater than start ({start})"
@@ -8604,15 +8623,15 @@ fn resolve_arrangement_range(
 fn analyze_drum_groove_impl(
     session: &SynthSession,
     shared: &McpSharedState,
-    pattern_id: Option<u32>,
-    arrangement_start_tick: Option<u64>,
-    arrangement_end_tick: Option<u64>,
+    pattern_id: Option<PatternId>,
+    arrangement_start_tick: Option<Tick>,
+    arrangement_end_tick: Option<Tick>,
 ) -> Result<synth_mcp::types::AnalyzeDrumGrooveResult, McpBridgeError> {
     use synth_mcp::types::{
         AnalyzeDrumGrooveResult, DrumBackbeat, DrumComposition, DrumFills, DrumGhostNotes, DrumHat,
         DrumRepetition, DrumTrackInfo, HarmonyScope,
     };
-    use synth_sequencer::{InstrumentId, PatternId};
+    use synth_sequencer::InstrumentId;
 
     let song = shared.song.read();
     let mut warnings: Vec<String> = Vec::new();
@@ -8620,7 +8639,7 @@ fn analyze_drum_groove_impl(
     let (scope, time_sig, length_ticks, notes, drum_tracks, start_tick, end_tick) = match pattern_id
     {
         Some(pid) => {
-            let pid_typed = PatternId(pid);
+            let pid_typed = pid;
             let Some(pattern) = song.pattern(pid_typed) else {
                 return Err(McpBridgeError::Other(format!("Pattern {pid} not found")));
             };
@@ -8668,7 +8687,7 @@ fn analyze_drum_groove_impl(
                     let seq = t.instrument;
                     let profile = drum_profiles.get(&seq)?;
                     Some(DrumTrackInfo {
-                        track_id: t.id.0,
+                        track_id: t.id,
                         track_name: t.name.clone(),
                         instrument_id: seq,
                         instrument_name: profile.instrument_name.clone(),
@@ -8679,10 +8698,7 @@ fn analyze_drum_groove_impl(
             drum_track_infos.sort_by_key(|d| d.track_id);
 
             let drum_track_ids: std::collections::HashSet<synth_sequencer::TrackId> =
-                drum_track_infos
-                    .iter()
-                    .map(|d| synth_sequencer::TrackId(d.track_id))
-                    .collect();
+                drum_track_infos.iter().map(|d| d.track_id).collect();
             let track_role_by_id = drum_components_by_track_id(&drum_track_infos);
 
             let mut notes: Vec<crate::analysis::DrumNote> = Vec::new();
@@ -8719,8 +8735,8 @@ fn analyze_drum_groove_impl(
             let ts = song.time_signature_at(synth_sequencer::Tick(start));
             (
                 HarmonyScope::Arrangement {
-                    start_tick: start,
-                    end_tick: end,
+                    start_tick: Tick(start),
+                    end_tick: Tick(end),
                 },
                 ts,
                 length_ticks,
@@ -8737,8 +8753,8 @@ fn analyze_drum_groove_impl(
     let mut analysis = crate::analysis::drum_groove::analyze(&notes, length_ticks, time_sig);
     warnings.append(&mut analysis.warnings);
 
-    let (start_bar, start_beat) = tick_to_bar_beat_1based(start_tick, time_sig);
-    let (end_bar, end_beat) = tick_to_bar_beat_1based(end_tick, time_sig);
+    let (start_bar, start_beat) = tick_to_bar_beat_1based(Tick(start_tick), time_sig);
+    let (end_bar, end_beat) = tick_to_bar_beat_1based(Tick(end_tick), time_sig);
 
     Ok(AnalyzeDrumGrooveResult {
         scope,
@@ -8794,16 +8810,16 @@ fn analyze_drum_groove_impl(
 fn analyze_bass_drum_lock_impl(
     session: &SynthSession,
     shared: &McpSharedState,
-    pattern_id: Option<u32>,
-    arrangement_start_tick: Option<u64>,
-    arrangement_end_tick: Option<u64>,
+    pattern_id: Option<PatternId>,
+    arrangement_start_tick: Option<Tick>,
+    arrangement_end_tick: Option<Tick>,
     onset_tolerance_ticks: Option<u32>,
 ) -> Result<synth_mcp::types::AnalyzeBassDrumLockResult, McpBridgeError> {
     use synth_mcp::types::{
         AnalyzeBassDrumLockResult, BassDrumAlignment, BassPitchStability, BassTrackInfo,
         DrumTrackInfo, HarmonyScope,
     };
-    use synth_sequencer::{InstrumentId, PatternId};
+    use synth_sequencer::InstrumentId;
 
     let song = shared.song.read();
     let mut warnings: Vec<String> = Vec::new();
@@ -8822,7 +8838,7 @@ fn analyze_bass_drum_lock_impl(
         end_tick,
     ) = match pattern_id {
         Some(pid) => {
-            let pid_typed = PatternId(pid);
+            let pid_typed = pid;
             let Some(pattern) = song.pattern(pid_typed) else {
                 return Err(McpBridgeError::Other(format!("Pattern {pid} not found")));
             };
@@ -8897,7 +8913,7 @@ fn analyze_bass_drum_lock_impl(
                     let seq = t.instrument;
                     let profile = drum_profiles.get(&seq)?;
                     Some(DrumTrackInfo {
-                        track_id: t.id.0,
+                        track_id: t.id,
                         track_name: t.name.clone(),
                         instrument_id: seq,
                         instrument_name: profile.instrument_name.clone(),
@@ -8912,7 +8928,7 @@ fn analyze_bass_drum_lock_impl(
                     let seq = t.instrument;
                     let profile = bass_profiles.get(&seq)?;
                     Some(BassTrackInfo {
-                        track_id: t.id.0,
+                        track_id: t.id,
                         track_name: t.name.clone(),
                         instrument_id: seq,
                         instrument_name: profile.instrument_name.clone(),
@@ -8923,15 +8939,9 @@ fn analyze_bass_drum_lock_impl(
             bass_track_infos.sort_by_key(|b| b.track_id);
 
             let drum_track_ids: std::collections::HashSet<synth_sequencer::TrackId> =
-                drum_track_infos
-                    .iter()
-                    .map(|d| synth_sequencer::TrackId(d.track_id))
-                    .collect();
+                drum_track_infos.iter().map(|d| d.track_id).collect();
             let bass_track_ids: std::collections::HashSet<synth_sequencer::TrackId> =
-                bass_track_infos
-                    .iter()
-                    .map(|b| synth_sequencer::TrackId(b.track_id))
-                    .collect();
+                bass_track_infos.iter().map(|b| b.track_id).collect();
             // Tracks whose name explicitly marks them as the kick — every hit
             // on these counts as a kick onset regardless of MIDI number. Lets
             // projects that map each drum to its own trigger note still get
@@ -8987,8 +8997,8 @@ fn analyze_bass_drum_lock_impl(
             let ts = song.time_signature_at(synth_sequencer::Tick(start));
             (
                 HarmonyScope::Arrangement {
-                    start_tick: start,
-                    end_tick: end,
+                    start_tick: Tick(start),
+                    end_tick: Tick(end),
                 },
                 ts,
                 length_ticks,
@@ -9008,8 +9018,8 @@ fn analyze_bass_drum_lock_impl(
         crate::analysis::bass_drum_lock::analyze(&kicks, &bass, length_ticks, time_sig, tolerance);
     warnings.append(&mut analysis.warnings);
 
-    let (start_bar, start_beat) = tick_to_bar_beat_1based(start_tick, time_sig);
-    let (end_bar, end_beat) = tick_to_bar_beat_1based(end_tick, time_sig);
+    let (start_bar, start_beat) = tick_to_bar_beat_1based(Tick(start_tick), time_sig);
+    let (end_bar, end_beat) = tick_to_bar_beat_1based(Tick(end_tick), time_sig);
 
     let on_kick_root_name = analysis
         .bass_pitch
@@ -9054,12 +9064,12 @@ fn analyze_bass_drum_lock_impl(
 fn analyze_harmonic_function_impl(
     session: &SynthSession,
     shared: &McpSharedState,
-    pattern_id: Option<u32>,
-    arrangement_start_tick: Option<u64>,
-    arrangement_end_tick: Option<u64>,
+    pattern_id: Option<PatternId>,
+    arrangement_start_tick: Option<Tick>,
+    arrangement_end_tick: Option<Tick>,
     grouping_ticks: Option<u32>,
     exclude_drums: Option<bool>,
-    exclude_track_ids: Option<Vec<u16>>,
+    exclude_track_ids: Option<Vec<TrackId>>,
 ) -> Result<synth_mcp::types::AnalyzeHarmonicFunctionResult, McpBridgeError> {
     use synth_mcp::types::{
         AnalyzeHarmonicFunctionResult, ChordFunctionEvent, FunctionDistribution,
@@ -9172,15 +9182,15 @@ fn analyze_harmonic_function_impl(
 fn collect_form_scope(
     session: &SynthSession,
     shared: &McpSharedState,
-    pattern_id: Option<u32>,
-    arrangement_start_tick: Option<u64>,
-    arrangement_end_tick: Option<u64>,
+    pattern_id: Option<PatternId>,
+    arrangement_start_tick: Option<Tick>,
+    arrangement_end_tick: Option<Tick>,
     exclude_drums: bool,
-    exclude_track_ids: &[u16],
+    exclude_track_ids: &[TrackId],
 ) -> Result<FormScopeData, McpBridgeError> {
     use crate::analysis::bar_features::MelodicNote;
     use synth_mcp::types::HarmonyScope;
-    use synth_sequencer::{InstrumentId, PatternId};
+    use synth_sequencer::InstrumentId;
 
     let song = shared.song.read();
     let mut warnings: Vec<String> = Vec::new();
@@ -9190,7 +9200,7 @@ fn collect_form_scope(
 
     match pattern_id {
         Some(pid) => {
-            let pid_typed = PatternId(pid);
+            let pid_typed = pid;
             let Some(pattern) = song.pattern(pid_typed) else {
                 return Err(McpBridgeError::Other(format!("Pattern {pid} not found")));
             };
@@ -9214,8 +9224,8 @@ fn collect_form_scope(
                 time_sig: ts,
                 length_ticks: u64::from(length_ticks),
                 total_bars,
-                start_tick: 0,
-                end_tick: u64::from(length_ticks),
+                start_tick: Tick::ZERO,
+                end_tick: Tick(u64::from(length_ticks)),
                 notes,
                 warnings,
             })
@@ -9230,12 +9240,8 @@ fn collect_form_scope(
 
             // Build the drum-filter set (auto-inferred drums + explicit
             // exclusions).
-            let mut excluded: std::collections::HashSet<synth_sequencer::TrackId> =
-                exclude_track_ids
-                    .iter()
-                    .copied()
-                    .map(synth_sequencer::TrackId)
-                    .collect();
+            let mut excluded: std::collections::HashSet<TrackId> =
+                exclude_track_ids.iter().copied().collect();
             if exclude_drums {
                 let drum_instrument_ids: std::collections::HashSet<InstrumentId> =
                     crate::analysis::infer_all_profiles(&song, session.state())
@@ -9299,14 +9305,14 @@ fn collect_form_scope(
             }
             Ok(FormScopeData {
                 scope: HarmonyScope::Arrangement {
-                    start_tick: start,
-                    end_tick: end,
+                    start_tick: Tick(start),
+                    end_tick: Tick(end),
                 },
                 time_sig: ts,
                 length_ticks: end - start,
                 total_bars,
-                start_tick: start,
-                end_tick: end,
+                start_tick: Tick(start),
+                end_tick: Tick(end),
                 notes,
                 warnings,
             })
@@ -9319,8 +9325,8 @@ struct FormScopeData {
     time_sig: synth_sequencer::TimeSignature,
     length_ticks: u64,
     total_bars: u32,
-    start_tick: u64,
-    end_tick: u64,
+    start_tick: Tick,
+    end_tick: Tick,
     notes: Vec<crate::analysis::bar_features::MelodicNote>,
     warnings: Vec<String>,
 }
@@ -9339,7 +9345,7 @@ fn section_summary_to_wire(
         mean_notes_per_bar: s.mean_notes_per_bar,
         mean_distinct_pitch_classes: s.mean_distinct_pitch_classes,
         mean_velocity: s.mean_velocity,
-        active_track_ids: s.active_track_ids.clone(),
+        active_track_ids: s.active_track_ids.iter().copied().map(TrackId).collect(),
     }
 }
 
@@ -9356,13 +9362,13 @@ fn clamp_similarity(t: Option<f32>) -> f32 {
 pub fn analyze_arrangement_impl(
     session: &SynthSession,
     shared: &McpSharedState,
-    pattern_id: Option<u32>,
-    arrangement_start_tick: Option<u64>,
-    arrangement_end_tick: Option<u64>,
+    pattern_id: Option<PatternId>,
+    arrangement_start_tick: Option<Tick>,
+    arrangement_end_tick: Option<Tick>,
     similarity_threshold: Option<f32>,
     section_min_bars: Option<u32>,
     exclude_drums: Option<bool>,
-    exclude_track_ids: Option<Vec<u16>>,
+    exclude_track_ids: Option<Vec<TrackId>>,
 ) -> Result<synth_mcp::types::AnalyzeArrangementResult, McpBridgeError> {
     use synth_mcp::types::{AnalyzeArrangementResult, BarFeatureSummary, SectionSpan};
 
@@ -9404,7 +9410,7 @@ pub fn analyze_arrangement_impl(
             distinct_pitch_classes: b.distinct_pitch_classes,
             dominant_pitch_class: b.dominant_pitch_class,
             mean_velocity: b.mean_velocity,
-            active_track_ids: b.active_track_ids.clone(),
+            active_track_ids: b.active_track_ids.iter().copied().map(TrackId).collect(),
         })
         .collect();
 
@@ -9441,13 +9447,13 @@ pub fn analyze_arrangement_impl(
 pub fn analyze_form_map_impl(
     session: &SynthSession,
     shared: &McpSharedState,
-    pattern_id: Option<u32>,
-    arrangement_start_tick: Option<u64>,
-    arrangement_end_tick: Option<u64>,
+    pattern_id: Option<PatternId>,
+    arrangement_start_tick: Option<Tick>,
+    arrangement_end_tick: Option<Tick>,
     similarity_threshold: Option<f32>,
     section_min_bars: Option<u32>,
     exclude_drums: Option<bool>,
-    exclude_track_ids: Option<Vec<u16>>,
+    exclude_track_ids: Option<Vec<TrackId>>,
 ) -> Result<synth_mcp::types::AnalyzeFormMapResult, McpBridgeError> {
     use synth_mcp::types::{AnalyzeFormMapResult, SectionSpan};
 
@@ -9537,7 +9543,7 @@ fn clamp_motif_lengths(min_len: Option<u8>, max_len: Option<u8>) -> (u8, u8) {
 
 fn motif_occurrences_to_wire(
     hits: &[crate::analysis::motifs::MotifHit],
-    scope_start_tick: u64,
+    scope_start_tick: Tick,
     time_sig: synth_sequencer::TimeSignature,
     max_per_motif: u32,
 ) -> Vec<synth_mcp::types::MotifOccurrence> {
@@ -9545,11 +9551,11 @@ fn motif_occurrences_to_wire(
     hits.iter()
         .take(limit)
         .map(|h| {
-            let abs_tick = scope_start_tick + u64::from(h.start_tick);
-            let (bar, beat) = tick_to_bar_beat_1based(abs_tick, time_sig);
+            let abs_tick = scope_start_tick.0 + u64::from(h.start_tick);
+            let (bar, beat) = tick_to_bar_beat_1based(Tick(abs_tick), time_sig);
             synth_mcp::types::MotifOccurrence {
-                track_id: h.track_id,
-                start_tick: abs_tick,
+                track_id: TrackId(h.track_id),
+                start_tick: Tick(abs_tick),
                 start_bar: bar,
                 start_beat: beat,
                 first_pitch: h.first_pitch,
@@ -9562,16 +9568,16 @@ fn motif_occurrences_to_wire(
 pub fn find_motifs_impl(
     session: &SynthSession,
     shared: &McpSharedState,
-    pattern_id: Option<u32>,
-    arrangement_start_tick: Option<u64>,
-    arrangement_end_tick: Option<u64>,
+    pattern_id: Option<PatternId>,
+    arrangement_start_tick: Option<Tick>,
+    arrangement_end_tick: Option<Tick>,
     min_interval_length: Option<u8>,
     max_interval_length: Option<u8>,
     min_count: Option<u32>,
     top_n: Option<u32>,
     max_occurrences_per_motif: Option<u32>,
     exclude_drums: Option<bool>,
-    exclude_track_ids: Option<Vec<u16>>,
+    exclude_track_ids: Option<Vec<TrackId>>,
 ) -> Result<synth_mcp::types::FindMotifsResult, McpBridgeError> {
     use synth_mcp::types::{FindMotifsResult, MotifEntry};
 
@@ -9647,14 +9653,14 @@ pub fn find_motifs_impl(
 pub fn analyze_hook_strength_impl(
     session: &SynthSession,
     shared: &McpSharedState,
-    pattern_id: Option<u32>,
-    arrangement_start_tick: Option<u64>,
-    arrangement_end_tick: Option<u64>,
+    pattern_id: Option<PatternId>,
+    arrangement_start_tick: Option<Tick>,
+    arrangement_end_tick: Option<Tick>,
     min_interval_length: Option<u8>,
     min_count: Option<u32>,
     max_occurrences_per_motif: Option<u32>,
     exclude_drums: Option<bool>,
-    exclude_track_ids: Option<Vec<u16>>,
+    exclude_track_ids: Option<Vec<TrackId>>,
 ) -> Result<synth_mcp::types::AnalyzeHookStrengthResult, McpBridgeError> {
     use synth_mcp::types::{AnalyzeHookStrengthResult, MotifEntry};
 
@@ -9730,14 +9736,14 @@ pub fn analyze_tension_curve_impl(
     session: &SynthSession,
     sample_library: &crate::audio::preview::SharedSampleLibrary,
     shared: &McpSharedState,
-    pattern_id: Option<u32>,
-    arrangement_start_tick: Option<u64>,
-    arrangement_end_tick: Option<u64>,
+    pattern_id: Option<PatternId>,
+    arrangement_start_tick: Option<Tick>,
+    arrangement_end_tick: Option<Tick>,
     include_audio: Option<bool>,
     similarity_threshold: Option<f32>,
     section_min_bars: Option<u32>,
     exclude_drums: Option<bool>,
-    exclude_track_ids: Option<Vec<u16>>,
+    exclude_track_ids: Option<Vec<TrackId>>,
 ) -> Result<synth_mcp::types::AnalyzeTensionCurveResult, McpBridgeError> {
     use synth_mcp::types::{AnalyzeTensionCurveResult, TensionCurveBar, TensionCurveSummary};
 
@@ -9840,8 +9846,8 @@ pub fn analyze_tension_curve_impl(
             // Harmony events carry absolute ticks in arrangement scope and
             // pattern-relative ticks in pattern scope. Subtract the scope
             // start so the inner module always sees scope-relative ticks.
-            let rel_start = ev.start_tick.saturating_sub(scope_data.start_tick) as u32;
-            let rel_end = ev.end_tick.saturating_sub(scope_data.start_tick) as u32;
+            let rel_start = ev.start_tick.0.saturating_sub(scope_data.start_tick.0) as u32;
+            let rel_end = ev.end_tick.0.saturating_sub(scope_data.start_tick.0) as u32;
             crate::analysis::tension_curve::ChordTensionSpan {
                 start_tick: rel_start,
                 end_tick: rel_end,
@@ -9872,12 +9878,12 @@ pub fn analyze_tension_curve_impl(
         // arrangement starting at 0 for `length_ticks` worth of ticks; for
         // arrangement scope we render the [start, end) range directly.
         let render_start = scope_data.start_tick;
-        let render_end = render_start + scope_data.length_ticks;
+        let render_end = render_start.0 + scope_data.length_ticks;
         match crate::audio::arrangement_render::render_arrangement_to_buffer(
             session,
             sample_library,
             shared,
-            render_start,
+            render_start.0,
             render_end,
         ) {
             Ok(rendered) => {
@@ -9890,12 +9896,12 @@ pub fn analyze_tension_curve_impl(
                 // is O(bars × tempo_changes).
                 let bar_boundary_frames: Vec<usize> = {
                     let song = shared.song.read();
-                    let start_seconds = song.tick_to_seconds(synth_sequencer::Tick(render_start));
+                    let start_seconds = song.tick_to_seconds(render_start);
                     (0..=scope_data.total_bars)
                         .map(|i| {
-                            let tick = (render_start + u64::from(i) * u64::from(ticks_per_bar))
+                            let tick = (render_start.0 + u64::from(i) * u64::from(ticks_per_bar))
                                 .min(render_end);
-                            let s = song.tick_to_seconds(synth_sequencer::Tick(tick));
+                            let s = song.tick_to_seconds(Tick(tick));
                             (((s - start_seconds) * f64::from(rendered.sample_rate)).max(0.0))
                                 as usize
                         })
@@ -10022,14 +10028,14 @@ pub fn suggest_music_fixes_impl(
     session: &SynthSession,
     sample_library: &crate::audio::preview::SharedSampleLibrary,
     shared: &McpSharedState,
-    pattern_id: Option<u32>,
-    arrangement_start_tick: Option<u64>,
-    arrangement_end_tick: Option<u64>,
+    pattern_id: Option<PatternId>,
+    arrangement_start_tick: Option<Tick>,
+    arrangement_end_tick: Option<Tick>,
     categories: Option<Vec<String>>,
     include_audio: Option<bool>,
     max_suggestions: Option<u32>,
     exclude_drums: Option<bool>,
-    exclude_track_ids: Option<Vec<u16>>,
+    exclude_track_ids: Option<Vec<TrackId>>,
 ) -> Result<synth_mcp::types::SuggestMusicFixesResult, McpBridgeError> {
     use synth_mcp::types::SuggestMusicFixesResult;
 
@@ -10209,8 +10215,8 @@ pub fn suggest_music_fixes_impl(
     let mix_bus = if cat_enabled("mix") && include_audio_v && pattern_id.is_none() {
         let song = shared.song.read();
         let start_seconds =
-            song.tick_to_seconds(synth_sequencer::Tick(scope_data.start_tick)) as f32;
-        let end_seconds = song.tick_to_seconds(synth_sequencer::Tick(scope_data.end_tick)) as f32;
+            song.tick_to_seconds(synth_sequencer::Tick(scope_data.start_tick.0)) as f32;
+        let end_seconds = song.tick_to_seconds(scope_data.end_tick) as f32;
         let dur = (end_seconds - start_seconds).max(0.0);
         drop(song);
         if dur <= 0.0 {
@@ -10341,7 +10347,7 @@ fn describe_signal_chain(scope: synth_mcp::AnalysisScope, master_volume: f32) ->
 fn resolve_duration_window(
     shared: &McpSharedState,
     duration_seconds: f32,
-    start_tick: Option<u64>,
+    start_tick: Option<Tick>,
 ) -> Result<(u64, u64), McpBridgeError> {
     let dur = if duration_seconds.is_nan() || duration_seconds <= 0.0 {
         DEFAULT_MIX_BUS_SECONDS
@@ -10353,12 +10359,12 @@ fn resolve_duration_window(
             "duration_seconds {dur} exceeds the 300-second maximum"
         )));
     }
-    let start = start_tick.unwrap_or(0);
+    let start = start_tick.map_or(0, |tick| tick.0);
     // Convert the requested duration into a tick offset using the song's tempo
     // so the renderer can do its own tick-range render.
     let end = {
         let song = shared.song.read();
-        let start_seconds = song.tick_to_seconds(synth_sequencer::Tick(start));
+        let start_seconds = song.tick_to_seconds(Tick(start));
         let target_seconds = start_seconds + f64::from(dur);
         song.seconds_to_tick(target_seconds).0
     };
@@ -10409,7 +10415,7 @@ pub fn render_to_wav_impl(
     shared: &McpSharedState,
     path: String,
     duration_seconds: f32,
-    start_tick: Option<u64>,
+    start_tick: Option<Tick>,
     instrument_id: Option<InstrumentId>,
     scope: synth_mcp::AnalysisScope,
 ) -> Result<RenderToWavResult, McpBridgeError> {
@@ -10574,25 +10580,30 @@ fn spectrum_descriptor(
     result: &crate::audio::analysis::spectrum::SpectrumResult,
 ) -> synth_mcp::types::SpectrumDescriptor {
     synth_mcp::types::SpectrumDescriptor {
-        f0_hz: result.f0.map(|h| h.0),
+        f0_hz: result.f0.map(synth_core::Hertz::as_f32),
         voiced: result.voiced,
         partials: result
             .partials
             .iter()
             .map(|p| synth_mcp::types::AnalyzePartial {
-                frequency_hz: p.frequency.0,
-                amplitude_db: p.amplitude.0,
+                frequency_hz: p.frequency.as_f32(),
+                amplitude_db: p.amplitude.as_f32(),
                 harmonic_number: p.harmonic_number,
-                inharmonicity_cents: p.inharmonicity.0,
+                inharmonicity_cents: p.inharmonicity.as_f32(),
             })
             .collect(),
-        centroid_hz: result.centroid.0,
-        flatness: result.flatness.0,
-        rolloff_hz: result.rolloff.0,
-        inharmonicity: result.inharmonicity.0,
+        centroid_hz: result.centroid.as_f32(),
+        flatness: result.flatness.as_f32(),
+        rolloff_hz: result.rolloff.as_f32(),
+        inharmonicity: result.inharmonicity.as_f32(),
         odd_even_ratio: result.odd_even_ratio,
         energy_bands: result.bands.into(),
-        log_bins_db: result.log_bins.iter().map(|d| d.0).collect(),
+        log_bins_db: result
+            .log_bins
+            .iter()
+            .copied()
+            .map(synth_core::Decibels::as_f32)
+            .collect(),
     }
 }
 
@@ -10605,7 +10616,7 @@ fn render_window_mono(
     sample_library: &crate::audio::preview::SharedSampleLibrary,
     shared: &McpSharedState,
     duration_seconds: f32,
-    start_tick: Option<u64>,
+    start_tick: Option<Tick>,
     instrument_id: Option<InstrumentId>,
     scope: synth_mcp::AnalysisScope,
 ) -> Result<
@@ -10640,7 +10651,7 @@ pub fn analyze_spectrum_impl(
     sample_library: &crate::audio::preview::SharedSampleLibrary,
     shared: &McpSharedState,
     duration_seconds: f32,
-    start_tick: Option<u64>,
+    start_tick: Option<Tick>,
     instrument_id: Option<InstrumentId>,
     f0_hint: Option<f32>,
     max_partials: Option<u32>,
@@ -10662,8 +10673,8 @@ pub fn analyze_spectrum_impl(
         crate::audio::analysis::spectrum::analyze_spectrum(&mono, rendered.sample_rate, opts);
 
     Ok(synth_mcp::types::AnalyzeSpectrumResult {
-        start_tick: rendered.start_tick,
-        end_tick: rendered.end_tick,
+        start_tick: Tick(rendered.start_tick),
+        end_tick: Tick(rendered.end_tick),
         spectrum: spectrum_descriptor(&result),
         soloed_instrument_id: instrument_id,
         warnings,
@@ -10685,7 +10696,7 @@ pub fn analyze_spectrogram_impl(
     sample_library: &crate::audio::preview::SharedSampleLibrary,
     shared: &McpSharedState,
     duration_seconds: f32,
-    start_tick: Option<u64>,
+    start_tick: Option<Tick>,
     instrument_id: Option<InstrumentId>,
     f0_hint: Option<f32>,
     max_partials: Option<u32>,
@@ -10716,8 +10727,8 @@ pub fn analyze_spectrogram_impl(
     );
 
     Ok(synth_mcp::types::AnalyzeSpectrogramResult {
-        start_tick: rendered.start_tick,
-        end_tick: rendered.end_tick,
+        start_tick: Tick(rendered.start_tick),
+        end_tick: Tick(rendered.end_tick),
         sample_rate: sr,
         hop_seconds: hop_samples as f32 / sr as f32,
         window_seconds: window_len_samples as f32 / sr as f32,
@@ -10779,13 +10790,13 @@ fn spectrogram_frames(
             "spectrogram truncated at the {}-frame cap (~{:.1} s covered) — \
              increase hop_ms or shorten the source for full coverage",
             crate::audio::analysis::spectrum::MAX_SPECTROGRAM_FRAMES,
-            dsp_frames.last().map(|f| f.time.0).unwrap_or(0.0)
+            dsp_frames.last().map(|f| f.time.as_f32()).unwrap_or(0.0)
         ));
     }
     dsp_frames
         .iter()
         .map(|f| synth_mcp::types::SpectrogramFrame {
-            time_seconds: f.time.0,
+            time_seconds: f.time.as_f32(),
             spectrum: spectrum_descriptor(&f.spectrum),
         })
         .collect()
@@ -10941,7 +10952,7 @@ fn resolve_sample_source(
         if let Some(sample) = lib.get(synth_sampler::SampleId::new(id)) {
             return Ok(ResolvedSampleAudio {
                 name: sample.meta.name.clone(),
-                sample_rate: sample.meta.sample_rate.0,
+                sample_rate: sample.meta.sample_rate.as_u32(),
                 channels: sample.meta.channels.count(),
                 data: std::sync::Arc::clone(&sample.data),
             });
@@ -10951,12 +10962,13 @@ fn resolve_sample_source(
     // Not an imported id → decode the path. Keep the source rate (target 0 = no
     // resample) so the spectrum reflects the file's real frequencies.
     let path = std::path::Path::new(sample_id_or_path);
-    let sample = synth_sampler::load_wav(path, synth_core::audio::SampleRate(0)).map_err(|e| {
-        McpBridgeError::Other(format!("could not load sample '{sample_id_or_path}': {e}"))
-    })?;
+    let sample =
+        synth_sampler::load_wav(path, synth_core::audio::SampleRate::new(0)).map_err(|e| {
+            McpBridgeError::Other(format!("could not load sample '{sample_id_or_path}': {e}"))
+        })?;
     Ok(ResolvedSampleAudio {
         name: sample.meta.name.clone(),
-        sample_rate: sample.meta.sample_rate.0,
+        sample_rate: sample.meta.sample_rate.as_u32(),
         channels: sample.meta.channels.count(),
         data: sample.data,
     })
@@ -11134,16 +11146,16 @@ pub fn compare_spectra_impl(
 
     let dist = spectrum::compare(&a.result, &b.result);
     let to_diff = |pd: &spectrum::PartialDiff| synth_mcp::types::PartialDiff {
-        frequency_hz: pd.frequency.0,
-        amplitude_db: pd.amplitude.0,
+        frequency_hz: pd.frequency.as_f32(),
+        amplitude_db: pd.amplitude.as_f32(),
     };
 
     let mut result = synth_mcp::types::CompareSpectraResult {
         log_spectral_distance: dist.log_spectral_distance,
         voicing_penalty_db: dist.voicing_penalty_db,
         mel_l2_distance: dist.mel_l2_distance,
-        centroid_delta_hz: dist.centroid_delta.0,
-        rolloff_delta_hz: dist.rolloff_delta.0,
+        centroid_delta_hz: dist.centroid_delta.as_f32(),
+        rolloff_delta_hz: dist.rolloff_delta.as_f32(),
         flatness_delta: dist.flatness_delta,
         inharmonicity_delta: dist.inharmonicity_delta,
         odd_even_ratio_delta_db: dist.odd_even_ratio_delta_db,
@@ -11275,7 +11287,7 @@ fn fill_time_resolved(
         tr.worst_frames
             .iter()
             .map(|w| synth_mcp::types::WorstFrame {
-                time_seconds: w.time.0,
+                time_seconds: w.time.as_f32(),
                 lsd: w.lsd,
             })
             .collect(),
@@ -11433,7 +11445,7 @@ pub fn analyze_mix_bus_impl(
     sample_library: &crate::audio::preview::SharedSampleLibrary,
     shared: &McpSharedState,
     duration_seconds: f32,
-    start_tick: Option<u64>,
+    start_tick: Option<Tick>,
     include_per_track: Option<bool>,
     scope: synth_mcp::AnalysisScope,
 ) -> Result<AnalyzeMixBusResult, McpBridgeError> {
@@ -11455,8 +11467,8 @@ pub fn analyze_mix_bus_impl(
         .song
         .read()
         .time_signature_at(synth_sequencer::Tick(rendered.start_tick));
-    let (start_bar, start_beat) = tick_to_bar_beat_1based(rendered.start_tick, ts);
-    let (end_bar, end_beat) = tick_to_bar_beat_1based(rendered.end_tick, ts);
+    let (start_bar, start_beat) = tick_to_bar_beat_1based(Tick(rendered.start_tick), ts);
+    let (end_bar, end_beat) = tick_to_bar_beat_1based(Tick(rendered.end_tick), ts);
 
     let mut warnings = rendered.warnings;
     let per_track = if include_per_track.unwrap_or(false) {
@@ -11464,8 +11476,8 @@ pub fn analyze_mix_bus_impl(
             session,
             sample_library,
             shared,
-            rendered.start_tick,
-            rendered.end_tick,
+            Tick(rendered.start_tick),
+            Tick(rendered.end_tick),
             scope,
             &mut warnings,
         )?
@@ -11478,8 +11490,8 @@ pub fn analyze_mix_bus_impl(
         start_beat,
         end_bar,
         end_beat,
-        start_tick: rendered.start_tick,
-        end_tick: rendered.end_tick,
+        start_tick: Tick(rendered.start_tick),
+        end_tick: Tick(rendered.end_tick),
         metrics,
         per_track,
         signal_chain: describe_signal_chain(scope, session.state().master_volume.load()),
@@ -11501,7 +11513,7 @@ pub fn analyze_master_chain_impl(
     sample_library: &crate::audio::preview::SharedSampleLibrary,
     shared: &McpSharedState,
     duration_seconds: f32,
-    start_tick: Option<u64>,
+    start_tick: Option<Tick>,
     scope: synth_mcp::AnalysisScope,
 ) -> Result<AnalyzeMasterChainResult, McpBridgeError> {
     let (start, end) = resolve_duration_window(shared, duration_seconds, start_tick)?;
@@ -11537,8 +11549,8 @@ pub fn analyze_master_chain_impl(
         .song
         .read()
         .time_signature_at(synth_sequencer::Tick(rendered_start));
-    let (start_bar, start_beat) = tick_to_bar_beat_1based(rendered_start, ts);
-    let (end_bar, end_beat) = tick_to_bar_beat_1based(rendered_end, ts);
+    let (start_bar, start_beat) = tick_to_bar_beat_1based(Tick(rendered_start), ts);
+    let (end_bar, end_beat) = tick_to_bar_beat_1based(Tick(rendered_end), ts);
 
     let mut stages = Vec::with_capacity(master_effects.len());
     let mut prev = input_metrics;
@@ -11575,8 +11587,8 @@ pub fn analyze_master_chain_impl(
         start_beat,
         end_bar,
         end_beat,
-        start_tick: rendered_start,
-        end_tick: rendered_end,
+        start_tick: Tick(rendered_start),
+        end_tick: Tick(rendered_end),
         input_metrics,
         output_metrics,
         stages,
@@ -11596,7 +11608,7 @@ pub fn analyze_return_busses_impl(
     sample_library: &crate::audio::preview::SharedSampleLibrary,
     shared: &McpSharedState,
     duration_seconds: f32,
-    start_tick: Option<u64>,
+    start_tick: Option<Tick>,
     scope: synth_mcp::AnalysisScope,
 ) -> Result<AnalyzeReturnBussesResult, McpBridgeError> {
     let (start, end) = resolve_duration_window(shared, duration_seconds, start_tick)?;
@@ -11650,8 +11662,8 @@ pub fn analyze_return_busses_impl(
         .song
         .read()
         .time_signature_at(synth_sequencer::Tick(rendered_start));
-    let (start_bar, start_beat) = tick_to_bar_beat_1based(rendered_start, ts);
-    let (end_bar, end_beat) = tick_to_bar_beat_1based(rendered_end, ts);
+    let (start_bar, start_beat) = tick_to_bar_beat_1based(Tick(rendered_start), ts);
+    let (end_bar, end_beat) = tick_to_bar_beat_1based(Tick(rendered_end), ts);
 
     let mut returns = Vec::with_capacity(return_busses.len());
     if return_busses.is_empty() {
@@ -11674,7 +11686,7 @@ pub fn analyze_return_busses_impl(
                 &mut warnings,
             )?;
             returns.push(synth_mcp::types::ReturnBusContribution {
-                return_id: *rid,
+                return_id: ReturnBusId(*rid),
                 return_name: rname.clone(),
                 lufs_delta: full_metrics.lufs_integrated - muted.lufs_integrated,
                 peak_delta_db: full_metrics.peak_dbfs - muted.peak_dbfs,
@@ -11690,8 +11702,8 @@ pub fn analyze_return_busses_impl(
         start_beat,
         end_bar,
         end_beat,
-        start_tick: rendered_start,
-        end_tick: rendered_end,
+        start_tick: Tick(rendered_start),
+        end_tick: Tick(rendered_end),
         full_metrics,
         returns,
         signal_chain: describe_signal_chain(chain_scope, session.state().master_volume.load()),
@@ -11712,7 +11724,7 @@ pub fn compare_mix_before_after_impl(
     shared: &McpSharedState,
     action: &str,
     duration_seconds: f32,
-    start_tick: Option<u64>,
+    start_tick: Option<Tick>,
     label: Option<String>,
     scope: synth_mcp::AnalysisScope,
 ) -> Result<CompareMixResult, McpBridgeError> {
@@ -11736,7 +11748,7 @@ pub fn compare_mix_before_after_impl(
                     label: label.clone(),
                     metrics: rendered.metrics,
                     duration_seconds,
-                    start_tick,
+                    start_tick: start_tick.map(|tick| tick.0),
                     scope,
                 });
             Ok(CompareMixResult {
@@ -11773,7 +11785,7 @@ pub fn compare_mix_before_after_impl(
                 sample_library,
                 shared,
                 baseline.duration_seconds,
-                baseline.start_tick,
+                baseline.start_tick.map(Tick),
                 None,
                 baseline.scope,
             )?;
@@ -11833,7 +11845,7 @@ fn auto_gain_stage_impl(
     target_lufs: f32,
     true_peak_ceiling_dbtp: f32,
     duration_seconds: f32,
-    start_tick: Option<u64>,
+    start_tick: Option<Tick>,
 ) -> Result<AutoGainStageResult, McpBridgeError> {
     // Measure the real output: include the master + return effect chains.
     let scope = synth_mcp::AnalysisScope {
@@ -11918,8 +11930,8 @@ pub fn analyze_section_impl(
     session: &SynthSession,
     sample_library: &crate::audio::preview::SharedSampleLibrary,
     shared: &McpSharedState,
-    start_tick: u64,
-    end_tick: u64,
+    start_tick: Tick,
+    end_tick: Tick,
     include_per_track: Option<bool>,
     scope: synth_mcp::AnalysisScope,
 ) -> Result<AnalyzeSectionResult, McpBridgeError> {
@@ -11927,8 +11939,8 @@ pub fn analyze_section_impl(
         session,
         sample_library,
         shared,
-        start_tick,
-        end_tick,
+        start_tick.0,
+        end_tick.0,
         scope,
     )?;
     let analysis =
@@ -11939,8 +11951,8 @@ pub fn analyze_section_impl(
         .song
         .read()
         .time_signature_at(synth_sequencer::Tick(rendered.start_tick));
-    let (start_bar, start_beat) = tick_to_bar_beat_1based(rendered.start_tick, ts);
-    let (end_bar, end_beat) = tick_to_bar_beat_1based(rendered.end_tick, ts);
+    let (start_bar, start_beat) = tick_to_bar_beat_1based(Tick(rendered.start_tick), ts);
+    let (end_bar, end_beat) = tick_to_bar_beat_1based(Tick(rendered.end_tick), ts);
 
     let mut warnings = rendered.warnings;
     let per_track = if include_per_track.unwrap_or(false) {
@@ -11962,8 +11974,8 @@ pub fn analyze_section_impl(
         start_beat,
         end_bar,
         end_beat,
-        start_tick: rendered.start_tick,
-        end_tick: rendered.end_tick,
+        start_tick: Tick(rendered.start_tick),
+        end_tick: Tick(rendered.end_tick),
         metrics,
         per_track,
         signal_chain: describe_signal_chain(scope, session.state().master_volume.load()),
@@ -11981,8 +11993,8 @@ fn render_per_track_contributions(
     session: &SynthSession,
     sample_library: &crate::audio::preview::SharedSampleLibrary,
     shared: &McpSharedState,
-    start_tick: u64,
-    end_tick: u64,
+    start_tick: Tick,
+    end_tick: Tick,
     scope: synth_mcp::AnalysisScope,
     warnings: &mut Vec<String>,
 ) -> Result<Vec<synth_mcp::types::TrackContribution>, McpBridgeError> {
@@ -11998,10 +12010,7 @@ fn render_per_track_contributions(
         let song = shared.song.read();
         let any_solo = song.any_solo();
         let mut covered: std::collections::HashSet<TrackId> = std::collections::HashSet::new();
-        for placement in song.placements_in_range(
-            synth_sequencer::Tick(start_tick),
-            synth_sequencer::Tick(end_tick),
-        ) {
+        for placement in song.placements_in_range(start_tick, end_tick) {
             covered.insert(placement.track_id);
         }
         let mut targets: Vec<TargetMeta> = covered
@@ -12086,7 +12095,8 @@ fn render_per_track_contributions(
             for target in chunk {
                 chunk_song.write().set_solo_only(target.track_id);
 
-                let rendered = engine_session.render_range(&chunk_song, start_tick, end_tick)?;
+                let rendered =
+                    engine_session.render_range(&chunk_song, start_tick.0, end_tick.0)?;
 
                 let mut per_target_warnings = std::mem::take(&mut pending_setup_warnings);
                 for w in &rendered.warnings {
@@ -12113,7 +12123,7 @@ fn render_per_track_contributions(
 
                 chunk_out.push((
                     synth_mcp::types::TrackContribution {
-                        track_id: target.track_id.0,
+                        track_id: target.track_id,
                         track_name: target.name.clone(),
                         instrument_id: target.instrument_id,
                         metrics,
@@ -12262,10 +12272,10 @@ fn masking_conflict_score(bands: &[BandOverlap]) -> f32 {
 fn masking_hint_for_pair(
     bands: &[BandOverlap],
     a_name: &str,
-    a_id: u16,
+    a_id: TrackId,
     b_name: &str,
-    b_id: u16,
-) -> (Option<String>, Option<u16>) {
+    b_id: TrackId,
+) -> (Option<String>, Option<TrackId>) {
     let Some(worst) = bands.iter().max_by(|x, y| {
         x.overlap_energy
             .partial_cmp(&y.overlap_energy)
@@ -12358,8 +12368,8 @@ pub fn analyze_masking_matrix_impl(
     session: &SynthSession,
     sample_library: &crate::audio::preview::SharedSampleLibrary,
     shared: &McpSharedState,
-    arrangement_start_tick: Option<u64>,
-    arrangement_end_tick: Option<u64>,
+    arrangement_start_tick: Option<Tick>,
+    arrangement_end_tick: Option<Tick>,
     top_pairs: Option<u32>,
     scope: synth_mcp::AnalysisScope,
 ) -> Result<AnalyzeMaskingMatrixResult, McpBridgeError> {
@@ -12373,8 +12383,8 @@ pub fn analyze_masking_matrix_impl(
         session,
         sample_library,
         shared,
-        start_tick,
-        end_tick,
+        Tick(start_tick),
+        Tick(end_tick),
         scope,
         &mut warnings,
     )?;
@@ -12395,20 +12405,17 @@ pub fn analyze_masking_matrix_impl(
         pairs.truncate(cap);
     }
 
-    let ts = shared
-        .song
-        .read()
-        .time_signature_at(synth_sequencer::Tick(start_tick));
-    let (start_bar, start_beat) = tick_to_bar_beat_1based(start_tick, ts);
-    let (end_bar, end_beat) = tick_to_bar_beat_1based(end_tick, ts);
+    let ts = shared.song.read().time_signature_at(Tick(start_tick));
+    let (start_bar, start_beat) = tick_to_bar_beat_1based(Tick(start_tick), ts);
+    let (end_bar, end_beat) = tick_to_bar_beat_1based(Tick(end_tick), ts);
 
     Ok(AnalyzeMaskingMatrixResult {
         start_bar,
         start_beat,
         end_bar,
         end_beat,
-        start_tick,
-        end_tick,
+        start_tick: Tick(start_tick),
+        end_tick: Tick(end_tick),
         track_count: contributions.len() as u32,
         total_pair_count,
         pairs,
@@ -12479,7 +12486,7 @@ fn resolve_envelope_window_ms(requested: Option<f32>) -> f32 {
 /// expose the resolution knob.
 pub fn analyze_rendered_buffer(
     rendered: &crate::audio::preview::RenderedNote,
-    note: u8,
+    note: MidiNote,
     velocity: u8,
     duration_ms: u32,
     expected_note: Option<u8>,
@@ -12499,7 +12506,7 @@ pub fn analyze_rendered_buffer(
 /// attacks the default 50 ms window collapses into a single frame.
 pub fn analyze_rendered_buffer_with_window(
     rendered: &crate::audio::preview::RenderedNote,
-    note: u8,
+    note: MidiNote,
     velocity: u8,
     duration_ms: u32,
     expected_note: Option<u8>,
@@ -12878,7 +12885,7 @@ pub fn analyze_rendered_buffer_with_window(
     };
 
     synth_mcp::types::AnalyzeNoteResult {
-        note_requested: note,
+        note_requested: note.as_u8(),
         note_played: rendered.effective_note.as_u8(),
         velocity,
         sample_rate,
@@ -13462,15 +13469,14 @@ pub fn generate_chord_impl(
 
 pub fn transpose_notes_impl(
     shared: &McpSharedState,
-    pattern_id: u32,
-    semitones: i32,
+    pattern_id: PatternId,
+    semitones: Semitones,
     scale_tonic: Option<u8>,
     scale_name: Option<&str>,
     tie_break: Option<&str>,
 ) -> Result<synth_mcp::types::TransposeNotesResult, McpBridgeError> {
     use crate::composition::{ScaleConstraint, transpose_pitches};
     use synth_mcp::types::TransposeNotesResult;
-    use synth_sequencer::PatternId;
 
     let tie_break = parse_tie_break(tie_break)?;
     let scale = match (scale_tonic, scale_name) {
@@ -13486,7 +13492,7 @@ pub fn transpose_notes_impl(
 
     let mut song = shared.song.write();
     let pattern = song
-        .pattern_mut(PatternId(pattern_id))
+        .pattern_mut(pattern_id)
         .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
 
     // Snapshot pitches, transpose in place, write back via `note_mut` so note
@@ -13496,7 +13502,9 @@ pub fn transpose_notes_impl(
         .iter()
         .map(|n| (n.id, n.pitch.as_midi()))
         .unzip();
-    let result = transpose_pitches(&mut pitches, semitones, scale.as_ref(), tie_break);
+    #[allow(clippy::cast_possible_truncation)]
+    let semitone_steps = semitones.as_f32().round() as i32;
+    let result = transpose_pitches(&mut pitches, semitone_steps, scale.as_ref(), tie_break);
     write_back_pitches(pattern, &ids, &pitches);
 
     Ok(TransposeNotesResult {
@@ -13514,14 +13522,13 @@ pub fn transpose_notes_impl(
 
 pub fn quantize_notes_to_scale_impl(
     shared: &McpSharedState,
-    pattern_id: u32,
+    pattern_id: PatternId,
     scale_tonic: u8,
     scale_name: &str,
     tie_break: Option<&str>,
 ) -> Result<synth_mcp::types::QuantizeNotesToScaleResult, McpBridgeError> {
     use crate::composition::{ScaleConstraint, ScaleQuantizeOptions, quantize_pitches_to_scale};
     use synth_mcp::types::QuantizeNotesToScaleResult;
-    use synth_sequencer::PatternId;
 
     let tie_break = parse_tie_break(tie_break)?;
     let scale = ScaleConstraint::new(scale_tonic, scale_name);
@@ -13530,7 +13537,7 @@ pub fn quantize_notes_to_scale_impl(
 
     let mut song = shared.song.write();
     let pattern = song
-        .pattern_mut(PatternId(pattern_id))
+        .pattern_mut(pattern_id)
         .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
 
     let (ids, mut pitches): (Vec<_>, Vec<u8>) = pattern
@@ -13568,7 +13575,7 @@ pub fn quantize_notes_to_scale_impl(
 
 pub fn quantize_notes_to_grid_impl(
     shared: &McpSharedState,
-    pattern_id: u32,
+    pattern_id: PatternId,
     grid_ticks: u32,
     strength: Option<f32>,
     swing: Option<f32>,
@@ -13577,7 +13584,6 @@ pub fn quantize_notes_to_grid_impl(
 ) -> Result<synth_mcp::types::QuantizeNotesToGridResult, McpBridgeError> {
     use crate::composition::{GridQuantizeOptions, NoteTiming, quantize_grid};
     use synth_mcp::types::QuantizeNotesToGridResult;
-    use synth_sequencer::PatternId;
 
     let strength_val = strength.unwrap_or(1.0).clamp(0.0, 1.0);
     let swing_val = swing.unwrap_or(0.0).clamp(0.0, 1.0);
@@ -13586,7 +13592,7 @@ pub fn quantize_notes_to_grid_impl(
 
     let mut song = shared.song.write();
     let pattern = song
-        .pattern_mut(PatternId(pattern_id))
+        .pattern_mut(pattern_id)
         .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
 
     let length_ticks = pattern.length.0;
@@ -14294,7 +14300,7 @@ mod mcp_helper_tests {
             synth_sequencer::Duration(3840),
         );
         let data = BridgeNoteData {
-            pitch: 60,
+            pitch: MidiNote::C4,
             start_beat: 0.0,
             duration_beats: 1.0,
             velocity: 100,
@@ -14308,7 +14314,7 @@ mod mcp_helper_tests {
             expression: None,
         };
         let id = try_insert_note_into_pattern(&mut pattern, &data).unwrap();
-        let note = pattern.note(synth_sequencer::NoteId(id)).unwrap();
+        let note = pattern.note(NoteId::new(id)).unwrap();
         assert!(note.legato);
         let g = note.glide.expect("glide applied");
         assert_eq!(
@@ -14326,7 +14332,7 @@ mod mcp_helper_tests {
             synth_sequencer::Duration(3840),
         );
         let data = BridgeNoteData {
-            pitch: 67,
+            pitch: MidiNote::new(67),
             start_beat: 0.0,
             duration_beats: 1.0,
             velocity: 100,
@@ -14340,7 +14346,7 @@ mod mcp_helper_tests {
             expression: None,
         };
         let id = try_insert_note_into_pattern(&mut pattern, &data).unwrap();
-        let note = pattern.note(synth_sequencer::NoteId(id)).unwrap();
+        let note = pattern.note(NoteId::new(id)).unwrap();
         assert!(!note.legato);
         let g = note.glide.expect("glide applied");
         assert_eq!(
@@ -14357,7 +14363,7 @@ mod mcp_helper_tests {
             synth_sequencer::Duration(3840),
         );
         let data = BridgeNoteData {
-            pitch: 60,
+            pitch: MidiNote::C4,
             start_beat: 0.0,
             duration_beats: 1.0,
             velocity: 100,
@@ -14377,7 +14383,7 @@ mod mcp_helper_tests {
             }),
         };
         let id = try_insert_note_into_pattern(&mut pattern, &data).unwrap();
-        let note = pattern.note(synth_sequencer::NoteId(id)).unwrap();
+        let note = pattern.note(NoteId::new(id)).unwrap();
         let e = note.expression.expect("expression applied");
         assert_eq!(e.accent, Some(1.5));
         assert!((e.gate.unwrap().as_f32() - 0.5).abs() < f32::EPSILON);
@@ -14396,7 +14402,7 @@ mod mcp_helper_tests {
         );
         // An expression block with no fields set is semantically "no expression".
         let data = BridgeNoteData {
-            pitch: 60,
+            pitch: MidiNote::C4,
             start_beat: 0.0,
             duration_beats: 1.0,
             velocity: 100,
@@ -14405,13 +14411,7 @@ mod mcp_helper_tests {
             expression: Some(BridgeExpression::default()),
         };
         let id = try_insert_note_into_pattern(&mut pattern, &data).unwrap();
-        assert!(
-            pattern
-                .note(synth_sequencer::NoteId(id))
-                .unwrap()
-                .expression
-                .is_none()
-        );
+        assert!(pattern.note(NoteId::new(id)).unwrap().expression.is_none());
     }
 
     #[test]

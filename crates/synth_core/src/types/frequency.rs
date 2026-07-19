@@ -18,7 +18,7 @@ use super::{BipolarValue, Cents, Clampable, Interpolate, Seconds, Semitones, Val
 )]
 #[serde(transparent)]
 #[repr(transparent)]
-pub struct Hertz(pub f32);
+pub struct Hertz(f32);
 
 impl Hertz {
     /// Create a new frequency value.
@@ -362,15 +362,27 @@ impl std::fmt::Display for Hertz {
 #[derive(
     Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize, schemars::JsonSchema,
 )]
-#[serde(transparent)]
+#[serde(from = "f32", into = "f32")]
 #[repr(transparent)]
-pub struct SampleRate(pub f32);
+pub struct SampleRate(f32);
 
 impl SampleRate {
     /// Create a new sample rate. Ensures the value is positive.
     #[inline]
     pub fn new(rate: f32) -> Self {
         Self(if rate > 0.0 { rate } else { 1.0 })
+    }
+
+    /// Create a sample rate without clamping.
+    ///
+    /// The caller must guarantee that `rate` is finite and greater than zero.
+    #[must_use]
+    pub const fn new_unchecked(rate: f32) -> Self {
+        debug_assert!(
+            rate.is_finite() && rate > 0.0,
+            "sample rate must be positive"
+        );
+        Self(rate)
     }
 
     /// Common sample rates.
@@ -406,7 +418,7 @@ impl SampleRate {
     /// Convert a time duration to sample count.
     #[inline]
     pub fn samples_for(self, duration: Seconds) -> usize {
-        (duration.0 * self.0).round() as usize
+        (duration.as_f32() * self.0).round() as usize
     }
 }
 
@@ -472,6 +484,6 @@ mod tests {
     fn test_hertz_period() {
         let freq = Hertz::new(100.0);
         let period = freq.period();
-        assert!((period.0 - 0.01).abs() < 0.0001);
+        assert!((period.as_f32() - 0.01).abs() < 0.0001);
     }
 }

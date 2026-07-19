@@ -32,12 +32,12 @@ pub fn load_wav(path: &Path, target_rate: SampleRate) -> Result<Sample, SampleEr
     // Read all samples as f32
     let float_samples = read_samples_as_f32(&mut reader, &spec)?;
 
-    let source_rate = SampleRate(spec.sample_rate);
+    let source_rate = SampleRate::new(spec.sample_rate);
     let frame_count = float_samples.len() / channel_count;
 
     // Resample if needed
     let (final_samples, final_frame_count, final_rate) = if source_rate != target_rate
-        && target_rate.0 > 0
+        && target_rate.as_u32() > 0
     {
         let resampled = resample_linear(&float_samples, channel_count, source_rate, target_rate);
         let new_frames = resampled.len() / channel_count;
@@ -77,7 +77,7 @@ pub fn save_wav(sample: &Sample, path: &Path, bit_depth: BitDepth) -> Result<(),
     let channel_count = sample.meta.channels.count();
     let spec = hound::WavSpec {
         channels: channel_count,
-        sample_rate: sample.meta.sample_rate.0,
+        sample_rate: sample.meta.sample_rate.as_u32(),
         bits_per_sample: match bit_depth {
             BitDepth::Int16 => 16,
             BitDepth::Int24 => 24,
@@ -182,7 +182,7 @@ fn resample_linear(
         return Vec::new();
     }
 
-    let ratio = f64::from(source_rate.0) / f64::from(target_rate.0);
+    let ratio = f64::from(source_rate.as_u32()) / f64::from(target_rate.as_u32());
     let target_frames = ((source_frames as f64) / ratio).ceil() as usize;
     let mut output = Vec::with_capacity(target_frames * channels);
 
@@ -230,7 +230,7 @@ mod tests {
                 id: SampleId::new(0),
                 name: "test".to_string(),
                 description: String::new(),
-                sample_rate: SampleRate(sample_rate),
+                sample_rate: SampleRate::new(sample_rate),
                 channels: ChannelCount::from(channels),
                 frame_count: SampleCount::new(frames),
                 root_note: None,
@@ -247,9 +247,9 @@ mod tests {
         let sample = make_test_sample(44100, 1, 1000);
         let file = NamedTempFile::new().unwrap();
         save_wav(&sample, file.path(), BitDepth::Int16).unwrap();
-        let loaded = load_wav(file.path(), SampleRate(44100)).unwrap();
+        let loaded = load_wav(file.path(), SampleRate::new(44100)).unwrap();
 
-        assert_eq!(loaded.meta.sample_rate, SampleRate(44100));
+        assert_eq!(loaded.meta.sample_rate, SampleRate::new(44100));
         assert_eq!(loaded.meta.channels, ChannelCount::Mono);
         assert_eq!(loaded.meta.frame_count, SampleCount::new(1000));
         assert_eq!(loaded.data.len(), 1000);
@@ -270,7 +270,7 @@ mod tests {
         let sample = make_test_sample(48000, 2, 500);
         let file = NamedTempFile::new().unwrap();
         save_wav(&sample, file.path(), BitDepth::Float32).unwrap();
-        let loaded = load_wav(file.path(), SampleRate(48000)).unwrap();
+        let loaded = load_wav(file.path(), SampleRate::new(48000)).unwrap();
 
         assert_eq!(loaded.meta.channels, ChannelCount::Stereo);
         assert_eq!(loaded.meta.frame_count, SampleCount::new(500));
@@ -291,7 +291,7 @@ mod tests {
         let sample = make_test_sample(44100, 1, 100);
         let file = NamedTempFile::new().unwrap();
         save_wav(&sample, file.path(), BitDepth::Int24).unwrap();
-        let loaded = load_wav(file.path(), SampleRate(44100)).unwrap();
+        let loaded = load_wav(file.path(), SampleRate::new(44100)).unwrap();
 
         assert_eq!(loaded.meta.frame_count, SampleCount::new(100));
         for i in 0..loaded.data.len() {
@@ -310,8 +310,8 @@ mod tests {
         let file = NamedTempFile::new().unwrap();
         save_wav(&sample, file.path(), BitDepth::Float32).unwrap();
 
-        let loaded = load_wav(file.path(), SampleRate(48000)).unwrap();
-        assert_eq!(loaded.meta.sample_rate, SampleRate(48000));
+        let loaded = load_wav(file.path(), SampleRate::new(48000)).unwrap();
+        assert_eq!(loaded.meta.sample_rate, SampleRate::new(48000));
         // 44100 frames at 44100 Hz = 1 second → ~48000 frames at 48000 Hz
         let expected_frames = 48000;
         let actual_frames = loaded.meta.frame_count.as_usize();
@@ -323,14 +323,14 @@ mod tests {
 
     #[test]
     fn wav_load_nonexistent_file() {
-        let result = load_wav(Path::new("/nonexistent/file.wav"), SampleRate(44100));
+        let result = load_wav(Path::new("/nonexistent/file.wav"), SampleRate::new(44100));
         assert!(result.is_err());
     }
 
     #[test]
     fn resample_identity() {
         let data = vec![0.0, 0.5, 1.0, 0.5, 0.0, -0.5, -1.0, -0.5];
-        let result = resample_linear(&data, 1, SampleRate(44100), SampleRate(44100));
+        let result = resample_linear(&data, 1, SampleRate::new(44100), SampleRate::new(44100));
         assert_eq!(result.len(), data.len());
         for (a, b) in result.iter().zip(data.iter()) {
             assert!((a - b).abs() < 1e-6);
@@ -341,7 +341,7 @@ mod tests {
     fn resample_upsample() {
         // 4 frames mono at 22050 → 8 frames at 44100 (2x)
         let data = vec![0.0, 1.0, 0.0, -1.0];
-        let result = resample_linear(&data, 1, SampleRate(22050), SampleRate(44100));
+        let result = resample_linear(&data, 1, SampleRate::new(22050), SampleRate::new(44100));
         assert_eq!(result.len(), 8);
         // First and interpolated values
         assert!((result[0] - 0.0).abs() < 1e-6);

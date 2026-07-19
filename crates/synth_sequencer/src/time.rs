@@ -68,6 +68,12 @@ impl Tick {
     }
 }
 
+impl std::fmt::Display for Tick {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 impl Add for Tick {
     type Output = Self;
     fn add(self, rhs: Self) -> Self::Output {
@@ -121,6 +127,12 @@ pub struct PatternTick(pub u32);
 
 impl PatternTick {
     pub const ZERO: Self = Self(0);
+}
+
+impl std::fmt::Display for PatternTick {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
 }
 
 impl Add for PatternTick {

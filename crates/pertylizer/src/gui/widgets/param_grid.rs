@@ -456,23 +456,26 @@ pub fn draw_parameter_grid<'d>(
                 .get(selected)
                 .map(|c| c.name.clone())
                 .unwrap_or_else(|| "?".into());
-            let combo =
-                egui::ComboBox::from_id_salt(format!("{}-{}", descriptor.type_id.0, param.name))
-                    .selected_text(text)
-                    .show_ui(ui, |ui| {
-                        for (i, choice) in choices.iter().enumerate() {
-                            if !choice_visible(param, choice) {
-                                continue;
-                            }
-                            let mut resp = ui.selectable_label(selected == i, &choice.name);
-                            if let Some(desc) = &choice.description {
-                                resp = resp.on_hover_text(desc);
-                            }
-                            if resp.clicked() {
-                                selected = i;
-                            }
-                        }
-                    });
+            let combo = egui::ComboBox::from_id_salt(format!(
+                "{}-{}",
+                descriptor.type_id.as_str(),
+                param.name
+            ))
+            .selected_text(text)
+            .show_ui(ui, |ui| {
+                for (i, choice) in choices.iter().enumerate() {
+                    if !choice_visible(param, choice) {
+                        continue;
+                    }
+                    let mut resp = ui.selectable_label(selected == i, &choice.name);
+                    if let Some(desc) = &choice.description {
+                        resp = resp.on_hover_text(desc);
+                    }
+                    if resp.clicked() {
+                        selected = i;
+                    }
+                }
+            });
             // Hovering the closed combo shows the active choice's description.
             if let Some(desc) = choices.get(selected).and_then(|c| c.description.as_ref()) {
                 combo.response.on_hover_text(desc);

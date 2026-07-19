@@ -778,7 +778,7 @@ mod tests {
     fn granular_osc_tracks_voice_pitch() {
         let sr = SampleRate::DVD_QUALITY;
         let srf = sr.as_f32();
-        let note = MidiNote(45); // A2 ≈ 110 Hz (rate 1.0 at SOURCE_BASE_FREQ)
+        let note = MidiNote::new(45); // A2 ≈ 110 Hz (rate 1.0 at SOURCE_BASE_FREQ)
         let f = note.to_frequency().as_f32();
         let cents = |est: f32, target: f32| 1200.0 * (est / target).log2();
 

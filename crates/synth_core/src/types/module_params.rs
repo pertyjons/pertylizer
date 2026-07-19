@@ -9,9 +9,9 @@ use serde::{Deserialize, Serialize};
 #[derive(
     Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize, schemars::JsonSchema,
 )]
-#[serde(transparent)]
+#[serde(from = "f32", into = "f32")]
 #[repr(transparent)]
-pub struct BitDepth(pub f32);
+pub struct BitDepth(f32);
 
 impl BitDepth {
     pub const MIN: Self = Self(1.0);
@@ -42,9 +42,9 @@ impl Default for BitDepth {
 #[derive(
     Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize, schemars::JsonSchema,
 )]
-#[serde(transparent)]
+#[serde(from = "f32", into = "f32")]
 #[repr(transparent)]
-pub struct TimeScale(pub f32);
+pub struct TimeScale(f32);
 
 impl TimeScale {
     pub const MIN: Self = Self(0.01);
@@ -75,9 +75,9 @@ impl Default for TimeScale {
 #[derive(
     Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize, schemars::JsonSchema,
 )]
-#[serde(transparent)]
+#[serde(from = "f32", into = "f32")]
 #[repr(transparent)]
-pub struct PulseWidth(pub f32);
+pub struct PulseWidth(f32);
 
 impl PulseWidth {
     pub const MIN: Self = Self(0.01);
@@ -108,9 +108,9 @@ impl Default for PulseWidth {
 #[derive(
     Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize, schemars::JsonSchema,
 )]
-#[serde(transparent)]
+#[serde(from = "f32", into = "f32")]
 #[repr(transparent)]
-pub struct DecayTrim(pub f32);
+pub struct DecayTrim(f32);
 
 impl DecayTrim {
     pub const MIN: Self = Self(0.1);
@@ -135,3 +135,24 @@ impl Default for DecayTrim {
         Self::FULL
     }
 }
+
+macro_rules! impl_f32_conversion {
+    ($type:ty) => {
+        impl From<f32> for $type {
+            fn from(value: f32) -> Self {
+                Self::new(value)
+            }
+        }
+
+        impl From<$type> for f32 {
+            fn from(value: $type) -> Self {
+                value.as_f32()
+            }
+        }
+    };
+}
+
+impl_f32_conversion!(BitDepth);
+impl_f32_conversion!(TimeScale);
+impl_f32_conversion!(PulseWidth);
+impl_f32_conversion!(DecayTrim);

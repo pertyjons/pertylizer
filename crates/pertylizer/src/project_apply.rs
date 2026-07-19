@@ -1037,7 +1037,7 @@ mod tests {
     fn drive(engine: &mut SynthEngine, blocks: usize) {
         let mut block = vec![0.0f32; 256 * 2];
         let context = AudioCallbackContext {
-            sample_rate: HwSampleRate(TEST_SR),
+            sample_rate: HwSampleRate::new(TEST_SR),
             frames: 256,
             channels: 2,
             stream_time: 0.0,
@@ -1185,8 +1185,8 @@ mod tests {
         let _ = session.apply_patch(id, &patch);
 
         let stream_info = synth_core::StreamInfo {
-            sample_rate: HwSampleRate(TEST_SR),
-            buffer_size: synth_core::BufferSize(256),
+            sample_rate: HwSampleRate::new(TEST_SR),
+            buffer_size: synth_core::BufferSize::new(256),
             channels: synth_core::ChannelCount::Stereo,
             output_latency: std::time::Duration::ZERO,
             input_latency: None,
@@ -1248,8 +1248,8 @@ mod tests {
         let _ = session.apply_patch(id, &patch);
 
         let stream_info = synth_core::StreamInfo {
-            sample_rate: HwSampleRate(TEST_SR),
-            buffer_size: synth_core::BufferSize(256),
+            sample_rate: HwSampleRate::new(TEST_SR),
+            buffer_size: synth_core::BufferSize::new(256),
             channels: synth_core::ChannelCount::Stereo,
             output_latency: std::time::Duration::ZERO,
             input_latency: None,
@@ -1347,8 +1347,8 @@ mod tests {
         );
 
         let stream_info = synth_core::StreamInfo {
-            sample_rate: HwSampleRate(TEST_SR),
-            buffer_size: synth_core::BufferSize(256),
+            sample_rate: HwSampleRate::new(TEST_SR),
+            buffer_size: synth_core::BufferSize::new(256),
             channels: synth_core::ChannelCount::Stereo,
             output_latency: std::time::Duration::ZERO,
             input_latency: None,
@@ -1409,8 +1409,8 @@ mod tests {
         );
 
         let stream_info = synth_core::StreamInfo {
-            sample_rate: HwSampleRate(TEST_SR),
-            buffer_size: synth_core::BufferSize(256),
+            sample_rate: HwSampleRate::new(TEST_SR),
+            buffer_size: synth_core::BufferSize::new(256),
             channels: synth_core::ChannelCount::Stereo,
             output_latency: std::time::Duration::ZERO,
             input_latency: None,
@@ -1456,8 +1456,8 @@ mod tests {
             .expect("set_mod_script");
 
         let stream_info = synth_core::StreamInfo {
-            sample_rate: HwSampleRate(TEST_SR),
-            buffer_size: synth_core::BufferSize(256),
+            sample_rate: HwSampleRate::new(TEST_SR),
+            buffer_size: synth_core::BufferSize::new(256),
             channels: synth_core::ChannelCount::Stereo,
             output_latency: std::time::Duration::ZERO,
             input_latency: None,
@@ -1503,8 +1503,8 @@ mod tests {
         let _ = session.apply_patch(id, &minimal_patch("X"));
 
         let stream_info = synth_core::StreamInfo {
-            sample_rate: HwSampleRate(TEST_SR),
-            buffer_size: synth_core::BufferSize(256),
+            sample_rate: HwSampleRate::new(TEST_SR),
+            buffer_size: synth_core::BufferSize::new(256),
             channels: synth_core::ChannelCount::Stereo,
             output_latency: std::time::Duration::ZERO,
             input_latency: None,
@@ -1587,8 +1587,8 @@ mod tests {
         let _ = session.apply_patch(other, &other_patch);
 
         let stream_info = synth_core::StreamInfo {
-            sample_rate: HwSampleRate(TEST_SR),
-            buffer_size: synth_core::BufferSize(256),
+            sample_rate: HwSampleRate::new(TEST_SR),
+            buffer_size: synth_core::BufferSize::new(256),
             channels: synth_core::ChannelCount::Stereo,
             output_latency: std::time::Duration::ZERO,
             input_latency: None,
@@ -1693,8 +1693,8 @@ mod tests {
         // land and `update_shared_instruments` mirrors the post-state into
         // `InstrumentSnapshot`.
         let stream_info = synth_core::StreamInfo {
-            sample_rate: HwSampleRate(TEST_SR),
-            buffer_size: synth_core::BufferSize(256),
+            sample_rate: HwSampleRate::new(TEST_SR),
+            buffer_size: synth_core::BufferSize::new(256),
             channels: synth_core::ChannelCount::Stereo,
             output_latency: std::time::Duration::ZERO,
             input_latency: None,
@@ -1797,7 +1797,7 @@ mod tests {
                     id: synth_sampler::SampleId::new(0),
                     name: name.to_string(),
                     description: String::new(),
-                    sample_rate: HwSampleRate(44_100),
+                    sample_rate: HwSampleRate::new(44_100),
                     channels: synth_core::ChannelCount::Mono,
                     frame_count: synth_core::SampleCount::new(100),
                     root_note: None,
@@ -1837,8 +1837,8 @@ mod tests {
             });
 
         let stream_info = synth_core::StreamInfo {
-            sample_rate: HwSampleRate(TEST_SR),
-            buffer_size: synth_core::BufferSize(256),
+            sample_rate: HwSampleRate::new(TEST_SR),
+            buffer_size: synth_core::BufferSize::new(256),
             channels: synth_core::ChannelCount::Stereo,
             output_latency: std::time::Duration::ZERO,
             input_latency: None,

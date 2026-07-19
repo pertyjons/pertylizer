@@ -199,7 +199,7 @@ fn module_scope_cutoff_modulation_changes_the_render() {
             ModNodeId::new(1),
             ModNodeConfig::Target(ModTarget {
                 target: AutomationTarget::Module {
-                    instrument: InstrumentId(0),
+                    instrument: InstrumentId::new(0),
                     module_type: ModuleType::Filter,
                     instance: 1,
                     param_id: "cutoff".into(),
@@ -270,7 +270,7 @@ fn instrument_scope_volume_modulation_changes_the_render() {
             ModNodeId::new(1),
             ModNodeConfig::Target(ModTarget {
                 target: AutomationTarget::Instrument {
-                    instrument: InstrumentId(0),
+                    instrument: InstrumentId::new(0),
                     param: synth_sequencer::AutoInstrumentParam::Volume,
                 },
                 amount: 0.5,

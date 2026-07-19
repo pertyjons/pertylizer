@@ -4667,6 +4667,7 @@ dependencies = [
  "ringbuf",
  "schemars",
  "serde",
+ "serde_json",
  "strum",
  "thiserror 2.0.18",
 ]

@@ -2382,7 +2382,7 @@ impl PatchEditor {
                 let is_source = self.is_source(module_id);
                 let is_sink = self.is_sink(module_id);
                 let is_automated = provenance.automated_modules.contains(&module_id);
-                let is_inline_monitor = descriptor.type_id.0 == "inline_signal_monitor";
+                let is_inline_monitor = descriptor.type_id.as_str() == "inline_signal_monitor";
 
                 // Place the module at its WORLD position — no egui::Area (an Area
                 // inside a Scene would not inherit the layer transform). Own the drag
@@ -3391,7 +3391,7 @@ fn draw_visualizer_display(
     _param_changes: &mut Vec<Param>,
 ) {
     // Check which type of visualizer based on module type id
-    if descriptor.type_id.0 == "oscilloscope" {
+    if descriptor.type_id.as_str() == "oscilloscope" {
         // Get gain from params by name
         let gain = state.param_values.get("Gain").copied().unwrap_or(1.0);
 
@@ -3437,7 +3437,7 @@ fn draw_visualizer_display(
         if vis_buffer.is_none() {
             caption(ui, "No signal", CaptionTone::Dim);
         }
-    } else if descriptor.type_id.0 == "spectrum_analyzer" {
+    } else if descriptor.type_id.as_str() == "spectrum_analyzer" {
         // Get gain from params by name
         let gain = state.param_values.get("Gain").copied().unwrap_or(1.0);
 
@@ -3469,7 +3469,7 @@ fn draw_visualizer_display(
         if vis_buffer.is_none() {
             caption(ui, "No signal", CaptionTone::Dim);
         }
-    } else if descriptor.type_id.0 == "level_meter" {
+    } else if descriptor.type_id.as_str() == "level_meter" {
         // Get levels from visualization buffer if available
         let (peak_l, peak_r, rms_l, rms_r) = if let Some(buffer) = vis_buffer {
             let (peak_l, peak_r) = buffer.get_peaks();

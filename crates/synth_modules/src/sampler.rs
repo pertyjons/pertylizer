@@ -71,7 +71,7 @@ pub struct Sampler {
 impl Sampler {
     pub fn new() -> Self {
         Self {
-            sample_id: SampleId(0),
+            sample_id: SampleId::new(0),
             pitch_tracking: true,
             level: Gain::new(0.8),
             play_mode: SamplerPlayMode::Sustain,
@@ -85,7 +85,7 @@ impl Sampler {
             sample_frame_count: 0,
             sample_crop: None,
             sample_loop: None,
-            root_note: MidiNote(60), // C4
+            root_note: MidiNote::new(60), // C4
 
             needs_sample_reload: false,
 
@@ -359,7 +359,7 @@ impl PolyModule for Sampler {
                 SamplerParam::PlayMode(_) => Some(self.play_mode as u8 as f32),
                 SamplerParam::Direction(_) => Some(self.direction as u8 as f32),
                 SamplerParam::VelocitySensitivity(_) => Some(self.velocity_sensitivity.as_f32()),
-                SamplerParam::FineTune(_) => Some(self.fine_tune.0),
+                SamplerParam::FineTune(_) => Some(self.fine_tune.as_f32()),
                 SamplerParam::StartOffset(_) => Some(self.start_offset.as_f32()),
             }
         } else {
@@ -427,7 +427,9 @@ impl PolyModule for Sampler {
 
         // Note-on-time params: sampled through the generic mod store at trigger,
         // so a routing active at note-on configures this note's player.
-        let fine_tune = self.mod_offsets.effective("fine_tune", self.fine_tune.0);
+        let fine_tune = self
+            .mod_offsets
+            .effective("fine_tune", self.fine_tune.as_f32());
         let start_offset = self
             .mod_offsets
             .effective("start_offset", self.start_offset.as_f32());
@@ -532,7 +534,14 @@ mod tests {
         let desc = s.descriptor();
         s.mod_offsets_mut().unwrap().populate(&desc);
         let data: Arc<[f32]> = vec![0.5_f32; 4096 * 2].into();
-        s.load_sample(data, ChannelCount::Stereo, 4096, None, None, MidiNote(60));
+        s.load_sample(
+            data,
+            ChannelCount::Stereo,
+            4096,
+            None,
+            None,
+            MidiNote::new(60),
+        );
         s
     }
 
@@ -549,7 +558,7 @@ mod tests {
     #[test]
     fn test_sampler_level_mod_offset_scales_output() {
         let mut s = loaded_sampler();
-        s.note_on(MidiNote(60), Velocity::new(1.0));
+        s.note_on(MidiNote::new(60), Velocity::new(1.0));
 
         // Warm up past any player fade-in so the steady-state level is reached.
         let _ = render_energy(&mut s, 256);
@@ -575,7 +584,7 @@ mod tests {
     /// non-looping sample is exhausted. Higher playback speed → exhausts sooner.
     fn frames_until_silent_with_cv(cv_octaves: f32) -> usize {
         let mut s = loaded_sampler();
-        s.note_on(MidiNote(60), Velocity::new(1.0)); // C4 == root → base_speed 1
+        s.note_on(MidiNote::new(60), Velocity::new(1.0)); // C4 == root → base_speed 1
         let mut cv = AudioBuffer::new(64);
         for i in 0..64 {
             cv[i] = cv_octaves;
@@ -602,8 +611,8 @@ mod tests {
     fn voice_pitch_modulates_sampler_playback_speed() {
         fn frames_until_silent(pitch_mul: f32) -> usize {
             let mut s = loaded_sampler();
-            s.note_on(MidiNote(60), Velocity::new(1.0)); // C4 == root
-            let root = MidiNote(60).to_frequency().as_f32();
+            s.note_on(MidiNote::new(60), Velocity::new(1.0)); // C4 == root
+            let root = MidiNote::new(60).to_frequency().as_f32();
             let mut total = 0;
             for _ in 0..400 {
                 s.set_voice_pitch(VoicePitch::tracking(Hertz::new(root * pitch_mul)));

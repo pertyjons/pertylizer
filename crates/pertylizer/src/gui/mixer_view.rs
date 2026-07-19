@@ -304,7 +304,7 @@ pub fn draw_mixer_view(
                         for ch in &snapshot.channels {
                             let eng_id = instruments
                                 .iter()
-                                .find(|i| i.id.0 == ch.instrument.0)
+                                .find(|i| i.id.as_u64() == ch.instrument.as_u64())
                                 .map(|i| i.id);
                             if draw_channel_strip(
                                 ui,
@@ -595,7 +595,7 @@ fn draw_channel_strip(
                 // Level meter + volume fader, side by side.
                 let peak = eng_id.map_or(0.0, |id| handle.channel_peak(id));
                 let level = eng_id
-                    .map(|id| smoothed(&mut state.channel_meter_smooth, id.0, peak))
+                    .map(|id| smoothed(&mut state.channel_meter_smooth, id.as_u64(), peak))
                     .unwrap_or(0.0);
                 ui.horizontal(|ui| {
                     ui.add_space(center_pad(METER_WIDTH + 24.0));

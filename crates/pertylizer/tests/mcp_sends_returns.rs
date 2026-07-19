@@ -49,19 +49,21 @@ fn return_bus_and_send_round_trip_via_bridge() {
     assert_eq!(busses[0].id, rid);
     assert_eq!(busses[0].name, "Reverb");
 
-    bridge.set_return_bus_volume(rid, 0.6).unwrap();
-    bridge.set_return_bus_pan(rid, -0.4).unwrap();
+    bridge.set_return_bus_volume(rid, 0.6.into()).unwrap();
+    bridge.set_return_bus_pan(rid, (-0.4).into()).unwrap();
     bridge.set_return_bus_mute(rid, true).unwrap();
     bridge.rename_return_bus(rid, "Hall").unwrap();
     let b = bridge.list_return_busses().unwrap().remove(0);
     assert_eq!(b.name, "Hall");
-    assert!((b.volume - 0.6).abs() < 1e-6);
-    assert!((b.pan - (-0.4)).abs() < 1e-6);
+    assert!((b.volume.as_f32() - 0.6).abs() < 1e-6);
+    assert!((b.pan.as_f32() - (-0.4)).abs() < 1e-6);
     assert!(b.mute);
 
     // Send: upsert by target.
     let tid = bridge.create_track("lead", None).expect("create track");
-    bridge.set_track_send(tid, rid, 0.5, true, true).unwrap();
+    bridge
+        .set_track_send(tid, rid, 0.5.into(), true, true)
+        .unwrap();
     let t = bridge
         .list_tracks()
         .unwrap()
@@ -70,11 +72,13 @@ fn return_bus_and_send_round_trip_via_bridge() {
         .unwrap();
     assert_eq!(t.sends.len(), 1);
     assert_eq!(t.sends[0].target, rid);
-    assert!((t.sends[0].level - 0.5).abs() < 1e-6);
+    assert!((t.sends[0].level.as_f32() - 0.5).abs() < 1e-6);
     assert!(t.sends[0].pre_fader);
     assert!(t.sends[0].enabled, "a fresh send is enabled");
 
-    bridge.set_track_send(tid, rid, 0.2, false, true).unwrap();
+    bridge
+        .set_track_send(tid, rid, 0.2.into(), false, true)
+        .unwrap();
     let t = bridge
         .list_tracks()
         .unwrap()
@@ -86,11 +90,13 @@ fn return_bus_and_send_round_trip_via_bridge() {
         1,
         "second send to same target must update, not duplicate"
     );
-    assert!((t.sends[0].level - 0.2).abs() < 1e-6);
+    assert!((t.sends[0].level.as_f32() - 0.2).abs() < 1e-6);
     assert!(!t.sends[0].pre_fader);
 
     // Bypassing keeps the send (and its level/tap) but flips `enabled`.
-    bridge.set_track_send(tid, rid, 0.2, false, false).unwrap();
+    bridge
+        .set_track_send(tid, rid, 0.2.into(), false, false)
+        .unwrap();
     let t = bridge
         .list_tracks()
         .unwrap()
@@ -98,11 +104,21 @@ fn return_bus_and_send_round_trip_via_bridge() {
         .find(|t| t.id == tid)
         .unwrap();
     assert_eq!(t.sends.len(), 1, "bypass must not remove the send");
-    assert!((t.sends[0].level - 0.2).abs() < 1e-6);
+    assert!((t.sends[0].level.as_f32() - 0.2).abs() < 1e-6);
     assert!(!t.sends[0].enabled, "send is now bypassed");
 
     // A send to a non-existent return bus is rejected.
-    assert!(bridge.set_track_send(tid, 999, 0.5, false, true).is_err());
+    assert!(
+        bridge
+            .set_track_send(
+                tid,
+                synth_sequencer::ReturnBusId(999),
+                0.5.into(),
+                false,
+                true
+            )
+            .is_err()
+    );
 
     // Deleting the return bus strips the targeting send.
     bridge.delete_return_bus(rid).unwrap();
@@ -117,7 +133,7 @@ fn return_bus_and_send_round_trip_via_bridge() {
         t.sends.is_empty(),
         "sends to a deleted return bus must be removed"
     );
-    assert!(bridge.set_return_bus_volume(rid, 0.5).is_err());
+    assert!(bridge.set_return_bus_volume(rid, 0.5.into()).is_err());
 }
 
 #[test]
@@ -127,20 +143,32 @@ fn return_bus_to_bus_sends_and_metadata_via_bridge() {
     let reverb = bridge.create_return_bus("Reverb").unwrap();
 
     // Bus-to-bus: delay feeds reverb.
-    bridge.set_return_send(delay, reverb, 0.5, true).unwrap();
+    bridge
+        .set_return_send(delay, reverb, 0.5.into(), true)
+        .unwrap();
     let busses = bridge.list_return_busses().unwrap();
     let d = busses.iter().find(|b| b.id == delay).unwrap();
     assert_eq!(d.sends.len(), 1);
     assert_eq!(d.sends[0].target, reverb);
-    assert!((d.sends[0].level - 0.5).abs() < 1e-6);
+    assert!((d.sends[0].level.as_f32() - 0.5).abs() < 1e-6);
     assert!(d.sends[0].enabled);
 
     // A self-send and a cycle (reverb -> delay closes delay -> reverb) are rejected.
-    assert!(bridge.set_return_send(delay, delay, 0.5, true).is_err());
-    assert!(bridge.set_return_send(reverb, delay, 0.5, true).is_err());
+    assert!(
+        bridge
+            .set_return_send(delay, delay, 0.5.into(), true)
+            .is_err()
+    );
+    assert!(
+        bridge
+            .set_return_send(reverb, delay, 0.5.into(), true)
+            .is_err()
+    );
 
     // Bypass keeps the send; removal drops it.
-    bridge.set_return_send(delay, reverb, 0.5, false).unwrap();
+    bridge
+        .set_return_send(delay, reverb, 0.5.into(), false)
+        .unwrap();
     let busses = bridge.list_return_busses().unwrap();
     assert!(!busses.iter().find(|b| b.id == delay).unwrap().sends[0].enabled);
     bridge.remove_return_send(delay, reverb).unwrap();
@@ -168,6 +196,6 @@ fn return_bus_to_bus_sends_and_metadata_via_bridge() {
     assert_eq!(r.description, "shared plate");
 
     // Master volume: set sends a command; get reads the engine atomic.
-    bridge.set_master_volume(0.5).unwrap();
+    bridge.set_master_volume(0.5.into()).unwrap();
     assert!(bridge.get_master_volume().is_ok());
 }

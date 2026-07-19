@@ -6,6 +6,7 @@
 //! the render loop keeps the engine plumbing in `mcp_bridge.rs` and lets these
 //! helpers be unit-tested with synthesized inputs — no audio engine needed.
 
+use synth_core::MidiNote;
 use synth_mcp::types::{
     AnalyzeNoteResult, InstrumentRangeIssues, InstrumentRangeStep, VelocityResponseIssues,
     VelocityResponseStep,
@@ -67,7 +68,7 @@ pub fn range_step_from_analysis(
     let pitch_lost = !silent && pitch_lost_for(result, pitch_confidence);
 
     InstrumentRangeStep {
-        note,
+        note: MidiNote::new(note),
         note_played: result.note_played,
         expected_hz: result.expected_fundamental_hz,
         fundamental_hz: result.fundamental_hz,
@@ -116,22 +117,22 @@ pub fn range_issues_from_steps(steps: &[InstrumentRangeStep]) -> InstrumentRange
     let mut max_peak: Option<f32> = None;
     for step in steps {
         if step.silent {
-            issues.silent_notes.push(step.note);
+            issues.silent_notes.push(step.note.as_u8());
         } else {
             min_peak = Some(min_peak.map_or(step.peak_amplitude, |m| m.min(step.peak_amplitude)));
             max_peak = Some(max_peak.map_or(step.peak_amplitude, |m| m.max(step.peak_amplitude)));
         }
         if step.likely_aliased {
-            issues.aliased_notes.push(step.note);
+            issues.aliased_notes.push(step.note.as_u8());
         }
         if step.pitch_lost {
-            issues.pitch_lost_notes.push(step.note);
+            issues.pitch_lost_notes.push(step.note.as_u8());
         }
         if step.pitch_unreliable {
-            issues.pitch_unreliable_notes.push(step.note);
+            issues.pitch_unreliable_notes.push(step.note.as_u8());
         }
         if step.clipped_samples > 0 {
-            issues.clipping_notes.push(step.note);
+            issues.clipping_notes.push(step.note.as_u8());
         }
     }
     if let (Some(min), Some(max)) = (min_peak, max_peak)

@@ -364,7 +364,7 @@ impl EngineHandle {
     /// currently audible/metered. Read each frame to drive a per-strip meter.
     #[must_use]
     pub fn channel_peak(&self, id: InstrumentId) -> f32 {
-        self.state.channel_meters.peak_for(id.0)
+        self.state.channel_meters.peak_for(id.as_u64())
     }
 
     /// Post-fader peak for a return bus, or 0.0 when muted/absent.
@@ -2275,7 +2275,7 @@ impl SynthEngine {
                     .track
                     .and_then(|t| self.mod_grid.track_offsets.get(&t))
                     .map_or(Semitones::ZERO, |o| o.pitch);
-                voice.track_pitch = Semitones(lane_pitch.0 + grid_pitch.0);
+                voice.track_pitch = lane_pitch + grid_pitch;
             }
         }
     }
@@ -2392,7 +2392,8 @@ impl SynthEngine {
                                 TrackParam::Volume => entry.volume += contribution,
                                 TrackParam::Pan => entry.pan += contribution,
                                 TrackParam::Pitch => {
-                                    entry.pitch = Semitones(entry.pitch.0 + contribution);
+                                    entry.pitch =
+                                        Semitones::new(entry.pitch.as_f32() + contribution);
                                 }
                                 // Mute is excluded from grid targets initially.
                                 TrackParam::Mute => {}
@@ -3789,7 +3790,7 @@ fn mix_channel_busses(
             0.0
         };
 
-        channel_meters.publish(i, instrument.id().0, peak);
+        channel_meters.publish(i, instrument.id().as_u64(), peak);
     }
     channel_meters.set_count(instruments.len());
 }
@@ -4311,7 +4312,7 @@ impl AudioProcessor for SynthEngine {
 
     fn on_stream_start(&mut self, info: &StreamInfo) {
         self.sample_rate = info.sample_rate.as_f32();
-        self.state.sample_rate.store(info.sample_rate.0);
+        self.state.sample_rate.store(info.sample_rate.as_u32());
         let sr = SampleRate::new(self.sample_rate);
         self.metering.set_sample_rate(sr);
         self.sequencer.set_sample_rate(sr);
@@ -4740,7 +4741,7 @@ mod tests {
     fn enter_preview(engine: &mut SynthEngine, handle: &mut EngineHandle) {
         handle.send(EngineCommand::SetPreviewPattern(Some((
             synth_sequencer::PatternId(0),
-            synth_sequencer::InstrumentId(0),
+            synth_sequencer::InstrumentId::new(0),
         ))));
         engine.process_commands();
         assert_eq!(
@@ -4800,7 +4801,7 @@ mod tests {
         };
 
         let (mut engine, mut handle) = SynthEngine::new();
-        // An instrument on track 0 (InstrumentId(0) ↔ InstrumentId::FIRST).
+        // An instrument on track 0 (InstrumentId::new(0) ↔ InstrumentId::FIRST).
         handle.send(EngineCommand::AddInstrument {
             instrument: Box::new(Instrument::new(InstrumentId::FIRST, "d")),
         });
@@ -4866,7 +4867,7 @@ mod tests {
         engine.update_track_controls();
         let ctrl = engine
             .track_controls
-            .get(&InstrumentId(0))
+            .get(&InstrumentId::new(0))
             .copied()
             .expect("track control present");
         assert!(
@@ -4878,7 +4879,7 @@ mod tests {
         // Full-flow path: drive the real process() and re-check the fader. This
         // is what the live engine / offline render actually run.
         let context = AudioCallbackContext {
-            sample_rate: synth_core::audio::SampleRate(48000),
+            sample_rate: synth_core::audio::SampleRate::new(48000),
             frames: 256,
             channels: 2,
             stream_time: 0.0,
@@ -4889,7 +4890,7 @@ mod tests {
         engine.process(&mut out, &context);
         let ctrl2 = engine
             .track_controls
-            .get(&InstrumentId(0))
+            .get(&InstrumentId::new(0))
             .copied()
             .unwrap();
         assert!(
@@ -4922,7 +4923,7 @@ mod tests {
                     targets: vec![ResolvedTarget {
                         source: Some(ModSource::Constant(1.0)),
                         target: AutomationTarget::Instrument {
-                            instrument: InstrumentId(0),
+                            instrument: InstrumentId::new(0),
                             param: AutoInstrumentParam::Volume,
                         },
                         amount: 0.5,
@@ -4945,7 +4946,7 @@ mod tests {
             engine
                 .mod_grid
                 .instrument_offsets
-                .get(&InstrumentId(0))
+                .get(&InstrumentId::new(0))
                 .copied()
                 .unwrap_or_default()
                 .volume
@@ -5155,7 +5156,7 @@ mod tests {
         let events = vec![SequencerEvent::Parameter {
             tick: Tick(0),
             target: AutomationTarget::Instrument {
-                instrument: InstrumentId(1),
+                instrument: InstrumentId::new(1),
                 param: AutoInstrumentParam::FilterCutoff,
             },
             value: NormalizedValue::MIN,
@@ -5208,7 +5209,7 @@ mod tests {
         let events = vec![SequencerEvent::Parameter {
             tick: Tick(0),
             target: AutomationTarget::Module {
-                instrument: InstrumentId(1),
+                instrument: InstrumentId::new(1),
                 module_type: ModuleType::Filter,
                 instance: 1,
                 param_id: "cutoff".into(),
@@ -5418,12 +5419,12 @@ mod tests {
     #[test]
     fn update_track_controls_resolves_sends_and_drops_missing() {
         let (mut engine, mut handle) = SynthEngine::new();
-        add_default_instrument(&mut engine, &mut handle); // FIRST ↔ InstrumentId(0)
+        add_default_instrument(&mut engine, &mut handle); // FIRST ↔ InstrumentId::new(0)
         handle.send(EngineCommand::CreateReturnBus { id: ReturnBusId(5) });
         handle.send(EngineCommand::CreateReturnBus { id: ReturnBusId(9) });
 
         let mut song = Song::default();
-        let tid = song.create_track("t"); // default instrument = InstrumentId(0)
+        let tid = song.create_track("t"); // default instrument = InstrumentId::new(0)
         let track = song.track_mut(tid).unwrap();
         track.sends.push(TrackSend {
             target: ReturnBusId(9),
@@ -5458,7 +5459,7 @@ mod tests {
         // (which wins for the block) has none. The shared channel must end with
         // NO sends — the first track's send must not leak into it.
         let (mut engine, mut handle) = SynthEngine::new();
-        add_default_instrument(&mut engine, &mut handle); // FIRST ↔ InstrumentId(0)
+        add_default_instrument(&mut engine, &mut handle); // FIRST ↔ InstrumentId::new(0)
         handle.send(EngineCommand::CreateReturnBus { id: ReturnBusId(0) });
 
         let mut song = Song::default();
@@ -5512,7 +5513,7 @@ mod tests {
         engine.process_commands();
 
         let context = AudioCallbackContext {
-            sample_rate: synth_core::audio::SampleRate(48000),
+            sample_rate: synth_core::audio::SampleRate::new(48000),
             frames: 256,
             channels: 2,
             stream_time: 0.0,
@@ -5677,7 +5678,7 @@ mod rt_alloc_guard {
         handle.note_on(MidiNote::C4, Velocity::new(0.8));
 
         let context = AudioCallbackContext {
-            sample_rate: synth_core::audio::SampleRate(48000),
+            sample_rate: synth_core::audio::SampleRate::new(48000),
             frames: 256,
             channels: 2,
             stream_time: 0.0,

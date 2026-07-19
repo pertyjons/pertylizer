@@ -985,7 +985,10 @@ impl eframe::App for SynthApp {
                     );
                     if let Some(crate::gui::mixer_view::MixerViewAction::EditChannelFx(seq_id)) =
                         action
-                        && let Some(inst) = self.instruments.iter().find(|i| i.id.0 == seq_id.0)
+                        && let Some(inst) = self
+                            .instruments
+                            .iter()
+                            .find(|i| i.id.as_u64() == seq_id.as_u64())
                     {
                         // Channel inserts live on the instrument — open its
                         // patch editor in the Rack.
@@ -1027,7 +1030,7 @@ impl eframe::App for SynthApp {
                         .filter_map(|p| match p {
                             synth_core::params::Param::Sampler(
                                 synth_core::params::SamplerParam::SampleSelect(id),
-                            ) => Some(id.0),
+                            ) => Some(id.as_u64()),
                             _ => None,
                         })
                     {
@@ -1601,7 +1604,7 @@ impl SynthApp {
                     id: synth_sampler::SampleId::new(0),
                     name: format!(
                         "Recording {:.1}s",
-                        frame_count as f64 / f64::from(sample_rate.0)
+                        frame_count as f64 / f64::from(sample_rate.as_u32())
                     ),
                     description: String::new(),
                     sample_rate,
@@ -2387,7 +2390,7 @@ impl SynthApp {
             // otherwise.
             let is_unison =
                 inst.allocation_mode == synth_engine::voice_allocator::AllocationMode::Unison;
-            let mut detune_ct = inst.unison_detune.0;
+            let mut detune_ct = inst.unison_detune.as_f32();
             if ui
                 .add_enabled(
                     is_unison,
@@ -2462,7 +2465,7 @@ impl SynthApp {
                 .on_hover_text("Oversampling factor (reduces aliasing)");
 
             // Max voices
-            let mut voices = inst.max_voices.0 as i32;
+            let mut voices = i32::from(inst.max_voices.as_u8());
             if ui
                 .add(
                     egui::DragValue::new(&mut voices)
@@ -2883,7 +2886,8 @@ impl SynthApp {
                         sample_id,
                     )) = param
                         && let Ok(lib) = self.sample_library.read()
-                        && let Some(sample) = lib.get(synth_sampler::SampleId::new(sample_id.0))
+                        && let Some(sample) =
+                            lib.get(synth_sampler::SampleId::new(sample_id.as_u64()))
                     {
                         self.handle.send(EngineCommand::LoadSampleData {
                             instrument_id: active_id,
@@ -2891,7 +2895,7 @@ impl SynthApp {
                             data: std::sync::Arc::clone(&sample.data),
                             channels: sample.meta.channels,
                             frame_count: sample.meta.frame_count.as_usize(),
-                            root_note: sample.meta.root_note.unwrap_or(synth_core::MidiNote(60)),
+                            root_note: sample.meta.root_note.unwrap_or(synth_core::MidiNote::new(60)),
                         });
                     }
                 }
@@ -2948,8 +2952,8 @@ impl SynthApp {
                 // Check if this module has a visualization buffer to clean up
                 let has_vis_buffer = patch_editor.module_descriptor(module_id).is_some_and(|d| {
                     d.category == ModuleCategory::Visualizer
-                        || d.type_id.0 == "signal_monitor"
-                        || d.type_id.0 == "inline_signal_monitor"
+                        || d.type_id.as_str() == "signal_monitor"
+                        || d.type_id.as_str() == "inline_signal_monitor"
                 });
 
                 // Remove from session (registry + engine command)
@@ -4391,8 +4395,8 @@ impl SynthApp {
                 .module_descriptor(module_id)
                 .is_some_and(|d| {
                     d.category == ModuleCategory::Visualizer
-                        || d.type_id.0 == "signal_monitor"
-                        || d.type_id.0 == "inline_signal_monitor"
+                        || d.type_id.as_str() == "signal_monitor"
+                        || d.type_id.as_str() == "inline_signal_monitor"
                 });
             if let Err(e) = self.session.remove_module(active_id, module_id) {
                 eprintln!("Failed to remove module {module_id:?}: {e}");
@@ -5712,7 +5716,7 @@ impl SynthApp {
                     .collect();
                 modules.push(crate::mcp_shared::ModuleLayout {
                     id: module_id.to_string(),
-                    module_type: descriptor.type_id.0.clone(),
+                    module_type: descriptor.type_id.as_str().to_string(),
                     name: descriptor.name.clone(),
                     position: (pos.x, pos.y),
                     size: (panel_size.x, panel_size.y),

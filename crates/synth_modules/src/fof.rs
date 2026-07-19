@@ -923,7 +923,7 @@ mod tests {
     fn fof_tracks_voice_pitch() {
         let sr = SampleRate::DVD_QUALITY;
         let srf = sr.as_f32();
-        let note = MidiNote(45); // A2 ≈ 110 Hz
+        let note = MidiNote::new(45); // A2 ≈ 110 Hz
         let f = note.to_frequency().as_f32();
         let cents = |est: f32, target: f32| 1200.0 * (est / target).log2();
 

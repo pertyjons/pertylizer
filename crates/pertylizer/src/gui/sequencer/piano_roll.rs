@@ -1169,7 +1169,7 @@ pub(super) fn draw_pattern_instrument_transport(
                     instruments
                         .iter()
                         .find(|inst| inst.id == *seq_id)
-                        .map_or_else(|| format!("#{}", seq_id.0), |inst| inst.name.clone())
+                        .map_or_else(|| format!("#{}", seq_id.as_u64()), |inst| inst.name.clone())
                 })
                 .collect();
             let arrow = egui_remixicon::icons::ARROW_RIGHT_S_LINE;
@@ -2615,7 +2615,7 @@ fn draw_piano_roll_grid(
                             .iter()
                             .find(|inst| inst.id == note_instrument)
                             .map_or_else(
-                                || format!("#{}", note_instrument.0),
+                                || format!("#{}", note_instrument.as_u64()),
                                 |inst| inst.name.clone(),
                             );
                         let tooltip_id = ui.id().with(("note_tip", note_id.0));

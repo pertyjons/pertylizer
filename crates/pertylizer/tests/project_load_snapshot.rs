@@ -122,7 +122,7 @@ struct SampleSummary {
 
 fn build_instrument_summary(inst: &InstrumentState) -> InstrumentSummary {
     InstrumentSummary {
-        id: inst.id.0,
+        id: inst.id.as_u64(),
         name: inst.name.clone(),
         channel: inst.channel,
         volume: inst.volume.as_f32(),
@@ -136,7 +136,7 @@ fn build_instrument_summary(inst: &InstrumentState) -> InstrumentSummary {
         description_len: inst.description.len(),
         color_present: inst.color.is_some(),
         allocation_mode: format!("{:?}", inst.allocation_mode),
-        unison_detune_cents: inst.unison_detune.0,
+        unison_detune_cents: inst.unison_detune.as_f32(),
         unison_spread: inst.unison_spread.as_f32(),
         max_voices: inst.max_voices.as_usize(),
         velocity_amp_sensitivity: inst.velocity_amp_sensitivity.as_f32(),

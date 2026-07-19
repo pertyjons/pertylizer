@@ -53,8 +53,8 @@ fn build_rig() -> Rig {
     let server = SynthMcpServer::new(Arc::new(bridge) as Arc<dyn SynthBridge>);
 
     let stream_info = synth_core::StreamInfo {
-        sample_rate: HwSampleRate(TEST_SR),
-        buffer_size: synth_core::BufferSize(256),
+        sample_rate: HwSampleRate::new(TEST_SR),
+        buffer_size: synth_core::BufferSize::new(256),
         channels: synth_core::ChannelCount::Stereo,
         output_latency: std::time::Duration::ZERO,
         input_latency: None,
@@ -69,7 +69,7 @@ impl Rig {
     /// refreshes the shared instrument snapshots that `get_instrument_info` reads.
     fn pump(&mut self) {
         let context = AudioCallbackContext {
-            sample_rate: HwSampleRate(TEST_SR),
+            sample_rate: HwSampleRate::new(TEST_SR),
             frames: 256,
             channels: 2,
             stream_time: 0.0,

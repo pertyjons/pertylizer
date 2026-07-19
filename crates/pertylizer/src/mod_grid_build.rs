@@ -276,7 +276,7 @@ mod tests {
                 ModNodeId::new(1),
                 ModNodeConfig::Target(ModTarget {
                     target: AutomationTarget::Instrument {
-                        instrument: synth_sequencer::InstrumentId(0),
+                        instrument: synth_sequencer::InstrumentId::new(0),
                         param: AutoInstrumentParam::FilterCutoff,
                     },
                     amount: 1.0,
@@ -296,7 +296,7 @@ mod tests {
                 ModNodeId::new(3),
                 ModNodeConfig::Target(ModTarget {
                     target: AutomationTarget::Instrument {
-                        instrument: synth_sequencer::InstrumentId(0),
+                        instrument: synth_sequencer::InstrumentId::new(0),
                         param: AutoInstrumentParam::Volume,
                     },
                     amount: 0.5,

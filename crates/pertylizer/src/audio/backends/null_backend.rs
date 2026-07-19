@@ -123,7 +123,7 @@ impl AudioStream for NullStream {
         let running = Arc::clone(&self.running);
         let position = Arc::clone(&self.position);
         let sample_rate = self.config.sample_rate;
-        let buffer_size = self.config.buffer_size.0 as usize;
+        let buffer_size = self.config.buffer_size.as_u32() as usize;
         let channels = self.config.channels.count() as usize;
         let output_latency = self.info.output_latency;
 

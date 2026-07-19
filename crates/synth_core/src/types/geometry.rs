@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 #[serde(transparent)]
 #[repr(transparent)]
 #[must_use]
-pub struct Meters(pub f32);
+pub struct Meters(f32);
 
 impl Meters {
     /// Create a new length.
@@ -134,7 +134,7 @@ impl DivAssign<f32> for Meters {
 #[serde(transparent)]
 #[repr(transparent)]
 #[must_use]
-pub struct MetersPerSecond(pub f32);
+pub struct MetersPerSecond(f32);
 
 impl MetersPerSecond {
     /// Create a new speed.
@@ -155,7 +155,7 @@ impl MetersPerSecond {
 #[serde(transparent)]
 #[repr(transparent)]
 #[must_use]
-pub struct SampleOffset(pub f32);
+pub struct SampleOffset(f32);
 
 impl SampleOffset {
     /// Create a new offset.
@@ -176,7 +176,7 @@ impl SampleOffset {
 #[serde(transparent)]
 #[repr(transparent)]
 #[must_use]
-pub struct Position3(pub [Meters; 3]);
+pub struct Position3([Meters; 3]);
 
 impl Position3 {
     /// Create a new position.

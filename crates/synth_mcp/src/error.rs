@@ -1,5 +1,9 @@
 //! Error types for the MCP bridge.
 
+use synth_sequencer::{
+    ModGraphId, ModNodeId, NoteGraphId, NoteId, NoteModuleId, PatternId, ReturnBusId, TrackId,
+};
+
 /// Errors that can occur in the MCP bridge.
 #[derive(Debug, thiserror::Error)]
 pub enum McpBridgeError {
@@ -40,19 +44,19 @@ pub enum McpBridgeError {
 
     /// Pattern not found.
     #[error("pattern not found: {0}")]
-    PatternNotFound(u32),
+    PatternNotFound(PatternId),
 
     /// Note not found.
     #[error("note not found: {0}")]
-    NoteNotFound(u64),
+    NoteNotFound(NoteId),
 
     /// Track not found.
     #[error("track not found: {0}")]
-    TrackNotFound(u16),
+    TrackNotFound(TrackId),
 
     /// Return bus not found.
     #[error("return bus not found: {0}")]
-    ReturnBusNotFound(u16),
+    ReturnBusNotFound(ReturnBusId),
 
     /// MIDI note out of valid range.
     #[error("invalid MIDI note {0}: must be 0-127")]
@@ -136,28 +140,28 @@ pub enum McpBridgeError {
 
     /// Note-graph (Note Grid pool asset) not found.
     #[error("note graph not found: {0}")]
-    NoteGraphNotFound(u32),
+    NoteGraphNotFound(NoteGraphId),
 
     /// Note-graph module (node) not found within a graph.
     #[error("note graph {graph_id} has no module {module_id}")]
     NoteGraphModuleNotFound {
         /// The graph that was searched.
-        graph_id: u32,
+        graph_id: NoteGraphId,
         /// The module id that was absent.
-        module_id: u32,
+        module_id: NoteModuleId,
     },
 
     /// Mod-graph (Mod Grid pool asset) not found.
     #[error("mod graph not found: {0}")]
-    ModGraphNotFound(u32),
+    ModGraphNotFound(ModGraphId),
 
     /// Mod-graph node not found within a graph.
     #[error("mod graph {graph_id} has no node {node_id}")]
     ModGraphNodeNotFound {
         /// The graph that was searched.
-        graph_id: u32,
+        graph_id: ModGraphId,
         /// The node id that was absent.
-        node_id: u32,
+        node_id: ModNodeId,
     },
 
     /// Generic error — use sparingly; prefer a specific variant when the failure

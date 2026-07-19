@@ -2,6 +2,7 @@
 //! `analyze_velocity_response`. Builds a real `SynthEngine` + `SynthSession`,
 //! installs a sustaining patch, then calls the bridge impls directly.
 
+use synth_core::MidiNote;
 use synth_engine::instrument::InstrumentId;
 
 use pertylizer::mcp_bridge::{analyze_instrument_range_impl, analyze_velocity_response_impl};
@@ -25,7 +26,7 @@ fn analyze_instrument_range_returns_one_step_per_swept_note() {
     )
     .expect("instrument range sweep");
     assert_eq!(result.steps.len(), 3, "C3 / C4 / C5");
-    let notes: Vec<u8> = result.steps.iter().map(|s| s.note).collect();
+    let notes: Vec<u8> = result.steps.iter().map(|s| s.note.as_u8()).collect();
     assert_eq!(notes, vec![48, 60, 72]);
     assert_eq!(result.low_note, 48);
     assert_eq!(result.high_note, 72);
@@ -73,7 +74,7 @@ fn analyze_velocity_response_curve_rises_with_velocity() {
         &rig.session,
         &rig.sample_library,
         InstrumentId::FIRST,
-        60,
+        MidiNote::new(60),
         Some(32),
         Some(127),
         Some(32),
@@ -107,7 +108,7 @@ fn analyze_velocity_response_inclusive_upper_bound() {
         &rig.session,
         &rig.sample_library,
         InstrumentId::FIRST,
-        60,
+        MidiNote::new(60),
         Some(100),
         Some(127),
         Some(27),
@@ -126,7 +127,7 @@ fn analyze_velocity_response_rejects_inverted_range() {
         &rig.session,
         &rig.sample_library,
         InstrumentId::FIRST,
-        60,
+        MidiNote::new(60),
         Some(127),
         Some(32),
         Some(16),

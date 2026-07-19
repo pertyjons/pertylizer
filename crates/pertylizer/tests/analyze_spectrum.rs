@@ -158,8 +158,8 @@ fn setup() -> (Rig, Arc<RwLock<Song>>) {
         .expect("add sine");
 
     let stream_info = synth_core::StreamInfo {
-        sample_rate: HwSampleRate(TEST_SR),
-        buffer_size: synth_core::BufferSize(256),
+        sample_rate: HwSampleRate::new(TEST_SR),
+        buffer_size: synth_core::BufferSize::new(256),
         channels: synth_core::ChannelCount::Stereo,
         output_latency: std::time::Duration::ZERO,
         input_latency: None,
@@ -168,7 +168,7 @@ fn setup() -> (Rig, Arc<RwLock<Song>>) {
 
     let mut block = vec![0.0f32; 256 * 2];
     let context = synth_core::AudioCallbackContext {
-        sample_rate: HwSampleRate(TEST_SR),
+        sample_rate: HwSampleRate::new(TEST_SR),
         frames: 256,
         channels: 2,
         stream_time: 0.0,
@@ -198,7 +198,7 @@ fn setup() -> (Rig, Arc<RwLock<Song>>) {
     for (idx, label) in [(0u16, "Saw"), (1u16, "Noise"), (2u16, "Sine")] {
         let tid = song.create_track(label);
         if let Some(t) = song.track_mut(tid) {
-            t.instrument = InstrumentId(u64::from(idx));
+            t.instrument = InstrumentId::new(u64::from(idx));
         }
         assert!(song.place_pattern(pat, tid, Tick(0)), "place {label}");
     }
@@ -224,7 +224,7 @@ fn analyze(
         &rig.sample_library,
         shared,
         2.0,
-        Some(0),
+        Some(Tick(0)),
         instrument_id,
         None,
         None,
@@ -327,7 +327,7 @@ fn analyze_sample_spectrum_roundtrips() {
         &shared,
         path.to_string_lossy().into_owned(),
         2.0,
-        Some(0),
+        Some(Tick(0)),
         Some(InstrumentId::new(0)), // solo the sawtooth
         AnalysisScope::default(),
     )
@@ -375,7 +375,7 @@ fn render_source(instrument_id: InstrumentId) -> synth_mcp::SpectrumSource {
     synth_mcp::SpectrumSource {
         sample_id_or_path: None,
         instrument_id: Some(instrument_id),
-        start_tick: Some(0),
+        start_tick: Some(Tick(0)),
         duration_seconds: Some(2.0),
         start_ms: None,
         window_len_ms: None,
@@ -620,7 +620,7 @@ fn compare_spectra_render_vs_sample_matches() {
         &shared,
         path.to_string_lossy().into_owned(),
         2.0,
-        Some(0),
+        Some(Tick(0)),
         Some(InstrumentId::new(0)),
         AnalysisScope::default(),
     )
@@ -656,7 +656,7 @@ fn analyze_spectrogram_frames_track_the_soloed_saw() {
         &rig.sample_library,
         &shared,
         2.0,
-        Some(0),
+        Some(Tick(0)),
         Some(InstrumentId::new(0)), // solo the sawtooth
         None,
         None,

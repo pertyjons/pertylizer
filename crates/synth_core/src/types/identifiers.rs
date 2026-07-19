@@ -17,7 +17,7 @@ use serde::{Deserialize, Serialize};
     Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema,
 )]
 #[repr(transparent)]
-pub struct InstrumentId(pub u64);
+pub struct InstrumentId(u64);
 
 impl InstrumentId {
     /// The default/first instrument id.

@@ -127,7 +127,7 @@ fn shaped_velocity(base: Velocity, expr: Option<NoteExpression>) -> Velocity {
     if !factor.is_finite() || (factor - 1.0).abs() < f32::EPSILON {
         return base;
     }
-    Velocity::new(base.0 * factor)
+    Velocity::new(base.as_f32() * factor)
 }
 
 /// Apply the `gate` note-shape scalar to a duration in ticks (staccato/tenuto).
@@ -345,7 +345,7 @@ impl SequencerEngine {
             expansion_drops: 0,
             solo_pattern: None,
             preview_pattern: None,
-            preview_instrument: InstrumentId(0),
+            preview_instrument: InstrumentId::new(0),
             roll_nonce: 0,
         }
     }
@@ -386,7 +386,7 @@ impl SequencerEngine {
             expansion_drops: 0,
             solo_pattern: None,
             preview_pattern: None,
-            preview_instrument: InstrumentId(0),
+            preview_instrument: InstrumentId::new(0),
             roll_nonce: 0,
         }
     }
@@ -1157,13 +1157,13 @@ mod tests {
         // No expression → unchanged.
         assert_eq!(shaped_velocity(base, None), base);
         // Accent 1.5× → 0.75.
-        assert!((shaped_velocity(base, Some(expr(Some(1.5), false))).0 - 0.75).abs() < 1e-6);
+        assert!((shaped_velocity(base, Some(expr(Some(1.5), false))).as_f32() - 0.75).abs() < 1e-6);
         // Ghost → 0.5 * 0.4 = 0.2.
-        assert!((shaped_velocity(base, Some(expr(None, true))).0 - 0.2).abs() < 1e-6);
+        assert!((shaped_velocity(base, Some(expr(None, true))).as_f32() - 0.2).abs() < 1e-6);
         // Accent + ghost compose: 0.5 * 2.0 * 0.4 = 0.4.
-        assert!((shaped_velocity(base, Some(expr(Some(2.0), true))).0 - 0.4).abs() < 1e-6);
+        assert!((shaped_velocity(base, Some(expr(Some(2.0), true))).as_f32() - 0.4).abs() < 1e-6);
         // Accent that overshoots clamps to 1.0.
-        assert!((shaped_velocity(base, Some(expr(Some(10.0), false))).0 - 1.0).abs() < 1e-6);
+        assert!((shaped_velocity(base, Some(expr(Some(10.0), false))).as_f32() - 1.0).abs() < 1e-6);
     }
 
     #[test]
@@ -1505,7 +1505,7 @@ mod tests {
         let mut seq =
             SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
 
-        let preview_inst = InstrumentId(7);
+        let preview_inst = InstrumentId::new(7);
         seq.set_preview_pattern(Some((pattern_id, preview_inst)));
         seq.play();
 
@@ -1551,7 +1551,7 @@ mod tests {
         let mut seq =
             SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
 
-        seq.set_preview_pattern(Some((pattern_id, InstrumentId(3))));
+        seq.set_preview_pattern(Some((pattern_id, InstrumentId::new(3))));
         assert_eq!(seq.preview_pattern(), Some(pattern_id));
 
         seq.set_preview_pattern(None);
@@ -1577,7 +1577,7 @@ mod tests {
         }
         let mut seq =
             SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
-        seq.set_preview_pattern(Some((pattern_id, InstrumentId(0))));
+        seq.set_preview_pattern(Some((pattern_id, InstrumentId::new(0))));
         seq.play();
 
         let mut events = Vec::new();
@@ -1750,7 +1750,7 @@ mod tests {
         }
         let mut seq =
             SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
-        seq.set_preview_pattern(Some((pattern_id, InstrumentId(1))));
+        seq.set_preview_pattern(Some((pattern_id, InstrumentId::new(1))));
         seq.play();
         let mut events = Vec::new();
         seq.process(SampleCount::new(1000), &mut events);
@@ -1778,7 +1778,7 @@ mod tests {
         }
         let mut seq =
             SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
-        seq.set_preview_pattern(Some((pattern_id, InstrumentId(1))));
+        seq.set_preview_pattern(Some((pattern_id, InstrumentId::new(1))));
         seq.play();
 
         let mut events = Vec::new();
@@ -1931,7 +1931,7 @@ mod tests {
         // Seed the dedup map with a Module target — the variant that owns a
         // ParamId(Arc<str>) whose final drop must not land on the audio thread.
         let target = AutomationTarget::Module {
-            instrument: InstrumentId(1),
+            instrument: InstrumentId::new(1),
             module_type: synth_core::ModuleType::Filter,
             instance: 1,
             param_id: synth_sequencer::ParamId::from("cutoff"),

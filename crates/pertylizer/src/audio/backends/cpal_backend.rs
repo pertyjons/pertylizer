@@ -84,7 +84,7 @@ impl CpalBackend {
                             [44100, 48000, 96000]
                                 .into_iter()
                                 .filter(move |&r| r >= min && r <= max)
-                                .map(SampleRate)
+                                .map(SampleRate::new)
                         })
                         .collect();
                     (
@@ -275,8 +275,8 @@ impl CpalStream {
         // Build cpal config
         let cpal_config = CpalStreamConfig {
             channels,
-            sample_rate: config.sample_rate.0,
-            buffer_size: cpal::BufferSize::Fixed(config.buffer_size.0),
+            sample_rate: config.sample_rate.as_u32(),
+            buffer_size: cpal::BufferSize::Fixed(config.buffer_size.as_u32()),
         };
 
         // Get actual latency
@@ -284,7 +284,7 @@ impl CpalStream {
             .default_output_config()
             .ok()
             .map(|c| {
-                let buffer_frames = config.buffer_size.0 as f64;
+                let buffer_frames = config.buffer_size.as_u32() as f64;
                 let sample_rate = c.sample_rate() as f64;
                 Duration::from_secs_f64(buffer_frames / sample_rate)
             })
@@ -367,7 +367,7 @@ impl CpalStream {
         // negotiated (0.18's `buffer_size()` accessor) — it can differ from
         // what we requested. Keep the estimate if the host can't report it.
         if let Ok(frames) = stream.buffer_size() {
-            let sample_rate_hz = f64::from(config.sample_rate.0);
+            let sample_rate_hz = f64::from(config.sample_rate.as_u32());
             if frames > 0 && sample_rate_hz > 0.0 {
                 info.output_latency = Duration::from_secs_f64(f64::from(frames) / sample_rate_hz);
             }
@@ -450,15 +450,15 @@ impl CpalInputStream {
 
         let cpal_config = CpalStreamConfig {
             channels,
-            sample_rate: config.sample_rate.0,
-            buffer_size: cpal::BufferSize::Fixed(config.buffer_size.0),
+            sample_rate: config.sample_rate.as_u32(),
+            buffer_size: cpal::BufferSize::Fixed(config.buffer_size.as_u32()),
         };
 
         let input_latency = device
             .default_input_config()
             .ok()
             .map(|c| {
-                let buffer_frames = config.buffer_size.0 as f64;
+                let buffer_frames = config.buffer_size.as_u32() as f64;
                 let sample_rate = c.sample_rate() as f64;
                 Duration::from_secs_f64(buffer_frames / sample_rate)
             })

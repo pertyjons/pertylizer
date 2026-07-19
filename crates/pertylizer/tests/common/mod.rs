@@ -84,8 +84,8 @@ pub fn setup_with_patch(patch: &Patch) -> Rig {
         .expect("add instrument");
 
     let stream_info = synth_core::StreamInfo {
-        sample_rate: HwSampleRate(TEST_SR),
-        buffer_size: synth_core::BufferSize(256),
+        sample_rate: HwSampleRate::new(TEST_SR),
+        buffer_size: synth_core::BufferSize::new(256),
         channels: synth_core::ChannelCount::Stereo,
         output_latency: std::time::Duration::ZERO,
         input_latency: None,
@@ -94,7 +94,7 @@ pub fn setup_with_patch(patch: &Patch) -> Rig {
 
     let mut block = vec![0.0f32; 256 * 2];
     let context = AudioCallbackContext {
-        sample_rate: HwSampleRate(TEST_SR),
+        sample_rate: HwSampleRate::new(TEST_SR),
         frames: 256,
         channels: 2,
         stream_time: 0.0,
@@ -120,7 +120,7 @@ pub fn setup_with_patch(patch: &Patch) -> Rig {
     }
 }
 
-/// Build a single-pattern, single-track song on `InstrumentId(0)` placed
+/// Build a single-pattern, single-track song on `InstrumentId::new(0)` placed
 /// at tick 0. `notes` lists `(start, pitch_midi, duration)` triples; the
 /// pattern length is `SeqDuration::WHOLE` (3840 ticks = 2 s at 120 BPM).
 pub fn build_single_pattern_song(
@@ -147,7 +147,7 @@ pub fn build_single_pattern_song(
 
     let track_id = song.create_track("T1");
     if let Some(track) = song.track_mut(track_id) {
-        track.instrument = InstrumentId(0);
+        track.instrument = InstrumentId::new(0);
     }
     assert!(
         song.place_pattern(pattern_id, track_id, Tick(0)),
@@ -157,7 +157,7 @@ pub fn build_single_pattern_song(
     Arc::new(RwLock::new(song))
 }
 
-/// One-bar 4-note C-major arpeggio on `InstrumentId(0)`, placed at tick 0.
+/// One-bar 4-note C-major arpeggio on `InstrumentId::new(0)`, placed at tick 0.
 /// At 120 BPM the pattern spans exactly 2 s (3840 ticks).
 pub fn build_arpeggio_song() -> Arc<RwLock<Song>> {
     let notes: Vec<_> = [60u8, 64, 67, 72]
@@ -227,7 +227,7 @@ pub fn build_sustained_note_song(name: &str) -> (Arc<RwLock<Song>>, PatternId, T
     }
     let track_id = song.create_track("T1");
     if let Some(track) = song.track_mut(track_id) {
-        track.instrument = InstrumentId(0);
+        track.instrument = InstrumentId::new(0);
     }
     assert!(
         song.place_pattern(pattern_id, track_id, Tick(0)),
@@ -278,7 +278,7 @@ pub fn set_first_track_fader(song: &Arc<RwLock<Song>>, volume: f32, pan: f32) {
 pub fn process_block(engine: &mut SynthEngine, blocks: usize) {
     let mut block = vec![0.0f32; 256 * 2];
     let context = AudioCallbackContext {
-        sample_rate: HwSampleRate(TEST_SR),
+        sample_rate: HwSampleRate::new(TEST_SR),
         frames: 256,
         channels: 2,
         stream_time: 0.0,

@@ -343,7 +343,7 @@ impl AnalyzeWindow {
                 )?;
                 let result = analyze_rendered_buffer(
                     &rendered,
-                    params.note.as_u8(),
+                    params.note,
                     params.velocity.to_midi(),
                     params.duration_ms,
                     params.expected_note.map(MidiNote::as_u8),

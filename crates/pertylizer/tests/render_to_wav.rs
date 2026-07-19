@@ -32,7 +32,7 @@ fn render_to_wav_writes_readable_wav() {
         &shared,
         path.to_string_lossy().into_owned(),
         2.0,
-        Some(0),
+        Some(synth_sequencer::Tick(0)),
         None,
         AnalysisScope::default(),
     )
@@ -107,7 +107,7 @@ fn render_to_wav_unknown_instrument_warns_and_is_silent() {
         &shared,
         path.to_string_lossy().into_owned(),
         1.0,
-        Some(0),
+        Some(synth_sequencer::Tick(0)),
         Some(InstrumentId::new(99)), // no track uses instrument 99
         AnalysisScope::default(),
     )

@@ -6,9 +6,10 @@
 use std::sync::Arc;
 
 use parking_lot::RwLock as PlRwLock;
+use synth_core::Bpm;
 use synth_engine::SynthEngine;
 use synth_mcp::SynthBridge;
-use synth_sequencer::Song;
+use synth_sequencer::{Song, Tick};
 
 use pertylizer::mcp_bridge::AppSynthBridge;
 use pertylizer::mcp_shared::McpSharedState;
@@ -44,29 +45,41 @@ fn tempo_map_set_get_remove_round_trips() {
     // The middle one is a ramp; the ramp flag must round-trip.
     bridge
         .set_tempo_at(&[
-            (3840, 90.0, false),
-            (960, 140.0, false),
-            (1920, 160.0, true),
+            (Tick(3840), 90.0, false),
+            (Tick(960), 140.0, false),
+            (Tick(1920), 160.0, true),
         ])
         .unwrap();
     let map = bridge.get_tempo_map().unwrap();
     assert_eq!(map.len(), 3);
-    assert_eq!((map[0].tick, map[0].bpm, map[0].ramp), (960, 140.0, false));
-    assert_eq!((map[1].tick, map[1].bpm, map[1].ramp), (1920, 160.0, true));
-    assert_eq!((map[2].tick, map[2].bpm, map[2].ramp), (3840, 90.0, false));
+    assert_eq!(
+        (map[0].tick, map[0].bpm, map[0].ramp),
+        (Tick(960), Bpm::new(140.0), false)
+    );
+    assert_eq!(
+        (map[1].tick, map[1].bpm, map[1].ramp),
+        (Tick(1920), Bpm::new(160.0), true)
+    );
+    assert_eq!(
+        (map[2].tick, map[2].bpm, map[2].ramp),
+        (Tick(3840), Bpm::new(90.0), false)
+    );
 
     // Replacing a point at the same tick overwrites rather than duplicates,
     // and updates its ramp flag.
-    bridge.set_tempo_at(&[(960, 128.0, true)]).unwrap();
+    bridge.set_tempo_at(&[(Tick(960), 128.0, true)]).unwrap();
     let map = bridge.get_tempo_map().unwrap();
     assert_eq!(map.len(), 3);
-    assert_eq!((map[0].tick, map[0].bpm, map[0].ramp), (960, 128.0, true));
+    assert_eq!(
+        (map[0].tick, map[0].bpm, map[0].ramp),
+        (Tick(960), Bpm::new(128.0), true)
+    );
 
     // Remove two (one present, one absent) — only the present one counts.
-    let removed = bridge.remove_tempo_at(&[1920, 5000]).unwrap();
+    let removed = bridge.remove_tempo_at(&[Tick(1920), Tick(5000)]).unwrap();
     assert_eq!(removed, 1);
     let map = bridge.get_tempo_map().unwrap();
     assert_eq!(map.len(), 2);
-    assert_eq!(map[0].tick, 960);
-    assert_eq!(map[1].tick, 3840);
+    assert_eq!(map[0].tick, Tick(960));
+    assert_eq!(map[1].tick, Tick(3840));
 }

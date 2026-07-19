@@ -230,19 +230,6 @@ the next voice-graph reconstruct/load; the other four are live. `Display`/`FromS
 on the enums make the string round-trip authoritative. End-to-end round-trip tests
 in `mcp_allocator_config.rs` drive the real engine.
 
-### 2.5 Hardening Newtype Invariants
-
-- [ ] **Harden type-safety invariants of domain newtypes.** Convert newtypes in `synth_core`
-  (like `NormalizedValue`, `BipolarValue`, `Phase`, `MidiNote`, etc.) from using public tuple
-  fields (e.g. `pub struct NormalizedValue(pub f32)`) to private fields (`pub struct NormalizedValue(f32)`).
-  This prevents external code from bypassing validation constraints and guarantees that values
-  remain valid once instantiated. Ensure that:
-    1. Validation-guaranteeing constructors (`new()`, etc.) are the only public creation vectors.
-    2. Explicit `new_unchecked()` constructors are exposed and used only in performance-critical
-       hot paths where the calling context has already proven/ensured correctness.
-    3. The helper macros in `macros.rs` and other modules are updated or verified to compile
-       properly under module-level visibility rules.
-
 ### 2.6 YAMS scripting follow-ups
 
 - [ ] **Per-sample pitch binding for `note_hz` in AudioScript.** The `note_hz`
@@ -623,38 +610,6 @@ debuggable at low cost.
 #### A6. Compile-time safety: static assertions for lock-free structs
 
 #### A7. Real-time safety: automated allocation testing with assert-no-alloc
-
-#### A8. Type safety: adopt id newtypes across the MCP wire surface
-
-- [ ] **Type the remaining MCP wire fields with their domain newtypes** (follow-up to the
-  `InstrumentId` unification, `5d7f60c4`). The MCP boundary (`synth_mcp/src/server.rs` params,
-  `types.rs` results, the `SynthBridge` trait, and the `AppSynthBridge` impl) still passes
-  several domain concepts as raw primitives. Typing them mirrors the `InstrumentId` change:
-  self-documenting schema (`$ref`) + drops the `Foo(x)` / `.as_u64()` conversion boilerplate in
-  the bridge impl. The MCP boundary is the main remaining raw-primitive cluster (internal code
-  already uses these newtypes).
-  - **Tier 1 — clean, do first.** `pattern_id`/`pattern_ids` `u32` → `PatternId`,
-    `track_id`/`track_ids` `u16` → `TrackId`, `return_id`/`return_ids` `u16` → `ReturnBusId`,
-    `note_id`/`note_ids` `u64` → `NoteId`. All four are transparent tuple newtypes that already
-    derive `Serialize`/`Deserialize`/`JsonSchema`, so the JSON wire form is unchanged (bare
-    numbers, in-range values round-trip) — same low-risk mechanical swap + test cascade as the
-    `InstrumentId` MCP step. Also verify `Tick`/`PatternTick` derive `JsonSchema`; if so,
-    `start_tick`/`tick` `u64` → `Tick` belongs here too. Same for the graph-view ids (MCP
-    audit 2026-07-19): `graph_id`/`node_id`/`module_id` `u32` → `NoteGraphId`/`NoteModuleId`/
-    `ModGraphId`/`ModNodeId` — all four already derive `Serialize`/`Deserialize`/`JsonSchema`
-    (`synth_sequencer/src/ids.rs`), so they are the same transparent swap.
-  - **Tier 2 — adds boundary validation (behaviour change, decide deliberately).** `pan` `f32`
-    → `BipolarValue`, `volume`/`level`/`master` `f32` → `Gain` or `NormalizedValue` (pick per
-    field's range), `bpm` `f32` → `Bpm`, `semitones` `i32` → `Semitones` (note: `Semitones` is
-    `f32`, so the wire changes int→number). These derive `JsonSchema` and would clamp/validate
-    today's unbounded raw `f32` MCP input.
-  - **Tier 2b — needs a `schemars::JsonSchema` derive added to the core type first.**
-    `note`/`pitch` `u8` → `MidiNote` (add the derive; gains 0–127 validation); `midi_channel`
-    `u8` → `MidiChannel` (add the derive **and** pin down its 1-indexed display / 0-indexed
-    internal serde semantics — higher risk).
-  - **Leave as raw:** `velocity` `u8` (MIDI 0–127 ≠ domain `Velocity` `f32` 0–1 — representation
-    mismatch) and `beat` `f32` (no domain newtype). Minor extra: consider
-    `ProjectFile.active_instrument_id: u64` → `InstrumentId` for consistency.
 
 ### Tier B — real problems, trigger-based (do when the symptom appears)
 

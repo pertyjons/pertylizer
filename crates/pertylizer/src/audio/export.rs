@@ -272,10 +272,10 @@ fn render_to_wav(
     handle.send_blocking(EngineCommand::SetGlideTime(project.global.glide_time));
 
     // 6. Notify the engine about the stream configuration
-    let hw_sample_rate = HwSampleRate(config.sample_rate);
+    let hw_sample_rate = HwSampleRate::new(config.sample_rate);
     let stream_info = synth_core::StreamInfo {
         sample_rate: hw_sample_rate,
-        buffer_size: synth_core::BufferSize(256),
+        buffer_size: synth_core::BufferSize::new(256),
         channels: synth_core::ChannelCount::Stereo,
         output_latency: std::time::Duration::ZERO,
         input_latency: None,

@@ -11,7 +11,9 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 
 use synth_engine::SynthEngine;
-use synth_sequencer::{Duration as SeqDuration, NoteId, PatternTick, Pitch, Song, Velocity};
+use synth_sequencer::{
+    Duration as SeqDuration, NoteId, PatternId, PatternTick, Pitch, Song, Velocity,
+};
 
 use pertylizer::mcp_bridge::{analyze_tension_curve_impl, suggest_music_fixes_impl};
 use pertylizer::mcp_shared::McpSharedState;
@@ -23,7 +25,7 @@ struct Rig {
     session: SynthSession,
     shared: Arc<McpSharedState>,
     sample_library: pertylizer::audio::preview::SharedSampleLibrary,
-    pattern_id: u32,
+    pattern_id: PatternId,
 }
 
 fn rig_with_pattern(notes: &[(u8, u32, u32, u8)]) -> Rig {
@@ -54,7 +56,7 @@ fn rig_with_pattern(notes: &[(u8, u32, u32, u8)]) -> Rig {
         session,
         shared,
         sample_library,
-        pattern_id: pid.0,
+        pattern_id: pid,
     }
 }
 

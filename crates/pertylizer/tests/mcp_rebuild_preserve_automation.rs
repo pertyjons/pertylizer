@@ -117,7 +117,7 @@ fn spec_without_filter(instrument_id: Option<InstrumentId>) -> BridgeInstrumentD
 
 /// Build the instrument + a pattern with one `module:flt:1:cutoff` lane.
 /// Returns (bridge, instrument_id, pattern_id).
-fn setup() -> (AppSynthBridge, InstrumentId, u32) {
+fn setup() -> (AppSynthBridge, InstrumentId, synth_sequencer::PatternId) {
     let bridge = build_bridge();
     let built = bridge
         .build_instrument(&spec_with_filter(None))

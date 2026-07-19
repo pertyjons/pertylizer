@@ -440,7 +440,9 @@ impl ParamValue {
     /// canonical string id rather than a numeric index.
     pub fn from_param(p: &Param, desc: &ParameterDescriptor) -> Self {
         if let Param::Sampler(synth_core::params::SamplerParam::SampleSelect(sid)) = p {
-            return Self::SampleId { sample_id: sid.0 };
+            return Self::SampleId {
+                sample_id: sid.as_u64(),
+            };
         }
         // Mod-matrix destinations serialize as a free-form address string
         // ("flt-1.cutoff"), not the legacy enum index — so they can target any
@@ -1401,7 +1403,7 @@ mod tests {
         inst.unison_detune = synth_core::Cents::new(25.0);
         let json = serde_json::to_string(&inst).expect("serialize");
         let parsed: InstrumentState = serde_json::from_str(&json).expect("deserialize");
-        assert!((parsed.unison_detune.0 - 25.0).abs() < f32::EPSILON);
+        assert!((parsed.unison_detune.as_f32() - 25.0).abs() < f32::EPSILON);
     }
 
     #[test]
@@ -1416,7 +1418,7 @@ mod tests {
         }
         let legacy = serde_json::to_string(&value).expect("reserialize");
         let parsed: InstrumentState = serde_json::from_str(&legacy).expect("deserialize legacy");
-        assert!((parsed.unison_detune.0 - 10.0).abs() < f32::EPSILON);
+        assert!((parsed.unison_detune.as_f32() - 10.0).abs() < f32::EPSILON);
     }
 
     #[test]

@@ -2,6 +2,18 @@
 
 use serde::{Deserialize, Serialize};
 
+macro_rules! impl_id_display {
+    ($($type:ty),+ $(,)?) => {
+        $(
+            impl std::fmt::Display for $type {
+                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                    self.0.fmt(f)
+                }
+            }
+        )+
+    };
+}
+
 /// Unique identifier for a pattern.
 #[must_use]
 #[derive(
@@ -641,6 +653,17 @@ impl NoteId {
         Self(id)
     }
 }
+
+impl_id_display!(
+    PatternId,
+    TrackId,
+    ReturnBusId,
+    NoteId,
+    NoteGraphId,
+    NoteModuleId,
+    ModGraphId,
+    ModNodeId,
+);
 
 #[cfg(test)]
 mod tests {

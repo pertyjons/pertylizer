@@ -69,8 +69,8 @@ impl Rig {
         let sample_library = Arc::new(std::sync::RwLock::new(SampleLibrary::default()));
 
         let stream_info = synth_core::StreamInfo {
-            sample_rate: HwSampleRate(TEST_SR),
-            buffer_size: synth_core::BufferSize(256),
+            sample_rate: HwSampleRate::new(TEST_SR),
+            buffer_size: synth_core::BufferSize::new(256),
             channels: synth_core::ChannelCount::Stereo,
             output_latency: std::time::Duration::ZERO,
             input_latency: None,
@@ -79,7 +79,7 @@ impl Rig {
 
         let block = vec![0.0f32; 256 * 2];
         let ctx = AudioCallbackContext {
-            sample_rate: HwSampleRate(TEST_SR),
+            sample_rate: HwSampleRate::new(TEST_SR),
             frames: 256,
             channels: 2,
             stream_time: 0.0,
@@ -168,63 +168,86 @@ fn assert_snapshot_matches(project: &ProjectFile, rig: &Rig) {
         let snap = snapshots
             .iter()
             .find(|s| s.id == inst.id)
-            .unwrap_or_else(|| panic!("instrument {} missing from engine snapshot", inst.id.0));
+            .unwrap_or_else(|| {
+                panic!(
+                    "instrument {} missing from engine snapshot",
+                    inst.id.as_u64()
+                )
+            });
 
         // (2) Every loaded instrument must be enabled.
         assert!(
             snap.enabled,
             "instrument {} ({}) is disabled after apply — \
              apply_project is missing SetInstrumentEnabled(true)",
-            inst.id.0, inst.name
+            inst.id.as_u64(),
+            inst.name
         );
 
         // (1) Instrument-level metadata round-trip.
-        assert_eq!(snap.name, inst.name, "name mismatch for {}", inst.id.0);
+        assert_eq!(
+            snap.name,
+            inst.name,
+            "name mismatch for {}",
+            inst.id.as_u64()
+        );
         assert!(
             (snap.volume.as_f32() - inst.volume.as_f32()).abs() < 1e-5,
             "volume mismatch for {}",
-            inst.id.0
+            inst.id.as_u64()
         );
         assert!(
             (snap.pan.as_f32() - inst.pan.as_f32()).abs() < 1e-5,
             "pan mismatch for {}",
-            inst.id.0
+            inst.id.as_u64()
         );
-        assert_eq!(snap.muted, inst.muted, "mute mismatch for {}", inst.id.0);
-        assert_eq!(snap.solo, inst.solo, "solo mismatch for {}", inst.id.0);
+        assert_eq!(
+            snap.muted,
+            inst.muted,
+            "mute mismatch for {}",
+            inst.id.as_u64()
+        );
+        assert_eq!(
+            snap.solo,
+            inst.solo,
+            "solo mismatch for {}",
+            inst.id.as_u64()
+        );
         assert_eq!(
             snap.category.as_u8(),
             inst.category,
             "category mismatch for {}",
-            inst.id.0
+            inst.id.as_u64()
         );
         assert_eq!(
             (snap.key_range.low.as_u8(), snap.key_range.high.as_u8()),
             inst.key_range,
             "key_range mismatch for {}",
-            inst.id.0
+            inst.id.as_u64()
         );
         assert_eq!(
             snap.midi_channel.as_u8(),
             inst.channel,
             "midi_channel mismatch for {}",
-            inst.id.0
+            inst.id.as_u64()
         );
         assert_eq!(
-            snap.allocation_mode, inst.allocation_mode,
+            snap.allocation_mode,
+            inst.allocation_mode,
             "allocation_mode mismatch for {}",
-            inst.id.0
+            inst.id.as_u64()
         );
         assert_eq!(
-            snap.max_voices, inst.max_voices,
+            snap.max_voices,
+            inst.max_voices,
             "max_voices mismatch for {}",
-            inst.id.0
+            inst.id.as_u64()
         );
         assert_eq!(
             snap.sidechain_source_id.map(|i| i.as_u64()),
             inst.sidechain_source_id,
             "sidechain_source_id mismatch for {}",
-            inst.id.0
+            inst.id.as_u64()
         );
 
         // (4) Voice-graph modules — visualizers + SignalMonitor stripped
@@ -232,15 +255,23 @@ fn assert_snapshot_matches(project: &ProjectFile, rig: &Rig) {
         // separately under `effect_count`.
         let expected_voice = voice_module_count(inst);
         assert_eq!(
-            snap.module_count, expected_voice,
+            snap.module_count,
+            expected_voice,
             "module_count mismatch for {} ({}): expected {} voice modules, got {}",
-            inst.id.0, inst.name, expected_voice, snap.module_count
+            inst.id.as_u64(),
+            inst.name,
+            expected_voice,
+            snap.module_count
         );
         let expected_effects = effect_module_count(inst);
         assert_eq!(
-            snap.effect_count, expected_effects,
+            snap.effect_count,
+            expected_effects,
             "effect_count mismatch for {} ({}): expected {} effect modules, got {}",
-            inst.id.0, inst.name, expected_effects, snap.effect_count
+            inst.id.as_u64(),
+            inst.name,
+            expected_effects,
+            snap.effect_count
         );
     }
 }

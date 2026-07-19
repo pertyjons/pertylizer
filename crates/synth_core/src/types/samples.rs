@@ -14,7 +14,7 @@ use super::{SampleRate, Seconds};
 )]
 #[serde(transparent)]
 #[repr(transparent)]
-pub struct SampleCount(pub usize);
+pub struct SampleCount(usize);
 
 impl SampleCount {
     /// Create a new sample count.
@@ -35,13 +35,13 @@ impl SampleCount {
     /// Convert to duration at a given sample rate.
     #[inline]
     pub fn to_seconds(self, sample_rate: SampleRate) -> Seconds {
-        Seconds::new(self.0 as f32 / sample_rate.0)
+        Seconds::new(self.0 as f32 / sample_rate.as_f32())
     }
 
     /// Create from a duration at a given sample rate.
     #[inline]
     pub fn from_seconds(duration: Seconds, sample_rate: SampleRate) -> Self {
-        Self((duration.0 * sample_rate.0).round() as usize)
+        Self((duration.as_f32() * sample_rate.as_f32()).round() as usize)
     }
 
     /// Check if zero.
@@ -110,7 +110,7 @@ impl Div<SampleRate> for SampleCount {
 
     #[inline]
     fn div(self, rhs: SampleRate) -> Self::Output {
-        Seconds::new(self.0 as f32 / rhs.0)
+        Seconds::new(self.0 as f32 / rhs.as_f32())
     }
 }
 
@@ -137,7 +137,7 @@ impl std::fmt::Display for SampleCount {
 /// Can be used for playback position, write position, etc.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[repr(transparent)]
-pub struct SamplePosition(pub u64);
+pub struct SamplePosition(u64);
 
 impl SamplePosition {
     /// Create a new sample position.
@@ -164,7 +164,7 @@ impl SamplePosition {
     /// Convert to time at a given sample rate.
     #[inline]
     pub fn to_seconds(self, sample_rate: SampleRate) -> Seconds {
-        Seconds::new((self.0 as f64 / sample_rate.0 as f64) as f32)
+        Seconds::new((self.0 as f64 / f64::from(sample_rate.as_f32())) as f32)
     }
 
     /// Get position within a buffer (wrapping).
@@ -213,7 +213,7 @@ impl std::fmt::Display for SamplePosition {
 /// Block size (number of samples processed at once).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[repr(transparent)]
-pub struct BlockSize(pub usize);
+pub struct BlockSize(usize);
 
 impl BlockSize {
     /// Create a new block size.
@@ -244,7 +244,7 @@ impl BlockSize {
     /// Calculate latency in seconds.
     #[inline]
     pub fn latency(self, sample_rate: SampleRate) -> Seconds {
-        Seconds::new(self.0 as f32 / sample_rate.0)
+        Seconds::new(self.0 as f32 / sample_rate.as_f32())
     }
 
     /// Check if this is a power of two (optimal for FFT, etc.).
@@ -293,7 +293,7 @@ mod tests {
         let samples = SampleCount::new(48000);
         let sr = SampleRate::DVD_QUALITY;
         let secs = samples.to_seconds(sr);
-        assert!((secs.0 - 1.0).abs() < 0.001);
+        assert!((secs.as_f32() - 1.0).abs() < 0.001);
     }
 
     #[test]

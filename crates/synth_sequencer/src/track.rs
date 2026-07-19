@@ -175,7 +175,7 @@ pub struct SequencerTrack {
     pub description: String,
     /// Instrument this track routes its notes to. Every track has one;
     /// instruments may be shared across tracks (intentional layering). Defaults
-    /// to `InstrumentId(0)` for a freshly created track until reassigned.
+    /// to `InstrumentId::new(0)` for a freshly created track until reassigned.
     #[serde(default)]
     pub instrument: InstrumentId,
     /// Volume (type-safe normalized 0.0-1.0).
@@ -411,11 +411,11 @@ mod tests {
     #[test]
     fn test_track_builder() {
         let track = SequencerTrack::new(TrackId(0), "Bass")
-            .with_instrument(InstrumentId(1))
+            .with_instrument(InstrumentId::new(1))
             .with_volume(NormalizedValue::new(0.8))
             .with_pan(BipolarValue::new(0.3));
 
-        assert_eq!(track.instrument, InstrumentId(1));
+        assert_eq!(track.instrument, InstrumentId::new(1));
         assert_eq!(track.volume, NormalizedValue::new(0.8));
         assert_eq!(track.pan, BipolarValue::new(0.3));
     }
@@ -423,17 +423,18 @@ mod tests {
     #[test]
     fn new_track_has_a_default_instrument() {
         // Phase 3: every track has an instrument (no `Option`); a freshly
-        // created track defaults to `InstrumentId(0)` until reassigned.
+        // created track defaults to `InstrumentId::new(0)` until reassigned.
         let track = SequencerTrack::new(TrackId(3), "Fresh");
-        assert_eq!(track.instrument, InstrumentId(0));
+        assert_eq!(track.instrument, InstrumentId::new(0));
     }
 
     #[test]
     fn instruments_may_be_shared_across_tracks() {
         // Phase 3: sharing is allowed (intentional layering, e.g. Kick +
         // Syncopated Kick). Two tracks can route to the same instrument.
-        let a = SequencerTrack::new(TrackId(0), "Kick").with_instrument(InstrumentId(7));
-        let b = SequencerTrack::new(TrackId(1), "Syncopated Kick").with_instrument(InstrumentId(7));
+        let a = SequencerTrack::new(TrackId(0), "Kick").with_instrument(InstrumentId::new(7));
+        let b = SequencerTrack::new(TrackId(1), "Syncopated Kick")
+            .with_instrument(InstrumentId::new(7));
         assert_eq!(a.instrument, b.instrument);
     }
 

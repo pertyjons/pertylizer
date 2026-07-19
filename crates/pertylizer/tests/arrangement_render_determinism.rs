@@ -539,7 +539,7 @@ fn module_param_automation_ramps_down() {
         "ModuleLevelRamp",
         "module-param (amp level) ramp-down must reach the offline render",
         |_| AutomationTarget::Module {
-            instrument: InstrumentId(0),
+            instrument: InstrumentId::new(0),
             module_type: ModuleType::Amplifier,
             instance: 1,
             param_id: "level".into(),

@@ -92,7 +92,7 @@ fn offline_callback_ctx(
     sample_rate: u32,
 ) -> AudioCallbackContext {
     AudioCallbackContext {
-        sample_rate: HwSampleRate(sample_rate),
+        sample_rate: HwSampleRate::new(sample_rate),
         frames,
         channels: CHANNELS as u16,
         stream_time,
@@ -336,8 +336,8 @@ impl OfflineEngineSession {
 
         let sample_rate = scope.render_sample_rate;
         let stream_info = synth_core::StreamInfo {
-            sample_rate: HwSampleRate(sample_rate),
-            buffer_size: synth_core::BufferSize(BUFFER_SIZE as u32),
+            sample_rate: HwSampleRate::new(sample_rate),
+            buffer_size: synth_core::BufferSize::new(BUFFER_SIZE as u32),
             channels: synth_core::ChannelCount::Stereo,
             output_latency: std::time::Duration::ZERO,
             input_latency: None,

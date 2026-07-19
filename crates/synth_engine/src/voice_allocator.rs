@@ -728,8 +728,8 @@ mod tests {
     fn unison_detune_spread_equals_total_for_any_count() {
         let spread = Cents::new(10.0);
         for n in [2_usize, 4, 8] {
-            let lo = unison_voice_detune(0, n, spread).0;
-            let hi = unison_voice_detune(n - 1, n, spread).0;
+            let lo = unison_voice_detune(0, n, spread).as_f32();
+            let hi = unison_voice_detune(n - 1, n, spread).as_f32();
             // Lowest..highest spans exactly the configured spread, symmetric
             // around the centre — independent of the voice count.
             assert!(
@@ -740,7 +740,7 @@ mod tests {
             assert!((lo + hi).abs() < 1e-4, "n={n}: not symmetric ({lo}, {hi})");
         }
         // A single voice gets no detune (no division by zero).
-        assert!(unison_voice_detune(0, 1, spread).0.abs() < 1e-6);
+        assert!(unison_voice_detune(0, 1, spread).as_f32().abs() < 1e-6);
     }
 
     #[test]

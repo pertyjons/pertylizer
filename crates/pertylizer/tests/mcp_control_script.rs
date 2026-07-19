@@ -147,15 +147,15 @@ fn script_module_readback_via_get_module_info() {
         .expect("add instrument");
 
     let stream_info = synth_core::StreamInfo {
-        sample_rate: HwSampleRate(44_100),
-        buffer_size: synth_core::BufferSize(256),
+        sample_rate: HwSampleRate::new(44_100),
+        buffer_size: synth_core::BufferSize::new(256),
         channels: synth_core::ChannelCount::Stereo,
         output_latency: std::time::Duration::ZERO,
         input_latency: None,
     };
     engine.on_stream_start(&stream_info);
     let ctx = AudioCallbackContext {
-        sample_rate: HwSampleRate(44_100),
+        sample_rate: HwSampleRate::new(44_100),
         frames: 256,
         channels: 2,
         stream_time: 0.0,
@@ -265,15 +265,15 @@ fn set_parameters_sets_address_based_mod_matrix_destination() {
         .expect("add instrument");
 
     let stream_info = synth_core::StreamInfo {
-        sample_rate: HwSampleRate(44_100),
-        buffer_size: synth_core::BufferSize(256),
+        sample_rate: HwSampleRate::new(44_100),
+        buffer_size: synth_core::BufferSize::new(256),
         channels: synth_core::ChannelCount::Stereo,
         output_latency: std::time::Duration::ZERO,
         input_latency: None,
     };
     engine.on_stream_start(&stream_info);
     let ctx = AudioCallbackContext {
-        sample_rate: HwSampleRate(44_100),
+        sample_rate: HwSampleRate::new(44_100),
         frames: 256,
         channels: 2,
         stream_time: 0.0,

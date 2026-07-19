@@ -10754,7 +10754,7 @@
         "instrument": {
           "$ref": "#/$defs/InstrumentId",
           "default": 0,
-          "description": "Instrument this track routes its notes to. Every track has one;\ninstruments may be shared across tracks (intentional layering). Defaults\nto `InstrumentId(0)` for a freshly created track until reassigned."
+          "description": "Instrument this track routes its notes to. Every track has one;\ninstruments may be shared across tracks (intentional layering). Defaults\nto `InstrumentId::new(0)` for a freshly created track until reassigned."
         },
         "mode": {
           "$ref": "#/$defs/TrackMode",

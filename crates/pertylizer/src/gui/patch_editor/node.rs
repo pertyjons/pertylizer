@@ -402,7 +402,7 @@ pub(super) fn draw_module_panel_params(
     }
 
     // Special handling for Audio Input — monitoring and recording controls
-    if descriptor.type_id.0 == "audio_input" {
+    if descriptor.type_id.as_str() == "audio_input" {
         let t = theme();
         let input_state = audio_input_snapshot.state;
         let is_monitoring = input_state != InputState::Idle;
@@ -514,7 +514,7 @@ pub(super) fn draw_module_panel_params(
     }
 
     // Special handling for Sampler — sample selector dropdown
-    if descriptor.type_id.0 == "sampler" && !sample_list.is_empty() {
+    if descriptor.type_id.as_str() == "sampler" && !sample_list.is_empty() {
         let current_id = state.param_values.get("Sample").copied().unwrap_or(0.0) as u64;
         let current_name = sample_list
             .iter()
@@ -540,7 +540,7 @@ pub(super) fn draw_module_panel_params(
     }
 
     // Special handling for Mod Matrix — custom grid rendering
-    if descriptor.type_id.0 == "mod_matrix" {
+    if descriptor.type_id.as_str() == "mod_matrix" {
         return draw_mod_matrix_grid(
             ui,
             state,
@@ -553,7 +553,7 @@ pub(super) fn draw_module_panel_params(
 
     // Special handling for the Script module — a single YAMS program (ƒx editor)
     // plus its declared knobs rendered generically below.
-    if descriptor.type_id.0 == "script" {
+    if descriptor.type_id.as_str() == "script" {
         return draw_script_module_grid(
             ui,
             state,
@@ -567,7 +567,7 @@ pub(super) fn draw_module_panel_params(
 
     // Special handling for the AudioScript module — a single per-sample YAMS
     // program (one stereo slot) plus its declared knobs.
-    if descriptor.type_id.0 == "audio_script" {
+    if descriptor.type_id.as_str() == "audio_script" {
         return draw_audio_script_module_grid(
             ui,
             state,
@@ -580,7 +580,7 @@ pub(super) fn draw_module_panel_params(
     }
 
     // Signal Monitor — draw oscilloscope display above parameters
-    if descriptor.type_id.0 == "signal_monitor" {
+    if descriptor.type_id.as_str() == "signal_monitor" {
         let gain = state.param_values.get("Gain").copied().unwrap_or(1.0);
         let trigger_level = state.param_values.get("Trig").copied().unwrap_or(0.5);
 

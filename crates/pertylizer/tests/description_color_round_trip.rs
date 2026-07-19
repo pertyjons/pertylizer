@@ -43,7 +43,7 @@ fn descriptions_color_and_track_instrument_binding_round_trip() {
         let track = song.track_mut(tid).expect("track exists");
         track.description = "sidechain source".to_string();
         track.color = TrackColor::new(0x12, 0x34, 0x56);
-        track.instrument = InstrumentId(7);
+        track.instrument = InstrumentId::new(7);
     }
 
     let json = serde_json::to_string(&song).expect("serialize song");
@@ -65,7 +65,7 @@ fn descriptions_color_and_track_instrument_binding_round_trip() {
     assert_eq!(rt.color, TrackColor::new(0x12, 0x34, 0x56));
     assert_eq!(
         rt.instrument,
-        InstrumentId(7),
+        InstrumentId::new(7),
         "track->instrument binding lost"
     );
 }
@@ -75,7 +75,7 @@ fn legacy_save_without_description_keys_loads_with_empty_defaults() {
     let mut song = Song::new("Legacy");
     let _pid = song.create_pattern(Duration(1920));
     let tid = song.create_track("Lead");
-    song.track_mut(tid).expect("track exists").instrument = InstrumentId(3);
+    song.track_mut(tid).expect("track exists").instrument = InstrumentId::new(3);
 
     let mut value = serde_json::to_value(&song).expect("serialize");
     strip_key(&mut value, "description");
@@ -89,6 +89,6 @@ fn legacy_save_without_description_keys_loads_with_empty_defaults() {
     // The mandatory binding still survives a legacy load.
     assert_eq!(
         reloaded.tracks().find(|t| t.id == tid).unwrap().instrument,
-        InstrumentId(3)
+        InstrumentId::new(3)
     );
 }

@@ -80,8 +80,10 @@ pub(crate) fn sampler_sample_id(
     snapshot: &synth_engine::ModuleStateSnapshot,
 ) -> Option<synth_sampler::SampleId> {
     snapshot.parameters.iter().find_map(|p| match p {
-        synth_core::Param::Sampler(synth_core::SamplerParam::SampleSelect(sid)) if sid.0 != 0 => {
-            Some(synth_sampler::SampleId::new(sid.0))
+        synth_core::Param::Sampler(synth_core::SamplerParam::SampleSelect(sid))
+            if sid.as_u64() != 0 =>
+        {
+            Some(synth_sampler::SampleId::new(sid.as_u64()))
         }
         _ => None,
     })
@@ -441,10 +443,10 @@ impl OfflineNoteSession {
         }
 
         // Set up stream
-        let hw_sample_rate = HwSampleRate(PREVIEW_SAMPLE_RATE);
+        let hw_sample_rate = HwSampleRate::new(PREVIEW_SAMPLE_RATE);
         let stream_info = synth_core::StreamInfo {
             sample_rate: hw_sample_rate,
-            buffer_size: synth_core::BufferSize(BUFFER_SIZE as u32),
+            buffer_size: synth_core::BufferSize::new(BUFFER_SIZE as u32),
             channels: synth_core::ChannelCount::Stereo,
             output_latency: std::time::Duration::ZERO,
             input_latency: None,
@@ -490,7 +492,7 @@ impl OfflineNoteSession {
             MidiNote::new(shifted.clamp(0, 127) as u8)
         };
 
-        let hw_sample_rate = HwSampleRate(PREVIEW_SAMPLE_RATE);
+        let hw_sample_rate = HwSampleRate::new(PREVIEW_SAMPLE_RATE);
         let mut block = vec![0.0f32; BUFFER_SIZE * CHANNELS];
 
         // On a reused engine, hard-reset all DSP state before this note so the

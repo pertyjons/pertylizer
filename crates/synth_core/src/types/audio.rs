@@ -9,7 +9,7 @@ use super::{Decibels, Gain, Seconds};
 /// Buffer index for delay lines and circular buffers.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[repr(transparent)]
-pub struct BufferIndex(pub usize);
+pub struct BufferIndex(usize);
 
 impl BufferIndex {
     /// Create a new buffer index.
@@ -133,7 +133,7 @@ impl From<BufferIndex> for usize {
 /// Frame count (number of audio samples to process).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[repr(transparent)]
-pub struct FrameCount(pub usize);
+pub struct FrameCount(usize);
 
 impl FrameCount {
     /// Create a new frame count.
@@ -173,7 +173,7 @@ impl From<FrameCount> for usize {
 /// Noise generator state (xorshift random state).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(transparent)]
-pub struct NoiseState(pub u32);
+pub struct NoiseState(u32);
 
 impl NoiseState {
     /// Create a new noise state with a seed.
@@ -222,7 +222,7 @@ impl Default for NoiseState {
 /// Used for one-pole lowpass, biquad states, etc.
 #[derive(Debug, Clone, Copy, PartialEq, Default)]
 #[repr(transparent)]
-pub struct FilterState(pub f32);
+pub struct FilterState(f32);
 
 impl FilterState {
     /// Create a new filter state.
@@ -389,7 +389,7 @@ impl From<FilterState> for f32 {
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
 #[serde(transparent)]
 #[repr(transparent)]
-pub struct Amplitude(pub f32);
+pub struct Amplitude(f32);
 
 impl Amplitude {
     /// Create a new amplitude value.
@@ -459,8 +459,9 @@ impl From<Amplitude> for f32 {
     Deserialize,
     schemars::JsonSchema,
 )]
+#[serde(from = "u8", into = "u8")]
 #[repr(transparent)]
-pub struct VoiceCount(pub u8);
+pub struct VoiceCount(u8);
 
 impl VoiceCount {
     /// Create a new voice count, clamping to [1, 128].
@@ -576,9 +577,9 @@ impl std::fmt::Display for VoiceCount {
 /// This is a specialized wrapper around `BipolarValue` for stereo positioning.
 /// It provides convenience methods for pan-specific calculations.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
-#[serde(transparent)]
+#[serde(from = "f32", into = "f32")]
 #[repr(transparent)]
-pub struct StereoBalance(pub super::BipolarValue);
+pub struct StereoBalance(super::BipolarValue);
 
 impl StereoBalance {
     /// Create a new stereo balance.
@@ -1024,9 +1025,9 @@ impl Default for OnePoleSmooth {
 ///
 /// Represents the fraction of available CPU time used by audio processing.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
-#[serde(transparent)]
+#[serde(from = "f32", into = "f32")]
 #[repr(transparent)]
-pub struct CpuUsage(pub f32);
+pub struct CpuUsage(f32);
 
 impl CpuUsage {
     /// Create a new CPU usage value, clamping to [0, 1].
@@ -1172,7 +1173,7 @@ impl From<StereoLevels> for (f32, f32) {
 /// Zero-indexed position in the pattern order list.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 #[repr(transparent)]
-pub struct PatternIndex(pub usize);
+pub struct PatternIndex(usize);
 
 impl PatternIndex {
     /// Create a new pattern index.
@@ -1234,7 +1235,7 @@ impl std::fmt::Display for PatternIndex {
 )]
 #[must_use]
 #[repr(transparent)]
-pub struct StepCount(pub u8);
+pub struct StepCount(u8);
 
 impl StepCount {
     /// Create a new step count.

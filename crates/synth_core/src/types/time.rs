@@ -12,7 +12,7 @@ use super::{Clampable, Interpolate, SampleRate};
 )]
 #[serde(transparent)]
 #[repr(transparent)]
-pub struct Seconds(pub f32);
+pub struct Seconds(f32);
 
 impl Seconds {
     /// Create a new time duration.
@@ -138,7 +138,7 @@ impl std::fmt::Display for Seconds {
 )]
 #[serde(transparent)]
 #[repr(transparent)]
-pub struct Milliseconds(pub f32);
+pub struct Milliseconds(f32);
 
 impl Milliseconds {
     /// Create a new duration in milliseconds.
@@ -210,15 +210,19 @@ impl std::fmt::Display for Milliseconds {
 #[derive(
     Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize, schemars::JsonSchema,
 )]
-#[serde(transparent)]
+#[serde(from = "f32", into = "f32")]
 #[repr(transparent)]
-pub struct Bpm(pub f32);
+pub struct Bpm(f32);
 
 impl Bpm {
     /// Create a new tempo value.
     #[inline]
     pub const fn new(bpm: f32) -> Self {
-        Self(bpm)
+        if bpm.is_finite() && bpm > 0.0 {
+            Self(bpm)
+        } else {
+            Self::DEFAULT
+        }
     }
 
     /// Default tempo (120 BPM).
@@ -277,7 +281,7 @@ impl Clampable for Bpm {
 
 impl From<f32> for Bpm {
     fn from(bpm: f32) -> Self {
-        Self(bpm)
+        Self::new(bpm)
     }
 }
 
@@ -305,7 +309,7 @@ impl std::fmt::Display for Bpm {
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(transparent)]
 #[repr(transparent)]
-pub struct BeatDivision(pub f32);
+pub struct BeatDivision(f32);
 
 impl BeatDivision {
     /// Create a new beat division.
@@ -520,7 +524,7 @@ impl std::ops::Div<f32> for BeatDivision {
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
 #[serde(transparent)]
 #[repr(transparent)]
-pub struct BeatPosition(pub f64);
+pub struct BeatPosition(f64);
 
 impl BeatPosition {
     /// Create a new beat position.
@@ -677,7 +681,7 @@ mod tests {
     fn test_seconds_to_frequency() {
         let period = Seconds::new(0.01); // 10ms
         let freq = period.to_frequency();
-        assert!((freq.0 - 100.0).abs() < 0.001);
+        assert!((freq.as_f32() - 100.0).abs() < 0.001);
     }
 
     #[test]
@@ -725,7 +729,7 @@ mod tests {
         let tempo = Bpm::new(120.0); // 2 beats per second
         let freq = quarter.to_frequency(tempo);
         // At 120 BPM, quarter note = 0.5s, so frequency = 2 Hz
-        assert!((freq.0 - 2.0).abs() < 0.001);
+        assert!((freq.as_f32() - 2.0).abs() < 0.001);
     }
 
     #[test]

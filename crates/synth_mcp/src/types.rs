@@ -1,7 +1,13 @@
 //! Serializable response types for MCP tools.
 
 use serde::{Deserialize, Serialize};
-use synth_core::{InstrumentId, ParamKind};
+use synth_core::{
+    BipolarValue, Bpm, Gain, InstrumentId, MidiChannel, MidiNote, NormalizedValue, ParamKind,
+    Semitones,
+};
+use synth_sequencer::{
+    ModGraphId, ModNodeId, NoteGraphId, NoteId, NoteModuleId, PatternId, ReturnBusId, Tick, TrackId,
+};
 
 /// Information about an instrument.
 #[derive(Debug, Clone, Serialize)]
@@ -33,11 +39,11 @@ pub struct InstrumentInfo {
     /// Instrument category (e.g. "Drums", "Bass", "Pad", "Lead").
     pub category: String,
     /// MIDI channel (1-16).
-    pub midi_channel: u8,
+    pub midi_channel: MidiChannel,
     /// Volume (0.0-2.0).
-    pub volume: f32,
+    pub volume: Gain,
     /// Pan (-1.0 = left, 0.0 = center, 1.0 = right).
-    pub pan: f32,
+    pub pan: BipolarValue,
     /// Whether the instrument is enabled (not muted).
     pub enabled: bool,
     /// Whether the instrument is muted.
@@ -589,9 +595,9 @@ pub struct SetSongResult {
     /// Number of arrangement placements created.
     pub placements_created: usize,
     /// Pattern IDs in the same order as the input array.
-    pub pattern_ids: Vec<u32>,
+    pub pattern_ids: Vec<PatternId>,
     /// Track IDs in the same order as the input array.
-    pub track_ids: Vec<u16>,
+    pub track_ids: Vec<TrackId>,
     /// Any errors that occurred during the operation.
     pub errors: Vec<String>,
 }
@@ -619,7 +625,7 @@ pub struct BuildInstrumentResult {
 #[derive(Debug, Clone, Serialize)]
 pub struct OrphanedAutomationLane {
     /// Pattern the lane lives in.
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     /// The dangling target string (e.g. `module:flt:2:cutoff`).
     pub target: String,
 }
@@ -707,9 +713,9 @@ pub struct SongInfo {
 #[derive(Debug, Clone, Serialize)]
 pub struct TempoPoint {
     /// Absolute position in ticks (960 ticks = 1 quarter note).
-    pub tick: u64,
+    pub tick: Tick,
     /// Tempo in BPM from this point onward (until the next point).
-    pub bpm: f32,
+    pub bpm: Bpm,
     /// When true, the tempo ramps linearly toward the next point's bpm
     /// (accelerando / ritardando); when false it is a step change.
     pub ramp: bool,
@@ -719,7 +725,7 @@ pub struct TempoPoint {
 #[derive(Debug, Clone, Serialize)]
 pub struct PatternInfo {
     /// Pattern ID.
-    pub id: u32,
+    pub id: PatternId,
     /// Pattern name.
     pub name: String,
     /// Free-text description / intent — `""` when not set. Skipped from JSON
@@ -736,7 +742,7 @@ pub struct PatternInfo {
 #[derive(Debug, Clone, Serialize)]
 pub struct NoteGraphInfo {
     /// Pool-unique graph id (address for every note-graph tool).
-    pub id: u32,
+    pub id: NoteGraphId,
     /// User-facing name.
     pub name: String,
     /// Free-text description.
@@ -755,7 +761,7 @@ pub struct NoteGraphInfo {
 #[derive(Debug, Clone, Serialize)]
 pub struct NoteGraphModuleInfo {
     /// Graph-local module id (address for connect / set / remove).
-    pub id: u32,
+    pub id: NoteModuleId,
     /// Kind tag (`scale_quantize`, `euclidean`, `note_lfo`, …).
     pub kind: String,
     /// Per-node pedagogical/user intent text.
@@ -771,9 +777,9 @@ pub struct NoteGraphModuleInfo {
 #[derive(Debug, Clone, Serialize)]
 pub struct NoteGraphConnectionInfo {
     /// Source (output-side) module id.
-    pub from: u32,
+    pub from: NoteModuleId,
     /// Destination (input-side) module id.
-    pub to: u32,
+    pub to: NoteModuleId,
     /// Signal type: `note_stream`, `value`, or `gate`.
     pub port: String,
     /// For `value`/`gate` edges, which value-input port of the target it feeds.
@@ -795,7 +801,7 @@ pub struct NoteGraphDetail {
 #[derive(Debug, Clone, Serialize)]
 pub struct ModGraphInfo {
     /// Pool-unique graph id (address for every mod-graph tool).
-    pub id: u32,
+    pub id: ModGraphId,
     /// User-facing name.
     pub name: String,
     /// Free-text description.
@@ -803,7 +809,7 @@ pub struct ModGraphInfo {
     /// `global` (one always-on instance) or `track` (one per assigned track).
     pub scope: String,
     /// For `track` scope, the assigned track ids (one running instance each).
-    pub assigned_tracks: Vec<u32>,
+    pub assigned_tracks: Vec<TrackId>,
     /// RGB color as `#rrggbb`, or `None` if unset.
     pub color: Option<String>,
     /// Number of nodes in the graph.
@@ -816,7 +822,7 @@ pub struct ModGraphInfo {
 #[derive(Debug, Clone, Serialize)]
 pub struct ModGraphNodeInfo {
     /// Graph-local node id (address for connect / remove).
-    pub id: u32,
+    pub id: ModNodeId,
     /// Kind tag (`module`, `macro`, `transport`, `midi_cc`, `audio_tap`,
     /// `target`).
     pub kind: String,
@@ -832,11 +838,11 @@ pub struct ModGraphNodeInfo {
 #[derive(Debug, Clone, Serialize)]
 pub struct ModGraphConnectionInfo {
     /// Source node id.
-    pub from: u32,
+    pub from: ModNodeId,
     /// Source output port name.
     pub from_port: String,
     /// Destination node id.
-    pub to: u32,
+    pub to: ModNodeId,
     /// Destination input port name.
     pub to_port: String,
 }
@@ -856,11 +862,11 @@ pub struct ModGraphDetail {
 #[derive(Debug, Clone, Serialize)]
 pub struct ModTargetInfo {
     /// The graph that owns this routing.
-    pub graph_id: u32,
+    pub graph_id: ModGraphId,
     /// The graph's name (for readability).
     pub graph_name: String,
     /// The Target node's id within the graph.
-    pub node_id: u32,
+    pub node_id: ModNodeId,
     /// The automation target's human-readable address.
     pub target: String,
     /// Routing depth in the target's units.
@@ -871,9 +877,9 @@ pub struct ModTargetInfo {
 #[derive(Debug, Clone, Serialize)]
 pub struct NoteInfo {
     /// Note ID.
-    pub id: u64,
+    pub id: NoteId,
     /// MIDI pitch (0-127).
-    pub pitch: u8,
+    pub pitch: MidiNote,
     /// Human-readable pitch name (e.g. "C4", "A#3").
     pub pitch_name: String,
     /// Start position in beats.
@@ -898,7 +904,7 @@ pub struct NoteInfo {
 #[derive(Debug, Clone, Serialize)]
 pub struct TrackInfo {
     /// Track ID.
-    pub id: u16,
+    pub id: TrackId,
     /// Track name.
     pub name: String,
     /// Free-text description / intent (e.g. "kick layer") — `""` when not set.
@@ -910,9 +916,9 @@ pub struct TrackInfo {
     /// Instrument ID (if assigned).
     pub instrument_id: Option<InstrumentId>,
     /// Volume (0.0-1.0).
-    pub volume: f32,
+    pub volume: NormalizedValue,
     /// Pan (-1.0 = left, 0.0 = center, 1.0 = right).
-    pub pan: f32,
+    pub pan: BipolarValue,
     /// Whether the track is muted.
     pub mute: bool,
     /// Whether the track is soloed.
@@ -926,9 +932,9 @@ pub struct TrackInfo {
 #[derive(Debug, Clone, Serialize)]
 pub struct SendInfo {
     /// Destination return-bus ID.
-    pub target: u16,
+    pub target: ReturnBusId,
     /// Send level (0.0 = none, 1.0 = unity).
-    pub level: f32,
+    pub level: NormalizedValue,
     /// `true` = pre-fader tap, `false` = post-fader.
     pub pre_fader: bool,
     /// `true` = active, `false` = bypassed (kept but contributes nothing).
@@ -939,13 +945,13 @@ pub struct SendInfo {
 #[derive(Debug, Clone, Serialize)]
 pub struct ReturnBusInfo {
     /// Return-bus ID (referenced by track sends).
-    pub id: u16,
+    pub id: ReturnBusId,
     /// Display name.
     pub name: String,
     /// Output fader level (0.0-1.0).
-    pub volume: f32,
+    pub volume: NormalizedValue,
     /// Output pan (-1.0 = left, 0.0 = center, 1.0 = right).
-    pub pan: f32,
+    pub pan: BipolarValue,
     /// Whether the bus is muted.
     pub mute: bool,
     /// Whether the bus is soloed.
@@ -968,9 +974,9 @@ pub struct ReturnBusInfo {
 #[derive(Debug, Clone, Serialize)]
 pub struct ReturnSendInfo {
     /// Destination return-bus ID.
-    pub target: u16,
+    pub target: ReturnBusId,
     /// Send level (0.0 = none, 1.0 = unity).
-    pub level: f32,
+    pub level: NormalizedValue,
     /// `true` = active, `false` = bypassed.
     pub enabled: bool,
 }
@@ -1009,13 +1015,13 @@ pub struct ReturnEffectParamInfo {
 #[derive(Debug, Clone, Serialize)]
 pub struct PlacementInfo {
     /// Pattern ID.
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     /// Track ID.
-    pub track_id: u16,
+    pub track_id: TrackId,
     /// Start position in beats.
     pub start_beat: f32,
     /// Exact start position in ticks.
-    pub start_tick: u64,
+    pub start_tick: Tick,
     /// Placement transposition in semitones.
     pub transpose_semitones: f32,
     /// Linear placement gain.
@@ -1031,7 +1037,7 @@ pub struct PlacementInfo {
     /// Exact effective length in ticks.
     pub effective_length_ticks: u32,
     /// Exact exclusive end position in ticks.
-    pub end_tick: u64,
+    pub end_tick: Tick,
 }
 
 // === Automation types ===
@@ -1099,7 +1105,7 @@ pub struct AutomationPointInfo {
 #[derive(Debug, Clone, Serialize)]
 pub struct AutomationSummaryLane {
     /// Pattern the lane lives in.
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     /// Pattern name (for human-readable reports).
     pub pattern_name: String,
     /// Automation target string (e.g. "module:flt:1:cutoff" or "Volume").
@@ -1611,7 +1617,7 @@ pub struct SamplerStateInfo {
     /// Pitch tracking enabled.
     pub pitch_tracking: bool,
     /// Volume level (0.0 - 1.0).
-    pub level: f32,
+    pub level: NormalizedValue,
     /// Play mode: "one_shot", "sustain", or "loop".
     pub play_mode: String,
     /// Direction: "forward", "reverse", or "ping_pong".
@@ -1727,9 +1733,9 @@ pub struct InputDeviceInfo {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HarmonyScope {
     /// A pattern, identified by its `PatternId` value.
-    Pattern { pattern_id: u32 },
+    Pattern { pattern_id: PatternId },
     /// An arrangement range in absolute ticks (`[start_tick, end_tick)`).
-    Arrangement { start_tick: u64, end_tick: u64 },
+    Arrangement { start_tick: Tick, end_tick: Tick },
 }
 
 /// One identified chord event inside `AnalyzeHarmonyResult.chords`.
@@ -1746,9 +1752,9 @@ pub struct HarmonyChordEvent {
     pub start_beat: u32,
     /// Window start in absolute ticks (or pattern-relative ticks for pattern
     /// scope).
-    pub start_tick: u64,
+    pub start_tick: Tick,
     /// Window end (exclusive).
-    pub end_tick: u64,
+    pub end_tick: Tick,
     /// Unique MIDI notes (0-127) that sounded at any point in the window,
     /// sorted ascending. Empty windows are omitted.
     pub midi_notes: Vec<u8>,
@@ -1916,9 +1922,9 @@ pub struct AnalyzeMixBusResult {
     /// 1-indexed beat within `end_bar`.
     pub end_beat: u32,
     /// Tick where the render started.
-    pub start_tick: u64,
+    pub start_tick: Tick,
     /// Tick where the render ended (exclusive).
-    pub end_tick: u64,
+    pub end_tick: Tick,
     /// Mix-bus metrics from the rendered window.
     pub metrics: MixBusMetrics,
     /// Per-track contribution breakdown, one entry per audible track whose
@@ -2010,9 +2016,9 @@ pub struct SpectrumDescriptor {
 #[derive(Debug, Clone, Serialize)]
 pub struct AnalyzeSpectrumResult {
     /// Tick where the analysed render started.
-    pub start_tick: u64,
+    pub start_tick: Tick,
     /// Tick where the analysed render ended (exclusive).
-    pub end_tick: u64,
+    pub end_tick: Tick,
     /// The spectral descriptor (flattened into this object's JSON).
     #[serde(flatten)]
     pub spectrum: SpectrumDescriptor,
@@ -2040,9 +2046,9 @@ pub struct SpectrogramFrame {
 #[derive(Debug, Clone, Serialize)]
 pub struct AnalyzeSpectrogramResult {
     /// Tick where the analysed render started.
-    pub start_tick: u64,
+    pub start_tick: Tick,
     /// Tick where the analysed render ended (exclusive).
-    pub end_tick: u64,
+    pub end_tick: Tick,
     /// Sample rate the render ran at, in Hz.
     pub sample_rate: u32,
     /// Actual hop between frame centres, in seconds (from the requested hop_ms).
@@ -2333,7 +2339,7 @@ pub struct AutoGainStageResult {
 #[derive(Debug, Clone, Serialize)]
 pub struct TrackContribution {
     /// Sequencer track ID.
-    pub track_id: u16,
+    pub track_id: TrackId,
     /// Track name.
     pub track_name: String,
     /// Assigned instrument's seq ID (matches `InstrumentInfo.id` value).
@@ -2366,8 +2372,8 @@ pub struct AnalyzeSectionResult {
     /// 1-indexed beat within `end_bar`.
     pub end_beat: u32,
     /// Tick range that was analyzed (inclusive start, exclusive end).
-    pub start_tick: u64,
-    pub end_tick: u64,
+    pub start_tick: Tick,
+    pub end_tick: Tick,
     /// Mix-bus metrics for the section.
     pub metrics: MixBusMetrics,
     /// Per-track contribution breakdown, one entry per audible track whose
@@ -2438,9 +2444,9 @@ pub struct AnalyzeMasterChainResult {
     /// 1-indexed beat within `end_bar`.
     pub end_beat: u32,
     /// Tick where the render started.
-    pub start_tick: u64,
+    pub start_tick: Tick,
     /// Tick where the render ended (exclusive).
-    pub end_tick: u64,
+    pub end_tick: Tick,
     /// Master-chain input metrics: the post-return mix before any master effect.
     pub input_metrics: MixBusMetrics,
     /// Final master output metrics (full chain). Equals `input_metrics` when the
@@ -2475,7 +2481,7 @@ pub struct AnalyzeMasterChainResult {
 #[derive(Debug, Clone, Serialize)]
 pub struct ReturnBusContribution {
     /// Return bus id.
-    pub return_id: u16,
+    pub return_id: ReturnBusId,
     /// Return bus name.
     pub return_name: String,
     /// Integrated-LUFS the return adds to the master (full − muted).
@@ -2505,9 +2511,9 @@ pub struct AnalyzeReturnBussesResult {
     /// 1-indexed beat within `end_bar`.
     pub end_beat: u32,
     /// Tick where the render started.
-    pub start_tick: u64,
+    pub start_tick: Tick,
     /// Tick where the render ended (exclusive).
-    pub end_tick: u64,
+    pub end_tick: Tick,
     /// Full master mix metrics with every return bus active.
     pub full_metrics: MixBusMetrics,
     /// One entry per return bus, in declared order.
@@ -2602,9 +2608,9 @@ pub struct BandOverlap {
 /// flags which side wins overall on the band that has the highest overlap.
 #[derive(Debug, Clone, Serialize)]
 pub struct MaskingPair {
-    pub track_a_id: u16,
+    pub track_a_id: TrackId,
     pub track_a_name: String,
-    pub track_b_id: u16,
+    pub track_b_id: TrackId,
     pub track_b_name: String,
     /// One entry per band (sub / low / mid / high), in that order.
     pub bands: Vec<BandOverlap>,
@@ -2616,7 +2622,7 @@ pub struct MaskingPair {
     /// dominance margin exceeds 6 dB. `None` means the pair is in even
     /// competition (or both sides are essentially silent in shared bands).
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub dominant_track_id: Option<u16>,
+    pub dominant_track_id: Option<TrackId>,
     /// Free-form hint summarizing the worst band, e.g. `"Pad(2) masks
     /// Lead(3) in mid (500-2000 Hz)"`. `None` when the highest-overlap band
     /// is below the audibility threshold.
@@ -2635,8 +2641,8 @@ pub struct AnalyzeMaskingMatrixResult {
     pub start_beat: u32,
     pub end_bar: u32,
     pub end_beat: u32,
-    pub start_tick: u64,
-    pub end_tick: u64,
+    pub start_tick: Tick,
+    pub end_tick: Tick,
     /// Number of audible tracks that overlapped the section. The pair
     /// count is `track_count·(track_count − 1) / 2`.
     pub track_count: u32,
@@ -2786,7 +2792,7 @@ pub struct PatternRepetition {
 #[derive(Debug, Clone, Serialize)]
 pub struct AnalyzePatternResult {
     /// Pattern ID that was analyzed.
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     /// Pattern name (may be empty).
     pub pattern_name: String,
     /// Authored pattern length, in ticks.
@@ -2886,7 +2892,7 @@ pub struct DrumRepetition {
 /// confidence >= 0.6 by [`crate::types::InstrumentProfileResult`]).
 #[derive(Debug, Clone, Serialize)]
 pub struct DrumTrackInfo {
-    pub track_id: u16,
+    pub track_id: TrackId,
     pub track_name: String,
     pub instrument_id: InstrumentId,
     pub instrument_name: String,
@@ -2943,7 +2949,7 @@ pub struct AnalyzeDrumGrooveResult {
 /// pulled notes from. Mirrors `DrumTrackInfo` but for bass.
 #[derive(Debug, Clone, Serialize)]
 pub struct BassTrackInfo {
-    pub track_id: u16,
+    pub track_id: TrackId,
     pub track_name: String,
     pub instrument_id: InstrumentId,
     pub instrument_name: String,
@@ -3042,9 +3048,9 @@ pub struct ChordFunctionEvent {
     /// 1-indexed beat within `start_bar`.
     pub start_beat: u32,
     /// Window start in absolute ticks (or pattern-relative for pattern scope).
-    pub start_tick: u64,
+    pub start_tick: Tick,
     /// Window end (exclusive).
-    pub end_tick: u64,
+    pub end_tick: Tick,
     /// Scale degree (1..=7 for diatonic, omitted for chromatic / unidentified
     /// chords).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3146,7 +3152,7 @@ pub struct AnalyzeHarmonicFunctionResult {
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct InstrumentRangeStep {
     /// MIDI note requested.
-    pub note: u8,
+    pub note: MidiNote,
     /// MIDI note actually played, after the patch's `octave_offset` was
     /// applied. Differs from `note` for bass patches with offset != 0.
     pub note_played: u8,
@@ -3304,7 +3310,7 @@ pub struct VelocityResponseIssues {
 pub struct AnalyzeVelocityResponseResult {
     pub instrument_id: InstrumentId,
     /// MIDI note held throughout the sweep.
-    pub note: u8,
+    pub note: MidiNote,
     /// Lowest velocity in the sweep.
     pub velocity_low: u8,
     /// Highest velocity in the sweep.
@@ -3369,7 +3375,7 @@ pub struct ChordProgressionStep {
 #[derive(Debug, Clone, Serialize)]
 pub struct CreateChordProgressionResult {
     /// ID of the newly created pattern.
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     /// Total pattern length in beats.
     pub length_beats: f32,
     /// Total notes placed across all chords.
@@ -3385,9 +3391,9 @@ pub struct CreateChordProgressionResult {
 /// place and returns aggregate stats.
 #[derive(Debug, Clone, Serialize)]
 pub struct TransposeNotesResult {
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     /// Signed semitone shift requested.
-    pub semitones: i32,
+    pub semitones: Semitones,
     /// Number of notes in the pattern before the call.
     pub notes_in: u32,
     /// Notes whose new pitch landed inside the valid MIDI range and were
@@ -3410,7 +3416,7 @@ pub struct TransposeNotesResult {
 /// Output of `quantize_notes_to_scale`.
 #[derive(Debug, Clone, Serialize)]
 pub struct QuantizeNotesToScaleResult {
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     /// Scale tonic (0..12, C = 0).
     pub scale_tonic_pitch_class: u8,
     /// Scale template that was applied (may differ from the requested name
@@ -3431,7 +3437,7 @@ pub struct QuantizeNotesToScaleResult {
 /// Output of `quantize_notes_to_grid`.
 #[derive(Debug, Clone, Serialize)]
 pub struct QuantizeNotesToGridResult {
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     /// Grid resolution (in ticks) the snap was performed against.
     pub grid_ticks: u32,
     /// Quantize strength that was applied (0..1).
@@ -3481,7 +3487,7 @@ pub struct BarFeatureSummary {
     /// Track IDs that had at least one note start in this bar. Empty in
     /// pattern scope (single pattern = single virtual track).
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub active_track_ids: Vec<u16>,
+    pub active_track_ids: Vec<TrackId>,
 }
 
 /// One detected section in `analyze_arrangement` — a contiguous bar range
@@ -3508,7 +3514,7 @@ pub struct SectionSpan {
     /// Distinct track IDs that contributed notes anywhere inside the section.
     /// Empty in pattern scope.
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
-    pub active_track_ids: Vec<u16>,
+    pub active_track_ids: Vec<TrackId>,
 }
 
 /// Output of `analyze_arrangement`. Section-level structural diagnostic built
@@ -3577,10 +3583,10 @@ pub struct AnalyzeFormMapResult {
 #[derive(Debug, Clone, Copy, Serialize)]
 pub struct MotifOccurrence {
     /// Track that the motif starts on. `0` in pattern scope.
-    pub track_id: u16,
+    pub track_id: TrackId,
     /// Absolute start tick of the first note in the motif. Pattern-relative
     /// in pattern scope.
-    pub start_tick: u64,
+    pub start_tick: Tick,
     /// 1-indexed bar number at the motif start.
     pub start_bar: u32,
     /// 1-indexed beat within `start_bar`.

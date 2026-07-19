@@ -12,7 +12,9 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 
 use synth_engine::SynthEngine;
-use synth_sequencer::{Duration as SeqDuration, NoteId, PatternTick, Pitch, Song, Velocity};
+use synth_sequencer::{
+    Duration as SeqDuration, NoteId, PatternId, PatternTick, Pitch, Song, Velocity,
+};
 
 use pertylizer::mcp_bridge::{
     analyze_arrangement_impl, analyze_form_map_impl, analyze_hook_strength_impl, find_motifs_impl,
@@ -25,7 +27,7 @@ struct Rig {
     _handle: synth_engine::EngineHandle,
     session: SynthSession,
     shared: Arc<McpSharedState>,
-    pattern_id: u32,
+    pattern_id: PatternId,
 }
 
 /// Build a 4-bar pattern with the supplied note list (pitch, tick,
@@ -55,7 +57,7 @@ fn rig_with_pattern(notes: &[(u8, u32, u32)]) -> Rig {
         _handle: handle,
         session,
         shared,
-        pattern_id: pid.0,
+        pattern_id: pid,
     }
 }
 

@@ -138,7 +138,7 @@ mod tests {
             tick: Tick(1000),
             pitch: Pitch::new(60).unwrap(),
             velocity: Velocity::MF,
-            instrument: InstrumentId(0),
+            instrument: InstrumentId::new(0),
             legato: false,
             glide: None,
             expression: None,
@@ -153,7 +153,7 @@ mod tests {
             tick: Tick(0),
             pitch: Pitch::new(60).unwrap(),
             velocity: Velocity::MF,
-            instrument: InstrumentId(0),
+            instrument: InstrumentId::new(0),
             legato: false,
             glide: None,
             expression: None,
@@ -165,7 +165,7 @@ mod tests {
         let note_off = SequencerEvent::NoteOff {
             tick: Tick(960),
             pitch: Pitch::new(60).unwrap(),
-            instrument: InstrumentId(0),
+            instrument: InstrumentId::new(0),
         };
         assert!(note_off.is_note_off());
         assert!(!note_off.is_note_on());
@@ -178,7 +178,7 @@ mod tests {
                 tick: Tick(500),
                 pitch: Pitch::new(60).unwrap(),
                 velocity: Velocity::MF,
-                instrument: InstrumentId(0),
+                instrument: InstrumentId::new(0),
                 legato: false,
                 glide: None,
                 expression: None,
@@ -188,7 +188,7 @@ mod tests {
                 tick: Tick(100),
                 pitch: Pitch::new(62).unwrap(),
                 velocity: Velocity::MF,
-                instrument: InstrumentId(0),
+                instrument: InstrumentId::new(0),
                 legato: false,
                 glide: None,
                 expression: None,
@@ -197,7 +197,7 @@ mod tests {
             SequencerEvent::NoteOff {
                 tick: Tick(300),
                 pitch: Pitch::new(60).unwrap(),
-                instrument: InstrumentId(0),
+                instrument: InstrumentId::new(0),
             },
         ]);
 
@@ -213,12 +213,12 @@ mod tests {
             tick: Tick(0),
             pitch: Pitch::new(60).unwrap(),
             velocity: Velocity::MF,
-            instrument: InstrumentId(5),
+            instrument: InstrumentId::new(5),
             legato: false,
             glide: None,
             expression: None,
             track: None,
         };
-        assert_eq!(note.instrument(), Some(InstrumentId(5)));
+        assert_eq!(note.instrument(), Some(InstrumentId::new(5)));
     }
 }

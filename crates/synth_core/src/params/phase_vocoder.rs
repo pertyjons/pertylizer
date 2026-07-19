@@ -115,7 +115,7 @@ impl PhaseVocoderParam {
     #[allow(clippy::cast_precision_loss)]
     pub fn as_f32(&self) -> f32 {
         match self {
-            Self::PitchShift(st) => st.0,
+            Self::PitchShift(st) => st.as_f32(),
             Self::Freeze(b) => {
                 if *b {
                     1.0
@@ -131,7 +131,7 @@ impl PhaseVocoderParam {
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn with_f32(&self, value: f32) -> Self {
         match self {
-            Self::PitchShift(_) => Self::PitchShift(Semitones(value)),
+            Self::PitchShift(_) => Self::PitchShift(Semitones::new(value)),
             Self::Freeze(_) => Self::Freeze(value > 0.5),
             Self::FftSize(_) => Self::FftSize(FftSizeOption::from_index(value as usize)),
             Self::Mix(_) => Self::Mix(NormalizedValue::new(value)),

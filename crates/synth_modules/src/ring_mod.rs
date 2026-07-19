@@ -330,7 +330,7 @@ mod tests {
     fn ring_mod_carrier_tracks_voice_pitch() {
         let sr = SampleRate::DVD_QUALITY;
         let srf = sr.as_f32();
-        let note = MidiNote(45); // A2 ≈ 110 Hz
+        let note = MidiNote::new(45); // A2 ≈ 110 Hz
         let f = note.to_frequency().as_f32();
         let cents = |est: f32, target: f32| 1200.0 * (est / target).log2();
         let block = 1024usize;
@@ -443,7 +443,7 @@ mod tests {
     #[test]
     fn ring_mod_nan_freq_cv_stays_finite() {
         let mut rm = RingMod::new();
-        rm.note_on(MidiNote(60), Velocity::MAX);
+        rm.note_on(MidiNote::new(60), Velocity::MAX);
         rm.set_sample_rate(SampleRate::DVD_QUALITY);
         let block = 256usize;
         let ctx = ProcessContext {

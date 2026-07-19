@@ -284,7 +284,7 @@ fn analyze_with_workspace(
 
     if let Some(f0_hz) = f0 {
         for peak in &mut peaks {
-            tag_harmonic(peak, f0_hz.0);
+            tag_harmonic(peak, f0_hz.as_f32());
         }
     }
 
@@ -522,7 +522,7 @@ fn tag_harmonic(peak: &mut Peak, f0: f32) {
 /// (f0·ΣE)`. 0 when unvoiced.
 fn aggregate_inharmonicity(peaks: &[Peak], f0: Option<Hertz>) -> f32 {
     let Some(f0) = f0 else { return 0.0 };
-    if f0.0 <= 0.0 {
+    if f0.as_f32() <= 0.0 {
         return 0.0;
     }
     let mut num = 0.0f64;
@@ -530,14 +530,14 @@ fn aggregate_inharmonicity(peaks: &[Peak], f0: Option<Hertz>) -> f32 {
     for p in peaks {
         let Some(n) = p.harmonic_number else { continue };
         let e = f64::from(p.magnitude * p.magnitude);
-        let dev = f64::from((p.frequency - n as f32 * f0.0).abs());
+        let dev = f64::from((p.frequency - n as f32 * f0.as_f32()).abs());
         num += e * dev;
         den += e;
     }
     if den <= 0.0 {
         0.0
     } else {
-        ((num / den) / f64::from(f0.0)).clamp(0.0, 1.0) as f32
+        ((num / den) / f64::from(f0.as_f32())).clamp(0.0, 1.0) as f32
     }
 }
 
@@ -697,8 +697,8 @@ fn detect_f0(signal: &[f32], sample_rate: u32, hint: Option<Hertz>) -> (Option<H
     // Lag search range. With a hint, restrict to a fifth (×1.5) either side of
     // the hinted period; otherwise the full musical range.
     let (lag_min, lag_max) = match hint {
-        Some(h) if h.0 > 0.0 => {
-            let period = sr / h.0;
+        Some(h) if h.as_f32() > 0.0 => {
+            let period = sr / h.as_f32();
             (
                 (period / 1.5).floor() as usize,
                 (period * 1.5).ceil() as usize,
@@ -877,10 +877,10 @@ fn odd_even_ratio_db(ratio: f32) -> f32 {
 /// `floor_limited` set, and floor-vs-floor bins never inflate the scalar.
 #[must_use]
 pub fn compare(target: &SpectrumResult, candidate: &SpectrumResult) -> SpectrumDistance {
-    let centroid_delta = Hertz::new(candidate.centroid.0 - target.centroid.0);
-    let rolloff_delta = Hertz::new(candidate.rolloff.0 - target.rolloff.0);
-    let flatness_delta = candidate.flatness.0 - target.flatness.0;
-    let inharmonicity_delta = candidate.inharmonicity.0 - target.inharmonicity.0;
+    let centroid_delta = Hertz::new(candidate.centroid.as_f32() - target.centroid.as_f32());
+    let rolloff_delta = Hertz::new(candidate.rolloff.as_f32() - target.rolloff.as_f32());
+    let flatness_delta = candidate.flatness.as_f32() - target.flatness.as_f32();
+    let inharmonicity_delta = candidate.inharmonicity.as_f32() - target.inharmonicity.as_f32();
     let odd_even_ratio_delta_db =
         odd_even_ratio_db(candidate.odd_even_ratio) - odd_even_ratio_db(target.odd_even_ratio);
 
@@ -968,8 +968,8 @@ fn log_spectral_distance(a: &[Decibels], b: &[Decibels]) -> (f32, f32) {
     let mut sum = 0.0f64;
     let mut live = 0usize;
     for i in 0..n {
-        let av = a[i].0.max(LSD_FLOOR_DB);
-        let bv = b[i].0.max(LSD_FLOOR_DB);
+        let av = a[i].as_f32().max(LSD_FLOOR_DB);
+        let bv = b[i].as_f32().max(LSD_FLOOR_DB);
         if av <= LSD_SHELF_DB && bv <= LSD_SHELF_DB {
             continue; // shared null: ≥ |LSD_SHELF_DB| below both peaks
         }
@@ -998,8 +998,8 @@ fn mel_l2_distance(a: &[Decibels], b: &[Decibels]) -> f32 {
     }
     let mut sum = 0.0f64;
     for i in 0..n {
-        let av = f64::from(a[i].0.max(LSD_FLOOR_DB));
-        let bv = f64::from(b[i].0.max(LSD_FLOOR_DB));
+        let av = f64::from(a[i].as_f32().max(LSD_FLOOR_DB));
+        let bv = f64::from(b[i].as_f32().max(LSD_FLOOR_DB));
         let d = av - bv;
         sum += d * d;
     }
@@ -1022,7 +1022,7 @@ fn diff_partials(
             if candidate_used[j] {
                 continue;
             }
-            let cents = 1200.0 * (c.frequency.0 / t.frequency.0).log2();
+            let cents = 1200.0 * (c.frequency.as_f32() / t.frequency.as_f32()).log2();
             if cents.abs() <= PARTIAL_MATCH_CENTS && best.is_none_or(|(_, b)| cents.abs() < b.abs())
             {
                 best = Some((j, cents));
@@ -1329,19 +1329,23 @@ mod tests {
         let sig = sine(1000.0, 16_384, 0.8);
         let r = analyze_spectrum(&sig, SR, SpectrumOpts::default());
         assert!(r.voiced, "1 kHz sine should be voiced");
-        let f0 = r.f0.expect("voiced → f0").0;
+        let f0 = r.f0.expect("voiced → f0").as_f32();
         assert!((f0 - 1000.0).abs() < 5.0, "f0 ≈ 1 kHz, got {f0}");
         let top = r.partials.first().expect("a partial");
         assert!(
-            (top.frequency.0 - 1000.0).abs() < 5.0,
+            (top.frequency.as_f32() - 1000.0).abs() < 5.0,
             "loudest partial ≈ 1 kHz, got {}",
-            top.frequency.0
+            top.frequency.as_f32()
         );
-        assert!(r.flatness.0 < 0.1, "pure tone flat, got {}", r.flatness.0);
         assert!(
-            r.inharmonicity.0 < 0.01,
+            r.flatness.as_f32() < 0.1,
+            "pure tone flat, got {}",
+            r.flatness.as_f32()
+        );
+        assert!(
+            r.inharmonicity.as_f32() < 0.01,
             "harmonic, got {}",
-            r.inharmonicity.0
+            r.inharmonicity.as_f32()
         );
     }
 
@@ -1356,11 +1360,15 @@ mod tests {
             })
             .collect();
         let r = analyze_spectrum(&sig, SR, SpectrumOpts::default());
-        assert!(r.flatness.0 > 0.3, "noise flat-ish, got {}", r.flatness.0);
+        assert!(
+            r.flatness.as_f32() > 0.3,
+            "noise flat-ish, got {}",
+            r.flatness.as_f32()
+        );
         assert!(!r.voiced, "white noise should be unvoiced");
         assert!(r.f0.is_none(), "unvoiced → no f0");
         assert!(
-            r.inharmonicity.0 == 0.0,
+            r.inharmonicity.as_f32() == 0.0,
             "no harmonic tagging when unvoiced"
         );
     }
@@ -1370,7 +1378,7 @@ mod tests {
         let sig = saw(200.0, 16_384, 12);
         let r = analyze_spectrum(&sig, SR, SpectrumOpts::default());
         assert!(r.voiced, "saw is pitched");
-        let f0 = r.f0.expect("f0").0;
+        let f0 = r.f0.expect("f0").as_f32();
         assert!((f0 - 200.0).abs() < 4.0, "f0 ≈ 200, got {f0}");
         // The first few harmonics should be tagged near-integer multiples.
         let tagged = r
@@ -1384,11 +1392,11 @@ mod tests {
         );
         for p in r.partials.iter().filter(|p| p.harmonic_number.is_some()) {
             assert!(
-                p.inharmonicity.0.abs() < 30.0,
+                p.inharmonicity.as_f32().abs() < 30.0,
                 "harmonic {} within 30 cents, got {} at {} Hz",
                 p.harmonic_number.unwrap(),
-                p.inharmonicity.0,
-                p.frequency.0
+                p.inharmonicity.as_f32(),
+                p.frequency.as_f32()
             );
         }
     }
@@ -1420,7 +1428,7 @@ mod tests {
         let strong_even = r
             .partials
             .iter()
-            .filter(|p| p.amplitude.0 > -30.0)
+            .filter(|p| p.amplitude.as_f32() > -30.0)
             .filter_map(|p| p.harmonic_number)
             .filter(|n| *n > 1 && n % 2 == 0)
             .count();
@@ -1443,7 +1451,7 @@ mod tests {
         let worst = r
             .partials
             .iter()
-            .filter_map(|p| p.harmonic_number.map(|_| p.inharmonicity.0.abs()))
+            .filter_map(|p| p.harmonic_number.map(|_| p.inharmonicity.as_f32().abs()))
             .fold(0.0, f32::max);
         assert!(worst > 100.0, "inharmonic partial flagged, worst = {worst}");
     }
@@ -1461,9 +1469,9 @@ mod tests {
         let r = analyze_spectrum(&sig, SR, SpectrumOpts::default());
         let top = r.partials.first().expect("a partial");
         assert!(
-            (top.frequency.0 - 150.0).abs() < 5.0,
+            (top.frequency.as_f32() - 150.0).abs() < 5.0,
             "zero-pad + parabolic should locate the 150 Hz peak, got {} Hz",
-            top.frequency.0
+            top.frequency.as_f32()
         );
     }
 
@@ -1471,10 +1479,10 @@ mod tests {
     fn silence_and_dc_do_not_nan() {
         for sig in [vec![0.0f32; 8192], vec![0.5f32; 8192]] {
             let r = analyze_spectrum(&sig, SR, SpectrumOpts::default());
-            assert!(r.centroid.0.is_finite());
-            assert!(r.flatness.0.is_finite());
-            assert!(r.rolloff.0.is_finite());
-            assert!(r.inharmonicity.0.is_finite());
+            assert!(r.centroid.as_f32().is_finite());
+            assert!(r.flatness.as_f32().is_finite());
+            assert!(r.rolloff.as_f32().is_finite());
+            assert!(r.inharmonicity.as_f32().is_finite());
             assert!(!r.voiced, "silence/DC is not voiced");
         }
     }
@@ -1485,9 +1493,9 @@ mod tests {
         let r = analyze_spectrum(&sig, SR, SpectrumOpts::default());
         for p in &r.partials {
             assert!(
-                p.frequency.0 < SR as f32 / 2.0,
+                p.frequency.as_f32() < SR as f32 / 2.0,
                 "partial {} Hz at/above Nyquist",
-                p.frequency.0
+                p.frequency.as_f32()
             );
         }
     }
@@ -1570,9 +1578,9 @@ mod tests {
         let d = compare(&saw_rich, &sine_pure);
         // The sine rolls off far lower than the harmonic-rich saw → negative.
         assert!(
-            d.rolloff_delta.0 < -200.0,
+            d.rolloff_delta.as_f32() < -200.0,
             "sine candidate should roll off well below the saw, got {} Hz",
-            d.rolloff_delta.0
+            d.rolloff_delta.as_f32()
         );
         // A square (odd-only) candidate is more odd-dominant than a saw target.
         let square_odd = analyze_spectrum(&square(300.0, 16_384, 24), SR, opts);
@@ -1584,7 +1592,7 @@ mod tests {
         );
         // Same spectrum → both deltas ~0.
         let same = compare(&saw_rich, &saw_rich);
-        assert!(same.rolloff_delta.0.abs() < f32::EPSILON);
+        assert!(same.rolloff_delta.as_f32().abs() < f32::EPSILON);
         assert!(same.odd_even_ratio_delta_db.abs() < 1.0e-3);
     }
 
@@ -1606,7 +1614,7 @@ mod tests {
         let argmax = |bins: &[Decibels]| -> usize {
             bins.iter()
                 .enumerate()
-                .max_by(|a, b| a.1.0.total_cmp(&b.1.0))
+                .max_by(|a, b| a.1.as_f32().total_cmp(&b.1.as_f32()))
                 .map(|(i, _)| i)
                 .unwrap_or(0)
         };
@@ -1637,7 +1645,7 @@ mod tests {
         let argmax = |bins: &[Decibels]| -> usize {
             bins.iter()
                 .enumerate()
-                .max_by(|a, b| a.1.0.total_cmp(&b.1.0))
+                .max_by(|a, b| a.1.as_f32().total_cmp(&b.1.as_f32()))
                 .map(|(i, _)| i)
                 .unwrap_or(0)
         };
@@ -1933,14 +1941,17 @@ mod tests {
         );
 
         // Timestamps increase monotonically.
-        assert!(frames[1].time.0 > frames[0].time.0, "timestamps ascend");
+        assert!(
+            frames[1].time.as_f32() > frames[0].time.as_f32(),
+            "timestamps ascend"
+        );
 
         // A frame well inside the tone is voiced; one well inside the noise is
         // not — the spectrogram reads the transition directly.
         let early = &frames[2];
         let late = &frames[frames.len() - 3];
         assert!(early.spectrum.voiced, "early (tone) frame should be voiced");
-        let f0 = early.spectrum.f0.expect("tone frame has f0").0;
+        let f0 = early.spectrum.f0.expect("tone frame has f0").as_f32();
         assert!(
             (f0 - 440.0).abs() < 6.0,
             "early frame f0 ≈ 440 Hz, got {f0}"

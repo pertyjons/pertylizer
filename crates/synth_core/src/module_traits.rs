@@ -73,7 +73,7 @@ impl VoicePitch {
 /// - Factory pattern for creating module instances
 /// - Module registration
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct ModuleTypeId(pub String);
+pub struct ModuleTypeId(String);
 
 impl ModuleTypeId {
     pub fn new(id: impl Into<String>) -> Self {
@@ -1943,7 +1943,7 @@ mod tests {
             ParamKind::Bool
         );
         assert_eq!(
-            Param::Sampler(SamplerParam::SampleSelect(SampleId(0))).kind(),
+            Param::Sampler(SamplerParam::SampleSelect(SampleId::new(0))).kind(),
             ParamKind::Reference
         );
         assert_eq!(

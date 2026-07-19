@@ -17,9 +17,9 @@ use super::Clampable;
 #[derive(
     Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize, schemars::JsonSchema,
 )]
-#[serde(transparent)]
+#[serde(from = "f32", into = "f32")]
 #[repr(transparent)]
-pub struct NormalizedValue(pub f32);
+pub struct NormalizedValue(f32);
 
 impl NormalizedValue {
     /// Create a new normalized value, clamping to [0, 1].
@@ -273,9 +273,9 @@ impl std::fmt::Display for NormalizedValue {
 #[derive(
     Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize, schemars::JsonSchema,
 )]
-#[serde(transparent)]
+#[serde(from = "f32", into = "f32")]
 #[repr(transparent)]
-pub struct BipolarValue(pub f32);
+pub struct BipolarValue(f32);
 
 impl BipolarValue {
     /// Create a new bipolar value, clamping to [-1, 1].
@@ -456,9 +456,9 @@ impl std::fmt::Display for BipolarValue {
 ///
 /// Used for oscillator phase, LFO position, etc.
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize)]
-#[serde(transparent)]
+#[serde(from = "f32", into = "f32")]
 #[repr(transparent)]
-pub struct Phase(pub f32);
+pub struct Phase(f32);
 
 impl Phase {
     /// Create a new phase value, wrapping to [0, 1).

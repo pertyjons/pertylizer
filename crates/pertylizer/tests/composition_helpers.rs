@@ -14,11 +14,12 @@ use pertylizer::mcp_bridge::{
     transpose_notes_impl,
 };
 use pertylizer::mcp_shared::McpSharedState;
+use synth_core::Semitones;
 use synth_sequencer::{
     Duration as SeqDuration, NoteId, PatternId, PatternTick, Pitch, Song, Velocity,
 };
 
-fn shared_with_pattern(notes: &[(u8, u32)]) -> (Arc<McpSharedState>, u32) {
+fn shared_with_pattern(notes: &[(u8, u32)]) -> (Arc<McpSharedState>, PatternId) {
     let mut song = Song::new("Test");
     let pid = song.create_pattern(SeqDuration(3840));
     if let Some(pattern) = song.pattern_mut(pid) {
@@ -35,18 +36,18 @@ fn shared_with_pattern(notes: &[(u8, u32)]) -> (Arc<McpSharedState>, u32) {
         }
     }
     let shared = Arc::new(McpSharedState::with_song(Arc::new(RwLock::new(song))));
-    (shared, pid.0)
+    (shared, pid)
 }
 
-fn pattern_pitches(shared: &McpSharedState, pid: u32) -> Vec<u8> {
+fn pattern_pitches(shared: &McpSharedState, pid: PatternId) -> Vec<u8> {
     let song = shared.song.read();
-    let pattern = song.pattern(PatternId(pid)).expect("pattern exists");
+    let pattern = song.pattern(pid).expect("pattern exists");
     pattern.notes().iter().map(|n| n.pitch.as_midi()).collect()
 }
 
-fn pattern_starts(shared: &McpSharedState, pid: u32) -> Vec<u32> {
+fn pattern_starts(shared: &McpSharedState, pid: PatternId) -> Vec<u32> {
     let song = shared.song.read();
-    let pattern = song.pattern(PatternId(pid)).expect("pattern exists");
+    let pattern = song.pattern(pid).expect("pattern exists");
     pattern.notes().iter().map(|n| n.start.0).collect()
 }
 
@@ -69,7 +70,8 @@ fn generate_chord_rejects_unknown_voicing() {
 #[test]
 fn transpose_notes_shifts_each_pitch() {
     let (shared, pid) = shared_with_pattern(&[(60, 0), (62, 240), (64, 480)]);
-    let result = transpose_notes_impl(&shared, pid, 5, None, None, None).expect("transpose works");
+    let result = transpose_notes_impl(&shared, pid, Semitones::new(5.0), None, None, None)
+        .expect("transpose works");
     assert_eq!(result.notes_transposed, 3);
     assert_eq!(result.notes_out_of_range, 0);
     assert_eq!(pattern_pitches(&shared, pid), vec![65, 67, 69]);
@@ -80,8 +82,15 @@ fn transpose_notes_with_scale_snaps_off_key_results() {
     // Bb (58) and E (64), shift +2 → C (in scale) and F# (out). Snap to G
     // (NearestUp).
     let (shared, pid) = shared_with_pattern(&[(58, 0), (64, 240)]);
-    let result = transpose_notes_impl(&shared, pid, 2, Some(0), Some("major"), Some("up"))
-        .expect("transpose works");
+    let result = transpose_notes_impl(
+        &shared,
+        pid,
+        Semitones::new(2.0),
+        Some(0),
+        Some("major"),
+        Some("up"),
+    )
+    .expect("transpose works");
     assert_eq!(result.notes_snapped_to_scale, 1);
     assert_eq!(pattern_pitches(&shared, pid), vec![60, 67]);
     assert_eq!(result.scale_name.as_deref(), Some("major"));
@@ -90,7 +99,7 @@ fn transpose_notes_with_scale_snaps_off_key_results() {
 #[test]
 fn transpose_partial_scale_constraint_emits_warning() {
     let (shared, pid) = shared_with_pattern(&[(60, 0)]);
-    let result = transpose_notes_impl(&shared, pid, 1, Some(0), None, None)
+    let result = transpose_notes_impl(&shared, pid, Semitones::new(1.0), Some(0), None, None)
         .expect("partial scale is non-fatal");
     assert!(result.warnings.iter().any(|w| w.contains("scale")));
     assert_eq!(pattern_pitches(&shared, pid), vec![61]);
@@ -145,8 +154,15 @@ fn quantize_to_grid_disabled_grid_returns_warning() {
 #[test]
 fn missing_pattern_returns_error() {
     let shared = Arc::new(McpSharedState::new());
-    let err = transpose_notes_impl(&shared, 999, 5, None, None, None)
-        .expect_err("nonexistent pattern should error");
+    let err = transpose_notes_impl(
+        &shared,
+        PatternId(999),
+        Semitones::new(5.0),
+        None,
+        None,
+        None,
+    )
+    .expect_err("nonexistent pattern should error");
     let msg = err.to_string();
     assert!(msg.contains("999") || msg.contains("Pattern"), "{msg}");
 }

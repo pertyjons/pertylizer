@@ -12,7 +12,7 @@ use thiserror::Error;
 ///
 /// Conversions between the two types are provided via `From` impls.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SampleRate(pub u32);
+pub struct SampleRate(u32);
 
 impl SampleRate {
     pub const CD_QUALITY: Self = Self(44100);
@@ -21,6 +21,16 @@ impl SampleRate {
     /// The highest sample rate the engine supports — the engine-wide ceiling.
     /// Kept in sync with the DSP [`crate::types::SampleRate::MAX_SUPPORTED`].
     pub const MAX_SUPPORTED: Self = Self(192_000);
+
+    #[must_use]
+    pub const fn new(rate: u32) -> Self {
+        Self(rate)
+    }
+
+    #[must_use]
+    pub const fn as_u32(self) -> u32 {
+        self.0
+    }
 
     #[inline]
     pub fn as_f32(self) -> f32 {
@@ -78,7 +88,7 @@ pub const MAX_BLOCK_SIZE: usize = 4096;
 
 /// Buffer size in frames.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct BufferSize(pub u32);
+pub struct BufferSize(u32);
 
 impl BufferSize {
     pub const TINY: Self = Self(64);
@@ -86,6 +96,16 @@ impl BufferSize {
     pub const MEDIUM: Self = Self(256);
     pub const LARGE: Self = Self(512);
     pub const VERY_LARGE: Self = Self(1024);
+
+    #[must_use]
+    pub const fn new(size: u32) -> Self {
+        Self(size)
+    }
+
+    #[must_use]
+    pub const fn as_u32(self) -> u32 {
+        self.0
+    }
 
     /// Calculate latency for this buffer size at given sample rate.
     #[inline]
@@ -256,7 +276,7 @@ mod tests {
         // so a change here is a deliberate, reviewed contract change — not a silent
         // desync against a hand-copied literal elsewhere.
         assert_eq!(MAX_BLOCK_SIZE, 4096);
-        assert_eq!(SampleRate::MAX_SUPPORTED.0, 192_000);
+        assert_eq!(SampleRate::MAX_SUPPORTED.as_u32(), 192_000);
         assert_eq!(
             crate::types::SampleRate::MAX_SUPPORTED.as_f32(),
             192_000.0,

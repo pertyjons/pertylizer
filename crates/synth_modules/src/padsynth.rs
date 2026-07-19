@@ -512,7 +512,7 @@ mod tests {
     fn padsynth_tracks_voice_pitch() {
         let sr = SampleRate::DVD_QUALITY;
         let srf = sr.as_f32();
-        let note = MidiNote(45); // A2 ≈ 110 Hz → 2F = 220, alias-free
+        let note = MidiNote::new(45); // A2 ≈ 110 Hz → 2F = 220, alias-free
         let f = note.to_frequency().as_f32();
         let cents = |est: f32, target: f32| 1200.0 * (est / target).log2();
 
@@ -547,8 +547,8 @@ mod tests {
     fn phase_increment_follows_render_rate_not_note_on_rate() {
         // Construct at the 48 kHz default, trigger A4 while still at 48 kHz...
         let mut pad = PadSynth::new();
-        pad.note_on(MidiNote(69), Velocity::MAX); // A4 = 440 Hz
-        let f = MidiNote(69).to_frequency().as_f32() as f64;
+        pad.note_on(MidiNote::new(69), Velocity::MAX); // A4 = 440 Hz
+        let f = MidiNote::new(69).to_frequency().as_f32() as f64;
 
         // ...then render the first block at 96 kHz.
         let ctx = ProcessContext {

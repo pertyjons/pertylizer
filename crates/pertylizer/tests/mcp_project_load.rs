@@ -83,8 +83,8 @@ fn build_headless_rig() -> HeadlessRig {
     // Drive a process tick so SetSong is consumed and any startup commands
     // settle. Mirrors how main.rs warms the engine before the first MCP call.
     let stream_info = synth_core::StreamInfo {
-        sample_rate: HwSampleRate(TEST_SR),
-        buffer_size: synth_core::BufferSize(256),
+        sample_rate: HwSampleRate::new(TEST_SR),
+        buffer_size: synth_core::BufferSize::new(256),
         channels: synth_core::ChannelCount::Stereo,
         output_latency: std::time::Duration::ZERO,
         input_latency: None,
@@ -93,7 +93,7 @@ fn build_headless_rig() -> HeadlessRig {
 
     let mut block = vec![0.0f32; 256 * 2];
     let ctx = AudioCallbackContext {
-        sample_rate: HwSampleRate(TEST_SR),
+        sample_rate: HwSampleRate::new(TEST_SR),
         frames: 256,
         channels: 2,
         stream_time: 0.0,
@@ -150,7 +150,7 @@ fn set_song_tempo_via_bridge_mutates_shared_song() {
     );
 
     rig.bridge
-        .set_song_tempo(144.0)
+        .set_song_tempo(144.0.into())
         .expect("set_song_tempo should succeed via shared state");
 
     let after = rig.song.read().default_tempo.as_f32();
@@ -206,7 +206,7 @@ fn new_project_works_without_gui() {
 
     // First poke the song so we have a baseline change to revert.
     rig.bridge
-        .set_song_tempo(99.0)
+        .set_song_tempo(99.0.into())
         .expect("set_song_tempo before reset");
 
     let before = rig._shared.project_revision.load(Ordering::Acquire);

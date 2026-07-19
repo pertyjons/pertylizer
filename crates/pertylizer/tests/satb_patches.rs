@@ -31,8 +31,8 @@ fn render_rms(patch: &Patch) -> f32 {
         .expect("add instrument");
 
     let stream_info = synth_core::StreamInfo {
-        sample_rate: HwSampleRate(TEST_SR),
-        buffer_size: synth_core::BufferSize(256),
+        sample_rate: HwSampleRate::new(TEST_SR),
+        buffer_size: synth_core::BufferSize::new(256),
         channels: synth_core::ChannelCount::Stereo,
         output_latency: std::time::Duration::ZERO,
         input_latency: None,
@@ -41,7 +41,7 @@ fn render_rms(patch: &Patch) -> f32 {
 
     let mut block = vec![0.0f32; 256 * 2];
     let context = AudioCallbackContext {
-        sample_rate: HwSampleRate(TEST_SR),
+        sample_rate: HwSampleRate::new(TEST_SR),
         frames: 256,
         channels: 2,
         stream_time: 0.0,

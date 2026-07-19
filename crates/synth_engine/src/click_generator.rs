@@ -6,13 +6,13 @@
 use synth_core::{Gain, Hertz, Milliseconds, Phase, SampleCount, SampleRate};
 
 /// Frequency for accented clicks (beat 1).
-const ACCENT_FREQ: Hertz = Hertz(1200.0);
+const ACCENT_FREQ: Hertz = Hertz::new(1200.0);
 /// Frequency for normal clicks.
-const NORMAL_FREQ: Hertz = Hertz(800.0);
+const NORMAL_FREQ: Hertz = Hertz::new(800.0);
 /// Duration of accented click.
-const ACCENT_DURATION: Milliseconds = Milliseconds(40.0);
+const ACCENT_DURATION: Milliseconds = Milliseconds::new(40.0);
 /// Duration of normal click.
-const NORMAL_DURATION: Milliseconds = Milliseconds(30.0);
+const NORMAL_DURATION: Milliseconds = Milliseconds::new(30.0);
 
 /// Generates metronome click sounds.
 ///

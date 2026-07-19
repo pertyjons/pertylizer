@@ -110,7 +110,7 @@ impl TestRig {
     fn drain(&mut self, blocks: usize) {
         let mut block = vec![0.0f32; 256 * 2];
         let context = AudioCallbackContext {
-            sample_rate: HwSampleRate(TEST_SR),
+            sample_rate: HwSampleRate::new(TEST_SR),
             frames: 256,
             channels: 2,
             stream_time: 0.0,
@@ -134,8 +134,8 @@ fn setup_with_patch(patch: &Patch) -> TestRig {
     // Drive on_stream_start + a couple of process() ticks so commands drain
     // and the shared_graph snapshot is populated with the instrument.
     let stream_info = synth_core::StreamInfo {
-        sample_rate: HwSampleRate(TEST_SR),
-        buffer_size: synth_core::BufferSize(256),
+        sample_rate: HwSampleRate::new(TEST_SR),
+        buffer_size: synth_core::BufferSize::new(256),
         channels: synth_core::ChannelCount::Stereo,
         output_latency: std::time::Duration::ZERO,
         input_latency: None,
@@ -144,7 +144,7 @@ fn setup_with_patch(patch: &Patch) -> TestRig {
 
     let mut block = vec![0.0f32; 256 * 2];
     let context = AudioCallbackContext {
-        sample_rate: HwSampleRate(TEST_SR),
+        sample_rate: HwSampleRate::new(TEST_SR),
         frames: 256,
         channels: 2,
         stream_time: 0.0,
@@ -322,8 +322,8 @@ fn missing_instrument_returns_error() {
     let (mut engine, handle) = SynthEngine::new();
     let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
     let stream_info = synth_core::StreamInfo {
-        sample_rate: HwSampleRate(44_100),
-        buffer_size: synth_core::BufferSize(256),
+        sample_rate: HwSampleRate::new(44_100),
+        buffer_size: synth_core::BufferSize::new(256),
         channels: synth_core::ChannelCount::Stereo,
         output_latency: std::time::Duration::ZERO,
         input_latency: None,

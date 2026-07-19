@@ -17,7 +17,12 @@ use rmcp::model::{
 };
 use rmcp::service::{NotificationContext, RequestContext};
 use rmcp::{ErrorData, RoleServer, ServerHandler, tool, tool_handler, tool_router};
-use synth_core::InstrumentId;
+use synth_core::{
+    BipolarValue, Bpm, Gain, InstrumentId, MidiChannel, MidiNote, NormalizedValue, Semitones,
+};
+use synth_sequencer::{
+    ModGraphId, ModNodeId, NoteGraphId, NoteId, NoteModuleId, PatternId, ReturnBusId, Tick, TrackId,
+};
 
 use crate::bridge::SynthBridge;
 use crate::error::McpBridgeError;
@@ -46,9 +51,9 @@ fn to_json<T: serde::Serialize>(value: &T) -> String {
 
 fn arrangement_tick(
     beat: Option<f32>,
-    tick: Option<u64>,
+    tick: Option<Tick>,
     field: &str,
-) -> Result<u64, McpBridgeError> {
+) -> Result<Tick, McpBridgeError> {
     match (beat, tick) {
         (Some(_), Some(_)) | (None, None) => Err(McpBridgeError::Other(format!(
             "set exactly one of {field}_beat or {field}_tick"
@@ -57,7 +62,9 @@ fn arrangement_tick(
         (Some(beat), None) => {
             validate_range("arrangement beat", beat, 0.0, 9999.0)?;
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            Ok((beat * synth_sequencer::TICKS_PER_QUARTER as f32).round() as u64)
+            Ok(Tick(
+                (beat * synth_sequencer::TICKS_PER_QUARTER as f32).round() as u64,
+            ))
         }
     }
 }
@@ -161,10 +168,7 @@ where
     })
 }
 
-fn validate_midi_note(note: u8) -> Result<(), McpBridgeError> {
-    if note > 127 {
-        return Err(McpBridgeError::InvalidMidiNote(note));
-    }
+fn validate_midi_note(_note: MidiNote) -> Result<(), McpBridgeError> {
     Ok(())
 }
 
@@ -175,10 +179,7 @@ fn validate_velocity(velocity: u8) -> Result<(), McpBridgeError> {
     Ok(())
 }
 
-fn validate_midi_channel(channel: u8) -> Result<(), McpBridgeError> {
-    if !(1..=16).contains(&channel) {
-        return Err(McpBridgeError::InvalidMidiChannel(channel));
-    }
+fn validate_midi_channel(_channel: MidiChannel) -> Result<(), McpBridgeError> {
     Ok(())
 }
 
@@ -208,7 +209,7 @@ fn validate_name(kind: &'static str, name: &str) -> Result<(), McpBridgeError> {
 
 /// Validate note fields that are always required (add_note, etc.).
 fn validate_note_fields(
-    pitch: u8,
+    pitch: MidiNote,
     velocity: u8,
     start_beat: f32,
     duration_beats: f32,
@@ -222,7 +223,7 @@ fn validate_note_fields(
 
 /// Validate optional note update fields.
 fn validate_note_update_fields(
-    pitch: Option<u8>,
+    pitch: Option<MidiNote>,
     velocity: Option<u8>,
     start_beat: Option<f32>,
     duration_beats: Option<f32>,
@@ -299,9 +300,9 @@ fn validate_time_signature(numerator: u8, denominator: u8) -> Result<(), McpBrid
 /// Validate fields common to `BuildInstrumentParam` / `InstrumentDefInput`.
 fn validate_build_instrument_fields(
     name: &str,
-    midi_channel: Option<u8>,
-    volume: Option<f32>,
-    pan: Option<f32>,
+    midi_channel: Option<MidiChannel>,
+    volume: Option<Gain>,
+    pan: Option<BipolarValue>,
     modules: &[ModuleDefInput],
     connections: Option<&[ConnectionDefInput]>,
 ) -> Result<(), McpBridgeError> {
@@ -310,10 +311,10 @@ fn validate_build_instrument_fields(
         validate_midi_channel(ch)?;
     }
     if let Some(v) = volume {
-        validate_range("volume", v, 0.0, 2.0)?;
+        validate_range("volume", v.as_f32(), 0.0, 2.0)?;
     }
     if let Some(p) = pan {
-        validate_range("pan", p, -1.0, 1.0)?;
+        validate_range("pan", p.as_f32(), -1.0, 1.0)?;
     }
     if let Some(conns) = connections {
         validate_connection_indices(conns, modules.len())?;
@@ -334,7 +335,7 @@ fn validate_note_input(n: &NoteInput) -> Result<(), McpBridgeError> {
     // main pitch being validated).
     if let Some(g) = &n.glide {
         if let Some(p) = g.from_pitch {
-            validate_midi_note(p)?;
+            validate_midi_note(MidiNote::new(p))?;
         }
         if let Some(t) = g.time_ms {
             validate_range("glide.time_ms", t, 0.0, 60_000.0)?;
@@ -855,7 +856,7 @@ pub struct NoteOnInput {
         description = "MIDI note number (0-127, where 60 = middle C)",
         range(min = 0, max = 127)
     )]
-    pub note: u8,
+    pub note: MidiNote,
     #[schemars(
         description = "Velocity (0-127, where 127 = maximum)",
         range(min = 0, max = 127)
@@ -865,7 +866,7 @@ pub struct NoteOnInput {
         description = "MIDI channel (1-16, default 1)",
         range(min = 1, max = 16)
     )]
-    pub channel: Option<u8>,
+    pub channel: Option<MidiChannel>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -877,12 +878,12 @@ pub struct NoteOnParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct NoteOffInput {
     #[schemars(description = "MIDI note number (0-127)", range(min = 0, max = 127))]
-    pub note: u8,
+    pub note: MidiNote,
     #[schemars(
         description = "MIDI channel (1-16, default 1)",
         range(min = 1, max = 16)
     )]
-    pub channel: Option<u8>,
+    pub channel: Option<MidiChannel>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -899,7 +900,7 @@ pub struct PreviewNoteParam {
         description = "MIDI note number (0-127, where 60 = middle C)",
         range(min = 0, max = 127)
     )]
-    pub note: u8,
+    pub note: MidiNote,
     #[schemars(
         description = "Velocity (0-127, where 127 = maximum)",
         range(min = 0, max = 127)
@@ -923,7 +924,7 @@ pub struct ValidateInstrumentAudioParam {
         description = "MIDI note to test (default 60 = middle C)",
         range(min = 0, max = 127)
     )]
-    pub note: Option<u8>,
+    pub note: Option<MidiNote>,
     #[schemars(
         description = "Velocity (0-127, default 100)",
         range(min = 0, max = 127)
@@ -944,7 +945,7 @@ pub struct AnalyzeMixBusParam {
     #[schemars(
         description = "Absolute tick to start rendering from (default 0 = song beginning)."
     )]
-    pub start_tick: Option<u64>,
+    pub start_tick: Option<Tick>,
     #[schemars(
         description = "When true, return a per-track contribution breakdown (peak, RMS, LUFS, banded energy, clipped sample count, and RMS share) for every audible track whose placements overlap the rendered window — the same breakdown analyze_section provides, but for a duration window from start_tick rather than an explicit [start,end) range. Costs one extra offline render per track, so leave off for fast master-only analysis. Default false."
     )]
@@ -980,7 +981,7 @@ pub struct RenderToWavParam {
     #[schemars(
         description = "Absolute tick to start rendering from (default 0 = song beginning)."
     )]
-    pub start_tick: Option<u64>,
+    pub start_tick: Option<Tick>,
     #[schemars(
         description = "When set, solo only this instrument's tracks so the file contains that one instrument's contribution — a clean single-source fingerprint for external spectral matching. Omit for the full mix. Done against a clone, so your project's solo state is untouched."
     )]
@@ -1010,7 +1011,7 @@ pub struct AnalyzeSpectrumParam {
     #[schemars(
         description = "Absolute tick to start rendering from (default 0 = song beginning)."
     )]
-    pub start_tick: Option<u64>,
+    pub start_tick: Option<Tick>,
     #[schemars(
         description = "When set, solo only this instrument's tracks so the spectrum is that one instrument's contribution — a clean single-source fingerprint. Omit for the full mix. Done against a clone, so your project's solo state is untouched."
     )]
@@ -1052,7 +1053,7 @@ pub struct AnalyzeSpectrogramParam {
     #[schemars(
         description = "Absolute tick to start rendering from (default 0 = song beginning)."
     )]
-    pub start_tick: Option<u64>,
+    pub start_tick: Option<Tick>,
     #[schemars(
         description = "When set, solo only this instrument's tracks. Omit for the full mix. Done against a clone, so your project's solo state is untouched."
     )]
@@ -1156,7 +1157,7 @@ pub struct SpectrumSourceParam {
     )]
     pub instrument_id: Option<InstrumentId>,
     #[schemars(description = "(Render source only) absolute start tick (default 0).")]
-    pub start_tick: Option<u64>,
+    pub start_tick: Option<Tick>,
     #[schemars(
         description = "(Render source only) how many seconds to render (default 10.0, max 300.0)."
     )]
@@ -1280,7 +1281,7 @@ pub struct AnalyzeMasterChainParam {
     #[schemars(
         description = "Absolute tick to start rendering from (default 0 = song beginning)."
     )]
-    pub start_tick: Option<u64>,
+    pub start_tick: Option<Tick>,
     #[schemars(
         description = "Feed the return-bus wet signal (send/return reverbs, delays, …) into the master-chain input. When false the return busses are summed dry. The master effect chain itself is ALWAYS measured regardless of this flag — it is the subject of the analysis. Default false."
     )]
@@ -1300,7 +1301,7 @@ pub struct AnalyzeReturnBussesParam {
     #[schemars(
         description = "Absolute tick to start rendering from (default 0 = song beginning)."
     )]
-    pub start_tick: Option<u64>,
+    pub start_tick: Option<Tick>,
     #[schemars(
         description = "Also load the master effect chain so each return's contribution is measured through the processed master output rather than the raw pre-master sum. The return-bus effect chains themselves are ALWAYS reconstructed — they are the subject of the analysis. Default false."
     )]
@@ -1324,7 +1325,7 @@ pub struct CompareMixBeforeAfterParam {
     #[schemars(
         description = "Capture only: absolute tick to start rendering from (default 0). Ignored on compare."
     )]
-    pub start_tick: Option<u64>,
+    pub start_tick: Option<Tick>,
     #[schemars(
         description = "Capture only: a label for the baseline (e.g. 'before EQ'). Defaults to 'baseline'. Ignored on compare."
     )]
@@ -1360,15 +1361,15 @@ pub struct AutoGainStageParam {
     #[schemars(
         description = "Absolute tick to start measuring from (default 0 = song beginning)."
     )]
-    pub start_tick: Option<u64>,
+    pub start_tick: Option<Tick>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AnalyzeSectionParam {
     #[schemars(description = "Absolute tick where the section starts (inclusive).")]
-    pub start_tick: u64,
+    pub start_tick: Tick,
     #[schemars(description = "Absolute tick where the section ends (exclusive).")]
-    pub end_tick: u64,
+    pub end_tick: Tick,
     #[schemars(
         description = "When true, return a per-track contribution breakdown (peak, RMS, LUFS, banded energy, clipped sample count, and RMS share) for every audible track whose placements overlap the section. Costs one extra offline render per track, so leave off for fast master-only analysis and turn on when investigating which track is clipping, dominating, or masking. Default false."
     )]
@@ -1396,11 +1397,11 @@ pub struct AnalyzeMaskingMatrixParam {
     #[schemars(
         description = "Arrangement-mode start tick (inclusive, absolute). Defaults to 0 (song beginning)."
     )]
-    pub arrangement_start_tick: Option<u64>,
+    pub arrangement_start_tick: Option<Tick>,
     #[schemars(
         description = "Arrangement-mode end tick (exclusive, absolute). Defaults to the full arrangement length."
     )]
-    pub arrangement_end_tick: Option<u64>,
+    pub arrangement_end_tick: Option<Tick>,
     #[schemars(
         description = "Maximum pairs to return, sorted by descending conflict_score (default 20, clamped to [1, 200]). The pair matrix is O(N²) in audible-track count, so the full list explodes the response size — only the top conflicts are usually actionable. `total_pair_count` in the result still reflects the full pair count."
     )]
@@ -1428,15 +1429,15 @@ pub struct AnalyzeHarmonyParam {
     #[schemars(
         description = "Pattern ID to analyze. When set, the arrangement_* fields are ignored and analysis runs on that pattern's notes in pattern-relative ticks. Leave unset to analyze the arrangement instead."
     )]
-    pub pattern_id: Option<u32>,
+    pub pattern_id: Option<PatternId>,
     #[schemars(
         description = "Arrangement-mode start tick (inclusive, absolute). Defaults to 0 (song beginning). Ignored when pattern_id is set."
     )]
-    pub arrangement_start_tick: Option<u64>,
+    pub arrangement_start_tick: Option<Tick>,
     #[schemars(
         description = "Arrangement-mode end tick (exclusive, absolute). Defaults to the full arrangement length. Ignored when pattern_id is set."
     )]
-    pub arrangement_end_tick: Option<u64>,
+    pub arrangement_end_tick: Option<Tick>,
     #[schemars(
         description = "Chord-detection window size in ticks (default 960 = one quarter note at 960 PPQN). Smaller values produce more, finer chord events; larger values aggregate."
     )]
@@ -1448,13 +1449,13 @@ pub struct AnalyzeHarmonyParam {
     #[schemars(
         description = "Explicit list of track IDs to exclude from chord identification, e.g. for tracks with category 'Uncategorized' that are nonetheless percussion. Combined with exclude_drums. Arrangement scope only."
     )]
-    pub exclude_track_ids: Option<Vec<u16>>,
+    pub exclude_track_ids: Option<Vec<TrackId>>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AnalyzePatternParam {
     #[schemars(description = "Pattern ID to analyze.")]
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1496,7 +1497,7 @@ pub struct AnalyzeVelocityResponseParam {
         description = "MIDI note to hold across the velocity sweep (0-127).",
         range(min = 0, max = 127)
     )]
-    pub note: u8,
+    pub note: MidiNote,
     #[schemars(
         description = "Lowest velocity in the sweep (1-127, default 1).",
         range(min = 1, max = 127)
@@ -1563,11 +1564,11 @@ pub struct CreateChordProgressionPatternParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct TransposeNotesParam {
     #[schemars(description = "Pattern to transpose.")]
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     #[schemars(
         description = "Signed semitone shift (e.g. +5 = up a fourth, -12 = down an octave)."
     )]
-    pub semitones: i32,
+    pub semitones: Semitones,
     #[schemars(
         description = "Optional scale-constraint tonic (0..12, C = 0). When both scale_tonic and scale_name are set, any transposed pitch that lands off-scale is snapped to the nearest in-scale pitch."
     )]
@@ -1585,7 +1586,7 @@ pub struct TransposeNotesParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct QuantizeNotesToScaleParam {
     #[schemars(description = "Pattern to operate on.")]
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     #[schemars(description = "Scale tonic pitch class (0..12, C = 0).")]
     pub scale_tonic: u8,
     #[schemars(
@@ -1601,7 +1602,7 @@ pub struct QuantizeNotesToScaleParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct QuantizeNotesToGridParam {
     #[schemars(description = "Pattern to operate on.")]
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     #[schemars(
         description = "Grid resolution in ticks (e.g. 240 = sixteenth at 960 PPQN, 480 = eighth, 960 = quarter). Must be > 0; pass 0 to return early without changes."
     )]
@@ -1629,15 +1630,15 @@ pub struct AnalyzeDrumGrooveParam {
     #[schemars(
         description = "Pattern ID to analyze as a drum pattern. When set, the arrangement_* fields are ignored and the analyzer treats every note in the pattern as a drum hit (no drum-track filtering)."
     )]
-    pub pattern_id: Option<u32>,
+    pub pattern_id: Option<PatternId>,
     #[schemars(
         description = "Arrangement-mode start tick (inclusive, absolute). Defaults to 0. Ignored when pattern_id is set."
     )]
-    pub arrangement_start_tick: Option<u64>,
+    pub arrangement_start_tick: Option<Tick>,
     #[schemars(
         description = "Arrangement-mode end tick (exclusive, absolute). Defaults to the full arrangement length. Ignored when pattern_id is set."
     )]
-    pub arrangement_end_tick: Option<u64>,
+    pub arrangement_end_tick: Option<Tick>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1645,15 +1646,15 @@ pub struct AnalyzeHarmonicFunctionParam {
     #[schemars(
         description = "Pattern ID to analyze. When set, the arrangement_* fields are ignored and analysis runs on that pattern's notes in pattern-relative ticks. Leave unset to analyze the arrangement instead."
     )]
-    pub pattern_id: Option<u32>,
+    pub pattern_id: Option<PatternId>,
     #[schemars(
         description = "Arrangement-mode start tick (inclusive, absolute). Defaults to 0 (song beginning). Ignored when pattern_id is set."
     )]
-    pub arrangement_start_tick: Option<u64>,
+    pub arrangement_start_tick: Option<Tick>,
     #[schemars(
         description = "Arrangement-mode end tick (exclusive, absolute). Defaults to the full arrangement length. Ignored when pattern_id is set."
     )]
-    pub arrangement_end_tick: Option<u64>,
+    pub arrangement_end_tick: Option<Tick>,
     #[schemars(
         description = "Chord-detection window size in ticks (default 960 = one quarter note at 960 PPQN, or 3840 = one bar in arrangement scope). Smaller values produce more, finer chord events; larger values aggregate."
     )]
@@ -1665,7 +1666,7 @@ pub struct AnalyzeHarmonicFunctionParam {
     #[schemars(
         description = "Explicit list of track IDs to exclude from chord identification, combined with exclude_drums. Arrangement scope only."
     )]
-    pub exclude_track_ids: Option<Vec<u16>>,
+    pub exclude_track_ids: Option<Vec<TrackId>>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1673,15 +1674,15 @@ pub struct AnalyzeArrangementParam {
     #[schemars(
         description = "Pattern ID to analyze. When set, the analyzer runs over the pattern's bars (in pattern-relative ticks) instead of the arrangement. arrangement_* fields are ignored when this is set."
     )]
-    pub pattern_id: Option<u32>,
+    pub pattern_id: Option<PatternId>,
     #[schemars(
         description = "Arrangement-mode start tick (inclusive, absolute). Defaults to 0. Ignored when pattern_id is set."
     )]
-    pub arrangement_start_tick: Option<u64>,
+    pub arrangement_start_tick: Option<Tick>,
     #[schemars(
         description = "Arrangement-mode end tick (exclusive, absolute). Defaults to the full arrangement length. Ignored when pattern_id is set."
     )]
-    pub arrangement_end_tick: Option<u64>,
+    pub arrangement_end_tick: Option<Tick>,
     #[schemars(
         description = "Cosine similarity above which two bars are treated as 'the same' for section labeling. Default 0.85 — lower for looser grouping, higher for stricter."
     )]
@@ -1697,19 +1698,19 @@ pub struct AnalyzeArrangementParam {
     #[schemars(
         description = "Explicit list of track IDs to exclude, combined with exclude_drums. Arrangement scope only."
     )]
-    pub exclude_track_ids: Option<Vec<u16>>,
+    pub exclude_track_ids: Option<Vec<TrackId>>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AnalyzeFormMapParam {
     #[schemars(description = "Pattern ID. When set, the arrangement_* fields are ignored.")]
-    pub pattern_id: Option<u32>,
+    pub pattern_id: Option<PatternId>,
     #[schemars(description = "Arrangement-mode start tick (inclusive, absolute). Defaults to 0.")]
-    pub arrangement_start_tick: Option<u64>,
+    pub arrangement_start_tick: Option<Tick>,
     #[schemars(
         description = "Arrangement-mode end tick (exclusive, absolute). Defaults to the full arrangement length."
     )]
-    pub arrangement_end_tick: Option<u64>,
+    pub arrangement_end_tick: Option<Tick>,
     #[schemars(
         description = "Cosine similarity above which two bars are treated as 'the same' for section labeling (default 0.85)."
     )]
@@ -1725,19 +1726,19 @@ pub struct AnalyzeFormMapParam {
     #[schemars(
         description = "Explicit list of track IDs to exclude from feature extraction. Arrangement scope only."
     )]
-    pub exclude_track_ids: Option<Vec<u16>>,
+    pub exclude_track_ids: Option<Vec<TrackId>>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct FindMotifsParam {
     #[schemars(description = "Pattern ID. When set, arrangement_* fields are ignored.")]
-    pub pattern_id: Option<u32>,
+    pub pattern_id: Option<PatternId>,
     #[schemars(description = "Arrangement-mode start tick (inclusive, absolute). Defaults to 0.")]
-    pub arrangement_start_tick: Option<u64>,
+    pub arrangement_start_tick: Option<Tick>,
     #[schemars(
         description = "Arrangement-mode end tick (exclusive, absolute). Defaults to the full arrangement length."
     )]
-    pub arrangement_end_tick: Option<u64>,
+    pub arrangement_end_tick: Option<Tick>,
     #[schemars(
         description = "Shortest motif length in intervals (= notes − 1). Default 3 = 4-note phrases. Clamped to [2, 12]."
     )]
@@ -1763,19 +1764,19 @@ pub struct FindMotifsParam {
     )]
     pub exclude_drums: Option<bool>,
     #[schemars(description = "Explicit list of track IDs to exclude. Arrangement scope only.")]
-    pub exclude_track_ids: Option<Vec<u16>>,
+    pub exclude_track_ids: Option<Vec<TrackId>>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AnalyzeHookStrengthParam {
     #[schemars(description = "Pattern ID. When set, arrangement_* fields are ignored.")]
-    pub pattern_id: Option<u32>,
+    pub pattern_id: Option<PatternId>,
     #[schemars(description = "Arrangement-mode start tick (inclusive, absolute). Defaults to 0.")]
-    pub arrangement_start_tick: Option<u64>,
+    pub arrangement_start_tick: Option<Tick>,
     #[schemars(
         description = "Arrangement-mode end tick (exclusive, absolute). Defaults to the full arrangement length."
     )]
-    pub arrangement_end_tick: Option<u64>,
+    pub arrangement_end_tick: Option<Tick>,
     #[schemars(
         description = "Shortest motif length in intervals to consider for the hook score (default 3 = 4-note phrases). Shorter motifs are too generic to be hooks."
     )]
@@ -1791,19 +1792,19 @@ pub struct AnalyzeHookStrengthParam {
     #[schemars(description = "Exclude drum tracks (default true).")]
     pub exclude_drums: Option<bool>,
     #[schemars(description = "Explicit list of track IDs to exclude. Arrangement scope only.")]
-    pub exclude_track_ids: Option<Vec<u16>>,
+    pub exclude_track_ids: Option<Vec<TrackId>>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AnalyzeTensionCurveParam {
     #[schemars(description = "Pattern ID. When set, arrangement_* fields are ignored.")]
-    pub pattern_id: Option<u32>,
+    pub pattern_id: Option<PatternId>,
     #[schemars(description = "Arrangement-mode start tick (inclusive, absolute). Defaults to 0.")]
-    pub arrangement_start_tick: Option<u64>,
+    pub arrangement_start_tick: Option<Tick>,
     #[schemars(
         description = "Arrangement-mode end tick (exclusive, absolute). Defaults to the full arrangement length."
     )]
-    pub arrangement_end_tick: Option<u64>,
+    pub arrangement_end_tick: Option<Tick>,
     #[schemars(
         description = "If true, render the scope once and slice the buffer per bar to compute loudness, brightness, band entropy, and stereo width axes. Defaults to true in arrangement scope and false in pattern scope. Audio mode costs roughly one `analyze_section` call."
     )]
@@ -1817,19 +1818,19 @@ pub struct AnalyzeTensionCurveParam {
     #[schemars(description = "Exclude drum tracks from the melodic note stream (default true).")]
     pub exclude_drums: Option<bool>,
     #[schemars(description = "Explicit list of track IDs to exclude. Arrangement scope only.")]
-    pub exclude_track_ids: Option<Vec<u16>>,
+    pub exclude_track_ids: Option<Vec<TrackId>>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SuggestMusicFixesParam {
     #[schemars(description = "Pattern ID. When set, arrangement_* fields are ignored.")]
-    pub pattern_id: Option<u32>,
+    pub pattern_id: Option<PatternId>,
     #[schemars(description = "Arrangement-mode start tick (inclusive, absolute). Defaults to 0.")]
-    pub arrangement_start_tick: Option<u64>,
+    pub arrangement_start_tick: Option<Tick>,
     #[schemars(
         description = "Arrangement-mode end tick (exclusive, absolute). Defaults to the full arrangement length."
     )]
-    pub arrangement_end_tick: Option<u64>,
+    pub arrangement_end_tick: Option<Tick>,
     #[schemars(
         description = "Categories to include. Subset of: 'harmony', 'mix', 'groove', 'arrangement', 'composition', 'patch'. Empty/null runs everything."
     )]
@@ -1843,7 +1844,7 @@ pub struct SuggestMusicFixesParam {
     #[schemars(description = "Exclude drum tracks from melodic-axis rules (default true).")]
     pub exclude_drums: Option<bool>,
     #[schemars(description = "Explicit list of track IDs to exclude. Arrangement scope only.")]
-    pub exclude_track_ids: Option<Vec<u16>>,
+    pub exclude_track_ids: Option<Vec<TrackId>>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -1851,15 +1852,15 @@ pub struct AnalyzeBassDrumLockParam {
     #[schemars(
         description = "Pattern ID to analyze. When set, the analyzer treats notes with GM kick MIDI numbers (35, 36) as kicks and everything else as bass. Useful for combined rhythm-section patterns. Ignored when arrangement_* fields are set."
     )]
-    pub pattern_id: Option<u32>,
+    pub pattern_id: Option<PatternId>,
     #[schemars(
         description = "Arrangement-mode start tick (inclusive, absolute). Defaults to 0. Ignored when pattern_id is set."
     )]
-    pub arrangement_start_tick: Option<u64>,
+    pub arrangement_start_tick: Option<Tick>,
     #[schemars(
         description = "Arrangement-mode end tick (exclusive, absolute). Defaults to the full arrangement length. Ignored when pattern_id is set."
     )]
-    pub arrangement_end_tick: Option<u64>,
+    pub arrangement_end_tick: Option<Tick>,
     #[schemars(
         description = "Maximum |Δtick| between a kick onset and a bass onset that still counts as a match. Default 120 (±1/32-note at 960 PPQN). Clamped to [30, 960]."
     )]
@@ -1874,7 +1875,7 @@ pub struct AnalyzeNoteParam {
         description = "MIDI note number (0-127, where 60 = middle C)",
         range(min = 0, max = 127)
     )]
-    pub note: u8,
+    pub note: MidiNote,
     #[schemars(
         description = "Velocity (0-127, where 127 = maximum)",
         range(min = 0, max = 127)
@@ -2163,7 +2164,7 @@ pub struct SetSongDescriptionParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct PatternDescriptionInput {
     #[schemars(description = "Pattern ID to annotate")]
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     #[schemars(
         description = "Free-text description of the pattern's intent (e.g. \"chorus drop, \
         half-time feel\"). Pass \"\" to clear. Surfaces in list_patterns."
@@ -2180,7 +2181,7 @@ pub struct SetPatternDescriptionParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct TrackDescriptionInput {
     #[schemars(description = "Track ID to annotate")]
-    pub track_id: u16,
+    pub track_id: TrackId,
     #[schemars(
         description = "Free-text description of the track's role (e.g. \"kick layer\", \
         \"sidechain source\"). Pass \"\" to clear. Surfaces in list_tracks."
@@ -2197,7 +2198,7 @@ pub struct SetTrackDescriptionParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct TrackColorInput {
     #[schemars(description = "Track ID to recolor")]
-    pub track_id: u16,
+    pub track_id: TrackId,
     #[schemars(
         description = "Display color as \"#RRGGBB\" or \"#RRGGBBAA\" (alpha ignored). \
         Lets you paint the arrangement so it is visually scannable. Surfaces in list_tracks."
@@ -2256,12 +2257,12 @@ pub struct InstrumentMixerInput {
     #[schemars(
         description = "Volume level (0.0 = silent, 1.0 = unity, 2.0 = max). Omit to leave unchanged."
     )]
-    pub volume: Option<f32>,
+    pub volume: Option<Gain>,
     #[serde(default)]
     #[schemars(
         description = "Pan position (-1.0 = left, 0.0 = center, 1.0 = right). Omit to leave unchanged."
     )]
-    pub pan: Option<f32>,
+    pub pan: Option<BipolarValue>,
     #[serde(default)]
     #[schemars(description = "Whether the instrument should be muted. Omit to leave unchanged.")]
     pub muted: Option<bool>,
@@ -2335,7 +2336,7 @@ pub struct InstrumentMidiChannelInput {
     #[schemars(description = "Instrument ID")]
     pub instrument_id: InstrumentId,
     #[schemars(description = "MIDI channel (1-16)", range(min = 1, max = 16))]
-    pub channel: u8,
+    pub channel: MidiChannel,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2364,15 +2365,15 @@ pub struct SetInstrumentCategoryParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetSongTempoParam {
     #[schemars(description = "Tempo in BPM (e.g. 120.0)")]
-    pub bpm: f32,
+    pub bpm: Bpm,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct TempoPointParam {
     #[schemars(description = "Absolute position in ticks (960 ticks = 1 quarter note)")]
-    pub tick: u64,
+    pub tick: Tick,
     #[schemars(description = "Tempo in BPM at this point (20-999)")]
-    pub bpm: f32,
+    pub bpm: Bpm,
     #[serde(default)]
     #[schemars(
         description = "When true, ramp linearly from this point's bpm toward the next point's bpm (accelerando/ritardando), reaching it at the next point. When false (default), a step change. A ramp with no following point holds constant."
@@ -2391,7 +2392,7 @@ pub struct SetTempoAtParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct RemoveTempoAtParam {
     #[schemars(description = "Absolute ticks whose tempo change should be removed")]
-    pub ticks: Vec<u64>,
+    pub ticks: Vec<Tick>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2413,7 +2414,7 @@ pub struct SetSongNameParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct PatternIdParam {
     #[schemars(description = "Pattern ID")]
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2421,15 +2422,15 @@ pub struct DeletePatternsParam {
     #[schemars(
         description = "Pattern IDs to delete (one or many). Also removes all placements of each pattern."
     )]
-    pub pattern_ids: Vec<u32>,
+    pub pattern_ids: Vec<PatternId>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct RemoveNotesParam {
     #[schemars(description = "Pattern ID")]
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     #[schemars(description = "Note IDs to remove (one or many)")]
-    pub note_ids: Vec<u64>,
+    pub note_ids: Vec<NoteId>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2503,7 +2504,7 @@ pub struct NoteInput {
         description = "MIDI pitch (0-127, where 60 = middle C)",
         range(min = 0, max = 127)
     )]
-    pub pitch: u8,
+    pub pitch: MidiNote,
     #[schemars(description = "Start position in beats (0.0 = beginning of pattern)")]
     pub start_beat: f32,
     #[schemars(description = "Duration in beats (1.0 = quarter note, 0.5 = eighth note)")]
@@ -2570,7 +2571,7 @@ fn note_input_to_bridge(n: &NoteInput) -> crate::bridge::BridgeNoteData {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AddNotesParam {
     #[schemars(description = "Pattern ID to add notes to")]
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     #[schemars(description = "Array of notes to add")]
     pub notes: Vec<NoteInput>,
 }
@@ -2579,12 +2580,12 @@ pub struct AddNotesParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct NoteUpdateInput {
     #[schemars(description = "Note ID to update")]
-    pub note_id: u64,
+    pub note_id: NoteId,
     #[schemars(
         description = "New MIDI pitch (0-127), or null to keep current",
         range(min = 0, max = 127)
     )]
-    pub pitch: Option<u8>,
+    pub pitch: Option<MidiNote>,
     #[schemars(description = "New start position in beats, or null to keep current")]
     pub start_beat: Option<f32>,
     #[schemars(description = "New duration in beats, or null to keep current")]
@@ -2599,7 +2600,7 @@ pub struct NoteUpdateInput {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct UpdateNotesParam {
     #[schemars(description = "Pattern ID")]
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     #[schemars(description = "Array of note updates")]
     pub updates: Vec<NoteUpdateInput>,
 }
@@ -2607,7 +2608,7 @@ pub struct UpdateNotesParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ReplaceNotesParam {
     #[schemars(description = "Pattern ID to replace notes in (clears existing notes first)")]
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     #[schemars(description = "Array of new notes to insert")]
     pub notes: Vec<NoteInput>,
 }
@@ -2617,7 +2618,7 @@ pub struct ReplaceNotesParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct NoteGraphIdParam {
     #[schemars(description = "Note graph id (from list_note_graphs)")]
-    pub graph_id: u32,
+    pub graph_id: NoteGraphId,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2635,13 +2636,13 @@ pub struct DeleteNoteGraphParam {
     #[schemars(
         description = "Note graph ids to delete (one or many). Each delete clears every pattern reference to that graph."
     )]
-    pub graph_ids: Vec<u32>,
+    pub graph_ids: Vec<NoteGraphId>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AddNoteGraphModuleInput {
     #[schemars(description = "Note graph id to add the module to")]
-    pub graph_id: u32,
+    pub graph_id: NoteGraphId,
     #[schemars(
         description = "Module as externally-tagged NoteModuleConfig JSON: one of {\"Processor\":{...}} (ScaleQuantize/Chord/Arpeggiator/Humanize), {\"Euclidean\":{...}}, {\"ProbabilityGate\":{...}}, {\"NoteLfo\":{...}}, {\"StepLfo\":{...}}, {\"NoteEnvelope\":{...}} (optional \"trigger\": \"SourceOnset\"|\"StreamOnset\"), {\"NoteScriptTransform\":{\"source\":\"...\"}} (a YAMS note_event script — set/compile the source afterwards with set_note_graph_script), {\"NoteDelay\":{...}} (decaying echoes; repeats clamp to 16 at playback), or {\"Ratchet\":{...}} (subdivides notes into retriggers; count clamps to 16). Read existing modules with get_note_graph to see the exact shape."
     )]
@@ -2659,9 +2660,9 @@ pub struct AddNoteGraphModuleParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetNoteGraphModuleInput {
     #[schemars(description = "Note graph id")]
-    pub graph_id: u32,
+    pub graph_id: NoteGraphId,
     #[schemars(description = "Module id to replace (from get_note_graph)")]
-    pub module_id: u32,
+    pub module_id: NoteModuleId,
     #[schemars(
         description = "Replacement module as externally-tagged NoteModuleConfig JSON (same shape as add_note_graph_module). The id and its connections are preserved."
     )]
@@ -2681,9 +2682,9 @@ pub struct SetNoteGraphModuleParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetNoteGraphScriptParam {
     #[schemars(description = "Note graph id")]
-    pub graph_id: u32,
+    pub graph_id: NoteGraphId,
     #[schemars(description = "NoteScriptTransform module id (from get_note_graph)")]
-    pub module_id: u32,
+    pub module_id: NoteModuleId,
     #[schemars(
         description = "YAMS note_event source. Runs per note (1:1). Read note_pitch/note_vel/note_dur/tick and value inputs in1..in4; assign out.pitch/out.vel/out.dur/out.gate. A negative out.vel drops the note; a negative out.dur restores 'plays until cut'. Empty source = pass-through. Example: `out.pitch = note_pitch + 12`."
     )]
@@ -2693,19 +2694,19 @@ pub struct SetNoteGraphScriptParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct RemoveNoteGraphModuleParam {
     #[schemars(description = "Note graph id")]
-    pub graph_id: u32,
+    pub graph_id: NoteGraphId,
     #[schemars(description = "Module id to remove (from get_note_graph)")]
-    pub module_id: u32,
+    pub module_id: NoteModuleId,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ConnectNoteGraphInput {
     #[schemars(description = "Note graph id")]
-    pub graph_id: u32,
+    pub graph_id: NoteGraphId,
     #[schemars(description = "Source (output-side) module id")]
-    pub from: u32,
+    pub from: NoteModuleId,
     #[schemars(description = "Destination (input-side) module id")]
-    pub to: u32,
+    pub to: NoteModuleId,
     #[schemars(
         description = "Port: 'note_stream' (the linear spine — one input and one output per node), 'value', or 'gate' (modulation into a value input port). Defaults to 'note_stream'."
     )]
@@ -2727,12 +2728,12 @@ pub struct ConnectNoteGraphParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct GetNoteGraphsParam {
     #[schemars(description = "Graph ids to read, or omit/null to read every graph")]
-    pub graph_ids: Option<Vec<u32>>,
+    pub graph_ids: Option<Vec<NoteGraphId>>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetNoteGraphMetadataInput {
-    pub graph_id: u32,
+    pub graph_id: NoteGraphId,
     pub name: Option<String>,
     pub description: Option<String>,
     #[schemars(description = "Replacement #rrggbb color; null/omitted keeps the current color")]
@@ -2747,11 +2748,11 @@ pub struct SetNoteGraphMetadataParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetPatternNoteGraphInput {
     #[schemars(description = "Pattern id to bind")]
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     #[schemars(
         description = "Note graph id to bind, or null/omitted to clear the binding (the pattern's raw notes + per-note ornaments then play)."
     )]
-    pub graph_id: Option<u32>,
+    pub graph_id: Option<NoteGraphId>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2763,13 +2764,13 @@ pub struct SetPatternNoteGraphParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetNoteNoteGraphInput {
     #[schemars(description = "Pattern id containing the note")]
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     #[schemars(description = "Note id (from list_notes)")]
-    pub note_id: u64,
+    pub note_id: NoteId,
     #[schemars(
         description = "Note graph id to bind for per-note articulation, or null/omitted to clear the binding."
     )]
-    pub graph_id: Option<u32>,
+    pub graph_id: Option<NoteGraphId>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2783,7 +2784,7 @@ pub struct SetNoteNoteGraphParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ModGraphIdParam {
     #[schemars(description = "Mod graph id (from list_mod_graphs)")]
-    pub graph_id: u32,
+    pub graph_id: ModGraphId,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2801,13 +2802,13 @@ pub struct CreateModGraphParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct DeleteModGraphParam {
     #[schemars(description = "Mod graph ids to delete (one or many).")]
-    pub graph_ids: Vec<u32>,
+    pub graph_ids: Vec<ModGraphId>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetModGraphScopeParam {
     #[schemars(description = "Mod graph id")]
-    pub graph_id: u32,
+    pub graph_id: ModGraphId,
     #[schemars(description = "New scope: 'global' or 'track'.")]
     pub scope: String,
 }
@@ -2815,17 +2816,17 @@ pub struct SetModGraphScopeParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AssignModGraphParam {
     #[schemars(description = "Mod graph id (must be 'track' scope to run)")]
-    pub graph_id: u32,
+    pub graph_id: ModGraphId,
     #[schemars(
         description = "Track ids to assign (replaces the current set; one running instance per track). Unknown ids are dropped."
     )]
-    pub tracks: Vec<u32>,
+    pub tracks: Vec<TrackId>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AddModGraphNodeInput {
     #[schemars(description = "Mod graph id to add the node to")]
-    pub graph_id: u32,
+    pub graph_id: ModGraphId,
     #[schemars(
         description = "Node as externally-tagged ModNodeConfig JSON. module_type uses the snake_case module key (e.g. 'lfo', 'mseg', 'envelope_follower'). Examples: {\"Module\":{\"module_type\":\"lfo\",\"params\":{\"rate\":2.0}}} (a hosted control-rate module), {\"Macro\":{\"name\":\"...\",\"value\":0.5}}, {\"Transport\":{\"source\":\"BeatPhase\"}}, {\"MidiCc\":{\"cc\":1}}, {\"AudioTap\":{\"source\":{\"Track\":0}}}, or {\"Target\":{\"target\":{\"Track\":{\"param\":\"Volume\"}},\"amount\":0.25}} (a routing sink; connect a source's out to its 'in' port). Read existing nodes with get_mod_graph to see the exact shape."
     )]
@@ -2843,21 +2844,21 @@ pub struct AddModGraphNodeParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct RemoveModGraphNodeParam {
     #[schemars(description = "Mod graph id")]
-    pub graph_id: u32,
+    pub graph_id: ModGraphId,
     #[schemars(description = "Node id to remove (drops every cable touching it)")]
-    pub node_id: u32,
+    pub node_id: ModNodeId,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ConnectModGraphInput {
     #[schemars(description = "Mod graph id")]
-    pub graph_id: u32,
+    pub graph_id: ModGraphId,
     #[schemars(description = "Source node id")]
-    pub from: u32,
+    pub from: ModNodeId,
     #[schemars(description = "Source output port name (e.g. 'out')")]
     pub from_port: String,
     #[schemars(description = "Destination node id")]
-    pub to: u32,
+    pub to: ModNodeId,
     #[schemars(description = "Destination input port name (e.g. 'in', 'rate_cv')")]
     pub to_port: String,
 }
@@ -2879,9 +2880,9 @@ pub struct DisconnectModGraphParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetModGraphNodeInput {
     #[schemars(description = "Mod graph id")]
-    pub graph_id: u32,
+    pub graph_id: ModGraphId,
     #[schemars(description = "Existing node id to edit in place")]
-    pub node_id: u32,
+    pub node_id: ModNodeId,
     #[schemars(
         description = "Replacement node as externally-tagged ModNodeConfig JSON (same shape as add_mod_graph_node). Keeps the node id and every cable touching it; the graph is re-validated (e.g. replacing a source that has outgoing cables with a Target is rejected). Read the current shape with get_mod_graph first."
     )]
@@ -2901,12 +2902,12 @@ pub struct SetModGraphNodeParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct GetModGraphsParam {
     #[schemars(description = "Graph ids to read, or omit/null to read every graph")]
-    pub graph_ids: Option<Vec<u32>>,
+    pub graph_ids: Option<Vec<ModGraphId>>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetModGraphMetadataInput {
-    pub graph_id: u32,
+    pub graph_id: ModGraphId,
     pub name: Option<String>,
     pub description: Option<String>,
     #[schemars(description = "Replacement #rrggbb color; null/omitted keeps the current color")]
@@ -2923,15 +2924,15 @@ pub struct ListModTargetsParam {
     #[schemars(
         description = "Restrict to one graph's routings, or null/omit for every graph's routings."
     )]
-    pub graph_id: Option<u32>,
+    pub graph_id: Option<ModGraphId>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct NoteOrnamentInput {
     #[schemars(description = "Pattern ID containing the note")]
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     #[schemars(description = "Note ID (from list_notes)")]
-    pub note_id: u64,
+    pub note_id: NoteId,
     #[schemars(
         description = "Ornament as JSON to set, or null/omitted to clear. Fields (all optional): count (total hits: flam 2, drag 3, ruff 4, roll N), spacing (ticks between hits), spacing_curve (Even/Accelerate/Decelerate), dynamics (Flat/Crescendo/Decrescendo), placement (LeadIn/OnBeat), pitch_offset (semitones for grace tones), grace_gate (0-1 grace length fraction)."
     )]
@@ -2947,7 +2948,7 @@ pub struct SetNoteOrnamentParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ClearPatternParam {
     #[schemars(description = "Pattern IDs to clear all notes from (one or many)")]
-    pub pattern_ids: Vec<u32>,
+    pub pattern_ids: Vec<PatternId>,
 }
 
 /// A structured automation target — a typed alternative to the
@@ -2981,7 +2982,7 @@ pub enum AutomationTargetInput {
         /// Track parameter name.
         param: String,
         /// Target track id; omitted = the pattern's host track.
-        track_id: Option<u16>,
+        track_id: Option<TrackId>,
     },
     /// A song-global parameter: MasterVolume.
     Global {
@@ -3052,7 +3053,7 @@ impl AutomationPointInput {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AddAutomationPointsParam {
     #[schemars(description = "Pattern ID")]
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     #[schemars(description = "Automation points to add")]
     pub points: Vec<AutomationPointInput>,
 }
@@ -3060,7 +3061,7 @@ pub struct AddAutomationPointsParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct GetAutomationPointsParam {
     #[schemars(description = "Pattern ID")]
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     #[schemars(
         description = "Target DSL: instrument macro (Volume/Pan/FilterCutoff/FilterResonance/Attack/Decay/Sustain/Release), module:<type>:<instance>:<param>, track:<param>[:<track_id>], or global:MasterVolume. From list_automation_lanes, pass the lane target string back verbatim."
     )]
@@ -3072,7 +3073,7 @@ pub struct GetAutomationPointsParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct RemoveAutomationPointsParam {
     #[schemars(description = "Pattern ID")]
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     #[schemars(
         description = "Target DSL: instrument macro (Volume/Pan/FilterCutoff/FilterResonance/Attack/Decay/Sustain/Release), module:<type>:<instance>:<param>, track:<param>[:<track_id>], or global:MasterVolume. From list_automation_lanes, pass the lane target string back verbatim."
     )]
@@ -3086,7 +3087,7 @@ pub struct RemoveAutomationPointsParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ClearAutomationLaneInput {
     #[schemars(description = "Pattern ID")]
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     #[schemars(
         description = "Target DSL: instrument macro (Volume/Pan/FilterCutoff/FilterResonance/Attack/Decay/Sustain/Release), module:<type>:<instance>:<param>, track:<param>[:<track_id>], or global:MasterVolume. From list_automation_lanes, pass the lane target string back verbatim."
     )]
@@ -3104,7 +3105,7 @@ pub struct ClearAutomationLaneParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ScaleAutomationLaneInput {
     #[schemars(description = "Pattern ID")]
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     #[schemars(description = "Target lane (e.g. 'module:flt:1:cutoff' or 'FilterCutoff')")]
     pub target: String,
     #[schemars(description = "Instrument index (default 0)")]
@@ -3128,7 +3129,7 @@ pub struct ScaleAutomationLaneParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct OffsetAutomationLaneInput {
     #[schemars(description = "Pattern ID")]
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     #[schemars(description = "Target lane (e.g. 'module:flt:1:cutoff' or 'FilterCutoff')")]
     pub target: String,
     #[schemars(description = "Instrument index (default 0)")]
@@ -3148,13 +3149,13 @@ pub struct OffsetAutomationLaneParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct CopyAutomationLaneInput {
     #[schemars(description = "Source pattern ID")]
-    pub from_pattern_id: u32,
+    pub from_pattern_id: PatternId,
     #[schemars(description = "Source target lane")]
     pub from_target: String,
     #[schemars(description = "Source instrument index (default 0)")]
     pub from_instrument_id: Option<InstrumentId>,
     #[schemars(description = "Destination pattern ID (may equal the source)")]
-    pub to_pattern_id: u32,
+    pub to_pattern_id: PatternId,
     #[schemars(description = "Destination target lane")]
     pub to_target: String,
     #[schemars(description = "Destination instrument index (default 0)")]
@@ -3194,15 +3195,15 @@ pub struct GetAutomationSummaryParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct TrackMixerInput {
     #[schemars(description = "Track ID")]
-    pub track_id: u16,
+    pub track_id: TrackId,
     #[serde(default)]
     #[schemars(description = "Volume (0.0 = silent, 1.0 = full). Omit to leave unchanged.")]
-    pub volume: Option<f32>,
+    pub volume: Option<NormalizedValue>,
     #[serde(default)]
     #[schemars(
         description = "Pan position (-1.0 = left, 0.0 = center, 1.0 = right). Omit to leave unchanged."
     )]
-    pub pan: Option<f32>,
+    pub pan: Option<BipolarValue>,
     #[serde(default)]
     #[schemars(description = "Whether the track should be muted. Omit to leave unchanged.")]
     pub muted: Option<bool>,
@@ -3225,7 +3226,7 @@ pub struct SetTrackMixerParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct TrackInstrumentInput {
     #[schemars(description = "Track ID")]
-    pub track_id: u16,
+    pub track_id: TrackId,
     #[schemars(
         description = "Instrument ID to drive this track. Pass null to unassign (the track plays nothing)."
     )]
@@ -3251,7 +3252,7 @@ pub struct DeleteReturnBusesParam {
     #[schemars(
         description = "Return bus IDs to delete (one or many). Also removes every track send that targeted each bus."
     )]
-    pub return_ids: Vec<u16>,
+    pub return_ids: Vec<ReturnBusId>,
 }
 
 /// One return bus's mixer update for `set_return_bus_mixer`. Every field except
@@ -3259,15 +3260,15 @@ pub struct DeleteReturnBusesParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ReturnBusMixerInput {
     #[schemars(description = "Return bus ID")]
-    pub return_id: u16,
+    pub return_id: ReturnBusId,
     #[serde(default)]
     #[schemars(description = "Volume (0.0 = silent, 1.0 = full). Omit to leave unchanged.")]
-    pub volume: Option<f32>,
+    pub volume: Option<NormalizedValue>,
     #[serde(default)]
     #[schemars(
         description = "Pan position (-1.0 = left, 0.0 = center, 1.0 = right). Omit to leave unchanged."
     )]
-    pub pan: Option<f32>,
+    pub pan: Option<BipolarValue>,
     #[serde(default)]
     #[schemars(description = "Whether the return bus should be muted. Omit to leave unchanged.")]
     pub muted: Option<bool>,
@@ -3288,7 +3289,7 @@ pub struct SetReturnBusMixerParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ReturnBusColorInput {
     #[schemars(description = "Return bus ID")]
-    pub return_id: u16,
+    pub return_id: ReturnBusId,
     #[schemars(description = "Display color as \"#RRGGBB\" (or \"#RRGGBBAA\", alpha ignored)")]
     pub color: String,
 }
@@ -3302,7 +3303,7 @@ pub struct SetReturnBusColorParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ReturnBusDescriptionInput {
     #[schemars(description = "Return bus ID")]
-    pub return_id: u16,
+    pub return_id: ReturnBusId,
     #[schemars(description = "Free-text description / intent (\"\" clears it)")]
     pub description: String,
 }
@@ -3316,7 +3317,7 @@ pub struct SetReturnBusDescriptionParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct RenameReturnBusInput {
     #[schemars(description = "Return bus ID")]
-    pub return_id: u16,
+    pub return_id: ReturnBusId,
     #[schemars(description = "New name")]
     pub name: String,
 }
@@ -3335,11 +3336,11 @@ fn default_true() -> bool {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct TrackSendInput {
     #[schemars(description = "Track ID (the channel sending)")]
-    pub track_id: u16,
+    pub track_id: TrackId,
     #[schemars(description = "Destination return bus ID")]
-    pub return_id: u16,
+    pub return_id: ReturnBusId,
     #[schemars(description = "Send level (0.0 = none, 1.0 = unity)")]
-    pub level: f32,
+    pub level: NormalizedValue,
     #[serde(default)]
     #[schemars(
         description = "Tap point: true = pre-fader, false = post-fader (default). Post-fader follows the channel fader."
@@ -3363,9 +3364,9 @@ pub struct SetTrackSendParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct TrackSendRef {
     #[schemars(description = "Track ID")]
-    pub track_id: u16,
+    pub track_id: TrackId,
     #[schemars(description = "Destination return bus ID the send targets")]
-    pub return_id: u16,
+    pub return_id: ReturnBusId,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -3379,7 +3380,7 @@ pub struct RemoveTrackSendsParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AddReturnEffectsParam {
     #[schemars(description = "Return bus ID")]
-    pub return_id: u16,
+    pub return_id: ReturnBusId,
     #[schemars(
         description = "Effect type keys to add (one or many), in chain order (e.g. ['eq', 'rev']). Each accepts the prefix or display name (e.g. 'rev', 'delay', 'chorus', 'compressor', 'distortion'). Voice modules are rejected."
     )]
@@ -3389,7 +3390,7 @@ pub struct AddReturnEffectsParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct RemoveReturnEffectsParam {
     #[schemars(description = "Return bus ID")]
-    pub return_id: u16,
+    pub return_id: ReturnBusId,
     #[schemars(
         description = "Effect module-id strings to remove (one or many), e.g. ['rev-1'], from list_return_busses"
     )]
@@ -3399,7 +3400,7 @@ pub struct RemoveReturnEffectsParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ReturnEffectParamInput {
     #[schemars(description = "Return bus ID")]
-    pub return_id: u16,
+    pub return_id: ReturnBusId,
     #[schemars(description = "Effect module-id string (e.g. 'rev-1')")]
     pub module_id: String,
     #[schemars(
@@ -3421,7 +3422,7 @@ pub struct SetReturnEffectParameterParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ReturnEffectEnabledInput {
     #[schemars(description = "Return bus ID")]
-    pub return_id: u16,
+    pub return_id: ReturnBusId,
     #[schemars(description = "Effect module-id string (e.g. 'rev-1')")]
     pub module_id: String,
     #[schemars(description = "true = active, false = bypassed")]
@@ -3437,7 +3438,7 @@ pub struct SetReturnEffectEnabledParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ReorderReturnEffectInput {
     #[schemars(description = "Return bus ID")]
-    pub return_id: u16,
+    pub return_id: ReturnBusId,
     #[schemars(description = "Effect module-id string (e.g. 'rev-1')")]
     pub module_id: String,
     #[schemars(description = "Direction to move: 'up' (earlier in the chain) or 'down' (later)")]
@@ -3455,11 +3456,11 @@ pub struct ReorderReturnEffectParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ReturnSendInput {
     #[schemars(description = "Source return bus ID (the one sending)")]
-    pub from_id: u16,
+    pub from_id: ReturnBusId,
     #[schemars(description = "Destination return bus ID")]
-    pub to_id: u16,
+    pub to_id: ReturnBusId,
     #[schemars(description = "Send level (0.0 = none, 1.0 = unity)")]
-    pub level: f32,
+    pub level: NormalizedValue,
     #[serde(default = "default_true")]
     #[schemars(
         description = "Whether the send is active (default true). false = non-destructive bypass."
@@ -3478,9 +3479,9 @@ pub struct SetReturnSendParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ReturnSendRef {
     #[schemars(description = "Source return bus ID")]
-    pub from_id: u16,
+    pub from_id: ReturnBusId,
     #[schemars(description = "Destination return bus ID the send targets")]
-    pub to_id: u16,
+    pub to_id: ReturnBusId,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -3494,7 +3495,7 @@ pub struct RemoveReturnSendsParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetMasterVolumeParam {
     #[schemars(description = "Master output volume (0.0 = silent, 1.0 = unity)")]
-    pub volume: f32,
+    pub volume: Gain,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -3564,7 +3565,7 @@ pub struct ReorderMasterEffectParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct RenameTrackInput {
     #[schemars(description = "Track ID")]
-    pub track_id: u16,
+    pub track_id: TrackId,
     #[schemars(description = "New name for the track")]
     pub name: String,
 }
@@ -3580,7 +3581,7 @@ pub struct DeleteTracksParam {
     #[schemars(
         description = "Track IDs to delete (one or many). Also removes each track's placements from the arrangement."
     )]
-    pub track_ids: Vec<u16>,
+    pub track_ids: Vec<TrackId>,
 }
 
 // === Pattern management parameter structs ===
@@ -3588,7 +3589,7 @@ pub struct DeleteTracksParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct RenamePatternInput {
     #[schemars(description = "Pattern ID")]
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     #[schemars(description = "New name for the pattern")]
     pub name: String,
 }
@@ -3602,7 +3603,7 @@ pub struct RenamePatternParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct PatternLengthInput {
     #[schemars(description = "Pattern ID")]
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     #[schemars(description = "New length in beats (e.g. 4.0 for one bar in 4/4)")]
     pub length_beats: f32,
 }
@@ -3616,7 +3617,7 @@ pub struct SetPatternLengthParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct DuplicatePatternParam {
     #[schemars(description = "Pattern IDs to duplicate (one or many)")]
-    pub pattern_ids: Vec<u32>,
+    pub pattern_ids: Vec<PatternId>,
 }
 
 // === Song metadata parameter structs ===
@@ -3696,15 +3697,15 @@ pub struct CreateTracksParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct PlacementInput {
     #[schemars(description = "Pattern ID to place")]
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     #[schemars(description = "Track ID to place on")]
-    pub track_id: u16,
+    pub track_id: TrackId,
     #[schemars(description = "Start position in beats; set exactly one of start_beat/start_tick")]
     pub start_beat: Option<f32>,
     #[schemars(
         description = "Exact start position in ticks; set exactly one of start_beat/start_tick"
     )]
-    pub start_tick: Option<u64>,
+    pub start_tick: Option<Tick>,
     #[serde(default)]
     #[schemars(description = "Placement transpose in semitones (default 0)")]
     pub transpose_semitones: Option<f32>,
@@ -3727,23 +3728,23 @@ pub struct PlacementInput {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct PlacementLocatorInput {
     #[schemars(description = "Pattern ID of the existing placement")]
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     #[schemars(description = "Track ID of the existing placement")]
-    pub track_id: u16,
+    pub track_id: TrackId,
     #[schemars(description = "Start position in beats; set exactly one of start_beat/start_tick")]
     pub start_beat: Option<f32>,
     #[schemars(
         description = "Exact start position in ticks; set exactly one of start_beat/start_tick"
     )]
-    pub start_tick: Option<u64>,
+    pub start_tick: Option<Tick>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct PlacementUpdateInput {
     #[schemars(description = "Pattern ID of the existing placement")]
-    pub pattern_id: u32,
+    pub pattern_id: PatternId,
     #[schemars(description = "Track ID of the existing placement")]
-    pub track_id: u16,
+    pub track_id: TrackId,
     #[schemars(
         description = "Existing start position in beats; set exactly one of start_beat/start_tick"
     )]
@@ -3751,9 +3752,9 @@ pub struct PlacementUpdateInput {
     #[schemars(
         description = "Exact existing start position in ticks; set exactly one of start_beat/start_tick"
     )]
-    pub start_tick: Option<u64>,
+    pub start_tick: Option<Tick>,
     #[schemars(description = "Move the placement to this track ID")]
-    pub new_track_id: Option<u16>,
+    pub new_track_id: Option<TrackId>,
     #[schemars(
         description = "Move the placement to this beat; mutually exclusive with new_start_tick"
     )]
@@ -3761,7 +3762,7 @@ pub struct PlacementUpdateInput {
     #[schemars(
         description = "Move the placement to this exact tick; mutually exclusive with new_start_beat"
     )]
-    pub new_start_tick: Option<u64>,
+    pub new_start_tick: Option<Tick>,
     #[schemars(description = "Replace the placement transpose in semitones (range -127..127)")]
     pub transpose_semitones: Option<f32>,
     #[schemars(description = "Replace the linear placement gain (range 0..2)")]
@@ -3825,7 +3826,7 @@ pub struct SongPlacementDef {
     )]
     pub track_index: usize,
     pub start_beat: Option<f32>,
-    pub start_tick: Option<u64>,
+    pub start_tick: Option<Tick>,
     pub transpose_semitones: Option<f32>,
     pub gain: Option<f32>,
     pub length_beats: Option<f32>,
@@ -3901,11 +3902,11 @@ pub struct InstrumentDefInput {
         description = "MIDI channel (1-16, optional)",
         range(min = 1, max = 16)
     )]
-    pub midi_channel: Option<u8>,
+    pub midi_channel: Option<MidiChannel>,
     #[schemars(description = "Volume (0.0-2.0, optional)")]
-    pub volume: Option<f32>,
+    pub volume: Option<Gain>,
     #[schemars(description = "Pan (-1.0 to 1.0, optional)")]
-    pub pan: Option<f32>,
+    pub pan: Option<BipolarValue>,
     #[schemars(description = "Modules to create")]
     pub modules: Vec<ModuleDefInput>,
     #[schemars(description = "Connections between modules (array indices)")]
@@ -3928,11 +3929,11 @@ pub struct RebuildInstrumentParam {
         description = "MIDI channel (1-16, optional)",
         range(min = 1, max = 16)
     )]
-    pub midi_channel: Option<u8>,
+    pub midi_channel: Option<MidiChannel>,
     #[schemars(description = "Volume (0.0-2.0, optional)")]
-    pub volume: Option<f32>,
+    pub volume: Option<Gain>,
     #[schemars(description = "Pan (-1.0 to 1.0, optional)")]
-    pub pan: Option<f32>,
+    pub pan: Option<BipolarValue>,
     #[schemars(description = "Modules of the rebuilt voice graph")]
     pub modules: Vec<ModuleDefInput>,
     #[schemars(description = "Connections between modules (array indices)")]
@@ -4041,7 +4042,7 @@ pub struct SampleRootNoteInput {
         description = "Root MIDI note (0-127). 60=C4, 48=C3, 72=C5.",
         range(min = 0, max = 127)
     )]
-    pub note: u8,
+    pub note: MidiNote,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -5236,14 +5237,14 @@ impl SynthMcpServer {
             if let Err(e) = validate_velocity(n.velocity) {
                 return format!("Error: {e}");
             }
-            if let Err(e) = validate_midi_channel(n.channel.unwrap_or(1)) {
+            if let Err(e) = validate_midi_channel(n.channel.unwrap_or(MidiChannel::CH1)) {
                 return format!("Error: {e}");
             }
         }
         let mut ok_count = 0usize;
         let mut errors = Vec::new();
         for n in &params.0.notes {
-            let channel = n.channel.unwrap_or(1);
+            let channel = n.channel.unwrap_or(MidiChannel::CH1);
             match self.bridge.note_on(n.note, n.velocity, channel) {
                 Ok(()) => ok_count += 1,
                 Err(e) => errors.push(format!("note {}: {e}", n.note)),
@@ -5260,14 +5261,14 @@ impl SynthMcpServer {
             if let Err(e) = validate_midi_note(n.note) {
                 return format!("Error: {e}");
             }
-            if let Err(e) = validate_midi_channel(n.channel.unwrap_or(1)) {
+            if let Err(e) = validate_midi_channel(n.channel.unwrap_or(MidiChannel::CH1)) {
                 return format!("Error: {e}");
             }
         }
         let mut ok_count = 0usize;
         let mut errors = Vec::new();
         for n in &params.0.notes {
-            let channel = n.channel.unwrap_or(1);
+            let channel = n.channel.unwrap_or(MidiChannel::CH1);
             match self.bridge.note_off(n.note, channel) {
                 Ok(()) => ok_count += 1,
                 Err(e) => errors.push(format!("note {}: {e}", n.note)),
@@ -5338,7 +5339,7 @@ impl SynthMcpServer {
         validate_range("tail_ms", tail_ms as f32, 1.0, 30000.0).map_err(mcp_err)?;
 
         if let Some(expected) = params.0.expected_note {
-            validate_midi_note(expected).map_err(mcp_err)?;
+            validate_midi_note(MidiNote::new(expected)).map_err(mcp_err)?;
         }
         if let Some(window) = params.0.envelope_window_ms {
             validate_range("envelope_window_ms", window, 1.0, 5000.0).map_err(mcp_err)?;
@@ -6191,13 +6192,10 @@ impl SynthMcpServer {
         params: Parameters<ValidateInstrumentAudioParam>,
     ) -> String {
         let p = params.0;
-        let note = p.note.unwrap_or(60);
+        let note = p.note.unwrap_or(MidiNote::C4);
         let velocity = p.velocity.unwrap_or(100);
         let duration_ms = p.duration_ms.unwrap_or(500);
         let tail_ms = p.tail_ms.unwrap_or(500);
-        if note > 127 {
-            return format!("Error: {}", McpBridgeError::InvalidMidiNote(note));
-        }
         if velocity > 127 {
             return format!("Error: {}", McpBridgeError::InvalidVelocity(velocity));
         }
@@ -6523,12 +6521,12 @@ impl SynthMcpServer {
         // Validate all ranges up front so a bad value rejects the whole call.
         for it in &params.0.items {
             if let Some(v) = it.volume
-                && let Err(e) = validate_range("volume", v, 0.0, 2.0)
+                && let Err(e) = validate_range("volume", v.as_f32(), 0.0, 2.0)
             {
                 return format!("Error: {e}");
             }
             if let Some(p) = it.pan
-                && let Err(e) = validate_range("pan", p, -1.0, 1.0)
+                && let Err(e) = validate_range("pan", p.as_f32(), -1.0, 1.0)
             {
                 return format!("Error: {e}");
             }
@@ -6745,7 +6743,7 @@ impl SynthMcpServer {
         description = "Set the song tempo in BPM (typically 60-200, e.g. 120.0 for standard pop tempo)."
     )]
     async fn set_song_tempo(&self, params: Parameters<SetSongTempoParam>) -> String {
-        if let Err(e) = validate_range("tempo", params.0.bpm, 20.0, 999.0) {
+        if let Err(e) = validate_range("tempo", params.0.bpm.as_f32(), 20.0, 999.0) {
             return format!("Error: {e}");
         }
         match self.bridge.set_song_tempo(params.0.bpm) {
@@ -6759,15 +6757,15 @@ impl SynthMcpServer {
     )]
     async fn set_tempo_at(&self, params: Parameters<SetTempoAtParam>) -> String {
         for point in &params.0.points {
-            if let Err(e) = validate_range("tempo", point.bpm, 20.0, 999.0) {
+            if let Err(e) = validate_range("tempo", point.bpm.as_f32(), 20.0, 999.0) {
                 return format!("Error: {e}");
             }
         }
-        let points: Vec<(u64, f32, bool)> = params
+        let points: Vec<(Tick, f32, bool)> = params
             .0
             .points
             .iter()
-            .map(|p| (p.tick, p.bpm, p.ramp))
+            .map(|p| (p.tick, p.bpm.as_f32(), p.ramp))
             .collect();
         match self.bridge.set_tempo_at(&points) {
             Ok(()) => format!("OK: set {} tempo-map point(s)", points.len()),
@@ -7789,12 +7787,12 @@ impl SynthMcpServer {
     async fn set_track_mixer(&self, params: Parameters<SetTrackMixerParam>) -> String {
         for it in &params.0.items {
             if let Some(v) = it.volume
-                && let Err(e) = validate_range("volume", v, 0.0, 2.0)
+                && let Err(e) = validate_range("volume", v.as_f32(), 0.0, 2.0)
             {
                 return validation_err(e);
             }
             if let Some(p) = it.pan
-                && let Err(e) = validate_range("pan", p, -1.0, 1.0)
+                && let Err(e) = validate_range("pan", p.as_f32(), -1.0, 1.0)
             {
                 return validation_err(e);
             }
@@ -7946,12 +7944,12 @@ impl SynthMcpServer {
         for it in &params.0.items {
             // Return-bus volume is stored as NormalizedValue (clamps to [0, 1]).
             if let Some(v) = it.volume
-                && let Err(e) = validate_range("volume", v, 0.0, 1.0)
+                && let Err(e) = validate_range("volume", v.as_f32(), 0.0, 1.0)
             {
                 return validation_err(e);
             }
             if let Some(p) = it.pan
-                && let Err(e) = validate_range("pan", p, -1.0, 1.0)
+                && let Err(e) = validate_range("pan", p.as_f32(), -1.0, 1.0)
             {
                 return validation_err(e);
             }
@@ -8052,7 +8050,7 @@ impl SynthMcpServer {
     async fn set_track_send(&self, params: Parameters<SetTrackSendParam>) -> String {
         // Stored as NormalizedValue (clamps to [0, 1]); validate to match.
         for s in &params.0.sends {
-            if let Err(e) = validate_range("level", s.level, 0.0, 1.0) {
+            if let Err(e) = validate_range("level", s.level.as_f32(), 0.0, 1.0) {
                 return validation_err(e);
             }
         }
@@ -8097,7 +8095,7 @@ impl SynthMcpServer {
     )]
     async fn set_return_send(&self, params: Parameters<SetReturnSendParam>) -> String {
         for s in &params.0.sends {
-            if let Err(e) = validate_range("level", s.level, 0.0, 1.0) {
+            if let Err(e) = validate_range("level", s.level.as_f32(), 0.0, 1.0) {
                 return validation_err(e);
             }
         }
@@ -8264,7 +8262,7 @@ impl SynthMcpServer {
 
     #[tool(description = "Set the master output volume (0.0 = silent, 1.0 = unity).")]
     async fn set_master_volume(&self, params: Parameters<SetMasterVolumeParam>) -> String {
-        if let Err(e) = validate_range("volume", params.0.volume, 0.0, 4.0) {
+        if let Err(e) = validate_range("volume", params.0.volume.as_f32(), 0.0, 4.0) {
             return validation_err(e);
         }
         match self.bridge.set_master_volume(params.0.volume) {
@@ -9017,7 +9015,7 @@ impl SynthMcpServer {
     async fn import_sample(&self, params: Parameters<ImportSampleParam>) -> String {
         for s in &params.0.samples {
             if let Some(note) = s.root_note
-                && let Err(e) = validate_midi_note(note)
+                && let Err(e) = validate_midi_note(MidiNote::new(note))
             {
                 return format!("Error: {e}");
             }
@@ -9579,9 +9577,9 @@ impl SynthMcpServer {
 fn convert_instrument_def(
     instrument_id: Option<InstrumentId>,
     name: String,
-    midi_channel: Option<u8>,
-    volume: Option<f32>,
-    pan: Option<f32>,
+    midi_channel: Option<MidiChannel>,
+    volume: Option<Gain>,
+    pan: Option<BipolarValue>,
     modules: Vec<ModuleDefInput>,
     connections: Option<Vec<ConnectionDefInput>>,
 ) -> crate::bridge::BridgeInstrumentDef {
@@ -9875,8 +9873,9 @@ mod schema_range_tests {
             .expect("NoteOnInput schema serializes");
         let props = &schema["properties"];
 
-        assert_eq!(props["note"]["maximum"], serde_json::json!(127), "note max");
-        assert_eq!(props["note"]["minimum"], serde_json::json!(0), "note min");
+        let midi_note = &schema["$defs"]["MidiNote"];
+        assert_eq!(midi_note["maximum"], serde_json::json!(127), "note max");
+        assert_eq!(midi_note["minimum"], serde_json::json!(0), "note min");
         assert_eq!(
             props["velocity"]["maximum"],
             serde_json::json!(127),
@@ -9887,12 +9886,13 @@ mod schema_range_tests {
             serde_json::json!(0),
             "velocity min"
         );
-        // channel is Option<u8>; the bounds attach to the inner number schema.
-        let channel = serde_json::to_string(&props["channel"]).unwrap();
-        assert!(
-            channel.contains("\"maximum\":16") && channel.contains("\"minimum\":1"),
-            "channel 1..=16 bounds missing: {channel}"
+        let midi_channel = &schema["$defs"]["MidiChannel"];
+        assert_eq!(
+            midi_channel["maximum"],
+            serde_json::json!(16),
+            "channel max"
         );
+        assert_eq!(midi_channel["minimum"], serde_json::json!(1), "channel min");
     }
 
     #[test]

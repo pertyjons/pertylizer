@@ -13,7 +13,7 @@ use super::{Hertz, ValueRange};
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize)]
 #[serde(transparent)]
 #[repr(transparent)]
-pub struct Cents(pub f32);
+pub struct Cents(f32);
 
 impl Cents {
     /// Create a new cents value.
@@ -67,7 +67,7 @@ impl Cents {
     /// Apply to a frequency.
     #[inline]
     pub fn apply(self, freq: Hertz) -> Hertz {
-        Hertz::new(freq.0 * self.to_ratio())
+        Hertz::new(freq.as_f32() * self.to_ratio())
     }
 
     /// Clamp to the oscillator fine-detune range ([`Self::DETUNE_RANGE`]).
@@ -149,7 +149,7 @@ impl std::fmt::Display for Cents {
 )]
 #[serde(transparent)]
 #[repr(transparent)]
-pub struct Semitones(pub f32);
+pub struct Semitones(f32);
 
 impl Semitones {
     /// Create a new semitones value.
@@ -185,7 +185,7 @@ impl Semitones {
     /// Apply to a frequency.
     #[inline]
     pub fn apply(self, freq: Hertz) -> Hertz {
-        Hertz::new(freq.0 * self.to_ratio())
+        Hertz::new(freq.as_f32() * self.to_ratio())
     }
 
     /// Round to nearest semitone.
@@ -289,7 +289,7 @@ impl std::fmt::Display for Semitones {
 )]
 #[serde(transparent)]
 #[repr(transparent)]
-pub struct Octaves(pub i32);
+pub struct Octaves(i32);
 
 impl Octaves {
     /// Create a new octave offset.
@@ -328,7 +328,7 @@ impl Octaves {
     /// Apply to a frequency.
     #[inline]
     pub fn apply(self, freq: Hertz) -> Hertz {
-        Hertz::new(freq.0 * self.to_ratio())
+        Hertz::new(freq.as_f32() * self.to_ratio())
     }
 }
 
@@ -378,10 +378,12 @@ impl std::fmt::Display for Octaves {
 }
 
 /// MIDI note number (0-127).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, schemars::JsonSchema,
+)]
 #[serde(transparent)]
 #[repr(transparent)]
-pub struct MidiNote(pub u8);
+pub struct MidiNote(#[schemars(range(min = 0, max = 127))] u8);
 
 impl MidiNote {
     /// Create a new MIDI note (clamped to 0-127).
@@ -472,6 +474,20 @@ impl From<MidiNote> for u8 {
     }
 }
 
+impl<'de> Deserialize<'de> for MidiNote {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let note = u8::deserialize(deserializer)?;
+        if note <= Self::MAX.as_u8() {
+            Ok(Self(note))
+        } else {
+            Err(serde::de::Error::custom("MIDI note must be in 0..=127"))
+        }
+    }
+}
+
 impl std::fmt::Display for MidiNote {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.name())
@@ -485,9 +501,9 @@ impl std::fmt::Display for MidiNote {
 #[derive(
     Debug, Clone, Copy, PartialEq, PartialOrd, Serialize, Deserialize, schemars::JsonSchema,
 )]
-#[serde(transparent)]
+#[serde(from = "f32", into = "f32")]
 #[repr(transparent)]
-pub struct Velocity(pub f32);
+pub struct Velocity(f32);
 
 impl Velocity {
     /// Create a new velocity from normalized value (0.0-1.0).
@@ -640,10 +656,12 @@ impl std::fmt::Display for Velocity {
 }
 
 /// MIDI channel (1-16).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, schemars::JsonSchema,
+)]
 #[serde(transparent)]
 #[repr(transparent)]
-pub struct MidiChannel(pub u8);
+pub struct MidiChannel(#[schemars(range(min = 1, max = 16))] u8);
 
 impl MidiChannel {
     /// Create a new MIDI channel (1-16).
@@ -692,6 +710,20 @@ impl From<u8> for MidiChannel {
 impl From<MidiChannel> for u8 {
     fn from(channel: MidiChannel) -> Self {
         channel.0
+    }
+}
+
+impl<'de> Deserialize<'de> for MidiChannel {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let channel = u8::deserialize(deserializer)?;
+        if (Self::CH1.as_u8()..=16).contains(&channel) {
+            Ok(Self(channel))
+        } else {
+            Err(serde::de::Error::custom("MIDI channel must be in 1..=16"))
+        }
     }
 }
 
@@ -774,6 +806,20 @@ mod tests {
     }
 
     #[test]
+    fn midi_channel_serde_is_one_indexed_and_validated() {
+        assert!(matches!(
+            serde_json::to_string(&MidiChannel::CH1).as_deref(),
+            Ok("1")
+        ));
+        assert!(matches!(
+            serde_json::from_str::<MidiChannel>("16").map(MidiChannel::as_u8),
+            Ok(16)
+        ));
+        assert!(serde_json::from_str::<MidiChannel>("0").is_err());
+        assert!(serde_json::from_str::<MidiChannel>("17").is_err());
+    }
+
+    #[test]
     fn test_cents_to_ratio() {
         let octave = Cents::OCTAVE;
         assert!((octave.to_ratio() - 2.0).abs() < 0.001);
@@ -808,6 +854,19 @@ mod tests {
     #[test]
     fn test_midi_note_frequency() {
         let a4 = MidiNote::A4;
-        assert!((a4.to_frequency().0 - 440.0).abs() < 0.001);
+        assert!((a4.to_frequency().as_f32() - 440.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn midi_note_serde_rejects_values_above_127() {
+        assert!(matches!(
+            serde_json::to_string(&MidiNote::C4).as_deref(),
+            Ok("60")
+        ));
+        assert!(matches!(
+            serde_json::from_str::<MidiNote>("127").map(MidiNote::as_u8),
+            Ok(127)
+        ));
+        assert!(serde_json::from_str::<MidiNote>("128").is_err());
     }
 }

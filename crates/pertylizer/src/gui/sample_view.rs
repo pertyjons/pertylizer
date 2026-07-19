@@ -902,7 +902,7 @@ fn draw_properties(
             // Sample Rate
             ui.label(egui::RichText::new("Sample Rate:").color(t.colors.text_secondary));
             ui.label(
-                egui::RichText::new(format!("{} Hz", meta.sample_rate.0))
+                egui::RichText::new(format!("{} Hz", meta.sample_rate.as_u32()))
                     .color(t.colors.text_primary),
             );
             ui.end_row();
@@ -930,7 +930,7 @@ fn draw_properties(
             // Root Note
             ui.label(egui::RichText::new("Root Note:").color(t.colors.text_secondary));
             {
-                let current = meta.root_note.map_or(60_u8, |n| n.0);
+                let current = meta.root_note.map_or(60_u8, synth_core::MidiNote::as_u8);
                 let note_names = [
                     "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B",
                 ];
@@ -958,7 +958,7 @@ fn draw_properties(
                     && let Some(m) = lib.get_meta(id)
                 {
                     let mut updated = m.clone();
-                    updated.root_note = Some(synth_core::MidiNote(new_val));
+                    updated.root_note = Some(synth_core::MidiNote::new(new_val));
                     lib.update_meta(id, updated);
                 }
             }
