@@ -462,6 +462,27 @@ fn apply_unison_spread(left: &mut [f32], right: &mut [f32], gains: (f32, f32)) {
     }
 }
 
+fn apply_track_control(
+    left: &mut [f32],
+    right: &mut [f32],
+    control: crate::synth_engine::TrackControl,
+) {
+    if !control.audible {
+        left.fill(0.0);
+        right.fill(0.0);
+        return;
+    }
+    // Balance around unity at center; the instrument channel applies the one
+    // shared constant-power pan law after the effect chain.
+    let pan = control.pan.as_f32();
+    let left_gain = (1.0 - pan).sqrt() * control.volume.as_f32();
+    let right_gain = (1.0 + pan).sqrt() * control.volume.as_f32();
+    for i in 0..left.len().min(right.len()) {
+        left[i] *= left_gain;
+        right[i] *= right_gain;
+    }
+}
+
 impl Instrument {
     /// Create a new instrument with the given ID and name.
     ///
@@ -1161,10 +1182,11 @@ impl Instrument {
     /// stolen note (re)triggers here — the block-level `update_track_pitch`
     /// already ran, so without this the stolen note's first block would sound
     /// at zero track pitch.
-    pub fn process(
+    pub(crate) fn process(
         &mut self,
         context: &ProcessContext,
         track_auto: &HashMap<synth_sequencer::TrackId, crate::sequencer_engine::TrackAutoOverride>,
+        track_controls: crate::synth_engine::TrackControlSnapshot<'_>,
     ) -> u32 {
         if self.mute_state.is_muted() {
             return 0;
@@ -1326,6 +1348,11 @@ impl Instrument {
                     &mut temp_right.as_mut_slice()[..os_count],
                     voice.unison_pan_gains,
                 );
+                apply_track_control(
+                    &mut temp_left.as_mut_slice()[..os_count],
+                    &mut temp_right.as_mut_slice()[..os_count],
+                    track_controls.get(voice.track),
+                );
 
                 // Sum into oversampled instrument buffers
                 for i in 0..os_count {
@@ -1460,6 +1487,11 @@ impl Instrument {
                     &mut temp_left.as_mut_slice()[..sample_count],
                     &mut temp_right.as_mut_slice()[..sample_count],
                     voice.unison_pan_gains,
+                );
+                apply_track_control(
+                    &mut temp_left.as_mut_slice()[..sample_count],
+                    &mut temp_right.as_mut_slice()[..sample_count],
+                    track_controls.get(voice.track),
                 );
 
                 // Sum into instrument buffers

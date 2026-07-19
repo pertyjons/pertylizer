@@ -995,8 +995,12 @@ fn edit_node_body(
                 ui.label("Name");
                 ui.text_edit_singleline(&mut m.name);
             });
-            let r = ui.add(egui::Slider::new(&mut m.value, 0.0..=1.0).text("Value"));
+            let mut value = m.value.as_f32();
+            let r = ui.add(egui::Slider::new(&mut value, 0.0..=1.0).text("Value"));
             *any_dragged |= r.dragged();
+            if r.changed() {
+                m.value = synth_core::NormalizedValue::new(value);
+            }
         }
         ModNodeConfig::Transport(tn) => {
             transport_combo(ui, tn);
@@ -1316,7 +1320,7 @@ fn node_catalog() -> Vec<(&'static str, ModNodeConfig)> {
             "Macro",
             ModNodeConfig::Macro(synth_sequencer::MacroNode {
                 name: "Macro".into(),
-                value: 0.0,
+                value: synth_core::NormalizedValue::MIN,
             }),
         ),
         (

@@ -231,7 +231,7 @@ fn resolve_source(
         ModNodeConfig::Module(_) => node_module_ids
             .get(&cable.from)
             .map(|&mid| ModSource::Dsp(mid, PortName::from(cable.from_port.as_str()))),
-        ModNodeConfig::Macro(m) => Some(ModSource::Constant(m.value.clamp(0.0, 1.0))),
+        ModNodeConfig::Macro(m) => Some(ModSource::Constant(m.value.as_f32())),
         ModNodeConfig::Transport(tn) => Some(ModSource::Transport(tn.source)),
         ModNodeConfig::AudioTap(tap) => Some(match tap.source {
             synth_sequencer::AudioTapSource::Master => ModSource::MasterLevel,
@@ -268,7 +268,7 @@ mod tests {
                 ModNodeId::new(0),
                 ModNodeConfig::Macro(synth_sequencer::MacroNode {
                     name: "M".into(),
-                    value: 1.0,
+                    value: 1.0.into(),
                 }),
             )
             .unwrap();
@@ -288,7 +288,7 @@ mod tests {
                 ModNodeId::new(2),
                 ModNodeConfig::Macro(synth_sequencer::MacroNode {
                     name: "V".into(),
-                    value: 1.0,
+                    value: 1.0.into(),
                 }),
             )
             .unwrap();
@@ -538,7 +538,7 @@ mod tests {
                 ModNodeId::new(0),
                 ModNodeConfig::Macro(MacroNode {
                     name: "M".into(),
-                    value: 0.6,
+                    value: 0.6.into(),
                 }),
             )
             .unwrap();
@@ -620,7 +620,7 @@ mod tests {
                 ModNodeId::new(6),
                 ModNodeConfig::Macro(MacroNode {
                     name: "M".into(),
-                    value: 0.43,
+                    value: 0.43.into(),
                 }),
             )
             .unwrap();

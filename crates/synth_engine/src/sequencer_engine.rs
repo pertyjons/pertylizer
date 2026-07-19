@@ -814,9 +814,19 @@ impl SequencerEngine {
                     continue;
                 }
 
-                // Calculate position within the pattern
-                #[allow(clippy::cast_possible_truncation)]
-                let pattern_tick = (self.current_tick.0 - placement.start.0) as u32;
+                // A placement longer than its source pattern loops in pattern
+                // space. Notes crossing the boundary keep ringing; a note at
+                // the next loop onset retriggers as a separate voice unless it
+                // lands exactly on the predecessor's end (the tie logic below).
+                let Some(pattern_tick) =
+                    PatternTick::looping_at(self.current_tick, placement.start, pattern.length)
+                else {
+                    continue;
+                };
+                let loop_start = self
+                    .current_tick
+                    .0
+                    .saturating_sub(u64::from(pattern_tick.0));
 
                 // Every track routes to an instrument; the track is the sole
                 // source (per-note `note.instrument` is vestigial — Phase 4).
@@ -831,7 +841,6 @@ impl SequencerEngine {
                 // yet stays reproducible. The pattern's processor rack then
                 // runs in pattern space (placement transpose applies after).
                 if audible {
-                    let placement_start = placement.start.0;
                     let roll_nonce = self.roll_nonce;
                     // Seed the roll by the note's *own* absolute start, not the
                     // expansion tick. For a plain note (gated only at its start)
@@ -840,7 +849,7 @@ impl SequencerEngine {
                     // the ticks it spans. The closure captures only Copy values,
                     // so it is reused across the graph / rack branch below.
                     let gate = |note: &synth_sequencer::Note| {
-                        let note_start = Tick(placement_start + u64::from(note.start.0));
+                        let note_start = Tick(loop_start + u64::from(note.start.0));
                         note_passes_probability(note, note_start, roll_nonce)
                     };
                     // A bound Note Grid graph takes precedence over the rack; a
@@ -857,7 +866,7 @@ impl SequencerEngine {
                     match pattern.note_graph().and_then(|gid| song.note_graph(gid)) {
                         Some(graph) => graph.expand_at_tick(
                             pattern.notes(),
-                            PatternTick(pattern_tick),
+                            pattern_tick,
                             HostKey::from(pattern.id),
                             self.cached_tempo,
                             gate,
@@ -866,7 +875,7 @@ impl SequencerEngine {
                             &mut self.scratch_expansion,
                         ),
                         None => pattern.expand_at_tick(
-                            PatternTick(pattern_tick),
+                            pattern_tick,
                             gate,
                             self.cached_tempo,
                             Some(&mut ns_ctx),
@@ -881,7 +890,7 @@ impl SequencerEngine {
                             expanded,
                             track_instrument,
                             placement.transpose,
-                            placement.start.0 + u64::from(pattern_tick),
+                            self.current_tick.0,
                             Some(placement.track_id),
                         ));
                     }
@@ -892,7 +901,7 @@ impl SequencerEngine {
                 // (`AutomationTarget::resolved`), so only concrete targets
                 // flow through dedup and `track_auto` downstream.
                 for lane in &pattern.automation {
-                    if let Some(value) = lane.value_at(PatternTick(pattern_tick))
+                    if let Some(value) = lane.value_at(pattern_tick)
                         && let Some(target) = lane.target.resolved(Some(placement.track_id))
                     {
                         self.scratch_automation.push((target, value));
@@ -1309,6 +1318,30 @@ mod tests {
             "Expected NoteOn events, got {:?}",
             events
         );
+    }
+
+    #[test]
+    fn placement_longer_than_pattern_retriggers_each_loop() {
+        let mut song = Song::new("Looped placement").with_tempo(Bpm::new(120.0));
+        let pattern_id = song.create_pattern(Duration::QUARTER);
+        if let Some(pattern) = song.pattern_mut(pattern_id) {
+            let _ = pattern.add_note(PatternTick::ZERO, Pitch::new(60).unwrap(), Velocity::MF);
+        }
+        let track_id = song.create_track("Loop track");
+        song.place_pattern(pattern_id, track_id, Tick::ZERO);
+        assert!(song.set_placement_length(pattern_id, track_id, Tick::ZERO, Some(Duration::HALF),));
+        let song = Arc::new(RwLock::new(song));
+        let mut seq = SequencerEngine::with_song(song, SampleRate::DVD_QUALITY);
+        let mut events = Vec::new();
+
+        seq.current_tick = Tick::ZERO;
+        seq.collect_events_at_tick(&mut events);
+        assert_eq!(events.iter().filter(|event| event.is_note_on()).count(), 1);
+
+        events.clear();
+        seq.current_tick = Tick(u64::from(Duration::QUARTER.0));
+        seq.collect_events_at_tick(&mut events);
+        assert_eq!(events.iter().filter(|event| event.is_note_on()).count(), 1);
     }
 
     #[test]

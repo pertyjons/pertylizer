@@ -66,7 +66,7 @@ fn add_track_volume_graph(song: &Arc<RwLock<Song>>, track: synth_sequencer::Trac
         ModNodeId::new(6),
         ModNodeConfig::Macro(MacroNode {
             name: "M".into(),
-            value: 1.0,
+            value: 1.0.into(),
         }),
     )
     .unwrap();
@@ -191,7 +191,7 @@ fn module_scope_cutoff_modulation_changes_the_render() {
             ModNodeId::new(0),
             ModNodeConfig::Macro(MacroNode {
                 name: "M".into(),
-                value: 1.0,
+                value: 1.0.into(),
             }),
         )
         .unwrap();
@@ -262,7 +262,7 @@ fn instrument_scope_volume_modulation_changes_the_render() {
             ModNodeId::new(0),
             ModNodeConfig::Macro(MacroNode {
                 name: "M".into(),
-                value: 1.0,
+                value: 1.0.into(),
             }),
         )
         .unwrap();
@@ -358,7 +358,7 @@ fn cheap_to_module_injection_changes_the_render() {
             ModNodeId::new(2),
             ModNodeConfig::Macro(MacroNode {
                 name: "Rate".into(),
-                value: 1.0,
+                value: 1.0.into(),
             }),
         )
         .unwrap();

@@ -155,24 +155,11 @@ can't be a per-block lane value; that dead code is not coming back.)
 
 - [ ] Verse, chorus, bridge labels in the arrangement
 
-### 1.5 Pattern looping within placement length (future)
+### 1.5 Pattern-loop presentation and controls
 
-- [ ] **Switch placement-resize from clip to loop-within semantics.** Today
-  `PatternPlacement.length_override` (added in v0.281 with placement-resize) uses *clip* semantics: when the
-  placement is longer than `pattern.length`, the pattern plays once and the remainder is silent. Most DAWs
-  (Ableton, FL Studio, Renoise, Bitwig) loop the pattern internally instead, so a 1-bar drum pattern
-  stretched to 4 bars plays four times. Implementing it touches three places in
-  `crates/synth_engine/src/sequencer_engine.rs`:
-    1. **Modulo on `pattern_tick`** — `collect_events_at_tick` currently computes
-       `pattern_tick = (current_tick - placement.start) as u32`. With looping it becomes
-       `pattern_tick = raw % pattern.length.0`. Trivial.
-    2. **NoteOff timing across loop boundaries.** A note starting at `pattern_tick=800` with duration
-       `200` in a 960-tick pattern would NoteOff at 1000 — past the loop. The active-notes buffer must
-       hold the *absolute* end-tick (not modulo), and the next loop iteration's identical NoteOn must
-       either retrigger or be coalesced with the still-ringing note. Pick a policy and document it.
-    3. **Automation re-trigger.** Automation points need a re-trigger or "carry-over last value"
-       decision per loop iteration. Today there is only one playback of each automation lane per
-       placement — see `pattern.automation` collection at line ~360.
+**Playback looping shipped:** placement positions now wrap through type-safe
+`PatternTick::looping_at`; crossing notes keep their absolute NoteOff and retrigger on the
+next pass, while automation restarts in pattern space each pass.
 - [ ] **Mini-note visualization should mirror the loop.** `NoteMiniature.start_frac` is currently
   fraction-of-pattern-length. For loop-within semantics the rendering in
   `gui/sequencer/arrangement.rs` (mini-note loop, near the `inst_color_cache` use) should repeat the miniature
@@ -242,7 +229,8 @@ in `mcp_allocator_config.rs` drive the real engine.
   oscillators track fast portamento faithfully. Small-to-medium; only matters for
   audible fast glides.
   **Investigated 2026-07-03 (deferred until someone actually needs it):** the
-  `AudioBindings`/`eval_block` half is trivial (add `note_hz: Option<u16>`, a
+  `AudioBindings`/`eval_block` half is trivial (add
+  `note_hz: Option<ScriptRegister>`, a
   `bindings_for` arm, and a per-sample `set_source`). The real work is that
   **there is no per-sample pitch signal in the engine at all** — the whole voice
   pitch pipeline is block-rate: `glide.update` runs once per block
@@ -399,8 +387,8 @@ green + per-step reviews). The six deferred items are done:
   2026-07-19).** `add_mod_graph_node`/`set_mod_graph_node` parse node configs with pure
   serde (`parse_mod_node`, `mcp_bridge.rs`): unknown `params` type_ids are silently
   skipped and values applied unvalidated at build (no `validate_f32`), a
-  valid-but-unhostable `module_type` is accepted and silently skipped at build,
-  and `Macro.value` outside 0..=1 is silently clamped. Resolve the module descriptor
+  and a valid-but-unhostable `module_type` is accepted and silently skipped at build.
+  Resolve the module descriptor
   at the boundary and reject bad input with errors, matching the `set_parameter`
   convention. Complements the port-validation item above. **S–M.**
 - [ ] **MCP parity gaps vs the note-graph family (MCP audit 2026-07-19).** No
@@ -655,24 +643,15 @@ enough to be driven by an actual observed symptom. Ordered by likely impact.
   guarantees smooth transitions. An **audible-quality** fix (effectively a small
   feature). **Trigger: when you hear clicks on cutoff/CV moves.**
 
-#### B6. Per-voice track fader — channel-strip "Phase 8" (shared-instrument correctness)
+#### B6. Per-track pre-FX sends and metering for shared instruments
 
-- [ ] **Apply the composed track volume/pan/mute per voice, not per engine
-  instrument.** Today `update_track_controls` (`synth_engine.rs`) writes
-  `track_controls` keyed by the track's engine instrument id, so when two tracks
-  share one instrument the **last track in `tracks()` order wins** the fader and
-  sends. With the automation platform's voice→track tagging in place (A2 of the
-  now-landed `automation-platform` work), apply the composed track
-  volume/pan/mute as a **per-voice** gain where velocity/expression already scale
-  the voice, **before** the instrument's shared effect chain, and re-key
-  `track_controls` by `TrackId`. The dry signal becomes fully track-correct;
-  shared FX still react to the sum (the same limitation as multitimbral racks in
-  other DAWs), and full isolation stays available by duplicating the instrument.
-  Per-track accumulators for pre-FX sends and metering ride the same
-  infrastructure. Landing this also removes the tracker importer's
-  clone-at-import workaround. **Trigger: when a shared-instrument project needs
-  independent track faders.** (Moved from the completed automation-platform work
-  on 2026-07-18.)
+- [ ] **Add per-track accumulators for pre-FX sends and metering.** Track
+  volume/pan/mute now resolves through a generation-marked `TrackId` table and is
+  applied per voice before the shared instrument effect chain, so shared-instrument
+  dry playback is track-correct. Pre-FX sends and meters still aggregate at the
+  instrument channel; split those taps per track if a project needs independent
+  routing or meters for tracks sharing one instrument. **Trigger: when such a
+  project needs separate pre-FX sends or meters.**
 
 ---
 
@@ -821,11 +800,6 @@ covered elsewhere; mod-grid-specific items live in §2.9.)*
   `scale`/`offset`/`copy_automation_lane` target descriptions predate the
   `track:`/`global:` DSL; ~8 sites still say "Instrument index" instead of
   "Instrument ID". **S.**
-- [ ] **`PlacementInfo` can't be echoed back as a locator.** Reads return BOTH
-  `start_beat` and `start_tick`, but the write side requires exactly one, so a listed
-  placement fails as `update_placement`/`remove_placement` input until one field is
-  stripped. Accept both when they agree (prefer ticks), error only on contradiction. **S.**
-
 ---
 
 ## Maybe later

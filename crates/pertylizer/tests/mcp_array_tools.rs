@@ -195,8 +195,10 @@ async fn pattern_placement_full_state_round_trips_and_updates() {
             "updates": [{
                 "pattern_id": pattern_id,
                 "track_id": 0,
+                "start_beat": 0.128125,
                 "start_tick": 123,
                 "new_track_id": 1,
+                "new_start_beat": 0.475,
                 "new_start_tick": 456,
                 "transpose_semitones": -5.0,
                 "gain": 1.25,
@@ -306,7 +308,7 @@ async fn set_song_accepts_complete_tick_addressed_placements() {
 }
 
 #[tokio::test]
-async fn placement_rejects_ambiguous_position_units() {
+async fn placement_rejects_contradictory_position_units() {
     let server = build_server();
     let response = call(
         &server,
@@ -316,13 +318,13 @@ async fn placement_rejects_ambiguous_position_units() {
                 "pattern_id": 0,
                 "track_id": 0,
                 "start_beat": 1.0,
-                "start_tick": 960
+                "start_tick": 961
             }]
         }),
     )
     .await;
     assert!(response.starts_with("Error:"), "{response}");
-    assert!(response.contains("exactly one"), "{response}");
+    assert!(response.contains("different positions"), "{response}");
 }
 
 #[tokio::test]

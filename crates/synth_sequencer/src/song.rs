@@ -2195,7 +2195,7 @@ mod tests {
                 ModNodeId::new(4),
                 ModNodeConfig::Macro(MacroNode {
                     name: "depth".into(),
-                    value: 0.6,
+                    value: 0.6.into(),
                 }),
             )
             .unwrap();

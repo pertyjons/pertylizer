@@ -53,18 +53,30 @@ fn arrangement_tick(
     beat: Option<f32>,
     tick: Option<Tick>,
     field: &str,
-) -> Result<Tick, McpBridgeError> {
+) -> Result<crate::bridge::PlacementPosition, McpBridgeError> {
     match (beat, tick) {
-        (Some(_), Some(_)) | (None, None) => Err(McpBridgeError::Other(format!(
-            "set exactly one of {field}_beat or {field}_tick"
+        (None, None) => Err(McpBridgeError::Other(format!(
+            "set at least one of {field}_beat or {field}_tick"
         ))),
-        (None, Some(tick)) => Ok(tick),
+        (None, Some(tick)) => Ok(crate::bridge::PlacementPosition::from_tick(tick)),
         (Some(beat), None) => {
             validate_range("arrangement beat", beat, 0.0, 9999.0)?;
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            Ok(Tick(
+            Ok(crate::bridge::PlacementPosition::from_tick(Tick(
                 (beat * synth_sequencer::TICKS_PER_QUARTER as f32).round() as u64,
-            ))
+            )))
+        }
+        (Some(beat), Some(tick)) => {
+            validate_range("arrangement beat", beat, 0.0, 9999.0)?;
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let beat_tick = Tick((beat * synth_sequencer::TICKS_PER_QUARTER as f32).round() as u64);
+            if beat_tick == tick {
+                Ok(crate::bridge::PlacementPosition::from_tick(tick))
+            } else {
+                Err(McpBridgeError::Other(format!(
+                    "{field}_beat and {field}_tick refer to different positions"
+                )))
+            }
         }
     }
 }
@@ -103,7 +115,7 @@ fn placement_to_bridge(
     Ok(crate::bridge::BridgePlacementData {
         pattern_id: placement.pattern_id,
         track_id: placement.track_id,
-        start_tick,
+        start: start_tick,
         transpose_semitones: transpose,
         gain,
         length_ticks: arrangement_length(placement.length_beats, placement.length_ticks)?,
@@ -3702,10 +3714,10 @@ pub struct PlacementInput {
     pub pattern_id: PatternId,
     #[schemars(description = "Track ID to place on")]
     pub track_id: TrackId,
-    #[schemars(description = "Start position in beats; set exactly one of start_beat/start_tick")]
+    #[schemars(description = "Start position in beats; may accompany an agreeing start_tick")]
     pub start_beat: Option<f32>,
     #[schemars(
-        description = "Exact start position in ticks; set exactly one of start_beat/start_tick"
+        description = "Exact start position in ticks; may accompany an agreeing start_beat"
     )]
     pub start_tick: Option<Tick>,
     #[serde(default)]
@@ -3733,10 +3745,10 @@ pub struct PlacementLocatorInput {
     pub pattern_id: PatternId,
     #[schemars(description = "Track ID of the existing placement")]
     pub track_id: TrackId,
-    #[schemars(description = "Start position in beats; set exactly one of start_beat/start_tick")]
+    #[schemars(description = "Start position in beats; may accompany an agreeing start_tick")]
     pub start_beat: Option<f32>,
     #[schemars(
-        description = "Exact start position in ticks; set exactly one of start_beat/start_tick"
+        description = "Exact start position in ticks; may accompany an agreeing start_beat"
     )]
     pub start_tick: Option<Tick>,
 }
@@ -3748,11 +3760,11 @@ pub struct PlacementUpdateInput {
     #[schemars(description = "Track ID of the existing placement")]
     pub track_id: TrackId,
     #[schemars(
-        description = "Existing start position in beats; set exactly one of start_beat/start_tick"
+        description = "Existing start position in beats; may accompany an agreeing start_tick"
     )]
     pub start_beat: Option<f32>,
     #[schemars(
-        description = "Exact existing start position in ticks; set exactly one of start_beat/start_tick"
+        description = "Exact existing start position in ticks; may accompany an agreeing start_beat"
     )]
     pub start_tick: Option<Tick>,
     #[schemars(description = "Move the placement to this track ID")]
@@ -7467,12 +7479,14 @@ impl SynthMcpServer {
             };
             match self
                 .bridge
-                .remove_placement(pl.pattern_id, pl.track_id, start_tick)
+                .remove_placement(pl.pattern_id, pl.track_id, start_tick.tick())
             {
                 Ok(()) => ok_count += 1,
                 Err(e) => errors.push(format!(
                     "pattern {} on track {} at {}: {e}",
-                    pl.pattern_id, pl.track_id, start_tick
+                    pl.pattern_id,
+                    pl.track_id,
+                    start_tick.tick()
                 )),
             }
         }
@@ -8660,9 +8674,9 @@ impl SynthMcpServer {
             updates.push(crate::bridge::BridgePlacementUpdate {
                 pattern_id: update.pattern_id,
                 track_id: update.track_id,
-                start_tick,
+                start: start_tick,
                 new_track_id: update.new_track_id,
-                new_start_tick,
+                new_start: new_start_tick,
                 transpose_semitones: update.transpose_semitones,
                 gain: update.gain,
                 length_ticks,
@@ -8775,7 +8789,7 @@ impl SynthMcpServer {
             placements.push(crate::bridge::BridgeSongPlacement {
                 pattern_index: pl.pattern_index,
                 track_index: pl.track_index,
-                start_tick,
+                start: start_tick,
                 transpose_semitones: pl.transpose_semitones.unwrap_or(0.0),
                 gain: pl.gain.unwrap_or(1.0),
                 length_ticks,

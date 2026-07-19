@@ -56,15 +56,29 @@ impl EvalContext {
 /// once and stays constant across the block; only these registers tick each
 /// sample (the per-block-constant vs per-sample source split). A `None` field
 /// means the script does not read that audio input.
+#[must_use]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub struct ScriptRegister(u16);
+
+impl ScriptRegister {
+    pub const fn new(index: u16) -> Self {
+        Self(index)
+    }
+
+    pub const fn as_u16(self) -> u16 {
+        self.0
+    }
+}
+
 #[derive(Debug, Clone, Copy, Default)]
 pub struct AudioBindings {
     /// Source register fed the per-sample left / mono audio input (`in` / `in-l`).
-    pub in_left: Option<u16>,
+    pub in_left: Option<ScriptRegister>,
     /// Source register fed the per-sample right audio input (`in-r`).
-    pub in_right: Option<u16>,
+    pub in_right: Option<ScriptRegister>,
     /// Source register fed `first_sample` — `1.0` only at sample 0 of the note's
     /// very first block, `0.0` everywhere after (audio-rate one-shot init).
-    pub first_sample: Option<u16>,
+    pub first_sample: Option<ScriptRegister>,
 }
 
 /// Number of addressable output slots captured during one evaluation. The
@@ -531,13 +545,13 @@ impl CompiledScript {
             // Per-sample source injection: only the audio-in and `first_sample`
             // registers tick; every other source stays at its block-constant value.
             if let Some(r) = bindings.in_left {
-                set_source(sources, r, in_left.get(i).copied().unwrap_or(0.0));
+                set_source(sources, r.as_u16(), in_left.get(i).copied().unwrap_or(0.0));
             }
             if let Some(r) = bindings.in_right {
-                set_source(sources, r, in_right.get(i).copied().unwrap_or(0.0));
+                set_source(sources, r.as_u16(), in_right.get(i).copied().unwrap_or(0.0));
             }
             if let Some(r) = bindings.first_sample {
-                set_source(sources, r, f32::from(first_block && i == 0));
+                set_source(sources, r.as_u16(), f32::from(first_block && i == 0));
             }
 
             stack.clear(); // reset sp only — keep the warm buffer
@@ -956,7 +970,7 @@ mod tests {
     fn eval_block_passthrough_is_bit_exact() {
         // `out = in` — left/right must equal the input sample-for-sample.
         let bindings = AudioBindings {
-            in_left: Some(0),
+            in_left: Some(ScriptRegister::new(0)),
             ..Default::default()
         };
         let input: Vec<f32> = (0..8).map(|i| (i as f32 * 0.131).sin()).collect();
@@ -981,7 +995,7 @@ mod tests {
     fn eval_block_applies_per_sample_gain() {
         // `out = in * 0.5`.
         let bindings = AudioBindings {
-            in_left: Some(0),
+            in_left: Some(ScriptRegister::new(0)),
             ..Default::default()
         };
         let input: Vec<f32> = vec![1.0, -0.4, 0.8, -1.0];
@@ -1026,7 +1040,7 @@ mod tests {
             Op::LoadState(0),
         ];
         let bindings = AudioBindings {
-            in_left: Some(0),
+            in_left: Some(ScriptRegister::new(0)),
             ..Default::default()
         };
         let input: Vec<f32> = (0..32).map(|i| if i == 0 { 1.0 } else { 0.0 }).collect(); // impulse
@@ -1054,7 +1068,7 @@ mod tests {
             Op::StoreOut(1),
         ];
         let bindings = AudioBindings {
-            in_left: Some(0),
+            in_left: Some(ScriptRegister::new(0)),
             ..Default::default()
         };
         let input: Vec<f32> = vec![0.25, -0.5, 1.0];
@@ -1070,7 +1084,7 @@ mod tests {
     fn eval_block_first_sample_fires_once_per_note() {
         // `out = first_sample` — 1 only at global sample 0, then 0 forever.
         let bindings = AudioBindings {
-            first_sample: Some(0),
+            first_sample: Some(ScriptRegister::new(0)),
             ..Default::default()
         };
         let zeros = vec![0.0; 4];
@@ -1171,7 +1185,7 @@ mod tests {
             Op::LoadState(0),
         ];
         let bindings = AudioBindings {
-            in_left: Some(0),
+            in_left: Some(ScriptRegister::new(0)),
             ..Default::default()
         };
         let input: Vec<f32> = vec![0.1, f32::NAN, 0.2, 0.3];

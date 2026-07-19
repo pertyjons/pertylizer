@@ -615,6 +615,12 @@ impl TrackId {
     pub fn new(id: u16) -> Self {
         Self(id)
     }
+
+    /// Return this ID as an array index.
+    #[must_use]
+    pub const fn as_usize(self) -> usize {
+        self.0 as usize
+    }
 }
 
 /// Unique identifier for an instrument.

@@ -105,8 +105,22 @@ pub struct MacroNode {
     /// Display name of the macro.
     pub name: String,
     /// Current value, `0.0..=1.0`.
-    #[serde(default)]
-    pub value: f32,
+    #[serde(default, deserialize_with = "deserialize_normalized_value")]
+    pub value: synth_core::NormalizedValue,
+}
+
+fn deserialize_normalized_value<'de, D>(
+    deserializer: D,
+) -> Result<synth_core::NormalizedValue, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let value = f32::deserialize(deserializer)?;
+    if (0.0..=1.0).contains(&value) {
+        Ok(synth_core::NormalizedValue::new(value))
+    } else {
+        Err(serde::de::Error::custom("macro value must be in 0..=1"))
+    }
 }
 
 /// A grid-native MIDI CC input source node.
@@ -484,6 +498,15 @@ mod tests {
             amount: 1.0,
             combine: CombineMode::Add,
         })
+    }
+
+    #[test]
+    fn macro_value_deserialization_rejects_out_of_range_values() {
+        let result = serde_json::from_value::<ModNodeConfig>(serde_json::json!({
+            "Macro": { "name": "Too loud", "value": 1.01 }
+        }));
+
+        assert!(result.is_err());
     }
 
     #[test]

@@ -88,7 +88,7 @@ impl AudioScript {
     fn bindings_for(script: &BoundScript) -> AudioBindings {
         let mut b = AudioBindings::default();
         for (i, input) in script.inputs.iter().enumerate() {
-            let reg = i as u16;
+            let reg = synth_core::script::ScriptRegister::new(u16::try_from(i).unwrap_or(0));
             match input {
                 ScriptInput::AudioIn(AudioInputChannel::Left) => b.in_left = Some(reg),
                 ScriptInput::AudioIn(AudioInputChannel::Right) => b.in_right = Some(reg),
@@ -392,9 +392,12 @@ mod tests {
             ],
         );
         let b = AudioScript::bindings_for(&s);
-        assert_eq!(b.in_right, Some(0));
-        assert_eq!(b.first_sample, Some(1));
-        assert_eq!(b.in_left, Some(2));
+        assert_eq!(b.in_right, Some(synth_core::script::ScriptRegister::new(0)));
+        assert_eq!(
+            b.first_sample,
+            Some(synth_core::script::ScriptRegister::new(1))
+        );
+        assert_eq!(b.in_left, Some(synth_core::script::ScriptRegister::new(2)));
     }
 
     #[test]
@@ -572,7 +575,10 @@ mod tests {
                 vec![ScriptInput::AudioIn(AudioInputChannel::Left)],
             )),
         );
-        assert_eq!(m.bindings.in_left, Some(0));
+        assert_eq!(
+            m.bindings.in_left,
+            Some(synth_core::script::ScriptRegister::new(0))
+        );
         let replaced = m.set_script(0, None);
         assert!(
             replaced.is_some(),

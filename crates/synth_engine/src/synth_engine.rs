@@ -503,13 +503,12 @@ pub struct SynthEngine {
     /// audio-thread allocation. Introduces ~1 buffer of sidechain
     /// detection latency — acceptable for compressor envelope follow.
     prev_instrument_outputs: std::collections::HashMap<InstrumentId, AudioBuffer>,
-    /// Per-instrument owning-track controls (volume/pan/audibility), refreshed
-    /// each block from the sequencer `Song` and consumed by the channel-bus
-    /// stage (`mix_channel_busses`). Pre-allocated on instrument add/remove
-    /// (mirrors `prev_instrument_outputs`) so the audio thread never grows it.
-    /// Instruments with no owning track keep a `NEUTRAL` entry, which composes
-    /// to the instrument's own fader unchanged.
-    track_controls: std::collections::HashMap<InstrumentId, TrackControl>,
+    /// Per-track controls applied to each tagged voice before the shared
+    /// instrument effect chain. The full `TrackId` space is pre-allocated and
+    /// generation-marked, so refresh and lookup are allocation-free without a
+    /// 65K-entry clear on every callback.
+    track_controls: Box<[TrackControlSlot]>,
+    track_control_generation: u64,
 
     // === Sends / returns (Phase 7) ===
     /// Return busses (effect-send destinations), each with its own effect
@@ -683,7 +682,9 @@ impl SynthEngine {
             mix_buffer: AudioBuffer::new(512),
             graph_output: AudioBuffer::new(1024),
             prev_instrument_outputs: std::collections::HashMap::new(),
-            track_controls: std::collections::HashMap::new(),
+            track_controls: vec![TrackControlSlot::default(); usize::from(u16::MAX) + 1]
+                .into_boxed_slice(),
+            track_control_generation: 0,
             return_busses: Vec::new(),
             return_index: std::collections::HashMap::new(),
             return_sends: Vec::new(),
@@ -1747,9 +1748,6 @@ impl SynthEngine {
             instrument.id(),
             AudioBuffer::new(synth_core::MAX_BLOCK_SIZE * 2),
         );
-        // Pre-allocate the track-control entry (neutral until a track claims it).
-        self.track_controls
-            .insert(instrument.id(), TrackControl::NEUTRAL);
         // Pre-allocate the per-channel send list at full capacity so the audio
         // thread refreshes it (clear + push) without ever growing the vec.
         self.channel_sends
@@ -1777,9 +1775,8 @@ impl SynthEngine {
                 .set_connections_for_instrument(instrument_id, Vec::new());
 
             let instrument = self.instruments.swap_remove(idx);
-            // Drop this instrument's sidechain cache and track-control entry.
+            // Drop this instrument's sidechain cache.
             self.prev_instrument_outputs.remove(&instrument_id);
-            self.track_controls.remove(&instrument_id);
             self.channel_sends.remove(&instrument_id);
             // Clear any sidechain references that pointed at this id.
             for inst in &mut self.instruments {
@@ -3263,34 +3260,25 @@ impl SynthEngine {
     /// ## Solo Logic
     /// If any instrument is soloed, only soloed instruments produce sound.
     /// Non-soloed instruments are skipped entirely (not just muted).
-    /// Refresh the per-instrument [`TrackControl`] map from the sequencer
-    /// `Song`, ready for the channel-bus stage.
+    /// Refresh the per-track [`TrackControl`] table from the sequencer `Song`,
+    /// ready for per-voice application in [`Instrument::process`].
     ///
     /// Real-time safe: `try_read()` only (on contention, last block's controls
-    /// are kept); no allocation — every key is pre-allocated on instrument add,
-    /// so this only resets and overwrites existing `Copy` values. Track and
-    /// instrument now share one id namespace, so a track's `instrument` keys the
-    /// control maps directly. Instruments may
-    /// be shared across tracks (intentional layering); when two tracks drive the
-    /// same instrument the last one in `tracks()` order wins the fader for that
-    /// block. Independent faders for a shared instrument would need per-voice
-    /// tagging (channel-strip plan, Phase 8) — not built.
+    /// are kept) and no allocation. Instruments may be shared across tracks;
+    /// each voice resolves the control for its own `TrackId`.
     fn update_track_controls(&mut self) {
         let Some(song) = self.sequencer.song().try_read() else {
             return;
         };
-        for control in self.track_controls.values_mut() {
-            *control = TrackControl::NEUTRAL;
-        }
+        self.track_control_generation = self.track_control_generation.wrapping_add(1).max(1);
         for sends in self.channel_sends.values_mut() {
             sends.clear();
         }
         let any_solo = song.any_solo();
         let track_auto = self.sequencer.track_auto();
         for track in song.tracks() {
-            // Every track has an instrument; a shared instrument means a shared
-            // fader (last track in iteration order wins for that block).
-            if let Some(control) = self.track_controls.get_mut(&track.instrument) {
+            // Every track writes its own generation-marked control slot.
+            if let Some(slot) = self.track_controls.get_mut(track.id.as_usize()) {
                 // Live automation overrides the stored fader; absent → static.
                 // The Mod Grid then adds its block-constant offset on top (lane
                 // or base value + grid offset, clamped) — additive composition.
@@ -3303,11 +3291,12 @@ impl SynthEngine {
                     .unwrap_or_default();
                 let base_volume = auto.volume.unwrap_or(track.volume).as_f32();
                 let base_pan = auto.pan.unwrap_or(track.pan).as_f32();
-                *control = TrackControl {
+                slot.control = TrackControl {
                     volume: NormalizedValue::new((base_volume + grid.volume).clamp(0.0, 1.0)),
                     pan: BipolarValue::new((base_pan + grid.pan).clamp(-1.0, 1.0)),
                     audible: track.is_audible(any_solo) && !auto.muted.unwrap_or(false),
                 };
+                slot.generation = self.track_control_generation;
             }
             // Resolve this track's send taps to return-bus indices. Like the
             // fader, a shared instrument takes the last track's sends for the
@@ -3502,6 +3491,10 @@ impl SynthEngine {
         // note seed its track pitch at retrigger (disjoint field borrow from
         // `self.instruments`).
         let track_auto = self.sequencer.track_auto();
+        let track_controls = TrackControlSnapshot {
+            slots: &self.track_controls,
+            generation: self.track_control_generation,
+        };
         for instrument in &mut self.instruments {
             // Skip this instrument if:
             // - Any instrument is soloed AND this one is not soloed
@@ -3516,7 +3509,7 @@ impl SynthEngine {
                 instrument.feed_sidechain_inputs(prev.as_slice());
             }
 
-            active_count += instrument.process(context, track_auto);
+            active_count += instrument.process(context, track_auto, track_controls);
         }
 
         // Clear each return bus's send-accumulation buffer for this block before
@@ -3525,15 +3518,13 @@ impl SynthEngine {
             bus.prepare_block(buffer_size);
         }
 
-        // Channel-bus stage: compose each channel's instrument fader with its
-        // owning-track fader and sum into the master mix, tapping configured
-        // sends into the return busses. Single insertion point for track
-        // controls and sends/returns (Phase 7).
+        // Channel-bus stage: apply the shared instrument fader and sum into the
+        // master mix, tapping configured sends into the return busses. Track
+        // controls were already applied per voice before the shared effects.
         mix_channel_busses(
             &self.instruments,
             any_soloed,
             ChannelControls {
-                track: &self.track_controls,
                 grid_offsets: &self.mod_grid.instrument_offsets,
                 sends: &self.channel_sends,
             },
@@ -3659,10 +3650,43 @@ impl Default for SynthEngine {
 /// the instrument's own fader unchanged, so an instrument with no owning track
 /// behaves exactly as it did before Phase 2.
 #[derive(Clone, Copy)]
-struct TrackControl {
-    volume: NormalizedValue,
-    pan: BipolarValue,
-    audible: bool,
+pub(crate) struct TrackControl {
+    pub(crate) volume: NormalizedValue,
+    pub(crate) pan: BipolarValue,
+    pub(crate) audible: bool,
+}
+
+#[derive(Clone, Copy)]
+struct TrackControlSlot {
+    control: TrackControl,
+    generation: u64,
+}
+
+impl Default for TrackControlSlot {
+    fn default() -> Self {
+        Self {
+            control: TrackControl::NEUTRAL,
+            generation: 0,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct TrackControlSnapshot<'a> {
+    slots: &'a [TrackControlSlot],
+    generation: u64,
+}
+
+impl TrackControlSnapshot<'_> {
+    pub(crate) fn get(self, track: Option<synth_sequencer::TrackId>) -> TrackControl {
+        let Some(track) = track else {
+            return TrackControl::NEUTRAL;
+        };
+        self.slots
+            .get(track.as_usize())
+            .filter(|slot| slot.generation == self.generation)
+            .map_or(TrackControl::NEUTRAL, |slot| slot.control)
+    }
 }
 
 impl TrackControl {
@@ -3699,11 +3723,9 @@ struct ResolvedReturnSend {
     level: f32,
 }
 
-/// The per-instrument control maps the channel-bus stage reads together: the
-/// resolved track fader/pan, the Mod Grid's per-instrument Volume/Pan offset, and
-/// the configured sends. Grouped to keep [`mix_channel_busses`]'s arity in check.
+/// The per-instrument control maps the channel-bus stage reads together. Track
+/// controls have already been applied per voice before the shared effect chain.
 struct ChannelControls<'a> {
-    track: &'a std::collections::HashMap<InstrumentId, TrackControl>,
     /// Mod Grid per-instrument Volume/Pan offsets, keyed by `InstrumentId`
     /// (pre-keyed off the audio thread).
     grid_offsets:
@@ -3715,23 +3737,16 @@ struct ChannelControls<'a> {
 ///
 /// Channel-strip model: each instrument is a channel whose post-effect,
 /// **pre-fader** signal lives in its `effect_buffer` (read via
-/// [`Instrument::last_output_interleaved`]). This stage composes the channel's
-/// instrument fader with its owning-track fader, applies per-channel soft
-/// clipping, and sums the result into `mix_buffer`:
-/// - gain = `inst.volume × track.volume`
-/// - pan  = `inst.pan + track.pan` (clamped to [-1, 1] by `BipolarValue::new`),
-///   fed once through the constant-power pan law — additive, *not* two cascaded
-///   pan stages (which would mis-handle hard-panned channels).
+/// [`Instrument::last_output_interleaved`]). This stage applies the shared
+/// instrument fader/pan, taps sends, and sums the result into `mix_buffer`.
 ///
-/// Moving the fader here (out of `Instrument::process`) makes the instrument a
-/// pure sound source and gives a single insertion point for track controls and
-/// sends/returns (Phase 7). The sidechain tap stays pre-fader: this stage never
-/// writes gain back into `effect_buffer`.
+/// Moving the shared instrument fader here (out of `Instrument::process`) gives
+/// sends/returns one insertion point. The per-track fader is applied per voice
+/// before the shared effect chain. The sidechain tap stays pre-instrument-fader:
+/// this stage never writes gain back into `effect_buffer`.
 ///
-/// Skips muted/non-soloed instruments (as in Phase 1) and, additionally,
-/// channels whose owning track is inaudible (track mute / track-solo exclusion
-/// via `SequencerTrack::is_audible`). Instruments with no track entry, or a
-/// `NEUTRAL` entry, compose to their instrument-only fader unchanged.
+/// Skips muted/non-soloed instruments. Track mute/solo has already been applied
+/// to each tagged voice.
 fn mix_channel_busses(
     instruments: &[Box<Instrument>],
     any_soloed: bool,
@@ -3745,16 +3760,10 @@ fn mix_channel_busses(
     // so the GUI can show a level on every strip.
     for (i, instrument) in instruments.iter().enumerate() {
         let soloed_out = any_soloed && !instrument.is_solo();
-        let track = controls
-            .track
-            .get(&instrument.id())
-            .copied()
-            .unwrap_or(TrackControl::NEUTRAL);
-        let audible = !soloed_out && !instrument.mute_state().is_muted() && track.audible;
+        let audible = !soloed_out && !instrument.mute_state().is_muted();
 
         let peak = if audible {
-            // Compose instrument fader with track fader. Additive pan through one
-            // constant-power law; multiplicative volume. The Mod Grid's
+            // Apply the instrument fader. The Mod Grid's
             // per-instrument offset composes additively onto the instrument fader
             // (volume clamped to a valid gain, pan clamped by `BipolarValue`).
             let grid = controls
@@ -3762,10 +3771,9 @@ fn mix_channel_busses(
                 .get(&instrument.id())
                 .copied()
                 .unwrap_or_default();
-            let pan = BipolarValue::new(instrument.pan().as_f32() + grid.pan + track.pan.as_f32());
+            let pan = BipolarValue::new(instrument.pan().as_f32() + grid.pan);
             let (pan_left, pan_right) = Gain::from_pan(pan);
-            let volume = (instrument.volume().as_f32() + grid.volume).clamp(0.0, 2.0)
-                * track.volume.as_f32();
+            let volume = (instrument.volume().as_f32() + grid.volume).clamp(0.0, 2.0);
             let left_gain = pan_left.as_f32() * volume;
             let right_gain = pan_right.as_f32() * volume;
 
@@ -4865,11 +4873,11 @@ mod tests {
 
         // Composition path: update_track_controls folds it onto the base fader.
         engine.update_track_controls();
-        let ctrl = engine
-            .track_controls
-            .get(&InstrumentId::new(0))
-            .copied()
-            .expect("track control present");
+        let ctrl = TrackControlSnapshot {
+            slots: &engine.track_controls,
+            generation: engine.track_control_generation,
+        }
+        .get(Some(TrackId(0)));
         assert!(
             (ctrl.volume.as_f32() - 0.9).abs() < 1e-4,
             "expected composed track fader 0.9 (0.4 + 0.5), got {}",
@@ -4888,11 +4896,11 @@ mod tests {
         };
         let mut out = vec![0.0f32; 256 * 2];
         engine.process(&mut out, &context);
-        let ctrl2 = engine
-            .track_controls
-            .get(&InstrumentId::new(0))
-            .copied()
-            .unwrap();
+        let ctrl2 = TrackControlSnapshot {
+            slots: &engine.track_controls,
+            generation: engine.track_control_generation,
+        }
+        .get(Some(TrackId(0)));
         assert!(
             (ctrl2.volume.as_f32() - 0.9).abs() < 1e-4,
             "after process(): expected composed track fader 0.9, got {}",

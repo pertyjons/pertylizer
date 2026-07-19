@@ -1126,10 +1126,9 @@
           "type": "string"
         },
         "value": {
+          "$ref": "#/$defs/NormalizedValue",
           "default": 0.0,
-          "description": "Current value, `0.0..=1.0`.",
-          "format": "float",
-          "type": "number"
+          "description": "Current value, `0.0..=1.0`."
         }
       },
       "required": [

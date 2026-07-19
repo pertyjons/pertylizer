@@ -24,6 +24,21 @@ use crate::types::{
     SetSongResult, SongInfo, TempoPoint, TrackInfo, UiSnapshot, VersionInfo,
 };
 
+/// Canonical exact position used to locate an arrangement placement.
+#[must_use]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PlacementPosition(Tick);
+
+impl PlacementPosition {
+    pub const fn from_tick(tick: Tick) -> Self {
+        Self(tick)
+    }
+
+    pub const fn tick(self) -> Tick {
+        self.0
+    }
+}
+
 // === Bridge-level data structures for batch operations ===
 
 /// Per-note glide (portamento/glissando) for batch note operations.
@@ -131,7 +146,7 @@ pub struct BridgePlacementData {
     /// Track ID.
     pub track_id: TrackId,
     /// Exact start position in ticks.
-    pub start_tick: Tick,
+    pub start: PlacementPosition,
     /// Transposition in semitones.
     pub transpose_semitones: f32,
     /// Linear placement gain.
@@ -144,9 +159,9 @@ pub struct BridgePlacementData {
 pub struct BridgePlacementUpdate {
     pub pattern_id: PatternId,
     pub track_id: TrackId,
-    pub start_tick: Tick,
+    pub start: PlacementPosition,
     pub new_track_id: Option<TrackId>,
-    pub new_start_tick: Option<Tick>,
+    pub new_start: Option<PlacementPosition>,
     pub transpose_semitones: Option<f32>,
     pub gain: Option<f32>,
     /// Omitted means unchanged; `Some(None)` clears the override.
@@ -160,7 +175,7 @@ pub struct BridgeSongPlacement {
     /// Index into the tracks array.
     pub track_index: usize,
     /// Exact start position in ticks.
-    pub start_tick: Tick,
+    pub start: PlacementPosition,
     pub transpose_semitones: f32,
     pub gain: f32,
     pub length_ticks: Option<u32>,

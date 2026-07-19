@@ -8,8 +8,11 @@
 
 mod common;
 
-use synth_core::{BipolarValue, Gain, ModuleType};
-use synth_sequencer::{AutomationTarget, GlobalParam, InstrumentId, TrackId, TrackParam};
+use synth_core::{BipolarValue, Gain, ModuleType, NormalizedValue};
+use synth_sequencer::{
+    AutomationTarget, Duration, GlobalParam, InstrumentId, PatternTick, Pitch, Song, Tick, TrackId,
+    TrackParam, Velocity,
+};
 
 use pertylizer::audio::arrangement_render::{OfflineEngineSession, render_arrangement_to_buffer};
 use pertylizer::audio::mix_analysis::analyze_mix_buffer;
@@ -413,6 +416,42 @@ fn track_volume_scales_output() {
     assert!(
         (0.4..=0.6).contains(&ratio),
         "half track volume should roughly halve the level (ratio={ratio})"
+    );
+}
+
+#[test]
+fn shared_instrument_tracks_keep_independent_voice_faders() {
+    let rig = setup_with_patch(&sustain_patch());
+    let mut song = Song::new("Shared instrument faders");
+    let pattern_id = song.create_pattern(Duration::WHOLE);
+    if let Some(pattern) = song.pattern_mut(pattern_id) {
+        let _ = pattern.add_note(PatternTick::ZERO, Pitch::new(60).unwrap(), Velocity::MF);
+    }
+    let audible_track = song.create_track("Audible");
+    let silent_track = song.create_track("Silent");
+    if let Some(track) = song.track_mut(audible_track) {
+        track.instrument = InstrumentId::FIRST;
+        track.volume = NormalizedValue::MAX;
+    }
+    if let Some(track) = song.track_mut(silent_track) {
+        track.instrument = InstrumentId::FIRST;
+        track.volume = NormalizedValue::MIN;
+    }
+    song.place_pattern(pattern_id, audible_track, Tick::ZERO);
+    song.place_pattern(pattern_id, silent_track, Tick::ZERO);
+    let shared = McpSharedState::with_song(std::sync::Arc::new(parking_lot::RwLock::new(song)));
+
+    let rendered = render_arrangement_to_buffer(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        0,
+        u64::from(Duration::WHOLE.0),
+    )
+    .expect("render shared instrument");
+    assert!(
+        left_rms(&rendered.samples) > 0.001,
+        "the silent second track must not override the audible first track"
     );
 }
 

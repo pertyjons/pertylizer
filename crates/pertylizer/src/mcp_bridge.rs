@@ -2811,7 +2811,7 @@ impl SynthBridge for AppSynthBridge {
     fn place_pattern(&self, data: &BridgePlacementData) -> Result<(), McpBridgeError> {
         let pid = data.pattern_id;
         let tid = data.track_id;
-        let tick = data.start_tick;
+        let tick = data.start.tick();
 
         let placement_end = {
             let mut song = self.shared.song.write();
@@ -2829,7 +2829,8 @@ impl SynthBridge for AppSynthBridge {
             {
                 return Err(McpBridgeError::Other(format!(
                     "placement already exists on track {} at tick {}",
-                    data.track_id, data.start_tick
+                    data.track_id,
+                    data.start.tick()
                 )));
             }
             let placement = placement_from_bridge(data);
@@ -3155,7 +3156,7 @@ impl SynthBridge for AppSynthBridge {
             for (i, p) in placements.iter().enumerate() {
                 let pid = p.pattern_id;
                 let tid = p.track_id;
-                let tick = p.start_tick;
+                let tick = p.start.tick();
 
                 let Some(pattern_length) = song.pattern(pid).map(|p| p.length) else {
                     items.push(BatchItemResult {
@@ -3187,7 +3188,8 @@ impl SynthBridge for AppSynthBridge {
                         id: None,
                         error: Some(format!(
                             "placement already exists on track {} at tick {}",
-                            p.track_id, p.start_tick
+                            p.track_id,
+                            p.start.tick()
                         )),
                     });
                     continue;
@@ -3240,7 +3242,7 @@ impl SynthBridge for AppSynthBridge {
         for (index, update) in updates.iter().enumerate() {
             let pattern_id = update.pattern_id;
             let track_id = update.track_id;
-            let start = update.start_tick;
+            let start = update.start.tick();
             let Some(mut replacement) = song
                 .arrangement()
                 .iter()
@@ -3262,8 +3264,8 @@ impl SynthBridge for AppSynthBridge {
             if let Some(new_track_id) = update.new_track_id {
                 replacement.track_id = new_track_id;
             }
-            if let Some(new_start_tick) = update.new_start_tick {
-                replacement.start = new_start_tick;
+            if let Some(new_start) = update.new_start {
+                replacement.start = new_start.tick();
             }
             if let Some(transpose) = update.transpose_semitones {
                 replacement.transpose = synth_core::Semitones::new(transpose);
@@ -3397,7 +3399,7 @@ impl SynthBridge for AppSynthBridge {
             let data = BridgePlacementData {
                 pattern_id: pid,
                 track_id: tid,
-                start_tick: pl.start_tick,
+                start: pl.start,
                 transpose_semitones: pl.transpose_semitones,
                 gain: pl.gain,
                 length_ticks: pl.length_ticks,
@@ -3408,7 +3410,8 @@ impl SynthBridge for AppSynthBridge {
             }) {
                 errors.push(format!(
                     "placement[{i}]: target track {} tick {} is occupied",
-                    tid.0, pl.start_tick
+                    tid.0,
+                    pl.start.tick()
                 ));
             } else if song.insert_placement(placement) {
                 placements_created += 1;
@@ -7233,7 +7236,7 @@ fn beats_to_ticks(beats: f32) -> u32 {
 
 fn placement_from_bridge(data: &BridgePlacementData) -> synth_sequencer::PatternPlacement {
     let mut placement =
-        synth_sequencer::PatternPlacement::new(data.pattern_id, data.track_id, data.start_tick)
+        synth_sequencer::PatternPlacement::new(data.pattern_id, data.track_id, data.start.tick())
             .with_transpose(synth_core::Semitones::new(data.transpose_semitones))
             .with_gain(synth_core::Gain::new(data.gain));
     placement.length_override = data.length_ticks.map(synth_sequencer::Duration);

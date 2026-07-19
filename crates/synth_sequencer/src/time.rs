@@ -127,6 +127,23 @@ pub struct PatternTick(pub u32);
 
 impl PatternTick {
     pub const ZERO: Self = Self(0);
+
+    /// Resolve an absolute song position into a looping pattern position.
+    ///
+    /// Returns `None` before the placement starts or for an empty pattern.
+    #[must_use]
+    pub fn looping_at(
+        current: Tick,
+        placement_start: Tick,
+        pattern_length: Duration,
+    ) -> Option<Self> {
+        if current < placement_start || pattern_length.0 == 0 {
+            return None;
+        }
+        let offset = current.0.saturating_sub(placement_start.0);
+        let wrapped = offset % u64::from(pattern_length.0);
+        Some(Self(u32::try_from(wrapped).unwrap_or(0)))
+    }
 }
 
 impl std::fmt::Display for PatternTick {
@@ -158,6 +175,27 @@ impl AddAssign for PatternTick {
 impl SubAssign for PatternTick {
     fn sub_assign(&mut self, rhs: Self) {
         self.0 = self.0.saturating_sub(rhs.0);
+    }
+}
+
+#[cfg(test)]
+mod pattern_tick_tests {
+    use super::*;
+
+    #[test]
+    fn looping_at_wraps_absolute_positions() {
+        assert_eq!(
+            PatternTick::looping_at(Tick(2_100), Tick(100), Duration(960)),
+            Some(PatternTick(80))
+        );
+        assert_eq!(
+            PatternTick::looping_at(Tick(99), Tick(100), Duration(960)),
+            None
+        );
+        assert_eq!(
+            PatternTick::looping_at(Tick(100), Tick(100), Duration(0)),
+            None
+        );
     }
 }
 
