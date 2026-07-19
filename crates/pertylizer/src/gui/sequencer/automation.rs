@@ -37,6 +37,7 @@ pub(super) fn draw_automation_zone(
     grid_x: f32,
     auto_y: f32,
     grid_width: f32,
+    viewport_left: f32,
     tick_to_x: &dyn Fn(PatternTick) -> f32,
     t: &crate::gui::theme::Theme,
     is_selected: bool,
@@ -72,13 +73,16 @@ pub(super) fn draw_automation_zone(
         Stroke::new(1.0, t.colors.border),
     );
 
-    // Every zone's target long-form name, dimmed at the top-right corner —
-    // right-aligned so it clears leading high-value points near tick 0. (The
-    // "AUTO" gutter tag on the focused lane is drawn by the pinned keyboard
-    // strip in `draw_pr_keyboard_gutter`.)
+    // Every zone's target long-form name, pinned to the visible left edge of the
+    // lane (clamped so it never drifts left of the lane's own start) so it stays
+    // on screen no matter how far the pattern is scrolled — it used to sit at the
+    // far right and was only visible when the whole pattern fit. Dimmed and drawn
+    // behind the curve; the "AUT" + short-type gutter tag is drawn by the pinned
+    // keyboard strip in `draw_pr_keyboard_gutter`.
+    let label_x = viewport_left.max(grid_x) + 4.0;
     painter.text(
-        Pos2::new(grid_x + grid_width - 4.0, auto_y + 2.0),
-        egui::Align2::RIGHT_TOP,
+        Pos2::new(label_x, auto_y + 2.0),
+        egui::Align2::LEFT_TOP,
         selected_target.display_name(),
         egui::FontId::proportional(9.0),
         t.colors

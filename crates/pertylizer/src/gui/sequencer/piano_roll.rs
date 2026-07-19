@@ -1931,16 +1931,31 @@ fn draw_pr_keyboard_gutter(
     );
     let auto_base_y = vel_y + VELOCITY_ZONE_HEIGHT;
     for (i, target) in auto_zone_targets.iter().enumerate() {
-        if selected_automation == Some(target) {
-            let zone_y = auto_base_y + i as f32 * AUTOMATION_ZONE_HEIGHT;
-            gp.text(
-                Pos2::new(area.left() + 2.0, zone_y + 2.0),
-                egui::Align2::LEFT_TOP,
-                "AUTO",
-                egui::FontId::proportional(9.0),
-                t.colors.text_dim,
-            );
-        }
+        let zone_y = auto_base_y + i as f32 * AUTOMATION_ZONE_HEIGHT;
+        // Every lane gets an "AUT" tag plus its short type below it (the pinned
+        // gutter counterpart of the "VEL" tag). The edit-focused lane is drawn
+        // brighter so it stands out.
+        let focused = selected_automation == Some(target);
+        let label_color = if focused {
+            t.colors.text_secondary
+        } else {
+            t.colors.text_dim
+        };
+        gp.text(
+            Pos2::new(area.left() + 2.0, zone_y + 2.0),
+            egui::Align2::LEFT_TOP,
+            "AUT",
+            egui::FontId::proportional(9.0),
+            label_color,
+        );
+        // Short type (the parameter name) below the tag — clipped to the gutter.
+        gp.text(
+            Pos2::new(area.left() + 2.0, zone_y + 13.0),
+            egui::Align2::LEFT_TOP,
+            target.short_name(),
+            egui::FontId::proportional(8.0),
+            label_color.gamma_multiply(0.85),
+        );
     }
 
     // Right edge of the gutter (the old keyboard/grid separator).
@@ -2576,6 +2591,9 @@ fn draw_piano_roll_grid(
     let auto_zone_targets = displayed_automation_targets(data, view_state);
     let auto_height = auto_zone_targets.len() as f32 * AUTOMATION_ZONE_HEIGHT;
     let auto_base_y = vel_y + VELOCITY_ZONE_HEIGHT;
+    // Left edge of the visible scroll viewport, so each lane can pin its
+    // description there and keep it on screen regardless of horizontal scroll.
+    let viewport_left = ui.clip_rect().min.x;
     for (i, target) in auto_zone_targets.iter().enumerate() {
         let zone_y = auto_base_y + i as f32 * AUTOMATION_ZONE_HEIGHT;
         let is_selected = view_state.selected_automation.as_ref() == Some(target);
@@ -2587,6 +2605,7 @@ fn draw_piano_roll_grid(
             grid_x,
             zone_y,
             grid_width,
+            viewport_left,
             &tick_to_x,
             &t,
             is_selected,

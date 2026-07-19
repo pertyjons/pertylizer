@@ -398,6 +398,19 @@ impl AutomationTarget {
         }
     }
 
+    /// Short type label — just the parameter name, without the instrument /
+    /// track scope that `display_name` prepends. For compact GUI gutters where
+    /// only ~one word fits (e.g. "Cutoff", "Pan", "Volume").
+    #[must_use]
+    pub fn short_name(&self) -> String {
+        match self {
+            Self::Instrument { param, .. } => param.display_name().to_owned(),
+            Self::Track { param, .. } => param.display_name().to_owned(),
+            Self::Global(param) => format!("{param:?}"),
+            Self::Module { param_id, .. } => param_id.to_string(),
+        }
+    }
+
     /// Resolve this target against the track hosting the placement being
     /// played. A host-track lane (`Track { track: None, .. }`) becomes a
     /// concrete `Track { track: Some(host), .. }`; with no host to resolve
