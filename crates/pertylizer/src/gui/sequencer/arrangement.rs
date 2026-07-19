@@ -298,14 +298,6 @@ impl ArrangementCoords {
             None
         }
     }
-
-    /// The ruler rectangle spanning the full timeline width.
-    fn ruler_rect(&self, timeline_width: f32) -> Rect {
-        Rect::from_min_size(
-            Pos2::new(self.tl_x, self.tl_y),
-            Vec2::new(timeline_width, RULER_HEIGHT),
-        )
-    }
 }
 
 /// Write a new length to a pattern and push the matching `SetPatternLength`
@@ -495,6 +487,40 @@ pub(super) fn draw_arrangement(
         }
     }
 
+    // ── Pinned bar-number ruler strip (fixed top, mirrors horizontal scroll) ──
+    // Only the ruler is pinned; the tempo lane stays in the scrolling canvas
+    // below and scrolls away with the tracks. Read the offset after auto-follow
+    // has set it so the strip tracks playback with no frame of lag. Mirrors the
+    // piano roll's pinned ruler (`draw_pr_ruler_strip`). Drawn after the left
+    // header panel so it spans only the timeline width right of the headers.
+    let ruler_offset = egui::scroll_area::State::load(ui.ctx(), scroll_id)
+        .map(|s| s.offset)
+        .unwrap_or_default();
+    egui::Panel::top("seq_ruler")
+        .exact_size(RULER_HEIGHT)
+        .resizable(false)
+        .frame(egui::Frame::NONE)
+        .show(ui, |ui| {
+            let mut ctx = ArrangementCtx {
+                data,
+                song,
+                handle: &mut *handle,
+                view_state: &mut *view_state,
+                undo_manager: &mut *undo_manager,
+                instruments,
+            };
+            draw_arrangement_ruler_strip(
+                &mut ctx,
+                ui,
+                ruler_offset.x,
+                current_tick,
+                ticks_per_bar,
+                ticks_per_beat,
+                pixels_per_beat,
+                total_bars,
+            );
+        });
+
     let scroll_output = egui::ScrollArea::both()
         .id_salt(scroll_salt)
         .auto_shrink([false, false])
@@ -569,7 +595,7 @@ fn draw_arrangement_timeline(
 
     let total_size = Vec2::new(
         timeline_width,
-        RULER_HEIGHT + TEMPO_LANE_HEIGHT + track_count as f32 * TRACK_ROW_HEIGHT,
+        TEMPO_LANE_HEIGHT + track_count as f32 * TRACK_ROW_HEIGHT,
     );
     let (response, painter) = ui.allocate_painter(total_size, Sense::click_and_drag());
     // Expose the canvas container to AccessKit / the egui-inspection MCP. Per-clip
@@ -583,7 +609,15 @@ fn draw_arrangement_timeline(
     let painter_rect = response.rect;
 
     let tl_x = painter_rect.min.x;
-    let tl_y = painter_rect.min.y;
+    // The bar-number ruler is now pinned in its own top strip
+    // (`draw_arrangement_ruler_strip`), so it is no longer part of this canvas.
+    // Keep `tl_y` as a "virtual ruler top" (canvas top minus RULER_HEIGHT) so
+    // every existing offset formula — `tracks_top`, `y_to_row`, the tempo lane's
+    // `lane_top = tl_y + RULER_HEIGHT`, the tempo band background — still lands
+    // correctly with no other edits: `tracks_top` resolves to
+    // `painter_rect.min.y + TEMPO_LANE_HEIGHT`, so the tempo lane occupies the
+    // top `TEMPO_LANE_HEIGHT` of the canvas and the tracks follow below it.
+    let tl_y = painter_rect.min.y - RULER_HEIGHT;
 
     // Painter-local geometry. The closures below delegate to it so the
     // rest of this function's call sites stay unchanged; later painter
@@ -600,26 +634,6 @@ fn draw_arrangement_timeline(
     // Top of the track content area: below both the ruler and the tempo lane.
     let tracks_top = tl_y + RULER_HEIGHT + TEMPO_LANE_HEIGHT;
 
-    let tick_to_x = |tick_val: u64| coords.tick_to_x(tick_val);
-    // Helper: x position to tick
-    let x_to_tick = |x: f32| coords.x_to_tick(x);
-    // Single snap unit shared by placement create, drag, resize, and
-    // loop-region — see `snap_to_step` for the underlying math.
-    let snap_tick = |tick: u64| coords.snap_tick(tick);
-    // Helper: y position to track row index
-    let y_to_row = |y: f32| coords.y_to_row(y);
-
-    // ── Ruler (bar/beat numbers) ──
-    let ruler_rect = coords.ruler_rect(timeline_width);
-    draw_ruler_labels(
-        &painter,
-        &t,
-        ruler_rect,
-        total_bars,
-        ticks_per_bar,
-        tick_to_x,
-    );
-
     // ── Tempo lane band (between the ruler and the track rows) ──
     let lane_top = tl_y + RULER_HEIGHT;
     let lane_rect = Rect::from_min_max(
@@ -627,8 +641,8 @@ fn draw_arrangement_timeline(
         Pos2::new(tl_x + timeline_width, tracks_top),
     );
     painter.rect_filled(lane_rect, 0.0, t.colors.bg_panel.gamma_multiply(0.5));
-    // Bottom border closing the lane (the ruler's own bottom border is drawn
-    // later with the other markers).
+    // Bottom border closing the lane (the ruler's own bottom border is drawn in
+    // the pinned ruler strip).
     painter.line_segment(
         [
             Pos2::new(tl_x, tracks_top),
@@ -636,6 +650,446 @@ fn draw_arrangement_timeline(
         ],
         Stroke::new(1.0, t.colors.border),
     );
+
+    draw_arrangement_grid_lines(
+        &painter,
+        &coords,
+        total_bars,
+        beats_per_bar,
+        ticks_per_bar,
+        ticks_per_beat,
+        track_count,
+    );
+
+    {
+        let mut ctx = ArrangementCtx {
+            data,
+            song,
+            handle: &mut *handle,
+            view_state: &mut *view_state,
+            undo_manager: &mut *undo_manager,
+            instruments,
+        };
+        draw_arrangement_track_rows(&mut ctx, &painter, &coords, track_count, timeline_width);
+    }
+
+    let placement_rects = {
+        let mut ctx = ArrangementCtx {
+            data,
+            song,
+            handle: &mut *handle,
+            view_state: &mut *view_state,
+            undo_manager: &mut *undo_manager,
+            instruments,
+        };
+        draw_arrangement_placements(&mut ctx, &painter, &coords)
+    };
+
+    {
+        let mut ctx = ArrangementCtx {
+            data,
+            song,
+            handle: &mut *handle,
+            view_state: &mut *view_state,
+            undo_manager: &mut *undo_manager,
+            instruments,
+        };
+        handle_arrangement_pointer(
+            &mut ctx,
+            ui,
+            &response,
+            &painter,
+            &coords,
+            &placement_rects,
+            double_clicked_pattern,
+            tracks_top,
+        );
+    }
+
+    // ── Right-click context menu on timeline ──
+    // Use stored position from secondary_clicked, not current hover
+    let ctx_pos = view_state.context_menu_pos;
+    {
+        let mut ctx = ArrangementCtx {
+            data,
+            song,
+            handle: &mut *handle,
+            view_state: &mut *view_state,
+            undo_manager: &mut *undo_manager,
+            instruments,
+        };
+        response.context_menu(|ui| {
+            draw_arrangement_context_menu(
+                &mut ctx,
+                ui,
+                &coords,
+                ctx_pos,
+                &placement_rects,
+                double_clicked_pattern,
+                ticks_per_bar,
+            );
+        });
+    }
+
+    {
+        let mut ctx = ArrangementCtx {
+            data,
+            song,
+            handle: &mut *handle,
+            view_state: &mut *view_state,
+            undo_manager: &mut *undo_manager,
+            instruments,
+        };
+        draw_arrangement_loop_markers(&mut ctx, &painter, &coords, track_count);
+    }
+
+    {
+        let mut ctx = ArrangementCtx {
+            data,
+            song,
+            handle: &mut *handle,
+            view_state: &mut *view_state,
+            undo_manager: &mut *undo_manager,
+            instruments,
+        };
+        draw_arrangement_tempo_lane(&mut ctx, ui, &painter, &coords, timeline_width);
+    }
+
+    {
+        let mut ctx = ArrangementCtx {
+            data,
+            song,
+            handle: &mut *handle,
+            view_state: &mut *view_state,
+            undo_manager: &mut *undo_manager,
+            instruments,
+        };
+        draw_arrangement_playhead(&mut ctx, &painter, &coords, current_tick, track_count);
+    }
+}
+
+/// Draw the pinned bar-number ruler strip and own all ruler interaction: seek
+/// on click, pointing-hand hover, loop brackets, the playhead triangle, and the
+/// loop/tempo right-click menu. Hosted by the fixed [`egui::Panel::top`] in
+/// [`draw_arrangement`] so it stays put while the tracks (and the tempo lane)
+/// scroll away. `offset_x` mirrors the timeline's horizontal scroll so the bar
+/// numbers track the song. Mirrors the piano roll's `draw_pr_ruler_strip`.
+#[allow(clippy::too_many_arguments)]
+fn draw_arrangement_ruler_strip(
+    ctx: &mut ArrangementCtx<'_>,
+    ui: &mut egui::Ui,
+    offset_x: f32,
+    current_tick: u64,
+    ticks_per_bar: u64,
+    ticks_per_beat: u64,
+    pixels_per_beat: f32,
+    total_bars: u32,
+) {
+    let t = theme();
+    let area = ui.max_rect();
+    // `tl_x = area.left() - offset_x` is the content origin's screen x (the same
+    // value the scrolling canvas sees as `painter_rect.min.x`), so ticks map to
+    // the same screen positions here as in the timeline below.
+    let coords = ArrangementCoords {
+        tl_x: area.left() - offset_x,
+        tl_y: area.top(),
+        ticks_per_beat,
+        pixels_per_beat,
+        track_count: ctx.data.tracks.len(),
+        snap_ticks: ctx.view_state.arrangement_snap_ticks as u64,
+    };
+    let painter = ui.painter().with_clip_rect(area);
+    let tick_to_x = |tick_val: u64| coords.tick_to_x(tick_val);
+    let x_to_tick = |x: f32| coords.x_to_tick(x);
+
+    // `draw_ruler_labels` fills the visible strip background before painting the
+    // labels at the offset tick positions.
+    draw_ruler_labels(&painter, &t, area, total_bars, ticks_per_bar, tick_to_x);
+
+    // ── Seek on click + pointing-hand hover with a strip-height indicator ──
+    let resp = ui.interact(area, ui.id().with("arr_ruler_seek"), egui::Sense::click());
+    if resp.clicked()
+        && let Some(pos) = resp.interact_pointer_pos()
+    {
+        ctx.handle.send(EngineCommand::Seek {
+            tick: Tick(x_to_tick(pos.x)),
+        });
+        ctx.view_state.reveal_playhead();
+    }
+    if resp.hovered()
+        && let Some(pos) = ui.ctx().pointer_hover_pos()
+        && area.contains(pos)
+    {
+        ui.output_mut(|o| {
+            o.cursor_icon = CursorIcon::PointingHand;
+        });
+        // Strip-height indicator only — a full-height line across the tracks is
+        // not reachable from the pinned strip.
+        painter.line_segment(
+            [
+                Pos2::new(pos.x, area.top()),
+                Pos2::new(pos.x, area.bottom()),
+            ],
+            Stroke::new(1.0, t.colors.text_dim.gamma_multiply(0.4)),
+        );
+    }
+
+    // ── Loop-region brackets (the faint band over the rows stays in the canvas) ──
+    if let (Some(loop_start), Some(loop_end)) =
+        (ctx.view_state.loop_start_tick, ctx.view_state.loop_end_tick)
+        && loop_end.0 > loop_start.0
+    {
+        for (x, dx) in [
+            (tick_to_x(loop_start.0), 6.0),
+            (tick_to_x(loop_end.0), -6.0),
+        ] {
+            painter.line_segment(
+                [Pos2::new(x, area.top()), Pos2::new(x, area.bottom())],
+                Stroke::new(2.0, LOOP_COLOR),
+            );
+            painter.line_segment(
+                [
+                    Pos2::new(x, area.top() + 4.0),
+                    Pos2::new(x + dx, area.top() + 4.0),
+                ],
+                Stroke::new(2.0, LOOP_COLOR),
+            );
+        }
+    }
+
+    // ── Playhead triangle (the vertical line stays in the canvas) ──
+    if current_tick > 0 || ctx.data.song_end_tick > 0 {
+        let playhead_x = tick_to_x(current_tick);
+        if playhead_x >= area.left() && playhead_x <= area.right() {
+            let tri_size = 6.0;
+            painter.add(egui::Shape::convex_polygon(
+                vec![
+                    Pos2::new(playhead_x - tri_size, area.top()),
+                    Pos2::new(playhead_x + tri_size, area.top()),
+                    Pos2::new(playhead_x, area.top() + RULER_HEIGHT * 0.6),
+                ],
+                t.colors.accent_primary,
+                Stroke::NONE,
+            ));
+        }
+    }
+
+    // Ruler bottom border.
+    painter.line_segment(
+        [
+            Pos2::new(area.left(), area.bottom()),
+            Pos2::new(area.right(), area.bottom()),
+        ],
+        Stroke::new(1.0, t.colors.border),
+    );
+
+    // ── Right-click: loop-region + tempo-map commands ──
+    let ctx_pos_id = resp.id.with("ruler_ctx_pos");
+    if resp.secondary_clicked()
+        && let Some(pos) = resp.interact_pointer_pos()
+    {
+        ui.memory_mut(|m| m.data.insert_temp(ctx_pos_id, pos));
+    }
+    {
+        let mut ctx2 = ArrangementCtx {
+            data: ctx.data,
+            song: ctx.song,
+            handle: &mut *ctx.handle,
+            view_state: &mut *ctx.view_state,
+            undo_manager: &mut *ctx.undo_manager,
+            instruments: ctx.instruments,
+        };
+        resp.context_menu(|ui| {
+            let pos = ui
+                .memory(|m| m.data.get_temp::<Pos2>(ctx_pos_id))
+                .unwrap_or_else(|| ui.min_rect().min);
+            draw_ruler_context_menu(&mut ctx2, ui, &coords, pos);
+        });
+    }
+}
+
+/// The ruler's right-click menu: loop-region commands (set start/end, clear) and
+/// the "Tempo point here…" editor (add/edit BPM, ramp, remove). Split verbatim
+/// out of [`draw_arrangement_context_menu`]'s former ruler branch; now attached
+/// to the pinned ruler strip. Computes the target tick from `hover_pos` via the
+/// strip's `coords`.
+fn draw_ruler_context_menu(
+    ctx: &mut ArrangementCtx<'_>,
+    ui: &mut egui::Ui,
+    coords: &ArrangementCoords,
+    hover_pos: Pos2,
+) {
+    let data = ctx.data;
+    let song = ctx.song;
+    let handle = &mut *ctx.handle;
+    let view_state = &mut *ctx.view_state;
+    let undo_manager = &mut *ctx.undo_manager;
+    let t = theme();
+    let x_to_tick = |x: f32| coords.x_to_tick(x);
+    let snap_tick = |tick: u64| coords.snap_tick(tick);
+
+    ui.set_min_width(180.0);
+
+    let tick = Tick(x_to_tick(hover_pos.x));
+    let snapped = snap_tick(tick.0);
+    if ui.button("Set loop start here").clicked() {
+        view_state.loop_start_tick = Some(Tick(snapped));
+        if let Some(end) = view_state.loop_end_tick
+            && end.0 > snapped
+        {
+            handle.send(EngineCommand::SetLoop {
+                start: Tick(snapped),
+                end,
+                enabled: true,
+            });
+        }
+        ui.close();
+    }
+    if ui.button("Set loop end here").clicked() {
+        view_state.loop_end_tick = Some(Tick(snapped));
+        if let Some(start) = view_state.loop_start_tick
+            && snapped > start.0
+        {
+            handle.send(EngineCommand::SetLoop {
+                start,
+                end: Tick(snapped),
+                enabled: true,
+            });
+        }
+        ui.close();
+    }
+    if (view_state.loop_start_tick.is_some() || view_state.loop_end_tick.is_some())
+        && danger_button(ui, "Clear loop").clicked()
+    {
+        view_state.loop_start_tick = None;
+        view_state.loop_end_tick = None;
+        handle.send(EngineCommand::SetLoop {
+            start: Tick::ZERO,
+            end: Tick::ZERO,
+            enabled: false,
+        });
+        ui.close();
+    }
+
+    ui.separator();
+
+    // Tempo automation at the clicked (snapped) tick.
+    let existing: Option<(f32, bool)> = data
+        .tempo_changes
+        .iter()
+        .find(|(t, _, _)| *t == snapped)
+        .map(|(_, b, r)| (*b, *r));
+    let default_bpm = existing.map_or_else(
+        || {
+            // Seed from the song's tempo at this position so editing an
+            // existing curve point feels stable.
+            song.try_read()
+                .map(|s| s.tempo_at(Tick(snapped)).as_f32())
+                .unwrap_or(120.0)
+        },
+        |(b, _)| b,
+    );
+    ui.menu_button("Tempo point here…", |ui| {
+        // A position-specific point in the tempo *map*, distinct from the
+        // song's global default (set via the transport tempo field).
+        ui.label(
+            RichText::new("Tempo-map point (not the song default)").color(t.colors.text_dim),
+        );
+        ui.separator();
+        // Live-apply BPM edit: the song is the buffer (like the knobs and the
+        // ramp toggle). A per-frame `let mut bpm = default` local resets every
+        // frame, so a mouse drag could never accumulate — instead seed from the
+        // song's current value and write straight back on change. Undo is
+        // coalesced to one entry per gesture (drag or keyboard edit); the two
+        // gesture kinds are disjoint, so exactly one end event fires each time.
+        // `default_bpm` already resolves to the existing point's bpm when one
+        // exists, else the song's tempo at this tick.
+        let mut bpm = default_bpm;
+        // A newly-created point (drag with no existing change) is a step; when a
+        // point exists we preserve its ramp flag while editing the bpm.
+        let ramp = existing.is_some_and(|(_, r)| r);
+        let resp = ui
+            .horizontal(|ui| {
+                ui.label("Tempo");
+                ui.add(
+                    egui::DragValue::new(&mut bpm)
+                        .range(20.0..=300.0)
+                        .speed(0.5)
+                        .fixed_decimals(1)
+                        .suffix(" BPM"),
+                )
+            })
+            .inner;
+
+        let undo_id = ui.id().with(("tempo_edit_old", snapped));
+        if resp.drag_started() || resp.gained_focus() {
+            // Snapshot the pre-edit state so the whole gesture is one undo.
+            let old = existing.map(|(b, r)| (Bpm::new(b), r));
+            ui.memory_mut(|m| m.data.insert_temp(undo_id, old));
+        }
+        if resp.changed() {
+            song.write()
+                .set_tempo_ramp_at(Tick(snapped), Bpm::new(bpm), ramp);
+        }
+        if resp.drag_stopped() || resp.lost_focus() {
+            let old: Option<(Bpm, bool)> = ui
+                .memory(|m| m.data.get_temp::<Option<(Bpm, bool)>>(undo_id))
+                .flatten();
+            let new = Some((Bpm::new(bpm), ramp));
+            if old != new {
+                undo_manager.push(crate::undo::UndoAction::SetTempo {
+                    tick: Tick(snapped),
+                    old,
+                    new,
+                });
+            }
+        }
+        // Ramp toggle for an existing point. It applies immediately (the song
+        // is the source of truth, re-read each frame), so no per-frame local
+        // state that would fail to persist across frames.
+        if let Some((existing_bpm, existing_ramp)) = existing {
+            let mut ramp = existing_ramp;
+            let resp = ui.checkbox(&mut ramp, "Ramp to next").on_hover_text(
+                "Ramp linearly toward the next tempo point (accelerando/ritardando) instead of a step change.",
+            );
+            if resp.changed() {
+                let bpm = Bpm::new(existing_bpm);
+                song.write().set_tempo_ramp_at(Tick(snapped), bpm, ramp);
+                undo_manager.push(crate::undo::UndoAction::SetTempo {
+                    tick: Tick(snapped),
+                    old: Some((bpm, existing_ramp)),
+                    new: Some((bpm, ramp)),
+                });
+            }
+            ui.separator();
+            if danger_button(ui, "Remove tempo change here").clicked() {
+                if song.write().remove_tempo_change(Tick(snapped)) {
+                    undo_manager.push(crate::undo::UndoAction::SetTempo {
+                        tick: Tick(snapped),
+                        old: Some((Bpm::new(existing_bpm), existing_ramp)),
+                        new: None,
+                    });
+                }
+                ui.close();
+            }
+        }
+    });
+}
+
+/// Draw the full-height bar/beat grid lines behind the arrangement track
+/// rows. Split out of [`draw_arrangement_timeline`].
+fn draw_arrangement_grid_lines(
+    painter: &egui::Painter,
+    coords: &ArrangementCoords,
+    total_bars: u32,
+    beats_per_bar: u64,
+    ticks_per_bar: u64,
+    ticks_per_beat: u64,
+    track_count: usize,
+) {
+    let t = theme();
+    let tracks_top = coords.tl_y + RULER_HEIGHT + TEMPO_LANE_HEIGHT;
+    let tick_to_x = |tick_val: u64| coords.tick_to_x(tick_val);
 
     // ── Full-height bar/beat grid lines ──
     for bar_idx in 0..total_bars {
@@ -657,6 +1111,23 @@ fn draw_arrangement_timeline(
             );
         }
     }
+}
+
+/// Draw the arrangement track-row backgrounds (highlight + zebra striping)
+/// and the "double-click to create a pattern" discoverability hint. Split
+/// out of [`draw_arrangement_timeline`].
+fn draw_arrangement_track_rows(
+    ctx: &mut ArrangementCtx<'_>,
+    painter: &egui::Painter,
+    coords: &ArrangementCoords,
+    track_count: usize,
+    timeline_width: f32,
+) {
+    let data = ctx.data;
+    let view_state = &mut *ctx.view_state;
+    let t = theme();
+    let tl_x = coords.tl_x;
+    let tracks_top = coords.tl_y + RULER_HEIGHT + TEMPO_LANE_HEIGHT;
 
     // ── Track row backgrounds ──
     for i in 0..track_count {
@@ -698,6 +1169,22 @@ fn draw_arrangement_timeline(
             t.colors.text_dim,
         );
     }
+}
+
+/// Draw all pattern placements (body fill, name label, note miniatures) and
+/// return their hit-test rectangles for pointer interaction. Split out of
+/// [`draw_arrangement_timeline`].
+fn draw_arrangement_placements(
+    ctx: &mut ArrangementCtx<'_>,
+    painter: &egui::Painter,
+    coords: &ArrangementCoords,
+) -> Vec<(Rect, PatternId, TrackId, u64)> {
+    let data = ctx.data;
+    let view_state = &mut *ctx.view_state;
+    let instruments = ctx.instruments;
+    let t = theme();
+    let tracks_top = coords.tl_y + RULER_HEIGHT + TEMPO_LANE_HEIGHT;
+    let tick_to_x = |tick_val: u64| coords.tick_to_x(tick_val);
 
     // ── Pattern placements ──
     let mut placement_rects: Vec<(Rect, PatternId, TrackId, u64)> = Vec::new();
@@ -798,12 +1285,42 @@ fn draw_arrangement_timeline(
         }
     }
 
+    placement_rects
+}
+
+/// Handle pointer interaction over the arrangement track canvas: double-click
+/// to open/create a pattern, hover tooltip, Ctrl+scroll zoom, primary-click
+/// highlight clear, right-click capture, and placement drag/resize with live
+/// ghosts. Ruler seek/hover live in the pinned strip
+/// ([`draw_arrangement_ruler_strip`]). Split out of [`draw_arrangement_timeline`].
+#[allow(clippy::too_many_arguments)]
+fn handle_arrangement_pointer(
+    ctx: &mut ArrangementCtx<'_>,
+    ui: &mut egui::Ui,
+    response: &egui::Response,
+    painter: &egui::Painter,
+    coords: &ArrangementCoords,
+    placement_rects: &[(Rect, PatternId, TrackId, u64)],
+    double_clicked_pattern: &mut Option<PatternId>,
+    tracks_top: f32,
+) {
+    let data = ctx.data;
+    let song = ctx.song;
+    let view_state = &mut *ctx.view_state;
+    let undo_manager = &mut *ctx.undo_manager;
+    let instruments = ctx.instruments;
+    let t = theme();
+    let tick_to_x = |tick_val: u64| coords.tick_to_x(tick_val);
+    let x_to_tick = |x: f32| coords.x_to_tick(x);
+    let snap_tick = |tick: u64| coords.snap_tick(tick);
+    let y_to_row = |y: f32| coords.y_to_row(y);
+
     // ── Double-click → open piano roll or create pattern ──
     if response.double_clicked()
         && let Some(pos) = response.interact_pointer_pos()
     {
         let mut hit_placement = false;
-        for (rect, pattern_id, _, _) in &placement_rects {
+        for (rect, pattern_id, _, _) in placement_rects {
             if rect.contains(pos) {
                 *double_clicked_pattern = Some(*pattern_id);
                 hit_placement = true;
@@ -873,37 +1390,11 @@ fn draw_arrangement_timeline(
         }
     }
 
-    // ── Primary click: ruler seek or clear highlight ──
-    if response.clicked()
-        && let Some(pos) = response.interact_pointer_pos()
-    {
-        if ruler_rect.contains(pos) {
-            // Click in ruler → seek to that position
-            let seek_tick = x_to_tick(pos.x);
-            handle.send(EngineCommand::Seek {
-                tick: Tick(seek_tick),
-            });
-            // Re-enable auto-follow on ruler click
-            view_state.reveal_playhead();
-        } else {
-            view_state.highlighted_track = None;
-        }
-    }
-
-    // ── Ruler hover: pointing hand cursor + indicator line ──
-    if response.hovered()
-        && let Some(pos) = ui.ctx().pointer_hover_pos()
-        && ruler_rect.contains(pos)
-    {
-        ui.output_mut(|o| {
-            o.cursor_icon = CursorIcon::PointingHand;
-        });
-        // Draw subtle hover indicator line
-        let line_bottom = tracks_top + track_count as f32 * TRACK_ROW_HEIGHT;
-        painter.line_segment(
-            [Pos2::new(pos.x, tl_y), Pos2::new(pos.x, line_bottom)],
-            Stroke::new(1.0, t.colors.text_dim.gamma_multiply(0.4)),
-        );
+    // ── Primary click on the canvas: clear the track highlight ──
+    // (Ruler seek + hover indicator now live on the pinned ruler strip,
+    // `draw_arrangement_ruler_strip`.)
+    if response.clicked() {
+        view_state.highlighted_track = None;
     }
 
     // ── Capture right-click position + set highlighted track ──
@@ -1113,34 +1604,22 @@ fn draw_arrangement_timeline(
             }
         }
     }
+}
 
-    // ── Right-click context menu on timeline ──
-    // Use stored position from secondary_clicked, not current hover
-    let ctx_pos = view_state.context_menu_pos;
-    {
-        let mut ctx = ArrangementCtx {
-            data,
-            song,
-            handle: &mut *handle,
-            view_state: &mut *view_state,
-            undo_manager: &mut *undo_manager,
-            instruments,
-        };
-        response.context_menu(|ui| {
-            draw_arrangement_context_menu(
-                &mut ctx,
-                ui,
-                &coords,
-                ruler_rect,
-                ctx_pos,
-                &placement_rects,
-                double_clicked_pattern,
-                ticks_per_bar,
-            );
-        });
-    }
+/// Draw the loop-region markers: the ruler brackets plus the faint band over
+/// the track rows. Split out of [`draw_arrangement_timeline`].
+fn draw_arrangement_loop_markers(
+    ctx: &mut ArrangementCtx<'_>,
+    painter: &egui::Painter,
+    coords: &ArrangementCoords,
+    track_count: usize,
+) {
+    let view_state = &mut *ctx.view_state;
+    let tracks_top = coords.tl_y + RULER_HEIGHT + TEMPO_LANE_HEIGHT;
+    let tick_to_x = |tick_val: u64| coords.tick_to_x(tick_val);
 
-    // ── Loop region markers (in ruler + faint band over rows) ──
+    // ── Loop region: faint band over the track rows. The ruler brackets are
+    // drawn in the pinned ruler strip (`draw_arrangement_ruler_strip`). ──
     if let (Some(loop_start), Some(loop_end)) =
         (view_state.loop_start_tick, view_state.loop_end_tick)
         && loop_end.0 > loop_start.0
@@ -1156,352 +1635,382 @@ fn draw_arrangement_timeline(
             0.0,
             band_fill,
         );
+    }
+}
 
-        for (x, dx) in [(x_a, 6.0), (x_b, -6.0)] {
+/// Draw the tempo lane: the piecewise default/map curve, BPM axis labels, and
+/// the interactive per-point handles (double/right-click to add, drag to move,
+/// context menu to ramp/remove). Split out of [`draw_arrangement_timeline`].
+#[allow(clippy::too_many_lines)]
+fn draw_arrangement_tempo_lane(
+    ctx: &mut ArrangementCtx<'_>,
+    ui: &mut egui::Ui,
+    painter: &egui::Painter,
+    coords: &ArrangementCoords,
+    timeline_width: f32,
+) {
+    let data = ctx.data;
+    let song = ctx.song;
+    let undo_manager = &mut *ctx.undo_manager;
+    let t = theme();
+    let tl_x = coords.tl_x;
+    let tl_y = coords.tl_y;
+    let tracks_top = coords.tl_y + RULER_HEIGHT + TEMPO_LANE_HEIGHT;
+    let lane_top = tl_y + RULER_HEIGHT;
+    let lane_rect = Rect::from_min_max(
+        Pos2::new(tl_x, lane_top),
+        Pos2::new(tl_x + timeline_width, tracks_top),
+    );
+    let tick_to_x = |tick_val: u64| coords.tick_to_x(tick_val);
+    let x_to_tick = |x: f32| coords.x_to_tick(x);
+    let snap_tick = |tick: u64| coords.snap_tick(tick);
+
+    let tempo_color = TEMPO_MARKER;
+    let lane_pad = 8.0;
+    let y_hi = lane_top + lane_pad; // top edge → axis max
+    let y_lo = tracks_top - lane_pad; // bottom edge → axis min
+
+    // Dynamic BPM axis fitted to the map. Freeze it while a handle is being
+    // dragged so vertical drag stays 1:1 (a live-rescaling axis makes the
+    // point slip under the cursor); recompute + re-store when idle.
+    let axis_id = ui.id().with("tempo_lane_axis");
+    let dragging = ui.ctx().dragged_id().is_some_and(|d| {
+        (0..data.tempo_changes.len()).any(|i| d == ui.id().with(("tempo_handle", i)))
+    });
+    let (bpm_min, bpm_max) = if dragging {
+        ui.memory(|m| m.data.get_temp::<(f32, f32)>(axis_id))
+            .unwrap_or_else(|| tempo_lane_range(data))
+    } else {
+        let range = tempo_lane_range(data);
+        ui.memory_mut(|m| m.data.insert_temp(axis_id, range));
+        range
+    };
+    let bpm_to_y = |bpm: f32| {
+        let f = ((bpm - bpm_min) / (bpm_max - bpm_min)).clamp(0.0, 1.0);
+        y_lo + f * (y_hi - y_lo)
+    };
+    let right_x = tl_x + timeline_width;
+
+    // Leading segment governed by the *global default* tempo (up to the first
+    // map point, or the whole lane when there are none). Drawn dim + labelled
+    // so it reads as the default, distinct from the bright map points.
+    let default_y = bpm_to_y(data.default_tempo);
+    let dim = tempo_color.gamma_multiply(0.4);
+    let first_x = data
+        .tempo_changes
+        .first()
+        .map_or(right_x, |(t, _, _)| tick_to_x(*t));
+    // Only when there is an actual default region — i.e. the first point is
+    // past tick 0 (or there are no points). A first point at tick 0 governs
+    // from the start, so drawing/labelling a default here would be misleading.
+    if first_x > tl_x {
+        painter.line_segment(
+            [Pos2::new(tl_x, default_y), Pos2::new(first_x, default_y)],
+            Stroke::new(1.0, dim),
+        );
+        if let Some((_, b0, _)) = data.tempo_changes.first() {
+            // Step from the default level to the first point.
             painter.line_segment(
-                [Pos2::new(x, tl_y), Pos2::new(x, tl_y + RULER_HEIGHT)],
-                Stroke::new(2.0, LOOP_COLOR),
+                [
+                    Pos2::new(first_x, default_y),
+                    Pos2::new(first_x, bpm_to_y(*b0)),
+                ],
+                Stroke::new(1.0, dim),
             );
+        }
+        painter.text(
+            Pos2::new(tl_x + 3.0, default_y + 1.0),
+            egui::Align2::LEFT_TOP,
+            "default",
+            egui::FontId::proportional(8.0),
+            tempo_color.gamma_multiply(0.7),
+        );
+    }
+
+    // Map segments: each point draws its outgoing segment to the next point
+    // (step = flat-then-jump, ramp = sloped), the last one holding to the
+    // right edge.
+    for i in 0..data.tempo_changes.len() {
+        let (_, bpm, ramp) = data.tempo_changes[i];
+        let x = tick_to_x(data.tempo_changes[i].0);
+        let y = bpm_to_y(bpm);
+        let (next_x, next_y) = data
+            .tempo_changes
+            .get(i + 1)
+            .map_or((right_x, y), |n| (tick_to_x(n.0), bpm_to_y(n.1)));
+        if ramp {
             painter.line_segment(
-                [Pos2::new(x, tl_y + 4.0), Pos2::new(x + dx, tl_y + 4.0)],
-                Stroke::new(2.0, LOOP_COLOR),
+                [Pos2::new(x, y), Pos2::new(next_x, next_y)],
+                Stroke::new(1.5, tempo_color),
             );
+        } else {
+            painter.line_segment(
+                [Pos2::new(x, y), Pos2::new(next_x, y)],
+                Stroke::new(1.5, tempo_color),
+            );
+            if data.tempo_changes.get(i + 1).is_some() {
+                painter.line_segment(
+                    [Pos2::new(next_x, y), Pos2::new(next_x, next_y)],
+                    Stroke::new(1.0, tempo_color.gamma_multiply(0.5)),
+                );
+            }
         }
     }
 
-    // ── Tempo lane: piecewise curve + point handles ──
+    // Axis scale labels at the lane's left edge (the padded extremes are
+    // always clear of the curve), so the dynamic BPM range is legible.
+    for (bpm, y, anchor) in [
+        (bpm_max, y_hi, egui::Align2::LEFT_TOP),
+        (bpm_min, y_lo, egui::Align2::LEFT_BOTTOM),
+    ] {
+        painter.text(
+            Pos2::new(tl_x + 2.0, y),
+            anchor,
+            format!("{bpm:.0}"),
+            egui::FontId::proportional(8.0),
+            t.colors.text_dim,
+        );
+    }
+
+    // ── Interaction (handles are drawn here so hover/drag glow reflects the
+    // live response state) ──
+    let y_to_bpm = |y: f32| {
+        let f = ((y - y_lo) / (y_hi - y_lo)).clamp(0.0, 1.0);
+        bpm_min + f * (bpm_max - bpm_min)
+    };
+
+    // Empty-lane background: double-click or right-click to add a point at the
+    // clicked position. `lane_bg` sits above the canvas response, so it owns
+    // both gestures here (the per-point handles, added later, sit above it).
+    let lane_bg = ui.interact(lane_rect, ui.id().with("tempo_lane_bg"), Sense::click());
+    // Expose the tempo lane background so the MCP can locate it (and target
+    // add-point clicks) by name.
+    expose(&lane_bg, egui::WidgetType::Panel, "tempo lane", None);
+    let add_point =
+        |song: &Arc<RwLock<Song>>, undo_manager: &mut crate::undo::UndoManager, pos: Pos2| {
+            let tick = snap_tick(x_to_tick(pos.x));
+            if !data.tempo_changes.iter().any(|(t, _, _)| *t == tick) {
+                let bpm = Bpm::new(y_to_bpm(pos.y).clamp(20.0, 300.0));
+                song.write().set_tempo_ramp_at(Tick(tick), bpm, false);
+                undo_manager.push(crate::undo::UndoAction::SetTempo {
+                    tick: Tick(tick),
+                    old: None,
+                    new: Some((bpm, false)),
+                });
+            }
+        };
+    if lane_bg.double_clicked()
+        && let Some(pos) = lane_bg.interact_pointer_pos()
     {
-        let tempo_color = TEMPO_MARKER;
-        let lane_pad = 8.0;
-        let y_hi = lane_top + lane_pad; // top edge → axis max
-        let y_lo = tracks_top - lane_pad; // bottom edge → axis min
-
-        // Dynamic BPM axis fitted to the map. Freeze it while a handle is being
-        // dragged so vertical drag stays 1:1 (a live-rescaling axis makes the
-        // point slip under the cursor); recompute + re-store when idle.
-        let axis_id = ui.id().with("tempo_lane_axis");
-        let dragging = ui.ctx().dragged_id().is_some_and(|d| {
-            (0..data.tempo_changes.len()).any(|i| d == ui.id().with(("tempo_handle", i)))
-        });
-        let (bpm_min, bpm_max) = if dragging {
-            ui.memory(|m| m.data.get_temp::<(f32, f32)>(axis_id))
-                .unwrap_or_else(|| tempo_lane_range(data))
-        } else {
-            let range = tempo_lane_range(data);
-            ui.memory_mut(|m| m.data.insert_temp(axis_id, range));
-            range
-        };
-        let bpm_to_y = |bpm: f32| {
-            let f = ((bpm - bpm_min) / (bpm_max - bpm_min)).clamp(0.0, 1.0);
-            y_lo + f * (y_hi - y_lo)
-        };
-        let right_x = tl_x + timeline_width;
-
-        // Leading segment governed by the *global default* tempo (up to the first
-        // map point, or the whole lane when there are none). Drawn dim + labelled
-        // so it reads as the default, distinct from the bright map points.
-        let default_y = bpm_to_y(data.default_tempo);
-        let dim = tempo_color.gamma_multiply(0.4);
-        let first_x = data
+        add_point(song, undo_manager, pos);
+    }
+    // Right-click → "Add tempo point" at the summoning position. Capture the
+    // exact click so the menu (which persists across frames) knows where it
+    // was opened.
+    let ctx_pos_id = lane_bg.id.with("ctx_pos");
+    if lane_bg.secondary_clicked()
+        && let Some(p) = lane_bg.interact_pointer_pos()
+    {
+        ui.memory_mut(|m| m.data.insert_temp(ctx_pos_id, p));
+    }
+    lane_bg.context_menu(|ui| {
+        let pos = ui
+            .memory(|m| m.data.get_temp::<Pos2>(ctx_pos_id))
+            .unwrap_or_else(|| ui.min_rect().min);
+        let snapped = snap_tick(x_to_tick(pos.x));
+        let existing = data
             .tempo_changes
-            .first()
-            .map_or(right_x, |(t, _, _)| tick_to_x(*t));
-        // Only when there is an actual default region — i.e. the first point is
-        // past tick 0 (or there are no points). A first point at tick 0 governs
-        // from the start, so drawing/labelling a default here would be misleading.
-        if first_x > tl_x {
-            painter.line_segment(
-                [Pos2::new(tl_x, default_y), Pos2::new(first_x, default_y)],
-                Stroke::new(1.0, dim),
-            );
-            if let Some((_, b0, _)) = data.tempo_changes.first() {
-                // Step from the default level to the first point.
-                painter.line_segment(
-                    [
-                        Pos2::new(first_x, default_y),
-                        Pos2::new(first_x, bpm_to_y(*b0)),
-                    ],
-                    Stroke::new(1.0, dim),
-                );
+            .iter()
+            .find(|(t, _, _)| *t == snapped)
+            .map(|(_, b, r)| (*b, *r));
+        // A point already sits on this snapped tick → edit it; otherwise add.
+        if let Some((eb, er)) = existing {
+            let mut r = er;
+            if ui.checkbox(&mut r, "Ramp to next").changed() {
+                song.write()
+                    .set_tempo_ramp_at(Tick(snapped), Bpm::new(eb), r);
+                undo_manager.push(crate::undo::UndoAction::SetTempo {
+                    tick: Tick(snapped),
+                    old: Some((Bpm::new(eb), er)),
+                    new: Some((Bpm::new(eb), r)),
+                });
+                ui.close();
             }
-            painter.text(
-                Pos2::new(tl_x + 3.0, default_y + 1.0),
-                egui::Align2::LEFT_TOP,
-                "default",
-                egui::FontId::proportional(8.0),
-                tempo_color.gamma_multiply(0.7),
-            );
-        }
-
-        // Map segments: each point draws its outgoing segment to the next point
-        // (step = flat-then-jump, ramp = sloped), the last one holding to the
-        // right edge.
-        for i in 0..data.tempo_changes.len() {
-            let (_, bpm, ramp) = data.tempo_changes[i];
-            let x = tick_to_x(data.tempo_changes[i].0);
-            let y = bpm_to_y(bpm);
-            let (next_x, next_y) = data
-                .tempo_changes
-                .get(i + 1)
-                .map_or((right_x, y), |n| (tick_to_x(n.0), bpm_to_y(n.1)));
-            if ramp {
-                painter.line_segment(
-                    [Pos2::new(x, y), Pos2::new(next_x, next_y)],
-                    Stroke::new(1.5, tempo_color),
-                );
-            } else {
-                painter.line_segment(
-                    [Pos2::new(x, y), Pos2::new(next_x, y)],
-                    Stroke::new(1.5, tempo_color),
-                );
-                if data.tempo_changes.get(i + 1).is_some() {
-                    painter.line_segment(
-                        [Pos2::new(next_x, y), Pos2::new(next_x, next_y)],
-                        Stroke::new(1.0, tempo_color.gamma_multiply(0.5)),
-                    );
-                }
-            }
-        }
-
-        // Axis scale labels at the lane's left edge (the padded extremes are
-        // always clear of the curve), so the dynamic BPM range is legible.
-        for (bpm, y, anchor) in [
-            (bpm_max, y_hi, egui::Align2::LEFT_TOP),
-            (bpm_min, y_lo, egui::Align2::LEFT_BOTTOM),
-        ] {
-            painter.text(
-                Pos2::new(tl_x + 2.0, y),
-                anchor,
-                format!("{bpm:.0}"),
-                egui::FontId::proportional(8.0),
-                t.colors.text_dim,
-            );
-        }
-
-        // ── Interaction (handles are drawn here so hover/drag glow reflects the
-        // live response state) ──
-        let y_to_bpm = |y: f32| {
-            let f = ((y - y_lo) / (y_hi - y_lo)).clamp(0.0, 1.0);
-            bpm_min + f * (bpm_max - bpm_min)
-        };
-
-        // Empty-lane background: double-click or right-click to add a point at the
-        // clicked position. `lane_bg` sits above the canvas response, so it owns
-        // both gestures here (the per-point handles, added later, sit above it).
-        let lane_bg = ui.interact(lane_rect, ui.id().with("tempo_lane_bg"), Sense::click());
-        // Expose the tempo lane background so the MCP can locate it (and target
-        // add-point clicks) by name.
-        expose(&lane_bg, egui::WidgetType::Panel, "tempo lane", None);
-        let add_point =
-            |song: &Arc<RwLock<Song>>, undo_manager: &mut crate::undo::UndoManager, pos: Pos2| {
-                let tick = snap_tick(x_to_tick(pos.x));
-                if !data.tempo_changes.iter().any(|(t, _, _)| *t == tick) {
-                    let bpm = Bpm::new(y_to_bpm(pos.y).clamp(20.0, 300.0));
-                    song.write().set_tempo_ramp_at(Tick(tick), bpm, false);
-                    undo_manager.push(crate::undo::UndoAction::SetTempo {
-                        tick: Tick(tick),
-                        old: None,
-                        new: Some((bpm, false)),
-                    });
-                }
-            };
-        if lane_bg.double_clicked()
-            && let Some(pos) = lane_bg.interact_pointer_pos()
-        {
-            add_point(song, undo_manager, pos);
-        }
-        // Right-click → "Add tempo point" at the summoning position. Capture the
-        // exact click so the menu (which persists across frames) knows where it
-        // was opened.
-        let ctx_pos_id = lane_bg.id.with("ctx_pos");
-        if lane_bg.secondary_clicked()
-            && let Some(p) = lane_bg.interact_pointer_pos()
-        {
-            ui.memory_mut(|m| m.data.insert_temp(ctx_pos_id, p));
-        }
-        lane_bg.context_menu(|ui| {
-            let pos = ui
-                .memory(|m| m.data.get_temp::<Pos2>(ctx_pos_id))
-                .unwrap_or_else(|| ui.min_rect().min);
-            let snapped = snap_tick(x_to_tick(pos.x));
-            let existing = data
-                .tempo_changes
-                .iter()
-                .find(|(t, _, _)| *t == snapped)
-                .map(|(_, b, r)| (*b, *r));
-            // A point already sits on this snapped tick → edit it; otherwise add.
-            if let Some((eb, er)) = existing {
-                let mut r = er;
-                if ui.checkbox(&mut r, "Ramp to next").changed() {
-                    song.write()
-                        .set_tempo_ramp_at(Tick(snapped), Bpm::new(eb), r);
+            if danger_button(ui, "Remove tempo point").clicked() {
+                if song.write().remove_tempo_change(Tick(snapped)) {
                     undo_manager.push(crate::undo::UndoAction::SetTempo {
                         tick: Tick(snapped),
                         old: Some((Bpm::new(eb), er)),
-                        new: Some((Bpm::new(eb), r)),
+                        new: None,
                     });
-                    ui.close();
                 }
-                if danger_button(ui, "Remove tempo point").clicked() {
-                    if song.write().remove_tempo_change(Tick(snapped)) {
-                        undo_manager.push(crate::undo::UndoAction::SetTempo {
-                            tick: Tick(snapped),
-                            old: Some((Bpm::new(eb), er)),
-                            new: None,
-                        });
-                    }
-                    ui.close();
-                }
-            } else {
-                let bpm_val = y_to_bpm(pos.y).clamp(20.0, 300.0);
-                if ui
-                    .button(format!("Add tempo point · {bpm_val:.0} BPM"))
-                    .clicked()
-                {
-                    add_point(song, undo_manager, pos);
-                    ui.close();
-                }
+                ui.close();
             }
-        });
-
-        // Per-point handles. Clamping each point between its neighbours keeps the
-        // list order — and thus the index-keyed interaction id — stable across a
-        // drag. Drag moves tick+bpm (ramp preserved); right-click removes / toggles.
-        let n = data.tempo_changes.len();
-        for i in 0..n {
-            let (tick, bpm, ramp) = data.tempo_changes[i];
-            let center = Pos2::new(tick_to_x(tick), bpm_to_y(bpm));
-            let handle_rect = Rect::from_center_size(center, Vec2::splat(12.0));
-            let id = ui.id().with(("tempo_handle", i));
-            let resp = ui.interact(handle_rect, id, Sense::click_and_drag());
-            // Expose each tempo point with its live BPM so the MCP can read/target it.
-            expose(
-                &resp,
-                egui::WidgetType::Slider,
-                format!("tempo point {i}"),
-                Some(f64::from(bpm)),
-            );
-
-            if resp.drag_started() {
-                ui.memory_mut(|m| m.data.insert_temp(id.with("old"), (tick, bpm, ramp)));
-            }
-            if resp.dragged()
-                && let Some(pos) = resp.interact_pointer_pos()
+        } else {
+            let bpm_val = y_to_bpm(pos.y).clamp(20.0, 300.0);
+            if ui
+                .button(format!("Add tempo point · {bpm_val:.0} BPM"))
+                .clicked()
             {
-                let lo = if i > 0 {
-                    data.tempo_changes[i - 1].0 + 1
-                } else {
-                    0
-                };
-                let hi = if i + 1 < n {
-                    data.tempo_changes[i + 1].0.saturating_sub(1)
-                } else {
-                    u64::MAX
-                };
-                // When neighbours are too close to leave any gap (`lo > hi`),
-                // there is no room to move horizontally — keep the tick and drag
-                // only the BPM. (`u64::clamp` would panic on `lo > hi`.)
-                let new_tick = if lo <= hi {
-                    snap_tick(x_to_tick(pos.x)).clamp(lo, hi)
-                } else {
-                    tick
-                };
-                let new_bpm = Bpm::new(y_to_bpm(pos.y).clamp(20.0, 300.0));
-                {
-                    let mut song_w = song.write();
-                    if new_tick != tick {
-                        song_w.remove_tempo_change(Tick(tick));
-                    }
-                    song_w.set_tempo_ramp_at(Tick(new_tick), new_bpm, ramp);
-                }
-                ui.memory_mut(|m| {
-                    m.data
-                        .insert_temp(id.with("cur"), (new_tick, new_bpm.as_f32(), ramp));
-                });
+                add_point(song, undo_manager, pos);
+                ui.close();
             }
-            if resp.drag_stopped() {
-                let old = ui.memory(|m| m.data.get_temp::<(u64, f32, bool)>(id.with("old")));
-                let cur = ui.memory(|m| m.data.get_temp::<(u64, f32, bool)>(id.with("cur")));
-                // Clear both so a later drag of whatever point next occupies this
-                // index can't read a stale `cur` (the id is keyed by index).
-                ui.memory_mut(|m| {
-                    m.data.remove::<(u64, f32, bool)>(id.with("old"));
-                    m.data.remove::<(u64, f32, bool)>(id.with("cur"));
-                });
-                if let (Some(o), Some(c)) = (old, cur)
-                    && o != c
-                {
-                    undo_manager.push(crate::undo::UndoAction::MoveTempo {
-                        old: (Tick(o.0), Bpm::new(o.1), o.2),
-                        new: (Tick(c.0), Bpm::new(c.1), c.2),
-                    });
-                }
-            }
+        }
+    });
 
-            resp.context_menu(|ui| {
-                let mut r = ramp;
-                if ui
-                    .checkbox(&mut r, "Ramp to next")
-                    .on_hover_text("Ramp linearly toward the next point instead of a step change.")
-                    .changed()
-                {
-                    song.write().set_tempo_ramp_at(Tick(tick), Bpm::new(bpm), r);
+    // Per-point handles. Clamping each point between its neighbours keeps the
+    // list order — and thus the index-keyed interaction id — stable across a
+    // drag. Drag moves tick+bpm (ramp preserved); right-click removes / toggles.
+    let n = data.tempo_changes.len();
+    for i in 0..n {
+        let (tick, bpm, ramp) = data.tempo_changes[i];
+        let center = Pos2::new(tick_to_x(tick), bpm_to_y(bpm));
+        let handle_rect = Rect::from_center_size(center, Vec2::splat(12.0));
+        let id = ui.id().with(("tempo_handle", i));
+        let resp = ui.interact(handle_rect, id, Sense::click_and_drag());
+        // Expose each tempo point with its live BPM so the MCP can read/target it.
+        expose(
+            &resp,
+            egui::WidgetType::Slider,
+            format!("tempo point {i}"),
+            Some(f64::from(bpm)),
+        );
+
+        if resp.drag_started() {
+            ui.memory_mut(|m| m.data.insert_temp(id.with("old"), (tick, bpm, ramp)));
+        }
+        if resp.dragged()
+            && let Some(pos) = resp.interact_pointer_pos()
+        {
+            let lo = if i > 0 {
+                data.tempo_changes[i - 1].0 + 1
+            } else {
+                0
+            };
+            let hi = if i + 1 < n {
+                data.tempo_changes[i + 1].0.saturating_sub(1)
+            } else {
+                u64::MAX
+            };
+            // When neighbours are too close to leave any gap (`lo > hi`),
+            // there is no room to move horizontally — keep the tick and drag
+            // only the BPM. (`u64::clamp` would panic on `lo > hi`.)
+            let new_tick = if lo <= hi {
+                snap_tick(x_to_tick(pos.x)).clamp(lo, hi)
+            } else {
+                tick
+            };
+            let new_bpm = Bpm::new(y_to_bpm(pos.y).clamp(20.0, 300.0));
+            {
+                let mut song_w = song.write();
+                if new_tick != tick {
+                    song_w.remove_tempo_change(Tick(tick));
+                }
+                song_w.set_tempo_ramp_at(Tick(new_tick), new_bpm, ramp);
+            }
+            ui.memory_mut(|m| {
+                m.data
+                    .insert_temp(id.with("cur"), (new_tick, new_bpm.as_f32(), ramp));
+            });
+        }
+        if resp.drag_stopped() {
+            let old = ui.memory(|m| m.data.get_temp::<(u64, f32, bool)>(id.with("old")));
+            let cur = ui.memory(|m| m.data.get_temp::<(u64, f32, bool)>(id.with("cur")));
+            // Clear both so a later drag of whatever point next occupies this
+            // index can't read a stale `cur` (the id is keyed by index).
+            ui.memory_mut(|m| {
+                m.data.remove::<(u64, f32, bool)>(id.with("old"));
+                m.data.remove::<(u64, f32, bool)>(id.with("cur"));
+            });
+            if let (Some(o), Some(c)) = (old, cur)
+                && o != c
+            {
+                undo_manager.push(crate::undo::UndoAction::MoveTempo {
+                    old: (Tick(o.0), Bpm::new(o.1), o.2),
+                    new: (Tick(c.0), Bpm::new(c.1), c.2),
+                });
+            }
+        }
+
+        resp.context_menu(|ui| {
+            let mut r = ramp;
+            if ui
+                .checkbox(&mut r, "Ramp to next")
+                .on_hover_text("Ramp linearly toward the next point instead of a step change.")
+                .changed()
+            {
+                song.write().set_tempo_ramp_at(Tick(tick), Bpm::new(bpm), r);
+                undo_manager.push(crate::undo::UndoAction::SetTempo {
+                    tick: Tick(tick),
+                    old: Some((Bpm::new(bpm), ramp)),
+                    new: Some((Bpm::new(bpm), r)),
+                });
+                ui.close();
+            }
+            if danger_button(ui, "Remove").clicked() {
+                if song.write().remove_tempo_change(Tick(tick)) {
                     undo_manager.push(crate::undo::UndoAction::SetTempo {
                         tick: Tick(tick),
                         old: Some((Bpm::new(bpm), ramp)),
-                        new: Some((Bpm::new(bpm), r)),
+                        new: None,
                     });
-                    ui.close();
                 }
-                if danger_button(ui, "Remove").clicked() {
-                    if song.write().remove_tempo_change(Tick(tick)) {
-                        undo_manager.push(crate::undo::UndoAction::SetTempo {
-                            tick: Tick(tick),
-                            old: Some((Bpm::new(bpm), ramp)),
-                            new: None,
-                        });
-                    }
-                    ui.close();
-                }
-            });
+                ui.close();
+            }
+        });
 
-            // Draw the handle, lit up when hovered or dragged so it's clear which
-            // point is grab/draggable. egui has no blur, so the glow is a couple
-            // of concentric translucent rings.
-            let hot = resp.hovered() || resp.dragged();
-            if resp.dragged() {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
-            } else if resp.hovered() {
-                ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
-            }
-            if hot {
-                for (r, a) in [(12.0, 22), (9.0, 40), (6.0, 70)] {
-                    painter.circle_filled(
-                        center,
-                        r,
-                        Color32::from_rgba_unmultiplied(
-                            TEMPO_MARKER.r(),
-                            TEMPO_MARKER.g(),
-                            TEMPO_MARKER.b(),
-                            a,
-                        ),
-                    );
-                }
-            }
-            let radius = if hot { 5.0 } else { 3.5 };
-            painter.circle_filled(center, radius, tempo_color);
-            if ramp {
-                painter.circle_stroke(center, radius + 2.0, Stroke::new(1.0, tempo_color));
-            }
-            painter.text(
-                center + Vec2::new(7.0, -5.0),
-                egui::Align2::LEFT_BOTTOM,
-                format!("{bpm:.0}"),
-                egui::FontId::proportional(9.0),
-                tempo_color,
-            );
+        // Draw the handle, lit up when hovered or dragged so it's clear which
+        // point is grab/draggable. egui has no blur, so the glow is a couple
+        // of concentric translucent rings.
+        let hot = resp.hovered() || resp.dragged();
+        if resp.dragged() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grabbing);
+        } else if resp.hovered() {
+            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
         }
+        if hot {
+            for (r, a) in [(12.0, 22), (9.0, 40), (6.0, 70)] {
+                painter.circle_filled(
+                    center,
+                    r,
+                    Color32::from_rgba_unmultiplied(
+                        TEMPO_MARKER.r(),
+                        TEMPO_MARKER.g(),
+                        TEMPO_MARKER.b(),
+                        a,
+                    ),
+                );
+            }
+        }
+        let radius = if hot { 5.0 } else { 3.5 };
+        painter.circle_filled(center, radius, tempo_color);
+        if ramp {
+            painter.circle_stroke(center, radius + 2.0, Stroke::new(1.0, tempo_color));
+        }
+        painter.text(
+            center + Vec2::new(7.0, -5.0),
+            egui::Align2::LEFT_BOTTOM,
+            format!("{bpm:.0}"),
+            egui::FontId::proportional(9.0),
+            tempo_color,
+        );
     }
+}
+
+/// Draw the playhead: a vertical line spanning the ruler and track rows with a
+/// triangle head in the ruler. Split out of [`draw_arrangement_timeline`].
+fn draw_arrangement_playhead(
+    ctx: &mut ArrangementCtx<'_>,
+    painter: &egui::Painter,
+    coords: &ArrangementCoords,
+    current_tick: u64,
+    track_count: usize,
+) {
+    let data = ctx.data;
+    let t = theme();
+    let tl_y = coords.tl_y;
+    let tracks_top = coords.tl_y + RULER_HEIGHT + TEMPO_LANE_HEIGHT;
+    let tick_to_x = |tick_val: u64| coords.tick_to_x(tick_val);
 
     // ── Playhead ──
     // The play-start / return position (the "cursor") is tracked by the
@@ -1512,7 +2021,10 @@ fn draw_arrangement_timeline(
     let line_bottom = tracks_top + track_count as f32 * TRACK_ROW_HEIGHT;
     if current_tick > 0 || data.song_end_tick > 0 {
         let playhead_x = tick_to_x(current_tick);
-        let line_top = tl_y;
+        // Content top (tempo lane + tracks). The triangle head is drawn in the
+        // pinned ruler strip; the virtual-ruler region above the canvas is not
+        // painted here.
+        let line_top = tl_y + RULER_HEIGHT;
 
         painter.line_segment(
             [
@@ -1521,27 +2033,7 @@ fn draw_arrangement_timeline(
             ],
             Stroke::new(2.0, t.colors.accent_primary),
         );
-
-        let tri_size = 6.0;
-        painter.add(egui::Shape::convex_polygon(
-            vec![
-                Pos2::new(playhead_x - tri_size, line_top),
-                Pos2::new(playhead_x + tri_size, line_top),
-                Pos2::new(playhead_x, line_top + RULER_HEIGHT * 0.6),
-            ],
-            t.colors.accent_primary,
-            Stroke::NONE,
-        ));
     }
-
-    // Ruler bottom border
-    painter.line_segment(
-        [
-            Pos2::new(tl_x, tl_y + RULER_HEIGHT),
-            Pos2::new(tl_x + timeline_width, tl_y + RULER_HEIGHT),
-        ],
-        Stroke::new(1.0, t.colors.border),
-    );
 }
 
 /// Right-click context menu for the arrangement timeline (ruler loop/tempo
@@ -1553,7 +2045,6 @@ fn draw_arrangement_context_menu(
     ctx: &mut ArrangementCtx<'_>,
     ui: &mut egui::Ui,
     coords: &ArrangementCoords,
-    ruler_rect: Rect,
     ctx_pos: Option<Pos2>,
     placement_rects: &[(Rect, PatternId, TrackId, u64)],
     double_clicked_pattern: &mut Option<PatternId>,
@@ -1562,7 +2053,6 @@ fn draw_arrangement_context_menu(
     use egui_remixicon::icons as ri;
     let data = ctx.data;
     let song = ctx.song;
-    let handle = &mut *ctx.handle;
     let view_state = &mut *ctx.view_state;
     let undo_manager = &mut *ctx.undo_manager;
     let t = theme();
@@ -1573,154 +2063,9 @@ fn draw_arrangement_context_menu(
     ui.set_min_width(180.0);
     let hover_pos = ctx_pos.unwrap_or(ui.min_rect().min);
 
-    // Right-click on the ruler shows loop-region commands.
-    if ruler_rect.contains(hover_pos) {
-        let tick = Tick(x_to_tick(hover_pos.x));
-        let snapped = snap_tick(tick.0);
-        if ui.button("Set loop start here").clicked() {
-            view_state.loop_start_tick = Some(Tick(snapped));
-            if let Some(end) = view_state.loop_end_tick
-                && end.0 > snapped
-            {
-                handle.send(EngineCommand::SetLoop {
-                    start: Tick(snapped),
-                    end,
-                    enabled: true,
-                });
-            }
-            ui.close();
-        }
-        if ui.button("Set loop end here").clicked() {
-            view_state.loop_end_tick = Some(Tick(snapped));
-            if let Some(start) = view_state.loop_start_tick
-                && snapped > start.0
-            {
-                handle.send(EngineCommand::SetLoop {
-                    start,
-                    end: Tick(snapped),
-                    enabled: true,
-                });
-            }
-            ui.close();
-        }
-        if (view_state.loop_start_tick.is_some() || view_state.loop_end_tick.is_some())
-            && danger_button(ui, "Clear loop").clicked()
-        {
-            view_state.loop_start_tick = None;
-            view_state.loop_end_tick = None;
-            handle.send(EngineCommand::SetLoop {
-                start: Tick::ZERO,
-                end: Tick::ZERO,
-                enabled: false,
-            });
-            ui.close();
-        }
-
-        ui.separator();
-
-        // Tempo automation at the clicked (snapped) tick.
-        let existing: Option<(f32, bool)> = data
-            .tempo_changes
-            .iter()
-            .find(|(t, _, _)| *t == snapped)
-            .map(|(_, b, r)| (*b, *r));
-        let default_bpm = existing.map_or_else(
-            || {
-                // Seed from the song's tempo at this position so editing an
-                // existing curve point feels stable.
-                song.try_read()
-                    .map(|s| s.tempo_at(Tick(snapped)).as_f32())
-                    .unwrap_or(120.0)
-            },
-            |(b, _)| b,
-        );
-        ui.menu_button("Tempo point here…", |ui| {
-            // A position-specific point in the tempo *map*, distinct from the
-            // song's global default (set via the transport tempo field).
-            ui.label(
-                RichText::new("Tempo-map point (not the song default)").color(t.colors.text_dim),
-            );
-            ui.separator();
-            // Live-apply BPM edit: the song is the buffer (like the knobs and the
-            // ramp toggle). A per-frame `let mut bpm = default` local resets every
-            // frame, so a mouse drag could never accumulate — instead seed from the
-            // song's current value and write straight back on change. Undo is
-            // coalesced to one entry per gesture (drag or keyboard edit); the two
-            // gesture kinds are disjoint, so exactly one end event fires each time.
-            // `default_bpm` already resolves to the existing point's bpm when one
-            // exists, else the song's tempo at this tick.
-            let mut bpm = default_bpm;
-            // A newly-created point (drag with no existing change) is a step; when a
-            // point exists we preserve its ramp flag while editing the bpm.
-            let ramp = existing.is_some_and(|(_, r)| r);
-            let resp = ui
-                .horizontal(|ui| {
-                    ui.label("Tempo");
-                    ui.add(
-                        egui::DragValue::new(&mut bpm)
-                            .range(20.0..=300.0)
-                            .speed(0.5)
-                            .fixed_decimals(1)
-                            .suffix(" BPM"),
-                    )
-                })
-                .inner;
-
-            let undo_id = ui.id().with(("tempo_edit_old", snapped));
-            if resp.drag_started() || resp.gained_focus() {
-                // Snapshot the pre-edit state so the whole gesture is one undo.
-                let old = existing.map(|(b, r)| (Bpm::new(b), r));
-                ui.memory_mut(|m| m.data.insert_temp(undo_id, old));
-            }
-            if resp.changed() {
-                song.write()
-                    .set_tempo_ramp_at(Tick(snapped), Bpm::new(bpm), ramp);
-            }
-            if resp.drag_stopped() || resp.lost_focus() {
-                let old: Option<(Bpm, bool)> = ui
-                    .memory(|m| m.data.get_temp::<Option<(Bpm, bool)>>(undo_id))
-                    .flatten();
-                let new = Some((Bpm::new(bpm), ramp));
-                if old != new {
-                    undo_manager.push(crate::undo::UndoAction::SetTempo {
-                        tick: Tick(snapped),
-                        old,
-                        new,
-                    });
-                }
-            }
-            // Ramp toggle for an existing point. It applies immediately (the song
-            // is the source of truth, re-read each frame), so no per-frame local
-            // state that would fail to persist across frames.
-            if let Some((existing_bpm, existing_ramp)) = existing {
-                let mut ramp = existing_ramp;
-                let resp = ui.checkbox(&mut ramp, "Ramp to next").on_hover_text(
-                    "Ramp linearly toward the next tempo point (accelerando/ritardando) instead of a step change.",
-                );
-                if resp.changed() {
-                    let bpm = Bpm::new(existing_bpm);
-                    song.write().set_tempo_ramp_at(Tick(snapped), bpm, ramp);
-                    undo_manager.push(crate::undo::UndoAction::SetTempo {
-                        tick: Tick(snapped),
-                        old: Some((bpm, existing_ramp)),
-                        new: Some((bpm, ramp)),
-                    });
-                }
-                ui.separator();
-                if danger_button(ui, "Remove tempo change here").clicked() {
-                    if song.write().remove_tempo_change(Tick(snapped)) {
-                        undo_manager.push(crate::undo::UndoAction::SetTempo {
-                            tick: Tick(snapped),
-                            old: Some((Bpm::new(existing_bpm), existing_ramp)),
-                            new: None,
-                        });
-                    }
-                    ui.close();
-                }
-            }
-        });
-        return;
-    }
+    // The ruler's loop/tempo commands now live on the pinned ruler strip
+    // (`draw_ruler_context_menu`); this menu handles the canvas below it —
+    // per-placement actions and empty-area pattern creation.
 
     // Check if right-click is on an existing placement
     let clicked_placement = placement_rects
@@ -1915,20 +2260,12 @@ fn draw_arrangement_track_headers(
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
 
-            // Ruler + tempo-lane corner placeholder (pinned, outside the scroll
-            // area) so the header column stays aligned with the timeline header.
+            // Ruler-height corner placeholder (pinned, outside the scroll area)
+            // so the header column stays aligned with the pinned ruler strip.
+            // Only the ruler height is fixed now; the tempo-lane "Tempo" label
+            // moves inside the scroll area so it scrolls with the timeline's
+            // tempo lane (which is now the first scroll content).
             ui.allocate_space(Vec2::new(TRACK_HEADER_WIDTH, RULER_HEIGHT));
-            let (lane_rect, _) = ui.allocate_exact_size(
-                Vec2::new(TRACK_HEADER_WIDTH, TEMPO_LANE_HEIGHT),
-                Sense::hover(),
-            );
-            ui.painter().text(
-                lane_rect.left_center() + Vec2::new(8.0, 0.0),
-                egui::Align2::LEFT_CENTER,
-                "Tempo",
-                egui::FontId::proportional(11.0),
-                theme().colors.text_secondary,
-            );
 
             egui::ScrollArea::vertical()
                 .id_salt("seq_track_headers_scroll")
@@ -1937,6 +2274,20 @@ fn draw_arrangement_track_headers(
                 .scroll_source(egui::scroll_area::ScrollSource::NONE)
                 .vertical_scroll_offset(header_v_offset)
                 .show(ui, |ui| {
+                    // Tempo-lane label — first scroll item, so it stays aligned
+                    // with the timeline's tempo lane as both scroll together.
+                    let (lane_rect, _) = ui.allocate_exact_size(
+                        Vec2::new(TRACK_HEADER_WIDTH, TEMPO_LANE_HEIGHT),
+                        Sense::hover(),
+                    );
+                    ui.painter().text(
+                        lane_rect.left_center() + Vec2::new(8.0, 0.0),
+                        egui::Align2::LEFT_CENTER,
+                        "Tempo",
+                        egui::FontId::proportional(11.0),
+                        theme().colors.text_secondary,
+                    );
+
                     for (i, track) in data.tracks.iter().enumerate() {
                         let is_selected = view_state.selected_track == Some(track.id);
                         let is_highlighted = view_state.highlighted_track == Some(track.id);
