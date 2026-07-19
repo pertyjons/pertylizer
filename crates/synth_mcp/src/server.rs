@@ -465,6 +465,12 @@ fn result_is_failure(result: &str) -> bool {
         .get("errors")
         .and_then(serde_json::Value::as_array)
         .is_some_and(|a| !a.is_empty());
+    if let (Some(failed), Some(succeeded)) = (
+        map.get("failed").and_then(serde_json::Value::as_u64),
+        map.get("succeeded").and_then(serde_json::Value::as_u64),
+    ) {
+        return failed > 0 && succeeded == 0;
+    }
     if !errors_nonempty {
         return false;
     }
@@ -879,6 +885,8 @@ pub struct NoteOnInput {
         range(min = 1, max = 16)
     )]
     pub channel: Option<MidiChannel>,
+    #[schemars(description = "Optional instrument ID; when set, bypasses MIDI-channel routing")]
+    pub instrument_id: Option<InstrumentId>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -896,12 +904,28 @@ pub struct NoteOffInput {
         range(min = 1, max = 16)
     )]
     pub channel: Option<MidiChannel>,
+    #[schemars(description = "Optional instrument ID; when set, releases only that instrument")]
+    pub instrument_id: Option<InstrumentId>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct NoteOffParam {
     #[schemars(description = "Notes to release (one or many)")]
     pub notes: Vec<NoteOffInput>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetInputDeviceParam {
+    #[schemars(
+        description = "Device id/name from list_input_devices, or null for the default input"
+    )]
+    pub device_id: Option<String>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct StopRecordingParam {
+    #[schemars(description = "Optional name for the sample created from the recording")]
+    pub name: Option<String>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -990,6 +1014,10 @@ pub struct RenderToWavParam {
         description = "How many seconds of the arrangement to render (default 10.0, max 300.0)."
     )]
     pub duration_seconds: Option<f32>,
+    #[schemars(
+        description = "Release/effect tail captured after the requested range (default 1.0 seconds, max 30). The transport stops before this tail, so later arrangement events are not triggered."
+    )]
+    pub tail_seconds: Option<f32>,
     #[schemars(
         description = "Absolute tick to start rendering from (default 0 = song beginning)."
     )]
@@ -1223,7 +1251,7 @@ pub struct CompareSpectraParam {
     )]
     pub render_quality: Option<String>,
     #[schemars(
-        description = "Turn on the time-resolved (per-frame) distance. Default false = aggregate only. Set true for staccato / silence-dominated / time-varying material (e.g. a SID release tail): the aggregate distances average over the whole window and go blind to quiet-in-time content, while the framed path scores each frame on its own and ranks candidates. Adds time_resolved_lsd / time_resolved_mel_l2 / frames_compared / frames_masked / alignment_offset_ms / worst_frames to the result."
+        description = "Enable the time-resolved (per-frame) distance (default true). It scores only target-energy frames by default, so sparse/staccato material ranks correctly instead of averaging over silence. Set false only when aggregate-only output is required."
     )]
     pub time_resolved: Option<bool>,
     #[schemars(
@@ -2749,8 +2777,11 @@ pub struct GetNoteGraphParam {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetNoteGraphMetadataInput {
+    #[schemars(description = "Note graph ID to update")]
     pub graph_id: NoteGraphId,
+    #[schemars(description = "Replacement name; omitted keeps the current name")]
     pub name: Option<String>,
+    #[schemars(description = "Replacement description; empty clears it, omitted keeps it")]
     pub description: Option<String>,
     #[schemars(description = "Replacement #rrggbb color; null/omitted keeps the current color")]
     pub color: Option<String>,
@@ -2758,6 +2789,7 @@ pub struct SetNoteGraphMetadataInput {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetNoteGraphMetadataParam {
+    #[schemars(description = "Note graph metadata updates (one or many)")]
     pub items: Vec<SetNoteGraphMetadataInput>,
 }
 
@@ -2803,6 +2835,8 @@ pub struct CreateModGraphParam {
     pub name: String,
     #[schemars(description = "Optional free-text description")]
     pub description: Option<String>,
+    #[schemars(description = "Optional color as #rrggbb")]
+    pub color: Option<String>,
     #[schemars(
         description = "Scope: 'global' (one always-on instance, default) or 'track' (one instance per assigned track; assign with assign_mod_graph)."
     )]
@@ -2813,6 +2847,12 @@ pub struct CreateModGraphParam {
 pub struct DeleteModGraphParam {
     #[schemars(description = "Mod graph ids to delete (one or many).")]
     pub graph_ids: Vec<ModGraphId>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct DuplicateModGraphParam {
+    #[schemars(description = "Mod graph id to duplicate")]
+    pub graph_id: ModGraphId,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2921,8 +2961,11 @@ pub struct GetModGraphParam {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetModGraphMetadataInput {
+    #[schemars(description = "Mod graph ID to update")]
     pub graph_id: ModGraphId,
+    #[schemars(description = "Replacement name; omitted keeps the current name")]
     pub name: Option<String>,
+    #[schemars(description = "Replacement description; empty clears it, omitted keeps it")]
     pub description: Option<String>,
     #[schemars(description = "Replacement #rrggbb color; null/omitted keeps the current color")]
     pub color: Option<String>,
@@ -2930,6 +2973,7 @@ pub struct SetModGraphMetadataInput {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SetModGraphMetadataParam {
+    #[schemars(description = "Mod graph metadata updates (one or many)")]
     pub items: Vec<SetModGraphMetadataInput>,
 }
 
@@ -3028,6 +3072,24 @@ impl AutomationTargetInput {
     }
 }
 
+/// Automation target accepted either as the canonical DSL string or as the
+/// same structured object supported by `add_automation_points`.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+#[serde(untagged)]
+pub enum AutomationTargetSelector {
+    Dsl(String),
+    Structured(AutomationTargetInput),
+}
+
+impl AutomationTargetSelector {
+    fn to_target_string(&self) -> String {
+        match self {
+            Self::Dsl(target) => target.clone(),
+            Self::Structured(target) => target.to_target_string(),
+        }
+    }
+}
+
 /// An automation point to add.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct AutomationPointInput {
@@ -3039,7 +3101,7 @@ pub struct AutomationPointInput {
         description = "Structured target (alternative to 'param'; takes precedence if both are given)."
     )]
     pub target: Option<AutomationTargetInput>,
-    #[schemars(description = "Instrument index (default 0)")]
+    #[schemars(description = "Instrument ID (default 0 for instrument/module targets)")]
     pub instrument_id: Option<InstrumentId>,
     #[schemars(description = "Position in beats")]
     pub beat: f32,
@@ -3079,8 +3141,8 @@ pub struct GetAutomationPointsParam {
     #[schemars(
         description = "Target DSL: instrument macro (Volume/Pan/FilterCutoff/FilterResonance/Attack/Decay/Sustain/Release), module:<type>:<instance>:<param>, track:<param>[:<track_id>], or global:MasterVolume. From list_automation_lanes, pass the lane target string back verbatim."
     )]
-    pub target: String,
-    #[schemars(description = "Instrument index (default 0)")]
+    pub target: AutomationTargetSelector,
+    #[schemars(description = "Instrument ID (default 0 for instrument/module targets)")]
     pub instrument_id: Option<InstrumentId>,
 }
 
@@ -3091,8 +3153,8 @@ pub struct RemoveAutomationPointsParam {
     #[schemars(
         description = "Target DSL: instrument macro (Volume/Pan/FilterCutoff/FilterResonance/Attack/Decay/Sustain/Release), module:<type>:<instance>:<param>, track:<param>[:<track_id>], or global:MasterVolume. From list_automation_lanes, pass the lane target string back verbatim."
     )]
-    pub target: String,
-    #[schemars(description = "Instrument index (default 0)")]
+    pub target: AutomationTargetSelector,
+    #[schemars(description = "Instrument ID (default 0 for instrument/module targets)")]
     pub instrument_id: Option<InstrumentId>,
     #[schemars(description = "Beat positions of points to remove")]
     pub beats: Vec<f32>,
@@ -3105,8 +3167,8 @@ pub struct ClearAutomationLaneInput {
     #[schemars(
         description = "Target DSL: instrument macro (Volume/Pan/FilterCutoff/FilterResonance/Attack/Decay/Sustain/Release), module:<type>:<instance>:<param>, track:<param>[:<track_id>], or global:MasterVolume. From list_automation_lanes, pass the lane target string back verbatim."
     )]
-    pub target: String,
-    #[schemars(description = "Instrument index (default 0)")]
+    pub target: AutomationTargetSelector,
+    #[schemars(description = "Instrument ID (default 0 for instrument/module targets)")]
     pub instrument_id: Option<InstrumentId>,
 }
 
@@ -3121,8 +3183,8 @@ pub struct ScaleAutomationLaneInput {
     #[schemars(description = "Pattern ID")]
     pub pattern_id: PatternId,
     #[schemars(description = "Target lane (e.g. 'module:flt:1:cutoff' or 'FilterCutoff')")]
-    pub target: String,
-    #[schemars(description = "Instrument index (default 0)")]
+    pub target: AutomationTargetSelector,
+    #[schemars(description = "Instrument ID (default 0 for instrument/module targets)")]
     pub instrument_id: Option<InstrumentId>,
     #[schemars(
         description = "Multiplier applied to each point's value around the pivot (e.g. 0.8 = 20% less movement, 1.5 = more). Values are clamped to 0..1 afterwards."
@@ -3145,8 +3207,8 @@ pub struct OffsetAutomationLaneInput {
     #[schemars(description = "Pattern ID")]
     pub pattern_id: PatternId,
     #[schemars(description = "Target lane (e.g. 'module:flt:1:cutoff' or 'FilterCutoff')")]
-    pub target: String,
-    #[schemars(description = "Instrument index (default 0)")]
+    pub target: AutomationTargetSelector,
+    #[schemars(description = "Instrument ID (default 0 for instrument/module targets)")]
     pub instrument_id: Option<InstrumentId>,
     #[schemars(
         description = "Amount added to every point's value (e.g. -0.05 lowers the whole lane). Values are clamped to 0..1 afterwards."
@@ -3165,14 +3227,16 @@ pub struct CopyAutomationLaneInput {
     #[schemars(description = "Source pattern ID")]
     pub from_pattern_id: PatternId,
     #[schemars(description = "Source target lane")]
-    pub from_target: String,
-    #[schemars(description = "Source instrument index (default 0)")]
+    pub from_target: AutomationTargetSelector,
+    #[schemars(description = "Source instrument ID (default 0 for instrument/module targets)")]
     pub from_instrument_id: Option<InstrumentId>,
     #[schemars(description = "Destination pattern ID (may equal the source)")]
     pub to_pattern_id: PatternId,
     #[schemars(description = "Destination target lane")]
-    pub to_target: String,
-    #[schemars(description = "Destination instrument index (default 0)")]
+    pub to_target: AutomationTargetSelector,
+    #[schemars(
+        description = "Destination instrument ID (default 0 for instrument/module targets)"
+    )]
     pub to_instrument_id: Option<InstrumentId>,
     #[schemars(
         description = "Optional multiplier applied to copied values (default 1.0). Clamped to 0..1."
@@ -3839,11 +3903,23 @@ pub struct SongPlacementDef {
         description = "Index into the tracks array (0-based, refers to the track at this position)"
     )]
     pub track_index: usize,
+    #[schemars(
+        description = "Start in beats; may accompany start_tick when both resolve to the same position"
+    )]
     pub start_beat: Option<f32>,
+    #[schemars(description = "Exact start tick; may accompany an agreeing start_beat")]
     pub start_tick: Option<Tick>,
+    #[schemars(description = "Optional placement transposition in semitones (default 0)")]
     pub transpose_semitones: Option<f32>,
+    #[schemars(description = "Optional linear placement gain (default 1)")]
     pub gain: Option<f32>,
+    #[schemars(
+        description = "Optional placement length in beats; mutually exclusive with length_ticks"
+    )]
     pub length_beats: Option<f32>,
+    #[schemars(
+        description = "Optional exact placement length in ticks; mutually exclusive with length_beats"
+    )]
     pub length_ticks: Option<u32>,
 }
 
@@ -4599,6 +4675,7 @@ impl SynthMcpServer {
             "list_mod_graphs" => list_mod_graphs(NoParams),
             "get_mod_graph" => get_mod_graph(GetModGraphParam),
             "create_mod_graph" => create_mod_graph(CreateModGraphParam),
+            "duplicate_mod_graph" => duplicate_mod_graph(DuplicateModGraphParam),
             "set_mod_graph_metadata" => set_mod_graph_metadata(SetModGraphMetadataParam),
             "delete_mod_graph" => delete_mod_graph(DeleteModGraphParam),
             "set_mod_graph_scope" => set_mod_graph_scope(SetModGraphScopeParam),
@@ -4706,6 +4783,11 @@ impl SynthMcpServer {
             // Audio input
             "list_input_devices" => list_input_devices(NoParams),
             "get_input_state" => get_input_state(NoParams),
+            "set_input_device" => set_input_device(SetInputDeviceParam),
+            "start_monitoring" => start_monitoring(NoParams),
+            "stop_monitoring" => stop_monitoring(NoParams),
+            "start_recording" => start_recording(NoParams),
+            "stop_recording" => stop_recording(StopRecordingParam),
 
             // Music analysis
             "analyze_harmony" => analyze_harmony(AnalyzeHarmonyParam),
@@ -4794,13 +4876,14 @@ impl ServerHandler for SynthMcpServer {
         // at the default level; a tool-reported failure (in-band `Error:` text
         // or the `is_error` flag) is demoted to warn.
         match outcome {
-            Ok(Ok(result)) => {
+            Ok(Ok(mut result)) => {
                 let failed = result.is_error.unwrap_or(false)
                     || result
                         .content
                         .iter()
                         .any(|c| c.as_text().is_some_and(|t| result_is_failure(&t.text)));
                 if failed {
+                    result.is_error = Some(true);
                     tracing::warn!(
                         target: "synth_mcp::call",
                         session_id = self.session_id,
@@ -5257,7 +5340,10 @@ impl SynthMcpServer {
         let mut errors = Vec::new();
         for n in &params.0.notes {
             let channel = n.channel.unwrap_or(MidiChannel::CH1);
-            match self.bridge.note_on(n.note, n.velocity, channel) {
+            match self
+                .bridge
+                .note_on(n.note, n.velocity, channel, n.instrument_id)
+            {
                 Ok(()) => ok_count += 1,
                 Err(e) => errors.push(format!("note {}: {e}", n.note)),
             }
@@ -5281,7 +5367,7 @@ impl SynthMcpServer {
         let mut errors = Vec::new();
         for n in &params.0.notes {
             let channel = n.channel.unwrap_or(MidiChannel::CH1);
-            match self.bridge.note_off(n.note, channel) {
+            match self.bridge.note_off(n.note, channel, n.instrument_id) {
                 Ok(()) => ok_count += 1,
                 Err(e) => errors.push(format!("note {}: {e}", n.note)),
             }
@@ -5397,10 +5483,14 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Render the arrangement offline and write it to a 32-bit float stereo WAV file on disk, returning the path plus stats (sample_rate, frames, peak). Deterministic and offline — the same render analyze_mix_bus uses. Pass instrument_id to solo one instrument so the file is a clean single-source fingerprint (done against a clone, your project is untouched); omit it for the full mix. This is the building block for external timbre-matching: write your candidate patch to a WAV, then run your own FFT / spectral-distance against a reference WAV (e.g. a real SID render). Renders from start_tick (default 0) for duration_seconds (default 10, max 300). Use render_quality 'full' (default) for spectral work — 'draft' truncates everything above 11 kHz."
+        description = "Render the arrangement offline to a 32-bit float stereo WAV and return path plus stats. At the requested range end the transport stops, then tail_seconds (default 1) captures voice/effect releases without triggering later arrangement events. Pass instrument_id to isolate one instrument against a cloned song. Deterministic and offline."
     )]
     async fn render_to_wav(&self, params: Parameters<RenderToWavParam>) -> String {
         let duration = params.0.duration_seconds.unwrap_or(10.0);
+        let tail = params.0.tail_seconds.unwrap_or(1.0);
+        if let Err(e) = validate_range("tail_seconds", tail, 0.0, 30.0) {
+            return validation_err(e);
+        }
         let scope = crate::bridge::AnalysisScope::from_flags(
             params.0.include_all,
             params.0.include_master_effects,
@@ -5414,6 +5504,7 @@ impl SynthMcpServer {
                 params.0.start_tick,
                 params.0.instrument_id,
                 scope,
+                synth_core::Seconds::new(tail),
             )
         })
     }
@@ -5507,7 +5598,7 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Compare two spectra and return how far apart they are, and WHERE. Each side (target, candidate) is either a render (optionally soloing one instrument) or an imported sample / WAV file, so you can compare render↔render, render↔sample, or sample↔sample. Returns two distance scalars to minimise: log_spectral_distance (RMS dB difference over log-frequency bins) and mel_l2_distance (true L2 / Euclidean distance over a log-mel filterbank — perceptually weighted, tracks audible timbre change more closely; sized by mel_bands, default 40). Plus per-descriptor deltas (candidate − target): centroid_delta_hz (brightness), rolloff_delta_hz (filter-slope steepness — 12 vs 24 dB/oct), flatness_delta, inharmonicity_delta, and odd_even_ratio_delta_db (odd/even harmonic balance in dB — encodes pulse duty cycle, so use it to match pulse width); voicing_mismatch (a pitched-vs-noise gross mismatch) with its penalty reported separately in voicing_penalty_db (60 dB on a mismatch, else 0) rather than folded into log_spectral_distance — so the spectral scalar keeps ranking candidates even against a silent/unvoiced target window (add the two for the old combined score); and the high-value lists missing_partials (strong in the target, absent in the candidate — what your patch is failing to produce) and extra_partials (present in the candidate, not the target). This closes the timbre-matching loop: fingerprint a reference (analyze_sample_spectrum of a real SID render), measure your candidate, read missing_partials to know which frequencies to add, and watch the distances fall as you adjust parameters. NOTE: the default (aggregate) distances average the whole window into one spectrum, so on staccato / silence-dominated / time-varying material they go blind to quiet-in-time content (a decaying release tail) and stop ranking candidates — set time_resolved: true for those, which frames both sources, aligns them, masks on target energy, and returns per-frame time_resolved_lsd / worst_frames instead. Deterministic and offline."
+        description = "Compare two rendered/sample spectra and report broadband distances, descriptor deltas, and missing/extra partials. Time-resolved comparison is enabled by default: frames are envelope-aligned and only target-energy frames are scored, so sparse/staccato references rank correctly instead of averaging over silence. Set time_resolved=false for aggregate-only output. Deterministic and offline."
     )]
     async fn compare_spectra(&self, params: Parameters<CompareSpectraParam>) -> String {
         let p = params.0;
@@ -5529,7 +5620,7 @@ impl SynthMcpServer {
         let candidate = to_source(&p.candidate);
         // Mask/align default to on; only the explicit "none" string turns them off.
         let time_resolved = crate::bridge::TimeResolvedOptions {
-            enabled: p.time_resolved.unwrap_or(false),
+            enabled: p.time_resolved.unwrap_or(true),
             hop_ms: p.hop_ms,
             frame_len_ms: p.frame_len_ms,
             mask_target_energy: p
@@ -7267,7 +7358,21 @@ impl SynthMcpServer {
     )]
     async fn create_mod_graph(&self, params: Parameters<CreateModGraphParam>) -> String {
         let p = params.0;
-        match self.bridge.create_mod_graph(p.name, p.description, p.scope) {
+        match self
+            .bridge
+            .create_mod_graph(p.name, p.description, p.color, p.scope)
+        {
+            Ok(id) => to_json(&serde_json::json!({ "graph_id": id })),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Duplicate one Mod Grid graph, preserving nodes, layout, metadata, scope, and assignments."
+    )]
+    async fn duplicate_mod_graph(&self, params: Parameters<DuplicateModGraphParam>) -> String {
+        let graph_id = params.0.graph_id;
+        match self.bridge.duplicate_mod_graph(graph_id) {
             Ok(id) => to_json(&serde_json::json!({ "graph_id": id })),
             Err(e) => format!("Error: {e}"),
         }
@@ -7647,9 +7752,10 @@ impl SynthMcpServer {
     #[tool(description = "Get all automation points for a specific parameter lane in a pattern.")]
     async fn get_automation_points(&self, params: Parameters<GetAutomationPointsParam>) -> String {
         let p = params.0;
+        let target = p.target.to_target_string();
         match self.bridge.get_automation_points(
             p.pattern_id,
-            &p.target,
+            &target,
             p.instrument_id.unwrap_or_default(),
         ) {
             Ok(points) => to_json(&points),
@@ -7663,9 +7769,10 @@ impl SynthMcpServer {
         params: Parameters<RemoveAutomationPointsParam>,
     ) -> String {
         let p = params.0;
+        let target = p.target.to_target_string();
         match self.bridge.remove_automation_points(
             p.pattern_id,
-            &p.target,
+            &target,
             p.instrument_id.unwrap_or_default(),
             &p.beats,
         ) {
@@ -7675,19 +7782,20 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Clear all automation points from one or more lanes (each a pattern + target + optional instrument index)."
+        description = "Clear all automation points from one or more lanes (each a pattern + target + optional instrument ID)."
     )]
     async fn clear_automation_lane(&self, params: Parameters<ClearAutomationLaneParam>) -> String {
         let mut ok_count = 0usize;
         let mut errors = Vec::new();
         for it in &params.0.items {
+            let target = it.target.to_target_string();
             match self.bridge.clear_automation_lane(
                 it.pattern_id,
-                &it.target,
+                &target,
                 it.instrument_id.unwrap_or_default(),
             ) {
                 Ok(_count) => ok_count += 1,
-                Err(e) => errors.push(format!("{}/{}: {e}", it.pattern_id, it.target)),
+                Err(e) => errors.push(format!("{} / {target}: {e}", it.pattern_id)),
             }
         }
         batch_msg(ok_count, "automation lanes cleared", &[], &errors)
@@ -7702,16 +7810,17 @@ impl SynthMcpServer {
         let mut ok_count = 0usize;
         let mut errors = Vec::new();
         for it in &params.0.items {
+            let target = it.target.to_target_string();
             match self.bridge.transform_automation_lane(
                 it.pattern_id,
-                &it.target,
+                &target,
                 it.instrument_id.unwrap_or_default(),
                 it.scale,
                 it.pivot.unwrap_or(0.5),
                 0.0,
             ) {
                 Ok(_count) => ok_count += 1,
-                Err(e) => errors.push(format!("{}/{}: {e}", it.pattern_id, it.target)),
+                Err(e) => errors.push(format!("{} / {target}: {e}", it.pattern_id)),
             }
         }
         batch_msg(ok_count, "automation lanes scaled", &[], &errors)
@@ -7728,16 +7837,17 @@ impl SynthMcpServer {
         let mut ok_count = 0usize;
         let mut errors = Vec::new();
         for it in &params.0.items {
+            let target = it.target.to_target_string();
             match self.bridge.transform_automation_lane(
                 it.pattern_id,
-                &it.target,
+                &target,
                 it.instrument_id.unwrap_or_default(),
                 1.0,
                 0.0,
                 it.offset,
             ) {
                 Ok(_count) => ok_count += 1,
-                Err(e) => errors.push(format!("{}/{}: {e}", it.pattern_id, it.target)),
+                Err(e) => errors.push(format!("{} / {target}: {e}", it.pattern_id)),
             }
         }
         batch_msg(ok_count, "automation lanes offset", &[], &errors)
@@ -7752,19 +7862,21 @@ impl SynthMcpServer {
         let mut ok_count = 0usize;
         let mut errors = Vec::new();
         for it in &params.0.items {
+            let from_target = it.from_target.to_target_string();
+            let to_target = it.to_target.to_target_string();
             match self.bridge.copy_automation_lane(
                 it.from_pattern_id,
-                &it.from_target,
+                &from_target,
                 it.from_instrument_id.unwrap_or_default(),
                 it.to_pattern_id,
-                &it.to_target,
+                &to_target,
                 it.to_instrument_id.unwrap_or_default(),
                 it.scale.unwrap_or(1.0),
                 it.offset.unwrap_or(0.0),
                 it.clear_destination.unwrap_or(false),
             ) {
                 Ok(_count) => ok_count += 1,
-                Err(e) => errors.push(format!("{} → {}: {e}", it.from_target, it.to_target)),
+                Err(e) => errors.push(format!("{from_target} → {to_target}: {e}")),
             }
         }
         batch_msg(ok_count, "automation lanes copied", &[], &errors)
@@ -9313,6 +9425,50 @@ impl SynthMcpServer {
         }
     }
 
+    #[tool(
+        description = "Select an audio input device by id/name; pass null for the backend default."
+    )]
+    async fn set_input_device(&self, params: Parameters<SetInputDeviceParam>) -> String {
+        match self.bridge.set_input_device(params.0.device_id) {
+            Ok(()) => "Input device selected".to_string(),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Start audio-input monitoring and connect it to Audio Input modules.")]
+    async fn start_monitoring(&self, _params: Parameters<NoParams>) -> String {
+        match self.bridge.start_monitoring() {
+            Ok(()) => "Input monitoring started".to_string(),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Stop audio-input monitoring and disconnect the engine input.")]
+    async fn stop_monitoring(&self, _params: Parameters<NoParams>) -> String {
+        match self.bridge.stop_monitoring() {
+            Ok(()) => "Input monitoring stopped".to_string(),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Start recording the monitored input on the dedicated recording-drain thread."
+    )]
+    async fn start_recording(&self, _params: Parameters<NoParams>) -> String {
+        match self.bridge.start_recording() {
+            Ok(()) => "Input recording started".to_string(),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(description = "Stop input recording and commit the captured audio as a library sample.")]
+    async fn stop_recording(&self, params: Parameters<StopRecordingParam>) -> String {
+        match self.bridge.stop_recording(params.0.name) {
+            Ok(sample) => to_json(&sample),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
     // ========================================================================
     // DISCOVERY TOOLS
     // ========================================================================
@@ -9784,6 +9940,15 @@ mod batch_msg_tests {
 
         // A non-batch JSON blob with an empty errors list is not a failure.
         assert!(!result_is_failure(r#"{"created":[],"errors":[]}"#));
+
+        // Bridge BatchResult: only a total failure trips rollback. Partial
+        // success remains a successful tool call with per-item errors.
+        assert!(result_is_failure(
+            r#"{"total":2,"succeeded":0,"failed":2,"items":[]}"#
+        ));
+        assert!(!result_is_failure(
+            r#"{"total":2,"succeeded":1,"failed":1,"items":[]}"#
+        ));
     }
 }
 

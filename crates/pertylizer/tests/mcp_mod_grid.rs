@@ -58,7 +58,7 @@ async fn mod_grid_create_route_enumerate_delete() {
     let created = call(
         &server,
         "create_mod_graph",
-        serde_json::json!({ "name": "wobble", "scope": "track" }),
+        serde_json::json!({ "name": "wobble", "scope": "track", "color": "#112233" }),
     )
     .await;
     let graph_id = serde_json::from_str::<serde_json::Value>(&created)
@@ -66,6 +66,28 @@ async fn mod_grid_create_route_enumerate_delete() {
         .get("graph_id")
         .and_then(|v| v.as_u64())
         .expect("graph_id in response") as u32;
+
+    let invalid_node = call(
+        &server,
+        "add_mod_graph_node",
+        serde_json::json!({ "items": [{
+            "graph_id": graph_id,
+            "node": { "Module": { "module_type": "lfo", "params": { "rate": 999999.0 } } }
+        }] }),
+    )
+    .await;
+    assert!(invalid_node.contains("invalid value"), "{invalid_node}");
+
+    let unhostable = call(
+        &server,
+        "add_mod_graph_node",
+        serde_json::json!({ "items": [{
+            "graph_id": graph_id,
+            "node": { "Module": { "module_type": "oscilloscope", "params": {} } }
+        }] }),
+    )
+    .await;
+    assert!(unhostable.contains("cannot be hosted"), "{unhostable}");
 
     let unknown_assignment = call(
         &server,
@@ -140,8 +162,10 @@ async fn mod_grid_create_route_enumerate_delete() {
     let detail: serde_json::Value = serde_json::from_str(&detail).unwrap();
     assert_eq!(detail["nodes"].as_array().unwrap().len(), 2);
     assert_eq!(detail["nodes"][0]["description"], "Slow movement source");
+    assert_eq!(detail["nodes"][1]["description"], "");
     assert_eq!(detail["connections"].as_array().unwrap().len(), 1);
     assert_eq!(detail["info"]["scope"], "track");
+    assert_eq!(detail["info"]["color"], "#112233");
     assert_eq!(detail["info"]["assigned_tracks"][0], track_id);
 
     let metadata = call(
@@ -195,6 +219,39 @@ async fn mod_grid_create_route_enumerate_delete() {
         "expected rejection: {bad}"
     );
 
+    let bad_port = call(
+        &server,
+        "connect_mod_graph",
+        serde_json::json!({ "items": [
+            { "graph_id": graph_id, "from": 0, "from_port": "missing", "to": 1, "to_port": "in" },
+        ] }),
+    )
+    .await;
+    assert!(bad_port.contains("no output port"), "{bad_port}");
+
+    let duplicated = call(
+        &server,
+        "duplicate_mod_graph",
+        serde_json::json!({ "graph_id": graph_id }),
+    )
+    .await;
+    let duplicated_id = serde_json::from_str::<serde_json::Value>(&duplicated).unwrap()["graph_id"]
+        .as_u64()
+        .expect("duplicated graph id") as u32;
+    let duplicated_detail = call(
+        &server,
+        "get_mod_graph",
+        serde_json::json!({ "graph_id": duplicated_id }),
+    )
+    .await;
+    let duplicated_detail: serde_json::Value =
+        serde_json::from_str(&duplicated_detail).expect("duplicated graph detail");
+    assert_eq!(duplicated_detail["nodes"].as_array().unwrap().len(), 2);
+    assert_eq!(
+        duplicated_detail["connections"].as_array().unwrap().len(),
+        1
+    );
+
     // 8. Delete the graph.
     let deleted = call(
         &server,
@@ -210,7 +267,7 @@ async fn mod_grid_create_route_enumerate_delete() {
             .as_array()
             .unwrap()
             .len(),
-        0
+        1
     );
 }
 

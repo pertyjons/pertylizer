@@ -13,13 +13,6 @@ as mono); (3) MCP batch `set_parameter` now accepts string/address values so `sl
 set to `spp-1.x` + description/discovery clarified. Design verdict (6) recorded below (keep ER
 unified); ergonomics note (4) still open. Details per item below.
 
-- [ ] **4. (Minor, ergonomics) `note_on`/`note_off` can't target an instrument.** They route
-  only by MIDI channel, and a freshly built instrument silently gets a *different* channel —
-  so `note_on` (default ch 1) hit the wrong (silent) instrument during the live test and
-  produced confusing silence. Add an optional `instrument_id` to `note_on`/`note_off` (like
-  `preview_note` already has), or return the assigned channel from
-  `build_instrument`/`create_instrument`.
-
 - [ ] **6. Design question — split the early reflections into their own module?** ER is
   currently *embedded* in `spp` (two parallel DSP halves — `spatializer.rs` direct binaural +
   `early_reflections.rs` ISM — already clean separate structs, summed in `mod.rs::process`).
@@ -368,14 +361,6 @@ green + per-step reviews). The six deferred items are done:
   intentional for rhythmic modules (a consistent gate pattern), so decide per module. **S.**
 - [ ] **Full sustain-pedal is CC64-specific.** The pedal path only handles CC64; other
   hold-type pedals (sostenuto CC66, soft CC67) are not modelled. Low priority. **S.**
-- [ ] **Descriptor-aware port validation for `ModGraph` (review finding 4).**
-  `ModGraph::validate` checks nodes/dupes/cycles but **not** port existence/direction
-  (the crate is descriptor-free), and the runtime build ignores `dsp.connect()` errors
-  (`mod_grid_build.rs`), so an MCP/import-authored cable with a bad port saves clean but
-  silently doesn't wire (cheap→module injections have the same gap on `to_port`). Add an
-  app-layer validator that checks port names/directions against module descriptors, and
-  have `build_mod_grid_runtime` surface dropped-connection diagnostics instead of
-  discarding them. **M.**
 - [ ] **CPU metering uses `Instant::now()` every audio callback (review finding 5).**
   The mod-grid stage timing follows the *pre-existing* per-stage pattern (voices /
   module-graph / master-fx already do 4 clock reads per callback). `Instant::now()`
@@ -383,20 +368,6 @@ green + per-step reviews). The six deferred items are done:
   frown on, and the reads happen even when the CPU tooltip is hidden. Consider making the
   whole metering opt-in/off-by-default or sampling it sparsely — a cross-cutting change to
   the existing metering subsystem, not mod-grid-specific. **S–M.**
-- [ ] **Descriptor-driven node-config validation at the MCP boundary (MCP audit
-  2026-07-19).** `add_mod_graph_node`/`set_mod_graph_node` parse node configs with pure
-  serde (`parse_mod_node`, `mcp_bridge.rs`): unknown `params` type_ids are silently
-  skipped and values applied unvalidated at build (no `validate_f32`), a
-  and a valid-but-unhostable `module_type` is accepted and silently skipped at build.
-  Resolve the module descriptor
-  at the boundary and reject bad input with errors, matching the `set_parameter`
-  convention. Complements the port-validation item above. **S–M.**
-- [ ] **MCP parity gaps vs the note-graph family (MCP audit 2026-07-19).** No
-  `duplicate_mod_graph` tool despite `duplicate_note_graph` precedent and existing engine
-  + GUI support (`Song::duplicate_mod_graph`) — MCP callers must re-create node-by-node,
-  losing layout. `create_mod_graph` lacks the `color` param `create_note_graph` has
-  (color only settable via the later `set_mod_graph_metadata`). Also: `set_mod_graph_scope`
-  and `remove_mod_graph_node` have zero MCP-level test coverage. **S.**
 
 ---
 
@@ -720,18 +691,6 @@ enough to be driven by an actual observed symptom. Ordered by likely impact.
 ### 6.5 Sampling & recording backlog
 *(from `plans/sampling-plan.md`; feature shipped through v0.262.0. Full P1/P2/P3 backlog + RT-review notes in git history. Related: §2.1.)*
 
-- [ ] **P1 — MCP recording/monitoring reach the engine.** Engine-side sample cache
-  (`LoadSample`/`UnloadSample`, with the cache on the *control* side so the audio
-  thread never hashes by `SampleId`); a **sample-data trash ring** for
-  `UnloadSample`/replace (so the last `Arc` drop/`free()` never lands on the audio
-  thread — like `automation_trash`/`script_trash`); `pending_sample_ops` in
-  `McpSharedState`; wire `list_input_devices`/`get_input_state` to the real backend;
-  MCP `set_input_device`/`start|stop_monitoring`/`start|stop_recording`. (Device
-  ownership lives in the `pertylizer` app crate — the reason these are GUI-side.)
-- [ ] **P1 — recording-drain thread.** Drain the input ring on a dedicated
-  low-priority thread, not the ~60 fps GUI thread (a GUI stall overflows the ~5.5 s
-  ring; also enables headless/MCP-only recording). The audio thread is already
-  RT-safe — this is purely about who drains.
 - [ ] **P2 — sample UX/DSP.** Draggable crop/loop handles + preview playback cursor;
   zero-crossing snap (match slope *sign*, not just proximity); loop crossfade
   (static/baked default, keep the original alongside; dynamic dual-read only if loop
@@ -745,61 +704,9 @@ enough to be driven by an actual observed symptom. Ordered by likely impact.
 ### 6.6 Pertylizer MCP gaps
 *(from `plans/pertylizer-mcp-feedback.md`; the live running log continues in the sid-analyzer session memory. Only Pertylizer-side open items harvested.)*
 
-- [ ] **Set `CallToolResult.isError` on total tool failure.** Many tools return a
-  normal text result beginning with `Error:`, while the MCP protocol result still has
-  `isError: false`; clients that rely on the protocol flag therefore treat failures as
-  successes. Centralize result construction so total failures set `isError: true`, while
-  preserving structured partial-success responses for batch tools.
-- [ ] **Document or normalize omitted empty description fields.** Graph node/module
-  `description` values are currently skipped during JSON serialization when empty, but
-  the MCP tool descriptions do not state that omission means an empty description.
-  Either always serialize `description: ""` for a stable response shape, or document the
-  omission consistently in the schemas and tool descriptions.
-- [ ] **`compare_spectra` energy-masked distance (option b).** Restrict the distance
-  to frames where the *target* has energy; whole-window and 500 ms RMS both failed to
-  rank candidates on sparse staccato material where an external numpy energy-mask
-  ranked cleanly. Needs frame-aware masking in `compare()` (currently one aggregate
-  spectrum per source). (Option a — the `voicing_penalty_db` field — already shipped.)
-- [ ] **Arpeggiator free-running / continuous-phase mode.** The `Arpeggiator`
-  NoteProcessor restarts its offset cycle on every note onset, so a note shorter than
-  one full cycle never reaches the trailing offsets (SID short-stab arps drop chord
-  tones). Add a mode where the offset index derives from absolute transport position
-  (or a per-instrument running counter). Anchors: `emit_custom`/`step_onset` in
-  `synth_sequencer/src/note_processor.rs`.
-- [ ] **`render_to_wav` tail truncation.** `render_range` truncates any voice still
-  ringing past the window edge, so offline `analyze_*` can't surface over-hang/tail
-  artifacts that live playback plays. Render a short release-tail past the window, or
-  add a flag to capture/analyze the LIVE playback audio.
-
 *(MCP convention audit 2026-07-19 — findings on the tools added 17–19 July that aren't
 covered elsewhere; mod-grid-specific items live in §2.9.)*
 
-- [ ] **`result_is_failure` can't classify the `BatchResult` shape.** It detects
-  `Error:` prose and `batch_json`'s `errors` array only (`synth_mcp/src/server.rs`
-  ~`:439`), so tools returning `to_json(&BatchResult)` (`place_pattern`,
-  `update_placement`, `add_automation_points`, `remove_automation_points`, plus
-  pre-existing `add_note`/`update_note`/`create_track`) never trip `batch_execute`'s
-  stop-on-error/rollback gate on total failure (`succeeded: 0`). One choke-point fix:
-  treat `failed > 0 && succeeded == 0` as failure. Sibling of the `isError` item above. **S.**
-- [ ] **Automation boundary gaps.** (a) `track:`/instrument-macro targets don't
-  validate that the track/instrument exists — `track:Volume:999` succeeds and creates a
-  dead lane, while the `module:` arm rejects nonexistent instances for exactly this
-  reason (`mcp_bridge.rs` `build_module_automation_target`); (b)
-  `remove_automation_points`/`clear_automation_lane` use `get_or_create_automation`, so
-  a typo'd-but-grammatical target creates a persistent empty lane while
-  `get`/`transform` correctly error "lane not found"; (c) the structured `target` object
-  is only accepted by the add path — the six read/edit siblings
-  (get/remove/clear/scale/offset/copy) are DSL-string-only; (d) `AutomationSummaryLane`
-  lacks the `scope` field `AutomationLaneInfo` gained, so track/global lanes group under
-  `"(no instrument)"` in the summary. **S–M.**
-- [ ] **Schema-description drift on the new tools.** `set_note_graph_metadata`/
-  `set_mod_graph_metadata` param fields are largely undocumented — including that `""`
-  clears color/description (the bridge supports it and even advertises it in its own
-  error text); `SongPlacementDef` *lost* its schemars field docs in `ffbfb19e` (sibling
-  `PlacementInput` documents every field incl. the beat/tick XOR rule);
-  `scale`/`offset`/`copy_automation_lane` target descriptions predate the
-  `track:`/`global:` DSL; ~8 sites still say "Instrument index" instead of
-  "Instrument ID". **S.**
 ---
 
 ## Maybe later

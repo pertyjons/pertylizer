@@ -765,7 +765,6 @@ pub struct NoteGraphModuleInfo {
     /// Kind tag (`scale_quantize`, `euclidean`, `note_lfo`, …).
     pub kind: String,
     /// Per-node pedagogical/user intent text.
-    #[serde(skip_serializing_if = "String::is_empty")]
     pub description: String,
     /// Full config as externally-tagged JSON — the shape
     /// `add_note_graph_module` / `set_note_graph_module` accept, so it
@@ -827,7 +826,6 @@ pub struct ModGraphNodeInfo {
     /// `target`).
     pub kind: String,
     /// Per-node pedagogical/user intent text.
-    #[serde(skip_serializing_if = "String::is_empty")]
     pub description: String,
     /// Full config as externally-tagged JSON — the shape `add_mod_graph_node`
     /// accepts, so it round-trips.
@@ -1113,6 +1111,8 @@ pub struct AutomationSummaryLane {
     /// Instrument the lane targets, when instrument-scoped.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub instrument_id: Option<InstrumentId>,
+    /// Lane scope: `instrument`, `module`, `track`, or `global`.
+    pub scope: String,
     /// Number of points in the lane.
     pub point_count: usize,
 }
@@ -1717,6 +1717,8 @@ pub struct InputStateInfo {
 /// Info about an audio input device.
 #[derive(Debug, Clone, Serialize)]
 pub struct InputDeviceInfo {
+    /// Stable backend device identifier accepted by `set_input_device`.
+    pub id: String,
     /// Device name/ID.
     pub name: String,
     /// Number of input channels.

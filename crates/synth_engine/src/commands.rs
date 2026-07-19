@@ -392,12 +392,16 @@ pub enum EngineCommand {
         /// Note velocity.
         velocity: Velocity,
         channel: MidiChannel,
+        /// Explicit destination, or `None` for normal focus/channel routing.
+        instrument_id: Option<InstrumentId>,
     },
 
     /// Stop a note.
     NoteOff {
         note: MidiNote,
         channel: MidiChannel,
+        /// Explicit destination, or `None` for normal focus/channel routing.
+        instrument_id: Option<InstrumentId>,
     },
 
     /// All notes off.
@@ -1157,13 +1161,14 @@ impl std::fmt::Debug for EngineCommand {
                 note,
                 velocity,
                 channel,
+                instrument_id: _,
             } => f
                 .debug_struct("NoteOn")
                 .field("note", note)
                 .field("velocity", velocity)
                 .field("channel", channel)
                 .finish(),
-            Self::NoteOff { note, channel } => f
+            Self::NoteOff { note, channel, .. } => f
                 .debug_struct("NoteOff")
                 .field("note", note)
                 .field("channel", channel)

@@ -67,7 +67,11 @@ pub fn parse_midi(bytes: &[u8]) -> Option<EngineCommand> {
 
             // CRITICAL: NoteOn with velocity 0 is actually NoteOff
             if velocity_raw == 0 {
-                Some(EngineCommand::NoteOff { note, channel })
+                Some(EngineCommand::NoteOff {
+                    note,
+                    channel,
+                    instrument_id: None,
+                })
             } else {
                 // Convert 0-127 to 0.0-1.0
                 let velocity = Velocity::from_midi(velocity_raw);
@@ -75,6 +79,7 @@ pub fn parse_midi(bytes: &[u8]) -> Option<EngineCommand> {
                     note,
                     velocity,
                     channel,
+                    instrument_id: None,
                 })
             }
         }
@@ -82,7 +87,11 @@ pub fn parse_midi(bytes: &[u8]) -> Option<EngineCommand> {
         status::NOTE_OFF if bytes.len() >= 3 => {
             let note = MidiNote::new(bytes[1] & 0x7F);
             // Release velocity is ignored (bytes[2])
-            Some(EngineCommand::NoteOff { note, channel })
+            Some(EngineCommand::NoteOff {
+                note,
+                channel,
+                instrument_id: None,
+            })
         }
 
         status::POLY_AFTERTOUCH if bytes.len() >= 3 => {
@@ -311,6 +320,7 @@ mod tests {
                 note,
                 velocity,
                 channel,
+                ..
             } => {
                 assert_eq!(note, MidiNote::C4);
                 assert!((velocity.as_f32() - 100.0 / 127.0).abs() < 0.01);
@@ -327,7 +337,7 @@ mod tests {
         let cmd = parse_midi(&msg).unwrap();
 
         match cmd {
-            EngineCommand::NoteOff { note, channel } => {
+            EngineCommand::NoteOff { note, channel, .. } => {
                 assert_eq!(note, MidiNote::new(64));
                 assert_eq!(channel.as_zero_indexed(), 0);
             }
@@ -342,7 +352,7 @@ mod tests {
         let cmd = parse_midi(&msg).unwrap();
 
         match cmd {
-            EngineCommand::NoteOff { note, channel } => {
+            EngineCommand::NoteOff { note, channel, .. } => {
                 assert_eq!(note, MidiNote::new(72));
                 assert_eq!(channel.as_zero_indexed(), 1);
             }

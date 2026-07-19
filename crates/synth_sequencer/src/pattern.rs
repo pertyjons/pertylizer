@@ -522,6 +522,16 @@ impl Pattern {
         self.automation.iter().find(|l| &l.target == target)
     }
 
+    /// Get a mutable automation lane for a target without creating it.
+    pub fn automation_lane_mut(
+        &mut self,
+        target: &super::automation::AutomationTarget,
+    ) -> Option<&mut AutomationLane> {
+        self.automation
+            .iter_mut()
+            .find(|lane| &lane.target == target)
+    }
+
     /// Insert a complete automation lane, replacing any existing lane for the same
     /// target. Used to restore a lane removed via undo.
     pub fn add_automation_lane(&mut self, lane: AutomationLane) {

@@ -37,7 +37,7 @@ fn build(src: &str) -> (BoundScript, AudioBindings, usize) {
     let bound = prog.into_bound(src.to_string());
     let mut b = AudioBindings::default();
     for (i, input) in bound.inputs.iter().enumerate() {
-        let reg = i as u16;
+        let reg = synth_core::script::ScriptRegister::new(i as u16);
         match input {
             ScriptInput::AudioIn(AudioInputChannel::Left) => b.in_left = Some(reg),
             ScriptInput::AudioIn(AudioInputChannel::Right) => b.in_right = Some(reg),

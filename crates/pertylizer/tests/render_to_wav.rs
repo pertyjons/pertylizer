@@ -9,10 +9,10 @@
 
 mod common;
 
-use synth_core::InstrumentId;
+use synth_core::{InstrumentId, Seconds};
 use synth_mcp::AnalysisScope;
 
-use pertylizer::mcp_bridge::render_to_wav_impl;
+use pertylizer::mcp_bridge::{render_to_wav_impl, render_to_wav_with_tail_impl};
 use pertylizer::mcp_shared::McpSharedState;
 
 use common::{TEST_SR, build_arpeggio_song, setup_with_patch, sustain_patch};
@@ -128,4 +128,29 @@ fn render_to_wav_unknown_instrument_warns_and_is_silent() {
         result.peak
     );
     assert!(path.exists(), "a valid WAV should still be written");
+}
+
+#[test]
+fn render_to_wav_appends_the_requested_effect_tail() {
+    let rig = setup_with_patch(&sustain_patch());
+    let shared = McpSharedState::with_song(build_arpeggio_song());
+    let dir = tempfile::tempdir().expect("tempdir");
+    let path = dir.path().join("tail.wav");
+
+    let result = render_to_wav_with_tail_impl(
+        &rig.session,
+        &rig.sample_library,
+        &shared,
+        path.to_string_lossy().into_owned(),
+        1.0,
+        Some(synth_sequencer::Tick(0)),
+        None,
+        AnalysisScope::default(),
+        Seconds::new(0.25),
+    )
+    .expect("render with tail should succeed");
+
+    let expected_frames = u64::from(TEST_SR) * 5 / 4;
+    assert_eq!(result.frames, expected_frames);
+    assert!((result.duration_seconds - 1.25).abs() < 0.001);
 }

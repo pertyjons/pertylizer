@@ -86,6 +86,11 @@ pub struct AppSynthBridge {
     /// `rollback: true` runs. Captured before the first op, applied back if any
     /// op fails, then cleared. `None` outside a rollback batch.
     rollback_snapshot: parking_lot::Mutex<Option<Box<crate::project::ProjectFile>>>,
+    /// MCP-owned input path, independent of GUI frame cadence so headless
+    /// recording works as well as desktop recording.
+    audio_input: Arc<parking_lot::Mutex<crate::audio::input::AudioInputManager>>,
+    audio_input_host: parking_lot::Mutex<Option<Box<dyn crate::audio::AudioHostTrait>>>,
+    selected_input_device: parking_lot::Mutex<Option<String>>,
 }
 
 /// Legacy port-name aliases so the historical example port names still connect
@@ -137,6 +142,18 @@ impl AppSynthBridge {
         shared: Arc<McpSharedState>,
         sample_library: Arc<std::sync::RwLock<synth_sampler::SampleLibrary>>,
     ) -> Self {
+        let audio_input = Arc::new(parking_lot::Mutex::new(
+            crate::audio::input::AudioInputManager::new(),
+        ));
+        let drain_input = Arc::downgrade(&audio_input);
+        let _ = std::thread::Builder::new()
+            .name("mcp-recording-drain".to_string())
+            .spawn(move || {
+                while let Some(input) = drain_input.upgrade() {
+                    input.lock().drain_gui_buffer();
+                    std::thread::sleep(std::time::Duration::from_millis(10));
+                }
+            });
         Self {
             session,
             shared,
@@ -144,6 +161,13 @@ impl AppSynthBridge {
             return_effect_hw: parking_lot::Mutex::new(HashMap::new()),
             master_effect_hw: parking_lot::Mutex::new(HashMap::new()),
             rollback_snapshot: parking_lot::Mutex::new(None),
+            audio_input,
+            audio_input_host: parking_lot::Mutex::new(
+                crate::audio::default_host()
+                    .ok()
+                    .map(|host| Box::new(host) as Box<dyn crate::audio::AudioHostTrait>),
+            ),
+            selected_input_device: parking_lot::Mutex::new(None),
         }
     }
 
@@ -336,6 +360,30 @@ impl AppSynthBridge {
             return Err(McpBridgeError::InstrumentNotFound(instrument_id.as_u64()));
         }
         Ok(())
+    }
+
+    /// Validate the entity addressed by an automation target before a lane is
+    /// read or created. Host-track and global targets need no concrete owner.
+    fn validate_automation_target_owner(
+        &self,
+        target: &synth_sequencer::AutomationTarget,
+    ) -> Result<(), McpBridgeError> {
+        match target {
+            synth_sequencer::AutomationTarget::Instrument { instrument, .. }
+            | synth_sequencer::AutomationTarget::Module { instrument, .. } => {
+                self.validate_instrument(*instrument)
+            }
+            synth_sequencer::AutomationTarget::Track {
+                track: Some(track), ..
+            } => {
+                if self.shared.song.read().track(*track).is_none() {
+                    return Err(McpBridgeError::TrackNotFound(*track));
+                }
+                Ok(())
+            }
+            synth_sequencer::AutomationTarget::Track { track: None, .. }
+            | synth_sequencer::AutomationTarget::Global(_) => Ok(()),
+        }
     }
 
     /// The `ModuleId`s in an instrument's graph (empty if the instrument is
@@ -1456,13 +1504,18 @@ impl SynthBridge for AppSynthBridge {
         note: MidiNote,
         velocity: u8,
         channel: MidiChannel,
+        instrument_id: Option<InstrumentId>,
     ) -> Result<(), McpBridgeError> {
+        if let Some(id) = instrument_id {
+            self.validate_instrument(id)?;
+        }
         let midi_channel =
             EngineMidiChannel::from_one_indexed(channel.as_u8()).unwrap_or(EngineMidiChannel::CH1);
         if self.session.command_sender().send(EngineCommand::NoteOn {
             note,
             velocity: Velocity::from_midi(velocity),
             channel: midi_channel,
+            instrument_id,
         }) {
             Ok(())
         } else {
@@ -1470,12 +1523,21 @@ impl SynthBridge for AppSynthBridge {
         }
     }
 
-    fn note_off(&self, note: MidiNote, channel: MidiChannel) -> Result<(), McpBridgeError> {
+    fn note_off(
+        &self,
+        note: MidiNote,
+        channel: MidiChannel,
+        instrument_id: Option<InstrumentId>,
+    ) -> Result<(), McpBridgeError> {
+        if let Some(id) = instrument_id {
+            self.validate_instrument(id)?;
+        }
         let midi_channel =
             EngineMidiChannel::from_one_indexed(channel.as_u8()).unwrap_or(EngineMidiChannel::CH1);
         if self.session.command_sender().send(EngineCommand::NoteOff {
             note,
             channel: midi_channel,
+            instrument_id,
         }) {
             Ok(())
         } else {
@@ -2476,6 +2538,7 @@ impl SynthBridge for AppSynthBridge {
         &self,
         name: String,
         description: Option<String>,
+        color: Option<String>,
         scope: Option<String>,
     ) -> Result<ModGraphId, McpBridgeError> {
         if name.trim().is_empty() {
@@ -2490,13 +2553,28 @@ impl SynthBridge for AppSynthBridge {
             });
         }
         let scope = parse_mod_graph_scope(scope.as_deref())?;
+        let color = color
+            .map(|hex| {
+                synth_sequencer::TrackColor::from_hex(&hex).ok_or_else(|| {
+                    McpBridgeError::Other(format!("invalid color '{hex}' (expected #rrggbb)"))
+                })
+            })
+            .transpose()?;
         let mut song = self.shared.song.write();
         let gid = song.create_mod_graph(name);
         song.set_mod_graph_scope(gid, scope);
         if let Some(graph) = song.mod_graph_mut(gid) {
             graph.description = description;
+            graph.color = color;
         }
         Ok(gid)
+    }
+
+    fn duplicate_mod_graph(&self, graph_id: ModGraphId) -> Result<ModGraphId, McpBridgeError> {
+        let mut song = self.shared.song.write();
+        song.duplicate_mod_graph(graph_id)
+            .map(|graph| graph.id)
+            .ok_or(McpBridgeError::ModGraphNotFound(graph_id))
     }
 
     fn delete_mod_graph(&self, graph_id: ModGraphId) -> Result<(), McpBridgeError> {
@@ -2639,6 +2717,7 @@ impl SynthBridge for AppSynthBridge {
         let graph = song
             .mod_graph_mut(gid)
             .ok_or(McpBridgeError::ModGraphNotFound(graph_id))?;
+        validate_mod_connection_ports(graph, from, &from_port, to, &to_port)?;
         let cable = synth_sequencer::ModConnection::new(from, from_port, to, to_port);
         graph
             .try_connect(cable)
@@ -2692,9 +2771,20 @@ impl SynthBridge for AppSynthBridge {
         }
         // `try_insert_node` replaces the config, keeps the id and its cables, and
         // re-validates (rolling back on rejection).
-        graph
+        let mut candidate = graph.clone();
+        candidate
             .try_insert_node(nid, config)
             .map_err(|e| McpBridgeError::Other(e.to_string()))?;
+        for cable in &candidate.connections {
+            validate_mod_connection_ports(
+                &candidate,
+                cable.from,
+                &cable.from_port,
+                cable.to,
+                &cable.to_port,
+            )?;
+        }
+        *graph = candidate;
         if let Some(description) = description {
             if description.is_empty() {
                 graph.node_descriptions.remove(&nid);
@@ -3841,6 +3931,17 @@ impl SynthBridge for AppSynthBridge {
         // the song lock) so Module targets can be validated against the real
         // graph without re-querying per point.
         let module_cache = self.module_id_cache(points.iter().map(|pt| pt.instrument_id));
+        let targets: Vec<Result<synth_sequencer::AutomationTarget, McpBridgeError>> = points
+            .iter()
+            .map(|pt| {
+                let valid = module_cache
+                    .get(&pt.instrument_id)
+                    .map_or(&[][..], Vec::as_slice);
+                let target = build_automation_target(&pt.param, pt.instrument_id, valid)?;
+                self.validate_automation_target_owner(&target)?;
+                Ok(target)
+            })
+            .collect();
 
         let mut song_w = self.shared.song.write();
         let pat_id = pattern_id;
@@ -3852,15 +3953,12 @@ impl SynthBridge for AppSynthBridge {
         let mut items = Vec::new();
         let total = points.len();
 
-        for (i, pt) in points.iter().enumerate() {
+        for (i, (pt, target)) in points.iter().zip(targets).enumerate() {
             // Share the same target builder as the read/edit/clear tools so the
             // `module:<type>:<instance>:<param>` syntax (validated against the
             // automatable allowlist + instrument graph) can also *create* lanes,
             // not just plain instrument params.
-            let valid = module_cache
-                .get(&pt.instrument_id)
-                .map_or(&[][..], Vec::as_slice);
-            let target = match build_automation_target(&pt.param, pt.instrument_id, valid) {
+            let target = match target {
                 Ok(t) => t,
                 Err(e) => {
                     items.push(BatchItemResult {
@@ -4015,13 +4113,14 @@ impl SynthBridge for AppSynthBridge {
         instrument_id: InstrumentId,
     ) -> Result<Vec<AutomationPointInfo>, McpBridgeError> {
         let valid_modules = self.instrument_module_ids(instrument_id);
+        let auto_target = build_automation_target(target, instrument_id, &valid_modules)?;
+        self.validate_automation_target_owner(&auto_target)?;
         let song = self.shared.song.read();
         let pat_id = pattern_id;
         let pattern = song
             .pattern(pat_id)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
 
-        let auto_target = build_automation_target(target, instrument_id, &valid_modules)?;
         let lane = pattern
             .automation_lane(&auto_target)
             .ok_or_else(|| McpBridgeError::Other(format!("automation lane not found: {target}")))?;
@@ -4045,14 +4144,17 @@ impl SynthBridge for AppSynthBridge {
         beats: &[f32],
     ) -> Result<BatchResult, McpBridgeError> {
         let valid_modules = self.instrument_module_ids(instrument_id);
+        let auto_target = build_automation_target(target, instrument_id, &valid_modules)?;
+        self.validate_automation_target_owner(&auto_target)?;
         let mut song = self.shared.song.write();
         let pat_id = pattern_id;
         let pattern = song
             .pattern_mut(pat_id)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
 
-        let auto_target = build_automation_target(target, instrument_id, &valid_modules)?;
-        let lane = pattern.get_or_create_automation(auto_target);
+        let lane = pattern
+            .automation_lane_mut(&auto_target)
+            .ok_or_else(|| McpBridgeError::Other(format!("automation lane not found: {target}")))?;
 
         let total = beats.len();
         let mut succeeded = 0usize;
@@ -4093,14 +4195,17 @@ impl SynthBridge for AppSynthBridge {
         instrument_id: InstrumentId,
     ) -> Result<usize, McpBridgeError> {
         let valid_modules = self.instrument_module_ids(instrument_id);
+        let auto_target = build_automation_target(target, instrument_id, &valid_modules)?;
+        self.validate_automation_target_owner(&auto_target)?;
         let mut song = self.shared.song.write();
         let pat_id = pattern_id;
         let pattern = song
             .pattern_mut(pat_id)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
 
-        let auto_target = build_automation_target(target, instrument_id, &valid_modules)?;
-        let lane = pattern.get_or_create_automation(auto_target);
+        let lane = pattern
+            .automation_lane_mut(&auto_target)
+            .ok_or_else(|| McpBridgeError::Other(format!("automation lane not found: {target}")))?;
         let count = lane.len();
         lane.clear();
         Ok(count)
@@ -4118,13 +4223,14 @@ impl SynthBridge for AppSynthBridge {
         use synth_sequencer::AutomationPoint;
 
         let valid_modules = self.instrument_module_ids(instrument_id);
+        let auto_target = build_automation_target(target, instrument_id, &valid_modules)?;
+        self.validate_automation_target_owner(&auto_target)?;
         let mut song = self.shared.song.write();
         let pat_id = pattern_id;
         let pattern = song
             .pattern_mut(pat_id)
             .ok_or(McpBridgeError::PatternNotFound(pattern_id))?;
 
-        let auto_target = build_automation_target(target, instrument_id, &valid_modules)?;
         // Require the lane to exist — don't silently create an empty one.
         let lane = pattern
             .automation_lane(&auto_target)
@@ -4164,11 +4270,13 @@ impl SynthBridge for AppSynthBridge {
 
         let from_valid = self.instrument_module_ids(from_instrument_id);
         let to_valid = self.instrument_module_ids(to_instrument_id);
+        let from_at = build_automation_target(from_target, from_instrument_id, &from_valid)?;
+        let to_at = build_automation_target(to_target, to_instrument_id, &to_valid)?;
+        self.validate_automation_target_owner(&from_at)?;
+        self.validate_automation_target_owner(&to_at)?;
         let mut song = self.shared.song.write();
         let from_pat = from_pattern_id;
         let to_pat = to_pattern_id;
-        let from_at = build_automation_target(from_target, from_instrument_id, &from_valid)?;
-        let to_at = build_automation_target(to_target, to_instrument_id, &to_valid)?;
 
         // Read + transform the source points first (owned copy), releasing the
         // immutable borrow before mutating the destination lane.
@@ -5386,8 +5494,9 @@ impl SynthBridge for AppSynthBridge {
         start_tick: Option<Tick>,
         instrument_id: Option<InstrumentId>,
         scope: synth_mcp::AnalysisScope,
+        tail: synth_core::Seconds,
     ) -> Result<RenderToWavResult, McpBridgeError> {
-        render_to_wav_impl(
+        render_to_wav_with_tail_impl(
             &self.session,
             &self.sample_library,
             &self.shared,
@@ -5396,6 +5505,7 @@ impl SynthBridge for AppSynthBridge {
             start_tick,
             instrument_id,
             scope,
+            tail,
         )
     }
 
@@ -6454,20 +6564,173 @@ impl SynthBridge for AppSynthBridge {
     // === Audio input ===
 
     fn list_input_devices(&self) -> Result<Vec<synth_mcp::types::InputDeviceInfo>, McpBridgeError> {
-        // TODO: Stub — needs access to AudioHostTrait to enumerate real input devices.
-        // Return empty list until wired up to the audio subsystem.
-        Ok(Vec::new())
+        let host = self.audio_input_host.lock();
+        let host = host.as_ref().ok_or_else(|| {
+            McpBridgeError::Other("audio input backend is unavailable".to_string())
+        })?;
+        let devices = host
+            .devices()
+            .map_err(|error| McpBridgeError::Other(error.to_string()))?;
+        Ok(devices
+            .into_iter()
+            .filter(|device| {
+                matches!(
+                    device.device_type,
+                    synth_core::audio::DeviceType::Input | synth_core::audio::DeviceType::Duplex
+                )
+            })
+            .map(|device| synth_mcp::types::InputDeviceInfo {
+                id: device.id,
+                name: device.name,
+                input_channels: device.input_channels.count(),
+            })
+            .collect())
     }
 
     fn get_input_state(&self) -> Result<synth_mcp::types::InputStateInfo, McpBridgeError> {
-        // TODO: Stub — returns hardcoded idle state. Wire up to real audio input
-        // monitoring state once the bridge has access to AudioInputManager.
+        let input = self.audio_input.lock();
+        let state = match input.state() {
+            crate::audio::input::InputState::Idle => "idle",
+            crate::audio::input::InputState::Monitoring => "monitoring",
+            crate::audio::input::InputState::Recording => "recording",
+        };
         Ok(synth_mcp::types::InputStateInfo {
-            state: "idle".to_string(),
-            peak_level: 0.0,
-            recorded_seconds: 0.0,
-            is_active: false,
+            state: state.to_string(),
+            peak_level: input.peak_level(),
+            recorded_seconds: input.recorded_seconds(),
+            is_active: input.is_active(),
         })
+    }
+
+    fn set_input_device(&self, device_id: Option<String>) -> Result<(), McpBridgeError> {
+        if self.audio_input.lock().state() != crate::audio::input::InputState::Idle {
+            return Err(McpBridgeError::Other(
+                "stop monitoring before changing the input device".to_string(),
+            ));
+        }
+        let resolved_device_id = if let Some(requested) = device_id.as_deref() {
+            let host = self.audio_input_host.lock();
+            let host = host.as_ref().ok_or_else(|| {
+                McpBridgeError::Other("audio input backend is unavailable".to_string())
+            })?;
+            let matched = host
+                .devices()
+                .map_err(|error| McpBridgeError::Other(error.to_string()))?
+                .into_iter()
+                .find(|device| device.id == requested || device.name == requested);
+            let Some(device) = matched else {
+                return Err(McpBridgeError::Other(format!(
+                    "audio input device not found: '{requested}'"
+                )));
+            };
+            Some(device.id)
+        } else {
+            None
+        };
+        *self.selected_input_device.lock() = resolved_device_id;
+        Ok(())
+    }
+
+    fn start_monitoring(&self) -> Result<(), McpBridgeError> {
+        let host = self.audio_input_host.lock();
+        let host = host.as_ref().ok_or_else(|| {
+            McpBridgeError::Other("audio input backend is unavailable".to_string())
+        })?;
+        let selected = self.selected_input_device.lock().clone();
+        let config = synth_core::audio::StreamConfig {
+            sample_rate: synth_core::audio::SampleRate::DVD_QUALITY,
+            buffer_size: synth_core::audio::BufferSize::MEDIUM,
+            channels: synth_core::audio::ChannelCount::Stereo,
+        };
+        let mut input = self.audio_input.lock();
+        input
+            .start_monitoring(host.as_ref(), selected.as_deref(), &config)
+            .map_err(|error| McpBridgeError::Other(error.to_string()))?;
+        let Some(consumer) = input.take_engine_consumer() else {
+            input.stop_monitoring();
+            return Err(McpBridgeError::Other(
+                "audio input started without an engine consumer".to_string(),
+            ));
+        };
+        if !self
+            .session
+            .command_sender()
+            .send(EngineCommand::SetAudioInputConsumer { consumer })
+        {
+            input.stop_monitoring();
+            return Err(McpBridgeError::CommandSendFailed {
+                command: "start_monitoring",
+            });
+        }
+        Ok(())
+    }
+
+    fn stop_monitoring(&self) -> Result<(), McpBridgeError> {
+        if !self
+            .session
+            .command_sender()
+            .send(EngineCommand::ClearAudioInputConsumer)
+        {
+            return Err(McpBridgeError::CommandSendFailed {
+                command: "stop_monitoring",
+            });
+        }
+        self.audio_input.lock().stop_monitoring();
+        Ok(())
+    }
+
+    fn start_recording(&self) -> Result<(), McpBridgeError> {
+        let mut input = self.audio_input.lock();
+        if input.state() != crate::audio::input::InputState::Monitoring {
+            return Err(McpBridgeError::Other(
+                "start monitoring before recording".to_string(),
+            ));
+        }
+        input.start_recording();
+        Ok(())
+    }
+
+    fn stop_recording(
+        &self,
+        name: Option<String>,
+    ) -> Result<synth_mcp::types::SampleInfo, McpBridgeError> {
+        let mut input = self.audio_input.lock();
+        let channels = input.channels();
+        let sample_rate = input.sample_rate();
+        let recorded_seconds = input.recorded_seconds();
+        let data = input
+            .stop_recording()
+            .ok_or_else(|| McpBridgeError::Other("audio input is not recording".to_string()))?;
+        let frame_count = data.len() / usize::from(channels.max(1));
+        let recording_name = name
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| format!("Recording {recorded_seconds:.1}s"));
+        drop(input);
+        let sample = synth_sampler::Sample::new(
+            synth_sampler::SampleMeta {
+                id: synth_sampler::SampleId::new(0),
+                name: recording_name,
+                description: String::new(),
+                sample_rate,
+                channels: synth_core::ChannelCount::from(channels),
+                frame_count: synth_core::SampleCount::new(frame_count),
+                root_note: None,
+                loop_region: None,
+                crop: None,
+                source: synth_sampler::SampleSource::Recorded,
+            },
+            data.into(),
+        );
+        let mut library = self
+            .sample_library
+            .write()
+            .map_err(|_| McpBridgeError::Other("sample library lock poisoned".to_string()))?;
+        let id = library.add(sample);
+        let meta = &library
+            .get(id)
+            .ok_or_else(|| McpBridgeError::Other("recording commit failed".to_string()))?
+            .meta;
+        Ok(meta_to_sample_info(meta))
     }
 
     // === Discovery ===
@@ -7519,8 +7782,106 @@ fn parse_mod_node(
         }
         other => other,
     };
-    serde_json::from_value(value)
-        .map_err(|e| McpBridgeError::Other(format!("invalid mod graph node: {e}")))
+    let mut config: synth_sequencer::ModNodeConfig = serde_json::from_value(value)
+        .map_err(|e| McpBridgeError::Other(format!("invalid mod graph node: {e}")))?;
+    if let synth_sequencer::ModNodeConfig::Module(module) = &mut config {
+        let Some((_, descriptor)) = crate::module_factory::create_voice_module(module.module_type)
+        else {
+            return Err(McpBridgeError::Other(format!(
+                "module type '{:?}' cannot be hosted in a Mod Grid",
+                module.module_type
+            )));
+        };
+        for (type_id, value) in &mut module.params {
+            let param = descriptor
+                .parameters
+                .iter()
+                .find(|param| param.type_id == *type_id)
+                .ok_or_else(|| {
+                    McpBridgeError::Other(format!(
+                        "module '{:?}' has no parameter '{type_id}'",
+                        module.module_type
+                    ))
+                })?;
+            *value = param.validate_f32(*value).map_err(|error| {
+                McpBridgeError::Other(format!(
+                    "invalid value for '{:?}.{}': {error}",
+                    module.module_type, type_id
+                ))
+            })?;
+        }
+    }
+    Ok(config)
+}
+
+/// Validate Mod Grid cable endpoints against hosted module descriptors and the
+/// fixed ports of grid-native source/target nodes.
+fn validate_mod_connection_ports(
+    graph: &synth_sequencer::ModGraph,
+    from: ModNodeId,
+    from_port: &str,
+    to: ModNodeId,
+    to_port: &str,
+) -> Result<(), McpBridgeError> {
+    let from_config = graph
+        .nodes
+        .get(&from)
+        .ok_or(McpBridgeError::ModGraphNodeNotFound {
+            graph_id: graph.id,
+            node_id: from,
+        })?;
+    let to_config = graph
+        .nodes
+        .get(&to)
+        .ok_or(McpBridgeError::ModGraphNodeNotFound {
+            graph_id: graph.id,
+            node_id: to,
+        })?;
+
+    let valid_module_port =
+        |module: &synth_sequencer::ModuleNode, port: &str, direction: PortDirection| {
+            crate::module_factory::create_voice_module(module.module_type).is_some_and(
+                |(_, descriptor)| {
+                    descriptor
+                        .ports
+                        .iter()
+                        .any(|candidate| candidate.direction == direction && candidate.name == port)
+                },
+            )
+        };
+
+    let source_valid = match from_config {
+        synth_sequencer::ModNodeConfig::Module(module) => {
+            valid_module_port(module, from_port, PortDirection::Output)
+        }
+        synth_sequencer::ModNodeConfig::Macro(_)
+        | synth_sequencer::ModNodeConfig::Transport(_)
+        | synth_sequencer::ModNodeConfig::MidiCc(_)
+        | synth_sequencer::ModNodeConfig::AudioTap(_) => from_port == "out",
+        synth_sequencer::ModNodeConfig::Target(_) => false,
+    };
+    if !source_valid {
+        return Err(McpBridgeError::Other(format!(
+            "node {from} has no output port '{from_port}'"
+        )));
+    }
+
+    let target_valid = match to_config {
+        synth_sequencer::ModNodeConfig::Module(module) => {
+            valid_module_port(module, to_port, PortDirection::Input)
+        }
+        synth_sequencer::ModNodeConfig::Target(_) => to_port == synth_sequencer::TARGET_INPUT_PORT,
+        synth_sequencer::ModNodeConfig::Macro(_)
+        | synth_sequencer::ModNodeConfig::Transport(_)
+        | synth_sequencer::ModNodeConfig::MidiCc(_)
+        | synth_sequencer::ModNodeConfig::AudioTap(_) => false,
+    };
+    if !target_valid {
+        return Err(McpBridgeError::Other(format!(
+            "node {to} has no input port '{to_port}'"
+        )));
+    }
+    Ok(())
 }
 
 fn note_to_info(n: &synth_sequencer::Note) -> NoteInfo {
@@ -10431,16 +10792,59 @@ pub fn render_to_wav_impl(
     instrument_id: Option<InstrumentId>,
     scope: synth_mcp::AnalysisScope,
 ) -> Result<RenderToWavResult, McpBridgeError> {
-    let (start, end) = resolve_duration_window(shared, duration_seconds, start_tick)?;
-    let (rendered, warnings) = render_analysis_window(
+    render_to_wav_with_tail_impl(
         session,
         sample_library,
         shared,
-        start,
-        end,
+        path,
+        duration_seconds,
+        start_tick,
         instrument_id,
         scope,
-    )?;
+        synth_core::Seconds::ZERO,
+    )
+}
+
+/// Tail-capturing variant used by the MCP tool. The transport stops exactly at
+/// the requested end before the additional audio is rendered.
+#[doc(hidden)]
+#[allow(clippy::too_many_arguments)]
+pub fn render_to_wav_with_tail_impl(
+    session: &SynthSession,
+    sample_library: &crate::audio::preview::SharedSampleLibrary,
+    shared: &McpSharedState,
+    path: String,
+    duration_seconds: f32,
+    start_tick: Option<Tick>,
+    instrument_id: Option<InstrumentId>,
+    scope: synth_mcp::AnalysisScope,
+    tail: synth_core::Seconds,
+) -> Result<RenderToWavResult, McpBridgeError> {
+    let (start, end) = resolve_duration_window(shared, duration_seconds, start_tick)?;
+    let mut warnings = Vec::new();
+    let song = if let Some(inst_id) = instrument_id {
+        let mut isolated = shared.song.read().clone();
+        let audible_tracks = isolated.isolate_instrument(inst_id);
+        if audible_tracks == 0 {
+            warnings.push(format!(
+                "instrument_id {} drives no track — the render will be silent",
+                inst_id.as_u64()
+            ));
+        }
+        warnings.extend(instrument_solo_conflicts(session, inst_id.as_u64()));
+        synth_engine::shared_song(isolated)
+    } else {
+        Arc::clone(&shared.song)
+    };
+    let (mut engine_session, setup_warnings) =
+        crate::audio::arrangement_render::OfflineEngineSession::new_with_scope(
+            session,
+            sample_library,
+            scope,
+        )?;
+    warnings.extend(setup_warnings);
+    let rendered = engine_session.render_range_with_tail(&song, start, end, tail)?;
+    warnings.extend(rendered.warnings.iter().cloned());
 
     // Resolve and create the target directory before the (potentially
     // expensive) write so a missing parent dir or relative path is handled

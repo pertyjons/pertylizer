@@ -96,8 +96,12 @@ fn build_instance(
     for (&node_id, config) in &graph.nodes {
         if let ModNodeConfig::Module(m) = config {
             let Some((mut module, descriptor)) = create_voice_module(m.module_type) else {
-                // Unknown or non-voice module type — skip; its cables and any
-                // target fed by it simply resolve to no source.
+                tracing::warn!(
+                    graph_id = graph.id.0,
+                    node_id = node_id.0,
+                    module_type = ?m.module_type,
+                    "dropping unhostable Mod Grid module node"
+                );
                 continue;
             };
             // Apply the persisted per-node seed to random-family modules, folding
@@ -113,6 +117,13 @@ fn build_instance(
             for (type_id, &value) in &m.params {
                 if let Some(p) = descriptor.parameters.iter().find(|p| p.type_id == *type_id) {
                     dsp.set_param(module_id, p.id.with_f32(value));
+                } else {
+                    tracing::warn!(
+                        graph_id = graph.id.0,
+                        node_id = node_id.0,
+                        parameter = type_id,
+                        "dropping unknown Mod Grid module parameter"
+                    );
                 }
             }
             node_module_ids.insert(node_id, module_id);
@@ -130,12 +141,20 @@ fn build_instance(
         ) else {
             continue;
         };
-        let _ = dsp.connect(
+        if let Err(error) = dsp.connect(
             from_id,
             cable.from_port.clone(),
             to_id,
             cable.to_port.clone(),
-        );
+        ) {
+            tracing::warn!(
+                graph_id = graph.id.0,
+                from_node = cable.from.0,
+                to_node = cable.to.0,
+                %error,
+                "dropping invalid Mod Grid runtime connection"
+            );
+        }
     }
 
     // 2b. Cheap→module cables: a cheap source (Macro/Transport/AudioTap) feeding a

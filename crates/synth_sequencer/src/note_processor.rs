@@ -555,9 +555,9 @@ const ARP_RAMP_FLOOR: f32 = 0.4;
 /// Replaces the source stream: at each step-grid onset it emits one member of
 /// the currently *held* chord (every source note sounding at that tick, viewed
 /// through the upstream chain's pitch transforms), and suppresses the source
-/// chord onsets themselves. Step phase counts from the held chord's earliest
-/// start, so the figure restarts on each new chord block. Stateless and
-/// deterministic per the rack contract.
+/// chord onsets themselves. Step phase normally counts from the held chord's
+/// earliest start; `continuous_phase` instead derives it from absolute pattern
+/// time. Stateless and deterministic per the rack contract.
 ///
 /// Trill / mordent / turn are constrained presets of this generator (NP3/NP6
 /// expose them via the per-note ornament menu); they are not separate code.
@@ -586,6 +586,9 @@ pub struct Arpeggiator {
     /// re-gating (one attack, pitch cycles). Needs a `gate` near 1.0 so steps
     /// meet end-to-end — a short gate leaves a hole the legato join can't span.
     pub legato: bool,
+    /// Keep the step cycle aligned to absolute pattern time instead of
+    /// restarting it at every new chord block.
+    pub continuous_phase: bool,
     /// Semitone offsets cycled when `mode == Custom`, relative to the source
     /// note's own pitch (offset 0 = the note). `octaves` multiplies the cycle:
     /// `[0,4,7]` with `octaves == 2` plays `0,4,7, 12,16,19`. Ignored by the
@@ -604,6 +607,7 @@ impl Default for Arpeggiator {
             velocity: ArpVelocity::AsPlayed,
             latch: false,
             legato: false,
+            continuous_phase: false,
             custom: ArpOffsets::default(),
         }
     }
@@ -804,7 +808,8 @@ impl Arpeggiator {
         // out of the rate's onset grid (integer divisions for the named/`Ticks`
         // rates, drift-free absolute-time rounding for the frame-locked `MilliHz`
         // rate). `None` ⇒ `tick` is not a step onset for this arp.
-        let Some((step, duration)) = self.step_onset(anchor, tick, bpm) else {
+        let phase_anchor = if self.continuous_phase { 0 } else { anchor };
+        let Some((step, duration)) = self.step_onset(phase_anchor, tick, bpm) else {
             return;
         };
 
@@ -2225,6 +2230,24 @@ mod tests {
     }
 
     #[test]
+    fn arp_continuous_phase_advances_across_short_notes() {
+        let mut pattern = Pattern::new(PatternId(0), Duration(960));
+        for start in [0, 240] {
+            let id = pattern.add_note(PatternTick(start), Pitch::new(60).unwrap(), Velocity::MF);
+            let _ = pattern.resize_note(id, Duration(120));
+        }
+        let mut arp = Arpeggiator {
+            mode: ArpMode::Custom,
+            continuous_phase: true,
+            ..Arpeggiator::default()
+        };
+        arp.custom = ArpOffsets::new(&[0, 4, 7]);
+        let _ = pattern.add_processor(NoteProcessor::Arpeggiator(arp));
+
+        assert_eq!(expand_all(&pattern, 480), vec![(0, 60), (240, 64)]);
+    }
+
+    #[test]
     fn arp_rate_ticks_subdivides_below_floor() {
         // `Ticks(40)` is below the old 80-tick floor (ThirtySecondTriplet @125 BPM
         // = one PAL frame), and `ticks()` maps it straight through.
@@ -2662,6 +2685,7 @@ mod tests {
             velocity: ArpVelocity::RampDown,
             latch: true,
             legato: true,
+            continuous_phase: true,
             custom: ArpOffsets::new(&[0, 4, 7]),
         }));
         let json = serde_json::to_string(&p).unwrap();

@@ -2184,7 +2184,7 @@ mod tests {
             .position(|i| *i == SourceInput::AudioIn(AudioInputChannel::Left))
             .expect("an `in` source register") as u16;
         let bindings = AudioBindings {
-            in_left: Some(drive_reg),
+            in_left: Some(synth_core::script::ScriptRegister::new(drive_reg)),
             ..Default::default()
         };
 

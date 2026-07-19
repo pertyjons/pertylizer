@@ -443,6 +443,8 @@ pub(crate) fn edit_arpeggiator(
         ui.checkbox(&mut a.legato, "Legato").on_hover_text(
             "Hold one envelope across the figure (glide between steps). Use a high Gate.",
         );
+        ui.checkbox(&mut a.continuous_phase, "Free-run")
+            .on_hover_text("Keep the step cycle aligned to absolute pattern time.");
     });
     if a.mode == ArpMode::Custom {
         edit_arp_offsets(ui, &mut a.custom, any_dragged);

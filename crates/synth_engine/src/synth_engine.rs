@@ -271,6 +271,7 @@ impl EngineHandle {
             note,
             velocity,
             channel: super::instrument::MidiChannel::CH1,
+            instrument_id: None,
         })
     }
 
@@ -279,6 +280,7 @@ impl EngineHandle {
         self.send(EngineCommand::NoteOff {
             note,
             channel: super::instrument::MidiChannel::CH1,
+            instrument_id: None,
         })
     }
 
@@ -293,6 +295,7 @@ impl EngineHandle {
             note,
             velocity,
             channel,
+            instrument_id: None,
         })
     }
 
@@ -302,7 +305,11 @@ impl EngineHandle {
         note: MidiNote,
         channel: super::instrument::MidiChannel,
     ) -> bool {
-        self.send(EngineCommand::NoteOff { note, channel })
+        self.send(EngineCommand::NoteOff {
+            note,
+            channel,
+            instrument_id: None,
+        })
     }
 
     /// Set a voice module parameter using the type-safe API.
@@ -1114,11 +1121,16 @@ impl SynthEngine {
                 note,
                 velocity,
                 channel,
+                instrument_id,
             } => {
-                self.handle_note_on(note, velocity, channel);
+                self.handle_note_on(note, velocity, channel, instrument_id);
             }
-            EngineCommand::NoteOff { note, channel } => {
-                self.handle_note_off(note, channel);
+            EngineCommand::NoteOff {
+                note,
+                channel,
+                instrument_id,
+            } => {
+                self.handle_note_off(note, channel, instrument_id);
             }
             EngineCommand::AllNotesOff => {
                 self.handle_all_notes_off();
@@ -1976,7 +1988,13 @@ impl SynthEngine {
     // Note control handlers
     // ========================================================================
 
-    fn handle_note_on(&mut self, note: MidiNote, velocity: Velocity, channel: MidiChannel) {
+    fn handle_note_on(
+        &mut self,
+        note: MidiNote,
+        velocity: Velocity,
+        channel: MidiChannel,
+        explicit_instrument: Option<InstrumentId>,
+    ) {
         let channel_raw = channel.as_zero_indexed();
         let mut note_triggered = false;
 
@@ -1988,9 +2006,14 @@ impl SynthEngine {
         let focused_id = self.state.get_focused_instrument();
 
         for instrument in self.instruments.iter_mut() {
+            if explicit_instrument.is_some_and(|id| instrument.id() != id) {
+                continue;
+            }
             // If focused instrument is set, only that instrument receives keyboard input
             // (Channel 0 is the default keyboard channel)
-            if let Some(focus_id) = focused_id {
+            if explicit_instrument.is_none()
+                && let Some(focus_id) = focused_id
+            {
                 // Only send to focused instrument, and only for channel 0 (keyboard)
                 if channel_raw == 0 && instrument.id() != focus_id {
                     continue;
@@ -1999,7 +2022,7 @@ impl SynthEngine {
                 if channel_raw != 0 && !instrument.responds_to_channel(channel_raw) {
                     continue;
                 }
-            } else {
+            } else if explicit_instrument.is_none() {
                 // Traditional MIDI channel routing
                 if !instrument.responds_to_channel(channel_raw) {
                     continue;
@@ -2035,7 +2058,7 @@ impl SynthEngine {
             }
         }
 
-        if self.use_modular_routing {
+        if explicit_instrument.is_none() && self.use_modular_routing {
             self.module_graph.note_on(note, velocity);
             note_triggered = true;
         }
@@ -2057,7 +2080,12 @@ impl SynthEngine {
         }
     }
 
-    fn handle_note_off(&mut self, note: MidiNote, channel: MidiChannel) {
+    fn handle_note_off(
+        &mut self,
+        note: MidiNote,
+        channel: MidiChannel,
+        explicit_instrument: Option<InstrumentId>,
+    ) {
         let channel_raw = channel.as_zero_indexed();
 
         // Sustain pedal held on this channel: defer the release until the pedal
@@ -2071,15 +2099,21 @@ impl SynthEngine {
         let focused_id = self.state.get_focused_instrument();
 
         for instrument in self.instruments.iter_mut() {
+            if explicit_instrument.is_some_and(|id| instrument.id() != id) {
+                continue;
+            }
             // Same logic as note_on for focused instrument routing
-            if let Some(focus_id) = focused_id {
+            if explicit_instrument.is_none()
+                && let Some(focus_id) = focused_id
+            {
                 if channel_raw == 0 && instrument.id() != focus_id {
                     continue;
                 }
                 if channel_raw != 0 && !instrument.responds_to_channel(channel_raw) {
                     continue;
                 }
-            } else if !instrument.responds_to_channel(channel_raw) {
+            } else if explicit_instrument.is_none() && !instrument.responds_to_channel(channel_raw)
+            {
                 continue;
             }
             instrument.note_off(note);
@@ -2098,7 +2132,7 @@ impl SynthEngine {
             }
         }
 
-        if self.use_modular_routing {
+        if explicit_instrument.is_none() && self.use_modular_routing {
             self.module_graph.note_off();
         }
 
@@ -2149,7 +2183,7 @@ impl SynthEngine {
         for note in 0u8..128 {
             if self.sustained_notes[ch][usize::from(note)] {
                 self.sustained_notes[ch][usize::from(note)] = false;
-                self.handle_note_off(MidiNote::new(note), channel);
+                self.handle_note_off(MidiNote::new(note), channel, None);
             }
         }
     }
@@ -4454,6 +4488,42 @@ mod tests {
         assert_eq!(engine.instruments[0].active_voice_count(), 1); // Still 1
     }
 
+    #[test]
+    fn explicit_instrument_note_target_bypasses_channel_routing() {
+        let (mut engine, mut handle) = SynthEngine::new();
+        add_default_instrument(&mut engine, &mut handle);
+        let second_id = InstrumentId::new(2);
+        let mut second = Instrument::with_config(second_id, "Second", AllocatorConfig::default());
+        second.set_midi_channel(MidiChannel::from_one_indexed(2).unwrap());
+        SynthEngine::populate_default_voice_graph(second.voice_graph_mut());
+        *second.allocator_mut() = VoiceAllocator::with_graph_template(
+            second.allocator().config().clone(),
+            second.voice_graph(),
+        );
+        handle.send(EngineCommand::AddInstrument {
+            instrument: Box::new(second),
+        });
+        engine.process_commands();
+
+        handle.send(EngineCommand::NoteOn {
+            note: MidiNote::C4,
+            velocity: Velocity::MF,
+            channel: MidiChannel::CH1,
+            instrument_id: Some(second_id),
+        });
+        engine.process_commands();
+        assert_eq!(engine.instruments[0].active_voice_count(), 0);
+        assert_eq!(engine.instruments[1].active_voice_count(), 1);
+
+        handle.send(EngineCommand::NoteOff {
+            note: MidiNote::C4,
+            channel: MidiChannel::CH1,
+            instrument_id: Some(second_id),
+        });
+        engine.process_commands();
+        assert_eq!(engine.instruments[0].active_voice_count(), 0);
+    }
+
     /// A `SetModScript` for a non-existent instrument (stale id) must NOT drop the
     /// unused script `Arc` on the audio thread — it must be parked in the trash
     /// channel and freed on the main thread by `cleanup_dropped_modules`.
@@ -5067,8 +5137,13 @@ mod tests {
             note,
             velocity: Velocity::MF,
             channel: ch,
+            instrument_id: None,
         });
-        handle.send(EngineCommand::NoteOff { note, channel: ch });
+        handle.send(EngineCommand::NoteOff {
+            note,
+            channel: ch,
+            instrument_id: None,
+        });
         engine.process_commands();
         assert!(engine.sustain_pedal_down[0], "pedal recorded as down");
         assert!(
@@ -5104,8 +5179,13 @@ mod tests {
             note,
             velocity: Velocity::MF,
             channel: ch,
+            instrument_id: None,
         });
-        handle.send(EngineCommand::NoteOff { note, channel: ch });
+        handle.send(EngineCommand::NoteOff {
+            note,
+            channel: ch,
+            instrument_id: None,
+        });
         engine.process_commands();
         assert!(engine.sustained_notes[0][usize::from(note.as_u8())]);
 
@@ -5114,6 +5194,7 @@ mod tests {
             note,
             velocity: Velocity::MF,
             channel: ch,
+            instrument_id: None,
         });
         engine.process_commands();
         assert!(

@@ -542,6 +542,7 @@ impl OfflineNoteSession {
             note: effective_note,
             velocity,
             channel: MidiChannel::CH1,
+            instrument_id: None,
         });
 
         let mut frames_written: u64 = 0;
@@ -592,6 +593,7 @@ impl OfflineNoteSession {
                 let sent = self.handle.send_blocking(EngineCommand::NoteOff {
                     note: effective_note,
                     channel: MidiChannel::CH1,
+                    instrument_id: None,
                 });
                 if !sent {
                     warnings.push("preview: failed to enqueue NoteOff".to_string());

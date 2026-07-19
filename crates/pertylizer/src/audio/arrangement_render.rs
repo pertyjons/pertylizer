@@ -386,6 +386,19 @@ impl OfflineEngineSession {
         start_tick: u64,
         end_tick: u64,
     ) -> Result<RenderedArrangement, McpBridgeError> {
+        self.render_range_with_tail(song, start_tick, end_tick, synth_core::Seconds::ZERO)
+    }
+
+    /// Render a range, then stop the transport at `end_tick` and capture an
+    /// additional release/effect tail without triggering later arrangement
+    /// events.
+    pub fn render_range_with_tail(
+        &mut self,
+        song: &Arc<RwLock<Song>>,
+        start_tick: u64,
+        end_tick: u64,
+        tail: synth_core::Seconds,
+    ) -> Result<RenderedArrangement, McpBridgeError> {
         if end_tick <= start_tick {
             return Err(McpBridgeError::Other(format!(
                 "Arrangement range invalid: end_tick ({end_tick}) must be greater than start_tick ({start_tick})"
@@ -454,7 +467,11 @@ impl OfflineEngineSession {
             (f64::from(visible_seconds) * f64::from(self.sample_rate)).ceil() as u64;
         let prefix_frames =
             (f64::from(prefix_seconds) * f64::from(self.sample_rate)).round() as u64;
-        let total_frames = prefix_frames + visible_frames;
+        let tail_frames =
+            u64::try_from(tail.to_samples(synth_core::SampleRate::new(self.sample_rate as f32)))
+                .unwrap_or(u64::MAX);
+        let stop_frame = prefix_frames + visible_frames;
+        let total_frames = stop_frame.saturating_add(tail_frames);
         if total_frames == 0 {
             return Err(McpBridgeError::Other(
                 "Arrangement range too short to produce any samples".to_string(),
@@ -566,10 +583,16 @@ impl OfflineEngineSession {
 
         let mut samples: Vec<f32> = Vec::with_capacity((total_frames as usize) * CHANNELS);
         let mut frames_written: u64 = 0;
+        let mut tail_started = false;
 
         while frames_written < total_frames {
             let remaining = (total_frames - frames_written) as usize;
-            let this_buffer = remaining.min(BUFFER_SIZE);
+            let before_stop = if !tail_started && frames_written < stop_frame {
+                usize::try_from(stop_frame - frames_written).unwrap_or(usize::MAX)
+            } else {
+                usize::MAX
+            };
+            let this_buffer = remaining.min(BUFFER_SIZE).min(before_stop);
             let sample_count = this_buffer * CHANNELS;
 
             block[..sample_count].fill(0.0);
@@ -584,6 +607,10 @@ impl OfflineEngineSession {
             self.engine.process(&mut block[..sample_count], &context);
             samples.extend_from_slice(&block[..sample_count]);
             frames_written += this_buffer as u64;
+            if tail_frames > 0 && !tail_started && frames_written >= stop_frame {
+                self.handle.send_blocking(EngineCommand::Stop);
+                tail_started = true;
+            }
         }
 
         // Drop the pre-roll prefix so the returned buffer covers exactly
@@ -603,7 +630,7 @@ impl OfflineEngineSession {
         Ok(RenderedArrangement {
             samples,
             sample_rate: self.sample_rate,
-            duration_seconds: visible_seconds,
+            duration_seconds: visible_seconds + tail.as_f32(),
             channels: CHANNELS as u16,
             start_tick,
             end_tick,

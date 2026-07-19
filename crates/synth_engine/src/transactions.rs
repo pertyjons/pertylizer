@@ -389,14 +389,21 @@ impl EngineCommand {
                 note,
                 velocity,
                 channel,
+                instrument_id,
             } => Self::NoteOn {
                 note: *note,
                 velocity: *velocity,
                 channel: *channel,
+                instrument_id: *instrument_id,
             },
-            Self::NoteOff { note, channel } => Self::NoteOff {
+            Self::NoteOff {
+                note,
+                channel,
+                instrument_id,
+            } => Self::NoteOff {
                 note: *note,
                 channel: *channel,
+                instrument_id: *instrument_id,
             },
             Self::AllNotesOff => Self::AllNotesOff,
             Self::ResetDsp => Self::ResetDsp,

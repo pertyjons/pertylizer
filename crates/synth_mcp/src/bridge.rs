@@ -343,7 +343,8 @@ pub struct SpectrumSource {
 /// framed distances are *added* to the aggregate result, not a replacement. The
 /// aggregate scalar averages over the whole window, so on time-sparse / staccato
 /// material this per-frame path is what carries the ranking signal. All fields
-/// are ignored when `enabled` is `false` (the default, unchanged behaviour).
+/// are ignored when `enabled` is `false`. MCP enables this by default so sparse
+/// target material is compared only where the target has energy.
 #[derive(Debug, Clone, Default)]
 pub struct TimeResolvedOptions {
     /// Turn the framed path on. `false` = aggregate-only.
@@ -791,10 +792,16 @@ pub trait SynthBridge: Send + Sync + 'static {
         note: MidiNote,
         velocity: u8,
         channel: MidiChannel,
+        instrument_id: Option<InstrumentId>,
     ) -> Result<(), McpBridgeError>;
 
     /// Send a MIDI note off.
-    fn note_off(&self, note: MidiNote, channel: MidiChannel) -> Result<(), McpBridgeError>;
+    fn note_off(
+        &self,
+        note: MidiNote,
+        channel: MidiChannel,
+        instrument_id: Option<InstrumentId>,
+    ) -> Result<(), McpBridgeError>;
 
     // === Example patches ===
 
@@ -1239,8 +1246,13 @@ pub trait SynthBridge: Send + Sync + 'static {
         &self,
         name: String,
         description: Option<String>,
+        color: Option<String>,
         scope: Option<String>,
     ) -> Result<ModGraphId, McpBridgeError>;
+
+    /// Duplicate a pooled mod graph, preserving its nodes, layout, metadata,
+    /// scope, and track assignments.
+    fn duplicate_mod_graph(&self, graph_id: ModGraphId) -> Result<ModGraphId, McpBridgeError>;
 
     /// Delete a pooled mod graph (removing its running instances).
     fn delete_mod_graph(&self, graph_id: ModGraphId) -> Result<(), McpBridgeError>;
@@ -1579,6 +1591,7 @@ pub trait SynthBridge: Send + Sync + 'static {
                     pattern_name: p.name.clone(),
                     target: lane.target,
                     instrument_id: lane.instrument_id,
+                    scope: lane.scope,
                     point_count: lane.point_count,
                 });
             }
@@ -1593,7 +1606,7 @@ pub trait SynthBridge: Send + Sync + 'static {
                 "pattern" => format!("pattern {} ({})", lane.pattern_id, lane.pattern_name),
                 // "instrument" and any other value fall back to instrument grouping.
                 _ => lane.instrument_id.map_or_else(
-                    || "(no instrument)".to_string(),
+                    || lane.scope.clone(),
                     |id| format!("instrument {}", id.as_u64()),
                 ),
             };
@@ -2153,6 +2166,7 @@ pub trait SynthBridge: Send + Sync + 'static {
         start_tick: Option<Tick>,
         instrument_id: Option<InstrumentId>,
         scope: AnalysisScope,
+        tail: synth_core::Seconds,
     ) -> Result<crate::types::RenderToWavResult, McpBridgeError>;
 
     /// Render `duration_seconds` of the arrangement offline and return a
@@ -2692,6 +2706,21 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// Get current audio input state.
     fn get_input_state(&self) -> Result<InputStateInfo, McpBridgeError>;
 
+    /// Select an input device by its id/name from `list_input_devices`.
+    fn set_input_device(&self, device_id: Option<String>) -> Result<(), McpBridgeError>;
+
+    /// Start input monitoring and connect the capture ring to the engine.
+    fn start_monitoring(&self) -> Result<(), McpBridgeError>;
+
+    /// Stop monitoring and disconnect the engine input ring.
+    fn stop_monitoring(&self) -> Result<(), McpBridgeError>;
+
+    /// Start accumulating input samples on the dedicated drain thread.
+    fn start_recording(&self) -> Result<(), McpBridgeError>;
+
+    /// Stop recording and commit it to the sample library.
+    fn stop_recording(&self, name: Option<String>) -> Result<SampleInfo, McpBridgeError>;
+
     // === Discovery ===
 
     /// Get detailed info for a single module type by its type key (e.g. "osc", "flt").
@@ -2756,7 +2785,7 @@ pub struct BridgeAutomationPointData {
     /// Instrument parameter name: "Volume", "Pan", "FilterCutoff", "FilterResonance",
     /// "Attack", "Decay", "Sustain", "Release".
     pub param: String,
-    /// Instrument index (default 0).
+    /// Instrument ID (default 0).
     pub instrument_id: InstrumentId,
     /// Position in beats.
     pub beat: f32,
