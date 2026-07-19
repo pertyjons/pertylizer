@@ -8,7 +8,8 @@
 //! PolyBLAMP residuals at pure-waveform and sync discontinuities, plus an
 //! optional 4x oversample + half-band decimation path (`Quality`).
 //!
-//! See `plans/sid-oscillator-module.md` for the full design rationale.
+//! See `docs/sid-oscillator.md` for the full design rationale (the `§N`
+//! references throughout this module point at its numbered sections).
 
 use std::collections::HashMap;
 

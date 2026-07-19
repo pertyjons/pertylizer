@@ -4,7 +4,7 @@
 //! waveforms are a combinable 4-bit mask (not an exclusive enum), pitch and
 //! pulse width are raw chip registers (16-bit / 12-bit), and a per-frame
 //! waveform-mask sequence can be programmed directly into the module (the SID
-//! driver's waveform table). See `plans/sid-oscillator-module.md`.
+//! driver's waveform table). See `docs/sid-oscillator.md`.
 
 use serde::{Deserialize, Serialize};
 

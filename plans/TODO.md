@@ -373,7 +373,7 @@ Residual after the shared-widget-helpers work landed — these are the remaining
 
 ### 5.3 SID oscillator — open fidelity follow-ups
 
-*(from `plans/sid-oscillator-module.md`; the `sid` module shipped to main @`d0d872f3`. Full spec + expert reviews in git history.)*
+*(full spec archived at `docs/sid-oscillator.md`; the `sid` module shipped to main @`d0d872f3`. Expert-review history in git.)*
 
 - [ ] **Oversampled ring/sync bus (ring-mod HF fidelity).** Ring sideband
   *positions* are exact but broadband `compare_spectra` distance holds ~16.9 dB vs
