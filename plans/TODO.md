@@ -400,17 +400,9 @@ green + per-step reviews). The six deferred items are done:
   serde (`parse_mod_node`, `mcp_bridge.rs`): unknown `params` type_ids are silently
   skipped and values applied unvalidated at build (no `validate_f32`), a
   valid-but-unhostable `module_type` is accepted and silently skipped at build,
-  `Macro.value` outside 0..=1 is silently clamped, and `MidiCc.cc: u8` accepts 128–255
-  which can never match a real CC. Resolve the module descriptor at the boundary and
-  reject bad input with errors, matching the `set_parameter` convention. Complements the
-  port-validation item above. **S–M.**
-- [ ] **`assign_mod_graph`: `tracks: Vec<u32>` silently truncates + drops unknown ids
-  (MCP audit 2026-07-19).** Every other wire track id is `u16` (out-of-range input fails
-  schema deserialization); here track `65537` wraps to `1` via `as u16`
-  (`server.rs` `AssignModGraphParam`, cast in `mcp_bridge.rs`), and ids that don't exist
-  are silently dropped instead of erroring `TrackNotFound` like every other
-  track-addressed tool. Change to `Vec<u16>` and error on (or at least report) unknown
-  ids. **S.**
+  and `Macro.value` outside 0..=1 is silently clamped. Resolve the module descriptor
+  at the boundary and reject bad input with errors, matching the `set_parameter`
+  convention. Complements the port-validation item above. **S–M.**
 - [ ] **MCP parity gaps vs the note-graph family (MCP audit 2026-07-19).** No
   `duplicate_mod_graph` tool despite `duplicate_note_graph` precedent and existing engine
   + GUI support (`Song::duplicate_mod_graph`) — MCP callers must re-create node-by-node,
@@ -801,7 +793,7 @@ enough to be driven by an actual observed symptom. Ordered by likely impact.
   add a flag to capture/analyze the LIVE playback audio.
 
 *(MCP convention audit 2026-07-19 — findings on the tools added 17–19 July that aren't
-covered elsewhere; mod-grid-specific items live in §2.9, wire-newtype items in §A8.)*
+covered elsewhere; mod-grid-specific items live in §2.9.)*
 
 - [ ] **`result_is_failure` can't classify the `BatchResult` shape.** It detects
   `Error:` prose and `batch_json`'s `errors` array only (`synth_mcp/src/server.rs`
@@ -810,11 +802,6 @@ covered elsewhere; mod-grid-specific items live in §2.9, wire-newtype items in 
   pre-existing `add_note`/`update_note`/`create_track`) never trip `batch_execute`'s
   stop-on-error/rollback gate on total failure (`succeeded: 0`). One choke-point fix:
   treat `failed > 0 && succeeded == 0` as failure. Sibling of the `isError` item above. **S.**
-- [ ] **`InstrumentId` `Display` leaks onto the wire (regression from `5d7f60c4`).**
-  `get_automation_summary` group keys now read `"instrument Instrument(3)"`
-  (`synth_mcp/src/bridge.rs` ~`:1565`, was `"instrument 3"`), and ~8 batch error strings
-  read `"Instrument(3): ..."` (`server.rs` ~`:6269` etc.) while `delete_instrument`
-  deliberately uses `.as_u64()`. Use the bare number at these sites. **S.**
 - [ ] **Automation boundary gaps.** (a) `track:`/instrument-macro targets don't
   validate that the track/instrument exists — `track:Volume:999` succeeds and creates a
   dead lane, while the `module:` arm rejects nonexistent instances for exactly this
@@ -826,12 +813,6 @@ covered elsewhere; mod-grid-specific items live in §2.9, wire-newtype items in 
   (get/remove/clear/scale/offset/copy) are DSL-string-only; (d) `AutomationSummaryLane`
   lacks the `scope` field `AutomationLaneInfo` gained, so track/global lanes group under
   `"(no instrument)"` in the summary. **S–M.**
-- [ ] **Plural `get_note_graphs`/`get_mod_graphs` break the one-tool-per-op pattern.**
-  The only plural `get_*` tools on the whole surface; each graph family now has three
-  overlapping readers (`list_` summary / `get_` by id / `get_…s` bulk detail). Fold the
-  bulk read into the singular tool as `graph_ids: Option<Vec<u32>>` (omitted = all)
-  before the pattern spreads to other families — or at minimum cross-link the three
-  tool descriptions. **S.**
 - [ ] **Schema-description drift on the new tools.** `set_note_graph_metadata`/
   `set_mod_graph_metadata` param fields are largely undocumented — including that `""`
   clears color/description (the bridge supports it and even advertises it in its own
@@ -839,7 +820,7 @@ covered elsewhere; mod-grid-specific items live in §2.9, wire-newtype items in 
   `PlacementInput` documents every field incl. the beat/tick XOR rule);
   `scale`/`offset`/`copy_automation_lane` target descriptions predate the
   `track:`/`global:` DSL; ~8 sites still say "Instrument index" instead of
-  "Instrument ID"; `curve_strength` doc says -127..=127 but `i8` admits -128. **S.**
+  "Instrument ID". **S.**
 - [ ] **`PlacementInfo` can't be echoed back as a locator.** Reads return BOTH
   `start_beat` and `start_tick`, but the write side requires exactly one, so a listed
   placement fails as `update_placement`/`remove_placement` input until one field is

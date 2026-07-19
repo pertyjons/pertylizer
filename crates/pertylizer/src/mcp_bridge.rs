@@ -2528,6 +2528,13 @@ impl SynthBridge for AppSynthBridge {
         tracks: Vec<TrackId>,
     ) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
+        if let Some(track_id) = tracks
+            .iter()
+            .copied()
+            .find(|track_id| song.track(*track_id).is_none())
+        {
+            return Err(McpBridgeError::TrackNotFound(track_id));
+        }
         let gid = graph_id;
         if song.assign_mod_graph(gid, &tracks) {
             Ok(())
@@ -7587,17 +7594,19 @@ fn parse_global_param(name: &str) -> Option<synth_sequencer::GlobalParam> {
 
 /// Map a bridge [`CurveKind`](synth_mcp::bridge::CurveKind) plus optional
 /// strength to the sequencer's `CurveType`. The strength is only meaningful for
-/// `Exponential` (clamped to its `i8` domain by the type); it defaults to 0.
+/// `Exponential` (validated as `-127..=127` by the type); it defaults to 0.
 fn curve_from_kind(
     kind: synth_mcp::bridge::CurveKind,
-    strength: Option<i8>,
+    strength: Option<synth_sequencer::CurveStrength>,
 ) -> synth_sequencer::CurveType {
     use synth_mcp::bridge::CurveKind;
     use synth_sequencer::CurveType;
     match kind {
         CurveKind::Linear => CurveType::Linear,
         CurveKind::Step => CurveType::Step,
-        CurveKind::Exponential => CurveType::Exponential(strength.unwrap_or(0)),
+        CurveKind::Exponential => {
+            CurveType::Exponential(strength.unwrap_or(synth_sequencer::CurveStrength::ZERO))
+        }
         CurveKind::SCurve => CurveType::SCurve,
     }
 }
@@ -14442,24 +14451,31 @@ mod mcp_helper_tests {
     #[test]
     fn curve_from_kind_maps_strength_only_for_exponential() {
         use synth_mcp::bridge::CurveKind;
-        use synth_sequencer::CurveType;
+        use synth_sequencer::{CurveStrength, CurveType};
         assert_eq!(
-            curve_from_kind(CurveKind::Linear, Some(40)),
+            curve_from_kind(
+                CurveKind::Linear,
+                Some(CurveStrength::new(40).unwrap_or_default()),
+            ),
             CurveType::Linear
         );
         assert_eq!(curve_from_kind(CurveKind::Step, None), CurveType::Step);
         assert_eq!(
-            curve_from_kind(CurveKind::SCurve, Some(7)),
+            curve_from_kind(
+                CurveKind::SCurve,
+                Some(CurveStrength::new(7).unwrap_or_default()),
+            ),
             CurveType::SCurve
         );
+        let negative = CurveStrength::new(-30).unwrap_or_default();
         assert_eq!(
-            curve_from_kind(CurveKind::Exponential, Some(-30)),
-            CurveType::Exponential(-30)
+            curve_from_kind(CurveKind::Exponential, Some(negative)),
+            CurveType::Exponential(negative)
         );
         // Missing strength defaults to 0.
         assert_eq!(
             curve_from_kind(CurveKind::Exponential, None),
-            CurveType::Exponential(0)
+            CurveType::Exponential(CurveStrength::ZERO)
         );
     }
 

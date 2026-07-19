@@ -45,7 +45,9 @@ pub use automation::{
     AutoInstrumentParam, GlobalParam, TRACK_PITCH_RANGE, TrackParam, track_pitch_normalized,
     track_pitch_semitones,
 };
-pub use automation::{AutomationLane, AutomationPoint, AutomationTarget, CurveType, ParamId};
+pub use automation::{
+    AutomationLane, AutomationPoint, AutomationTarget, CurveStrength, CurveType, ParamId,
+};
 pub use events::SequencerEvent;
 pub use ids::{
     InstrumentId, ModGraphId, ModNodeId, NoteGraphId, NoteId, NoteLane, NoteModuleId, PatternId,

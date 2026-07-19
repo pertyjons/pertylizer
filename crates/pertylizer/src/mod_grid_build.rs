@@ -242,7 +242,7 @@ fn resolve_source(
             }
         }),
         ModNodeConfig::MidiCc(m) => Some(ModSource::MidiCc {
-            cc: m.cc,
+            cc: m.cc.as_u8(),
             channel: m.channel,
         }),
         ModNodeConfig::Target(_) => None,

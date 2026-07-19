@@ -621,6 +621,13 @@
       ],
       "type": "object"
     },
+    "CurveStrength": {
+      "description": "Strength of an exponential automation curve (`-127..=127`).",
+      "format": "int8",
+      "maximum": 127,
+      "minimum": -127,
+      "type": "integer"
+    },
     "CurveType": {
       "description": "Interpolation curve type between automation points.",
       "oneOf": [
@@ -639,10 +646,7 @@
           "description": "Exponential curve (parameter indicates strength, -127 to 127).",
           "properties": {
             "Exponential": {
-              "format": "int8",
-              "maximum": 127,
-              "minimum": -128,
-              "type": "integer"
+              "$ref": "#/$defs/CurveStrength"
             }
           },
           "required": [
@@ -1137,12 +1141,9 @@
       "description": "A grid-native MIDI CC input source node.",
       "properties": {
         "cc": {
+          "$ref": "#/$defs/MidiCcNumber",
           "default": 0,
-          "description": "Controller number, `0..=127`.",
-          "format": "uint8",
-          "maximum": 255,
-          "minimum": 0,
-          "type": "integer"
+          "description": "Controller number, `0..=127`."
         },
         "channel": {
           "description": "MIDI channel to listen on, or `None` for omni.",
@@ -1156,6 +1157,13 @@
         }
       },
       "type": "object"
+    },
+    "MidiCcNumber": {
+      "description": "Standard MIDI continuous-controller number (`0..=127`).\n\nUnlike [`CcNumber`], this type excludes the pseudo-CC values used by the\ntelemetry subsystem.",
+      "format": "uint8",
+      "maximum": 127,
+      "minimum": 0,
+      "type": "integer"
     },
     "Milliseconds": {
       "description": "Duration in milliseconds.\n\nConvenience type for UI display and input.",

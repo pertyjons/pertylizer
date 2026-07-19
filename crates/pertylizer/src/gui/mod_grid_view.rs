@@ -1002,8 +1002,12 @@ fn edit_node_body(
             transport_combo(ui, tn);
         }
         ModNodeConfig::MidiCc(m) => {
-            let r = ui.add(egui::DragValue::new(&mut m.cc).range(0..=127).prefix("CC "));
+            let mut cc = m.cc.as_u8();
+            let r = ui.add(egui::DragValue::new(&mut cc).range(0..=127).prefix("CC "));
             *any_dragged |= r.dragged();
+            if r.changed() {
+                m.cc = synth_core::MidiCcNumber::new(cc).unwrap_or_default();
+            }
             let mut omni = m.channel.is_none();
             if ui.checkbox(&mut omni, "Omni").changed() {
                 m.channel = if omni { None } else { Some(0) };
@@ -1324,7 +1328,7 @@ fn node_catalog() -> Vec<(&'static str, ModNodeConfig)> {
         (
             "MIDI CC",
             ModNodeConfig::MidiCc(synth_sequencer::MidiCcNode {
-                cc: 1,
+                cc: synth_core::MidiCcNumber::MOD_WHEEL,
                 channel: None,
             }),
         ),

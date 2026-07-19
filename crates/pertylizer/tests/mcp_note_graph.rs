@@ -200,7 +200,7 @@ async fn note_graph_round_trip_through_mcp() {
 
     let bulk = call(
         &server,
-        "get_note_graphs",
+        "get_note_graph",
         serde_json::json!({ "graph_ids": [graph_id, 999] }),
     )
     .await;

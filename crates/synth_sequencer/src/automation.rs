@@ -8,6 +8,51 @@ use synth_core::{ModuleType, NormalizedValue, Semitones};
 use super::ids::{InstrumentId, TrackId};
 use super::time::PatternTick;
 
+/// Strength of an exponential automation curve (`-127..=127`).
+#[must_use]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, schemars::JsonSchema)]
+#[serde(transparent)]
+#[schemars(transparent)]
+pub struct CurveStrength(#[schemars(range(min = -127, max = 127))] i8);
+
+impl CurveStrength {
+    pub const MIN: i8 = -127;
+    pub const MAX: i8 = 127;
+    pub const ZERO: Self = Self(0);
+    pub const DEFAULT_EXPONENTIAL: Self = Self(64);
+
+    /// Create a validated curve strength.
+    pub const fn new(strength: i8) -> Option<Self> {
+        if strength >= Self::MIN {
+            Some(Self(strength))
+        } else {
+            None
+        }
+    }
+
+    /// Return the raw curve strength.
+    pub const fn as_i8(self) -> i8 {
+        self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for CurveStrength {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let strength = i8::deserialize(deserializer)?;
+        Self::new(strength)
+            .ok_or_else(|| serde::de::Error::custom("curve strength must be in -127..=127"))
+    }
+}
+
+impl std::fmt::Display for CurveStrength {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 /// Interned-by-`Arc` parameter id for [`AutomationTarget::Module`].
 ///
 /// Wraps `Arc<str>` so cloning the target on the audio thread (the per-tick
@@ -100,7 +145,7 @@ pub enum CurveType {
     /// Step (hold value until next point).
     Step,
     /// Exponential curve (parameter indicates strength, -127 to 127).
-    Exponential(i8),
+    Exponential(CurveStrength),
     /// S-curve (smoothstep).
     SCurve,
 }
@@ -122,7 +167,7 @@ impl CurveType {
     pub const MENU_KINDS: &[Self] = &[
         Self::Linear,
         Self::Step,
-        Self::Exponential(64),
+        Self::Exponential(CurveStrength::DEFAULT_EXPONENTIAL),
         Self::SCurve,
     ];
 
@@ -155,10 +200,11 @@ impl CurveType {
             Self::Linear => from_f + (to_f - from_f) * t,
             Self::Step => from_f,
             Self::Exponential(strength) => {
-                let exp_t = if *strength >= 0 {
-                    t.powf(1.0 + *strength as f32 * 0.02)
+                let strength = strength.as_i8();
+                let exp_t = if strength >= 0 {
+                    t.powf(1.0 + f32::from(strength) * 0.02)
                 } else {
-                    1.0 - (1.0 - t).powf(1.0 - *strength as f32 * 0.02)
+                    1.0 - (1.0 - t).powf(1.0 - f32::from(strength) * 0.02)
                 };
                 from_f + (to_f - from_f) * exp_t
             }
@@ -702,5 +748,21 @@ mod tests {
         let mut map = std::collections::HashMap::new();
         map.insert(target.clone(), NormalizedValue::new(0.5));
         assert_eq!(map.get(&target), Some(&NormalizedValue::new(0.5)));
+    }
+
+    #[test]
+    fn curve_strength_serde_rejects_negative_128() {
+        assert!(matches!(
+            serde_json::from_str::<CurveStrength>("-127").map(CurveStrength::as_i8),
+            Ok(-127)
+        ));
+        assert!(serde_json::from_str::<CurveStrength>("-128").is_err());
+        assert!(matches!(
+            serde_json::from_str::<CurveStrength>("127").map(CurveStrength::as_i8),
+            Ok(127)
+        ));
+        let schema = serde_json::to_value(schemars::schema_for!(CurveStrength)).unwrap_or_default();
+        assert_eq!(schema["minimum"], -127);
+        assert_eq!(schema["maximum"], 127);
     }
 }

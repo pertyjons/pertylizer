@@ -776,6 +776,58 @@ impl From<CcNumber> for u8 {
     }
 }
 
+/// Standard MIDI continuous-controller number (`0..=127`).
+///
+/// Unlike [`CcNumber`], this type excludes the pseudo-CC values used by the
+/// telemetry subsystem.
+#[must_use]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, schemars::JsonSchema)]
+#[serde(transparent)]
+#[schemars(transparent)]
+pub struct MidiCcNumber(#[schemars(range(min = 0, max = 127))] u8);
+
+impl MidiCcNumber {
+    pub const MIN: u8 = 0;
+    pub const MAX: u8 = 127;
+    pub const MOD_WHEEL: Self = Self(1);
+
+    /// Create a standard MIDI CC number.
+    pub const fn new(cc: u8) -> Option<Self> {
+        if cc <= Self::MAX {
+            Some(Self(cc))
+        } else {
+            None
+        }
+    }
+
+    /// Return the raw MIDI CC number.
+    pub const fn as_u8(self) -> u8 {
+        self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for MidiCcNumber {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let cc = u8::deserialize(deserializer)?;
+        Self::new(cc).ok_or_else(|| serde::de::Error::custom("MIDI CC must be in 0..=127"))
+    }
+}
+
+impl From<MidiCcNumber> for u8 {
+    fn from(cc: MidiCcNumber) -> Self {
+        cc.0
+    }
+}
+
+impl std::fmt::Display for MidiCcNumber {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -868,5 +920,16 @@ mod tests {
             Ok(127)
         ));
         assert!(serde_json::from_str::<MidiNote>("128").is_err());
+    }
+
+    #[test]
+    fn midi_cc_number_serde_rejects_pseudo_controllers() {
+        assert!(matches!(
+            serde_json::from_str::<MidiCcNumber>("127").map(MidiCcNumber::as_u8),
+            Ok(127)
+        ));
+        assert!(serde_json::from_str::<MidiCcNumber>("128").is_err());
+        let schema = serde_json::to_value(schemars::schema_for!(MidiCcNumber)).unwrap_or_default();
+        assert_eq!(schema["maximum"], 127);
     }
 }

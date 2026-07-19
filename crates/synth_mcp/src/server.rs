@@ -2726,7 +2726,11 @@ pub struct ConnectNoteGraphParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct GetNoteGraphsParam {
+pub struct GetNoteGraphParam {
+    #[schemars(
+        description = "One graph id to read in the single-detail shape; mutually exclusive with graph_ids"
+    )]
+    pub graph_id: Option<NoteGraphId>,
     #[schemars(description = "Graph ids to read, or omit/null to read every graph")]
     pub graph_ids: Option<Vec<NoteGraphId>>,
 }
@@ -2782,12 +2786,6 @@ pub struct SetNoteNoteGraphParam {
 // === Mod Grid (pooled control-rate modulator graphs) ===
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct ModGraphIdParam {
-    #[schemars(description = "Mod graph id (from list_mod_graphs)")]
-    pub graph_id: ModGraphId,
-}
-
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct CreateModGraphParam {
     #[schemars(description = "Name for the new mod graph")]
     pub name: String,
@@ -2818,7 +2816,7 @@ pub struct AssignModGraphParam {
     #[schemars(description = "Mod graph id (must be 'track' scope to run)")]
     pub graph_id: ModGraphId,
     #[schemars(
-        description = "Track ids to assign (replaces the current set; one running instance per track). Unknown ids are dropped."
+        description = "Track ids to assign (replaces the current set; one running instance per track). Unknown ids are rejected."
     )]
     pub tracks: Vec<TrackId>,
 }
@@ -2900,7 +2898,11 @@ pub struct SetModGraphNodeParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct GetModGraphsParam {
+pub struct GetModGraphParam {
+    #[schemars(
+        description = "One graph id to read in the single-detail shape; mutually exclusive with graph_ids"
+    )]
+    pub graph_id: Option<ModGraphId>,
     #[schemars(description = "Graph ids to read, or omit/null to read every graph")]
     pub graph_ids: Option<Vec<ModGraphId>>,
 }
@@ -3036,7 +3038,7 @@ pub struct AutomationPointInput {
     #[schemars(
         description = "Strength for the Exponential curve (-127..=127, negative = ease-in, positive = ease-out); ignored for other curves."
     )]
-    pub curve_strength: Option<i8>,
+    pub curve_strength: Option<synth_sequencer::CurveStrength>,
 }
 
 impl AutomationPointInput {
@@ -4568,8 +4570,7 @@ impl SynthMcpServer {
 
             // Note Grid (pooled note-processing graphs)
             "list_note_graphs" => list_note_graphs(NoParams),
-            "get_note_graph" => get_note_graph(NoteGraphIdParam),
-            "get_note_graphs" => get_note_graphs(GetNoteGraphsParam),
+            "get_note_graph" => get_note_graph(GetNoteGraphParam),
             "create_note_graph" => create_note_graph(CreateNoteGraphParam),
             "set_note_graph_metadata" => set_note_graph_metadata(SetNoteGraphMetadataParam),
             "duplicate_note_graph" => duplicate_note_graph(NoteGraphIdParam),
@@ -4584,8 +4585,7 @@ impl SynthMcpServer {
 
             // Mod Grid
             "list_mod_graphs" => list_mod_graphs(NoParams),
-            "get_mod_graph" => get_mod_graph(ModGraphIdParam),
-            "get_mod_graphs" => get_mod_graphs(GetModGraphsParam),
+            "get_mod_graph" => get_mod_graph(GetModGraphParam),
             "create_mod_graph" => create_mod_graph(CreateModGraphParam),
             "set_mod_graph_metadata" => set_mod_graph_metadata(SetModGraphMetadataParam),
             "delete_mod_graph" => delete_mod_graph(DeleteModGraphParam),
@@ -6264,7 +6264,7 @@ impl SynthMcpServer {
         for it in &params.0.items {
             match self.bridge.rename_instrument(it.instrument_id, &it.name) {
                 Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{}: {e}", it.instrument_id)),
+                Err(e) => errors.push(format!("{}: {e}", it.instrument_id.as_u64())),
             }
         }
         batch_msg(ok_count, "instruments renamed", &[], &errors)
@@ -6289,7 +6289,7 @@ impl SynthMcpServer {
                 .set_instrument_description(it.instrument_id, &it.description)
             {
                 Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{}: {e}", it.instrument_id)),
+                Err(e) => errors.push(format!("{}: {e}", it.instrument_id.as_u64())),
             }
         }
         batch_msg(ok_count, "instrument descriptions set", &[], &errors)
@@ -6311,7 +6311,7 @@ impl SynthMcpServer {
                 .set_instrument_color(it.instrument_id, &it.color)
             {
                 Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{}: {e}", it.instrument_id)),
+                Err(e) => errors.push(format!("{}: {e}", it.instrument_id.as_u64())),
             }
         }
         batch_msg(ok_count, "instrument colors set", &[], &errors)
@@ -6330,7 +6330,7 @@ impl SynthMcpServer {
         for it in &params.0.items {
             match self.bridge.set_patch_color(it.instrument_id, &it.color) {
                 Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{}: {e}", it.instrument_id)),
+                Err(e) => errors.push(format!("{}: {e}", it.instrument_id.as_u64())),
             }
         }
         batch_msg(ok_count, "patch colors set", &[], &errors)
@@ -6389,7 +6389,11 @@ impl SynthMcpServer {
                 &it.description,
             ) {
                 Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{}:{}: {e}", it.instrument_id, it.module_id)),
+                Err(e) => errors.push(format!(
+                    "{}:{}: {e}",
+                    it.instrument_id.as_u64(),
+                    it.module_id
+                )),
             }
         }
         batch_msg(ok_count, "module descriptions set", &[], &errors)
@@ -6504,7 +6508,7 @@ impl SynthMcpServer {
                 .set_sidechain_source(it.instrument_id, it.source)
             {
                 Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{}: {e}", it.instrument_id)),
+                Err(e) => errors.push(format!("{}: {e}", it.instrument_id.as_u64())),
             }
         }
         batch_msg(ok_count, "sidechain sources set", &[], &errors)
@@ -6675,7 +6679,7 @@ impl SynthMcpServer {
                 .set_instrument_midi_channel(it.instrument_id, it.channel)
             {
                 Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{}: {e}", it.instrument_id)),
+                Err(e) => errors.push(format!("{}: {e}", it.instrument_id.as_u64())),
             }
         }
         batch_msg(ok_count, "instrument MIDI channels set", &[], &errors)
@@ -6696,7 +6700,7 @@ impl SynthMcpServer {
                 .set_instrument_category(it.instrument_id, &it.category)
             {
                 Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{}: {e}", it.instrument_id)),
+                Err(e) => errors.push(format!("{}: {e}", it.instrument_id.as_u64())),
             }
         }
         batch_msg(ok_count, "instrument categories set", &[], &errors)
@@ -6957,19 +6961,18 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Get one Note Grid graph in full detail: its modules (in processing order, each with id/kind/config JSON) and connections (from/to/port/to_input)."
-    )]
-    async fn get_note_graph(&self, params: Parameters<NoteGraphIdParam>) -> String {
-        match self.bridge.get_note_graph(params.0.graph_id) {
-            Ok(detail) => to_json(&detail),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(
         description = "Get full detail for selected Note Grid graphs, or every graph when graph_ids is omitted. Returns stable graph-id order and a per-graph detail/error result."
     )]
-    async fn get_note_graphs(&self, params: Parameters<GetNoteGraphsParam>) -> String {
+    async fn get_note_graph(&self, params: Parameters<GetNoteGraphParam>) -> String {
+        if params.0.graph_id.is_some() && params.0.graph_ids.is_some() {
+            return "Error: provide graph_id or graph_ids, not both".to_string();
+        }
+        if let Some(graph_id) = params.0.graph_id {
+            return match self.bridge.get_note_graph(graph_id) {
+                Ok(detail) => to_json(&detail),
+                Err(e) => format!("Error: {e}"),
+            };
+        }
         let mut ids = match params.0.graph_ids {
             Some(ids) => ids,
             None => match self.bridge.list_note_graphs() {
@@ -7216,19 +7219,18 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Full detail of one Mod Grid graph: its nodes (with round-trippable ModNodeConfig JSON) and cables."
-    )]
-    async fn get_mod_graph(&self, params: Parameters<ModGraphIdParam>) -> String {
-        match self.bridge.get_mod_graph(params.0.graph_id) {
-            Ok(detail) => to_json(&detail),
-            Err(e) => format!("Error: {e}"),
-        }
-    }
-
-    #[tool(
         description = "Get full detail for selected Mod Grid graphs, or every graph when graph_ids is omitted. Returns stable graph-id order and a per-graph detail/error result."
     )]
-    async fn get_mod_graphs(&self, params: Parameters<GetModGraphsParam>) -> String {
+    async fn get_mod_graph(&self, params: Parameters<GetModGraphParam>) -> String {
+        if params.0.graph_id.is_some() && params.0.graph_ids.is_some() {
+            return "Error: provide graph_id or graph_ids, not both".to_string();
+        }
+        if let Some(graph_id) = params.0.graph_id {
+            return match self.bridge.get_mod_graph(graph_id) {
+                Ok(detail) => to_json(&detail),
+                Err(e) => format!("Error: {e}"),
+            };
+        }
         let mut ids = match params.0.graph_ids {
             Some(ids) => ids,
             None => match self.bridge.list_mod_graphs() {
@@ -7306,7 +7308,7 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Assign a track-scope Mod Grid graph to a set of tracks (one running instance per track; relative 'this track' targets resolve to each host). Replaces the current assignment; unknown track ids are dropped."
+        description = "Assign a track-scope Mod Grid graph to a set of tracks (one running instance per track; relative 'this track' targets resolve to each host). Replaces the current assignment; unknown track ids are rejected."
     )]
     async fn assign_mod_graph(&self, params: Parameters<AssignModGraphParam>) -> String {
         let p = params.0;

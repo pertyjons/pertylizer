@@ -67,6 +67,17 @@ async fn mod_grid_create_route_enumerate_delete() {
         .and_then(|v| v.as_u64())
         .expect("graph_id in response") as u32;
 
+    let unknown_assignment = call(
+        &server,
+        "assign_mod_graph",
+        serde_json::json!({ "graph_id": graph_id, "tracks": [999] }),
+    )
+    .await;
+    assert!(
+        unknown_assignment.contains("track not found: 999"),
+        "unknown assignment: {unknown_assignment}"
+    );
+
     // 2. Assign it to the track.
     let assigned = call(
         &server,
@@ -75,6 +86,20 @@ async fn mod_grid_create_route_enumerate_delete() {
     )
     .await;
     assert!(!assigned.starts_with("Error"), "assign failed: {assigned}");
+
+    let invalid_cc = call(
+        &server,
+        "add_mod_graph_node",
+        serde_json::json!({ "items": [{
+            "graph_id": graph_id,
+            "node": { "MidiCc": { "cc": 128 } }
+        }] }),
+    )
+    .await;
+    assert!(
+        invalid_cc.contains("MIDI CC must be in 0..=127"),
+        "invalid CC: {invalid_cc}"
+    );
 
     // 3. Add an LFO source (node 0) and a Target sink (node 1).
     let add = call(
@@ -134,7 +159,7 @@ async fn mod_grid_create_route_enumerate_delete() {
 
     let bulk = call(
         &server,
-        "get_mod_graphs",
+        "get_mod_graph",
         serde_json::json!({ "graph_ids": [graph_id, 999] }),
     )
     .await;

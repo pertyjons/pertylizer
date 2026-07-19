@@ -2172,7 +2172,7 @@ mod tests {
             g.try_insert_node(
                 ModNodeId::new(1),
                 ModNodeConfig::MidiCc(MidiCcNode {
-                    cc: 74,
+                    cc: synth_core::MidiCcNumber::new(74).unwrap_or_default(),
                     channel: Some(2),
                 }),
             )

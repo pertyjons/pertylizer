@@ -1240,7 +1240,7 @@ pub trait SynthBridge: Send + Sync + 'static {
 
     /// Assign a Track-scope mod graph to a set of tracks (one running instance
     /// per track). Replaces the current assignment; unknown track ids are
-    /// dropped.
+    /// rejected.
     fn assign_mod_graph(
         &self,
         graph_id: ModGraphId,
@@ -1579,7 +1579,7 @@ pub trait SynthBridge: Send + Sync + 'static {
                 // "instrument" and any other value fall back to instrument grouping.
                 _ => lane.instrument_id.map_or_else(
                     || "(no instrument)".to_string(),
-                    |id| format!("instrument {id}"),
+                    |id| format!("instrument {}", id.as_u64()),
                 ),
             };
             grouped.entry(key).or_default().push(lane);
@@ -2750,7 +2750,7 @@ pub struct BridgeAutomationPointData {
     /// Interpolation curve.
     pub curve: CurveKind,
     /// Strength for `CurveKind::Exponential` (-127..=127); ignored otherwise.
-    pub curve_strength: Option<i8>,
+    pub curve_strength: Option<synth_sequencer::CurveStrength>,
 }
 
 /// Parameter set for batch set_parameters operations.

@@ -114,7 +114,7 @@ pub struct MacroNode {
 pub struct MidiCcNode {
     /// Controller number, `0..=127`.
     #[serde(default)]
-    pub cc: u8,
+    pub cc: synth_core::MidiCcNumber,
     /// MIDI channel to listen on, or `None` for omni.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub channel: Option<u8>,
