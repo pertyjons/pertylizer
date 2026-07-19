@@ -20,6 +20,37 @@ pub const SID_FREQ_REG_MAX: u32 = 0xFFFF;
 /// Maximum raw 12-bit SID pulse-width-register value.
 pub const SID_PW_REG_MAX: u32 = 0xFFF;
 
+/// Valid non-zero state of the SID oscillator's 23-bit noise LFSR.
+#[must_use]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct SidNoiseSeed(u32);
+
+impl SidNoiseSeed {
+    pub const MAX: u32 = 0x7F_FFFF;
+    pub const DEFAULT: Self = Self(Self::MAX);
+
+    pub const fn new(value: u32) -> Self {
+        Self(if value == 0 {
+            1
+        } else if value > Self::MAX {
+            Self::MAX
+        } else {
+            value
+        })
+    }
+
+    #[must_use]
+    pub const fn as_u32(self) -> u32 {
+        self.0
+    }
+}
+
+impl Default for SidNoiseSeed {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
 // ============================================================================
 // CHOICE ENUMS
 // ============================================================================
@@ -224,6 +255,8 @@ pub enum SidOscillatorParam {
     Pulse(bool),
     /// Noise waveform bit.
     Noise(bool),
+    /// Non-zero 23-bit state reloaded by module reset and TEST rising edges.
+    NoiseSeed(SidNoiseSeed),
     /// Raw 16-bit SID frequency register (0-65535). Used when
     /// `TrackVoicePitch` is off (ring/sync-source tuning).
     FreqReg(u32),
@@ -262,6 +295,10 @@ pub enum SidOscillatorParam {
     /// Waveform-mask sequence step: (step index, 4-bit mask 0-15).
     /// Bit 0 = triangle, 1 = sawtooth, 2 = pulse, 3 = noise.
     SeqStep(u8, u8),
+    /// Bit mask selecting sequence steps with an explicit frequency register.
+    SeqFreqMask(u32),
+    /// Per-step raw SID frequency-register override.
+    SeqStepFreq(u8, u32),
     /// Per-oscillator glide (portamento) time in seconds (0 = follow the
     /// voice-level glide). Only affects the tuning when `TrackVoicePitch` is on.
     GlideTime(Seconds),
@@ -271,7 +308,8 @@ impl SidOscillatorParam {
     /// Check if two parameters are the same kind (ignoring values).
     pub fn same_kind(&self, other: &Self) -> bool {
         match (self, other) {
-            (Self::SeqStep(a, _), Self::SeqStep(b, _)) => a == b,
+            (Self::SeqStep(a, _), Self::SeqStep(b, _))
+            | (Self::SeqStepFreq(a, _), Self::SeqStepFreq(b, _)) => a == b,
             _ => std::mem::discriminant(self) == std::mem::discriminant(other),
         }
     }
@@ -283,6 +321,7 @@ impl SidOscillatorParam {
             Self::Sawtooth(_) => "Sawtooth",
             Self::Pulse(_) => "Pulse",
             Self::Noise(_) => "Noise",
+            Self::NoiseSeed(_) => "Noise Seed",
             Self::FreqReg(_) => "Freq Reg",
             Self::TrackVoicePitch(_) => "Track Pitch",
             Self::PulseWidthReg(_) => "PW Reg",
@@ -298,6 +337,8 @@ impl SidOscillatorParam {
             Self::SeqRate(_) => "Seq Rate",
             Self::SeqLoop(_) => "Seq Loop",
             Self::SeqStep(..) => "Seq Step",
+            Self::SeqFreqMask(_) => "Seq Freq Mask",
+            Self::SeqStepFreq(..) => "Seq Step Freq",
             Self::GlideTime(_) => "Glide",
         }
     }
@@ -322,7 +363,9 @@ impl SidOscillatorParam {
                 }
             }
             #[allow(clippy::cast_precision_loss)]
-            Self::FreqReg(v) | Self::PulseWidthReg(v) => *v as f32,
+            Self::FreqReg(v) | Self::PulseWidthReg(v) | Self::SeqStepFreq(_, v) => *v as f32,
+            Self::SeqFreqMask(mask) => *mask as f32,
+            Self::NoiseSeed(seed) => seed.as_u32() as f32,
             #[allow(clippy::cast_precision_loss)]
             Self::Model(m) => m.index() as f32,
             #[allow(clippy::cast_precision_loss)]
@@ -344,6 +387,7 @@ impl SidOscillatorParam {
             Self::Sawtooth(_) => Self::Sawtooth(as_bool),
             Self::Pulse(_) => Self::Pulse(as_bool),
             Self::Noise(_) => Self::Noise(as_bool),
+            Self::NoiseSeed(_) => Self::NoiseSeed(SidNoiseSeed::new(value.round().max(1.0) as u32)),
             #[allow(clippy::cast_precision_loss)]
             Self::FreqReg(_) => {
                 Self::FreqReg(value.round().clamp(0.0, SID_FREQ_REG_MAX as f32) as u32)
@@ -369,6 +413,11 @@ impl SidOscillatorParam {
             Self::SeqRate(_) => Self::SeqRate(value.round().clamp(1.0, 16.0) as u8),
             Self::SeqLoop(_) => Self::SeqLoop(as_bool),
             Self::SeqStep(i, _) => Self::SeqStep(*i, value.round().clamp(0.0, 15.0) as u8),
+            Self::SeqFreqMask(_) => Self::SeqFreqMask(value.round().clamp(0.0, 65535.0) as u32),
+            #[allow(clippy::cast_precision_loss)]
+            Self::SeqStepFreq(i, _) => {
+                Self::SeqStepFreq(*i, value.round().clamp(0.0, SID_FREQ_REG_MAX as f32) as u32)
+            }
             Self::GlideTime(_) => Self::GlideTime(Seconds::new(value.max(0.0))),
         }
     }

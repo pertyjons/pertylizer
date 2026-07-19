@@ -109,8 +109,8 @@ pub use ring_mod::RingModParam;
 pub use sampler::{PlayDirection, SampleId, SamplerParam, SamplerPlayMode};
 pub use script::ScriptParam;
 pub use sid_oscillator::{
-    SID_FREQ_REG_MAX, SID_PW_REG_MAX, SID_SEQ_STEPS, SidClock, SidModel, SidOscillatorParam,
-    SidQuality,
+    SID_FREQ_REG_MAX, SID_PW_REG_MAX, SID_SEQ_STEPS, SidClock, SidModel, SidNoiseSeed,
+    SidOscillatorParam, SidQuality,
 };
 pub use signal_monitor::SignalMonitorParam;
 pub use spectrum_analyzer::SpectrumAnalyzerParam;

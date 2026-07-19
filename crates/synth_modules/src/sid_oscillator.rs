@@ -22,7 +22,8 @@ use synth_core::{
 use crate::osc_glide::OscGlide;
 use synth_core::{
     Gain, Hertz, MidiNote, ModuleType, Param, PortName, SID_FREQ_REG_MAX, SID_PW_REG_MAX,
-    SID_SEQ_STEPS, SampleRate, SidClock, SidModel, SidOscillatorParam, SidQuality, Velocity,
+    SID_SEQ_STEPS, SampleRate, SidClock, SidModel, SidNoiseSeed, SidOscillatorParam, SidQuality,
+    Velocity,
 };
 use synth_dsp::oscillators::{poly_blamp, poly_blep};
 use synth_dsp::oversampling::{Downsampler, OversamplingFactor};
@@ -155,6 +156,7 @@ pub struct SidOscillator {
     sawtooth: bool,
     pulse: bool,
     noise: bool,
+    noise_seed: SidNoiseSeed,
     freq_reg: u32,
     track_voice_pitch: bool,
     pulse_width_reg: u32,
@@ -171,6 +173,8 @@ pub struct SidOscillator {
     seq_rate: u8,
     seq_loop: bool,
     seq_steps: [u8; SID_SEQ_STEPS],
+    seq_freq_mask: u16,
+    seq_step_freqs: [u32; SID_SEQ_STEPS],
 
     // Chip state (free-running; note_on must NOT reseed — plan §5)
     /// Phase accumulator, Q24.32 (top 24 bits are the SID accumulator).
@@ -254,6 +258,7 @@ impl SidOscillator {
             sawtooth: true,
             pulse: false,
             noise: false,
+            noise_seed: SidNoiseSeed::DEFAULT,
             freq_reg: 0,
             track_voice_pitch: true,
             pulse_width_reg: 2048,
@@ -269,6 +274,8 @@ impl SidOscillator {
             seq_rate: 1,
             seq_loop: false,
             seq_steps: [0; SID_SEQ_STEPS],
+            seq_freq_mask: 0,
+            seq_step_freqs: [0; SID_SEQ_STEPS],
             acc: 0,
             tracked_freq_reg: None,
             glide: OscGlide::new(),
@@ -371,6 +378,32 @@ impl SidOscillator {
             pos.min(u32::from(self.seq_length - 1))
         };
         self.seq_steps.get(idx as usize).copied().unwrap_or(0) & 0xF
+    }
+
+    fn live_step_index(&self) -> Option<usize> {
+        if self.seq_length == 0 {
+            return None;
+        }
+        let position = self.frame_count / u32::from(self.seq_rate.max(1));
+        let index = if self.seq_loop {
+            position % u32::from(self.seq_length)
+        } else {
+            position.min(u32::from(self.seq_length - 1))
+        };
+        Some(index as usize)
+    }
+
+    fn live_freq_reg(&self, inherited: f64) -> f64 {
+        let Some(index) = self.live_step_index() else {
+            return inherited;
+        };
+        if self.seq_freq_mask & (1u16 << index) == 0 {
+            return inherited;
+        }
+        self.seq_step_freqs
+            .get(index)
+            .copied()
+            .map_or(inherited, f64::from)
     }
 
     /// Classify a mask for the band-limiting residual (recomputed only when
@@ -588,6 +621,7 @@ impl SidOscillator {
             SidOscillatorParam::Sawtooth(_) => SidOscillatorParam::Sawtooth(self.sawtooth),
             SidOscillatorParam::Pulse(_) => SidOscillatorParam::Pulse(self.pulse),
             SidOscillatorParam::Noise(_) => SidOscillatorParam::Noise(self.noise),
+            SidOscillatorParam::NoiseSeed(_) => SidOscillatorParam::NoiseSeed(self.noise_seed),
             SidOscillatorParam::FreqReg(_) => SidOscillatorParam::FreqReg(self.freq_reg),
             SidOscillatorParam::TrackVoicePitch(_) => {
                 SidOscillatorParam::TrackVoicePitch(self.track_voice_pitch)
@@ -610,6 +644,16 @@ impl SidOscillator {
             SidOscillatorParam::SeqStep(i, _) => SidOscillatorParam::SeqStep(
                 *i,
                 self.seq_steps.get(usize::from(*i)).copied().unwrap_or(0),
+            ),
+            SidOscillatorParam::SeqFreqMask(_) => {
+                SidOscillatorParam::SeqFreqMask(u32::from(self.seq_freq_mask))
+            }
+            SidOscillatorParam::SeqStepFreq(i, _) => SidOscillatorParam::SeqStepFreq(
+                *i,
+                self.seq_step_freqs
+                    .get(usize::from(*i))
+                    .copied()
+                    .unwrap_or(0),
             ),
         }
     }
@@ -678,6 +722,18 @@ impl Describable for SidOscillator {
             .tag("source")
             .tag("sid")
             .tag("chiptune")
+            .parameter(
+                ParameterDescriptor::float(
+                    "noise_seed",
+                    Param::SidOscillator(SidOscillatorParam::NoiseSeed(SidNoiseSeed::DEFAULT)),
+                    "Noise Seed",
+                )
+                .description("Non-zero 23-bit LFSR state loaded by reset and TEST")
+                .range(1.0, SidNoiseSeed::MAX as f32)
+                .default(SidNoiseSeed::DEFAULT.as_u32() as f32)
+                .modulatable(false)
+                .widget(WidgetHint::Hidden),
+            )
             .parameter(
                 ParameterDescriptor::float(
                     "triangle",
@@ -945,6 +1001,32 @@ impl Describable for SidOscillator {
                 .widget(WidgetHint::Hidden),
             );
         }
+        desc = desc.parameter(
+            ParameterDescriptor::float(
+                "seq_freq_mask",
+                Param::SidOscillator(SidOscillatorParam::SeqFreqMask(0)),
+                "Seq Freq Mask",
+            )
+            .description("Bit mask selecting sequence steps with an explicit frequency")
+            .range(0.0, 65535.0)
+            .default(0.0)
+            .modulatable(false)
+            .widget(WidgetHint::Hidden),
+        );
+        for i in 0..SID_SEQ_STEPS as u8 {
+            desc = desc.parameter(
+                ParameterDescriptor::float(
+                    format!("seq_step_freq_{i}"),
+                    Param::SidOscillator(SidOscillatorParam::SeqStepFreq(i, 0)),
+                    format!("Seq Step Freq {i}"),
+                )
+                .description("Raw SID frequency register for this sequence step")
+                .range(0.0, SID_FREQ_REG_MAX as f32)
+                .default(0.0)
+                .modulatable(false)
+                .widget(WidgetHint::Hidden),
+            );
+        }
 
         desc.port(PortDescriptor::control_input("fm", "FM").description(
             "Additive pitch modulation in Freq Reg units (offset-from-base; \
@@ -1040,7 +1122,7 @@ impl PolyModule for SidOscillator {
         // base param, then the mod-matrix offset applies on top (the trait's
         // combine order); the additive `fm`/`pwm` CV rides per sample on top.
         #[allow(clippy::cast_precision_loss)]
-        let base_freq_reg = f64::from(
+        let inherited_freq_reg = f64::from(
             self.mod_offsets
                 .effective("freq_reg", self.effective_freq_reg() as f32),
         );
@@ -1059,7 +1141,8 @@ impl PolyModule for SidOscillator {
             .clamp(0.0, SID_PW_REG_MAX as f32) as u32;
         // Block-constant factors, hoisted out of the sample loop.
         let reg_to_inc = self.reg_to_inc(gen_rate);
-        let mut inc = Self::acc_increment(base_freq_reg, reg_to_inc);
+        let mut live_base_freq = self.live_freq_reg(inherited_freq_reg);
+        let mut inc = Self::acc_increment(live_base_freq, reg_to_inc);
         let mut dt = Self::inc_to_dt(inc);
         let level = self
             .mod_offsets
@@ -1076,7 +1159,7 @@ impl PolyModule for SidOscillator {
         let test_connected = test_reader.is_connected();
         if !test_connected {
             if self.test && !self.prev_test_active {
-                self.lfsr = LFSR_INIT;
+                self.lfsr = self.noise_seed.as_u32();
             }
             self.prev_test_active = self.test;
         }
@@ -1089,6 +1172,9 @@ impl PolyModule for SidOscillator {
                     self.frame_pos -= frame_len;
                     self.frame_count += 1;
                     (mask, pure, noise_locked) = self.mask_state();
+                    live_base_freq = self.live_freq_reg(inherited_freq_reg);
+                    inc = Self::acc_increment(live_base_freq, reg_to_inc);
+                    dt = Self::inc_to_dt(inc);
                 }
             }
 
@@ -1097,7 +1183,7 @@ impl PolyModule for SidOscillator {
             let test_active = if test_connected {
                 let active = self.test || test_reader.get(i) > 0.5;
                 if active && !self.prev_test_active {
-                    self.lfsr = LFSR_INIT;
+                    self.lfsr = self.noise_seed.as_u32();
                 }
                 self.prev_test_active = active;
                 active
@@ -1115,7 +1201,7 @@ impl PolyModule for SidOscillator {
 
             // Additive CV in raw register units (offset-from-base — plan §3).
             if fm_reader.is_connected() {
-                let reg = (base_freq_reg + f64::from(fm_reader.get(i)))
+                let reg = (live_base_freq + f64::from(fm_reader.get(i)))
                     .clamp(0.0, f64::from(SID_FREQ_REG_MAX));
                 inc = Self::acc_increment(reg, reg_to_inc);
                 dt = Self::inc_to_dt(inc);
@@ -1312,6 +1398,7 @@ impl PolyModule for SidOscillator {
                 SidOscillatorParam::Sawtooth(b) => self.sawtooth = b,
                 SidOscillatorParam::Pulse(b) => self.pulse = b,
                 SidOscillatorParam::Noise(b) => self.noise = b,
+                SidOscillatorParam::NoiseSeed(seed) => self.noise_seed = seed,
                 SidOscillatorParam::FreqReg(v) => self.freq_reg = v.min(SID_FREQ_REG_MAX),
                 SidOscillatorParam::TrackVoicePitch(b) => self.track_voice_pitch = b,
                 SidOscillatorParam::PulseWidthReg(v) => {
@@ -1351,6 +1438,14 @@ impl PolyModule for SidOscillator {
                         *step = mask & 0xF;
                     }
                 }
+                SidOscillatorParam::SeqFreqMask(mask) => {
+                    self.seq_freq_mask = mask.min(u32::from(u16::MAX)) as u16;
+                }
+                SidOscillatorParam::SeqStepFreq(i, frequency) => {
+                    if let Some(step) = self.seq_step_freqs.get_mut(usize::from(i)) {
+                        *step = frequency.min(SID_FREQ_REG_MAX);
+                    }
+                }
             }
         }
     }
@@ -1369,6 +1464,7 @@ impl PolyModule for SidOscillator {
             SidOscillatorParam::Sawtooth(false),
             SidOscillatorParam::Pulse(false),
             SidOscillatorParam::Noise(false),
+            SidOscillatorParam::NoiseSeed(SidNoiseSeed::DEFAULT),
             SidOscillatorParam::FreqReg(0),
             SidOscillatorParam::TrackVoicePitch(false),
             SidOscillatorParam::PulseWidthReg(0),
@@ -1384,9 +1480,11 @@ impl PolyModule for SidOscillator {
             SidOscillatorParam::SeqLength(0),
             SidOscillatorParam::SeqRate(1),
             SidOscillatorParam::SeqLoop(false),
+            SidOscillatorParam::SeqFreqMask(0),
         ];
         #[allow(clippy::cast_possible_truncation)]
         templates.extend((0..SID_SEQ_STEPS as u8).map(|i| SidOscillatorParam::SeqStep(i, 0)));
+        templates.extend((0..SID_SEQ_STEPS as u8).map(|i| SidOscillatorParam::SeqStepFreq(i, 0)));
         templates
             .into_iter()
             .map(|t| Param::SidOscillator(self.current(&t)))
@@ -1430,7 +1528,7 @@ impl PolyModule for SidOscillator {
         // Power-on state. Note this is the *module* reset (graph (re)build),
         // not note_on — the chip state free-runs across notes (plan §5).
         self.acc = 0;
-        self.lfsr = LFSR_INIT;
+        self.lfsr = self.noise_seed.as_u32();
         self.prev_sync = 0.0;
         self.pending_sync_step = 0.0;
         self.pending_sync_d = 0.0;
@@ -1772,6 +1870,40 @@ mod tests {
             sid.clock_lfsr(false);
             assert_ne!(sid.lfsr, 0, "LFSR must never go all-zero");
         }
+    }
+
+    #[test]
+    fn configurable_noise_seed_has_golden_prefix_and_test_reload() {
+        let mut sid = SidOscillator::new();
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::NoiseSeed(
+            SidNoiseSeed::new(0x12_3456),
+        )));
+        sid.reset();
+        assert_eq!(sid.lfsr, 0x12_3456);
+        sid.clock_lfsr(false);
+        assert_eq!(sid.lfsr, 0x24_68AD);
+        sid.clock_lfsr(false);
+        assert_eq!(sid.lfsr, 0x48_D15A);
+
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::Test(true)));
+        let _ = render(&mut sid, 1);
+        assert_eq!(sid.lfsr, 0x12_3456, "TEST reloads the configured seed");
+
+        let mut second = SidOscillator::new();
+        second.set_param(Param::SidOscillator(SidOscillatorParam::NoiseSeed(
+            SidNoiseSeed::new(1),
+        )));
+        second.reset();
+        second.clock_lfsr(false);
+        assert_eq!(second.lfsr, 2);
+        second.clock_lfsr(false);
+        assert_eq!(second.lfsr, 4);
+    }
+
+    #[test]
+    fn noise_seed_rejects_the_zero_lock_state() {
+        assert_eq!(SidNoiseSeed::new(0).as_u32(), 1);
+        assert_eq!(SidNoiseSeed::new(u32::MAX).as_u32(), SidNoiseSeed::MAX);
     }
 
     /// Noise is deterministic from the fixed seed: two fresh modules render
@@ -2338,6 +2470,48 @@ mod tests {
         assert!(energy(3860..4780) > 1.0, "frame 4 loops back to the saw");
     }
 
+    #[test]
+    fn sequence_frequency_switches_on_the_waveform_step_boundary() {
+        let mut sid = sid_with((false, true, false), 7493);
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::SeqLength(2)));
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::SeqStep(0, 0b0010)));
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::SeqStep(1, 0b0001)));
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::SeqFreqMask(0b11)));
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::SeqStepFreq(
+            0, 1000,
+        )));
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::SeqStepFreq(
+            1, 2000,
+        )));
+
+        let _ = render(&mut sid, 959);
+        assert_eq!(sid.live_mask(), MASK_SAWTOOTH);
+        let before = sid.acc;
+        let _ = render(&mut sid, 1);
+        let actual_increment = sid.acc.wrapping_sub(before) & ACC_MASK;
+        let expected_increment = SidOscillator::acc_increment(2000.0, sid.reg_to_inc(48_000.0));
+
+        assert_eq!(sid.live_mask(), MASK_TRIANGLE);
+        assert_eq!(actual_increment, expected_increment);
+    }
+
+    #[test]
+    fn sequence_frequency_clear_mask_bits_inherit_the_live_base() {
+        let mut sid = sid_with((false, true, false), 1000);
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::SeqLength(2)));
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::SeqFreqMask(0b01)));
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::SeqStepFreq(
+            0, 2000,
+        )));
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::SeqStepFreq(
+            1, 3000,
+        )));
+
+        assert_eq!(sid.live_freq_reg(1234.0), 2000.0);
+        sid.frame_count = u32::from(sid.seq_rate);
+        assert_eq!(sid.live_freq_reg(1234.0), 1234.0);
+    }
+
     /// TEST dominates hard sync: a master edge during a TEST hold must not
     /// inject a BLEP step into the frozen output.
     #[test]
@@ -2410,9 +2584,16 @@ mod tests {
     fn params_round_trip_and_match_descriptor() {
         let mut sid = SidOscillator::new();
         sid.set_param(Param::SidOscillator(SidOscillatorParam::SeqLength(3)));
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::NoiseSeed(
+            SidNoiseSeed::new(0x12_3456),
+        )));
         sid.set_param(Param::SidOscillator(SidOscillatorParam::SeqStep(0, 0x1)));
         sid.set_param(Param::SidOscillator(SidOscillatorParam::SeqStep(1, 0x4)));
         sid.set_param(Param::SidOscillator(SidOscillatorParam::SeqStep(2, 0x8)));
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::SeqFreqMask(0x5)));
+        sid.set_param(Param::SidOscillator(SidOscillatorParam::SeqStepFreq(
+            0, 1234,
+        )));
 
         let desc = sid.descriptor();
         for p in sid.get_params() {
@@ -2425,6 +2606,20 @@ mod tests {
         assert_eq!(
             sid.get_param(&Param::SidOscillator(SidOscillatorParam::SeqStep(1, 0))),
             Some(4.0)
+        );
+        assert_eq!(
+            sid.get_param(&Param::SidOscillator(SidOscillatorParam::SeqFreqMask(0))),
+            Some(5.0)
+        );
+        assert_eq!(
+            sid.get_param(&Param::SidOscillator(SidOscillatorParam::NoiseSeed(
+                SidNoiseSeed::DEFAULT
+            ))),
+            Some(0x12_3456 as f32)
+        );
+        assert_eq!(
+            sid.get_param(&Param::SidOscillator(SidOscillatorParam::SeqStepFreq(0, 0))),
+            Some(1234.0)
         );
         // The raw registers are automatable as stepped/sample-hold lanes
         // (integer automation — plan §3's "general alternative", now the

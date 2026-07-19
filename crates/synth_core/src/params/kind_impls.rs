@@ -2296,12 +2296,14 @@ impl SidOscillatorParam {
             | Self::HardSync(v)
             | Self::DcBlock(v)
             | Self::SeqLoop(v) => v.scalar_kind(),
-            Self::FreqReg(v) | Self::PulseWidthReg(v) => v.scalar_kind(),
+            Self::NoiseSeed(v) => v.scalar_kind(),
+            Self::FreqReg(v) | Self::PulseWidthReg(v) | Self::SeqStepFreq(_, v) => v.scalar_kind(),
             Self::Model(v) => v.scalar_kind(),
             Self::Clock(v) => v.scalar_kind(),
             Self::Quality(v) => v.scalar_kind(),
             Self::Level(v) => v.scalar_kind(),
             Self::SeqLength(v) | Self::SeqRate(v) | Self::SeqStep(_, v) => v.scalar_kind(),
+            Self::SeqFreqMask(v) => v.scalar_kind(),
             Self::GlideTime(v) => v.scalar_kind(),
         }
     }
@@ -2320,12 +2322,14 @@ impl SidOscillatorParam {
             | Self::HardSync(v)
             | Self::DcBlock(v)
             | Self::SeqLoop(v) => v.scalar_unit(),
-            Self::FreqReg(v) | Self::PulseWidthReg(v) => v.scalar_unit(),
+            Self::NoiseSeed(v) => v.scalar_unit(),
+            Self::FreqReg(v) | Self::PulseWidthReg(v) | Self::SeqStepFreq(_, v) => v.scalar_unit(),
             Self::Model(v) => v.scalar_unit(),
             Self::Clock(v) => v.scalar_unit(),
             Self::Quality(v) => v.scalar_unit(),
             Self::Level(v) => v.scalar_unit(),
             Self::SeqLength(v) | Self::SeqRate(v) | Self::SeqStep(_, v) => v.scalar_unit(),
+            Self::SeqFreqMask(v) => v.scalar_unit(),
             Self::GlideTime(v) => v.scalar_unit(),
         }
     }
@@ -2345,12 +2349,14 @@ impl SidOscillatorParam {
             | Self::HardSync(v)
             | Self::DcBlock(v)
             | Self::SeqLoop(v) => v.scalar_curve(),
-            Self::FreqReg(v) | Self::PulseWidthReg(v) => v.scalar_curve(),
+            Self::NoiseSeed(v) => v.scalar_curve(),
+            Self::FreqReg(v) | Self::PulseWidthReg(v) | Self::SeqStepFreq(_, v) => v.scalar_curve(),
             Self::Model(v) => v.scalar_curve(),
             Self::Clock(v) => v.scalar_curve(),
             Self::Quality(v) => v.scalar_curve(),
             Self::Level(v) => v.scalar_curve(),
             Self::SeqLength(v) | Self::SeqRate(v) | Self::SeqStep(_, v) => v.scalar_curve(),
+            Self::SeqFreqMask(v) => v.scalar_curve(),
             Self::GlideTime(v) => v.scalar_curve(),
         }
     }

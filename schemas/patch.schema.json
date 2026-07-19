@@ -7550,6 +7550,14 @@
                     "boolean"
                   ]
                 },
+                "noise_seed": {
+                  "default": 8388607.0,
+                  "description": "Non-zero 23-bit LFSR state loaded by reset and TEST",
+                  "maximum": 8388607.0,
+                  "minimum": 1.0,
+                  "title": "Noise Seed",
+                  "type": "number"
+                },
                 "pulse": {
                   "default": 0.0,
                   "description": "Pulse waveform bit (combinable, width from PW Reg)",
@@ -7599,6 +7607,14 @@
                     "number",
                     "boolean"
                   ]
+                },
+                "seq_freq_mask": {
+                  "default": 0.0,
+                  "description": "Bit mask selecting sequence steps with an explicit frequency",
+                  "maximum": 65535.0,
+                  "minimum": 0.0,
+                  "title": "Seq Freq Mask",
+                  "type": "number"
                 },
                 "seq_len": {
                   "default": 0.0,
@@ -7753,6 +7769,134 @@
                   "maximum": 15.0,
                   "minimum": 0.0,
                   "title": "Seq Step 9",
+                  "type": "number"
+                },
+                "seq_step_freq_0": {
+                  "default": 0.0,
+                  "description": "Raw SID frequency register for this sequence step",
+                  "maximum": 65535.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step Freq 0",
+                  "type": "number"
+                },
+                "seq_step_freq_1": {
+                  "default": 0.0,
+                  "description": "Raw SID frequency register for this sequence step",
+                  "maximum": 65535.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step Freq 1",
+                  "type": "number"
+                },
+                "seq_step_freq_10": {
+                  "default": 0.0,
+                  "description": "Raw SID frequency register for this sequence step",
+                  "maximum": 65535.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step Freq 10",
+                  "type": "number"
+                },
+                "seq_step_freq_11": {
+                  "default": 0.0,
+                  "description": "Raw SID frequency register for this sequence step",
+                  "maximum": 65535.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step Freq 11",
+                  "type": "number"
+                },
+                "seq_step_freq_12": {
+                  "default": 0.0,
+                  "description": "Raw SID frequency register for this sequence step",
+                  "maximum": 65535.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step Freq 12",
+                  "type": "number"
+                },
+                "seq_step_freq_13": {
+                  "default": 0.0,
+                  "description": "Raw SID frequency register for this sequence step",
+                  "maximum": 65535.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step Freq 13",
+                  "type": "number"
+                },
+                "seq_step_freq_14": {
+                  "default": 0.0,
+                  "description": "Raw SID frequency register for this sequence step",
+                  "maximum": 65535.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step Freq 14",
+                  "type": "number"
+                },
+                "seq_step_freq_15": {
+                  "default": 0.0,
+                  "description": "Raw SID frequency register for this sequence step",
+                  "maximum": 65535.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step Freq 15",
+                  "type": "number"
+                },
+                "seq_step_freq_2": {
+                  "default": 0.0,
+                  "description": "Raw SID frequency register for this sequence step",
+                  "maximum": 65535.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step Freq 2",
+                  "type": "number"
+                },
+                "seq_step_freq_3": {
+                  "default": 0.0,
+                  "description": "Raw SID frequency register for this sequence step",
+                  "maximum": 65535.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step Freq 3",
+                  "type": "number"
+                },
+                "seq_step_freq_4": {
+                  "default": 0.0,
+                  "description": "Raw SID frequency register for this sequence step",
+                  "maximum": 65535.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step Freq 4",
+                  "type": "number"
+                },
+                "seq_step_freq_5": {
+                  "default": 0.0,
+                  "description": "Raw SID frequency register for this sequence step",
+                  "maximum": 65535.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step Freq 5",
+                  "type": "number"
+                },
+                "seq_step_freq_6": {
+                  "default": 0.0,
+                  "description": "Raw SID frequency register for this sequence step",
+                  "maximum": 65535.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step Freq 6",
+                  "type": "number"
+                },
+                "seq_step_freq_7": {
+                  "default": 0.0,
+                  "description": "Raw SID frequency register for this sequence step",
+                  "maximum": 65535.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step Freq 7",
+                  "type": "number"
+                },
+                "seq_step_freq_8": {
+                  "default": 0.0,
+                  "description": "Raw SID frequency register for this sequence step",
+                  "maximum": 65535.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step Freq 8",
+                  "type": "number"
+                },
+                "seq_step_freq_9": {
+                  "default": 0.0,
+                  "description": "Raw SID frequency register for this sequence step",
+                  "maximum": 65535.0,
+                  "minimum": 0.0,
+                  "title": "Seq Step Freq 9",
                   "type": "number"
                 },
                 "test": {

@@ -1018,7 +1018,7 @@ enough to be driven by an actual observed symptom. Ordered by likely impact.
   real-time telemetry-driven flow particles (CV speed/direction, audio RMS density,
   gate burst). Touches `theme.rs`, `cable.rs`, `wiring.rs` + an `AtomicF32`
   port-level feed from the audio thread.
-- [ ] **SID seq per-step frequency.** (Design was in
+- [x] **SID seq per-step frequency — DONE.** (Design was in
   `plans/sid-seq-legato-and-step-freq.md`, now deleted — full text in git history
   via `git log --follow`.) **Feature:** per-step frequency for the SID waveform
   sequence (16 `seq_step_freq_i` params + a `seq_freq_mask` enable bitmask, all-0
