@@ -141,6 +141,191 @@ async fn note_on_strikes_a_whole_chord_in_one_call() {
 }
 
 #[tokio::test]
+async fn pattern_placement_full_state_round_trips_and_updates() {
+    let server = build_server();
+    let created = call(
+        &server,
+        "create_pattern",
+        serde_json::json!({
+            "patterns": [{ "name": "Phrase", "length_beats": 4.0 }]
+        }),
+    )
+    .await;
+    let pattern_id = serde_json::from_str::<serde_json::Value>(&created).unwrap()["items"][0]["id"]
+        .as_u64()
+        .expect("pattern id");
+    let _ = call(
+        &server,
+        "create_track",
+        serde_json::json!({ "tracks": [{ "name": "A" }, { "name": "B" }] }),
+    )
+    .await;
+
+    let placed = call(
+        &server,
+        "place_pattern",
+        serde_json::json!({
+            "placements": [{
+                "pattern_id": pattern_id,
+                "track_id": 0,
+                "start_tick": 123,
+                "transpose_semitones": 7.0,
+                "gain": 0.5,
+                "length_ticks": 777
+            }]
+        }),
+    )
+    .await;
+    let result: serde_json::Value = serde_json::from_str(&placed).expect("placement result");
+    assert_eq!(result["succeeded"], 1, "{placed}");
+
+    let arrangement = call(&server, "list_arrangement", serde_json::json!({})).await;
+    let listed: serde_json::Value = serde_json::from_str(&arrangement).expect("arrangement");
+    assert_eq!(listed[0]["start_tick"], 123);
+    assert_eq!(listed[0]["transpose_semitones"], 7.0);
+    assert_eq!(listed[0]["gain"], 0.5);
+    assert_eq!(listed[0]["length_ticks"], 777);
+    assert_eq!(listed[0]["effective_length_ticks"], 777);
+    assert_eq!(listed[0]["end_tick"], 900);
+
+    let updated = call(
+        &server,
+        "update_placement",
+        serde_json::json!({
+            "updates": [{
+                "pattern_id": pattern_id,
+                "track_id": 0,
+                "start_tick": 123,
+                "new_track_id": 1,
+                "new_start_tick": 456,
+                "transpose_semitones": -5.0,
+                "gain": 1.25,
+                "clear_length_override": true
+            }]
+        }),
+    )
+    .await;
+    let result: serde_json::Value = serde_json::from_str(&updated).expect("update result");
+    assert_eq!(result["succeeded"], 1, "{updated}");
+
+    let arrangement = call(&server, "list_arrangement", serde_json::json!({})).await;
+    let listed: serde_json::Value = serde_json::from_str(&arrangement).expect("arrangement");
+    assert_eq!(listed[0]["track_id"], 1);
+    assert_eq!(listed[0]["start_tick"], 456);
+    assert_eq!(listed[0]["transpose_semitones"], -5.0);
+    assert_eq!(listed[0]["gain"], 1.25);
+    assert!(listed[0].get("length_ticks").is_none());
+    assert_eq!(listed[0]["effective_length_ticks"], 3840);
+}
+
+#[tokio::test]
+async fn placement_mutations_report_duplicates_and_missing_items() {
+    let server = build_server();
+    let created = call(
+        &server,
+        "create_pattern",
+        serde_json::json!({ "patterns": [{ "name": "P", "length_beats": 1.0 }] }),
+    )
+    .await;
+    let pattern_id = serde_json::from_str::<serde_json::Value>(&created).unwrap()["items"][0]["id"]
+        .as_u64()
+        .expect("pattern id");
+    let _ = call(
+        &server,
+        "create_track",
+        serde_json::json!({ "tracks": [{ "name": "T" }] }),
+    )
+    .await;
+    let placement = serde_json::json!({
+        "pattern_id": pattern_id,
+        "track_id": 0,
+        "start_beat": 0.0
+    });
+    let first = call(
+        &server,
+        "place_pattern",
+        serde_json::json!({ "placements": [placement.clone()] }),
+    )
+    .await;
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&first).unwrap()["succeeded"],
+        1
+    );
+    let duplicate = call(
+        &server,
+        "place_pattern",
+        serde_json::json!({ "placements": [placement] }),
+    )
+    .await;
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&duplicate).unwrap()["failed"],
+        1
+    );
+
+    let missing = call(
+        &server,
+        "remove_placement",
+        serde_json::json!({
+            "placements": [{ "pattern_id": pattern_id, "track_id": 0, "start_tick": 999 }]
+        }),
+    )
+    .await;
+    assert!(missing.contains("0 placements removed"), "{missing}");
+    assert!(missing.contains("placement not found"), "{missing}");
+}
+
+#[tokio::test]
+async fn set_song_accepts_complete_tick_addressed_placements() {
+    let server = build_server();
+    let response = call(
+        &server,
+        "set_song",
+        serde_json::json!({
+            "name": "Placed",
+            "patterns": [{ "name": "P", "length_beats": 2.0, "notes": [] }],
+            "tracks": [{ "name": "T" }],
+            "placements": [{
+                "pattern_index": 0,
+                "track_index": 0,
+                "start_tick": 37,
+                "transpose_semitones": 12.0,
+                "gain": 0.75,
+                "length_beats": 0.5
+            }]
+        }),
+    )
+    .await;
+    assert!(!response.starts_with("Error:"), "{response}");
+
+    let arrangement = call(&server, "list_arrangement", serde_json::json!({})).await;
+    let listed: serde_json::Value = serde_json::from_str(&arrangement).expect("arrangement");
+    assert_eq!(listed[0]["start_tick"], 37);
+    assert_eq!(listed[0]["transpose_semitones"], 12.0);
+    assert_eq!(listed[0]["gain"], 0.75);
+    assert_eq!(listed[0]["length_ticks"], 480);
+}
+
+#[tokio::test]
+async fn placement_rejects_ambiguous_position_units() {
+    let server = build_server();
+    let response = call(
+        &server,
+        "place_pattern",
+        serde_json::json!({
+            "placements": [{
+                "pattern_id": 0,
+                "track_id": 0,
+                "start_beat": 1.0,
+                "start_tick": 960
+            }]
+        }),
+    )
+    .await;
+    assert!(response.starts_with("Error:"), "{response}");
+    assert!(response.contains("exactly one"), "{response}");
+}
+
+#[tokio::test]
 async fn set_track_instrument_assigns_and_unassigns_via_null() {
     let server = build_server();
     let created = call(

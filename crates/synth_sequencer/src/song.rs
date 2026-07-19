@@ -1296,6 +1296,48 @@ impl Song {
         }
     }
 
+    /// Replace a placement while preserving its identity lookup separately
+    /// from the new track, start, and playback properties.
+    pub fn update_placement(
+        &mut self,
+        pattern_id: PatternId,
+        track_id: TrackId,
+        start: Tick,
+        replacement: PatternPlacement,
+    ) -> bool {
+        let Some(index) = self.arrangement.iter().position(|placement| {
+            placement.pattern_id == pattern_id
+                && placement.track_id == track_id
+                && placement.start == start
+        }) else {
+            return false;
+        };
+        if !self
+            .patterns
+            .iter()
+            .any(|pattern| pattern.id == replacement.pattern_id)
+            || !self
+                .tracks
+                .iter()
+                .any(|track| track.id == replacement.track_id)
+            || self
+                .arrangement
+                .iter()
+                .enumerate()
+                .any(|(other, placement)| {
+                    other != index
+                        && placement.track_id == replacement.track_id
+                        && placement.start == replacement.start
+                })
+        {
+            return false;
+        }
+        self.arrangement[index] = replacement;
+        self.arrangement.sort_by_key(|placement| placement.start);
+        self.bump_structure();
+        true
+    }
+
     /// Get all placements.
     pub fn arrangement(&self) -> &[PatternPlacement] {
         &self.arrangement

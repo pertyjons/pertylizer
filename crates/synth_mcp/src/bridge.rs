@@ -137,8 +137,27 @@ pub struct BridgePlacementData {
     pub pattern_id: u32,
     /// Track ID.
     pub track_id: u16,
-    /// Start position in beats.
-    pub start_beat: f32,
+    /// Exact start position in ticks.
+    pub start_tick: u64,
+    /// Transposition in semitones.
+    pub transpose_semitones: f32,
+    /// Linear placement gain.
+    pub gain: f32,
+    /// Optional exact placement length override in ticks.
+    pub length_ticks: Option<u32>,
+}
+
+/// Partial update to one existing arrangement placement.
+pub struct BridgePlacementUpdate {
+    pub pattern_id: u32,
+    pub track_id: u16,
+    pub start_tick: u64,
+    pub new_track_id: Option<u16>,
+    pub new_start_tick: Option<u64>,
+    pub transpose_semitones: Option<f32>,
+    pub gain: Option<f32>,
+    /// Omitted means unchanged; `Some(None)` clears the override.
+    pub length_ticks: Option<Option<u32>>,
 }
 
 /// Placement using array indices (for `set_song` where IDs don't exist yet).
@@ -147,8 +166,11 @@ pub struct BridgeSongPlacement {
     pub pattern_index: usize,
     /// Index into the tracks array.
     pub track_index: usize,
-    /// Start position in beats.
-    pub start_beat: f32,
+    /// Exact start position in ticks.
+    pub start_tick: u64,
+    pub transpose_semitones: f32,
+    pub gain: f32,
+    pub length_ticks: Option<u32>,
 }
 
 // === Bridge-level data structures for batch instrument building ===
@@ -1305,19 +1327,14 @@ pub trait SynthBridge: Send + Sync + 'static {
     // === Sequencer: Arrangement ===
 
     /// Place a pattern on a track at a given beat position.
-    fn place_pattern(
-        &self,
-        pattern_id: u32,
-        track_id: u16,
-        start_beat: f32,
-    ) -> Result<(), McpBridgeError>;
+    fn place_pattern(&self, placement: &BridgePlacementData) -> Result<(), McpBridgeError>;
 
     /// Remove a pattern placement.
     fn remove_placement(
         &self,
         pattern_id: u32,
         track_id: u16,
-        start_beat: f32,
+        start_tick: u64,
     ) -> Result<(), McpBridgeError>;
 
     /// List all pattern placements in the arrangement.
@@ -1373,6 +1390,12 @@ pub trait SynthBridge: Send + Sync + 'static {
     fn place_patterns(
         &self,
         placements: &[BridgePlacementData],
+    ) -> Result<BatchResult, McpBridgeError>;
+
+    /// Update or move multiple existing placements.
+    fn update_placements(
+        &self,
+        updates: &[BridgePlacementUpdate],
     ) -> Result<BatchResult, McpBridgeError>;
 
     /// Build a full song in one call (patterns + tracks + notes + arrangement).

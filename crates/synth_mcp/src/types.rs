@@ -1014,6 +1014,24 @@ pub struct PlacementInfo {
     pub track_id: u16,
     /// Start position in beats.
     pub start_beat: f32,
+    /// Exact start position in ticks.
+    pub start_tick: u64,
+    /// Placement transposition in semitones.
+    pub transpose_semitones: f32,
+    /// Linear placement gain.
+    pub gain: f32,
+    /// Optional placement length override in beats.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub length_beats: Option<f32>,
+    /// Optional exact placement length override in ticks.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub length_ticks: Option<u32>,
+    /// Effective length after applying the optional override.
+    pub effective_length_beats: f32,
+    /// Exact effective length in ticks.
+    pub effective_length_ticks: u32,
+    /// Exact exclusive end position in ticks.
+    pub end_tick: u64,
 }
 
 // === Automation types ===

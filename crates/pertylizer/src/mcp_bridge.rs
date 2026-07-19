@@ -17,7 +17,7 @@ use synth_mcp::bridge::SynthBridge;
 use synth_mcp::bridge::{
     BridgeAutomationPointData, BridgeExpression, BridgeGlide, BridgeInstrumentDef, BridgeNoteData,
     BridgeNoteUpdate, BridgeParamSet, BridgeParamValue, BridgePatternData, BridgePlacementData,
-    BridgeSongPlacement, BridgeTrackData,
+    BridgePlacementUpdate, BridgeSongPlacement, BridgeTrackData,
 };
 use synth_mcp::error::McpBridgeError;
 use synth_mcp::types::{
@@ -2802,27 +2802,38 @@ impl SynthBridge for AppSynthBridge {
 
     // === Sequencer: Arrangement ===
 
-    fn place_pattern(
-        &self,
-        pattern_id: u32,
-        track_id: u16,
-        start_beat: f32,
-    ) -> Result<(), McpBridgeError> {
-        let pid = synth_sequencer::PatternId::new(pattern_id);
-        let tid = synth_sequencer::TrackId(track_id);
-        let tick = synth_sequencer::Tick(u64::from(beats_to_ticks(start_beat)));
+    fn place_pattern(&self, data: &BridgePlacementData) -> Result<(), McpBridgeError> {
+        let pid = synth_sequencer::PatternId::new(data.pattern_id);
+        let tid = synth_sequencer::TrackId(data.track_id);
+        let tick = synth_sequencer::Tick(data.start_tick);
 
         let placement_end = {
             let mut song = self.shared.song.write();
             let pattern_length = song
                 .pattern(pid)
-                .ok_or(McpBridgeError::PatternNotFound(pattern_id))?
+                .ok_or(McpBridgeError::PatternNotFound(data.pattern_id))?
                 .length;
             if song.track(tid).is_none() {
-                return Err(McpBridgeError::TrackNotFound(track_id));
+                return Err(McpBridgeError::TrackNotFound(data.track_id));
             }
-            song.place_pattern(pid, tid, tick);
-            synth_sequencer::PatternPlacement::new(pid, tid, tick).end(pattern_length)
+            if song
+                .arrangement()
+                .iter()
+                .any(|placement| placement.track_id == tid && placement.start == tick)
+            {
+                return Err(McpBridgeError::Other(format!(
+                    "placement already exists on track {} at tick {}",
+                    data.track_id, data.start_tick
+                )));
+            }
+            let placement = placement_from_bridge(data);
+            let placement_end = placement.end(pattern_length);
+            if !song.insert_placement(placement) {
+                return Err(McpBridgeError::Other(
+                    "placement could not be inserted".to_string(),
+                ));
+            }
+            placement_end
         };
 
         self.auto_extend_transport_loop(placement_end);
@@ -2833,14 +2844,20 @@ impl SynthBridge for AppSynthBridge {
         &self,
         pattern_id: u32,
         track_id: u16,
-        start_beat: f32,
+        start_tick: u64,
     ) -> Result<(), McpBridgeError> {
         let mut song = self.shared.song.write();
         let pid = synth_sequencer::PatternId::new(pattern_id);
         let tid = synth_sequencer::TrackId(track_id);
-        let tick = synth_sequencer::Tick(u64::from(beats_to_ticks(start_beat)));
-        song.remove_placement(pid, tid, tick);
-        Ok(())
+        let tick = synth_sequencer::Tick(start_tick);
+        if song.remove_placement(pid, tid, tick) {
+            Ok(())
+        } else {
+            Err(McpBridgeError::Other(format!(
+                "placement not found: pattern {pattern_id}, track {track_id}, tick {}",
+                tick.0
+            )))
+        }
     }
 
     fn list_arrangement(&self) -> Result<Vec<PlacementInfo>, McpBridgeError> {
@@ -2848,10 +2865,22 @@ impl SynthBridge for AppSynthBridge {
         Ok(song
             .arrangement()
             .iter()
-            .map(|p| PlacementInfo {
-                pattern_id: p.pattern_id.0,
-                track_id: p.track_id.0,
-                start_beat: ticks_to_beats_u64(p.start.0),
+            .filter_map(|p| {
+                let pattern_length = song.pattern(p.pattern_id)?.length;
+                let effective_length = p.effective_length(pattern_length);
+                Some(PlacementInfo {
+                    pattern_id: p.pattern_id.0,
+                    track_id: p.track_id.0,
+                    start_beat: ticks_to_beats_u64(p.start.0),
+                    start_tick: p.start.0,
+                    transpose_semitones: p.transpose.as_f32(),
+                    gain: p.gain.as_f32(),
+                    length_beats: p.length_override.map(|length| ticks_to_beats(length.0)),
+                    length_ticks: p.length_override.map(|length| length.0),
+                    effective_length_beats: ticks_to_beats(effective_length.0),
+                    effective_length_ticks: effective_length.0,
+                    end_tick: p.end(pattern_length).0,
+                })
             })
             .collect())
     }
@@ -3120,7 +3149,7 @@ impl SynthBridge for AppSynthBridge {
             for (i, p) in placements.iter().enumerate() {
                 let pid = synth_sequencer::PatternId::new(p.pattern_id);
                 let tid = synth_sequencer::TrackId(p.track_id);
-                let tick = synth_sequencer::Tick(u64::from(beats_to_ticks(p.start_beat)));
+                let tick = synth_sequencer::Tick(p.start_tick);
 
                 let Some(pattern_length) = song.pattern(pid).map(|p| p.length) else {
                     items.push(BatchItemResult {
@@ -3141,9 +3170,33 @@ impl SynthBridge for AppSynthBridge {
                     continue;
                 }
 
-                song.place_pattern(pid, tid, tick);
-                let placement_end =
-                    synth_sequencer::PatternPlacement::new(pid, tid, tick).end(pattern_length);
+                if song
+                    .arrangement()
+                    .iter()
+                    .any(|placement| placement.track_id == tid && placement.start == tick)
+                {
+                    items.push(BatchItemResult {
+                        index: i,
+                        success: false,
+                        id: None,
+                        error: Some(format!(
+                            "placement already exists on track {} at tick {}",
+                            p.track_id, p.start_tick
+                        )),
+                    });
+                    continue;
+                }
+                let placement = placement_from_bridge(p);
+                let placement_end = placement.end(pattern_length);
+                if !song.insert_placement(placement) {
+                    items.push(BatchItemResult {
+                        index: i,
+                        success: false,
+                        id: None,
+                        error: Some("placement could not be inserted".to_string()),
+                    });
+                    continue;
+                }
                 if placement_end.0 > max_end.0 {
                     max_end = placement_end;
                 }
@@ -3165,6 +3218,89 @@ impl SynthBridge for AppSynthBridge {
             total: placements.len(),
             succeeded,
             failed: placements.len() - succeeded,
+            items,
+        })
+    }
+
+    fn update_placements(
+        &self,
+        updates: &[BridgePlacementUpdate],
+    ) -> Result<BatchResult, McpBridgeError> {
+        let mut song = self.shared.song.write();
+        let mut items = Vec::with_capacity(updates.len());
+        let mut succeeded = 0usize;
+        let mut max_end = synth_sequencer::Tick::ZERO;
+
+        for (index, update) in updates.iter().enumerate() {
+            let pattern_id = synth_sequencer::PatternId::new(update.pattern_id);
+            let track_id = synth_sequencer::TrackId(update.track_id);
+            let start = synth_sequencer::Tick(update.start_tick);
+            let Some(mut replacement) = song
+                .arrangement()
+                .iter()
+                .find(|placement| {
+                    placement.pattern_id == pattern_id
+                        && placement.track_id == track_id
+                        && placement.start == start
+                })
+                .cloned()
+            else {
+                items.push(BatchItemResult {
+                    index,
+                    success: false,
+                    id: None,
+                    error: Some("placement not found".to_string()),
+                });
+                continue;
+            };
+            if let Some(new_track_id) = update.new_track_id {
+                replacement.track_id = synth_sequencer::TrackId(new_track_id);
+            }
+            if let Some(new_start_tick) = update.new_start_tick {
+                replacement.start = synth_sequencer::Tick(new_start_tick);
+            }
+            if let Some(transpose) = update.transpose_semitones {
+                replacement.transpose = synth_core::Semitones::new(transpose);
+            }
+            if let Some(gain) = update.gain {
+                replacement.gain = synth_core::Gain::new(gain);
+            }
+            if let Some(length_ticks) = update.length_ticks {
+                replacement.length_override = length_ticks.map(synth_sequencer::Duration);
+            }
+            let replacement_end = song
+                .pattern(replacement.pattern_id)
+                .map(|pattern| replacement.end(pattern.length));
+            if song.update_placement(pattern_id, track_id, start, replacement) {
+                succeeded += 1;
+                if let Some(end) = replacement_end
+                    && end.0 > max_end.0
+                {
+                    max_end = end;
+                }
+                items.push(BatchItemResult {
+                    index,
+                    success: true,
+                    id: None,
+                    error: None,
+                });
+            } else {
+                items.push(BatchItemResult {
+                    index,
+                    success: false,
+                    id: None,
+                    error: Some("invalid target track or occupied target position".to_string()),
+                });
+            }
+        }
+        drop(song);
+        if succeeded > 0 {
+            self.auto_extend_transport_loop(max_end);
+        }
+        Ok(BatchResult {
+            total: updates.len(),
+            succeeded,
+            failed: updates.len() - succeeded,
             items,
         })
     }
@@ -3252,9 +3388,27 @@ impl SynthBridge for AppSynthBridge {
 
             let pid = synth_sequencer::PatternId::new(pattern_ids[pl.pattern_index]);
             let tid = synth_sequencer::TrackId(track_ids[pl.track_index]);
-            let tick = synth_sequencer::Tick(u64::from(beats_to_ticks(pl.start_beat)));
-            song.place_pattern(pid, tid, tick);
-            placements_created += 1;
+            let data = BridgePlacementData {
+                pattern_id: pid.0,
+                track_id: tid.0,
+                start_tick: pl.start_tick,
+                transpose_semitones: pl.transpose_semitones,
+                gain: pl.gain,
+                length_ticks: pl.length_ticks,
+            };
+            let placement = placement_from_bridge(&data);
+            if song.arrangement().iter().any(|existing| {
+                existing.track_id == placement.track_id && existing.start == placement.start
+            }) {
+                errors.push(format!(
+                    "placement[{i}]: target track {} tick {} is occupied",
+                    tid.0, pl.start_tick
+                ));
+            } else if song.insert_placement(placement) {
+                placements_created += 1;
+            } else {
+                errors.push(format!("placement[{i}]: placement could not be inserted"));
+            }
         }
 
         // Also update engine transport tempo
@@ -7035,6 +7189,18 @@ fn insert_note_into_pattern(pattern: &mut synth_sequencer::Pattern, n: &BridgeNo
 #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
 fn beats_to_ticks(beats: f32) -> u32 {
     (beats * synth_sequencer::TICKS_PER_QUARTER as f32).round() as u32
+}
+
+fn placement_from_bridge(data: &BridgePlacementData) -> synth_sequencer::PatternPlacement {
+    let mut placement = synth_sequencer::PatternPlacement::new(
+        synth_sequencer::PatternId::new(data.pattern_id),
+        synth_sequencer::TrackId(data.track_id),
+        synth_sequencer::Tick(data.start_tick),
+    )
+    .with_transpose(synth_core::Semitones::new(data.transpose_semitones))
+    .with_gain(synth_core::Gain::new(data.gain));
+    placement.length_override = data.length_ticks.map(synth_sequencer::Duration);
+    placement
 }
 
 /// Convert ticks (u32) to beats (float).

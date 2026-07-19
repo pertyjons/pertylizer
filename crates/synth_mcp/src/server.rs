@@ -44,6 +44,65 @@ fn to_json<T: serde::Serialize>(value: &T) -> String {
     serde_json::to_string_pretty(value).unwrap_or_else(|e| format!("Serialization error: {e}"))
 }
 
+fn arrangement_tick(
+    beat: Option<f32>,
+    tick: Option<u64>,
+    field: &str,
+) -> Result<u64, McpBridgeError> {
+    match (beat, tick) {
+        (Some(_), Some(_)) | (None, None) => Err(McpBridgeError::Other(format!(
+            "set exactly one of {field}_beat or {field}_tick"
+        ))),
+        (None, Some(tick)) => Ok(tick),
+        (Some(beat), None) => {
+            validate_range("arrangement beat", beat, 0.0, 9999.0)?;
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            Ok((beat * synth_sequencer::TICKS_PER_QUARTER as f32).round() as u64)
+        }
+    }
+}
+
+fn arrangement_length(
+    beats: Option<f32>,
+    ticks: Option<u32>,
+) -> Result<Option<u32>, McpBridgeError> {
+    match (beats, ticks) {
+        (Some(_), Some(_)) => Err(McpBridgeError::Other(
+            "set at most one of length_beats or length_ticks".to_string(),
+        )),
+        (None, None) => Ok(None),
+        (None, Some(0)) => Err(McpBridgeError::Other(
+            "length_ticks must be greater than zero".to_string(),
+        )),
+        (None, Some(ticks)) => Ok(Some(ticks)),
+        (Some(beats), None) => {
+            validate_range("length_beats", beats, 0.001, 1024.0)?;
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            Ok(Some(
+                (beats * synth_sequencer::TICKS_PER_QUARTER as f32).round() as u32,
+            ))
+        }
+    }
+}
+
+fn placement_to_bridge(
+    placement: PlacementInput,
+) -> Result<crate::bridge::BridgePlacementData, McpBridgeError> {
+    let start_tick = arrangement_tick(placement.start_beat, placement.start_tick, "start")?;
+    let transpose = placement.transpose_semitones.unwrap_or(0.0);
+    validate_range("transpose_semitones", transpose, -127.0, 127.0)?;
+    let gain = placement.gain.unwrap_or(1.0);
+    validate_range("gain", gain, 0.0, 2.0)?;
+    Ok(crate::bridge::BridgePlacementData {
+        pattern_id: placement.pattern_id,
+        track_id: placement.track_id,
+        start_tick,
+        transpose_semitones: transpose,
+        gain,
+        length_ticks: arrangement_length(placement.length_beats, placement.length_ticks)?,
+    })
+}
+
 /// Extract a human-readable message from a caught panic payload
 /// (`Box<dyn Any + Send>`), covering the common `&str` / `String` cases.
 fn panic_message(payload: &(dyn std::any::Any + Send)) -> String {
@@ -2376,9 +2435,9 @@ pub struct RemoveNotesParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct RemovePlacementsParam {
     #[schemars(
-        description = "Placements to remove (one or many), each identified by pattern_id, track_id, and start_beat"
+        description = "Placements to remove (one or many), each identified by pattern_id, track_id, and exactly one of start_beat/start_tick"
     )]
-    pub placements: Vec<PlacementInput>,
+    pub placements: Vec<PlacementLocatorInput>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -3640,8 +3699,90 @@ pub struct PlacementInput {
     pub pattern_id: u32,
     #[schemars(description = "Track ID to place on")]
     pub track_id: u16,
-    #[schemars(description = "Start position in beats")]
-    pub start_beat: f32,
+    #[schemars(description = "Start position in beats; set exactly one of start_beat/start_tick")]
+    pub start_beat: Option<f32>,
+    #[schemars(
+        description = "Exact start position in ticks; set exactly one of start_beat/start_tick"
+    )]
+    pub start_tick: Option<u64>,
+    #[serde(default)]
+    #[schemars(description = "Placement transpose in semitones (default 0)")]
+    pub transpose_semitones: Option<f32>,
+    #[serde(default)]
+    #[schemars(description = "Linear placement gain (default 1, range 0..2)")]
+    pub gain: Option<f32>,
+    #[serde(default)]
+    #[schemars(
+        description = "Optional placement length override in beats; mutually exclusive with length_ticks"
+    )]
+    pub length_beats: Option<f32>,
+    #[serde(default)]
+    #[schemars(
+        description = "Optional exact placement length override in ticks; mutually exclusive with length_beats"
+    )]
+    pub length_ticks: Option<u32>,
+}
+
+/// The exact identity of an existing pattern placement.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct PlacementLocatorInput {
+    #[schemars(description = "Pattern ID of the existing placement")]
+    pub pattern_id: u32,
+    #[schemars(description = "Track ID of the existing placement")]
+    pub track_id: u16,
+    #[schemars(description = "Start position in beats; set exactly one of start_beat/start_tick")]
+    pub start_beat: Option<f32>,
+    #[schemars(
+        description = "Exact start position in ticks; set exactly one of start_beat/start_tick"
+    )]
+    pub start_tick: Option<u64>,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct PlacementUpdateInput {
+    #[schemars(description = "Pattern ID of the existing placement")]
+    pub pattern_id: u32,
+    #[schemars(description = "Track ID of the existing placement")]
+    pub track_id: u16,
+    #[schemars(
+        description = "Existing start position in beats; set exactly one of start_beat/start_tick"
+    )]
+    pub start_beat: Option<f32>,
+    #[schemars(
+        description = "Exact existing start position in ticks; set exactly one of start_beat/start_tick"
+    )]
+    pub start_tick: Option<u64>,
+    #[schemars(description = "Move the placement to this track ID")]
+    pub new_track_id: Option<u16>,
+    #[schemars(
+        description = "Move the placement to this beat; mutually exclusive with new_start_tick"
+    )]
+    pub new_start_beat: Option<f32>,
+    #[schemars(
+        description = "Move the placement to this exact tick; mutually exclusive with new_start_beat"
+    )]
+    pub new_start_tick: Option<u64>,
+    #[schemars(description = "Replace the placement transpose in semitones (range -127..127)")]
+    pub transpose_semitones: Option<f32>,
+    #[schemars(description = "Replace the linear placement gain (range 0..2)")]
+    pub gain: Option<f32>,
+    #[schemars(
+        description = "Replace the length override in beats; mutually exclusive with length_ticks and clear_length_override"
+    )]
+    pub length_beats: Option<f32>,
+    #[schemars(
+        description = "Replace the exact length override in ticks; mutually exclusive with length_beats and clear_length_override"
+    )]
+    pub length_ticks: Option<u32>,
+    #[serde(default)]
+    #[schemars(description = "Remove the existing length override")]
+    pub clear_length_override: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct UpdatePlacementsParam {
+    #[schemars(description = "Array of partial placement updates")]
+    pub updates: Vec<PlacementUpdateInput>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -3683,8 +3824,12 @@ pub struct SongPlacementDef {
         description = "Index into the tracks array (0-based, refers to the track at this position)"
     )]
     pub track_index: usize,
-    #[schemars(description = "Start position in beats")]
-    pub start_beat: f32,
+    pub start_beat: Option<f32>,
+    pub start_tick: Option<u64>,
+    pub transpose_semitones: Option<f32>,
+    pub gain: Option<f32>,
+    pub length_beats: Option<f32>,
+    pub length_ticks: Option<u32>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -4489,9 +4634,10 @@ impl SynthMcpServer {
             "reorder_master_effect" => reorder_master_effect(ReorderMasterEffectParam),
 
             // Arrangement
+            "place_pattern" => place_pattern(PlacePatternsParam),
+            "update_placement" => update_placement(UpdatePlacementsParam),
             "remove_placement" => remove_placement(RemovePlacementsParam),
             "list_arrangement" => list_arrangement(NoParams),
-            "place_pattern" => place_pattern(PlacePatternsParam),
 
             // Automation
             "add_automation_points" => add_automation_points(AddAutomationPointsParam),
@@ -7306,20 +7452,27 @@ impl SynthMcpServer {
     // === Sequencer: Arrangement ===
 
     #[tool(
-        description = "Remove one or more pattern placements from the arrangement. Each placement is identified by its pattern_id, track_id, and start_beat."
+        description = "Remove one or more pattern placements from the arrangement. Each placement is identified exactly by pattern_id, track_id, and either start_beat or start_tick."
     )]
     async fn remove_placement(&self, params: Parameters<RemovePlacementsParam>) -> String {
         let mut ok_count = 0usize;
         let mut errors = Vec::new();
         for pl in &params.0.placements {
+            let start_tick = match arrangement_tick(pl.start_beat, pl.start_tick, "start") {
+                Ok(tick) => tick,
+                Err(error) => {
+                    errors.push(error.to_string());
+                    continue;
+                }
+            };
             match self
                 .bridge
-                .remove_placement(pl.pattern_id, pl.track_id, pl.start_beat)
+                .remove_placement(pl.pattern_id, pl.track_id, start_tick)
             {
                 Ok(()) => ok_count += 1,
                 Err(e) => errors.push(format!(
                     "pattern {} on track {} at {}: {e}",
-                    pl.pattern_id, pl.track_id, pl.start_beat
+                    pl.pattern_id, pl.track_id, start_tick
                 )),
             }
         }
@@ -7327,7 +7480,7 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "List all pattern placements in the song arrangement. Each placement maps a pattern to a track at a beat position."
+        description = "List complete pattern-placement state, including exact ticks, transpose, gain, optional length override, effective length, and end tick."
     )]
     async fn list_arrangement(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.list_arrangement() {
@@ -8439,27 +8592,85 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Place one or more patterns on tracks in the arrangement in one call. Each placement specifies pattern_id, track_id, and start_beat."
+        description = "Place one or more patterns with complete PatternPlacement properties. Address positions and optional lengths in beats or exact ticks; transpose_semitones defaults to 0 and gain to 1."
     )]
     async fn place_pattern(&self, params: Parameters<PlacePatternsParam>) -> String {
-        for p in &params.0.placements {
-            if let Err(e) = validate_range("start_beat", p.start_beat, 0.0, 9999.0) {
-                return validation_err(e);
-            }
-        }
-        let placements: Vec<_> = params
+        let placements = match params
             .0
             .placements
             .into_iter()
-            .map(|p| crate::bridge::BridgePlacementData {
-                pattern_id: p.pattern_id,
-                track_id: p.track_id,
-                start_beat: p.start_beat,
-            })
-            .collect();
+            .map(placement_to_bridge)
+            .collect::<Result<Vec<_>, _>>()
+        {
+            Ok(placements) => placements,
+            Err(error) => return validation_err(error),
+        };
         match self.bridge.place_patterns(&placements) {
             Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Update or move one or more existing pattern placements. Identify each by pattern_id, track_id and start_beat/start_tick; optionally set a new track/start, transpose, gain, or length. Set clear_length_override to restore the pattern length."
+    )]
+    async fn update_placement(&self, params: Parameters<UpdatePlacementsParam>) -> String {
+        let mut updates = Vec::with_capacity(params.0.updates.len());
+        for update in params.0.updates {
+            let start_tick = match arrangement_tick(update.start_beat, update.start_tick, "start") {
+                Ok(tick) => tick,
+                Err(error) => return validation_err(error),
+            };
+            let new_start_tick = if update.new_start_beat.is_some()
+                || update.new_start_tick.is_some()
+            {
+                match arrangement_tick(update.new_start_beat, update.new_start_tick, "new_start") {
+                    Ok(tick) => Some(tick),
+                    Err(error) => return validation_err(error),
+                }
+            } else {
+                None
+            };
+            if let Some(transpose) = update.transpose_semitones
+                && let Err(error) = validate_range("transpose_semitones", transpose, -127.0, 127.0)
+            {
+                return validation_err(error);
+            }
+            if let Some(gain) = update.gain
+                && let Err(error) = validate_range("gain", gain, 0.0, 2.0)
+            {
+                return validation_err(error);
+            }
+            if update.clear_length_override
+                && (update.length_beats.is_some() || update.length_ticks.is_some())
+            {
+                return validation_err(McpBridgeError::Other(
+                    "clear_length_override conflicts with length_beats/length_ticks".to_string(),
+                ));
+            }
+            let length_ticks = if update.clear_length_override {
+                Some(None)
+            } else {
+                match arrangement_length(update.length_beats, update.length_ticks) {
+                    Ok(Some(length)) => Some(Some(length)),
+                    Ok(None) => None,
+                    Err(error) => return validation_err(error),
+                }
+            };
+            updates.push(crate::bridge::BridgePlacementUpdate {
+                pattern_id: update.pattern_id,
+                track_id: update.track_id,
+                start_tick,
+                new_track_id: update.new_track_id,
+                new_start_tick,
+                transpose_semitones: update.transpose_semitones,
+                gain: update.gain,
+                length_ticks,
+            });
+        }
+        match self.bridge.update_placements(&updates) {
+            Ok(result) => to_json(&result),
+            Err(error) => format!("Error: {error}"),
         }
     }
 
@@ -8500,7 +8711,7 @@ impl SynthMcpServer {
                 return validation_err(McpBridgeError::Other(format!("track[{i}]: {e}")));
             }
         }
-        // Validate placement indices and start_beat
+        // Validate placement indices and complete placement properties.
         for (i, pl) in p.placements.iter().enumerate() {
             if pl.pattern_index >= p.patterns.len() {
                 return validation_err(McpBridgeError::IndexOutOfBounds {
@@ -8516,8 +8727,21 @@ impl SynthMcpServer {
                     count: p.tracks.len(),
                 });
             }
-            if let Err(e) = validate_range("start_beat", pl.start_beat, 0.0, 9999.0) {
-                return validation_err(McpBridgeError::Other(format!("placement[{i}]: {e}")));
+            if let Err(error) = arrangement_tick(pl.start_beat, pl.start_tick, "start") {
+                return validation_err(McpBridgeError::Other(format!("placement[{i}]: {error}")));
+            }
+            if let Some(transpose) = pl.transpose_semitones
+                && let Err(error) = validate_range("transpose_semitones", transpose, -127.0, 127.0)
+            {
+                return validation_err(McpBridgeError::Other(format!("placement[{i}]: {error}")));
+            }
+            if let Some(gain) = pl.gain
+                && let Err(error) = validate_range("gain", gain, 0.0, 2.0)
+            {
+                return validation_err(McpBridgeError::Other(format!("placement[{i}]: {error}")));
+            }
+            if let Err(error) = arrangement_length(pl.length_beats, pl.length_ticks) {
+                return validation_err(McpBridgeError::Other(format!("placement[{i}]: {error}")));
             }
         }
         let patterns: Vec<_> = p
@@ -8538,15 +8762,25 @@ impl SynthMcpServer {
                 instrument_id: t.instrument_id,
             })
             .collect();
-        let placements: Vec<_> = p
-            .placements
-            .into_iter()
-            .map(|pl| crate::bridge::BridgeSongPlacement {
+        let mut placements = Vec::with_capacity(p.placements.len());
+        for pl in p.placements {
+            let start_tick = match arrangement_tick(pl.start_beat, pl.start_tick, "start") {
+                Ok(tick) => tick,
+                Err(error) => return validation_err(error),
+            };
+            let length_ticks = match arrangement_length(pl.length_beats, pl.length_ticks) {
+                Ok(length) => length,
+                Err(error) => return validation_err(error),
+            };
+            placements.push(crate::bridge::BridgeSongPlacement {
                 pattern_index: pl.pattern_index,
                 track_index: pl.track_index,
-                start_beat: pl.start_beat,
-            })
-            .collect();
+                start_tick,
+                transpose_semitones: pl.transpose_semitones.unwrap_or(0.0),
+                gain: pl.gain.unwrap_or(1.0),
+                length_ticks,
+            });
+        }
         let tempo = p.tempo.unwrap_or(120.0);
         if let Err(e) = validate_range("tempo", tempo, 20.0, 999.0) {
             return format!("Error: {e}");

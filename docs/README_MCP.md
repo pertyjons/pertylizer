@@ -249,7 +249,7 @@ optional fields beyond pitch/start/duration/velocity:
 | `list_tracks`, `create_track` | Track lifecycle (`create_track` takes one or many) |
 | `rename_track`, `delete_track`, `set_track_instrument` | (each takes one or many; `set_track_instrument` null = unassign) |
 | `set_track_mixer` | Volume / pan / mute / solo per track, array of updates |
-| `list_arrangement`, `place_pattern`, `remove_placement` | Song arrangement (`place_pattern` takes one or many) |
+| `list_arrangement`, `place_pattern`, `update_placement`, `remove_placement` | Complete pattern placements: beat/tick position, transpose, gain, and optional length (`place_pattern`/`update_placement` take one or many) |
 
 ### Instrument Mixing
 
