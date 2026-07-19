@@ -13,92 +13,12 @@ as mono); (3) MCP batch `set_parameter` now accepts string/address values so `sl
 set to `spp-1.x` + description/discovery clarified. Design verdict (6) recorded below (keep ER
 unified); ergonomics note (4) still open. Details per item below.
 
-- [x] **1. Smooth the early-reflection path per sample (fixes the audible stepping).** When
-  the source moves, the orbit sounds *stepped / grainy* — root cause found in
-  `crates/synth_modules/src/spatial_panner/early_reflections.rs`: `update_geometry()` runs
-  once per block and writes all six taps' `delay_samples` + `gain_left/right` **directly**
-  (~lines 163–167), block-constant, so every block the 6 reflection delays and gains
-  **jump**. The direct binaural path (`spatializer.rs`) already smooths its ILD gains +
-  head-shadow per sample (`OnePoleSmooth`) and interpolates the ITD, so it glides — the ER
-  path never got the same treatment. Fix: ramp each tap gain per sample toward its target (a
-  `OnePoleSmooth` per tap) and crossfade / glide the tap-delay read instead of snapping it.
-  Then ER Level can go back up (it's usable now only because I dropped it to 0.12 to mask the
-  steps) with *both* full room tone and smooth movement. Well-scoped, on
-  `feat/awe-to-spatial-panner` before merge.
-  - **Decision (2026-07-12): always-on, no checkbox.** Zipper/stepping is never musically
-    wanted, and the direct path (`spatializer.rs`) already smooths unconditionally — ER should
-    match. Make the smoother **self-disabling** (skip when the target equals the current value)
-    so a *static* placement pays ≈0 CPU without a user toggle. If anything is ever exposed it is
-    a smoothing/Doppler **time**, not an on/off.
-  - **SHIPPED on branch `feat/spatial-panner-er-smoothing` (2026-07-12), gate green; pending
-    merge + in-app eyeball.** Per-tap `OnePoleSmooth` on delay + gains, snapping on the first
-    update after a reset (no note-on swoop). Live-debugging this *also* surfaced and fixed two
-    more direct-path artifacts at the median plane: (a) the head-shadow ear-swap was
-    discontinuous (`0.3`/`0.8` `|angle|` amount) → rescaled to `MAX_SHADOW · |sin angle|` so it
-    vanishes dead ahead/behind; (b) **the actual audible "boundary in the middle"** was a
-    delay-line seam click on the sub-sample ITD read — see #8. Regression tests:
-    `moving_source_gain_glides_not_steps`, `head_shadow_vanishes_on_the_median_plane`,
-    `no_click_at_centre_crossing`.
-
-- [x] **2. Add `x_cv`/`y_cv`/`z_cv` control-input ports to `spp`.** DONE. Three `control`
-  inputs, sampled once at block start (matching the control-rate geometry recompute — the
-  per-sample smoothers in both DSP halves glide between block updates so motion stays smooth),
-  summed onto the base + mod-matrix offset per axis and clamped to `[-1, 1]`. Now an LFO /
-  Script (`scr`) / AudioScript / Envelope **cable** can draw the trajectory directly ("script
-  draws the orbit, `spp` renders it"), not only a Mod Matrix slot. Added a compile-time
-  `PortName::Z_CV` constant (`x_cv`/`y_cv` already existed) — interning in `process()` takes a
-  write lock, forbidden on the audio thread. Test `x_cv_input_shifts_stereo_balance`.
-  - *Optional secondary CV:* `direct_level_cv` / `er_level_cv` (duck/swell room vs direct
-    with an envelope). Lower value — add only if wanted.
-  - *Considered and rejected (don't re-litigate):* **stereo input** — mono-in is correct for
-    a point-source spatializer; a stereo source has no single position, downmix first.
-    **Split `direct`/`er` outputs** (route reflections to their own reverb bus) — nice but
-    +2 ports and complexity; defer until a patch needs it. **CV on
-    absorption/diffusion/air** — room character rarely needs live modulation; the params
-    suffice.
-
-- [x] **3. MCP surface misrepresents the Mod Matrix (the GUI is fine).** DONE. Two real gaps
-  fixed; the readback was already present.
-  - **Write path (the real gap):** the batch `set_parameter` tool carried a plain `f32` value, so
-    a Mod Matrix `slot_N_dest`/`slot_N_source` could only be a legacy `ModDestination`/`ModSource`
-    enum **index** (no `spp`). Upgraded `ParamSetInput.value` (and `BridgeParamSet.value`) from
-    `f32` to `ParamValueInput`/`BridgeParamValue` (`Number|Bool|Choice`, `untagged` — numeric
-    calls stay byte-compatible), and routed the batch `set_parameters` through the **single**
-    `set_parameter` bridge method, which already parses a full `DestAddr`/`SrcAddr` from a string.
-    Now `set_parameter mmx-1 slot_1_dest "spp-1.x"` works — and, as a bonus, any choice param
-    (e.g. a waveform) is settable by name, not only by numeric index. Test
-    `set_parameters_sets_address_based_mod_matrix_destination` (E2E through the bridge; the
-    routing reads back as `spp-1.x`).
-  - **Discovery/misrepresentation:** `get_module_info`'s `slot_N_source`/`slot_N_dest`
-    descriptions now state they accept a **full address string** (`"spp-1.x"`, `"lfo-1.out"`, a
-    macro id, a legacy id, or `"none"`), that the listed choices are only the common legacy
-    shortcuts (not exhaustive), and point at `get_instrument_automation_targets` (targets) +
-    `get_mod_matrix_routings` (readback).
-  - **Readback already existed:** `get_mod_matrix_routings` returns the source/destination as
-    address strings (`to_address_string()`), and the address-string set path in the *single*
-    `set_parameter` bridge method was already there — only the *batch tool* couldn't reach it.
-  - *Remaining nicety (not built):* a dedicated tool that enumerates valid mod-matrix source/dest
-    addresses in `spp-1.x` form (dests are already discoverable via
-    `get_instrument_automation_targets`; sources follow the `<module>-<n>.<port>` / macro
-    convention). Low value — fold into §6.6 if a client needs it.
-
 - [ ] **4. (Minor, ergonomics) `note_on`/`note_off` can't target an instrument.** They route
   only by MIDI channel, and a freshly built instrument silently gets a *different* channel —
   so `note_on` (default ch 1) hit the wrong (silent) instrument during the live test and
   produced confusing silence. Add an optional `instrument_id` to `note_on`/`note_off` (like
   `preview_note` already has), or return the assigned channel from
   `build_instrument`/`create_instrument`.
-
-- [x] **5. Add a `distance` param + `distance_cv` input (radial fly-by control).** DONE.
-  **Decision: kept `x`/`y`/`z` cartesian; `distance` is a `[0, 1]` radial scale on the offset
-  vector** (default 1.0 = full offset = the previous behaviour, 0 = collapsed onto the listener)
-  — the simplest, non-breaking option. Because it just scales the computed source position, the
-  existing spatializer + ISM geometry deliver **Doppler** (interpolated delay lines),
-  **inverse-distance level** (ISM 1/d tap gains + ILD), and **air-absorption HF rolloff** for
-  free as the source moves. A `distance_cv` control input sums onto it (clamped `[0, 1]`), so an
-  LFO/Envelope swoops the source toward/away. `SpatialPannerParam::Distance(NormalizedValue)`;
-  `PortName::DISTANCE_CV` (id 50). Test `distance_scales_offset_toward_centre`. Pairs with the
-  `x_cv`/`y_cv`/`z_cv` ports from #2.
 
 - [ ] **6. Design question — split the early reflections into their own module?** ER is
   currently *embedded* in `spp` (two parallel DSP halves — `spatializer.rs` direct binaural +
@@ -112,44 +32,6 @@ unified); ergonomics note (4) still open. Details per item below.
   room is one shared space, and 6 delay taps × polyphony is a lot of duplication; but a shared
   send would need to carry each voice's position, which the current bus model doesn't. Record
   the decision here before merge.
-
-- [x] **7. `render_to_wav` renders scripted spatial modulation as MONO (offline ≠ live).** DONE.
-  Root cause was **not** that the offline engine skips control-scripts — `replay_module_scripts`
-  already installs mmx/`scr`/`asc` scripts offline. The offline loaders
-  (`arrangement_render::load_instrument_into_offline` and `preview::OfflineNoteSession`) replayed
-  each module parameter through a **lossy `desc_param.id.with_f32(ep.as_f32())` round-trip**. For
-  the Mod Matrix's address-carrying `SlotDestination(Option<DestAddr>)` / `SlotSource`, `as_f32()`
-  returns the **legacy `ModDestination` enum index** (0 for `spp`, which isn't in that enum) and
-  `with_f32()` rebuilds from it — so an address-based dest like `spp-1.x` was silently replaced by
-  a legacy slot. The script was installed but routed to nothing → `spp` stayed centred → mono. Fix:
-  send the snapshot's **full typed `Param`** (`*ep`) in both offline loaders, matching the live/GUI
-  load path (which already uses `ParamValue::to_param`, address-preserving). Regression test
-  `offline_render_preserves_address_based_mod_matrix_destination` (renders `osc → spp → out` with a
-  Mod Matrix slot → `spp-1.x`; without the fix L≡R exactly, with it the source pans right). This is
-  a **general** offline fix for *any* address-based mod-matrix routing (any 2nd filter, any module
-  the legacy enum lacks), not just `spp` — folds in the §6.6 offline-vs-live gap.
-
-- [x] **8. `BufferIndex::read_interpolated` blends across the write seam for sub-sample delays.**
-  It reads `buffer[idx0]`/`buffer[idx0+1]` with `idx1` walking *toward* `write_pos`; since
-  `write()` advances **after** writing, a delay `d < 1` puts `idx1` on the wrap seam and blends
-  the newest sample with the **oldest** (a full buffer away → a different phase) → a click. This
-  was the audible `spp` centre-crossing boundary (ITD → 0 at the median plane).
-  - **DONE — dedicated seam-safe method, not a global convention change.** The originally-noted
-    "proper fix" of `read_pos = write_pos − 1 − d` on the *existing* method would silently shift
-    **every** delay effect (chorus/flanger/FDN reverb/delay) by one sample — the cursor
-    convention (integer `d` = exactly `d` samples) is *correct* for the usual read-before-write
-    callers; only the write-**then**-read pattern (spatializer's sub-sample ITD) needs `d = 0` =
-    newest. So the fix adds a parallel `read_interpolated_newest(delay_from_newest)` on
-    `BufferIndex` + `InterpolatedDelayLine` (anchored at `write_pos − 1`, seam-safe for all
-    `d ≥ 0`) and switches `spatializer.rs` to it, dropping the `ITD_READ_FLOOR = 1` workaround.
-    The read position is bit-identical to the old `read_interpolated(itd + 1)`, so the direct
-    path's sound is unchanged. Early reflections were left on the cursor method: their taps are
-    always clamped `≥ 1` sample, so they never straddle the seam. Primitive test
-    `read_interpolated_newest_is_seam_safe`; the existing `no_click_at_centre_crossing` guards
-    the spatializer.
-
-> Related: §6.6 already tracks other Pertylizer MCP gaps; items 3–4 and 7 generalize beyond
-> `spp` and should fold in with that section once addressed.
 
 ---
 
@@ -302,13 +184,6 @@ can't be a per-block lane value; that dead code is not coming back.)
 
 ### 1.6 Persist the transport loop region across save/load
 
-- [x] **`set_transport_loop` is now saved with the project.** DONE (`aa02ea44`): `Song`
-  gained a serialized `transport_loop: Option<LoopRegion { start, end, enabled }>` carrier;
-  `build_project_from_engine` captures the engine loop off the `TransportState` mirror (RT-safe)
-  and `apply_project` restores it via a `SetLoop` command (clearing any stale loop when a loaded
-  project has none). Covers the GUI + MCP save/load paths; `enabled` persists as saved. Headless
-  round-trip tests added; `project.schema.json` regenerated.
-
 ---
 
 ## 2. Sound Design — Expanded Capabilities
@@ -391,20 +266,9 @@ in `mcp_allocator_config.rs` drive the real engine.
   are piecewise-linear, so a per-block linear ramp reconstructs the trajectory
   exactly. Bundle the per-sample inputs into a struct rather than growing
   `eval_block`'s already-`too_many_arguments` signature.
-- [x] **Generate the context-var lists from `CONTEXT_CATALOG` instead of hand
-  maintenance.** DONE: the patch-editor help popup's Context line
-  (`gui/patch_editor/popups.rs`) is now built by iterating `CONTEXT_CATALOG`
-  (`name (label)`) instead of a hardcoded string, so a new context var appears
-  automatically. The rich per-var prose in the `docs/yams.md` `### Context` table
-  is intentionally *not* collapsed into the terse picker labels; instead a new
-  `docs_yams_context_table_matches_catalog` test parses that table and asserts its
-  names match `CONTEXT_CATALOG` (order included) — a drift guard for exactly the
-  stale-`sr` bug class. The `Context` enum / `context_from_name` / resolver
-  triangle was already guarded by `every_context_var_declares_catalog_membership`.
-
 ### 2.7 Script-exposed params follow-ups
-*(from `plans/script-exposed-params.md`, IMPLEMENTED on branch `feat/script-exposed-params`
-— both parts landed, workspace green (dev + release), NOT merged/eyeballed. The `Script`
+*(IMPLEMENTED on branch `feat/script-exposed-params` — both parts landed, workspace
+green (dev + release), NOT merged/eyeballed. The `Script`
 module became a one-program **4 CV-in (`in1..in4`) / 4 CV-out (`out1..out4`)** node, and both
 `Script` and `AudioScript` gained user-declared `param` knobs — real descriptor params:
 GUI faceplate + mod-matrix dest + automation + save + cross-script `scr-1.drive` reads.)*
@@ -491,25 +355,10 @@ instrument/master RMS through a one-pole so it ducks directly); app-side builder
 (pool/nodes/cables/`list_mod_targets` provenance); the GUI node view (pool +
 Scene canvas, named descriptor ports, module→module cables, scope toggle +
 per-track assignment, `UndoAction::SetModGraph`); persistence + offline-render
-wiring; and a lane provenance chip + jump + `＋ Mod Grid` quick-assign. Plan doc
-`plans/mod-grid-plan.md` marked IMPLEMENTED. Also folded in the fix-first
+wiring; and a lane provenance chip + jump + `＋ Mod Grid` quick-assign. Also folded in the fix-first
 `clear_mod_offsets`-unconditional bug (an offset writer without a Mod Matrix
 module used to latch offsets forever).
 
-- [x] **RESOLVED (2026-07-18): track-scope modulation "not working" was an orphaned
-  track→instrument link, not a Mod Grid bug.** A live session showed a `Track · Volume`
-  target having zero effect while `Global(MasterVolume)` worked. Root cause traced end
-  to end: the song's track referenced `SeqInstrumentId(0)`, but the only instrument
-  ("Sub Bass") had `id 1`. `update_track_controls` maps `track.instrument → engine_id`
-  and skips the track when it doesn't resolve — so **no** track-level control reached
-  the sound instrument (not the grid offset *and not even the base fader*; the note
-  played at unity, which is why nothing I changed on the track mattered). Master works
-  because it's global. Fixing the track's instrument (`set_track_instrument`) made the
-  live A/B unambiguous: assigned peak 0.303 vs unassigned 0.157 (×1.93 = the +0.34
-  Macro offset on the 0.4 fader). Mod-grid logic is correct — now guarded by tests
-  `mod_grid_track_volume_offset_accumulates` (engine, full `process()`),
-  `track_scope_volume_modulation_changes_the_render` + `track_scope_macro_to_relative_volume_resolves`
-  (pertylizer, real render path + builder resolution).
 - [ ] **Robustness follow-up: surface orphaned tracks (track→instrument that doesn't
   exist).** Such a track silently drops **all** track-level control (fader, mute,
   automation lanes, *and* Mod Grid), yet its notes still play (at unity) — a confusing
@@ -518,73 +367,6 @@ module used to latch offsets forever).
   load. General track-management, not Mod-Grid-specific. **S–M.**
 **Follow-ups shipped 2026-07-18** (branch `feat/mod-grid`, one commit each, gate
 green + per-step reviews). The six deferred items are done:
-
-- [x] **MCP gap `disconnect_mod_graph`** (`d054267f`) — array-capable, removes a
-  named `(from, from_port, to, to_port)` cable, errors on a missing one.
-- [x] **MCP gap `set_mod_graph_node`** (`d054267f`) — in-place node-config edit
-  keeping the id + cables, re-validating; errors if the node is absent.
-- [x] **MidiCc live-CC pipeline** (`38a9c6b6`) — `EngineCommand::ControlChange`
-  from the MIDI handler (every non-bespoke CC, incl. sustain; CC1 stays ModWheel
-  and mirrors in), a boxed `MidiCcState` (per-channel + omni) read in
-  `process_mod_grid`; `ModSource::MidiCc { cc, channel }`; GUI add-node entry +
-  cc/omni/channel editor. Offline render has no live CC → reads 0 (live-only).
-- [x] **Module-param grid write targets** (`87f7e7cc`) — `AutomationTarget::Module`
-  applies an additive offset to each active voice via `Voice::apply_mod_offset_addr`;
-  `DestAddr` pre-interned off-thread; skips muted/soloed-out instruments (else the
-  offset latches). A grid LFO can now sweep a filter cutoff. (Instrument-level
-  Volume/Pan targets stay a no-op — see the leftover below.)
-- [x] **Cheap→module cable injection** (`670114a0`) — `ModuleGraph` gained a
-  pre-created input-injection slot list (`push_input_injection` off-thread,
-  `set_input_injection_value` RT); the builder records cheap→module cables; the
-  GUI validator now allows the drop. `Macro → LFO.rate_cv` works.
-- [x] **Per-node `seed` application** (`b7f4d66c`) — `PolyModule::set_seed` (default
-  no-op) implemented for RandomGates + TuringMachine; the builder folds the host
-  track into the seed to decorrelate instances. (DriftGenerator was a no-op here;
-  its per-instance RNG landed later in §7.4 `f32c4302`.)
-
-**§7 follow-ups shipped 2026-07-18** (branch `feat/mod-grid`, one commit each,
-gate green + per-step + final review; see `plans/mod-grid-plan.md` §7):
-
-- [x] **Instrument-level grid targets (Volume/Pan + module-backed)** (`38ae6913`) —
-  `grid_instrument_offsets` store folded into the channel-bus fader/pan; module-
-  backed params (FilterCutoff/ADSR) map to a `DestAddr` and reuse the per-voice path.
-- [x] **DriftGenerator per-instance RNG** (`f32c4302`) — xorshift `rng_state` +
-  `set_seed`/`set_voice_index`; closes the decorrelation *and* offline-determinism
-  gaps (supersedes the "stays a no-op" note above).
-- [x] **Sustain-pedal (CC64) note-hold** (`5c462033`) — per-channel pedal state,
-  deferred NoteOffs while held, released on lift, re-press reclaims.
-- [x] **Patch-editor grid dest markers — Alt A** (`2e7b9971`) — `ModMarker::GridDest`
-  (PULSE_LINE/green) stacked above MatrixDest; `PatchAnalysis.grid_dest_params`.
-- [x] **GUI Module-target picker** (`d2a62c92`, validated `07ee2c1e`, hierarchical
-  menu `0b7919e6`) — the Target node now uses the **same nested `tree_picker_button`
-  menu as the pattern-view "Auto:" selector** (This Track / Global at top, then a
-  submenu per instrument with its Volume/Pan macros + a submenu per automatable
-  module → params), driven by the shared `module_targets::module_target_groups`
-  helper (which also now backs MCP `get_instrument_automation_targets`).
-- [x] **Mod Grid CPU readout** (`cf145877`) — canvas-header % + status-bar breakdown row.
-
-- [x] **In-app eyeball (2026-07-18): checked live, "good enough".** The §7 GUI
-  (Module-target menu, grid-dest markers, CPU readout) was clicked through in-app and
-  looks fine. A fuller pass of every §6 exit-gate scenario (below) can still be done,
-  but the GUI is no longer the blocker.
-- [x] **Persistence round-trip + schema-regen guard + exit gate (2026-07-18).**
-  `mod_graph_survives_json_round_trip` (song.rs) builds a Track-scope graph exercising
-  every node kind (hosted module w/ params + seed, MidiCc, AudioTap, Transport, Macro,
-  two Target sinks), cables, assignment, description, color and node positions, then
-  asserts the whole `ModGraph` survives JSON save/load and the restored pool keeps the
-  id allocator ahead. `schemas/project.schema.json` includes the Mod Grid types and the
-  `schemas_validate_examples` guard confirms it is current. Full gate green.
-- [x] **RT-safety hardening from two branch reviews (2026-07-18).** `SetModGrid` is now
-  a pure `mem::replace` pointer move — offset accumulators moved into `ModGridRuntime`
-  and pre-keyed off the audio thread by the builder, so no map insertion/allocation on
-  the callback; instrument offsets keyed by `SeqInstrumentId` (order-independent, kills
-  the offline-export ordering trap at its root); a single-slot `mod_grid_pending_drop`
-  backstop guarantees no DSP is dropped on the audio thread on a full trash channel.
-  Also: `tap_coeff` takes `SampleCount`/`SampleRate` newtypes and is `pub(crate)`;
-  sustain-hold uses a boxed `[[bool;128];16]` bitfield; AudioTap follower is now
-  block-size-independent (`TAP_TAU_SECONDS` time constant).
-
-Remaining Mod Grid leftovers + §7 refinements:
 
 - [ ] **Optional: fuller §6 exit-gate walk-through.** Not blocking (the GUI was
   eyeballed above). If you want an exhaustive live pass: `LFO → Track 2 volume` with
@@ -600,6 +382,10 @@ Remaining Mod Grid leftovers + §7 refinements:
   all running instances (reuses the per-stage timing). Per-graph cost needs separate
   instrumentation (time each `ModGridInstance` and map to its `ModGraphId`, exposed to
   the GUI). **M.**
+- [ ] **Soft cap on Mod Grid assignments.** Once per-graph CPU attribution is available,
+  use the measured instance cost to decide whether track-scoped graphs need a soft
+  assignment limit. Warn in the GUI when the estimated aggregate cost exceeds the
+  budget; do not impose a hard limit unless real projects demonstrate a need. **S–M.**
 - [ ] **Per-voice decorrelation for RandomGates / TuringMachine (optional).**
   DriftGenerator now decorrelates per voice via `set_voice_index`; RandomGates and
   TuringMachine still run in lockstep across a patch's voices (they don't override it).
@@ -622,6 +408,28 @@ Remaining Mod Grid leftovers + §7 refinements:
   frown on, and the reads happen even when the CPU tooltip is hidden. Consider making the
   whole metering opt-in/off-by-default or sampling it sparsely — a cross-cutting change to
   the existing metering subsystem, not mod-grid-specific. **S–M.**
+- [ ] **Descriptor-driven node-config validation at the MCP boundary (MCP audit
+  2026-07-19).** `add_mod_graph_node`/`set_mod_graph_node` parse node configs with pure
+  serde (`parse_mod_node`, `mcp_bridge.rs`): unknown `params` type_ids are silently
+  skipped and values applied unvalidated at build (no `validate_f32`), a
+  valid-but-unhostable `module_type` is accepted and silently skipped at build,
+  `Macro.value` outside 0..=1 is silently clamped, and `MidiCc.cc: u8` accepts 128–255
+  which can never match a real CC. Resolve the module descriptor at the boundary and
+  reject bad input with errors, matching the `set_parameter` convention. Complements the
+  port-validation item above. **S–M.**
+- [ ] **`assign_mod_graph`: `tracks: Vec<u32>` silently truncates + drops unknown ids
+  (MCP audit 2026-07-19).** Every other wire track id is `u16` (out-of-range input fails
+  schema deserialization); here track `65537` wraps to `1` via `as u16`
+  (`server.rs` `AssignModGraphParam`, cast in `mcp_bridge.rs`), and ids that don't exist
+  are silently dropped instead of erroring `TrackNotFound` like every other
+  track-addressed tool. Change to `Vec<u16>` and error on (or at least report) unknown
+  ids. **S.**
+- [ ] **MCP parity gaps vs the note-graph family (MCP audit 2026-07-19).** No
+  `duplicate_mod_graph` tool despite `duplicate_note_graph` precedent and existing engine
+  + GUI support (`Song::duplicate_mod_graph`) — MCP callers must re-create node-by-node,
+  losing layout. `create_mod_graph` lacks the `color` param `create_note_graph` has
+  (color only settable via the later `set_mod_graph_metadata`). Also: `set_mod_graph_scope`
+  and `remove_mod_graph_node` have zero MCP-level test coverage. **S.**
 
 ---
 
@@ -735,18 +543,6 @@ efficiency/altitude items deliberately left out of that change.
   (`gui/sample_view.rs`). It is only ever read in `if select || rename` and
   `rename` already implies selection; the selection assignment can test the row
   response (and `rename`) directly. Pure cleanup, no behavior change.
-- [x] **Detach deleted samples from referencing sampler modules.** DONE: the
-  audit confirmed the runtime path is already panic-safe — `Sampler::note_on`
-  early-returns when `sample_data` is `None`, `process()` emits silence with no
-  `player`, and the offline-render loader already logs a warning and skips a
-  missing id (`preview.rs`). The `Sampler` also holds its own `Arc<[f32]>` clone,
-  so a live voice keeps playing after the library entry is gone; the break only
-  surfaces (silently) on the next save→load. Fix chosen: **block deletion of an
-  in-use sample** in the list kebab — the Delete item is disabled with an
-  `on_disabled_hover_text` naming the referencing-module count
-  (`gui/sample_view.rs`), driven by a per-id reference-count map replacing the old
-  used/unused `HashSet` (`gui/egui_backend.rs`). Unused samples delete as before.
-
 ### 3.8 Shared widget helpers follow-ups (evaluating Phase 2 residual)
 
 Residual after the shared-widget-helpers work landed — these are the remaining areas to polish the GUI helpers layer:
@@ -756,12 +552,6 @@ Residual after the shared-widget-helpers work landed — these are the remaining
   `FileDialog` instance across all kinds (Open/Save Patch, templates, etc.) rather than rebuilding it when
   `file_dialog_kind` changes. Update its `config_mut().file_filters` dynamically on every open. This enables directory
   memory and highlighting (`retain_selected_entry`) to survive switching between Open and Save actions.
-- [x] **Unify inline name/description editors.** DONE (`5b42949b`): added
-  `inline_editable_text` + `InlineEdit` in
-  [controls.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/widgets/controls.rs)
-  (folds the focus-grab + lost-focus/Enter end-of-edit detection); the four inline
-  pattern/track name and description editors in `piano_roll.rs` and `arrangement.rs`
-  now call it, each keeping its own editing-state + commit policy.
 - [ ] **Address inline toggle button variations.** Several inline toggle styles (e.g. M/S muting/soloing badges,
   custom-colored selections) still bypass `toggle_button_colored`. Create a flexible `toggle_badge` or
   `selectable_toggle` helper to cover these and keep sizes consistent (preventing drift).
@@ -799,15 +589,6 @@ Residual after the shared-widget-helpers work landed — these are the remaining
 
 ### 4.1 MCP & AI Interaction
 
-- [x] **`compare_spectra`: guard the empty-bin / silence floor.** DONE on
-  `feat/sid-fidelity` (2026-07-02): (1) log bins are clamped up to −80 dB
-  (peak-normalised) before diffing and bins floored on BOTH sides are excluded
-  from the RMS — the sparse-harmonic empty-bin inflation is gone; (2) both
-  sources under an absolute −80 dBFS broadband RMS (`EnergyBands::total_rms`)
-  compare as distance 0 with `floor_limited: true` (silence agrees with
-  silence). The response now carries `floor_coverage` (fraction of informative
-  bins) + `floor_limited` (no information at all).
-
 ---
 
 ## 5. Architectural & Performance Hardening
@@ -831,74 +612,17 @@ debuggable at low cost.
 
 #### A1. Thread diagnostics: named background threads
 
-- [x] **Use named threads via `std::thread::Builder` for background tasks.**
-  DONE (`b775d290`): named the four long-lived background threads — `mcp-server`
-  (main.rs), `osc-telemetry` (synth_osc), `null-audio` (null backend),
-  `analyze-render` (GUI note analysis). `Builder::spawn`'s `io::Result` is handled
-  without expect/unwrap (log-or-degrade / map to `StreamCreationFailed` / skip).
-
 #### A2. Code quality: standardise on to_radians / to_degrees
-
-- [x] **N/A — no such conversions exist.** Audited the whole workspace: there are
-  **zero** `PI / 180.0`-style degree↔radian multipliers (and no `to_radians` /
-  `to_degrees` calls). The M/S "rotation" maps a normalized value ×π (not
-  degrees×π/180), and the Spatial Panner angle math uses `atan2`/geometry in radians directly.
-  Every remaining "degrees" hit is a comment, a graph in-degree, or a musical
-  scale-degree. Nothing to change.
 
 #### A3. Invariant checking: debug_assert in new_unchecked constructors
 
-- [x] **Add `debug_assert!` inside `new_unchecked` newtype constructors.** DONE
-  (`6194ecf5`): asserts on the documented bound for `NormalizedValue` [0,1],
-  `BipolarValue` [-1,1], `Phase` [0,1), `VoiceCount` [1,128], `Velocity` [0,1]
-  (bare-condition + static-str so they stay const-fn-safe; not `unsafe`). Surfaced
-  and fixed a real invariant violation: `compare_spectra` stuffed signed
-  candidate−target deltas into `NormalizedValue` — retyped those `SpectrumDistance`
-  fields to `f32` (the MCP type was already `f32`).
-
 #### A4. DSP: prevent CPU denormal spikes via FTZ/DAZ
-
-- [x] **Prevent CPU denormal exceptions in DSP filters.** DONE. The real-time
-  path was already covered by `DenormalGuard` (FTZ+DAZ via MXCSR on x86_64, FZ via
-  FPCR on aarch64, RAII restore) installed at the top of the cpal output callback.
-  Extended (`5b02e7f8`) to the offline `engine.process` loops —
-  `arrangement_render::render_range`, `export::render_to_wav`, and the shared
-  `OfflineNoteSession::render` (covers `preview_note`) — so offline renders match
-  live playback at the denormal level and avoid the same slowdown.
 
 #### A5. UX: custom panic hook for desktop crash diagnostics
 
-- [x] **Custom panic hook.** DONE: `pertylizer::panic_hook::install()` (called
-  from `main.rs` right after tracing is up) replaces the hook with one that
-  `force_capture`s a backtrace, logs the report via `tracing::error!`, and dumps a
-  self-contained crash report (version, thread, message, location, backtrace) to
-  `<data_dir>/pertylizer/crashes/crash-<secs>-<pid>.log`. Best-effort file I/O
-  that never panics from inside the hook, and chains to the previous hook so the
-  standard stderr trace still appears. Testable core (`write_report_to`) unit-tested.
-
 #### A6. Compile-time safety: static assertions for lock-free structs
 
-- [x] **Use `static_assertions` to verify bounds of thread-transferred data.**
-  DONE (`91921dfa`): `assert_impl_all!(EngineCommand: Send)` /
-  `assert_impl_all!(EngineEvent: Send)` plus a const `'static` check, pinned at the
-  enum definitions in `commands.rs` (added the `static_assertions` workspace dep).
-  Ringbuf only checks `Send` deep in its generics, so this gives a clear failure
-  site if a variant ever captures a non-`Send`/borrowed payload. Struct-**size**
-  asserts were deliberately skipped — they churn on every field edit for no
-  invariant gain.
-
 #### A7. Real-time safety: automated allocation testing with assert-no-alloc
-
-- [x] **Custom allocator guard in tests.** DONE: `rt_alloc_guard` (a `#[cfg(test)]`
-  module in `synth_engine.rs`) installs a counting `#[global_allocator]` for the
-  unit-test binary and a thread-local-armed `count_allocs(|| …)` region.
-  `process_does_not_allocate_in_steady_state` warms up a one-voice engine (drains
-  commands + lazy init), then asserts a steady-state `SynthEngine::process()` does
-  **zero** alloc/dealloc/realloc; `guard_actually_detects_an_allocation` is the
-  self-test. Chose a counting guard over `assert-no-alloc` (no new dep, clean
-  test-framework pass/fail instead of `process::abort`, and parallel tests are not
-  disturbed since arming is thread-local). Confirmed the RT path is already
-  allocation-free.
 
 #### A8. Type safety: adopt id newtypes across the MCP wire surface
 
@@ -915,7 +639,10 @@ debuggable at low cost.
     derive `Serialize`/`Deserialize`/`JsonSchema`, so the JSON wire form is unchanged (bare
     numbers, in-range values round-trip) — same low-risk mechanical swap + test cascade as the
     `InstrumentId` MCP step. Also verify `Tick`/`PatternTick` derive `JsonSchema`; if so,
-    `start_tick`/`tick` `u64` → `Tick` belongs here too.
+    `start_tick`/`tick` `u64` → `Tick` belongs here too. Same for the graph-view ids (MCP
+    audit 2026-07-19): `graph_id`/`node_id`/`module_id` `u32` → `NoteGraphId`/`NoteModuleId`/
+    `ModGraphId`/`ModNodeId` — all four already derive `Serialize`/`Deserialize`/`JsonSchema`
+    (`synth_sequencer/src/ids.rs`), so they are the same transparent swap.
   - **Tier 2 — adds boundary validation (behaviour change, decide deliberately).** `pan` `f32`
     → `BipolarValue`, `volume`/`level`/`master` `f32` → `Gain` or `NormalizedValue` (pick per
     field's range), `bpm` `f32` → `Bpm`, `semitones` `i32` → `Semitones` (note: `Semitones` is
@@ -997,39 +724,24 @@ enough to be driven by an actual observed symptom. Ordered by likely impact.
   Per-track accumulators for pre-FX sends and metering ride the same
   infrastructure. Landing this also removes the tracker importer's
   clone-at-import workaround. **Trigger: when a shared-instrument project needs
-  independent track faders.** (Was A5 in `plans/automation-platform-plan.md`;
-  moved here 2026-07-18.)
+  independent track faders.** (Moved from the completed automation-platform work
+  on 2026-07-18.)
 
 ---
 
 ## 6. Future features (harvested from retired plan docs)
 
 > **Consolidated 2026-07-13.** The standalone design/status docs that used to live
-> under `plans/` were folded in here. **Shipped/done plan docs were deleted** —
-> their full text is recoverable via `git log --follow -- plans/<file>.md`; only
-> their remaining open work is captured below. **Two not-yet-started design docs
-> are KEPT as files** and indexed in §6.1 (open them for the full design).
+> under `plans/` were folded in here. Their full text is recoverable from git
+> history; only their remaining open work is captured below.
 
-### 6.1 Kept design docs (not started — full design lives in the file)
+### 6.1 Deferred design work
 
-- [ ] **Cable routing / layering / aesthetics.** `plans/cable-routing.md` (PROPOSED).
-  Opt-in cubic-Bézier hanging cables (vs orthogonal), foreground transparent
-  rendering, source→destination colour gradients, selection focus-dimming, and
-  real-time telemetry-driven flow particles (CV speed/direction, audio RMS density,
-  gate burst). Touches `theme.rs`, `cable.rs`, `wiring.rs` + an `AtomicF32`
-  port-level feed from the audio thread.
-- [x] **SID seq per-step frequency — DONE.** (Design was in
-  `plans/sid-seq-legato-and-step-freq.md`, now deleted — full text in git history
-  via `git log --follow`.) **Feature:** per-step frequency for the SID waveform
-  sequence (16 `seq_step_freq_i` params + a `seq_freq_mask` enable bitmask, all-0
-  = track pitch) so far-from-pitch noise/drum steps (Hubbard) render correctly.
-  - [x] **`Note.legato` doc fix — DONE.** Reworded to *continuation-of-predecessor*
-    (successor-flag) semantics everywhere: `note.rs` + regenerated
-    `project.schema.json` (`44bddcd7`), and the client-facing MCP surfaces — the
-    `add_note` `legato` arg (`server.rs`), `BridgeNoteData` (`bridge.rs`), and
-    `docs/README_MCP.md` — which had kept the old, misleading "connect to the *next*
-    note" wording that made a client mis-export.
-
+- [ ] **Cable layering, gradients, and focus mode.** Render cables and flow
+  particles transparently in front of module faceplates, colour cross-domain
+  cables with a source→destination gradient, and dim cables unrelated to the
+  current selection. Keep the existing orthogonal routing and telemetry model;
+  this is a scoped visual pass touching `theme.rs`, `cable.rs`, and `wiring.rs`.
 ### 6.2 Note Grid — deferred earned-escalation
 *(from `plans/note-grid.md`; Note Grid shipped + squash-merged to main 2026-07-13 @`65f12900`. Full plan in git history.)*
 
@@ -1133,6 +845,51 @@ enough to be driven by an actual observed symptom. Ordered by likely impact.
   artifacts that live playback plays. Render a short release-tail past the window, or
   add a flag to capture/analyze the LIVE playback audio.
 
+*(MCP convention audit 2026-07-19 — findings on the tools added 17–19 July that aren't
+covered elsewhere; mod-grid-specific items live in §2.9, wire-newtype items in §A8.)*
+
+- [ ] **`result_is_failure` can't classify the `BatchResult` shape.** It detects
+  `Error:` prose and `batch_json`'s `errors` array only (`synth_mcp/src/server.rs`
+  ~`:439`), so tools returning `to_json(&BatchResult)` (`place_pattern`,
+  `update_placement`, `add_automation_points`, `remove_automation_points`, plus
+  pre-existing `add_note`/`update_note`/`create_track`) never trip `batch_execute`'s
+  stop-on-error/rollback gate on total failure (`succeeded: 0`). One choke-point fix:
+  treat `failed > 0 && succeeded == 0` as failure. Sibling of the `isError` item above. **S.**
+- [ ] **`InstrumentId` `Display` leaks onto the wire (regression from `5d7f60c4`).**
+  `get_automation_summary` group keys now read `"instrument Instrument(3)"`
+  (`synth_mcp/src/bridge.rs` ~`:1565`, was `"instrument 3"`), and ~8 batch error strings
+  read `"Instrument(3): ..."` (`server.rs` ~`:6269` etc.) while `delete_instrument`
+  deliberately uses `.as_u64()`. Use the bare number at these sites. **S.**
+- [ ] **Automation boundary gaps.** (a) `track:`/instrument-macro targets don't
+  validate that the track/instrument exists — `track:Volume:999` succeeds and creates a
+  dead lane, while the `module:` arm rejects nonexistent instances for exactly this
+  reason (`mcp_bridge.rs` `build_module_automation_target`); (b)
+  `remove_automation_points`/`clear_automation_lane` use `get_or_create_automation`, so
+  a typo'd-but-grammatical target creates a persistent empty lane while
+  `get`/`transform` correctly error "lane not found"; (c) the structured `target` object
+  is only accepted by the add path — the six read/edit siblings
+  (get/remove/clear/scale/offset/copy) are DSL-string-only; (d) `AutomationSummaryLane`
+  lacks the `scope` field `AutomationLaneInfo` gained, so track/global lanes group under
+  `"(no instrument)"` in the summary. **S–M.**
+- [ ] **Plural `get_note_graphs`/`get_mod_graphs` break the one-tool-per-op pattern.**
+  The only plural `get_*` tools on the whole surface; each graph family now has three
+  overlapping readers (`list_` summary / `get_` by id / `get_…s` bulk detail). Fold the
+  bulk read into the singular tool as `graph_ids: Option<Vec<u32>>` (omitted = all)
+  before the pattern spreads to other families — or at minimum cross-link the three
+  tool descriptions. **S.**
+- [ ] **Schema-description drift on the new tools.** `set_note_graph_metadata`/
+  `set_mod_graph_metadata` param fields are largely undocumented — including that `""`
+  clears color/description (the bridge supports it and even advertises it in its own
+  error text); `SongPlacementDef` *lost* its schemars field docs in `ffbfb19e` (sibling
+  `PlacementInput` documents every field incl. the beat/tick XOR rule);
+  `scale`/`offset`/`copy_automation_lane` target descriptions predate the
+  `track:`/`global:` DSL; ~8 sites still say "Instrument index" instead of
+  "Instrument ID"; `curve_strength` doc says -127..=127 but `i8` admits -128. **S.**
+- [ ] **`PlacementInfo` can't be echoed back as a locator.** Reads return BOTH
+  `start_beat` and `start_tick`, but the write side requires exactly one, so a listed
+  placement fails as `update_placement`/`remove_placement` input until one field is
+  stripped. Accept both when they agree (prefer ticks), error only on contradiction. **S.**
+
 ---
 
 ## Maybe later
@@ -1156,5 +913,5 @@ enough to be driven by an actual observed symptom. Ordered by likely impact.
   actually want** (a) **audio-buffer-rate** feedback wrapped around *existing* modules
   without reimplementing their DSP in script (the address source yields one control-rate
   scalar/block, not an audio buffer), or (b) the **turnkey "drag a back-edge → feedback
-  cable" UX** (`plans/cable-routing.md` §2.A already sketches the distinct arc). Otherwise
+  cable" UX** with a visually distinct feedback arc. Otherwise
   document the script recipe as the supported way to do control/CV-rate feedback.
