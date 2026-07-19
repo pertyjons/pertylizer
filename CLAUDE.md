@@ -60,9 +60,19 @@ must be explicit.)
 3. Review `plans/TODO.md` and mark completed tasks.
 4. Update the version number in `crates/pertylizer/Cargo.toml`, then run
    `cargo build` so `Cargo.lock` is synced.
-5. Commit the bump to `main` as `Release vX.Y.Z: <summary>` (follow the
+5. **If dependencies changed since the last release, refresh the third-party
+   license attribution** so `THIRD-PARTY-LICENSES.md` stays accurate:
+   ```bash
+   cargo about generate --manifest-path crates/pertylizer/Cargo.toml \
+     about.hbs -o THIRD-PARTY-LICENSES.md
+   ```
+   Needs `cargo-about` (`cargo install cargo-about --locked --features cli`).
+   If it fails on an unaccepted license, that is the gate working — add the
+   license to `about.toml`'s `accepted` list only after confirming it is
+   redistributable. Include the regenerated file in the release commit.
+6. Commit the bump to `main` as `Release vX.Y.Z: <summary>` (follow the
    `git commit` checklist above).
-6. **Tag and push — this is what publishes the release:**
+7. **Tag and push — this is what publishes the release:**
    ```bash
    git tag vX.Y.Z
    git push origin vX.Y.Z
