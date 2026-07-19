@@ -112,6 +112,16 @@ pub fn apply_project(
         // rebuilds and ships the running instances for the loaded pool.
         s.rebuild_mod_graphs();
     }
+    // Reinstall the shared song even though its allocation is unchanged. A
+    // deserialized Song starts with a non-persisted structure generation that
+    // can equal the sequencer's cached generation from the previous project.
+    // SetSong explicitly refreshes cached tempo/length and resets transport, so
+    // playback cannot stop at the previous project's arrangement end.
+    if !sender.send(EngineCommand::SetSong {
+        song: Arc::clone(song),
+    }) {
+        return Err("failed to refresh sequencer state for loaded song".to_string());
+    }
 
     // Restore the saved transport loop into the engine's sequencer (runtime
     // state that isn't part of the shared Song). Sending an explicit disabled

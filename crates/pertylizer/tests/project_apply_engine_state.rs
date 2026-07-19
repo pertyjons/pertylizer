@@ -32,7 +32,7 @@ use synth_core::audio::SampleRate as HwSampleRate;
 use synth_core::{AudioCallbackContext, AudioProcessor};
 use synth_engine::SynthEngine;
 use synth_sampler::SampleLibrary;
-use synth_sequencer::Song;
+use synth_sequencer::{Duration, Song, Tick};
 
 use pertylizer::bundle::{is_zip_file, load_bundle};
 use pertylizer::patch::InstrumentState;
@@ -123,6 +123,20 @@ fn load_project_at(path: &std::path::Path) -> (ProjectFile, SampleLibrary) {
         ProjectFile::load(path).expect("load json project")
     };
     (project, lib)
+}
+
+fn empty_project_with_arrangement_length(name: &str, length: Duration) -> ProjectFile {
+    let mut song = Song::new(name);
+    let pattern = song.create_pattern(length);
+    let track = song.create_track("Track");
+    assert!(song.place_pattern(pattern, track, Tick::ZERO));
+    ProjectFile::new(
+        Vec::new(),
+        0,
+        None,
+        song,
+        pertylizer::project::GlobalProjectState::default(),
+    )
 }
 
 /// Count voice-graph modules in a patch — what `InstrumentSnapshot.module_count`
@@ -348,6 +362,38 @@ fn apply_new_project_clears_engine() {
         rig.song.read().name,
         "Untitled",
         "song should be reset to Untitled"
+    );
+}
+
+#[test]
+fn replacing_song_with_equal_generation_refreshes_cached_arrangement_length() {
+    let mut rig = Rig::new();
+    let short = empty_project_with_arrangement_length("Short", Duration::QUARTER);
+    let long = empty_project_with_arrangement_length("Long", Duration::WHOLE);
+    assert_eq!(
+        short.song.structure_generation(),
+        long.song.structure_generation(),
+        "regression requires colliding non-persisted generations"
+    );
+
+    project_apply::apply_project(&short, &rig.session, &rig.song, &rig.sample_library)
+        .expect("apply short project");
+    rig.pump(4);
+    project_apply::apply_project(&long, &rig.session, &rig.song, &rig.sample_library)
+        .expect("apply long project");
+    rig.pump(4);
+
+    assert!(
+        rig.session
+            .command_sender()
+            .send(synth_engine::EngineCommand::Play)
+    );
+    // At 120 BPM this advances beyond the short song's 0.5 seconds while
+    // remaining well inside the long song's 2-second arrangement.
+    rig.pump(110);
+    assert!(
+        rig.session.state().transport.is_playing(),
+        "playback stopped at the stale short-project length"
     );
 }
 
