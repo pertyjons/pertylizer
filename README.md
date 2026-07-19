@@ -9,8 +9,9 @@
 > **Disclaimer:** This application is primarily AI-generated (built with Claude Code). The author takes no
 > responsibility whatsoever for anything — use entirely at your own risk.
 
-A modular audio synthesizer written in Rust with a real-time egui GUI, pattern sequencer, spatial audio engine, 3D
-visualizer, and **first-class AI-agent integration via MCP (Model Context Protocol)**.
+A modular audio workstation written in Rust with a real-time egui GUI, three complementary graph editors, a pattern
+sequencer, mixing and sampling, spatial audio, a 3D visualizer, and **first-class AI-agent integration via MCP (Model
+Context Protocol)**.
 
 ## How This Came About
 
@@ -42,19 +43,22 @@ exploratory encounter — poke at things, see what happens, and discover how it 
 
 A quick tour of what's inside — each item is described in more detail in its own section below.
 
-- **Modular synthesis** — 71 module types (including 25 effects), patched freely over a DAG-based audio graph with live
+- **Modular synthesis** — 70 module types (including 25 effects), patched freely over a DAG-based audio graph with live
   cable visualization, plus 68 built-in patches to start from
-- **Deep modulation** — a dynamic Mod Matrix wires any module output or per-voice macro to any modulatable parameter,
-  and any routing's amount can be a live **YAMS** control script (`out = lag(velocity, 40ms)`) instead of a fixed value
-- **Real-time GUI** — an immediate-mode egui interface for building instruments, wiring modules, and tweaking
-  parameters while everything keeps playing
+- **Three graph workflows** — the Rack builds per-voice audio patches, the **Note Grid** transforms note streams, and
+  the **Mod Grid** runs reusable control-rate modulation graphs at global or per-track scope
+- **Deep modulation and scripting** — the Mod Matrix and Mod Grid target parameters by stable address, while **YAMS**
+  powers scripted control modules, audio-rate scripts, and modulation expressions
+- **Real-time GUI** — Home, Rack, Notes, Mod, Pattern, Sequencer, Mixer, and Sample views remain interactive while the
+  audio engine keeps playing
 - **MIDI** — hardware MIDI input with velocity, pitch bend, mod wheel, and aftertouch
 - **Spatial & reverb** — per-voice binaural placement with the **Spatial Panner** module (image-source early
   reflections + ITD/ILD direct path), plus FDN reverb, convolution, and modal-resonator effects
 - **Pattern sequencer** — pattern-based composition with song arrangement, real-time recording, and per-pattern
   automation lanes, edited in the piano roll or a vertical **tracker** view
-- **Note processors & expression** — non-destructive per-track articulation (arpeggiator, ornaments, chord + strum,
-  scale-quantize, humanize) plus per-note glide, legato, vibrato, probability, and gate
+- **Note processing & expression** — pooled Note Grid graphs provide arpeggiation, ornaments, chord/strum,
+  scale-quantize, humanize, delay, ratchets, scripting, and other reusable transformations, with graph binding at
+  pattern or individual-note scope
 - **Sample bank** — a simple sampler for importing, cropping, looping, and playing back your own samples
 - **Audio input & recording** — record voice or live audio (mic/line-in) straight into the sample bank, or route the
   live input through an Audio Input module directly into a patch's module chain to process it with filters and effects
@@ -62,7 +66,8 @@ A quick tour of what's inside — each item is described in more detail in its o
   44.1/48/96 kHz, with adjustable duration and reverb/delay tail
 - **3D visualizer** — a separate Bevy app driven by OSC telemetry, with 27 audio-reactive effects, 11 scene presets,
   and 8 themes
-- **AI integration** — 180+ MCP tools that let agents like Claude build, compose, and analyze right alongside you
+- **AI integration** — 200+ MCP tools let agents build patches, Note/Mod graphs, arrangements, mixes, and analyses
+  alongside you
 
 ## Examples
 
@@ -78,8 +83,26 @@ to load and pull apart:
 
 ## Screenshots
 
+<p align="center">
+  <img src="screenshots/pertylizer-collage.png" alt="Pertylizer modular rack, YAMS scripting, sequencer, and 3D visualizer" width="100%">
+</p>
+
 See [`screenshots/README.md`](screenshots/README.md) for a visual tour of the patch editor, the Mod Matrix YAMS script
 editor, the sequencer and tracker, and 3D visualizer.
+
+## Application Views
+
+The current top-level workflow is split into eight focused views. The retired AWE view is no longer part of the
+application; its useful spatial work lives on in the per-voice Spatial Panner module.
+
+- **Home** — start a project or instrument, open a patch or sample, and revisit recent projects
+- **Rack** — instrument voice graph, effects, module groups, macros, and live patching
+- **Notes** — the Note Grid pool and node editor for reusable note-event transformations
+- **Mod** — the Mod Grid pool and node editor for always-on global or per-track control graphs
+- **Pattern** — pattern browser with the full-window piano-roll or tracker editor
+- **Sequencer** — song arrangement, tracks, placements, transport, and tempo map
+- **Mixer** — instrument channels, return busses, sends, master processing, and metering
+- **Sample** — sample import, recording, editing, looping, and preview
 
 ## Synthesis & Sound Design
 
@@ -88,7 +111,7 @@ At its core, Pertylizer is a modular synthesizer. Every instrument is a voice gr
 feeding a per-instrument effect chain. You can start from one of the built-in patches or from an empty graph and build
 up from scratch.
 
-- **71 module types** (43 voice & synthesis modules, 25 effects, 3 inline visualizers) — oscillators (standard,
+- **70 module types** (42 voice & synthesis modules, 25 effects, 3 inline visualizers) — oscillators (standard,
   wavetable, additive, granular, fractal, FM/math, sub, LA synth, vector, pad synth, chaotic), filters (ladder, SVF,
   biquad, formant), envelopes, LFOs, MSEG, mod matrix, ring mod, drift generator, sampler, audio input, and more
 - **25 effects** — delay, BBD delay, reverb, shimmer reverb, reverse gate reverb, chorus, ensemble chorus, flanger,
@@ -110,8 +133,8 @@ A handful of modules reach well past the usual subtractive toolkit:
 
 ### Modulation
 
-Modulation is first-class: a dynamic Mod Matrix connects sources to destinations by address, and any routing can run a
-small script in place of a fixed amount.
+Modulation is first-class. Patch-local routings and project-level control graphs both target stable parameter
+addresses, and YAMS can supply anything from a compact expression to a complete scripted control module.
 
 - **Dynamic Mod Matrix** — route any module output (`lfo-3.out`, `env-2.out`) or per-voice macro (velocity, mod wheel,
   aftertouch, pitch bend, note) to any modulatable parameter on any module; every continuous parameter is a working
@@ -119,6 +142,8 @@ small script in place of a fixed amount.
 - **YAMS control scripts** — optionally replace a routing's scalar amount with a small real-time expression language —
   macros and context (note `age`, `gate`), stateful operators (`lag`, `slew`, `sah`, `phasor`), math, and ternaries —
   compiled and evaluated per voice, editable live in the patch editor with compile and auto-format feedback
+- **Mod Grid** — build pooled control-rate graphs from LFOs, macros, transport, MIDI CC, audio taps, logic, and target
+  nodes; run a graph globally or assign independent instances to tracks, with additive composition over automation
 
 ## Spatial Audio & Reverb
 
@@ -145,8 +170,11 @@ result straight to disk.
 - **Automation lanes** — per-pattern parameter automation
 - **Tracker editor** — a vertical, tracker-style per-pattern view (toggle with the piano roll) with note, voice,
   automation, and per-note expression columns
-- **Note processors** — non-destructive, per-track generative articulation applied as the pattern plays: arpeggiator,
-  timed-repeat ornaments (flam/drag/ruff/roll/grace), chord + strum, scale-quantize, and humanize
+- **Note Grid** — reusable pooled graphs transform notes non-destructively as patterns play. Bind one graph to a whole
+  pattern or override it on individual notes; graphs can be duplicated, shared, inspected in the tracker, or frozen
+  into ordinary notes
+- **Note modules** — scale quantize, chord/strum, arpeggiator, humanize, Euclidean generation, probability gate,
+  note/step LFOs, note envelope, YAMS note transforms, delay/echo, and ratchet
 - **Per-note expression** — glide/portamento, legato ties, vibrato, trigger probability, ghost/accent velocity, and
   gate length, set per note
 - **WAV export** — offline render of the full song to WAV, faster than real-time, with selectable bit depth (16/24-bit,
@@ -163,14 +191,16 @@ input.
 
 ## AI Integration via MCP
 
-Pertylizer exposes **180+ MCP tools** that let AI agents (Claude Code, Claude Desktop, or any MCP-capable client)
-build instruments, compose songs, edit patterns, set parameters, render and analyze audio, and play notes in real time
-— all while the synth keeps running.
+Pertylizer exposes **200+ MCP tools** that let AI agents (Claude Code, Claude Desktop, or any MCP-capable client)
+build instruments and graph assets, compose songs, edit patterns, set parameters, mix, render and analyze audio, and
+play notes in real time — all while the synth keeps running.
 
 - **Streamable HTTP** on `http://127.0.0.1:9850/mcp` (enabled by default in GUI mode)
 - **stdio** transport via `cargo run -- --headless`
 - **Audio analysis tools** (`analyze_harmony`, `analyze_section`, `analyze_mix_bus`) give agents quantitative,
   deterministic feedback on harmony, mix balance, and per-track contribution
+- **Graph authoring tools** create, inspect, duplicate, bind, and edit pooled Note Grid and Mod Grid graphs without
+  bypassing the same validation used by the GUI
 - **Auto-inference** (`get_instrument_profiles`) classifies instrument roles (drums/bass/lead/pad/pluck/FX) with
   confidence scores so agents can compose without manual tagging
 
@@ -181,10 +211,13 @@ See [`docs/README_MCP.md`](docs/README_MCP.md) for the full integration guide, t
 A few principles hold the whole thing together:
 
 - **Modular patching** — connect modules freely via a DAG-based audio graph with cable visualization
+- **Pooled graph assets** — Note Grid and Mod Grid graphs are stored once in the song and referenced from patterns,
+  notes, or track assignments
 - **Multitimbral** — per-instrument voice allocation and effect chains
 - **Mixing & routing** — per-instrument, return-bus, and master effect chains, with sends (including bus-to-bus) and
   per-channel level/pan/mute/solo
-- **Real-time safe** — lock-free audio thread with zero allocations, locks, or panics
+- **Real-time safe** — commands and events use lock-free ring buffers; sequencer edits publish immutable `Song`
+  snapshots through `ArcSwap`, so the audio thread never takes the editor's song lock
 - **MIDI** — hardware MIDI input with velocity, pitch bend, mod wheel, aftertouch
 - **Audio input** — monitor and record mic/line-in into the sample bank, or feed it live into a patch via the Audio
   Input module to process external sound through the voice graph and effects
@@ -317,9 +350,9 @@ cargo test && cargo clippy --all-targets && cargo fmt --check
 | `synth_dsp`          | DSP primitives: oscillators, filters, delay lines, FFT       |
 | `synth_sampler`      | Sample loading, playback, and waveform analysis              |
 | `synth_sequencer`    | Pattern and song sequencing                                  |
-| `synth_modules`      | 71 module types including 25 effects                         |
+| `synth_modules`      | 70 module types including 25 effects                         |
 | `synth_engine`       | Audio engine: voice allocation, modular graph, mixing        |
-| `synth_mcp`          | MCP server with 180+ tools for AI agent integration          |
+| `synth_mcp`          | MCP server with 200+ tools for AI agent integration          |
 | `synth_osc`          | OSC telemetry sender (spectrum, notes, transport over UDP)   |
 | `synth_osc_protocol` | Shared OSC protocol definitions for synth and visualizer     |
 | `pertylizer`         | Main application: GUI, audio I/O, MIDI                       |
