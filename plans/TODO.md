@@ -1,158 +1,17 @@
 # TODO - Pertylizer
 
-## ~~⭐ HIGHEST PRIORITY~~ — DONE: SpatialPanner (`spp`) motion smoothness + modulation reach (found live 2026-07-12)
-
-**All 8 items shipped** (branch `feat/spp-cv-distance-mcp-gaps`, 2026-07-13). The new `spp`
-positioned sound correctly from the start (verified live: `X = -0.95` → left RMS `0.137` /
-right `0.080`, mirrored at `X = +0.95`); this batch closed the motion-smoothness and
-modulation-reach gaps. Shipped: (1) ER per-sample smoothing + two direct-path artifact fixes
-(head-shadow median discontinuity, ITD delay-seam click); (2) `x_cv`/`y_cv`/`z_cv` position CV
-inputs; (5) `distance` param + `distance_cv`; (8) seam-safe `read_interpolated_newest` primitive;
-(7) offline render preserves address-based mod-matrix routings (was rendering scripted spp motion
-as mono); (3) MCP batch `set_parameter` now accepts string/address values so `slot_N_dest` can be
-set to `spp-1.x` + description/discovery clarified. Design verdict (6) recorded below (keep ER
-unified); ergonomics note (4) still open. Details per item below.
-
-- [ ] **6. Design question — split the early reflections into their own module?** ER is
-  currently *embedded* in `spp` (two parallel DSP halves — `spatializer.rs` direct binaural +
-  `early_reflections.rs` ISM — already clean separate structs, summed in `mod.rs::process`).
-  Splitting into a standalone ER module would let the reflections be routed independently (e.g.
-  to their own reverb bus) — but both halves must share the *same* source position, so a split
-  forces the user to wire and modulate `x`/`y`/`z` **twice** and keep them in sync. Verdict lean:
-  **keep unified** for position-coherence; solve independent routing with the optional
-  split `direct`/`er` **outputs** from #2 instead. The genuinely different architecture (bigger,
-  separate effort) is a **shared, send-based room** rather than per-voice ER — physically a
-  room is one shared space, and 6 delay taps × polyphony is a lot of duplication; but a shared
-  send would need to carry each voice's position, which the current bus model doesn't. Record
-  the decision here before merge.
-
----
-
-## 0. ~~HIGHEST PRIORITY~~ — DONE: Envelope attack/decay/release now mean their nominal time
-
-**Shipped (branch `feat/envelope-nominal-time`).** Option 1 (analog-style
-overshoot) applied consistently to attack, decay, **and** release, plus compat
-**A** (break the sound, no migration; `FORMAT_VERSION` bumped `"1.0"`→`"1.1"` as a
-marker only — old files still load since `version` is never compared on load).
-
-Implementation: a single `Envelope::overshoot_target(start, dest)` aims the
-one-pole a fixed fraction `k = e⁻¹/(1−e⁻¹) ≈ 0.582` of the span *past* the
-destination, so each stage *crosses* its destination at exactly `t = τ = nominal
-time`. `target_level: NormalizedValue` (couldn't hold >1 or <0) was replaced by a
-`stage_start_level: f32` captured at each stage entry; the asymptote itself is a
-documented raw `f32` (deliberately outside [0,1], never serialized). The decay
-"sustain modulated above current → glide up" case is preserved via a direction
-guard. Regression test `stages_complete_in_nominal_time` locks all three stages
-to ±4 ms of nominal (cleanly separated from the old ~7× behavior). `velocity_pad`
-and the other built-ins authored *to the number* (e.g. `attack=0.15` = "150 ms")
-are now correct as-is — no blind retune done (needs an in-app ear check).
-
-**Remaining (needs the running app):** A/B the built-ins by ear and retune any
-that now sound off; the change is measurable-correct but not yet audibly reviewed.
-
-<details><summary>Original investigation (kept for reference)</summary>
-
-**The `Attack`/`Decay`/`Release` parameters do not mean what their descriptions
-say.** `Attack` is documented as *"Attack time (silence to peak)"*
-(`crates/synth_modules/src/envelope.rs:344`), but the stage is a one-pole
-exponential glide toward `target_level = MAX (1.0)` that only advances to Decay
-once `level >= 0.999` (`envelope.rs:240-259`), with time-constant `τ = Attack`
-seconds (`to_exp_coeff` in `crates/synth_core/src/types/time.rs`,
-`coef = exp(-1/(τ·fs))`). A one-pole toward 1.0 reaches:
-
-- **90 % at `t = ln(10)·τ ≈ 2.3 × Attack`**
-- **99.9 % (stage completes) at `t = ln(1000)·τ ≈ 6.9 × Attack`**
-
-So a "20 ms" attack takes **~138 ms** to reach the peak. Decay/Release use the
-same one-pole-to-threshold pattern (~6× nominal), though perceptually they land
-near nominal because "most of the way" is reached sooner. The amp is **not**
-involved — it reads `cv` raw per sample, no smoothing on the cv input
-(`crates/synth_modules/src/amplifier.rs:194-204`); the de-zipper there is only on
-its own `Level` knob.
-
-**Verified live (2026-07-05)** via `compare_envelopes`/`analyze_note` on a
-saw-pad with Attack=0.02: `attack_ms` reads a stable ~50 ms across window sizes
-(the analyzer's 90 % threshold ≈ 2.3·τ = 46 ms), and the raw `rms_envelope`
-peaks at ~125 ms (≈ 6.9·τ = 138 ms) — both match the math exactly. The
-`envelope_estimate` hardening (`d043187c`) is correct and honest; this is a
-genuine **envelope DSP / parameter-semantics** issue, not an analysis artifact.
-
-Evidence the params are authored *to the number*: 68/69 built-in patches set
-attack, and `patches/velocity_pad.rs:82` sets `.param_f("attack", 0.15)` with the
-comment *"Slow attack (150ms) for pad-like swell"* — the author expected
-0.15 = 150 ms but gets ~1 s to peak. So a fix makes such patches **more** correct.
-
-### Chosen direction — Option 1: overshoot target (analog-style)
-
-- [ ] **Make Attack/Decay/Release mean their nominal time.** Aim the attack
-  glide at a target **> 1.0** (≈ 1.58, since `1.58·(1−e⁻¹) ≈ 0.999`) so the curve
-  crosses the completion threshold at ≈ one time-constant = the nominal Attack.
-  Apply the same fix consistently to Decay and Release (else attack is accurate
-  while decay/release stay ~6× time-constants). Keeps the natural exponential
-  feel while the number becomes meaningful.
-  - **Implementation note:** `target_level` is a `NormalizedValue`, which clamps
-    to [0, 1] — the attack overshoot target needs a raw `f32` (or a dedicated
-    "attack target" constant), so a small refactor of the attack branch in
-    `envelope.rs`, not a one-liner. Decide the exact overshoot from the completion
-    threshold used.
-  - **Spot-check by ear:** A/B `velocity_pad` against its own "150 ms" intent,
-    then retune the handful of built-in patches that sound wrong.
-
-### Loading older projects / instruments (compat)
-
-- **Files still load — no format break.** Attack is stored as a plain number
-  (seconds) in module params; Option 1 changes DSP behavior, not the schema, so
-  `.pertyproj` and patch files parse unchanged (`ProjectFile::FORMAT_VERSION`
-  stays parseable).
-- **But the SOUND changes:** every envelope with a non-tiny attack plays ~7×
-  faster to peak. Impact scales with attack length — plucks (attack≈0) unaffected;
-  pads/swells (0.15–0.5 s) dramatically snappier.
-- **Decision needed — how to treat old user content:**
-  - **A (recommended): break the sound, no migration.** Aligned with the
-    project's "no backward compatibility required" stance; the built-in patches
-    (authored to the number) get *more* correct. Bump `FORMAT_VERSION` "1.0"→"1.1"
-    purely as a marker; retune the few built-ins that sound off. User projects
-    with long deliberate attacks need a manual re-tune.
-  - **B: behavior-preserving migration.** On load of a "1.0" file, scale every
-    Envelope module's Attack (and Decay/Release if fixed) by the conversion factor
-    (~6.9×), gated on `ProjectFile.version` so "1.1" saves aren't re-scaled.
-    Precedent exists: `upgrade_legacy_mod_matrix` (`patch.rs:549`) and
-    `resolve_stereo_out_port` run transforms on load. **Caveats:** the migration
-    preserves only one point on the curve (the completion time) not the whole
-    shape — old is a long-tailed exponential, new is overshoot-truncated (~2.7×
-    for the 90 % point vs ~6.9× for completion), so it's approximate; and it also
-    "un-fixes" patches that were authored to the number (like `velocity_pad`).
-- **Suggested first step:** a small spike — fix only the attack curve and A/B
-  `velocity_pad` against its "150 ms" intent before committing to the full
-  three-stage change + the A-vs-B migration decision.
-
-</details>
-
----
-
 ## 1. Sequencer & Arrangement
 
-### 1.1 Tempo automation
-
-**Done.** The **tempo map** (position-specific tempo + accelerando/ritardando ramps)
-shipped in full: MCP tools (`set_tempo_at` / `remove_tempo_at` / `get_tempo_map`, each
-with a `ramp` flag) + the map in `get_song_info`; ramp interpolation in `tempo_at` and
-ramp-aware `tick_to_seconds` / `seconds_to_tick`; ramp-aware undo (`SetTempo` +
-`MoveTempo`); and a draggable GUI tempo lane in the arrangement — curve + handles with
-drag/add/remove, hover glow, a dynamic BPM axis (frozen during a drag), and the global
-default drawn/labelled distinct from map points. (Not to be confused with the generic
-`AutomationTarget::Global(Tempo)` lane, removed for good 2026-06-01 — a tempo-map point
-can't be a per-block lane value; that dead code is not coming back.)
-
-### 1.2 Section markers
+### 1.1 Section markers
 
 - [ ] Verse, chorus, bridge labels in the arrangement
 
-### 1.5 Pattern-loop presentation and controls
+### 1.2 Pattern-loop presentation and controls
 
 **Playback looping shipped:** placement positions now wrap through type-safe
 `PatternTick::looping_at`; crossing notes keep their absolute NoteOff and retrigger on the
 next pass, while automation restarts in pattern space each pass.
+
 - [ ] **Mini-note visualization should mirror the loop.** `NoteMiniature.start_frac` is currently
   fraction-of-pattern-length. For loop-within semantics the rendering in
   `gui/sequencer/arrangement.rs` (mini-note loop, near the `inst_color_cache` use) should repeat the miniature
@@ -161,10 +20,6 @@ next pass, while automation restarts in pattern space each pass.
   `Repeat` to match DAW expectations). Surface in the placement context menu and in the right-edge
   resize-grab tooltip so the user can choose per placement. Migration of older songs: default existing
   placements to `Clip` so behaviour is preserved, or `Repeat` if we accept a one-time semantic change.
-
-### 1.6 Persist the transport loop region across save/load
-
----
 
 ## 2. Sound Design — Expanded Capabilities
 
@@ -197,20 +52,7 @@ next pass, while automation restarts in pattern space each pass.
   filter sweeps. **S** task — build only when a tune genuinely needs a shared (not
   per-instrument) automated sweep; per-instrument sweeps are already covered by A2.
 
-### 2.4 Polyphony settings
-
-**Done.** The feature — **unison detune + spread controls** for the voice-allocator's
-global `AllocationMode::Unison` — shipped earlier: detune end-to-end (`268441f9`)
-and per-voice stereo spread (`eac9b020`). The remaining **MCP surface** is now
-also shipped: `get_instrument_info` reads the whole allocator config
-(`allocation_mode`, `stealing_strategy`, `unison_detune`, `unison_spread`,
-`max_voices`), and a dedicated array tool `set_allocator_config` sets any subset
-as a group. `max_voices` is stored RT-safely (no live `resize()`) and applies on
-the next voice-graph reconstruct/load; the other four are live. `Display`/`FromStr`
-on the enums make the string round-trip authoritative. End-to-end round-trip tests
-in `mcp_allocator_config.rs` drive the real engine.
-
-### 2.6 YAMS scripting follow-ups
+### 2.4 YAMS scripting follow-ups
 
 - [ ] **Per-sample pitch binding for `note_hz` in AudioScript.** The `note_hz`
   context var is currently *block-constant* — resolved once per block by the
@@ -234,12 +76,12 @@ in `mcp_allocator_config.rs` drive the real engine.
   are piecewise-linear, so a per-block linear ramp reconstructs the trajectory
   exactly. Bundle the per-sample inputs into a struct rather than growing
   `eval_block`'s already-`too_many_arguments` signature.
-### 2.7 Script-exposed params follow-ups
-*(IMPLEMENTED on branch `feat/script-exposed-params` — both parts landed, workspace
-green (dev + release), NOT merged/eyeballed. The `Script`
-module became a one-program **4 CV-in (`in1..in4`) / 4 CV-out (`out1..out4`)** node, and both
-`Script` and `AudioScript` gained user-declared `param` knobs — real descriptor params:
-GUI faceplate + mod-matrix dest + automation + save + cross-script `scr-1.drive` reads.)*
+
+### 2.5 Script-exposed params follow-ups
+
+The shipped `Script` module is a one-program **4 CV-in (`in1..in4`) / 4 CV-out
+(`out1..out4`)** node. `Script` and `AudioScript` expose user-declared `param`
+knobs through the GUI, Mod Matrix, automation, persistence, and cross-script reads.
 
 - [ ] **In-app GUI eyeball (pending verification, not a bug).** The 4-in/4-out faceplate
   ports, the ƒx editor's live control-ports status, and the declared-knob rendering are
@@ -269,17 +111,9 @@ GUI faceplate + mod-matrix dest + automation + save + cross-script `scr-1.drive`
   deferred (default linear/unipolar). A later optional `param … unit hz` keyword maps a
   recognized token → the `ParameterUnit` enum, else `None`. **S**.
 
-### 2.8 Per-oscillator glide (portamento)
+### 2.6 Per-oscillator glide (portamento)
 
-**Shipped (branch `feat/per-oscillator-glide`, squash-merged 2026-07-13).** All 8
-pitched oscillators (`oscillator`, `sub_osc`, `wavetable_osc`, `math_oscillator`,
-`additive_osc`, `granular_osc`, `fractal_osc`, `sid_oscillator`) gained a
-`glide_time` param: when `> 0` the oscillator runs its own portamento (shared
-`PitchGlide` in synth_dsp / `OscGlide` in synth_modules) toward the raw note
-target and re-applies bend/vibrato on top, overriding the voice-level glide for
-itself; `= 0` is bit-identical to before. `VoicePitch` (synth_core) decomposes the
-per-block pitch broadcast into `played` / `note_target` / `expr` / `note`. Gate
-green; final full-branch review clean. Plan doc deleted with the merge.
+The eight pitched oscillators have shipped with an opt-in `glide_time` parameter.
 
 - [ ] **In-app eyeball (pending — not a bug).** Two oscillators in one voice: set
   `glide_time > 0` on one, confirm it audibly portamentos between notes while the
@@ -301,32 +135,13 @@ green; final full-branch review clean. Plan doc deleted with the merge.
   voice glides stay voice-level; a per-osc glide is always continuous. Mirror them
   per-oscillator only if a use case appears.
 
-### 2.9 Mod Grid follow-ups
+### 2.7 Mod Grid follow-ups
 
-**Shipped (branch `feat/mod-grid`, 11 commits, gate green dev + release, final
-full-branch review clean — NOT merged, NOT eyeballed in-app).** A third node view
-beside the patch editor and Note Grid: a pool of control-rate modulator graphs
-(`ModGraph`, `ModGraphScope::{Global, Track}`) whose outputs write additive
-block-constant offsets into the automation target space. Landed: data model +
-`Song` pool + `mod_grid_generation` counter; engine control-rate pre-pass
-(`process_mod_grid`) running before instruments with **track (volume/pan/pitch) +
-global (master volume)** write paths composed additively over lanes; cheap value
-sources **Macro / Transport / Audio-tap** (`ModSource` enum, tap follows an
-instrument/master RMS through a one-pole so it ducks directly); app-side builder
-(`mod_grid_build`) + GUI generation-watch sync shipping the runtime via
-`EngineCommand::SetModGrid` (old runtime freed off-thread); MCP tool family
-(pool/nodes/cables/`list_mod_targets` provenance); the GUI node view (pool +
-Scene canvas, named descriptor ports, module→module cables, scope toggle +
-per-track assignment, `UndoAction::SetModGraph`); persistence + offline-render
-wiring; and a lane provenance chip + jump + `＋ Mod Grid` quick-assign. Also folded in the fix-first
-`clear_mod_offsets`-unconditional bug (an offset writer without a Mod Matrix
-module used to latch offsets forever).
+Mod Grid has shipped across the data model, engine, GUI, MCP, persistence, and
+offline rendering. Remaining refinements follow.
 
-**Follow-ups shipped 2026-07-18** (branch `feat/mod-grid`, one commit each, gate
-green + per-step reviews). The six deferred items are done:
-
-- [ ] **Optional: fuller §6 exit-gate walk-through.** Not blocking (the GUI was
-  eyeballed above). If you want an exhaustive live pass: `LFO → Track 2 volume` with
+- [ ] **Optional: fuller live exit-gate walk-through.** Not blocking. For an
+  exhaustive pass, verify `LFO → Track 2 volume` with
   no lane; a Track graph on two tracks; `LFO → Pitch` host-only; an Audio-tap duck;
   routing-removal returns to base; a seeded render matches live; `Macro → LFO.rate_cv`;
   a live `MidiCc`; sustain hold+release.
@@ -362,44 +177,7 @@ green + per-step reviews). The six deferred items are done:
 
 ## 3. UI & Visual Polish
 
-### 3.1 Improve module knobs
-
-- [ ] Better visual design — gradient fill, shadow, tick marks, value tooltip
-- [ ] Consistent sizing across module types
-- [ ] Arc-style knobs with colored fill showing current value
-
-### 3.2 Redesign instrument list
-
-- [ ] Tabbed interface, mixer-style vertical strips, or collapsible panels
-
-### 3.3 Module Groups — Phase 2–3
-
-- [ ] Phase 2: Template variants (parameter presets with remap)
-- [ ] Phase 3: Probes data pipeline (ringbuffers, audio-thread safe collection)
-- [ ] Phase 3: Probe rendering (waveform/spectrum/meter) with PortType-based signal type
-- [ ] Phase 3: Polyphony probes = sum of voices (mixdown)
-
-### 3.4 Mod Matrix routing visibility
-
-**Done.** Header badges and MCP surfacing shipped in v0.289.0
-(`get_mod_matrix_routings`, virtual `"matrix"` port on `list_modules`). The
-script-source markers then shipped in full: `ModRole` was replaced by a
-multi-kind `ModMarkers` set, and `PatchAnalysis` now extracts sources read *from
-inside a script* — Mod Matrix slot expressions, `ScriptModule` (`"scr"`), and
-`AudioScript` (`"asc"`) — not just scalar `slot_addrs`, each tagged with its
-consumer kind (per-slot compile cache; disabled Mod Matrix slots emit nothing).
-Three source kinds are distinguished by icon+colour: Mod Matrix `↗` purple,
-Script `ƒx` teal, AudioScript `ƒx` yellow, plus the Mod Matrix destination `↙`
-purple. Markers render on param labels/knobs, output-port corners (glyph inside
-the fixed 20×20 box), the module footer badge, and the macro rail — each kind in
-its **own fixed corner** (knobs push the glyph just outside the circle, grown
-vertically inward so it clears the label), each glyph with its own hover tooltip.
-Shipped alongside: GUI patch load/save now install/capture per-slot control
-scripts (`patch_bridge::load_module` + `create_patch_from_editor`), which the GUI
-paths had been silently dropping. No "what feeds what" tooltip yet — a possible
-future refinement, but not tracked as open work.
-
-### 3.5 MSEG UI overhaul (problematic — needs review)
+### 3.1 MSEG UI overhaul (problematic — needs review)
 
 - [ ] **The MSEG module UI is very problematic and must be reworked.** MSEG is a multi-segment
   envelope (up to 16 segments, each with time/level/curve, plus loop start/end), but it currently has
@@ -419,7 +197,7 @@ future refinement, but not tracked as open work.
        consider an array-style MCP tool (`set_mseg_segments`) so the shape can be set in one call instead of
        ~50 individual `set_parameter`s. Review the whole MSEG UX as part of this.
 
-### 3.6 `ModuleParam` single-definition cleanup (MAYBE — aesthetics only, future)
+### 3.2 `ModuleParam` single-definition cleanup (MAYBE — aesthetics only, future)
 
 - [ ] **Collapse the inherent-vs-trait duplication for the param method set — purely for
   "one definition" tidiness, low priority.** Phase 7 of the param-type-system work
@@ -440,7 +218,7 @@ future refinement, but not tracked as open work.
       inherent method, and add `use synth_core::prelude::*` where the compiler flags missing
       trait scope. Let the compiler drive the call-site fixes; gate per crate.
 
-### 3.7 Unified list-panel follow-ups (deferred from code review)
+### 3.3 Unified list-panel follow-ups (deferred from code review)
 
 Surfaced during the shared left-list-panel work (`feat/uniform-list-panels`,
 2026-06-24, `gui/list_panel.rs` + Instruments/Patterns/Samples panels). None are
@@ -470,12 +248,13 @@ efficiency/altitude items deliberately left out of that change.
   (`gui/sample_view.rs`). It is only ever read in `if select || rename` and
   `rename` already implies selection; the selection assignment can test the row
   response (and `rename`) directly. Pure cleanup, no behavior change.
-### 3.8 Shared widget helpers follow-ups (evaluating Phase 2 residual)
+
+### 3.4 Shared widget helpers follow-ups (evaluating Phase 2 residual)
 
 Residual after the shared-widget-helpers work landed — these are the remaining areas to polish the GUI helpers layer:
 
 - [ ] **Global FileDialog memory across kinds.** Refactor `ensure_dialog`
-  in [dialogs.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/dialogs.rs) to reuse a single global
+  in `gui/dialogs.rs` to reuse a single global
   `FileDialog` instance across all kinds (Open/Save Patch, templates, etc.) rather than rebuilding it when
   `file_dialog_kind` changes. Update its `config_mut().file_filters` dynamically on every open. This enables directory
   memory and highlighting (`retain_selected_entry`) to survive switching between Open and Save actions.
@@ -485,10 +264,10 @@ Residual after the shared-widget-helpers work landed — these are the remaining
 - [ ] **Perform a visual eyeball check on normalized captions.** Verify that the normalized size shift (~9px to 10px
   `size_small`) for the 24 migrated `.small()` labels does not cause visual clipping or alignment issues in tight
   spaces (especially grid cells
-  in [tracker.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/sequencer/tracker.rs) and Vol/Pan knob
-  rows in [arrangement.rs](file:///home/per/github/pertylizer/crates/pertylizer/src/gui/sequencer/arrangement.rs)).
+  in `gui/sequencer/tracker.rs` and Vol/Pan knob rows in
+  `gui/sequencer/arrangement.rs`).
 
-### 3.9 Drop the vendored egui-0.35 forks once upstream ships 0.35
+### 3.5 Drop the vendored egui-0.35 forks once upstream ships 0.35
 
 - [ ] **Replace the vendored `third_party/egui-remixicon` crate with the crates.io version once they publish an
   egui-0.35-compatible release.** The egui 0.34→0.35 upgrade was blocked because neither `egui-remixicon` nor
@@ -499,7 +278,7 @@ Residual after the shared-widget-helpers work landed — these are the remaining
       `[patch.crates-io]` block and the `third_party/egui-remixicon` directory, and verify the build.
       Watch: https://github.com/get200/egui-remixicon
 
-### 3.10 Review the mixer view layout
+### 3.6 Review the mixer view layout
 
 - [ ] **Give the mixer view (`gui/mixer_view.rs`) a proper layout pass.** The module-header
   consolidation (2026-07-01) shared `draw_module_header`'s right-alignment across the mixer, switched
@@ -512,51 +291,19 @@ Residual after the shared-widget-helpers work landed — these are the remaining
 
 ---
 
-## 4. AI & Automation
-
-### 4.1 MCP & AI Interaction
-
----
-
-## 5. Architectural & Performance Hardening
+## 4. Architectural & Performance Hardening
 
 > **Ground rule: nothing here gets optimized before it is a *measured* problem.**
 > Readable, well-structured code wins over speculative micro-optimization. The
 > long catalogue of speculative cycle-shaving items (SIMD/alignment, `rem_euclid`
 > tricks, mmap, dashmap, PGO, reciprocal-mult, etc.) was **removed on 2026-06-30**
-> — it traded clarity for unmeasured gains. What remains is split into two tiers:
->
-> - **Tier A = cheap wins** that raise safety / readability / diagnostics or fix a
-    > *known* bug. Do them whenever; no trigger needed. Ordered cheapest-first.
-> - **Tier B = real problems that need a trigger.** Each is a genuine
-    > correctness/RT-safety issue, but architectural enough that it should be driven
-    > by an *actually observed symptom*, not done pre-emptively. Ordered by impact.
+> — it traded clarity for unmeasured gains. The remaining entries are genuine
+> correctness/RT-safety issues, but architectural enough to be driven by an
+> *actually observed symptom*, not done pre-emptively.
 
-### Tier A — cheap quality/safety wins (do whenever, cheapest first)
+### Trigger-based hardening (do when the symptom appears)
 
-These are not performance bets; they make the code safer, clearer, or more
-debuggable at low cost.
-
-#### A1. Thread diagnostics: named background threads
-
-#### A2. Code quality: standardise on to_radians / to_degrees
-
-#### A3. Invariant checking: debug_assert in new_unchecked constructors
-
-#### A4. DSP: prevent CPU denormal spikes via FTZ/DAZ
-
-#### A5. UX: custom panic hook for desktop crash diagnostics
-
-#### A6. Compile-time safety: static assertions for lock-free structs
-
-#### A7. Real-time safety: automated allocation testing with assert-no-alloc
-
-### Tier B — real problems, trigger-based (do when the symptom appears)
-
-Principled correctness/RT-safety issues, not guesses — but each is architectural
-enough to be driven by an actual observed symptom. Ordered by likely impact.
-
-#### B4. Real-time safety: replace HashMap usage on the audio thread
+#### Real-time safety: replace HashMap usage on the audio thread
 
 - [ ] **Remove `HashMap` lookups/updates from the audio thread.**
   `last_automation_values`, `track_auto`, `prev_instrument_outputs`, and
@@ -566,7 +313,7 @@ enough to be driven by an actual observed symptom. Ordered by likely impact.
   arrays, which are cache-friendly with deterministic WCET, and can read more
   cleanly. **Trigger: when jitter is actually measured.**
 
-#### B5. DSP: parameter smoothing for CV/cutoff changes
+#### DSP: parameter smoothing for CV/cutoff changes
 
 - [ ] **Add parameter smoothing to hot paths.** Sudden block-by-block parameter
   jumps cause audible clicks / "zipper noise". A lightweight smoother (1-pole
@@ -574,7 +321,7 @@ enough to be driven by an actual observed symptom. Ordered by likely impact.
   guarantees smooth transitions. An **audible-quality** fix (effectively a small
   feature). **Trigger: when you hear clicks on cutoff/CV moves.**
 
-#### B6. Per-track pre-FX sends and metering for shared instruments
+#### Per-track pre-FX sends and metering for shared instruments
 
 - [ ] **Add per-track accumulators for pre-FX sends and metering.** Track
   volume/pan/mute now resolves through a generation-marked `TrackId` table and is
@@ -586,20 +333,22 @@ enough to be driven by an actual observed symptom. Ordered by likely impact.
 
 ---
 
-## 6. Future features (harvested from retired plan docs)
+## 5. Future features (harvested from retired plan docs)
 
 > **Consolidated 2026-07-13.** The standalone design/status docs that used to live
 > under `plans/` were folded in here. Their full text is recoverable from git
 > history; only their remaining open work is captured below.
 
-### 6.1 Deferred design work
+### 5.1 Deferred design work
 
 - [ ] **Cable layering, gradients, and focus mode.** Render cables and flow
   particles transparently in front of module faceplates, colour cross-domain
   cables with a source→destination gradient, and dim cables unrelated to the
   current selection. Keep the existing orthogonal routing and telemetry model;
   this is a scoped visual pass touching `theme.rs`, `cable.rs`, and `wiring.rs`.
-### 6.2 Note Grid — deferred earned-escalation
+
+### 5.2 Note Grid — deferred earned-escalation
+
 *(from `plans/note-grid.md`; Note Grid shipped + squash-merged to main 2026-07-13 @`65f12900`. Full plan in git history.)*
 
 - [ ] **DAG (branch/merge) escalation** — relax the linear-stream validation; add
@@ -622,7 +371,8 @@ enough to be driven by an actual observed symptom. Ordered by likely impact.
 - [ ] **Misc later**: per-reference overrides, per-scope `Vec` of graphs,
   cross-track routing, cable telemetry, per-node tracker taps.
 
-### 6.3 SID oscillator — open fidelity follow-ups
+### 5.3 SID oscillator — open fidelity follow-ups
+
 *(from `plans/sid-oscillator-module.md`; the `sid` module shipped to main @`d0d872f3`. Full spec + expert reviews in git history.)*
 
 - [ ] **Oversampled ring/sync bus (ring-mod HF fidelity).** Ring sideband
@@ -632,12 +382,13 @@ enough to be driven by an actual observed symptom. Ordered by likely impact.
   `sid` to expose its MSB at the 4× rate (or the sub-sample crossing fraction) — a
   cross-module `msb`-port contract change, out of scope for a local
   `sid_oscillator.rs` edit. The one-sided PolyBLEP fold-flip already shipped (keep
-  it). *(Same item as the ring note under §6.6.)*
+  it).
 - [ ] **Golden reSID A/B acceptance re-run.** Re-run the §11 reSID matrix (the
   sid-analyzer harness) as the acceptance gate for the shipped option-C combine /
   ring / `DcBlock` changes.
 
-### 6.4 AccessKit / egui-inspection — deferred
+### 5.4 AccessKit / egui-inspection — deferred
+
 *(from `plans/accesskit-custom-widgets.md`; shipped to main @`c7372dae`, container-level exposure across all views. Full inventory in git history.)*
 
 - [ ] **Per-element canvas drivability.** v1 exposed the big canvases (piano roll,
@@ -648,7 +399,8 @@ enough to be driven by an actual observed symptom. Ordered by likely impact.
   encodes topology on the port labels. A cable-as-node pass (via the `expose_painted`
   escape hatch + AccessKit relations) is optional follow-up.
 
-### 6.5 Sampling & recording backlog
+### 5.5 Sampling & recording backlog
+
 *(from `plans/sampling-plan.md`; feature shipped through v0.262.0. Full P1/P2/P3 backlog + RT-review notes in git history. Related: §2.1.)*
 
 - [ ] **P2 — sample UX/DSP.** Draggable crop/loop handles + preview playback cursor;
@@ -660,14 +412,6 @@ enough to be driven by an actual observed symptom. Ordered by likely impact.
   streaming for large files, multi-sample zones (pull the `SampleZone` data model
   earlier to avoid a voice/GUI rewrite), slicing, timestretch, granular
   `GrainSource::Sample`, audio track in the sequencer.
-
-### 6.6 Pertylizer MCP gaps
-*(from `plans/pertylizer-mcp-feedback.md`; the live running log continues in the sid-analyzer session memory. Only Pertylizer-side open items harvested.)*
-
-*(MCP convention audit 2026-07-19 — findings on the tools added 17–19 July that aren't
-covered elsewhere; mod-grid-specific items live in §2.9.)*
-
----
 
 ## Maybe later
 
