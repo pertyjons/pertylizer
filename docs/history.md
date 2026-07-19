@@ -1,5 +1,90 @@
 # Version History
 
+## [0.316.0] - 2026-07-20
+
+### Note Grid — modular note & pattern processing (new node view)
+
+- **A pool of note-processing graphs.** A new node view where notes flow through
+  modular graphs (NoteDelay/Echo, Ratchet, Humanize, ProbabilityGate, StreamOnset
+  envelope, …) with a note-scope engine and GUI.
+
+### Mod Grid — pooled control-rate modulator graphs (third node view)
+
+- **Reusable modulator graphs.** Pooled control-rate modulator graphs assignable
+  across modules, with an external-review pass (offset-clearing fix, rebuild sync).
+
+### Automation platform
+
+- **Track & global automation lanes** with per-voice track pitch, curve editing,
+  and stacked lanes.
+
+### SpatialPanner (replaces AWE)
+
+- **AWE monolith removed.** Its ISM early-reflections and binaural spatializer were
+  salvaged into a new `spp` PolyModule, which gained CV/distance inputs, a seam-safe
+  delay, and address-based Mod Matrix control over MCP. Early reflections were
+  smoothed and a median-plane click removed. Ships a Spatial Orbit example patch.
+
+### New modules & instrument features
+
+- **Script module** — a user-defined module with 4 CV in / 4 CV out and user knobs.
+- **Per-oscillator glide (portamento).**
+- **SID stateful waveform sequences** — per-frame waveform-mask sequence controls.
+- **Envelope**: ADSR stages now complete in nominal time; `analyze_note` gained a
+  window knob.
+
+### Sequencer & GUI
+
+- **Tracker**: a per-note note-graph binding column plus robustness fixes.
+- **Piano roll**: the keyboard column and bar ruler are pinned so they never scroll
+  away; every automation lane is labelled with a pinned description.
+- **Arrangement**: the bar-number ruler is pinned and the timeline view decomposed
+  into helpers.
+- **Unified module chrome** across all graph views.
+
+### Accessibility
+
+- **AccessKit exposure** for the custom-painted widgets (view tabs, keyboard,
+  knobs/ports/cables).
+
+### MCP
+
+- **compare_spectra / compare_envelopes**: perceptual (Mel-L2) and envelope
+  timbre-matching, time-resolved target-energy-masked per-frame distance, and the
+  voicing penalty reported as its own field.
+- **ID newtypes across the wire surface**: instrument IDs unified onto
+  `synth_core::InstrumentId`; sequencer/MCP domain types and newtype invariants
+  hardened.
+- **Complete pattern placements** exposed through MCP; the MCP hardening backlog
+  completed. Schemas now document module scripts and per-instance descriptions, and
+  `asc` (AudioScript) is named as a `set_mod_matrix_script` host.
+
+### Real-time & tooling
+
+- Hardened real-time song and metadata handling; the sequencer cache is refreshed
+  after project load.
+- Adopted Rust 1.97 tooling (`build.warnings`, `cfg_select!`) and fixed the
+  `Note.legato` MCP docs.
+
+### Licensing & references
+
+- Added `THIRD-PARTY-LICENSES.md` (generated via `cargo-about`) plus a regeneration
+  step in the release flow, expanded `docs/references.md` with the external sources
+  cited across the modules/effects, and restored the SID design doc to
+  `docs/sid-oscillator.md` so its `§N` code citations resolve.
+
+### Docs & housekeeping
+
+- Synchronized MCP and YAMS documentation, refreshed the README for current graph
+  workflows, consolidated shipped plan docs into `TODO.md` (tracking two future
+  design drafts), dropped the stale crate-structure table from `CLAUDE.md`, and
+  pruned the MCP feedback log.
+
+### Dependencies
+
+- Bumped jsonschema 0.47.0 and rmcp 2.2.0, raised the MSRV to Rust 1.97, and
+  promoted arc-swap to a workspace dependency.
+
 ## [0.315.0] - 2026-07-04
 
 ### SID oscillator — a new module (`sid`)
