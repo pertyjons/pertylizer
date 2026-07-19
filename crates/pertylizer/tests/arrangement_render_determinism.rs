@@ -73,7 +73,7 @@ fn offline_render_is_bit_exact_across_calls() {
     );
 }
 
-/// Noise hammers `fastrand::f32()` on every sample, so a non-reseeded
+/// Noise advances its owned deterministic RNG on every sample, so a state leak
 /// renderer diverges by O(1) immediately — complements the sawtooth test
 /// which only diverges at note-on phase randomization.
 fn noise_patch() -> Patch {
@@ -108,7 +108,7 @@ fn offline_render_is_bit_exact_for_noise_patch() {
 }
 
 /// Two oscillators with phase randomization. Each `note_on` consumes
-/// `fastrand` for unison phase, so whichever oscillator iterates first in
+/// its owned RNG for unison phase, so whichever oscillator iterates first in
 /// `ModuleGraph::note_on` ends up with a different phase. Catches any
 /// regression in `nodes` iteration determinism.
 fn dual_osc_patch() -> Patch {
@@ -163,7 +163,7 @@ fn offline_render_is_bit_exact_for_dual_oscillator_patch() {
 // across N renders. The contract is that a session reused across calls
 // produces bit-exact identical buffers to a freshly-built engine. The
 // dual-oscillator patch is the canonical regression target — it's the
-// smallest patch that exposes `note_on`'s `fastrand`-consumption order
+// smallest patch that exposes `note_on`'s RNG-consumption order
 // dependency (caught §8.1 Round 2 of the determinism work).
 
 #[test]
@@ -223,7 +223,7 @@ fn session_render_range_is_bit_exact_across_three_calls() {
 
 #[test]
 fn session_render_range_is_bit_exact_for_noise_patch() {
-    // Noise hammers `fastrand::f32()` every sample, so an unreseeded
+    // Noise advances its owned RNG every sample, so an unreseeded
     // session would diverge immediately on render-2.
     let rig = setup_with_patch(&noise_patch());
     let song = build_arpeggio_song();
@@ -439,7 +439,8 @@ fn shared_instrument_tracks_keep_independent_voice_faders() {
     }
     song.place_pattern(pattern_id, audible_track, Tick::ZERO);
     song.place_pattern(pattern_id, silent_track, Tick::ZERO);
-    let shared = McpSharedState::with_song(std::sync::Arc::new(parking_lot::RwLock::new(song)));
+    let shared =
+        McpSharedState::with_song(std::sync::Arc::new(synth_sequencer::SharedSong::new(song)));
 
     let rendered = render_arrangement_to_buffer(
         &rig.session,

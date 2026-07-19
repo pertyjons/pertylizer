@@ -14,7 +14,6 @@
 
 use std::sync::Arc;
 
-use parking_lot::RwLock as PlRwLock;
 use synth_core::audio::SampleRate as HwSampleRate;
 use synth_core::{AudioCallbackContext, AudioProcessor};
 use synth_engine::SynthEngine;
@@ -35,7 +34,9 @@ struct Rig {
 
 fn build_rig() -> Rig {
     let (mut engine, handle) = SynthEngine::new();
-    let song = Arc::new(PlRwLock::new(Song::new("AllocatorConfig")));
+    let song = Arc::new(synth_sequencer::SharedSong::new(Song::new(
+        "AllocatorConfig",
+    )));
     let _ = handle
         .command_sender()
         .send(synth_engine::EngineCommand::SetSong {

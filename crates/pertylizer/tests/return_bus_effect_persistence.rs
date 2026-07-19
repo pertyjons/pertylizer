@@ -11,7 +11,6 @@
 
 use std::sync::Arc;
 
-use parking_lot::RwLock as PlRwLock;
 use synth_core::audio::SampleRate as HwSampleRate;
 use synth_core::{AudioCallbackContext, AudioProcessor, ModuleType};
 use synth_engine::{EngineCommand, ModuleId, SynthEngine};
@@ -26,7 +25,7 @@ const TEST_SR: u32 = 44_100;
 struct Rig {
     engine: SynthEngine,
     session: Arc<SynthSession>,
-    song: Arc<PlRwLock<Song>>,
+    song: Arc<synth_sequencer::SharedSong>,
     sample_library: Arc<std::sync::RwLock<SampleLibrary>>,
     block: Vec<f32>,
     ctx: AudioCallbackContext,
@@ -40,7 +39,8 @@ impl Rig {
             handle.command_sender(),
             Arc::clone(&handle.state),
         ));
-        let song: Arc<PlRwLock<Song>> = Arc::new(PlRwLock::new(Song::new("test")));
+        let song: Arc<synth_sequencer::SharedSong> =
+            Arc::new(synth_sequencer::SharedSong::new(Song::new("test")));
         handle.command_sender().send(EngineCommand::SetSong {
             song: Arc::clone(&song),
         });

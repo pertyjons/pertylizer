@@ -6,11 +6,10 @@
 use std::sync::Arc;
 
 use eframe::egui;
-use parking_lot::RwLock;
 use synth_core::{NormalizedValue, Semitones};
 use synth_sequencer::{
     Duration as SeqDuration, MAX_ORNAMENT_HITS, NoteId, Ornament, OrnamentDynamics,
-    OrnamentPlacement, OrnamentSpacing, PatternId, Song,
+    OrnamentPlacement, OrnamentSpacing, PatternId,
 };
 
 use super::SequencerViewState;
@@ -121,7 +120,7 @@ pub(crate) fn draw_ornament_editor(ui: &mut egui::Ui, orn: &mut Option<Ornament>
 /// pushes one coalesced `SetNoteOrnament` undo entry when the window is closed.
 pub(crate) fn draw_ornament_popup(
     ui: &mut egui::Ui,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     view_state: &mut SequencerViewState,
     undo_manager: &mut UndoManager,
 ) {

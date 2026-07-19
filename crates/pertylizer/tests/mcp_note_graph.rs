@@ -7,7 +7,6 @@
 
 use std::sync::Arc;
 
-use parking_lot::RwLock as PlRwLock;
 use synth_engine::SynthEngine;
 use synth_mcp::SynthBridge;
 use synth_mcp::SynthMcpServer;
@@ -17,9 +16,9 @@ use pertylizer::mcp_bridge::AppSynthBridge;
 use pertylizer::mcp_shared::McpSharedState;
 use pertylizer::session::SynthSession;
 
-fn build_server() -> (SynthMcpServer, Arc<PlRwLock<Song>>) {
+fn build_server() -> (SynthMcpServer, Arc<synth_sequencer::SharedSong>) {
     let (_engine, handle) = SynthEngine::new();
-    let song = Arc::new(PlRwLock::new(Song::new("NoteGraph")));
+    let song = Arc::new(synth_sequencer::SharedSong::new(Song::new("NoteGraph")));
     let _ = handle
         .command_sender()
         .send(synth_engine::EngineCommand::SetSong {
@@ -48,7 +47,11 @@ async fn call(server: &SynthMcpServer, tool: &str, params: serde_json::Value) ->
 }
 
 /// Whether the given graph's module is a compiled `NoteScriptTransform`.
-fn note_script_compiled(song: &Arc<PlRwLock<Song>>, graph_id: u32, module_id: u32) -> bool {
+fn note_script_compiled(
+    song: &Arc<synth_sequencer::SharedSong>,
+    graph_id: u32,
+    module_id: u32,
+) -> bool {
     let song = song.read();
     let graph = song
         .note_graph(synth_sequencer::NoteGraphId::new(graph_id))
@@ -305,7 +308,7 @@ async fn note_graph_round_trip_through_mcp() {
 }
 
 /// The note-scope graph bound to note `nid` in pattern `pid`, as a raw id.
-fn note_binding(song: &Arc<PlRwLock<Song>>, pid: u32, nid: u64) -> Option<u32> {
+fn note_binding(song: &Arc<synth_sequencer::SharedSong>, pid: u32, nid: u64) -> Option<u32> {
     let s = song.read();
     s.pattern(synth_sequencer::PatternId::new(pid))?
         .notes()

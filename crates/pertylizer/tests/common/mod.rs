@@ -10,8 +10,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use parking_lot::RwLock;
-
 use synth_core::audio::SampleRate as HwSampleRate;
 use synth_core::{AudioCallbackContext, AudioProcessor, ModuleType};
 use synth_engine::SynthEngine;
@@ -126,7 +124,7 @@ pub fn setup_with_patch(patch: &Patch) -> Rig {
 pub fn build_single_pattern_song(
     name: &str,
     notes: &[(PatternTick, u8, SeqDuration)],
-) -> Arc<RwLock<Song>> {
+) -> Arc<synth_sequencer::SharedSong> {
     let mut song = Song::new(name);
     let pattern_id = song.create_pattern(SeqDuration::WHOLE);
     {
@@ -154,12 +152,12 @@ pub fn build_single_pattern_song(
         "place_pattern should succeed"
     );
 
-    Arc::new(RwLock::new(song))
+    Arc::new(synth_sequencer::SharedSong::new(song))
 }
 
 /// One-bar 4-note C-major arpeggio on `InstrumentId::new(0)`, placed at tick 0.
 /// At 120 BPM the pattern spans exactly 2 s (3840 ticks).
-pub fn build_arpeggio_song() -> Arc<RwLock<Song>> {
+pub fn build_arpeggio_song() -> Arc<synth_sequencer::SharedSong> {
     let notes: Vec<_> = [60u8, 64, 67, 72]
         .iter()
         .enumerate()
@@ -209,7 +207,9 @@ pub fn right_rms(stereo: &[f32]) -> f32 {
 /// returning the song plus its `PatternId` and `TrackId` so tests can attach
 /// automation lanes. Steady amplitude (absent automation) makes RMS-over-time
 /// comparisons meaningful.
-pub fn build_sustained_note_song(name: &str) -> (Arc<RwLock<Song>>, PatternId, TrackId) {
+pub fn build_sustained_note_song(
+    name: &str,
+) -> (Arc<synth_sequencer::SharedSong>, PatternId, TrackId) {
     let mut song = Song::new(name);
     let pattern_id = song.create_pattern(SeqDuration::WHOLE);
     {
@@ -233,13 +233,17 @@ pub fn build_sustained_note_song(name: &str) -> (Arc<RwLock<Song>>, PatternId, T
         song.place_pattern(pattern_id, track_id, Tick(0)),
         "place_pattern should succeed"
     );
-    (Arc::new(RwLock::new(song)), pattern_id, track_id)
+    (
+        Arc::new(synth_sequencer::SharedSong::new(song)),
+        pattern_id,
+        track_id,
+    )
 }
 
 /// Attach a two-point linear ramp (`from` → `to` across the 3840-tick pattern)
 /// for `target` to the pattern's automation lanes.
 pub fn add_ramp_automation(
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     pattern_id: PatternId,
     target: AutomationTarget,
     from: f32,
@@ -263,7 +267,7 @@ pub fn add_ramp_automation(
 /// Set the first track's volume and pan on a shared song (test-side write
 /// lock). Track faders are read live from the `Song` during render, so no
 /// engine drain is needed after calling this.
-pub fn set_first_track_fader(song: &Arc<RwLock<Song>>, volume: f32, pan: f32) {
+pub fn set_first_track_fader(song: &Arc<synth_sequencer::SharedSong>, volume: f32, pan: f32) {
     let track_id = song.read().tracks().next().expect("song has a track").id;
     let mut song_w = song.write();
     if let Some(track) = song_w.track_mut(track_id) {

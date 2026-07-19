@@ -313,6 +313,15 @@ pub struct ProjectLintEntry {
     pub diagnostics: Vec<GraphDiagnostic>,
 }
 
+/// Track whose instrument reference does not resolve in the live engine.
+#[derive(Debug, Clone, Serialize)]
+pub struct OrphanedTrackLint {
+    pub track_id: TrackId,
+    pub track_name: String,
+    pub missing_instrument_id: InstrumentId,
+    pub message: String,
+}
+
 /// Project-wide load-lint report: runs the graph diagnostics over every
 /// instrument and aggregates the results. Surfaces *behavioural* warnings
 /// (unconnected ports, silent voices, feedback loops, …) that schema validation
@@ -338,6 +347,9 @@ pub struct ProjectLintReport {
     pub info_count: usize,
     /// One entry per instrument with at least one `Warning`/`Error` diagnostic.
     pub entries: Vec<ProjectLintEntry>,
+    /// Invalid track-to-instrument references that would silently bypass track
+    /// mixer, automation, and Mod Grid control during playback.
+    pub orphaned_tracks: Vec<OrphanedTrackLint>,
 }
 
 /// The authoritative on-disk JSON Schema for `.pertyproj` project files, paired

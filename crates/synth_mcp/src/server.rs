@@ -5310,8 +5310,8 @@ impl SynthMcpServer {
     #[tool(
         description = "Lint the whole project: run graph diagnostics over every instrument and \
                        aggregate them into one report. Surfaces behavioural issues schema validation \
-                       can't — unconnected ports, silent voices, feedback loops, missing audio paths — \
-                       per instrument, with total error/warning/info counts. A healthy project reports \
+                       can't — unconnected ports, silent voices, feedback loops, missing audio paths, \
+                       and tracks that reference missing instruments — with total error/warning/info counts. A healthy project reports \
                        error_count = 0 and warning_count = 0. Use after loading a project or before export."
     )]
     async fn lint_project(&self, _params: Parameters<NoParams>) -> String {

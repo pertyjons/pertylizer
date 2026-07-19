@@ -13,12 +13,11 @@ mod common;
 
 use std::sync::Arc;
 
-use parking_lot::RwLock;
 use synth_core::ModuleType;
 use synth_sequencer::{
     AudioTapNode, AudioTapSource, AutomationTarget, GlobalParam, InstrumentId, MacroNode,
-    ModConnection, ModGraphScope, ModNodeConfig, ModNodeId, ModTarget, ModuleNode, Song,
-    TrackParam, TransportNode, TransportSource,
+    ModConnection, ModGraphScope, ModNodeConfig, ModNodeId, ModTarget, ModuleNode, TrackParam,
+    TransportNode, TransportSource,
 };
 
 use pertylizer::audio::arrangement_render::render_arrangement_to_buffer;
@@ -34,7 +33,10 @@ use common::{
 /// `track`. Includes orphan hosted modules + transport + audio_tap alongside the
 /// Macro → Target routing (mirroring a real, cluttered graph) to prove they
 /// don't interfere.
-fn add_track_volume_graph(song: &Arc<RwLock<Song>>, track: synth_sequencer::TrackId) {
+fn add_track_volume_graph(
+    song: &Arc<synth_sequencer::SharedSong>,
+    track: synth_sequencer::TrackId,
+) {
     let mut s = song.write();
     let gid = s.create_mod_graph("Mod 1");
     s.set_mod_graph_scope(gid, ModGraphScope::Track);

@@ -6,13 +6,12 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use parking_lot::RwLock;
 use ringbuf::traits::Producer;
 
 use synth_core::{BipolarValue, Bpm, NormalizedValue, SampleCount, SampleRate, Semitones};
 use synth_sequencer::{
     AutomationTarget, ExpandedNote, ExpansionBuffer, Glide, GlideFrom, HostKey, InstrumentId,
-    NoteExpression, NoteScopeCtx, PatternId, PatternTick, Pitch, SequencerEvent, Song,
+    NoteExpression, NoteScopeCtx, PatternId, PatternTick, Pitch, SequencerEvent, SharedSong, Song,
     TICKS_PER_QUARTER, Tick, TrackId, TrackParam, Velocity, track_pitch_semitones,
 };
 
@@ -226,7 +225,7 @@ fn note_passes_probability(note: &synth_sequencer::Note, tick: Tick, roll_nonce:
 /// between audio buffer callbacks.
 pub struct SequencerEngine {
     /// Reference to song data (thread-safe).
-    song: Arc<RwLock<Song>>,
+    song: Arc<SharedSong>,
     /// Current playback state.
     play_state: PlayState,
     /// Current position in the song (integer ticks).
@@ -351,7 +350,7 @@ impl SequencerEngine {
     }
 
     /// Create a sequencer engine with a shared song reference.
-    pub fn with_song(song: Arc<RwLock<Song>>, sample_rate: SampleRate) -> Self {
+    pub fn with_song(song: Arc<SharedSong>, sample_rate: SampleRate) -> Self {
         let (cached_tempo, cached_song_length, cached_structure_gen) = {
             let s = song.read();
             (
@@ -536,11 +535,7 @@ impl SequencerEngine {
     /// Disabling clears the loop.
     pub fn set_repeat_song(&mut self, enabled: bool) {
         if enabled {
-            let song_end = self
-                .song
-                .try_read()
-                .map(|s| s.calculate_length())
-                .unwrap_or(Tick::ZERO);
+            let song_end = self.song.snapshot().calculate_length();
             if song_end > Tick::ZERO {
                 self.set_loop(Tick::ZERO, song_end, true);
             }
@@ -651,13 +646,12 @@ impl SequencerEngine {
     /// O(arrangement × patterns) rescan-per-tick into a `u64` compare-per-tick,
     /// while still picking up structural edits made mid-playback.
     fn update_cached_state(&mut self) {
-        if let Some(song) = self.song.try_read() {
-            self.cached_tempo = song.tempo_at(self.current_tick);
-            let generation = song.structure_generation();
-            if generation != self.cached_structure_gen {
-                self.cached_structure_gen = generation;
-                self.cached_song_length = song.calculate_length();
-            }
+        let song = self.song.snapshot();
+        self.cached_tempo = song.tempo_at(self.current_tick);
+        let generation = song.structure_generation();
+        if generation != self.cached_structure_gen {
+            self.cached_structure_gen = generation;
+            self.cached_song_length = song.calculate_length();
         }
     }
 
@@ -667,11 +661,10 @@ impl SequencerEngine {
     /// generation gate in [`Self::update_cached_state`] can't be trusted to
     /// detect the change (the two counters may coincide).
     fn force_refresh_cached_state(&mut self) {
-        if let Some(song) = self.song.try_read() {
-            self.cached_tempo = song.tempo_at(self.current_tick);
-            self.cached_structure_gen = song.structure_generation();
-            self.cached_song_length = song.calculate_length();
-        }
+        let song = self.song.snapshot();
+        self.cached_tempo = song.tempo_at(self.current_tick);
+        self.cached_structure_gen = song.structure_generation();
+        self.cached_song_length = song.calculate_length();
     }
 
     /// Clear the automation dedup map at a transport reset without freeing its
@@ -705,9 +698,7 @@ impl SequencerEngine {
         // Preview-mode (orphan pattern) bypasses the arrangement entirely
         // and loops a single pattern at `current_tick % pattern.length`.
         if let Some(preview_id) = self.preview_pattern {
-            let Some(song) = self.song.try_read() else {
-                return;
-            };
+            let song = self.song.snapshot();
             if let Some(pattern) = song.pattern(preview_id) {
                 let length_ticks = u64::from(pattern.length.0.max(1));
                 #[allow(clippy::cast_possible_truncation)]
@@ -777,9 +768,7 @@ impl SequencerEngine {
                 }
             }
         } else {
-            let Some(song) = self.song.try_read() else {
-                return;
-            };
+            let song = self.song.snapshot();
 
             let any_solo = song.any_solo();
 
@@ -1092,7 +1081,7 @@ impl SequencerEngine {
     }
 
     /// Get the shared song reference.
-    pub fn song(&self) -> &Arc<RwLock<Song>> {
+    pub fn song(&self) -> &Arc<SharedSong> {
         &self.song
     }
 
@@ -1112,7 +1101,7 @@ impl SequencerEngine {
     }
 
     /// Set a new song.
-    pub fn set_song(&mut self, song: Arc<RwLock<Song>>) {
+    pub fn set_song(&mut self, song: Arc<SharedSong>) {
         let _ = self.stop();
         // A new song is unrelated to the old one's timeline: reset both the
         // playhead and the cursor (play-start / return position) to the start so
@@ -1291,7 +1280,7 @@ mod tests {
 
     #[test]
     fn test_process_advances_position() {
-        let song = Arc::new(RwLock::new(create_test_song()));
+        let song = Arc::new(SharedSong::new(create_test_song()));
         let mut seq = SequencerEngine::with_song(song, SampleRate::DVD_QUALITY);
 
         seq.play();
@@ -1304,7 +1293,7 @@ mod tests {
 
     #[test]
     fn test_note_events_generated() {
-        let song = Arc::new(RwLock::new(create_test_song()));
+        let song = Arc::new(SharedSong::new(create_test_song()));
         let mut seq = SequencerEngine::with_song(song, SampleRate::DVD_QUALITY);
 
         seq.play();
@@ -1330,7 +1319,7 @@ mod tests {
         let track_id = song.create_track("Loop track");
         song.place_pattern(pattern_id, track_id, Tick::ZERO);
         assert!(song.set_placement_length(pattern_id, track_id, Tick::ZERO, Some(Duration::HALF),));
-        let song = Arc::new(RwLock::new(song));
+        let song = Arc::new(SharedSong::new(song));
         let mut seq = SequencerEngine::with_song(song, SampleRate::DVD_QUALITY);
         let mut events = Vec::new();
 
@@ -1346,7 +1335,7 @@ mod tests {
 
     #[test]
     fn test_stop_releases_notes() {
-        let song = Arc::new(RwLock::new(create_test_song()));
+        let song = Arc::new(SharedSong::new(create_test_song()));
         let mut seq = SequencerEngine::with_song(song, SampleRate::DVD_QUALITY);
 
         seq.play();
@@ -1362,7 +1351,7 @@ mod tests {
 
     #[test]
     fn test_seek() {
-        let song = Arc::new(RwLock::new(create_test_song()));
+        let song = Arc::new(SharedSong::new(create_test_song()));
         let mut seq = SequencerEngine::with_song(song, SampleRate::DVD_QUALITY);
 
         let target = Tick(1000);
@@ -1373,7 +1362,7 @@ mod tests {
 
     #[test]
     fn test_cursor_play_stop_semantics() {
-        let song = Arc::new(RwLock::new(create_test_song()));
+        let song = Arc::new(SharedSong::new(create_test_song()));
         let mut seq = SequencerEngine::with_song(song, SampleRate::DVD_QUALITY);
 
         // Mark a cursor, then play: playback starts at the cursor, not 0.
@@ -1429,7 +1418,7 @@ mod tests {
         song.place_pattern(pattern_id, track_id, Tick::ZERO);
         song.place_pattern(pattern_id, track_id, Tick(pattern_len.0 as u64));
 
-        let song = Arc::new(RwLock::new(song));
+        let song = Arc::new(SharedSong::new(song));
         let mut seq = SequencerEngine::with_song(song, SampleRate::DVD_QUALITY);
         seq.play();
 
@@ -1478,7 +1467,7 @@ mod tests {
             let track_id = song.create_track("T");
             song.place_pattern(pattern_id, track_id, Tick::ZERO);
 
-            let song = Arc::new(RwLock::new(song));
+            let song = Arc::new(SharedSong::new(song));
             let mut seq = SequencerEngine::with_song(song, SampleRate::DVD_QUALITY);
             seq.play();
 
@@ -1508,7 +1497,7 @@ mod tests {
 
     #[test]
     fn test_looping() {
-        let song = Arc::new(RwLock::new(create_test_song()));
+        let song = Arc::new(SharedSong::new(create_test_song()));
         let mut seq = SequencerEngine::with_song(song, SampleRate::DVD_QUALITY);
 
         seq.set_loop(Tick(0), Tick(100), true);
@@ -1536,7 +1525,7 @@ mod tests {
     fn orphan_preview_emits_notes_through_preview_instrument() {
         let (song, pattern_id) = create_orphan_song();
         let mut seq =
-            SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
+            SequencerEngine::with_song(Arc::new(SharedSong::new(song)), SampleRate::DVD_QUALITY);
 
         let preview_inst = InstrumentId::new(7);
         seq.set_preview_pattern(Some((pattern_id, preview_inst)));
@@ -1566,7 +1555,7 @@ mod tests {
         // placement the normal loop emits nothing.
         let (song, _pattern_id) = create_orphan_song();
         let mut seq =
-            SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
+            SequencerEngine::with_song(Arc::new(SharedSong::new(song)), SampleRate::DVD_QUALITY);
         seq.play();
 
         let mut events = Vec::new();
@@ -1582,7 +1571,7 @@ mod tests {
     fn clearing_preview_silences_the_orphan_pattern() {
         let (song, pattern_id) = create_orphan_song();
         let mut seq =
-            SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
+            SequencerEngine::with_song(Arc::new(SharedSong::new(song)), SampleRate::DVD_QUALITY);
 
         seq.set_preview_pattern(Some((pattern_id, InstrumentId::new(3))));
         assert_eq!(seq.preview_pattern(), Some(pattern_id));
@@ -1609,7 +1598,7 @@ mod tests {
             let _ = pattern.add_note(PatternTick(0), Pitch::new(60).unwrap(), Velocity::MF);
         }
         let mut seq =
-            SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
+            SequencerEngine::with_song(Arc::new(SharedSong::new(song)), SampleRate::DVD_QUALITY);
         seq.set_preview_pattern(Some((pattern_id, InstrumentId::new(0))));
         seq.play();
 
@@ -1647,7 +1636,7 @@ mod tests {
         song.place_pattern(pattern_id, track_id, Tick::ZERO);
 
         let mut seq =
-            SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
+            SequencerEngine::with_song(Arc::new(SharedSong::new(song)), SampleRate::DVD_QUALITY);
         seq.play();
         let mut events = Vec::new();
         seq.process(SampleCount::new(1000), &mut events);
@@ -1688,7 +1677,7 @@ mod tests {
         song.place_pattern(pattern_id, track_id, Tick::ZERO);
 
         let mut seq =
-            SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
+            SequencerEngine::with_song(Arc::new(SharedSong::new(song)), SampleRate::DVD_QUALITY);
         seq.play();
         let mut events = Vec::new();
         seq.process(SampleCount::new(1000), &mut events);
@@ -1714,7 +1703,7 @@ mod tests {
         song.place_pattern(pattern_id, track_id, Tick::ZERO);
 
         let mut seq =
-            SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
+            SequencerEngine::with_song(Arc::new(SharedSong::new(song)), SampleRate::DVD_QUALITY);
         seq.play();
         let mut events = Vec::new();
         seq.process(SampleCount::new(1000), &mut events);
@@ -1749,7 +1738,7 @@ mod tests {
         song.place_pattern(pattern_id, track_id, Tick::ZERO);
 
         let mut seq =
-            SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
+            SequencerEngine::with_song(Arc::new(SharedSong::new(song)), SampleRate::DVD_QUALITY);
         seq.play();
         let mut events = Vec::new();
         seq.process(SampleCount::new(1000), &mut events);
@@ -1782,7 +1771,7 @@ mod tests {
             pattern.note_mut(nid).unwrap().note_graph = Some(gid);
         }
         let mut seq =
-            SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
+            SequencerEngine::with_song(Arc::new(SharedSong::new(song)), SampleRate::DVD_QUALITY);
         seq.set_preview_pattern(Some((pattern_id, InstrumentId::new(1))));
         seq.play();
         let mut events = Vec::new();
@@ -1810,7 +1799,7 @@ mod tests {
             }));
         }
         let mut seq =
-            SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
+            SequencerEngine::with_song(Arc::new(SharedSong::new(song)), SampleRate::DVD_QUALITY);
         seq.set_preview_pattern(Some((pattern_id, InstrumentId::new(1))));
         seq.play();
 
@@ -1845,7 +1834,7 @@ mod tests {
         song.place_pattern(pattern_id, track_id, Tick::ZERO);
 
         let mut seq =
-            SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
+            SequencerEngine::with_song(Arc::new(SharedSong::new(song)), SampleRate::DVD_QUALITY);
         seq.play();
         let mut events = Vec::new();
         // 1 second at 120 BPM = 2 beats = 8 sixteenth steps.
@@ -1893,8 +1882,10 @@ mod tests {
             let track_id = song.create_track("T");
             song.place_pattern(pattern_id, track_id, Tick::ZERO);
 
-            let mut seq =
-                SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
+            let mut seq = SequencerEngine::with_song(
+                Arc::new(SharedSong::new(song)),
+                SampleRate::DVD_QUALITY,
+            );
             seq.play();
             let mut events = Vec::new();
             // 2400 ticks @120 BPM = 1.25s; 1.4s covers the final NoteOff.
@@ -1938,7 +1929,7 @@ mod tests {
         song.place_pattern(pattern_id, track_id, Tick::ZERO);
 
         let mut seq =
-            SequencerEngine::with_song(Arc::new(RwLock::new(song)), SampleRate::DVD_QUALITY);
+            SequencerEngine::with_song(Arc::new(SharedSong::new(song)), SampleRate::DVD_QUALITY);
         seq.play();
         let mut events = Vec::new();
         seq.process(SampleCount::new(1000), &mut events);

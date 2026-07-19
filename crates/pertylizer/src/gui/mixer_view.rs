@@ -20,11 +20,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use eframe::egui::{self, Color32, RichText};
-use parking_lot::RwLock;
 
 use synth_core::{BipolarValue, Gain, ModuleType, NormalizedValue, Param};
 use synth_engine::{EngineCommand, EngineHandle, InstrumentId, ModuleId};
-use synth_sequencer::{ReturnBusId, Song, TrackId, TrackSend};
+use synth_sequencer::{ReturnBusId, TrackId, TrackSend};
 
 use crate::gui::module_panel::category_color;
 use crate::gui::theme::theme;
@@ -224,7 +223,7 @@ impl EffectTarget {
 pub fn draw_mixer_view(
     ui: &mut egui::Ui,
     handle: &mut EngineHandle,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     instruments: &[crate::gui::instrument_rack::InstrumentUiState],
     state: &mut MixerViewState,
 ) -> Option<MixerViewAction> {
@@ -352,7 +351,7 @@ pub fn draw_mixer_view(
 }
 
 /// Collect a render snapshot under a short read lock (released on return).
-fn collect_snapshot(song: &Arc<RwLock<Song>>) -> Option<MixerSnapshot> {
+fn collect_snapshot(song: &Arc<synth_sequencer::SharedSong>) -> Option<MixerSnapshot> {
     let song = song.try_read()?;
 
     let return_ids: Vec<(ReturnBusId, String)> = song
@@ -514,7 +513,7 @@ fn draw_channel_strip(
     ui: &mut egui::Ui,
     ch: &ChannelSnapshot,
     return_ids: &[(ReturnBusId, String)],
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     handle: &EngineHandle,
     eng_id: Option<InstrumentId>,
     state: &mut MixerViewState,
@@ -619,7 +618,7 @@ fn draw_channel_strip(
 #[allow(clippy::too_many_arguments)]
 fn draw_send_row(
     ui: &mut egui::Ui,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     track: TrackId,
     target: ReturnBusId,
     name: &str,
@@ -681,7 +680,12 @@ fn draw_send_row(
 }
 
 /// Toggle a send's non-destructive enable flag. No-op if the send doesn't exist.
-fn set_send_enabled(song: &Arc<RwLock<Song>>, track: TrackId, target: ReturnBusId, enabled: bool) {
+fn set_send_enabled(
+    song: &Arc<synth_sequencer::SharedSong>,
+    track: TrackId,
+    target: ReturnBusId,
+    enabled: bool,
+) {
     let mut sw = song.write();
     if let Some(tr) = sw.track_mut(track)
         && let Some(send) = tr.sends.iter_mut().find(|s| s.target == target)
@@ -695,7 +699,7 @@ fn set_send_enabled(song: &Arc<RwLock<Song>>, track: TrackId, target: ReturnBusI
 /// enable toggle. Level 0 removes the send. Cyclic targets are hidden.
 fn draw_return_sends(
     ui: &mut egui::Ui,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     rb: &ReturnSnapshot,
     return_ids: &[(ReturnBusId, String)],
 ) {
@@ -753,7 +757,12 @@ fn draw_return_sends(
 
 /// Write a bus-to-bus send to the song: level 0 removes it, positive level
 /// upserts it. Guards against cycles even though the UI hides cyclic targets.
-fn apply_return_send(song: &Arc<RwLock<Song>>, from: ReturnBusId, target: ReturnBusId, level: f32) {
+fn apply_return_send(
+    song: &Arc<synth_sequencer::SharedSong>,
+    from: ReturnBusId,
+    target: ReturnBusId,
+    level: f32,
+) {
     let mut sw = song.write();
     if level <= 0.0 {
         if let Some(bus) = sw.return_bus_mut(from) {
@@ -779,7 +788,7 @@ fn apply_return_send(song: &Arc<RwLock<Song>>, from: ReturnBusId, target: Return
 
 /// Toggle a bus-to-bus send's enable flag. No-op if the send doesn't exist.
 fn set_return_send_enabled(
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     from: ReturnBusId,
     target: ReturnBusId,
     enabled: bool,
@@ -794,7 +803,7 @@ fn set_return_send_enabled(
 
 /// Write a send to the song: level 0 removes it, positive level upserts it.
 fn apply_send(
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     track: TrackId,
     target: ReturnBusId,
     level: f32,
@@ -824,7 +833,7 @@ fn apply_send(
 fn draw_return_strip(
     ui: &mut egui::Ui,
     rb: &ReturnSnapshot,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     handle: &mut EngineHandle,
     effects: &[EffectInfo],
     return_ids: &[(ReturnBusId, String)],
@@ -1131,7 +1140,11 @@ fn draw_master_strip(ui: &mut egui::Ui, handle: &mut EngineHandle, effects: &[Ef
 }
 
 /// Apply a deferred return-bus add/remove (song write + engine channel command).
-fn apply_mutation(mutation: MixerMutation, handle: &mut EngineHandle, song: &Arc<RwLock<Song>>) {
+fn apply_mutation(
+    mutation: MixerMutation,
+    handle: &mut EngineHandle,
+    song: &Arc<synth_sequencer::SharedSong>,
+) {
     match mutation {
         MixerMutation::CreateReturn => {
             let name = {

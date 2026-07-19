@@ -4,7 +4,6 @@
 
 use std::sync::Arc;
 
-use parking_lot::RwLock as PlRwLock;
 use synth_engine::SynthEngine;
 use synth_mcp::SynthBridge;
 use synth_mcp::SynthMcpServer;
@@ -16,7 +15,7 @@ use pertylizer::session::SynthSession;
 
 fn build_bridge() -> AppSynthBridge {
     let (_engine, handle) = SynthEngine::new();
-    let song = Arc::new(PlRwLock::new(Song::new("Headless")));
+    let song = Arc::new(synth_sequencer::SharedSong::new(Song::new("Headless")));
     let _ = handle
         .command_sender()
         .send(synth_engine::EngineCommand::SetSong {

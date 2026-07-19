@@ -7,7 +7,6 @@
 
 use std::sync::Arc;
 
-use parking_lot::RwLock as PlRwLock;
 use synth_engine::SynthEngine;
 use synth_mcp::SynthBridge;
 use synth_mcp::SynthMcpServer;
@@ -17,9 +16,9 @@ use pertylizer::mcp_bridge::AppSynthBridge;
 use pertylizer::mcp_shared::McpSharedState;
 use pertylizer::session::SynthSession;
 
-fn build_server() -> (SynthMcpServer, Arc<PlRwLock<Song>>) {
+fn build_server() -> (SynthMcpServer, Arc<synth_sequencer::SharedSong>) {
     let (_engine, handle) = SynthEngine::new();
-    let song = Arc::new(PlRwLock::new(Song::new("ModGrid")));
+    let song = Arc::new(synth_sequencer::SharedSong::new(Song::new("ModGrid")));
     let _ = handle
         .command_sender()
         .send(synth_engine::EngineCommand::SetSong {

@@ -13,11 +13,10 @@ use std::sync::Arc;
 
 use eframe::egui::{self, Color32, RichText};
 use egui_remixicon::icons as ri;
-use parking_lot::RwLock;
 use synth_sequencer::{
     ArpMode, ArpRate, ArpVelocity, Arpeggiator, Chord, Duration as SeqDuration, Humanize,
     MAX_ARP_OFFSETS, NoteGraphId, NoteName, NoteProcessor, PatternId, PitchClass, ScaleMask,
-    ScaleQuantize, Song, StrumDirection,
+    ScaleQuantize, StrumDirection,
 };
 
 use crate::gui::theme::theme;
@@ -56,7 +55,7 @@ struct BoundGraph {
 /// the result into plain notes. Applies at most one edit per frame.
 pub(crate) fn draw_note_fx_panel(
     ui: &mut egui::Ui,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     view_state: &mut SequencerViewState,
     undo_manager: &mut crate::undo::UndoManager,
     pattern_id: PatternId,

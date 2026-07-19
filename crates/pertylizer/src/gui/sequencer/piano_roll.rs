@@ -30,7 +30,7 @@ pub(super) fn displayed_automation_targets(
 
 /// Collect piano roll data from song (short read-lock, then release).
 pub(crate) fn collect_piano_roll_data(
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     pattern_id: PatternId,
 ) -> Option<PianoRollData> {
     let song = song.try_read()?;
@@ -238,7 +238,7 @@ fn default_inspector_vibrato() -> Vibrato {
 /// note's *other* fields) and push one `SetExpressionBatch` undo entry. For
 /// discrete (toggle) edits.
 fn apply_expression_edit(
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     undo: &mut crate::undo::UndoManager,
     pid: PatternId,
     selected: &[&PianoRollNote],
@@ -273,7 +273,7 @@ fn apply_expression_edit(
 /// DragValue is dragging; the drag collapses into one undo entry on release via
 /// [`finish_expression_drag`]. Preserves each note's other fields.
 fn live_expression_edit(
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     pid: PatternId,
     selected: &[&PianoRollNote],
     edit: impl Fn(&mut NoteExpression),
@@ -292,7 +292,7 @@ fn live_expression_edit(
 /// On expression-DragValue release, diff the pre-drag snapshot against the now
 /// current pattern state and push one `SetExpressionBatch` undo entry.
 fn finish_expression_drag(
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     undo: &mut crate::undo::UndoManager,
     pid: PatternId,
     before: Vec<(NoteId, Option<NoteExpression>)>,
@@ -321,7 +321,7 @@ fn draw_piano_roll_selection_inspector(
     ui: &mut egui::Ui,
     data: &PianoRollData,
     view_state: &mut SequencerViewState,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     undo_manager: &mut crate::undo::UndoManager,
 ) {
     let t = theme();
@@ -1088,7 +1088,7 @@ pub(super) fn draw_pattern_instrument_transport(
     ui: &mut egui::Ui,
     data: &PianoRollData,
     handle: &mut EngineHandle,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     view_state: &mut SequencerViewState,
     instruments: &[crate::gui::instrument_rack::InstrumentUiState],
     is_playing: bool,
@@ -1408,7 +1408,7 @@ impl PianoRollCoords {
 /// `PianoRollCoords` transforms).
 struct PianoRollCtx<'a> {
     data: &'a PianoRollData,
-    song: &'a Arc<RwLock<Song>>,
+    song: &'a Arc<synth_sequencer::SharedSong>,
     view_state: &'a mut SequencerViewState,
     handle: &'a mut EngineHandle,
     undo_manager: &'a mut crate::undo::UndoManager,
@@ -1420,7 +1420,7 @@ impl<'a> PianoRollCtx<'a> {
     /// reborrow-per-call sites stay one line each.
     fn new(
         data: &'a PianoRollData,
-        song: &'a Arc<RwLock<Song>>,
+        song: &'a Arc<synth_sequencer::SharedSong>,
         view_state: &'a mut SequencerViewState,
         handle: &'a mut EngineHandle,
         undo_manager: &'a mut crate::undo::UndoManager,
@@ -1441,7 +1441,7 @@ impl<'a> PianoRollCtx<'a> {
 /// that wires an LFO to it in ~3 clicks. Only shown when a lane is focused.
 fn draw_mod_grid_lane_tools(
     ui: &mut egui::Ui,
-    song: &std::sync::Arc<parking_lot::RwLock<synth_sequencer::Song>>,
+    song: &std::sync::Arc<synth_sequencer::SharedSong>,
     data: &PianoRollData,
     view_state: &mut SequencerViewState,
     undo_manager: &mut crate::undo::UndoManager,
@@ -1529,7 +1529,7 @@ fn mod_target_matches(grid: &AutomationTarget, sel: &AutomationTarget) -> bool {
 /// a relative track target the graph is Track-scoped and assigned to the
 /// pattern's host track so it resolves and modulates immediately.
 fn quick_assign_mod_grid(
-    song: &std::sync::Arc<parking_lot::RwLock<synth_sequencer::Song>>,
+    song: &std::sync::Arc<synth_sequencer::SharedSong>,
     undo_manager: &mut crate::undo::UndoManager,
     view_state: &mut SequencerViewState,
     data: &PianoRollData,
@@ -1613,7 +1613,7 @@ pub(crate) fn draw_piano_roll(
     playhead_tick: Option<PatternTick>,
     is_playing: bool,
     handle: &mut EngineHandle,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     view_state: &mut SequencerViewState,
     instruments: &[crate::gui::instrument_rack::InstrumentUiState],
     undo_manager: &mut crate::undo::UndoManager,

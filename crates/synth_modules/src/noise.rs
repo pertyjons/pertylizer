@@ -14,6 +14,7 @@
 
 use std::collections::HashMap;
 
+use synth_core::hash::RtRng;
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
     ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortName, ProcessContext,
@@ -62,6 +63,8 @@ pub struct NoiseGenerator {
     // State for clocked digital noise.
     lfsr_state: u16,
     chip_lfsr_state: u32,
+    rng: RtRng,
+    rng_seed: u64,
 
     // Sample rate
     sample_rate: SampleRate,
@@ -87,23 +90,25 @@ impl NoiseGenerator {
             violet_prev: [FilterState::ZERO; 2],
             lfsr_state: LFSR_SEED,
             chip_lfsr_state: CHIP_LFSR_SEED,
+            rng: RtRng::new(0x4E4F_4953_4501),
+            rng_seed: 0x4E4F_4953_4501,
             sample_rate: SampleRate::DVD_QUALITY,
             mod_offsets: ParamModOffsets::new(),
             output_buffer: AudioBuffer::new(1024),
         }
     }
 
-    /// Generate white noise using fastrand (thread-local, lock-free).
+    /// Generate deterministic per-instance white noise.
     #[inline]
-    fn white_noise() -> f32 {
-        fastrand::f32() * 2.0 - 1.0
+    fn white_noise(&mut self) -> f32 {
+        self.rng.next_bipolar()
     }
 
     /// Generate pink noise using Voss-McCartney algorithm.
     /// Pink noise has equal energy per octave (-3dB/octave slope).
     #[inline]
     fn pink_noise(&mut self) -> f32 {
-        let white = Self::white_noise();
+        let white = self.white_noise();
 
         // Voss-McCartney algorithm: update rows based on trailing zeros of index
         let last_index = self.pink_index;
@@ -114,7 +119,7 @@ impl NoiseGenerator {
         for i in 0..16 {
             if (changed & (1 << i)) != 0 {
                 let running_sum = self.pink_running_sum.as_f32() - self.pink_rows[i].as_f32();
-                let new_row = (fastrand::f32() * 2.0 - 1.0) * 0.5;
+                let new_row = self.rng.next_bipolar() * 0.5;
                 self.pink_rows[i] = FilterState::new(new_row);
                 self.pink_running_sum = FilterState::new(running_sum + new_row);
                 break;
@@ -129,7 +134,7 @@ impl NoiseGenerator {
     /// Brown noise has -6dB/octave slope (darker than pink).
     #[inline]
     fn brown_noise(&mut self) -> f32 {
-        let white = Self::white_noise();
+        let white = self.white_noise();
 
         // Leaky integrator to prevent DC drift. The pole coefficient is
         // computed from a fixed time constant and the active sample rate
@@ -146,7 +151,7 @@ impl NoiseGenerator {
     /// Blue noise has +3dB/octave slope (brighter than white).
     #[inline]
     fn blue_noise(&mut self) -> f32 {
-        let white = Self::white_noise();
+        let white = self.white_noise();
 
         // Simple differentiator (high-pass character)
         let output = white - self.blue_prev.as_f32();
@@ -160,7 +165,7 @@ impl NoiseGenerator {
     /// Violet noise has +6dB/octave slope (very bright).
     #[inline]
     fn violet_noise(&mut self) -> f32 {
-        let white = Self::white_noise();
+        let white = self.white_noise();
 
         // Second difference: y[n] = x[n] - 2*x[n-1] + x[n-2]
         let output = white - 2.0 * self.violet_prev[0].as_f32() + self.violet_prev[1].as_f32();
@@ -214,7 +219,7 @@ impl NoiseGenerator {
     #[inline]
     fn generate_sample(&mut self) -> f32 {
         let sample = match self.noise_type {
-            NoiseType::White => Self::white_noise(),
+            NoiseType::White => self.white_noise(),
             NoiseType::Pink => self.pink_noise(),
             NoiseType::Brown => self.brown_noise(),
             NoiseType::Blue => self.blue_noise(),
@@ -351,6 +356,16 @@ impl PolyModule for NoiseGenerator {
         self.violet_prev.fill(FilterState::ZERO);
         self.lfsr_state = LFSR_SEED;
         self.chip_lfsr_state = CHIP_LFSR_SEED;
+        self.rng.reseed(self.rng_seed);
+    }
+
+    fn set_seed(&mut self, seed: u64) {
+        self.rng_seed = seed ^ 0x4E4F_4953_4501;
+        self.rng.reseed(self.rng_seed);
+    }
+
+    fn set_voice_index(&mut self, voice_index: u32) {
+        self.set_seed(u64::from(voice_index));
     }
 
     fn note_on(&mut self, _note: MidiNote, _velocity: Velocity) {

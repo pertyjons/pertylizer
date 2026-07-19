@@ -5,7 +5,6 @@
 
 use std::sync::Arc;
 
-use parking_lot::RwLock as PlRwLock;
 use synth_engine::SynthEngine;
 use synth_mcp::SynthBridge;
 use synth_mcp::SynthMcpServer;
@@ -17,7 +16,7 @@ use pertylizer::session::SynthSession;
 
 fn build_server() -> SynthMcpServer {
     let (_engine, handle) = SynthEngine::new();
-    let song = Arc::new(PlRwLock::new(Song::new("Scripts")));
+    let song = Arc::new(synth_sequencer::SharedSong::new(Song::new("Scripts")));
     let _ = handle
         .command_sender()
         .send(synth_engine::EngineCommand::SetSong {
@@ -132,7 +131,7 @@ fn script_module_readback_via_get_module_info() {
     use synth_mcp::SynthBridge;
 
     let (mut engine, handle) = SynthEngine::new();
-    let song = Arc::new(PlRwLock::new(Song::new("ScrReadback")));
+    let song = Arc::new(synth_sequencer::SharedSong::new(Song::new("ScrReadback")));
     let _ = handle
         .command_sender()
         .send(synth_engine::EngineCommand::SetSong {
@@ -250,7 +249,7 @@ fn set_parameters_sets_address_based_mod_matrix_destination() {
     use synth_mcp::bridge::{BridgeParamSet, BridgeParamValue};
 
     let (mut engine, handle) = SynthEngine::new();
-    let song = Arc::new(PlRwLock::new(Song::new("AddrRoute")));
+    let song = Arc::new(synth_sequencer::SharedSong::new(Song::new("AddrRoute")));
     let _ = handle
         .command_sender()
         .send(synth_engine::EngineCommand::SetSong {

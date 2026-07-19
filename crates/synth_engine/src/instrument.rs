@@ -580,8 +580,8 @@ impl Instrument {
 
     /// Set the instrument name.
     #[inline]
-    pub fn set_name(&mut self, name: impl Into<String>) {
-        self.name = name.into();
+    pub fn replace_name(&mut self, name: String) -> String {
+        std::mem::replace(&mut self.name, name)
     }
 
     /// Get the instrument description (free-text intent).
@@ -592,8 +592,8 @@ impl Instrument {
 
     /// Set the instrument description.
     #[inline]
-    pub fn set_description(&mut self, description: impl Into<String>) {
-        self.description = description.into();
+    pub fn replace_description(&mut self, description: String) -> String {
+        std::mem::replace(&mut self.description, description)
     }
 
     /// Get the patch description, if any.
@@ -604,8 +604,8 @@ impl Instrument {
 
     /// Set or clear the patch description. `None` clears.
     #[inline]
-    pub fn set_patch_description(&mut self, description: Option<String>) {
-        self.patch_description = description;
+    pub fn replace_patch_description(&mut self, description: Option<String>) -> Option<String> {
+        std::mem::replace(&mut self.patch_description, description)
     }
 
     /// Get the accent color (hex string), if any.
@@ -616,8 +616,8 @@ impl Instrument {
 
     /// Set or clear the accent color. `None` clears back to "auto" / default.
     #[inline]
-    pub fn set_color(&mut self, color: Option<String>) {
-        self.color = color;
+    pub fn replace_color(&mut self, color: Option<String>) -> Option<String> {
+        std::mem::replace(&mut self.color, color)
     }
 
     /// Get the patch-level accent color (hex string), if any.
@@ -628,8 +628,8 @@ impl Instrument {
 
     /// Set or clear the patch-level accent color. `None` clears.
     #[inline]
-    pub fn set_patch_color(&mut self, color: Option<String>) {
-        self.patch_color = color;
+    pub fn replace_patch_color(&mut self, color: Option<String>) -> Option<String> {
+        std::mem::replace(&mut self.patch_color, color)
     }
 
     /// Get the free-text description for a specific module instance, if set.
@@ -641,34 +641,32 @@ impl Instrument {
     /// Set or clear a module instance's description. `None` (or an empty
     /// string) removes the entry so empty descriptions never persist.
     #[inline]
-    pub fn set_module_description(
+    pub fn replace_module_description(
         &mut self,
         module_id: crate::ModuleId,
         description: Option<String>,
-    ) {
+    ) -> Option<String> {
         match description {
-            Some(desc) if !desc.is_empty() => {
-                self.module_descriptions.insert(module_id, desc);
-            }
-            _ => {
-                self.module_descriptions.remove(&module_id);
-            }
+            Some(desc) if !desc.is_empty() => self.module_descriptions.insert(module_id, desc),
+            _ => self.module_descriptions.remove(&module_id),
         }
     }
 
     /// Drop a module instance's stored description (called when the module is
     /// removed from the graph so the map doesn't accumulate stale entries).
     #[inline]
-    pub fn remove_module_description(&mut self, module_id: crate::ModuleId) {
-        self.module_descriptions.remove(&module_id);
+    pub fn remove_module_description(&mut self, module_id: crate::ModuleId) -> Option<String> {
+        self.module_descriptions.remove(&module_id)
     }
 
     /// Drop all stored module descriptions (called when the whole graph is
     /// cleared so descriptions don't resurface on modules later given the same
     /// `ModuleId`).
     #[inline]
-    pub fn clear_module_descriptions(&mut self) {
-        self.module_descriptions.clear();
+    pub fn take_module_descriptions(&mut self) -> impl Iterator<Item = String> + '_ {
+        self.module_descriptions
+            .drain()
+            .map(|(_, description)| description)
     }
 
     /// Get the sidechain source instrument id, if any.

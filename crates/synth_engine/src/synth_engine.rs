@@ -195,6 +195,11 @@ pub struct EngineHandle {
     /// `ParamId(Arc<str>)` frees here, on the main thread, never on the audio
     /// thread (see `SequencerEngine::clear_automation_dedup`).
     automation_trash_consumer: ringbuf::HeapCons<AutomationTarget>,
+    /// Receive replaced metadata strings for destruction off the audio thread.
+    metadata_trash_consumer: ringbuf::HeapCons<String>,
+    /// Receive superseded instrument metadata snapshots for off-thread drop.
+    instrument_snapshot_trash_consumer:
+        ringbuf::HeapCons<Vec<crate::shared_state::InstrumentSnapshot>>,
     /// Receive replaced mod-matrix scripts from the audio thread so the old
     /// `Arc<BoundScript>` (bytecode + source text) frees here, on the main
     /// thread, never on the audio thread (see `handle_set_mod_script`).
@@ -254,6 +259,9 @@ impl EngineHandle {
         // Clean up cleared automation dedup keys — their ParamId(Arc<str>) frees
         // here on the main thread, never on the audio thread.
         while self.automation_trash_consumer.try_pop().is_some() {}
+        // Free replaced names, descriptions, and colors on the control thread.
+        while self.metadata_trash_consumer.try_pop().is_some() {}
+        while self.instrument_snapshot_trash_consumer.try_pop().is_some() {}
         // Clean up replaced mod-matrix scripts — their Arc<BoundScript> frees here
         // on the main thread, never on the audio thread.
         while self.script_trash_consumer.try_pop().is_some() {}
@@ -467,6 +475,11 @@ pub struct SynthEngine {
     return_producer: ringbuf::HeapProd<DroppedModule>,
     /// Send removed instruments back to UI for dropping on main thread.
     instrument_return_producer: ringbuf::HeapProd<Box<Instrument>>,
+    /// Send replaced instrument/module metadata to the main thread for drop.
+    metadata_trash_producer: ringbuf::HeapProd<String>,
+    /// Send superseded instrument metadata snapshots to the main thread.
+    instrument_snapshot_trash_producer:
+        ringbuf::HeapProd<Vec<crate::shared_state::InstrumentSnapshot>>,
     /// Send replaced mod-matrix scripts back to UI for dropping on the main
     /// thread. `set_mod_script` runs during the command drain (audio thread), so
     /// the old `Arc<BoundScript>`'s final `free()` must not happen here.
@@ -651,6 +664,17 @@ impl SynthEngine {
         let automation_trash_rb = HeapRb::<AutomationTarget>::new(RETURN_BUFFER_SIZE);
         let (automation_trash_producer, automation_trash_consumer) = automation_trash_rb.split();
 
+        // A command can retire at most one metadata string except graph clears,
+        // whose total is bounded by the modules previously accepted through the
+        // command queue. Match that queue so a full drain cannot overflow into
+        // an audio-thread String drop.
+        let metadata_trash_rb = HeapRb::<String>::new(COMMAND_BUFFER_SIZE);
+        let (metadata_trash_producer, metadata_trash_consumer) = metadata_trash_rb.split();
+        let instrument_snapshot_trash_rb =
+            HeapRb::<Vec<crate::shared_state::InstrumentSnapshot>>::new(COMMAND_BUFFER_SIZE);
+        let (instrument_snapshot_trash_producer, instrument_snapshot_trash_consumer) =
+            instrument_snapshot_trash_rb.split();
+
         // Create return buffer for replaced mod-matrix scripts, whose
         // `Arc<BoundScript>` must not run its (possibly final) drop on the audio
         // thread (see `handle_set_mod_script`).
@@ -677,6 +701,8 @@ impl SynthEngine {
             note_event_producer,
             return_producer,
             instrument_return_producer,
+            metadata_trash_producer,
+            instrument_snapshot_trash_producer,
             script_trash_producer,
             descriptor_trash_producer,
             state: Arc::clone(&state),
@@ -742,6 +768,8 @@ impl SynthEngine {
             return_consumer,
             instrument_return_consumer,
             automation_trash_consumer,
+            metadata_trash_consumer,
+            instrument_snapshot_trash_consumer,
             script_trash_consumer,
             descriptor_trash_consumer,
             mod_grid_trash_consumer,
@@ -908,65 +936,80 @@ impl SynthEngine {
                 instrument_id,
                 name,
             } => {
-                if let Some(inst) = self
+                let discarded = if let Some(inst) = self
                     .instruments
                     .iter_mut()
                     .find(|i| i.id() == instrument_id)
                 {
-                    inst.set_name(&name);
-                }
+                    inst.replace_name(name)
+                } else {
+                    name
+                };
+                Self::trash_metadata(&mut self.metadata_trash_producer, Some(discarded));
                 self.update_shared_instruments();
             }
             EngineCommand::SetInstrumentDescription {
                 instrument_id,
                 description,
             } => {
-                if let Some(inst) = self
+                let discarded = if let Some(inst) = self
                     .instruments
                     .iter_mut()
                     .find(|i| i.id() == instrument_id)
                 {
-                    inst.set_description(&description);
-                }
+                    inst.replace_description(description)
+                } else {
+                    description
+                };
+                Self::trash_metadata(&mut self.metadata_trash_producer, Some(discarded));
                 self.update_shared_instruments();
             }
             EngineCommand::SetPatchDescription {
                 instrument_id,
                 description,
             } => {
-                if let Some(inst) = self
+                let discarded = if let Some(inst) = self
                     .instruments
                     .iter_mut()
                     .find(|i| i.id() == instrument_id)
                 {
-                    inst.set_patch_description(description);
-                }
+                    inst.replace_patch_description(description)
+                } else {
+                    description
+                };
+                Self::trash_metadata(&mut self.metadata_trash_producer, discarded);
                 self.update_shared_instruments();
             }
             EngineCommand::SetInstrumentColor {
                 instrument_id,
                 color,
             } => {
-                if let Some(inst) = self
+                let discarded = if let Some(inst) = self
                     .instruments
                     .iter_mut()
                     .find(|i| i.id() == instrument_id)
                 {
-                    inst.set_color(color);
-                }
+                    inst.replace_color(color)
+                } else {
+                    color
+                };
+                Self::trash_metadata(&mut self.metadata_trash_producer, discarded);
                 self.update_shared_instruments();
             }
             EngineCommand::SetPatchColor {
                 instrument_id,
                 color,
             } => {
-                if let Some(inst) = self
+                let discarded = if let Some(inst) = self
                     .instruments
                     .iter_mut()
                     .find(|i| i.id() == instrument_id)
                 {
-                    inst.set_patch_color(color);
-                }
+                    inst.replace_patch_color(color)
+                } else {
+                    color
+                };
+                Self::trash_metadata(&mut self.metadata_trash_producer, discarded);
                 self.update_shared_instruments();
             }
             EngineCommand::SetModuleDescription {
@@ -974,16 +1017,16 @@ impl SynthEngine {
                 module_id,
                 description,
             } => {
-                if let Some(inst) = self
+                let discarded = if let Some(inst) = self
                     .instruments
                     .iter_mut()
                     .find(|i| i.id() == instrument_id)
                 {
-                    inst.set_module_description(module_id, description);
-                    // Republish the module graph so the snapshot's
-                    // `description` reflects the change for MCP/GUI reads.
-                    self.update_shared_graph(Some(instrument_id));
-                }
+                    inst.replace_module_description(module_id, description)
+                } else {
+                    description
+                };
+                Self::trash_metadata(&mut self.metadata_trash_producer, discarded);
             }
             EngineCommand::SetSidechainSource {
                 instrument_id,
@@ -1471,11 +1514,8 @@ impl SynthEngine {
                 instrument,
             } => {
                 // Find pattern in arrangement and get boundaries
-                let bounds = self
-                    .sequencer
-                    .song()
-                    .try_read()
-                    .and_then(|song| Self::find_pattern_bounds(&song, pattern_id));
+                let bounds =
+                    Self::find_pattern_bounds(&self.sequencer.song().snapshot(), pattern_id);
 
                 if let Some((start, end)) = bounds {
                     // Placed pattern — play through the arrangement at this region.
@@ -1491,8 +1531,9 @@ impl SynthEngine {
                     let length = self
                         .sequencer
                         .song()
-                        .try_read()
-                        .and_then(|song| song.pattern(pattern_id).map(|p| p.length));
+                        .snapshot()
+                        .pattern(pattern_id)
+                        .map(|p| p.length);
                     if let Some(length) = length {
                         // max(1): a zero-length pattern would otherwise make the
                         // loop [0,0) wrap every tick and pin the playhead at 0.
@@ -1524,11 +1565,8 @@ impl SynthEngine {
             }
             EngineCommand::PlayFromPattern { pattern_id } => {
                 // Start playback from pattern start, no loop
-                let bounds = self
-                    .sequencer
-                    .song()
-                    .try_read()
-                    .and_then(|song| Self::find_pattern_bounds(&song, pattern_id));
+                let bounds =
+                    Self::find_pattern_bounds(&self.sequencer.song().snapshot(), pattern_id);
 
                 if let Some((start, _end)) = bounds {
                     // Important: play() first to avoid it resetting current_tick to 0
@@ -2714,6 +2752,15 @@ impl SynthEngine {
         }
     }
 
+    /// Defer destruction of replaced metadata until the control thread drains
+    /// the return queues. The trash ring matches the command queue's capacity,
+    /// so every metadata value accepted since the previous UI cleanup fits.
+    fn trash_metadata(producer: &mut ringbuf::HeapProd<String>, discarded: Option<String>) {
+        if let Some(value) = discarded {
+            let _ = producer.try_push(value);
+        }
+    }
+
     // ========================================================================
     // Reset/clear handlers
     // ========================================================================
@@ -2742,7 +2789,9 @@ impl SynthEngine {
             instrument.set_enabled(false);
             instrument.voice_graph_mut().clear();
             instrument.effect_chain_mut().clear();
-            instrument.clear_module_descriptions();
+            for description in instrument.take_module_descriptions() {
+                Self::trash_metadata(&mut self.metadata_trash_producer, Some(description));
+            }
             instrument.rebuild_voices();
         }
         self.master_effects.clear();
@@ -2884,7 +2933,8 @@ impl SynthEngine {
             Some(inst_id) => {
                 if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
                     instrument.effect_chain_mut().remove_visualizer(id);
-                    instrument.remove_module_description(id);
+                    let description = instrument.remove_module_description(id);
+                    Self::trash_metadata(&mut self.metadata_trash_producer, description);
                 }
             }
             None => {
@@ -2937,7 +2987,8 @@ impl SynthEngine {
             Some(inst_id) => {
                 if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
                     instrument.effect_chain_mut().remove_effect(id);
-                    instrument.remove_module_description(id);
+                    let description = instrument.remove_module_description(id);
+                    Self::trash_metadata(&mut self.metadata_trash_producer, description);
                     let count = count_effects(instrument);
                     self.state.effect_count.store(count);
                 }
@@ -3038,7 +3089,8 @@ impl SynthEngine {
             Some(inst_id) => {
                 if let Some(instrument) = self.instruments.iter_mut().find(|i| i.id() == inst_id) {
                     instrument.voice_graph_mut().remove_module(id);
-                    instrument.remove_module_description(id);
+                    let description = instrument.remove_module_description(id);
+                    Self::trash_metadata(&mut self.metadata_trash_producer, description);
                     instrument.rebuild_voices();
                 }
             }
@@ -3239,7 +3291,7 @@ impl SynthEngine {
     }
 
     /// Build and write instrument metadata snapshots to shared state.
-    fn update_shared_instruments(&self) {
+    fn update_shared_instruments(&mut self) {
         let snapshots: Vec<crate::shared_state::InstrumentSnapshot> = self
             .instruments
             .iter()
@@ -3281,7 +3333,8 @@ impl SynthEngine {
                 }
             })
             .collect();
-        *self.state.instrument_snapshots.write() = snapshots;
+        let retired = std::mem::replace(&mut *self.state.instrument_snapshots.write(), snapshots);
+        let _ = self.instrument_snapshot_trash_producer.try_push(retired);
     }
 
     /// Process all active voices across all instruments and mix.
@@ -3297,13 +3350,11 @@ impl SynthEngine {
     /// Refresh the per-track [`TrackControl`] table from the sequencer `Song`,
     /// ready for per-voice application in [`Instrument::process`].
     ///
-    /// Real-time safe: `try_read()` only (on contention, last block's controls
-    /// are kept) and no allocation. Instruments may be shared across tracks;
+    /// Real-time safe: reads an immutable lock-free snapshot and allocates
+    /// nothing. Instruments may be shared across tracks;
     /// each voice resolves the control for its own `TrackId`.
     fn update_track_controls(&mut self) {
-        let Some(song) = self.sequencer.song().try_read() else {
-            return;
-        };
+        let song = self.sequencer.song().snapshot();
         self.track_control_generation = self.track_control_generation.wrapping_add(1).max(1);
         for sends in self.channel_sends.values_mut() {
             sends.clear();
@@ -3404,11 +3455,7 @@ impl SynthEngine {
             self.return_order.push(idx);
         }
 
-        let Some(song) = self.sequencer.song().try_read() else {
-            // Audio thread couldn't read the song this block: keep the plain
-            // in-order pass (no bus-to-bus routing) rather than skipping returns.
-            return;
-        };
+        let song = self.sequencer.song().snapshot();
 
         // Resolve send targets and accumulate indegrees for the topological sort.
         for def in song.return_busses() {
@@ -4843,7 +4890,9 @@ mod tests {
         let (mut engine, mut handle) = SynthEngine::new();
         enter_preview(&mut engine, &mut handle);
         handle.send(EngineCommand::SetSong {
-            song: std::sync::Arc::new(parking_lot::RwLock::new(synth_sequencer::Song::default())),
+            song: std::sync::Arc::new(synth_sequencer::SharedSong::new(
+                synth_sequencer::Song::default(),
+            )),
         });
         engine.process_commands();
         assert_eq!(engine.sequencer.preview_pattern(), None);
@@ -4888,7 +4937,7 @@ mod tests {
         let tid = song.create_track("t");
         song.track_mut(tid).unwrap().volume = NormalizedValue::new(0.4);
         handle.send(EngineCommand::SetSong {
-            song: std::sync::Arc::new(parking_lot::RwLock::new(song)),
+            song: std::sync::Arc::new(synth_sequencer::SharedSong::new(song)),
         });
 
         // A Constant(1.0) source → this-track Volume (already resolved to track 0)
@@ -5422,7 +5471,7 @@ mod tests {
         def.pan = BipolarValue::new(-0.5);
         def.mute = true;
         handle.send(EngineCommand::SetSong {
-            song: std::sync::Arc::new(parking_lot::RwLock::new(song)),
+            song: std::sync::Arc::new(synth_sequencer::SharedSong::new(song)),
         });
         engine.process_commands();
         engine.update_track_controls();
@@ -5464,7 +5513,7 @@ mod tests {
         // Now b -> a would close a loop.
         assert!(song.return_send_would_cycle(b, a));
         handle.send(EngineCommand::SetSong {
-            song: std::sync::Arc::new(parking_lot::RwLock::new(song)),
+            song: std::sync::Arc::new(synth_sequencer::SharedSong::new(song)),
         });
         engine.process_commands();
         engine.update_track_controls();
@@ -5494,7 +5543,7 @@ mod tests {
                 enabled: false,
             });
         handle.send(EngineCommand::SetSong {
-            song: std::sync::Arc::new(parking_lot::RwLock::new(song)),
+            song: std::sync::Arc::new(synth_sequencer::SharedSong::new(song)),
         });
         engine.process_commands();
         engine.update_track_controls();
@@ -5529,7 +5578,7 @@ mod tests {
             enabled: true,
         });
         handle.send(EngineCommand::SetSong {
-            song: std::sync::Arc::new(parking_lot::RwLock::new(song)),
+            song: std::sync::Arc::new(synth_sequencer::SharedSong::new(song)),
         });
         engine.process_commands();
         engine.update_track_controls();
@@ -5559,7 +5608,7 @@ mod tests {
             .push(TrackSend::new(ReturnBusId(0), NormalizedValue::MAX));
         let _no_send = song.create_track("no_send"); // also instrument 0, later → wins
         handle.send(EngineCommand::SetSong {
-            song: std::sync::Arc::new(parking_lot::RwLock::new(song)),
+            song: std::sync::Arc::new(synth_sequencer::SharedSong::new(song)),
         });
         engine.process_commands();
         engine.update_track_controls();
@@ -5588,16 +5637,10 @@ mod tests {
                 enabled: true,
             });
             handle.send(EngineCommand::SetSong {
-                song: std::sync::Arc::new(parking_lot::RwLock::new(song)),
+                song: std::sync::Arc::new(synth_sequencer::SharedSong::new(song)),
             });
         }
-        // Deterministic oscillator start phase. note_on randomizes the unison
-        // phase via fastrand (unison_phase_random defaults to MAX), so without a
-        // fixed seed the baseline and with-send passes start at different phases
-        // and the rendered energy ratio occasionally dips below the assert
-        // threshold — a flaky failure unrelated to send routing. Seeding right
-        // before note_on makes both passes render the identical dry signal.
-        fastrand::seed(0x5EED);
+        // Per-module RNG state makes oscillator start phase deterministic.
         handle.note_on(MidiNote::C4, Velocity::new(0.8));
         engine.process_commands();
 

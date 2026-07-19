@@ -306,7 +306,7 @@ struct SynthApp {
     // DEBUG: frame counter after project load (0 = not tracking)
 
     // Sequencer state
-    song: std::sync::Arc<parking_lot::RwLock<synth_sequencer::Song>>,
+    song: std::sync::Arc<synth_sequencer::SharedSong>,
     sequencer_view_state: crate::gui::sequencer::SequencerViewState,
 
     // Pattern view state (tab-local UI bits; selection shared via sequencer_view_state)

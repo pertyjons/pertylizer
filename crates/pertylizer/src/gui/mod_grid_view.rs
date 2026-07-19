@@ -25,14 +25,13 @@ use std::sync::Arc;
 
 use eframe::egui::{self, Color32, Pos2, Rect, RichText, Sense, Vec2};
 use egui_remixicon::icons as ri;
-use parking_lot::RwLock;
 
 use synth_core::{ModuleCategory, ModuleDescriptor, ModuleType, ModuleWidth};
 use synth_engine::ModuleId;
 use synth_sequencer::{
     AutoInstrumentParam, AutomationTarget, GlobalParam, InstrumentId, MAX_MOD_GRID_NODES,
     ModConnection, ModGraph, ModGraphId, ModGraphScope, ModNodeConfig, ModNodeId, ModTarget,
-    ModuleNode, Song, TrackId, TrackParam, TransportNode, TransportSource,
+    ModuleNode, TrackId, TrackParam, TransportNode, TransportSource,
 };
 
 use crate::gui::auto_layout::{LayoutConnection, ModuleInfo, calculate_free_flow_layout};
@@ -164,7 +163,7 @@ enum GraphEdit {
 /// Draw the whole Mod Grid view: left pool panel + central node canvas.
 pub(crate) fn draw_mod_grid_view(
     ui: &mut egui::Ui,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     state: &mut ModGridViewState,
     undo_manager: &mut UndoManager,
     instruments: &[(InstrumentId, String)],
@@ -225,7 +224,7 @@ type PoolRow = (ModGraphId, String, ModGraphScope, usize);
 
 fn draw_pool_panel(
     ui: &mut egui::Ui,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     state: &mut ModGridViewState,
     undo_manager: &mut UndoManager,
 ) -> Option<Vec<ModGraphId>> {
@@ -397,7 +396,7 @@ fn draw_pool_panel(
 /// Mutate one graph under the write lock and push a snapshot undo entry when the
 /// closure actually changed it.
 fn with_graph_undo(
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     undo_manager: &mut UndoManager,
     id: ModGraphId,
     mutate: impl FnOnce(&mut ModGraph),
@@ -427,7 +426,7 @@ fn with_graph_undo(
 
 fn draw_graph_canvas(
     ui: &mut egui::Ui,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     state: &mut ModGridViewState,
     undo_manager: &mut UndoManager,
     graph_id: ModGraphId,
@@ -1404,7 +1403,7 @@ fn draw_bg_context_menu(
 // ============================================================================
 
 fn apply_graph_edit(
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     undo_manager: &mut UndoManager,
     state: &mut ModGridViewState,
     pre_snapshot: &ModGraph,
@@ -1506,7 +1505,7 @@ fn apply_graph_edit(
 /// Finalize a coalesced config-edit undo entry once no widget is being dragged:
 /// one undo entry per gesture, not per frame.
 fn finalize_config_undo(
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     undo_manager: &mut UndoManager,
     state: &mut ModGridViewState,
     any_dragged: bool,

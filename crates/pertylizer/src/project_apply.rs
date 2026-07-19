@@ -6,8 +6,6 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
-use parking_lot::RwLock as PRwLock;
-
 use synth_core::{ModuleType, Param, ParameterDescriptor, VoiceCount};
 use synth_engine::commands::InstrumentParam;
 use synth_engine::shared_state::{
@@ -21,7 +19,7 @@ use crate::patch::{ConnectionState, InstrumentState, ModuleState, ParamValue, Pa
 use crate::project::{GlobalProjectState, ProjectFile, ReturnBusEffectsState};
 use crate::session::{SessionError, SynthSession};
 
-type SharedSong = Arc<PRwLock<Song>>;
+type SharedSong = Arc<synth_sequencer::SharedSong>;
 type SharedSampleLibrary = Arc<std::sync::RwLock<SampleLibrary>>;
 
 /// Empty the shared sample library. Call this before applying a plain-JSON
@@ -1140,7 +1138,7 @@ mod tests {
     fn new_project_resets_instrument_id_counter() {
         let (mut engine, handle) = SynthEngine::new();
         let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
-        let song: SharedSong = Arc::new(PRwLock::new(Song::new("Counter")));
+        let song: SharedSong = Arc::new(synth_sequencer::SharedSong::new(Song::new("Counter")));
         let sample_library: SharedSampleLibrary = Arc::new(std::sync::RwLock::new(
             synth_sampler::SampleLibrary::default(),
         ));
@@ -1170,7 +1168,7 @@ mod tests {
     fn save_project_round_trips_control_scripts() {
         let (mut engine, handle) = SynthEngine::new();
         let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
-        let song: SharedSong = Arc::new(PRwLock::new(Song::new("Scripts")));
+        let song: SharedSong = Arc::new(synth_sequencer::SharedSong::new(Song::new("Scripts")));
         let sample_library: SharedSampleLibrary = Arc::new(std::sync::RwLock::new(
             synth_sampler::SampleLibrary::default(),
         ));
@@ -1234,7 +1232,7 @@ mod tests {
     fn load_patch_round_trips_control_scripts() {
         let (mut engine, handle) = SynthEngine::new();
         let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
-        let song: SharedSong = Arc::new(PRwLock::new(Song::new("Scripts")));
+        let song: SharedSong = Arc::new(synth_sequencer::SharedSong::new(Song::new("Scripts")));
         let sample_library: SharedSampleLibrary = Arc::new(std::sync::RwLock::new(
             synth_sampler::SampleLibrary::default(),
         ));
@@ -1627,7 +1625,7 @@ mod tests {
     fn save_project_round_trip_preserves_extended_instrument_fields() {
         let (mut engine, handle) = SynthEngine::new();
         let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
-        let song: SharedSong = Arc::new(PRwLock::new(Song::new("RoundTrip")));
+        let song: SharedSong = Arc::new(synth_sequencer::SharedSong::new(Song::new("RoundTrip")));
         let sample_library: SharedSampleLibrary = Arc::new(std::sync::RwLock::new(
             synth_sampler::SampleLibrary::default(),
         ));
@@ -1761,7 +1759,7 @@ mod tests {
         // wrote in the first place (the JSON is round-trippable end-to-end).
         let (mut engine2, handle2) = SynthEngine::new();
         let session2 = SynthSession::new(handle2.command_sender(), Arc::clone(&handle2.state));
-        let song2: SharedSong = Arc::new(PRwLock::new(Song::new("RoundTrip2")));
+        let song2: SharedSong = Arc::new(synth_sequencer::SharedSong::new(Song::new("RoundTrip2")));
         let sample_library2: SharedSampleLibrary = Arc::new(std::sync::RwLock::new(
             synth_sampler::SampleLibrary::default(),
         ));

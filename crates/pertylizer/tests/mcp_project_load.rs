@@ -17,7 +17,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use parking_lot::RwLock as PlRwLock;
 use synth_core::audio::SampleRate as HwSampleRate;
 use synth_core::{AudioCallbackContext, AudioProcessor, BipolarValue, Gain, InstrumentId};
 use synth_engine::SynthEngine;
@@ -38,7 +37,7 @@ struct HeadlessRig {
     ctx: AudioCallbackContext,
     _handle: synth_engine::EngineHandle,
     /// Shared Song so the bridge and engine see the same data.
-    song: Arc<PlRwLock<Song>>,
+    song: Arc<synth_sequencer::SharedSong>,
     _shared: Arc<McpSharedState>,
     _session: Arc<SynthSession>,
     _sample_library: Arc<std::sync::RwLock<synth_sampler::SampleLibrary>>,
@@ -58,7 +57,7 @@ impl HeadlessRig {
 fn build_headless_rig() -> HeadlessRig {
     let (mut engine, handle) = SynthEngine::new();
 
-    let song = Arc::new(PlRwLock::new(Song::new("Headless")));
+    let song = Arc::new(synth_sequencer::SharedSong::new(Song::new("Headless")));
     let _ = handle
         .command_sender()
         .send(synth_engine::EngineCommand::SetSong {
@@ -441,6 +440,24 @@ fn description_and_color_setters_round_trip_via_bridge() {
         rig.bridge.set_track_color(tid, "not-a-color").is_err(),
         "malformed color should be rejected"
     );
+}
+
+#[test]
+fn lint_project_surfaces_orphaned_track_instrument_references() {
+    let rig = build_headless_rig();
+    let track_id = rig
+        .bridge
+        .create_track("Orphan", Some(InstrumentId::new(999)))
+        .expect("create orphaned track");
+
+    let report = rig.bridge.lint_project().expect("lint project");
+    assert_eq!(report.orphaned_tracks.len(), 1);
+    assert_eq!(report.orphaned_tracks[0].track_id, track_id);
+    assert_eq!(
+        report.orphaned_tracks[0].missing_instrument_id,
+        InstrumentId::new(999)
+    );
+    assert_eq!(report.error_count, 1);
 }
 
 #[test]

@@ -8,7 +8,9 @@ use super::*;
 use crate::gui::widgets::{expose, expose_selected, mute_toggle, solo_toggle};
 
 /// Collect arrangement data from song (short read-lock, then release).
-pub(super) fn collect_arrangement_data(song: &Arc<RwLock<Song>>) -> Option<ArrangementData> {
+pub(super) fn collect_arrangement_data(
+    song: &Arc<synth_sequencer::SharedSong>,
+) -> Option<ArrangementData> {
     let song = song.try_read()?;
 
     let tracks: Vec<TrackInfo> = song
@@ -232,7 +234,7 @@ fn draw_arrangement_toolbar(
 /// unchanged.
 struct ArrangementCtx<'a> {
     data: &'a ArrangementData,
-    song: &'a Arc<RwLock<Song>>,
+    song: &'a Arc<synth_sequencer::SharedSong>,
     handle: &'a mut EngineHandle,
     view_state: &'a mut SequencerViewState,
     undo_manager: &'a mut crate::undo::UndoManager,
@@ -304,7 +306,7 @@ impl ArrangementCoords {
 /// undo action — but only if the length actually changed. Shared by the
 /// "Set Length…" submenu's free-input Apply branch and its bar presets.
 fn apply_pattern_length(
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     undo_manager: &mut crate::undo::UndoManager,
     pat_id: PatternId,
     new_len: SeqDuration,
@@ -360,7 +362,7 @@ pub(super) fn draw_arrangement(
     current_tick: u64,
     is_playing: bool,
     handle: &mut EngineHandle,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     view_state: &mut SequencerViewState,
     instruments: &[crate::gui::instrument_rack::InstrumentUiState],
     undo_manager: &mut crate::undo::UndoManager,
@@ -1786,19 +1788,20 @@ fn draw_arrangement_tempo_lane(
     // Expose the tempo lane background so the MCP can locate it (and target
     // add-point clicks) by name.
     expose(&lane_bg, egui::WidgetType::Panel, "tempo lane", None);
-    let add_point =
-        |song: &Arc<RwLock<Song>>, undo_manager: &mut crate::undo::UndoManager, pos: Pos2| {
-            let tick = snap_tick(x_to_tick(pos.x));
-            if !data.tempo_changes.iter().any(|(t, _, _)| *t == tick) {
-                let bpm = Bpm::new(y_to_bpm(pos.y).clamp(20.0, 300.0));
-                song.write().set_tempo_ramp_at(Tick(tick), bpm, false);
-                undo_manager.push(crate::undo::UndoAction::SetTempo {
-                    tick: Tick(tick),
-                    old: None,
-                    new: Some((bpm, false)),
-                });
-            }
-        };
+    let add_point = |song: &Arc<synth_sequencer::SharedSong>,
+                     undo_manager: &mut crate::undo::UndoManager,
+                     pos: Pos2| {
+        let tick = snap_tick(x_to_tick(pos.x));
+        if !data.tempo_changes.iter().any(|(t, _, _)| *t == tick) {
+            let bpm = Bpm::new(y_to_bpm(pos.y).clamp(20.0, 300.0));
+            song.write().set_tempo_ramp_at(Tick(tick), bpm, false);
+            undo_manager.push(crate::undo::UndoAction::SetTempo {
+                tick: Tick(tick),
+                old: None,
+                new: Some((bpm, false)),
+            });
+        }
+    };
     if lane_bg.double_clicked()
         && let Some(pos) = lane_bg.interact_pointer_pos()
     {

@@ -467,7 +467,7 @@ impl OfflineNoteSession {
     /// Play one note on the pre-loaded engine and capture the rendered
     /// stereo-interleaved f32 buffer. The first call warms the engine up; every
     /// later call first drains voices still ringing from the previous note so
-    /// renders stay independent. Reseeds `fastrand` per call for determinism.
+    /// renders stay independent. DSP randomness is per-instance and deterministic.
     pub fn render(
         &mut self,
         note: MidiNote,
@@ -475,9 +475,6 @@ impl OfflineNoteSession {
         duration_ms: u32,
         tail_ms: u32,
     ) -> Result<RenderedNote, McpBridgeError> {
-        // Deterministic offline render — see `OFFLINE_RENDER_SEED` docstring.
-        fastrand::seed(crate::audio::arrangement_render::OFFLINE_RENDER_SEED);
-
         // Flush denormals (FTZ/DAZ) for this render, matching the real-time
         // audio callback so previews agree with live playback. Restored by RAII.
         let _denormal_guard = DenormalGuard::new();

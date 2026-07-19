@@ -42,7 +42,7 @@ pub(super) fn draw_ruler_labels(
 pub(super) fn draw_transport_bar(
     ui: &mut egui::Ui,
     handle: &mut EngineHandle,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     view_state: &mut SequencerViewState,
 ) -> bool {
     use egui_remixicon::icons as ri;

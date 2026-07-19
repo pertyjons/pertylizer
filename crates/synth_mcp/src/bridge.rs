@@ -18,10 +18,10 @@ use crate::types::{
     DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic, InputDeviceInfo,
     InputStateInfo, InsertModuleResult, InstrumentInfo, InstrumentProfileResult, MatrixRoutingInfo,
     ModGraphDetail, ModGraphInfo, ModTargetInfo, ModuleInfo, ModuleSearchResult, ModuleTypeBrief,
-    ModuleTypeInfo, NoteGraphDetail, NoteGraphInfo, NoteInfo, OptimizeResult, ParameterInfo,
-    PatchResourceData, PatternInfo, PlacementInfo, ProjectLintEntry, ProjectLintReport,
-    ProjectSchemaInfo, ReturnBusInfo, ReturnEffectInfo, SampleInfo, SamplerStateInfo,
-    SetSongResult, SongInfo, TempoPoint, TrackInfo, UiSnapshot, VersionInfo,
+    ModuleTypeInfo, NoteGraphDetail, NoteGraphInfo, NoteInfo, OptimizeResult, OrphanedTrackLint,
+    ParameterInfo, PatchResourceData, PatternInfo, PlacementInfo, ProjectLintEntry,
+    ProjectLintReport, ProjectSchemaInfo, ReturnBusInfo, ReturnEffectInfo, SampleInfo,
+    SamplerStateInfo, SetSongResult, SongInfo, TempoPoint, TrackInfo, UiSnapshot, VersionInfo,
 };
 
 /// Canonical exact position used to locate an arrangement placement.
@@ -590,6 +590,12 @@ pub trait SynthBridge: Send + Sync + 'static {
     /// the schema and risking introspection-vs-disk drift.
     fn get_project_schema(&self) -> Result<ProjectSchemaInfo, McpBridgeError>;
 
+    /// Return tracks whose referenced instrument does not exist. Bridges that
+    /// do not expose song routing may keep the empty default.
+    fn list_orphaned_tracks(&self) -> Result<Vec<OrphanedTrackLint>, McpBridgeError> {
+        Ok(Vec::new())
+    }
+
     /// Run the graph diagnostics over every instrument and aggregate the results
     /// into one project-wide load-lint report — a single call that surfaces
     /// *behavioural* warnings (unconnected ports, silent voices, feedback loops)
@@ -612,7 +618,10 @@ pub trait SynthBridge: Send + Sync + 'static {
                 Err(e) => return Err(e),
             }
         }
-        Ok(build_lint_report(per_instrument))
+        let mut report = build_lint_report(per_instrument);
+        report.orphaned_tracks = self.list_orphaned_tracks()?;
+        report.error_count += report.orphaned_tracks.len();
+        Ok(report)
     }
 
     // === Instrument lifecycle ===
@@ -2853,6 +2862,7 @@ pub(crate) fn build_lint_report(
         warning_count,
         info_count,
         entries,
+        orphaned_tracks: Vec::new(),
     }
 }
 

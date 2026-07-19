@@ -85,9 +85,8 @@ impl std::fmt::Debug for GraphNode {
 pub struct ModuleGraph {
     /// All modules in the graph. `BTreeMap` so iteration order is
     /// deterministic across fresh instances — `HashMap`'s per-instance
-    /// `RandomState` breaks offline-render bit-exactness whenever any
-    /// module consumes a shared RNG in iteration order (Oscillator
-    /// `note_on` does, via `fastrand` for unison phase).
+    /// `RandomState` breaks stable traversal and complicates reproducible
+    /// diagnostics even though DSP randomness is now per-module.
     nodes: BTreeMap<ModuleId, GraphNode>,
     /// All connections.
     connections: HashSet<Connection>,

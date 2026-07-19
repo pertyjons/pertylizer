@@ -403,6 +403,57 @@ impl AppSynthBridge {
             .collect()
     }
 
+    /// Resolve automation against the instrument's live descriptors. Script
+    /// modules extend their descriptor at runtime with user-declared knobs, so
+    /// the factory descriptor is insufficient for both authoring and rebuild
+    /// orphan detection.
+    fn build_live_automation_target(
+        &self,
+        target: &str,
+        instrument_id: InstrumentId,
+        valid_modules: &[synth_engine::ModuleId],
+    ) -> Result<synth_sequencer::AutomationTarget, McpBridgeError> {
+        let Some(body) = target.strip_prefix("module:") else {
+            return build_automation_target(target, instrument_id, valid_modules);
+        };
+        let (module_type, instance, param_id) = parse_module_automation_target(body)?;
+        let module_id = synth_engine::ModuleId::new(module_type, instance);
+        if !valid_modules.contains(&module_id) {
+            return Err(McpBridgeError::Other(format!(
+                "instrument has no '{}-{instance}' module to automate",
+                module_type.prefix()
+            )));
+        }
+        let descriptor = self
+            .session
+            .module_descriptor(instrument_id, module_id)
+            .ok_or_else(|| {
+                McpBridgeError::Other(format!("no live descriptor for module '{module_id}'"))
+            })?;
+        let parameter = descriptor
+            .parameters
+            .iter()
+            .find(|parameter| parameter.type_id == param_id)
+            .ok_or_else(|| {
+                McpBridgeError::Other(format!(
+                    "module '{}' has no parameter '{param_id}'",
+                    module_type.prefix()
+                ))
+            })?;
+        if !parameter.is_automatable() {
+            return Err(McpBridgeError::Other(format!(
+                "parameter '{param_id}' on module '{}' is not automatable",
+                module_type.prefix()
+            )));
+        }
+        Ok(synth_sequencer::AutomationTarget::Module {
+            instrument: instrument_id,
+            module_type,
+            instance,
+            param_id: synth_sequencer::ParamId::from(param_id),
+        })
+    }
+
     /// Build a deduped `instrument_id → live module ids` cache for a set of
     /// instruments, so bulk automation operations validate Module targets with
     /// one graph query per instrument rather than one per point.
@@ -492,6 +543,31 @@ impl SynthBridge for AppSynthBridge {
     fn list_instruments(&self) -> Result<Vec<InstrumentInfo>, McpBridgeError> {
         let snapshots = self.session.list_instruments();
         Ok(snapshots.iter().map(Self::snapshot_to_info).collect())
+    }
+
+    fn list_orphaned_tracks(
+        &self,
+    ) -> Result<Vec<synth_mcp::types::OrphanedTrackLint>, McpBridgeError> {
+        let live: std::collections::HashSet<_> = self
+            .session
+            .list_instruments()
+            .iter()
+            .map(|instrument| instrument.id)
+            .collect();
+        let song = self.shared.song.read();
+        Ok(song
+            .tracks()
+            .filter(|track| !live.contains(&track.instrument))
+            .map(|track| synth_mcp::types::OrphanedTrackLint {
+                track_id: track.id,
+                track_name: track.name.clone(),
+                missing_instrument_id: track.instrument,
+                message: format!(
+                    "track references missing instrument {}; track mixer, automation, and Mod Grid control will not apply",
+                    track.instrument
+                ),
+            })
+            .collect())
     }
 
     fn get_instrument_profiles(
@@ -3829,7 +3905,10 @@ impl SynthBridge for AppSynthBridge {
                 if lane.instrument_id != Some(id) || !lane.target.starts_with("module:") {
                     continue;
                 }
-                if build_automation_target(&lane.target, id, &valid_modules).is_ok() {
+                let resolves = self
+                    .build_live_automation_target(&lane.target, id, &valid_modules)
+                    .is_ok();
+                if resolves {
                     preserved_lanes += 1;
                 } else {
                     orphaned_lanes.push(synth_mcp::types::OrphanedAutomationLane {
@@ -3937,7 +4016,8 @@ impl SynthBridge for AppSynthBridge {
                 let valid = module_cache
                     .get(&pt.instrument_id)
                     .map_or(&[][..], Vec::as_slice);
-                let target = build_automation_target(&pt.param, pt.instrument_id, valid)?;
+                let target =
+                    self.build_live_automation_target(&pt.param, pt.instrument_id, valid)?;
                 self.validate_automation_target_owner(&target)?;
                 Ok(target)
             })
@@ -4113,7 +4193,8 @@ impl SynthBridge for AppSynthBridge {
         instrument_id: InstrumentId,
     ) -> Result<Vec<AutomationPointInfo>, McpBridgeError> {
         let valid_modules = self.instrument_module_ids(instrument_id);
-        let auto_target = build_automation_target(target, instrument_id, &valid_modules)?;
+        let auto_target =
+            self.build_live_automation_target(target, instrument_id, &valid_modules)?;
         self.validate_automation_target_owner(&auto_target)?;
         let song = self.shared.song.read();
         let pat_id = pattern_id;
@@ -4144,7 +4225,8 @@ impl SynthBridge for AppSynthBridge {
         beats: &[f32],
     ) -> Result<BatchResult, McpBridgeError> {
         let valid_modules = self.instrument_module_ids(instrument_id);
-        let auto_target = build_automation_target(target, instrument_id, &valid_modules)?;
+        let auto_target =
+            self.build_live_automation_target(target, instrument_id, &valid_modules)?;
         self.validate_automation_target_owner(&auto_target)?;
         let mut song = self.shared.song.write();
         let pat_id = pattern_id;
@@ -4195,7 +4277,8 @@ impl SynthBridge for AppSynthBridge {
         instrument_id: InstrumentId,
     ) -> Result<usize, McpBridgeError> {
         let valid_modules = self.instrument_module_ids(instrument_id);
-        let auto_target = build_automation_target(target, instrument_id, &valid_modules)?;
+        let auto_target =
+            self.build_live_automation_target(target, instrument_id, &valid_modules)?;
         self.validate_automation_target_owner(&auto_target)?;
         let mut song = self.shared.song.write();
         let pat_id = pattern_id;
@@ -4223,7 +4306,8 @@ impl SynthBridge for AppSynthBridge {
         use synth_sequencer::AutomationPoint;
 
         let valid_modules = self.instrument_module_ids(instrument_id);
-        let auto_target = build_automation_target(target, instrument_id, &valid_modules)?;
+        let auto_target =
+            self.build_live_automation_target(target, instrument_id, &valid_modules)?;
         self.validate_automation_target_owner(&auto_target)?;
         let mut song = self.shared.song.write();
         let pat_id = pattern_id;
@@ -4270,8 +4354,9 @@ impl SynthBridge for AppSynthBridge {
 
         let from_valid = self.instrument_module_ids(from_instrument_id);
         let to_valid = self.instrument_module_ids(to_instrument_id);
-        let from_at = build_automation_target(from_target, from_instrument_id, &from_valid)?;
-        let to_at = build_automation_target(to_target, to_instrument_id, &to_valid)?;
+        let from_at =
+            self.build_live_automation_target(from_target, from_instrument_id, &from_valid)?;
+        let to_at = self.build_live_automation_target(to_target, to_instrument_id, &to_valid)?;
         self.validate_automation_target_owner(&from_at)?;
         self.validate_automation_target_owner(&to_at)?;
         let mut song = self.shared.song.write();
@@ -8058,25 +8143,8 @@ fn build_module_automation_target(
     instrument: synth_sequencer::InstrumentId,
     valid_modules: &[synth_engine::ModuleId],
 ) -> Result<synth_sequencer::AutomationTarget, McpBridgeError> {
-    let malformed = || {
-        McpBridgeError::Other(format!(
-            "module target must be 'module:<type>:<instance>:<param>' \
-             (or 'module:<type>-<instance>:<param>'), got 'module:{body}'"
-        ))
-    };
-    let (module_ref, param_id) = body.rsplit_once(':').ok_or_else(malformed)?;
-    // Split off the instance from the END: the instance is always the trailing
-    // token, while the type token itself may contain a '-' (a hyphenated
-    // multi-word name like "ladder-filter" that `parse_module_type` accepts).
-    // Splitting on the first separator would mis-slice such names.
-    let (type_token, instance_str) = module_ref.rsplit_once([':', '-']).ok_or_else(malformed)?;
-
-    let module_type = parse_module_type(type_token)
-        .ok_or_else(|| McpBridgeError::Other(format!("unknown module type: '{type_token}'")))?;
+    let (module_type, instance, param_id) = parse_module_automation_target(body)?;
     let prefix = module_type.prefix();
-    let instance: u16 = instance_str
-        .parse()
-        .map_err(|_| McpBridgeError::Other(format!("invalid module instance: '{instance_str}'")))?;
 
     // Validate the instance actually exists in the instrument's graph, so a
     // target can't silently bind to a missing module.
@@ -8111,6 +8179,28 @@ fn build_module_automation_target(
         instance,
         param_id: synth_sequencer::ParamId::from(param_id),
     })
+}
+
+fn parse_module_automation_target(body: &str) -> Result<(ModuleType, u16, &str), McpBridgeError> {
+    let malformed = || {
+        McpBridgeError::Other(format!(
+            "module target must be 'module:<type>:<instance>:<param>' \
+             (or 'module:<type>-<instance>:<param>'), got 'module:{body}'"
+        ))
+    };
+    let (module_ref, param_id) = body.rsplit_once(':').ok_or_else(malformed)?;
+    // Split off the instance from the END: the instance is always the trailing
+    // token, while the type token itself may contain a '-' (a hyphenated
+    // multi-word name like "ladder-filter" that `parse_module_type` accepts).
+    // Splitting on the first separator would mis-slice such names.
+    let (type_token, instance_str) = module_ref.rsplit_once([':', '-']).ok_or_else(malformed)?;
+
+    let module_type = parse_module_type(type_token)
+        .ok_or_else(|| McpBridgeError::Other(format!("unknown module type: '{type_token}'")))?;
+    let instance: u16 = instance_str
+        .parse()
+        .map_err(|_| McpBridgeError::Other(format!("invalid module instance: '{instance_str}'")))?;
+    Ok((module_type, instance, param_id))
 }
 
 /// Extract a round-trippable target string, optional instrument ID, and scope
@@ -10757,7 +10847,7 @@ fn resolve_duration_window(
 /// one place.
 fn render_range_to_metrics(
     engine_session: &mut crate::audio::arrangement_render::OfflineEngineSession,
-    song: &Arc<parking_lot::RwLock<synth_sequencer::Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     start: u64,
     end: u64,
     warnings: &mut Vec<String>,
@@ -12470,7 +12560,7 @@ fn render_per_track_contributions(
     // sample data) by reusing ONE offline session across each chunk's tracks
     // instead of rebuilding per track — ≈`num_threads` builds rather than one
     // per track. `render_range` fully resets between calls (Stop + voice drain
-    // + `fastrand` reseed + re-attach song + return-bus rebuild), so reusing a
+    // + voice drain + re-attach song + return-bus rebuild), so reusing a
     // session across solo variants is bit-exact to a fresh one — the
     // `arrangement_render_determinism` test covers consecutive-render equality.
     // Chunks still render in parallel across threads; determinism also rests on

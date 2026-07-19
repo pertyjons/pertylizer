@@ -104,8 +104,9 @@ commit and the code carry the detail; history.md is the index.
 - **Audio thread** — real-time, lock-free. Runs `SynthEngine::process()`. Communicates via `EngineCommand` (in) and
   `EngineEvent` (out) ring buffers.
 - **UI thread** — egui rendering. Holds `EngineHandle` for sending commands and reading shared atomic state.
-- **Shared state** — `Arc<RwLock<Song>>` for sequencer data. Audio thread uses `try_read()` only. UI thread uses
-  `write()` for mutations. Collect snapshots before rendering, release lock, then draw.
+- **Shared state** — `Arc<SharedSong>` keeps editable sequencer data behind an `RwLock` and publishes immutable
+  `Arc<Song>` snapshots through `ArcSwap`. The audio thread reads snapshots lock-free; the UI thread uses `write()`
+  for mutations. Collect snapshots before rendering, release locks, then draw.
 
 ### GUI Architecture (egui)
 

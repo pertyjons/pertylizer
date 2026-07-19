@@ -85,6 +85,8 @@ pub struct Oscillator {
 
     // State
     unison_phases: [Phase; MAX_UNISON_VOICES],
+    rng: synth_core::hash::RtRng,
+    rng_seed: u64,
     sample_rate: SampleRate,
     /// Previous sync-input sample, for master-cycle edge detection (persists
     /// across buffers). Raw `f32`: the sync input is now an audio-rate signal
@@ -154,6 +156,8 @@ impl Oscillator {
                 std::f32::consts::FRAC_1_SQRT_2,
             ); MAX_UNISON_VOICES],
             unison_phases: [Phase::ZERO; MAX_UNISON_VOICES],
+            rng: synth_core::hash::RtRng::new(0x4F53_4301),
+            rng_seed: 0x4F53_4301,
             sample_rate: SampleRate::DVD_QUALITY,
             prev_sync: 0.0,
             mod_offset_pitch: Semitones::ZERO,
@@ -811,6 +815,16 @@ impl PolyModule for Oscillator {
         // Uninitialize the glide so the first note of a freshly allocated voice
         // snaps (jumps) instead of gliding from a stale pitch.
         self.glide.reset();
+        self.rng.reseed(self.rng_seed);
+    }
+
+    fn set_seed(&mut self, seed: u64) {
+        self.rng_seed = seed ^ 0x4F53_4301;
+        self.rng.reseed(self.rng_seed);
+    }
+
+    fn set_voice_index(&mut self, voice_index: u32) {
+        self.set_seed(u64::from(voice_index));
     }
 
     fn set_voice_pitch(&mut self, pitch: VoicePitch) {
@@ -828,7 +842,7 @@ impl PolyModule for Oscillator {
         let random = self.unison_phase_random.as_f32();
         for phase in &mut self.unison_phases[..n] {
             *phase = if random > 0.0 {
-                Phase::new(fastrand::f32() * random)
+                Phase::new(self.rng.next_unit() * random)
             } else {
                 Phase::ZERO
             };

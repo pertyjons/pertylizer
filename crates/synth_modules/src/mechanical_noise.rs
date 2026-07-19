@@ -41,6 +41,8 @@ pub struct MechanicalNoise {
     mod_offsets: ParamModOffsets,
     /// Previous Trigger-gate level for rising-edge detection (persists across blocks).
     prev_trigger: f32,
+    rng: synth_core::hash::RtRng,
+    rng_seed: u64,
 
     // Output buffer
     output_buffer: AudioBuffer,
@@ -64,6 +66,8 @@ impl MechanicalNoise {
             sample_rate: SampleRate::DVD_QUALITY,
             mod_offsets: ParamModOffsets::new(),
             prev_trigger: 0.0,
+            rng: synth_core::hash::RtRng::new(0x004D_4543_4801),
+            rng_seed: 0x004D_4543_4801,
             output_buffer: AudioBuffer::new(1024),
         }
     }
@@ -95,7 +99,7 @@ impl MechanicalNoise {
         }
 
         // White noise base
-        let noise = fastrand::f32() * 2.0 - 1.0;
+        let noise = self.rng.next_bipolar();
 
         // Simple one-pole lowpass filter
         let cutoff_norm = (self.cutoff.as_f32() / self.sample_rate.as_f32()).min(0.5);
@@ -330,6 +334,16 @@ impl PolyModule for MechanicalNoise {
         self.current_sample = self.envelope_samples;
         self.filter_state = FilterState::ZERO;
         self.prev_trigger = 0.0;
+        self.rng.reseed(self.rng_seed);
+    }
+
+    fn set_seed(&mut self, seed: u64) {
+        self.rng_seed = seed ^ 0x004D_4543_4801;
+        self.rng.reseed(self.rng_seed);
+    }
+
+    fn set_voice_index(&mut self, voice_index: u32) {
+        self.set_seed(u64::from(voice_index));
     }
 
     fn note_on(&mut self, _note: MidiNote, velocity: Velocity) {

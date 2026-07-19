@@ -8,8 +8,6 @@
 
 use std::sync::Arc;
 
-use parking_lot::RwLock;
-
 use synth_engine::SynthEngine;
 use synth_sequencer::{
     Duration as SeqDuration, NoteId, PatternId, PatternTick, Pitch, Song, Velocity,
@@ -48,7 +46,9 @@ fn rig_with_pattern(notes: &[(u8, u32, u32, u8)]) -> Rig {
             let _ = pattern.insert_note(n);
         }
     }
-    let shared = Arc::new(McpSharedState::with_song(Arc::new(RwLock::new(song))));
+    let shared = Arc::new(McpSharedState::with_song(Arc::new(
+        synth_sequencer::SharedSong::new(song),
+    )));
     let sample_library = pertylizer::audio::preview::SharedSampleLibrary::default();
     Rig {
         _engine: engine,

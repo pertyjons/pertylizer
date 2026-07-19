@@ -453,6 +453,9 @@ impl SynthSession {
         module_id: ModuleId,
         description: Option<&str>,
     ) -> Result<(), SessionError> {
+        let normalized = description
+            .filter(|value| !value.is_empty())
+            .unwrap_or_default();
         if !self
             .command_sender
             .send(EngineCommand::SetModuleDescription {
@@ -463,6 +466,11 @@ impl SynthSession {
         {
             return Err(SessionError::SendFailed);
         }
+        self.state.shared_graph.set_module_description(
+            instrument_id,
+            module_id,
+            normalized.to_owned(),
+        );
         Ok(())
     }
 

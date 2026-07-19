@@ -39,6 +39,46 @@ pub fn splitmix64_bipolar(seed: u64) -> f32 {
     splitmix64_unit(seed) * 2.0 - 1.0
 }
 
+/// Small deterministic stateful generator for audio-rate noise.
+///
+/// Unlike thread-local RNGs, each module instance owns its state, making live
+/// playback and offline rendering independent of thread scheduling and module
+/// traversal order. Advancing it is pure integer arithmetic and RT-safe.
+#[must_use]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct RtRng {
+    state: u64,
+}
+
+impl RtRng {
+    pub const DEFAULT_SEED: u64 = 0xA076_1D64_78BD_642F;
+
+    pub const fn new(seed: u64) -> Self {
+        Self {
+            state: if seed == 0 { Self::DEFAULT_SEED } else { seed },
+        }
+    }
+
+    pub fn reseed(&mut self, seed: u64) {
+        *self = Self::new(seed);
+    }
+
+    pub fn next_unit(&mut self) -> f32 {
+        self.state = splitmix64(self.state);
+        splitmix64_unit(self.state)
+    }
+
+    pub fn next_bipolar(&mut self) -> f32 {
+        self.next_unit() * 2.0 - 1.0
+    }
+}
+
+impl Default for RtRng {
+    fn default() -> Self {
+        Self::new(Self::DEFAULT_SEED)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -65,5 +105,15 @@ mod tests {
             assert!((-1.0..1.0).contains(&v), "seed {seed} → {v} out of [-1,1)");
             assert_eq!(v, splitmix64_bipolar(seed), "must be reproducible");
         }
+    }
+
+    #[test]
+    fn rt_rng_reseeds_reproducibly_and_advances() {
+        let mut first = RtRng::new(42);
+        let a = first.next_bipolar();
+        let b = first.next_bipolar();
+        assert_ne!(a, b);
+        first.reseed(42);
+        assert_eq!(first.next_bipolar(), a);
     }
 }

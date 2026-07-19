@@ -7,8 +7,6 @@
 
 use std::sync::Arc;
 
-use parking_lot::RwLock;
-
 use pertylizer::mcp_bridge::{
     generate_chord_impl, quantize_notes_to_grid_impl, quantize_notes_to_scale_impl,
     transpose_notes_impl,
@@ -35,7 +33,9 @@ fn shared_with_pattern(notes: &[(u8, u32)]) -> (Arc<McpSharedState>, PatternId) 
             let _ = pattern.insert_note(n);
         }
     }
-    let shared = Arc::new(McpSharedState::with_song(Arc::new(RwLock::new(song))));
+    let shared = Arc::new(McpSharedState::with_song(Arc::new(
+        synth_sequencer::SharedSong::new(song),
+    )));
     (shared, pid)
 }
 

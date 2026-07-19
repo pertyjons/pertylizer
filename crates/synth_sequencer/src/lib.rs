@@ -36,6 +36,7 @@ pub mod note_graph;
 pub mod note_processor;
 pub mod pattern;
 pub mod pitch;
+pub mod shared_song;
 pub mod song;
 pub mod time;
 pub mod track;
@@ -78,6 +79,7 @@ pub use note_processor::{
 };
 pub use pattern::{Pattern, RowResolution};
 pub use pitch::{NoteName, Pitch, Velocity};
+pub use shared_song::{SharedSong, SharedSongWriteGuard};
 pub use song::{FreezeStats, LoopRegion, PatternPlacement, Song, TempoChange, TimeSignatureChange};
 pub use time::{Duration, PatternTick, TICKS_PER_QUARTER, Tick, TimeSignature};
 pub use track::{ReturnBus, ReturnSend, SequencerTrack, TrackColor, TrackMode, TrackSend};

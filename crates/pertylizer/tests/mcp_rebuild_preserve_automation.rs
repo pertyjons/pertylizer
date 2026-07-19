@@ -8,7 +8,6 @@
 
 use std::sync::Arc;
 
-use parking_lot::RwLock as PlRwLock;
 use synth_core::InstrumentId;
 use synth_engine::SynthEngine;
 use synth_mcp::SynthBridge;
@@ -24,7 +23,7 @@ use pertylizer::session::SynthSession;
 
 fn build_bridge() -> AppSynthBridge {
     let (_engine, handle) = SynthEngine::new();
-    let song = Arc::new(PlRwLock::new(Song::new("Rebuild")));
+    let song = Arc::new(synth_sequencer::SharedSong::new(Song::new("Rebuild")));
     let _ = handle
         .command_sender()
         .send(synth_engine::EngineCommand::SetSong {
@@ -111,6 +110,21 @@ fn spec_without_filter(instrument_id: Option<InstrumentId>) -> BridgeInstrumentD
                 params: vec![],
             },
         ],
+        connections: vec![],
+    }
+}
+
+fn script_spec(instrument_id: Option<InstrumentId>) -> BridgeInstrumentDef {
+    BridgeInstrumentDef {
+        instrument_id,
+        name: "Script Lead".to_string(),
+        midi_channel: None,
+        volume: None,
+        pan: None,
+        modules: vec![BridgeModuleDef {
+            module_type: "scr".to_string(),
+            params: vec![],
+        }],
         connections: vec![],
     }
 }
@@ -208,5 +222,48 @@ fn rebuild_requires_existing_instrument_id() {
     assert!(
         err.to_string().contains("requires instrument_id"),
         "got {err}"
+    );
+}
+
+#[test]
+fn rebuild_reports_and_drops_lane_when_script_param_is_removed() {
+    let bridge = build_bridge();
+    let built = bridge
+        .build_instrument(&script_spec(None))
+        .expect("build script instrument");
+    let instrument_id = built.instrument_id;
+    bridge
+        .set_mod_matrix_script(instrument_id, "scr-1", 1, "param drive = 0.5\nout1 = drive")
+        .expect("install script parameter");
+    let pattern_id = bridge
+        .create_pattern("Script automation", 4.0)
+        .expect("create pattern");
+    let authored = bridge
+        .add_automation_points(
+            pattern_id,
+            &[BridgeAutomationPointData {
+                param: "module:scr:1:drive".to_string(),
+                instrument_id,
+                beat: 0.0,
+                value: 0.75,
+                curve: CurveKind::Linear,
+                curve_strength: None,
+            }],
+        )
+        .expect("automate declared script parameter");
+    assert_eq!(authored.succeeded, 1, "script automation must be authored");
+
+    let result = bridge
+        .rebuild_instrument_preserve_automation(&script_spec(Some(instrument_id)), true)
+        .expect("rebuild after removing declared parameter");
+
+    assert_eq!(result.orphaned_lanes.len(), 1);
+    assert_eq!(result.orphaned_lanes[0].target, "module:scr:1:drive");
+    assert!(result.dropped_orphaned);
+    assert!(
+        bridge
+            .list_automation_lanes(pattern_id)
+            .expect("list lanes")
+            .is_empty()
     );
 }

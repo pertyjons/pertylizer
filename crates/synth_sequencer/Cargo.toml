@@ -16,6 +16,8 @@ serde = { workspace = true }
 fastrand = { workspace = true }
 schemars = { workspace = true }
 thiserror = { workspace = true }
+parking_lot = { workspace = true }
+arc-swap = { workspace = true }
 
 [dev-dependencies]
 serde_json = { workspace = true }

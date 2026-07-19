@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use synth_core::hash::RtRng;
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
     ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
@@ -34,6 +35,8 @@ pub struct Lfo {
     /// Smooth random: current and target values for interpolation.
     smooth_random_current: f32,
     smooth_random_target: f32,
+    rng: RtRng,
+    rng_seed: u64,
     sync_mode: SyncMode,
     sync_division: BeatDivision,
     retrigger_mode: RetriggerMode,
@@ -63,6 +66,8 @@ impl Lfo {
             sh_trigger_prev: NormalizedValue::MIN,
             smooth_random_current: 0.0,
             smooth_random_target: 0.0,
+            rng: RtRng::new(0x4C46_4F01),
+            rng_seed: 0x4C46_4F01,
             sync_mode: SyncMode::Free,
             sync_division: BeatDivision::QUARTER,
             retrigger_mode: RetriggerMode::Continue,
@@ -75,8 +80,8 @@ impl Lfo {
     }
 
     #[inline]
-    fn random(&self) -> f32 {
-        fastrand::f32() * 2.0 - 1.0
+    fn random(&mut self) -> f32 {
+        self.rng.next_bipolar()
     }
 
     #[inline]
@@ -379,6 +384,16 @@ impl PolyModule for Lfo {
         self.phase = Phase::ZERO;
         self.sh_value = 0.0;
         self.prev_retrigger = NormalizedValue::MIN;
+        self.rng.reseed(self.rng_seed);
+    }
+
+    fn set_seed(&mut self, seed: u64) {
+        self.rng_seed = seed ^ 0x4C46_4F01;
+        self.rng.reseed(self.rng_seed);
+    }
+
+    fn set_voice_index(&mut self, voice_index: u32) {
+        self.set_seed(u64::from(voice_index));
     }
 
     fn note_on(&mut self, _note: MidiNote, _velocity: Velocity) {}

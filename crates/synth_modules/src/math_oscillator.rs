@@ -10,6 +10,7 @@ use std::collections::HashMap;
 use std::f32::consts::{PI, TAU};
 
 use synth_core::VoicePitch;
+use synth_core::hash::RtRng;
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
     ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
@@ -60,6 +61,8 @@ pub struct MathOscillator {
     delay_line: Vec<f32>,
     write_pos: BufferIndex,
     burst_remaining: FrameCount,
+    rng: RtRng,
+    rng_seed: u64,
 
     // Bytebeat state
     time_counter: u32,
@@ -93,6 +96,8 @@ impl MathOscillator {
             delay_line: vec![0.0; MAX_DELAY_SIZE],
             write_pos: BufferIndex::ZERO,
             burst_remaining: FrameCount::ZERO,
+            rng: RtRng::new(0x004D_4154_4801),
+            rng_seed: 0x004D_4154_4801,
             time_counter: 0,
             shepard_phases: [0.0; 6],
             output_buffer: AudioBuffer::new(1024),
@@ -105,11 +110,10 @@ impl MathOscillator {
         self.base_frequency = self.frequency;
     }
 
-    /// Generate white noise sample using fastrand (thread-local, lock-free).
+    /// Generate deterministic per-instance white noise.
     #[inline]
-    fn noise(&self) -> f32 {
-        // Convert [0, 1) to [-1, 1)
-        fastrand::f32() * 2.0 - 1.0
+    fn noise(&mut self) -> f32 {
+        self.rng.next_bipolar()
     }
 
     /// Convenience for tests/internal callers: generate using the current
@@ -706,6 +710,16 @@ impl PolyModule for MathOscillator {
         self.write_pos = BufferIndex::ZERO;
         self.burst_remaining = FrameCount::ZERO;
         self.glide.reset();
+        self.rng.reseed(self.rng_seed);
+    }
+
+    fn set_seed(&mut self, seed: u64) {
+        self.rng_seed = seed ^ 0x004D_4154_4801;
+        self.rng.reseed(self.rng_seed);
+    }
+
+    fn set_voice_index(&mut self, voice_index: u32) {
+        self.set_seed(u64::from(voice_index));
     }
 
     fn note_on(&mut self, note: MidiNote, _velocity: Velocity) {

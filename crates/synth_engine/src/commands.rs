@@ -709,10 +709,10 @@ pub enum EngineCommand {
 
     /// Set the song for the sequencer.
     ///
-    /// The song is shared via `Arc<RwLock<Song>>` for thread-safe access.
+    /// The song publishes immutable snapshots for lock-free audio access.
     /// The sequencer will stop and reset when a new song is set.
     SetSong {
-        song: std::sync::Arc<parking_lot::RwLock<synth_sequencer::Song>>,
+        song: std::sync::Arc<synth_sequencer::SharedSong>,
     },
 
     /// Replace the running Mod Grid instances wholesale. Built off the audio

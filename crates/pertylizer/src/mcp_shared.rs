@@ -52,7 +52,7 @@ pub struct McpSharedState {
     /// Current UI layout snapshot (written by GUI, read by MCP).
     pub ui_layout: Mutex<UiLayoutData>,
     /// Shared song data for sequencer (read/written by MCP, read by engine).
-    pub song: Arc<parking_lot::RwLock<Song>>,
+    pub song: Arc<synth_sequencer::SharedSong>,
     /// Whether the MCP HTTP server is listening.
     pub mcp_listening: AtomicBool,
     /// Registry of active MCP sessions with client identity info.
@@ -108,7 +108,7 @@ impl McpSharedState {
 
     /// Create with a pre-existing shared Song (so GUI and MCP share the same instance).
     #[must_use]
-    pub fn with_song(song: Arc<parking_lot::RwLock<Song>>) -> Self {
+    pub fn with_song(song: Arc<synth_sequencer::SharedSong>) -> Self {
         Self {
             pending_patch: Mutex::new(None),
             ui_layout: Mutex::new(UiLayoutData::default()),

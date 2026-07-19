@@ -24,8 +24,6 @@
 
 use std::sync::Arc;
 
-use parking_lot::RwLock;
-
 use synth_core::audio::SampleRate as HwSampleRate;
 use synth_core::{AudioCallbackContext, AudioProcessor, DenormalGuard};
 use synth_engine::commands::{InstrumentParam, PortId};
@@ -57,15 +55,6 @@ const MAX_RENDER_SECONDS: f32 = 300.0;
 /// entire song. Notes that started further back than this are silent in the
 /// output — same as the pre-pre-roll behaviour, but with a warning.
 const MAX_PREROLL_SECONDS: f32 = 30.0;
-
-/// Fixed seed for `fastrand`'s thread-local RNG at the start of every offline
-/// render. Several DSP modules pull from `fastrand` during processing —
-/// noise/LFO-S&H output, oscillator phase randomization on note-on, mechanical
-/// noise, drift. Without a deterministic seed, two consecutive renders of the
-/// same song-state diverge by enough to mask sub-dB mix differences.
-/// `fastrand`'s free functions use a thread-local RNG, so reseeding here
-/// doesn't disturb the audio thread.
-pub(crate) const OFFLINE_RENDER_SEED: u64 = 0x5EED_5EED_5EED_5EED;
 
 /// Upper bound on how long the voice-bleed drain in `render_range` may run
 /// between two consecutive renders, in milliseconds. The drain exits early as
@@ -179,7 +168,7 @@ pub fn render_arrangement_to_buffer_with_scope(
 pub(crate) fn render_arrangement_to_buffer_with_song(
     session: &SynthSession,
     sample_library: &crate::audio::preview::SharedSampleLibrary,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     start_tick: u64,
     end_tick: u64,
     scope: AnalysisScope,
@@ -212,7 +201,7 @@ pub(crate) fn render_arrangement_to_buffer_with_song(
 /// }
 /// ```
 ///
-/// Each `render_range` call reseeds `fastrand`, sends `Stop` (to drop any
+/// Each `render_range` call sends `Stop` (to drop any
 /// voices still ringing from the previous render), re-attaches the song, and
 /// runs Play → Seek → process. The dual-oscillator `arrangement_render_determinism`
 /// test enforces that consecutive `render_range` calls are bit-exact.
@@ -377,12 +366,12 @@ impl OfflineEngineSession {
     }
 
     /// Render one `[start_tick, end_tick)` range against `song`. Safe to call
-    /// repeatedly on the same session — reseeds `fastrand`, flushes voice
+    /// repeatedly on the same session — flushes voice
     /// state via `Stop`, and re-attaches the song each call so consecutive
     /// renders are bit-exact regardless of what the previous render did.
     pub fn render_range(
         &mut self,
-        song: &Arc<RwLock<Song>>,
+        song: &Arc<synth_sequencer::SharedSong>,
         start_tick: u64,
         end_tick: u64,
     ) -> Result<RenderedArrangement, McpBridgeError> {
@@ -394,7 +383,7 @@ impl OfflineEngineSession {
     /// events.
     pub fn render_range_with_tail(
         &mut self,
-        song: &Arc<RwLock<Song>>,
+        song: &Arc<synth_sequencer::SharedSong>,
         start_tick: u64,
         end_tick: u64,
         tail: synth_core::Seconds,
@@ -404,8 +393,6 @@ impl OfflineEngineSession {
                 "Arrangement range invalid: end_tick ({end_tick}) must be greater than start_tick ({start_tick})"
             )));
         }
-
-        fastrand::seed(OFFLINE_RENDER_SEED);
 
         // Flush denormals (FTZ/DAZ) for the whole offline render, matching the
         // real-time audio callback. Without this an offline render can diverge

@@ -377,7 +377,7 @@ mod tests {
     /// The persisted per-node `seed` reaches the built random-family module: two
     /// seeds decorrelate its output, and the same seed reproduces it (offline ==
     /// live). Processes the grid `dsp` directly — no oscillator (whose unison
-    /// phase uses global `fastrand`) to confound determinism.
+    /// phase uses per-module deterministic RNG state) to confound determinism.
     #[test]
     fn per_node_seed_reaches_the_built_module() {
         use synth_core::{AudioBuffer, ProcessContext, SampleCount};

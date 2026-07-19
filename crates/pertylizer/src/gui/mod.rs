@@ -117,7 +117,7 @@ pub struct SynthGuiConfig {
     /// Shared synth session (module lifecycle).
     pub session: Arc<crate::session::SynthSession>,
     /// Shared song data for sequencer.
-    pub song: Arc<parking_lot::RwLock<synth_sequencer::Song>>,
+    pub song: Arc<synth_sequencer::SharedSong>,
     /// Shared MCP state (if MCP feature enabled).
     #[cfg(feature = "mcp")]
     pub mcp_shared: Option<std::sync::Arc<crate::mcp_shared::McpSharedState>>,

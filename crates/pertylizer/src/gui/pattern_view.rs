@@ -14,10 +14,9 @@ use std::sync::Arc;
 
 use eframe::egui;
 use egui_remixicon::icons as ri;
-use parking_lot::RwLock;
 
 use synth_engine::{EngineCommand, EngineHandle};
-use synth_sequencer::{Duration as SeqDuration, PatternId, PatternTick, Song, Tick};
+use synth_sequencer::{Duration as SeqDuration, PatternId, PatternTick, Tick};
 
 use crate::gui::instrument_rack::InstrumentUiState;
 use crate::gui::list_panel;
@@ -83,7 +82,7 @@ struct PatternBrowserRow {
 /// place rather than being sorted to the bottom. Returns `None` if the song is
 /// currently write-locked (caller should skip rendering this frame).
 fn collect_pattern_browser_data(
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     query: &str,
 ) -> Option<Vec<PatternBrowserRow>> {
     let song = song.try_read()?;
@@ -119,7 +118,7 @@ fn collect_pattern_browser_data(
 pub(crate) fn draw_pattern_view(
     ui: &mut egui::Ui,
     handle: &mut EngineHandle,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     seq_view_state: &mut SequencerViewState,
     pattern_view_state: &mut PatternViewState,
     instruments: &[InstrumentUiState],
@@ -256,7 +255,7 @@ const fn default_new_pattern_length() -> SeqDuration {
 
 fn draw_pattern_browser(
     ui: &mut egui::Ui,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     seq_view_state: &mut SequencerViewState,
     pattern_view_state: &mut PatternViewState,
     undo_manager: &mut UndoManager,
@@ -307,7 +306,7 @@ fn draw_pattern_browser(
 fn draw_browser_row(
     ui: &mut egui::Ui,
     row: &PatternBrowserRow,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     seq_view_state: &mut SequencerViewState,
     editing: &mut Option<PatternEditState>,
     undo_manager: &mut UndoManager,
@@ -407,7 +406,7 @@ fn draw_browser_row(
 /// kebab menu. Mirrors the instrument edit window. Commits on change.
 fn draw_pattern_edit_window(
     ctx: &egui::Context,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     pattern_view_state: &mut PatternViewState,
     undo_manager: &mut UndoManager,
 ) {

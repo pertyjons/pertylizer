@@ -7,8 +7,6 @@
 use std::collections::HashSet;
 use std::sync::Arc;
 
-use parking_lot::RwLock;
-
 use eframe::egui::{self, Color32, CursorIcon, Pos2, Rect, RichText, Sense, Stroke, Vec2};
 use synth_core::{BipolarValue, Bpm, Hertz, MidiNote, Milliseconds, NormalizedValue, Semitones};
 use synth_engine::{EngineCommand, EngineHandle, InstrumentId, RecordingState};
@@ -407,7 +405,11 @@ impl SequencerViewState {
     /// a cached result, recomputing the per-tick sweep only when the source notes
     /// or rack changed. Returns an owned copy for the frame's painter; empty on a
     /// lock miss or when the pattern has nothing to expand.
-    fn ghost_notes(&mut self, song: &Arc<RwLock<Song>>, pattern_id: PatternId) -> Vec<GhostNote> {
+    fn ghost_notes(
+        &mut self,
+        song: &Arc<synth_sequencer::SharedSong>,
+        pattern_id: PatternId,
+    ) -> Vec<GhostNote> {
         let Some(s) = song.try_read() else {
             return self
                 .ghost_cache
@@ -536,7 +538,7 @@ pub(super) fn user_scrolled_away<R>(
 /// `RenamePattern` undo entry. No-op if the name is unchanged or the pattern
 /// no longer exists.
 pub(crate) fn commit_pattern_rename(
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     undo_manager: &mut crate::undo::UndoManager,
     pattern_id: PatternId,
     new_name: String,
@@ -564,7 +566,7 @@ pub(crate) fn commit_pattern_rename(
 /// description is unchanged or the pattern no longer exists. Description is a
 /// utility metadata field and is not tracked by the undo system.
 pub(crate) fn commit_pattern_description(
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     pattern_id: PatternId,
     new_description: String,
 ) {
@@ -1005,7 +1007,7 @@ fn cached_instrument_color(
 /// placement) as the recording region. Returns true if arm was sent.
 fn arm_recording_for_pattern(
     handle: &mut EngineHandle,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     view_state: &mut SequencerViewState,
     pattern_id: PatternId,
 ) -> bool {
@@ -1065,7 +1067,7 @@ fn arm_recording_for_pattern(
 /// a single composite undo entry containing MoveNote / ResizeNote /
 /// SetNoteVelocity per note that actually changed.
 fn batch_transform_with_undo<F>(
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     pattern_id: PatternId,
     note_ids: &HashSet<NoteId>,
     undo_manager: &mut crate::undo::UndoManager,
@@ -1125,7 +1127,7 @@ fn batch_transform_with_undo<F>(
 }
 
 fn delete_selected_notes(
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     pattern_id: PatternId,
     selected: &mut HashSet<NoteId>,
     undo_manager: &mut crate::undo::UndoManager,
@@ -1202,7 +1204,7 @@ fn copy_selected_notes(
 
 /// Paste clipboard notes at a given tick position into the pattern.
 fn paste_clipboard_notes(
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     pattern_id: PatternId,
     clipboard: &Clipboard,
     paste_tick: PatternTick,
@@ -1267,7 +1269,7 @@ fn velocity_color(vel: f32) -> Color32 {
 pub(crate) fn draw_sequencer_view(
     ui: &mut egui::Ui,
     handle: &mut EngineHandle,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     view_state: &mut SequencerViewState,
     instruments: &[crate::gui::instrument_rack::InstrumentUiState],
     undo_manager: &mut crate::undo::UndoManager,

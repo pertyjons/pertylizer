@@ -15,8 +15,6 @@ mod common;
 
 use std::sync::Arc;
 
-use parking_lot::RwLock;
-
 use synth_core::AudioProcessor;
 use synth_core::audio::SampleRate as HwSampleRate;
 use synth_engine::SynthEngine;
@@ -144,7 +142,7 @@ struct Rig {
 
 /// Three instruments — 0: sawtooth, 1: noise, 2: sine — each on its own track,
 /// all sounding a sustained A3 (220 Hz) across the whole pattern.
-fn setup() -> (Rig, Arc<RwLock<Song>>) {
+fn setup() -> (Rig, Arc<synth_sequencer::SharedSong>) {
     let (mut engine, handle) = SynthEngine::new();
     let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
     session
@@ -211,7 +209,7 @@ fn setup() -> (Rig, Arc<RwLock<Song>>) {
             synth_sampler::SampleLibrary::default(),
         )),
     };
-    (rig, Arc::new(RwLock::new(song)))
+    (rig, Arc::new(synth_sequencer::SharedSong::new(song)))
 }
 
 fn analyze(

@@ -24,7 +24,6 @@ use std::sync::Arc;
 
 use eframe::egui::{self, Color32, Pos2, Rect, RichText, Sense, Vec2};
 use egui_remixicon::icons as ri;
-use parking_lot::RwLock;
 
 use synth_core::{ModuleCategory, ModuleType, ModuleWidth, NormalizedValue};
 use synth_engine::ModuleId;
@@ -33,7 +32,7 @@ use synth_sequencer::{
     LfoShape, MAX_DELAY_REPEATS, MAX_NOTE_DELAY_TICKS, MAX_RATCHET_SUBDIVISIONS,
     MAX_STEP_LFO_STEPS, NoteConnection, NoteDelay, NoteEnvelope, NoteGraph, NoteGraphId, NoteLfo,
     NoteModuleConfig, NoteModuleId, NoteName, NotePortType, NoteProcessor, NoteScriptTransform,
-    Pitch, ProbabilityGate, Ratchet, ScaleQuantize, Song, StepLfo, TrackColor, Velocity,
+    Pitch, ProbabilityGate, Ratchet, ScaleQuantize, StepLfo, TrackColor, Velocity,
 };
 
 use crate::gui::auto_layout::{LayoutConnection, ModuleInfo, calculate_free_flow_layout};
@@ -172,7 +171,7 @@ enum GraphEdit {
 /// Draw the whole Note Grid view: left pool panel + central node canvas.
 pub(crate) fn draw_note_grid_view(
     ui: &mut egui::Ui,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     state: &mut NoteGridViewState,
     undo_manager: &mut UndoManager,
 ) {
@@ -240,7 +239,7 @@ type PoolRow = (NoteGraphId, String, Option<TrackColor>, String, usize);
 /// as an empty pool).
 fn draw_pool_panel(
     ui: &mut egui::Ui,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     state: &mut NoteGridViewState,
     undo_manager: &mut UndoManager,
 ) -> Option<Vec<NoteGraphId>> {
@@ -493,7 +492,7 @@ fn draw_pool_panel(
 /// Mutate one graph under the write lock and push a snapshot undo entry when
 /// the closure actually changed it. Used for metadata edits (rename, recolor).
 fn with_graph_undo(
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     undo_manager: &mut UndoManager,
     id: NoteGraphId,
     mutate: impl FnOnce(&mut NoteGraph),
@@ -525,7 +524,7 @@ fn with_graph_undo(
 /// [`with_graph_undo`]).
 fn draw_graph_edit_window(
     ctx: &egui::Context,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     state: &mut NoteGridViewState,
     undo_manager: &mut UndoManager,
 ) {
@@ -634,7 +633,7 @@ enum ScriptEditAction {
 /// applied, independent of the node's installed `source`.
 fn draw_note_script_editor(
     ctx: &egui::Context,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     state: &mut NoteGridViewState,
     undo_manager: &mut UndoManager,
 ) {
@@ -756,7 +755,7 @@ fn draw_note_script_editor(
 /// counterpart of MCP `set_note_graph_script`, routed through the graph undo
 /// path so a script change is one undo entry.
 fn set_note_script(
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     undo_manager: &mut UndoManager,
     graph_id: NoteGraphId,
     node_id: NoteModuleId,
@@ -778,7 +777,7 @@ fn set_note_script(
 
 fn draw_graph_canvas(
     ui: &mut egui::Ui,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     state: &mut NoteGridViewState,
     undo_manager: &mut UndoManager,
     graph_id: NoteGraphId,
@@ -1614,7 +1613,7 @@ fn draw_bg_context_menu(
 /// edits push a whole-graph snapshot undo immediately; `SetNode` applies live
 /// and leaves undo to [`finalize_config_undo`] (Note FX coalescing idiom).
 fn apply_graph_edit(
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     undo_manager: &mut UndoManager,
     state: &mut NoteGridViewState,
     pre_snapshot: &NoteGraph,
@@ -1746,7 +1745,7 @@ fn apply_graph_edit(
 /// Finalize a coalesced config-edit undo entry once no widget is being
 /// dragged (the Note FX idiom): one undo entry per gesture, not per frame.
 fn finalize_config_undo(
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     undo_manager: &mut UndoManager,
     state: &mut NoteGridViewState,
     any_dragged: bool,

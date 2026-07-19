@@ -575,6 +575,22 @@ impl SharedGraphState {
         drop(modules);
     }
 
+    /// Update one module's descriptive metadata from a control thread.
+    pub fn set_module_description(
+        &self,
+        instrument_id: InstrumentId,
+        id: ModuleId,
+        description: String,
+    ) -> bool {
+        let mut modules = self.modules.write();
+        let Some(module) = modules.get_mut(&(instrument_id, id)) else {
+            return false;
+        };
+        module.description = description;
+        self.bump_version();
+        true
+    }
+
     /// Remove a module.
     pub fn remove_module(&self, instrument_id: InstrumentId, id: ModuleId) {
         let mut modules = self.modules.write();

@@ -13,8 +13,6 @@
 
 use std::sync::Arc;
 
-use parking_lot::RwLock;
-
 use synth_core::audio::SampleRate as HwSampleRate;
 use synth_core::{
     AudioCallbackContext, AudioProcessor, DistortionParam, ModuleType, NormalizedValue, Param,
@@ -312,7 +310,7 @@ fn setup_pad_and_uncategorized_sampler_kick() -> TwoInstrumentRig {
 /// Without filtering, the analyzer should see {A, C, E, F#} and identify
 /// the bar as `F#m7b5` (the bug from live testing). With the drum filter
 /// active, the percussion track drops out and the bar becomes `Am`.
-fn build_drum_pollution_song() -> Arc<RwLock<Song>> {
+fn build_drum_pollution_song() -> Arc<synth_sequencer::SharedSong> {
     let mut song = Song::new("DrumPollution");
     let bar = 3840u32; // 4 quarter notes at 960 PPQN
 
@@ -360,7 +358,7 @@ fn build_drum_pollution_song() -> Arc<RwLock<Song>> {
     song.place_pattern(pad_pattern_id, pad_track, Tick(0));
     song.place_pattern(drum_pattern_id, drum_track, Tick(0));
 
-    Arc::new(RwLock::new(song))
+    Arc::new(synth_sequencer::SharedSong::new(song))
 }
 
 #[test]
@@ -637,7 +635,7 @@ fn harmony_query_warns_exclude_options_in_pattern_scope() {
 /// Same two-instrument rig but both tracks play melodic pad chords so the
 /// per-track render produces audible output for both. Used for the section
 /// breakdown test.
-fn build_two_track_song() -> Arc<RwLock<Song>> {
+fn build_two_track_song() -> Arc<synth_sequencer::SharedSong> {
     let mut song = Song::new("TwoTrack");
     let bar = 3840u32;
 
@@ -677,7 +675,7 @@ fn build_two_track_song() -> Arc<RwLock<Song>> {
     song.place_pattern(pad_pattern_id, pad_track, Tick(0));
     song.place_pattern(bass_pattern_id, bass_track, Tick(0));
 
-    Arc::new(RwLock::new(song))
+    Arc::new(synth_sequencer::SharedSong::new(song))
 }
 
 #[test]
@@ -846,7 +844,7 @@ fn analyze_return_busses_reports_per_return_contribution() {
         .sends
         .push(TrackSend::new(rid, NormalizedValue::MAX));
 
-    let shared = McpSharedState::with_song(Arc::new(RwLock::new(song)));
+    let shared = McpSharedState::with_song(Arc::new(synth_sequencer::SharedSong::new(song)));
 
     let result = analyze_return_busses_impl(
         &rig.session,
@@ -1370,7 +1368,7 @@ fn analyze_masking_matrix_with_single_track_returns_no_pairs() {
         t.instrument = InstrumentId::new(0);
     }
     song.place_pattern(pad_pattern_id, pad_track, Tick(0));
-    let shared = McpSharedState::with_song(Arc::new(RwLock::new(song)));
+    let shared = McpSharedState::with_song(Arc::new(synth_sequencer::SharedSong::new(song)));
 
     let result = analyze_masking_matrix_impl(
         &rig.session,
@@ -1486,7 +1484,7 @@ fn analyze_section_master_effects_scope_reconstructs_live_master_chain() {
         t.instrument = InstrumentId::new(0);
     }
     song.place_pattern(pad_pattern_id, pad_track, Tick(0));
-    let shared = McpSharedState::with_song(Arc::new(RwLock::new(song)));
+    let shared = McpSharedState::with_song(Arc::new(synth_sequencer::SharedSong::new(song)));
 
     // --- DRY render: instruments + their own effects only. ---
     let dry = analyze_section_impl(
@@ -1631,7 +1629,7 @@ fn analyze_master_chain_isolates_single_effect_contribution() {
         t.instrument = InstrumentId::new(0);
     }
     song.place_pattern(pad_pattern_id, pad_track, Tick(0));
-    let shared = McpSharedState::with_song(Arc::new(RwLock::new(song)));
+    let shared = McpSharedState::with_song(Arc::new(synth_sequencer::SharedSong::new(song)));
 
     // Add a maxed-drive Distortion to the live master chain and pump so the
     // shared `master_effects` snapshot republishes.

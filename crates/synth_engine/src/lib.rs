@@ -37,15 +37,10 @@ pub mod visualizers;
 pub mod voice;
 pub mod voice_allocator;
 
-/// Wrap a [`synth_sequencer::Song`] in the shared `Arc<RwLock<Song>>` the engine
-/// and app use for the audio/UI split (audio thread `try_read`s, UI thread
-/// `write`s). Centralizes the otherwise-repeated
-/// `Arc::new(parking_lot::RwLock::new(song))` idiom.
+/// Wrap a song in editable control-thread state with lock-free audio snapshots.
 #[must_use]
-pub fn shared_song(
-    song: synth_sequencer::Song,
-) -> std::sync::Arc<parking_lot::RwLock<synth_sequencer::Song>> {
-    std::sync::Arc::new(parking_lot::RwLock::new(song))
+pub fn shared_song(song: synth_sequencer::Song) -> std::sync::Arc<synth_sequencer::SharedSong> {
+    std::sync::Arc::new(synth_sequencer::SharedSong::new(song))
 }
 
 // Engine exports

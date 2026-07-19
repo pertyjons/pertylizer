@@ -258,11 +258,6 @@ GUI faceplate + mod-matrix dest + automation + save + cross-script `scr-1.drive`
   labels did not; ports show bare `in1..in4` / `out1..out4`. Needs a small header-declaration
   grammar addition (a bare `in1 "label"` statement) + carrying the label onto the port
   descriptor (it must NOT change the port id, so no cable churn). **S–M**, purely cosmetic.
-- [ ] **Confirm `rebuild_instrument_preserve_automation` + a removed `param`.** Plan §6 open
-  question: editing a live script to *remove* a knob a lane was bound to should drop the
-  orphaned automation lane and warn, not panic. The store degrades (the knob vanishes from the
-  descriptor + the fixed arrays reindex), but the rebuild/automation interaction wasn't
-  specifically exercised — worth an in-app check.
 - [ ] **Built-in knob smoothing (`smooth()` / slew) for audio-rate params.** Plan §6: a
   declared `param` is block-constant, so under fast automation/mod it *steps* at each block
   boundary — audible on a steep `audio_script` knob (filter cutoff, gain). v1 leaves click-free
@@ -327,12 +322,6 @@ wiring; and a lane provenance chip + jump + `＋ Mod Grid` quick-assign. Also fo
 `clear_mod_offsets`-unconditional bug (an offset writer without a Mod Matrix
 module used to latch offsets forever).
 
-- [ ] **Robustness follow-up: surface orphaned tracks (track→instrument that doesn't
-  exist).** Such a track silently drops **all** track-level control (fader, mute,
-  automation lanes, *and* Mod Grid), yet its notes still play (at unity) — a confusing
-  silent trap (it cost a long debugging session above). Options: a `lint_project`
-  warning, a GUI badge on the track header, and/or repointing/clearing the reference on
-  load. General track-management, not Mod-Grid-specific. **S–M.**
 **Follow-ups shipped 2026-07-18** (branch `feat/mod-grid`, one commit each, gate
 green + per-step reviews). The six deferred items are done:
 
@@ -566,35 +555,6 @@ debuggable at low cost.
 
 Principled correctness/RT-safety issues, not guesses — but each is architectural
 enough to be driven by an actual observed symptom. Ordered by likely impact.
-
-#### B1. Architectural: RCU / arc-swap to remove RwLock<Song> read locks on the audio thread
-
-- [ ] **Replace `RwLock<Song>` with an RCU/double-buffering pattern.** The audio
-  thread uses `try_read()` on `Arc<RwLock<Song>>`. When the UI takes a write lock
-  (e.g. a large project mutation), `try_read()` fails and the audio thread skips
-  blocks / plays silence — an **audible dropout during heavy editing**, not a perf
-  nicety. Evaluate RCU pointers (`arc-swap`) or double-buffered pointer swaps for
-  lock-free, contention-free reads. **Trigger: do it if you hear dropouts while
-  editing big projects.**
-
-#### B2. Reproducibility & RT safety: replace fastrand on the audio thread
-
-- [ ] **Replace `fastrand` usage on the audio thread.** `synth_core/src/hash.rs`
-  already states the audio path should never call an RNG — to keep renders
-  *deterministic/reproducible* and avoid TLS lookups. Yet `noise.rs`,
-  `drift_generator.rs`, and `oscillator.rs` call `fastrand::f32()`. Refactor them
-  onto the deterministic SplitMix64 helpers in `synth_core::hash`. A
-  correctness/reproducibility fix, not a speed bet.
-
-#### B3. Real-time safety: metadata deallocation on the audio thread
-
-- [ ] **Stop deallocating metadata on the audio thread.** Commands like
-  `RenameInstrument` / `SetInstrumentDescription` move `String`s by value to the
-  audio thread; dropping them heap-deallocates there — a direct violation of the
-  project's own RT rules. Evaluate separating metadata from the audio engine's
-  structs (keep it in GUI state / shared graph; the audio thread holds only numeric
-  IDs), or return old metadata to the UI thread via a queue for disposal. Best
-  folded into the next change to the instrument-state model.
 
 #### B4. Real-time safety: replace HashMap usage on the audio thread
 

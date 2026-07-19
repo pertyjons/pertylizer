@@ -17,13 +17,12 @@ use std::sync::Arc;
 
 use eframe::egui::{self, Color32, RichText};
 use egui_extras::{Column, TableBuilder};
-use parking_lot::RwLock;
 use synth_core::{Milliseconds, NormalizedValue, Semitones};
 use synth_engine::EngineHandle;
 use synth_sequencer::{
     AutomationLane, AutomationPoint, AutomationTarget, CurveType, Duration as SeqDuration,
     ExpansionBuffer, Glide, GlideFrom, GlideInterp, NoteExpression, NoteId, NoteLane, NoteScopeCtx,
-    PatternId, PatternTick, Pitch, Song,
+    PatternId, PatternTick, Pitch,
 };
 
 use super::{
@@ -252,7 +251,7 @@ struct NpStage {
 /// overlay this frame. Both expansions are pure/deterministic, so calling
 /// them off the audio thread is safe.
 fn compute_np_stages(
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     pattern_id: PatternId,
     tpr: u32,
     n_rows: usize,
@@ -361,7 +360,7 @@ fn np_cell_text(pitches: &[Pitch]) -> String {
 /// contended lock (distinct from `Some(empty)` = a project with no graphs): the
 /// column then renders blank rather than mislabeling live bindings as deleted.
 fn snapshot_graph_pool(
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
 ) -> Option<Vec<(synth_sequencer::NoteGraphId, String)>> {
     song.try_read()
         .map(|s| s.note_graphs().map(|g| (g.id, g.name.clone())).collect())
@@ -737,7 +736,7 @@ fn handle_tracker_keys(
 fn handle_tracker_edit_keys(
     ui: &egui::Ui,
     data: &PianoRollData,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     handle: &mut EngineHandle,
     undo_manager: &mut UndoManager,
     view_state: &mut SequencerViewState,
@@ -833,7 +832,7 @@ fn handle_tracker_edit_keys(
 fn edit_ornament_cell(
     ui: &egui::Ui,
     data: &PianoRollData,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     undo_manager: &mut UndoManager,
     view_state: &mut SequencerViewState,
     lane: usize,
@@ -898,7 +897,7 @@ fn edit_ornament_cell(
 fn edit_graph_cell(
     ui: &egui::Ui,
     data: &PianoRollData,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     undo_manager: &mut UndoManager,
     view_state: &mut SequencerViewState,
     lane: usize,
@@ -956,7 +955,7 @@ fn edit_graph_cell(
 fn edit_voice_cell(
     ui: &egui::Ui,
     data: &PianoRollData,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     handle: &mut EngineHandle,
     undo_manager: &mut UndoManager,
     view_state: &mut SequencerViewState,
@@ -1077,7 +1076,7 @@ fn edit_voice_cell(
 fn edit_automation_cell(
     ui: &egui::Ui,
     data: &PianoRollData,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     undo_manager: &mut UndoManager,
     view_state: &mut SequencerViewState,
     ai: usize,
@@ -1228,7 +1227,7 @@ fn set_expr_field(expr: &mut NoteExpression, field: ExprField, displayed: Option
 fn edit_expression_cell(
     ui: &egui::Ui,
     data: &PianoRollData,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     undo_manager: &mut UndoManager,
     view_state: &mut SequencerViewState,
     lane: usize,
@@ -1331,7 +1330,7 @@ fn edit_expression_cell(
 /// resulting mutations are bundled into a single undo step.
 fn clean_empty_columns(
     data: &PianoRollData,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     undo_manager: &mut UndoManager,
     view_state: &mut SequencerViewState,
     lane_of_note: &[usize],
@@ -1421,7 +1420,7 @@ pub(crate) fn draw_tracker(
     playhead_tick: Option<PatternTick>,
     is_playing: bool,
     handle: &mut EngineHandle,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     view_state: &mut SequencerViewState,
     instruments: &[InstrumentUiState],
     undo_manager: &mut UndoManager,
@@ -2206,7 +2205,7 @@ pub(crate) fn draw_tracker(
 /// the frame's `(id, name)` snapshot — the option list.
 fn draw_note_graph_popup(
     ui: &mut egui::Ui,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     view_state: &mut SequencerViewState,
     undo_manager: &mut UndoManager,
     pool: &[(synth_sequencer::NoteGraphId, String)],
@@ -2270,7 +2269,7 @@ fn draw_note_graph_popup(
 fn apply_ctx_action(
     action: Option<CtxAction>,
     pattern_id: PatternId,
-    song: &Arc<RwLock<Song>>,
+    song: &Arc<synth_sequencer::SharedSong>,
     view_state: &mut SequencerViewState,
     undo_manager: &mut UndoManager,
 ) {

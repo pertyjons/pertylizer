@@ -20,8 +20,6 @@ mod common;
 
 use std::sync::Arc;
 
-use parking_lot::RwLock;
-
 use synth_core::AudioProcessor;
 use synth_core::ModuleType;
 use synth_core::audio::SampleRate as HwSampleRate;
@@ -311,7 +309,7 @@ fn master_volume_scales_offline_render() {
 fn empty_arrangement_renders_silently_without_error() {
     // Same engine + patch, but the song has no tracks or placements.
     let rig = setup_with_patch(&sustain_patch());
-    let song = Arc::new(RwLock::new(Song::new("Empty")));
+    let song = Arc::new(synth_sequencer::SharedSong::new(Song::new("Empty")));
     let shared = McpSharedState::with_song(song);
 
     let rendered =
@@ -348,7 +346,7 @@ fn render_rejects_inverted_range() {
 /// One sustained MIDI 60 note spanning the full pattern length (3840 ticks).
 /// Used to exercise the pre-roll path: a render that begins mid-note must
 /// still trigger the note via Seek-from-earliest-overlap.
-fn build_sustained_note_song() -> Arc<RwLock<Song>> {
+fn build_sustained_note_song() -> Arc<synth_sequencer::SharedSong> {
     build_single_pattern_song("Sustained", &[(PatternTick(0), 60, SeqDuration(3840))])
 }
 
