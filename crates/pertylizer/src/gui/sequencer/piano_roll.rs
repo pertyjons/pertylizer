@@ -1713,21 +1713,27 @@ pub(crate) fn draw_piano_roll(
     };
     let grid_width = (beats_in_pattern * pr_pixels_per_beat).max(200.0);
 
-    // ── Scrollable piano roll area ──
-    // Use all available height (panel is resizable via TopBottomPanel)
-    let scroll_max_height = ui.available_height().max(100.0);
-
-    // Auto-follow playhead in piano roll during playback
+    // ── Pinned gutter + ruler, scrollable grid ──
+    // The keyboard column (fixed left) and the bar-number ruler (fixed top) live
+    // in their own pinned strips so they never scroll out of view; only the note
+    // grid scrolls. Each strip mirrors the grid ScrollArea's offset on its own
+    // axis (keyboard ← offset.y, ruler ← offset.x) so it stays locked to the song
+    // position. Mirrors the arrangement's pinned track-header column.
     let pr_scroll_salt = "piano_roll_scroll";
     let pr_scroll_id = super::scroll_state_id(ui, pr_scroll_salt);
+
+    // Auto-follow playhead during playback: pre-set the horizontal offset before
+    // the grid ScrollArea reads it. Grid content x of tick 0 is 0 now that the
+    // keyboard column lives outside the scroll area, and the visible width is the
+    // grid viewport (panel width minus the pinned keyboard column).
     if is_playing
         && view_state.auto_follow_playhead
         && let Some(pt) = playhead_tick
         && ticks_per_beat > 0
     {
         let playhead_beats = pt.0 as f32 / ticks_per_beat as f32;
-        let playhead_x = KEY_WIDTH + playhead_beats * pr_pixels_per_beat;
-        let visible_width = ui.available_width();
+        let playhead_x = playhead_beats * pr_pixels_per_beat;
+        let visible_width = (ui.available_width() - KEY_WIDTH).max(1.0);
         let target_offset = (playhead_x - visible_width * 0.5).max(0.0);
 
         if let Some(mut scroll_state) = egui::scroll_area::State::load(ui.ctx(), pr_scroll_id) {
@@ -1737,6 +1743,13 @@ pub(crate) fn draw_piano_roll(
         }
     }
 
+    // The offset the grid will use this frame — read after auto-follow set it, so
+    // the pinned strips track playback without a frame of lag.
+    let pr_offset = egui::scroll_area::State::load(ui.ctx(), pr_scroll_id)
+        .map(|s| s.offset)
+        .unwrap_or_default();
+    let selected_auto = view_state.selected_automation.clone();
+
     // Ghost-preview notes (note-processor expansion), computed before the painter
     // so the cache update's mutable borrow of `view_state` ends here.
     let ghost_notes = if view_state.show_note_fx_ghosts {
@@ -1745,9 +1758,46 @@ pub(crate) fn draw_piano_roll(
         Vec::new()
     };
 
+    // Pinned keyboard column (fixed left edge, mirrors vertical scroll). No
+    // frame margin so the key rows line up pixel-exactly with the grid rows.
+    egui::Panel::left("pr_keyboard_gutter")
+        .exact_size(KEY_WIDTH)
+        .resizable(false)
+        .frame(egui::Frame::NONE)
+        .show(ui, |ui| {
+            draw_pr_keyboard_gutter(
+                ui,
+                pr_offset.y,
+                view_pitch_min,
+                view_pitch_max,
+                note_row_height,
+                grid_height,
+                &auto_zone_targets,
+                selected_auto.as_ref(),
+            );
+        });
+
+    // Pinned bar-number ruler (fixed top edge, mirrors horizontal scroll). No
+    // frame margin so the bar labels line up pixel-exactly with the grid.
+    egui::Panel::top("pr_ruler")
+        .exact_size(RULER_HEIGHT)
+        .resizable(false)
+        .frame(egui::Frame::NONE)
+        .show(ui, |ui| {
+            draw_pr_ruler_strip(
+                ui,
+                pr_offset.x,
+                pr_pixels_per_beat,
+                ticks_per_beat,
+                data,
+                effective_ticks,
+                playhead_tick,
+            );
+        });
+
     let scroll_output = egui::ScrollArea::both()
         .id_salt(pr_scroll_salt)
-        .max_height(scroll_max_height)
+        .auto_shrink([false, false])
         .scroll_source(egui::scroll_area::ScrollSource {
             scroll_bar: true,
             // egui 0.35: `drag` is now `DragScroll`; `Never` == old `false`.
@@ -1770,7 +1820,6 @@ pub(crate) fn draw_piano_roll(
                 grid_width,
                 total_content_height,
                 ticks_per_beat,
-                effective_ticks,
                 beats_in_pattern,
                 &ghost_notes,
             );
@@ -1798,10 +1847,178 @@ pub(crate) fn draw_piano_roll(
     keep_open
 }
 
-/// Draw the piano-roll note grid (keys, ruler, grid lines, notes, velocity and
-/// automation zones) and dispatch its pointer interaction — the body of the
-/// note-grid `ScrollArea`, split out of [`draw_piano_roll`]. Builds its
-/// `PianoRollCoords` from the painter rect and delegates editing to
+/// Draw the pinned keyboard column — a fixed-x left strip that mirrors the grid
+/// `ScrollArea`'s vertical `offset_y` so the piano keys stay aligned with their
+/// note rows no matter how far the grid is scrolled sideways. Also paints the
+/// "VEL" / "AUTO" gutter tags at their zone positions. Counterpart of the
+/// arrangement's pinned track-header column.
+#[allow(clippy::too_many_arguments)]
+fn draw_pr_keyboard_gutter(
+    ui: &mut egui::Ui,
+    offset_y: f32,
+    view_pitch_min: Pitch,
+    view_pitch_max: Pitch,
+    note_row_height: f32,
+    grid_height: f32,
+    auto_zone_targets: &[AutomationTarget],
+    selected_automation: Option<&AutomationTarget>,
+) {
+    let t = theme();
+    let area = ui.max_rect();
+    let corner = Rect::from_min_size(area.min, Vec2::new(area.width(), RULER_HEIGHT));
+    let gutter = Rect::from_min_max(Pos2::new(area.left(), area.top() + RULER_HEIGHT), area.max);
+
+    // Corner cell + gutter background.
+    let painter = ui.painter().with_clip_rect(area);
+    painter.rect_filled(corner, 0.0, t.colors.bg_dark);
+    painter.rect_filled(gutter, 0.0, t.colors.bg_dark);
+
+    // Keys are clipped to the gutter so a row scrolled up under the corner does
+    // not bleed over it.
+    let gp = ui.painter().with_clip_rect(gutter);
+    // Screen y of the top visible grid row (`view_pitch_max`), scrolled by the
+    // grid's vertical offset — the gutter analogue of `PianoRollCoords::grid_y`.
+    let row0_y = gutter.top() - offset_y;
+
+    for p in view_pitch_min.as_midi()..=view_pitch_max.as_midi() {
+        let row = view_pitch_max.as_midi().saturating_sub(p);
+        let y = row0_y + f32::from(row) * note_row_height;
+        if y + note_row_height < gutter.top() || y > gutter.bottom() {
+            continue;
+        }
+        let is_black = NoteName::from_midi(p % 12).is_black_key();
+        let key_color = if is_black {
+            PIANO_KEY_BLACK
+        } else {
+            PIANO_KEY_WHITE
+        };
+        gp.rect_filled(
+            Rect::from_min_size(
+                Pos2::new(area.left(), y),
+                Vec2::new(area.width(), note_row_height),
+            ),
+            0.0,
+            key_color,
+        );
+        if p % 12 == 0 {
+            let octave = (p / 12) as i8 - 1;
+            gp.text(
+                Pos2::new(area.left() + 4.0, y + 1.0),
+                egui::Align2::LEFT_TOP,
+                format!("C{octave}"),
+                egui::FontId::proportional(10.0),
+                t.colors.text_primary,
+            );
+        }
+        gp.line_segment(
+            [
+                Pos2::new(area.left(), y + note_row_height),
+                Pos2::new(area.right(), y + note_row_height),
+            ],
+            Stroke::new(0.5, t.colors.border.gamma_multiply(0.3)),
+        );
+    }
+
+    // "VEL" tag over the velocity zone, and "AUTO" over the focused automation
+    // lane — the pinned gutter counterparts of the tags the zones used to draw.
+    let vel_y = row0_y + grid_height;
+    gp.text(
+        Pos2::new(area.left() + 2.0, vel_y + 2.0),
+        egui::Align2::LEFT_TOP,
+        "VEL",
+        egui::FontId::proportional(9.0),
+        t.colors.text_dim,
+    );
+    let auto_base_y = vel_y + VELOCITY_ZONE_HEIGHT;
+    for (i, target) in auto_zone_targets.iter().enumerate() {
+        if selected_automation == Some(target) {
+            let zone_y = auto_base_y + i as f32 * AUTOMATION_ZONE_HEIGHT;
+            gp.text(
+                Pos2::new(area.left() + 2.0, zone_y + 2.0),
+                egui::Align2::LEFT_TOP,
+                "AUTO",
+                egui::FontId::proportional(9.0),
+                t.colors.text_dim,
+            );
+        }
+    }
+
+    // Right edge of the gutter (the old keyboard/grid separator).
+    painter.line_segment(
+        [
+            Pos2::new(area.right(), area.top()),
+            Pos2::new(area.right(), area.bottom()),
+        ],
+        Stroke::new(1.0, t.colors.border),
+    );
+}
+
+/// Draw the pinned bar-number ruler — a fixed-y top strip that mirrors the grid
+/// `ScrollArea`'s horizontal `offset_x` so bar numbers track the song position,
+/// and paints the playhead triangle marker. Never scrolls out of view.
+fn draw_pr_ruler_strip(
+    ui: &mut egui::Ui,
+    offset_x: f32,
+    pr_pixels_per_beat: f32,
+    ticks_per_beat: u32,
+    data: &PianoRollData,
+    effective_ticks: u32,
+    playhead_tick: Option<PatternTick>,
+) {
+    let t = theme();
+    let area = ui.max_rect();
+    let painter = ui.painter().with_clip_rect(area);
+
+    let ticks_per_bar = u64::from(data.time_sig.ticks_per_bar().max(1));
+    let total_bars = effective_ticks
+        .div_ceil(data.time_sig.ticks_per_bar().max(1))
+        .max(1);
+    // Screen x of a content tick: the grid's left edge minus the horizontal
+    // scroll offset, plus the tick's grid position.
+    let tick_to_x = |tick: u64| {
+        if ticks_per_beat == 0 {
+            area.left() - offset_x
+        } else {
+            area.left() - offset_x + (tick as f32 / ticks_per_beat as f32) * pr_pixels_per_beat
+        }
+    };
+    // `draw_ruler_labels` fills the strip background before painting the labels.
+    draw_ruler_labels(&painter, &t, area, total_bars, ticks_per_bar, tick_to_x);
+
+    // Ruler bottom border.
+    painter.line_segment(
+        [
+            Pos2::new(area.left(), area.bottom()),
+            Pos2::new(area.right(), area.bottom()),
+        ],
+        Stroke::new(1.0, t.colors.border),
+    );
+
+    // Playhead triangle marker (matches the grid's vertical playhead line).
+    if let Some(pt) = playhead_tick
+        && ticks_per_beat > 0
+    {
+        let x = area.left() - offset_x + (pt.0 as f32 / ticks_per_beat as f32) * pr_pixels_per_beat;
+        if x >= area.left() && x <= area.right() {
+            let tri = 6.0;
+            painter.add(egui::Shape::convex_polygon(
+                vec![
+                    Pos2::new(x - tri, area.top()),
+                    Pos2::new(x + tri, area.top()),
+                    Pos2::new(x, area.top() + RULER_HEIGHT * 0.6),
+                ],
+                t.colors.accent_primary,
+                Stroke::NONE,
+            ));
+        }
+    }
+}
+
+/// Draw the piano-roll note grid (grid lines, notes, velocity and automation
+/// zones) and dispatch its pointer interaction — the body of the note-grid
+/// `ScrollArea`, split out of [`draw_piano_roll`]. The keyboard column and bar
+/// ruler are drawn separately by the pinned strips. Builds its `PianoRollCoords`
+/// from the painter rect and delegates editing to
 /// [`handle_piano_roll_interaction`].
 #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
 fn draw_piano_roll_grid(
@@ -1816,7 +2033,6 @@ fn draw_piano_roll_grid(
     grid_width: f32,
     total_content_height: f32,
     ticks_per_beat: u32,
-    effective_ticks: u32,
     beats_in_pattern: f32,
     ghost_notes: &[GhostNote],
 ) {
@@ -1828,7 +2044,7 @@ fn draw_piano_roll_grid(
     let instruments = ctx.instruments;
     let t = theme();
 
-    let total_size = Vec2::new(KEY_WIDTH + grid_width, RULER_HEIGHT + total_content_height);
+    let total_size = Vec2::new(grid_width, total_content_height);
 
     // Use allocate_rect with click_and_drag sense for mouse interaction
     let alloc_rect = Rect::from_min_size(ui.cursor().min, total_size);
@@ -1864,9 +2080,11 @@ fn draw_piano_roll_grid(
     }
 
     let origin = rect.min;
-    let grid_x = origin.x + KEY_WIDTH;
-    // Reserve a ruler strip at the top; the grid starts below it.
-    let grid_y = origin.y + RULER_HEIGHT;
+    // Keyboard column and bar ruler are pinned in their own strips outside this
+    // scroll area, so the grid content starts at the scroll-content origin on
+    // both axes (no keyboard/ruler inset here anymore).
+    let grid_x = origin.x;
+    let grid_y = origin.y;
 
     // All four grid↔(tick,pitch) transforms live on this one value (see
     // `PianoRollCoords`). The closures below just delegate so the rest of
@@ -1889,96 +2107,9 @@ fn draw_piano_roll_grid(
         Vec2::new(grid_width, grid_height),
     );
 
-    // ── Timeline ruler (bar numbers) ──
-    // Top-left corner cell above the keyboard column.
-    painter.rect_filled(
-        Rect::from_min_size(origin, Vec2::new(KEY_WIDTH, RULER_HEIGHT)),
-        0.0,
-        t.colors.bg_dark,
-    );
-    let ruler_rect = Rect::from_min_size(
-        Pos2::new(grid_x, origin.y),
-        Vec2::new(grid_width, RULER_HEIGHT),
-    );
-    let ticks_per_bar = u64::from(data.time_sig.ticks_per_bar().max(1));
-    let total_bars = effective_ticks
-        .div_ceil(data.time_sig.ticks_per_bar().max(1))
-        .max(1);
-    draw_ruler_labels(
-        &painter,
-        &t,
-        ruler_rect,
-        total_bars,
-        ticks_per_bar,
-        |tick| {
-            if ticks_per_beat == 0 {
-                grid_x
-            } else {
-                grid_x + (tick as f32 / ticks_per_beat as f32) * pr_pixels_per_beat
-            }
-        },
-    );
-    // Ruler bottom border.
-    painter.line_segment(
-        [
-            Pos2::new(grid_x, grid_y),
-            Pos2::new(grid_x + grid_width, grid_y),
-        ],
-        Stroke::new(1.0, t.colors.border),
-    );
-
-    // ── Keyboard (left column) ──
-    painter.rect_filled(
-        Rect::from_min_size(
-            Pos2::new(origin.x, grid_y),
-            Vec2::new(KEY_WIDTH, grid_height),
-        ),
-        0.0,
-        t.colors.bg_dark,
-    );
-
-    for p in view_pitch_min.as_midi()..=view_pitch_max.as_midi() {
-        let pitch = Pitch::new(p).unwrap_or(Pitch::MIDDLE_C);
-        let y = pitch_to_y(pitch);
-        let note_name = NoteName::from_midi(p % 12);
-        let is_black = note_name.is_black_key();
-
-        // Key background
-        let key_color = if is_black {
-            PIANO_KEY_BLACK
-        } else {
-            PIANO_KEY_WHITE
-        };
-        painter.rect_filled(
-            Rect::from_min_size(
-                Pos2::new(origin.x, y),
-                Vec2::new(KEY_WIDTH, note_row_height),
-            ),
-            0.0,
-            key_color,
-        );
-
-        // Label on C notes
-        if p % 12 == 0 {
-            let octave = (p / 12) as i8 - 1;
-            painter.text(
-                Pos2::new(origin.x + 4.0, y + 1.0),
-                egui::Align2::LEFT_TOP,
-                format!("C{octave}"),
-                egui::FontId::proportional(10.0),
-                t.colors.text_primary,
-            );
-        }
-
-        // Key border
-        painter.line_segment(
-            [
-                Pos2::new(origin.x, y + note_row_height),
-                Pos2::new(origin.x + KEY_WIDTH, y + note_row_height),
-            ],
-            Stroke::new(0.5, t.colors.border.gamma_multiply(0.3)),
-        );
-    }
+    // The bar-number ruler and the piano keyboard column are drawn by the pinned
+    // strips in `draw_piano_roll` (`draw_pr_ruler_strip` / `draw_pr_keyboard_gutter`),
+    // so this canvas paints only the scrollable grid, notes and zones.
 
     // ── Note grid background ──
     for p in view_pitch_min.as_midi()..=view_pitch_max.as_midi() {
@@ -2411,14 +2542,7 @@ fn draw_piano_roll_grid(
         Stroke::new(1.0, t.colors.border),
     );
 
-    // Velocity label
-    painter.text(
-        Pos2::new(origin.x + 2.0, vel_y + 2.0),
-        egui::Align2::LEFT_TOP,
-        "VEL",
-        egui::FontId::proportional(9.0),
-        t.colors.text_dim,
-    );
+    // (The "VEL" gutter tag is drawn by the pinned keyboard strip.)
 
     // Velocity bars
     for note in &data.notes {
@@ -2483,25 +2607,15 @@ fn draw_piano_roll_grid(
         let playhead_x = tick_to_x(pattern_tick);
 
         if playhead_x >= grid_x && playhead_x <= grid_x + grid_width {
-            // Line runs from the top of the ruler down through the grid.
+            // Vertical line spanning the grid + velocity/automation zones. The
+            // matching ruler triangle marker is drawn by `draw_pr_ruler_strip`.
             painter.line_segment(
                 [
-                    Pos2::new(playhead_x, origin.y),
+                    Pos2::new(playhead_x, grid_y),
                     Pos2::new(playhead_x, grid_y + total_content_height),
                 ],
                 Stroke::new(1.5, t.colors.accent_primary),
             );
-            // Triangle marker in the ruler strip.
-            let tri_size = 6.0;
-            painter.add(egui::Shape::convex_polygon(
-                vec![
-                    Pos2::new(playhead_x - tri_size, origin.y),
-                    Pos2::new(playhead_x + tri_size, origin.y),
-                    Pos2::new(playhead_x, origin.y + RULER_HEIGHT * 0.6),
-                ],
-                t.colors.accent_primary,
-                Stroke::NONE,
-            ));
         }
     }
 
@@ -2519,14 +2633,7 @@ fn draw_piano_roll_grid(
         }
     }
 
-    // ── Keyboard / grid separator ──
-    painter.line_segment(
-        [
-            Pos2::new(grid_x, grid_y),
-            Pos2::new(grid_x, grid_y + total_content_height),
-        ],
-        Stroke::new(1.0, t.colors.border),
-    );
+    // (The keyboard/grid separator is now the pinned keyboard strip's edge.)
 
     // Hit-test rect for the edit-focused lane's zone (at its stacked y).
     let auto_rect = selected_zone_index.map(|_| {

@@ -72,18 +72,10 @@ pub(super) fn draw_automation_zone(
         Stroke::new(1.0, t.colors.border),
     );
 
-    // One "AUTO" gutter tag on the focused lane (mirrors the "VEL" tag above),
-    // plus every zone's target long-form name dimmed at the top-right corner —
-    // right-aligned so it clears leading high-value points near tick 0.
-    if is_selected {
-        painter.text(
-            Pos2::new(grid_x - KEY_WIDTH + 2.0, auto_y + 2.0),
-            egui::Align2::LEFT_TOP,
-            "AUTO",
-            egui::FontId::proportional(9.0),
-            t.colors.text_dim,
-        );
-    }
+    // Every zone's target long-form name, dimmed at the top-right corner —
+    // right-aligned so it clears leading high-value points near tick 0. (The
+    // "AUTO" gutter tag on the focused lane is drawn by the pinned keyboard
+    // strip in `draw_pr_keyboard_gutter`.)
     painter.text(
         Pos2::new(grid_x + grid_width - 4.0, auto_y + 2.0),
         egui::Align2::RIGHT_TOP,
