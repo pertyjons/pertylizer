@@ -7,7 +7,7 @@ edit patterns, render audio, and analyze the result, all while the synth keeps r
 
 This guide covers how to start the server, how to connect from common clients, what tools exist, and the
 AI-specific affordances built into Pertylizer.
-
+ 
 ---
 
 ## Table of Contents
@@ -132,7 +132,13 @@ equivalent on macOS/Windows) and add:
   "mcpServers": {
     "pertylizer": {
       "command": "cargo",
-      "args": ["run", "--manifest-path", "/path/to/pertylizer/Cargo.toml", "--", "--headless"]
+      "args": [
+        "run",
+        "--manifest-path",
+        "/path/to/pertylizer/Cargo.toml",
+        "--",
+        "--headless"
+      ]
     }
   }
 }
@@ -155,75 +161,75 @@ every schema field. The MCP client's live tool list and JSON Schemas are authori
 
 Read the current state of instruments, modules, ports, parameters, and the audio graph.
 
-| Tool | Purpose |
-|------|---------|
-| `list_instruments` | All instruments with id, name, category |
-| `get_instrument_info` | Modules, connections, parameter values for one instrument |
-| `get_instrument_profiles` | Auto-inferred role (drums/bass/lead/pad/pluck/FX) with confidence + signal trail |
+| Tool                                | Purpose                                                                                                                                                                 |
+|-------------------------------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `list_instruments`                  | All instruments with id, name, category                                                                                                                                 |
+| `get_instrument_info`               | Modules, connections, parameter values for one instrument                                                                                                               |
+| `get_instrument_profiles`           | Auto-inferred role (drums/bass/lead/pad/pluck/FX) with confidence + signal trail                                                                                        |
 | `get_instrument_automation_targets` | Valid automation targets for an instrument: every automatable per-module parameter (ready-to-use target string, range, unit, response curve) plus the instrument macros |
-| `list_modules` | All modules in an instrument; each parameter carries `type_id`, `unit`, `is_automatable`, and `response_curve` |
-| `list_module_types` | All 70 module types with categories |
-| `get_module_type_info` | Ports, parameters, defaults, and ranges for a module type |
-| `search_modules` | Fuzzy search by name across all module types |
-| `list_port_types` | All port types (Audio, Cv, Gate, Pitch, Clock, …) |
-| `get_connections` | All cables in an instrument |
-| `check_connection` | Whether a specific connection exists |
-| `get_parameter` | Current value of one parameter |
-| `get_graph_diagnostics` | Detect feedback loops, unreachable modules, missing outputs (one instrument) |
-| `lint_project` | Project-wide load-lint: graph diagnostics over every instrument + error/warning/info totals |
-| `get_project_schema` | Authoritative on-disk `.pertyproj` JSON Schema + format/build version (validate/diff project files without introspection drift) |
-| `get_ui_snapshot` | Current GUI focus, selection, view |
-| `get_engine_status` | Sample rate, transport state, BPM, voice count |
-| `get_version` | Application version, build profile, target, and git revision |
+| `list_modules`                      | All modules in an instrument; each parameter carries `type_id`, `unit`, `is_automatable`, and `response_curve`                                                          |
+| `list_module_types`                 | All 70 module types with categories                                                                                                                                     |
+| `get_module_type_info`              | Ports, parameters, defaults, and ranges for a module type                                                                                                               |
+| `search_modules`                    | Fuzzy search by name across all module types                                                                                                                            |
+| `list_port_types`                   | All port types (Audio, Cv, Gate, Pitch, Clock, …)                                                                                                                       |
+| `get_connections`                   | All cables in an instrument                                                                                                                                             |
+| `check_connection`                  | Whether a specific connection exists                                                                                                                                    |
+| `get_parameter`                     | Current value of one parameter                                                                                                                                          |
+| `get_graph_diagnostics`             | Detect feedback loops, unreachable modules, missing outputs (one instrument)                                                                                            |
+| `lint_project`                      | Project-wide load-lint: graph diagnostics over every instrument + error/warning/info totals                                                                             |
+| `get_project_schema`                | Authoritative on-disk `.pertyproj` JSON Schema + format/build version (validate/diff project files without introspection drift)                                         |
+| `get_ui_snapshot`                   | Current GUI focus, selection, view                                                                                                                                      |
+| `get_engine_status`                 | Sample rate, transport state, BPM, voice count                                                                                                                          |
+| `get_version`                       | Application version, build profile, target, and git revision                                                                                                            |
 
 ### Patch & Sound Design
 
 Create instruments, wire modules together, set parameters.
 
-| Tool | Purpose |
-|------|---------|
-| `create_instrument`, `delete_instrument`, `rename_instrument` | Lifecycle |
-| `set_instrument_category` | Drums/Bass/Lead/Pad/Pluck/Keys/FX/Other |
-| `add_module`, `remove_module` | Modify the graph |
-| `connect`, `disconnect` | Cables (each takes one or many port pairs) |
-| `clear_graph`, `auto_layout` | Reset / tidy |
-| `set_parameter` | One or many params atomically; value may be a number, a choice string (`"sawtooth"`), or a boolean |
-| `build_instrument` | Single call: one or many full instruments from a JSON spec |
-| `apply_example_patch`, `load_example_patch`, `list_example_patches` | Built-in patch library |
+| Tool                                                                | Purpose                                                                                            |
+|---------------------------------------------------------------------|----------------------------------------------------------------------------------------------------|
+| `create_instrument`, `delete_instrument`, `rename_instrument`       | Lifecycle                                                                                          |
+| `set_instrument_category`                                           | Drums/Bass/Lead/Pad/Pluck/Keys/FX/Other                                                            |
+| `add_module`, `remove_module`                                       | Modify the graph                                                                                   |
+| `connect`, `disconnect`                                             | Cables (each takes one or many port pairs)                                                         |
+| `clear_graph`, `auto_layout`                                        | Reset / tidy                                                                                       |
+| `set_parameter`                                                     | One or many params atomically; value may be a number, a choice string (`"sawtooth"`), or a boolean |
+| `build_instrument`                                                  | Single call: one or many full instruments from a JSON spec                                         |
+| `apply_example_patch`, `load_example_patch`, `list_example_patches` | Built-in patch library                                                                             |
 
 ### Playback & Transport
 
 Play notes and drive the sequencer.
 
-| Tool | Purpose |
-|------|---------|
-| `note_on`, `note_off` | MIDI input from the agent |
-| `seq_play`, `seq_stop`, `seq_seek` | Transport control |
+| Tool                                         | Purpose                                            |
+|----------------------------------------------|----------------------------------------------------|
+| `note_on`, `note_off`                        | MIDI input from the agent                          |
+| `seq_play`, `seq_stop`, `seq_seek`           | Transport control                                  |
 | `set_transport_loop`, `clear_transport_loop` | Set or clear the persisted arrangement loop region |
 
 ### Song & Project
 
-| Tool | Purpose |
-|------|---------|
-| `get_song_info`, `set_song_name`, `set_song_author` | Metadata |
-| `set_song_tempo`, `set_song_time_signature` | Default timing |
-| `get_tempo_map`, `set_tempo_at`, `remove_tempo_at` | Position-specific tempo points and ramps |
-| `new_project`, `load_project`, `save_project` | Project I/O |
-| `set_song` | Load a complete arrangement in one call |
+| Tool                                                | Purpose                                  |
+|-----------------------------------------------------|------------------------------------------|
+| `get_song_info`, `set_song_name`, `set_song_author` | Metadata                                 |
+| `set_song_tempo`, `set_song_time_signature`         | Default timing                           |
+| `get_tempo_map`, `set_tempo_at`, `remove_tempo_at`  | Position-specific tempo points and ramps |
+| `new_project`, `load_project`, `save_project`       | Project I/O                              |
+| `set_song`                                          | Load a complete arrangement in one call  |
 
 ### Patterns & Notes
 
 Non-realtime composition.
 
-| Tool | Purpose |
-|------|---------|
-| `list_patterns`, `create_pattern` | Pattern lifecycle (`create_pattern` takes one or many) |
-| `delete_pattern`, `rename_pattern`, `duplicate_pattern` | |
-| `set_pattern_length` | In ticks (960 PPQN) |
-| `list_notes`, `add_note` | Note entry (`add_note` takes one or many) |
-| `update_note`, `replace_notes`, `remove_note` | Edits (`update_note` takes one or many) |
-| `clear_pattern` | Wipe a pattern |
-| `freeze_pattern` | Bake the played note-processing result into ordinary notes |
+| Tool                                                    | Purpose                                                    |
+|---------------------------------------------------------|------------------------------------------------------------|
+| `list_patterns`, `create_pattern`                       | Pattern lifecycle (`create_pattern` takes one or many)     |
+| `delete_pattern`, `rename_pattern`, `duplicate_pattern` |                                                            |
+| `set_pattern_length`                                    | In ticks (960 PPQN)                                        |
+| `list_notes`, `add_note`                                | Note entry (`add_note` takes one or many)                  |
+| `update_note`, `replace_notes`, `remove_note`           | Edits (`update_note` takes one or many)                    |
+| `clear_pattern`                                         | Wipe a pattern                                             |
+| `freeze_pattern`                                        | Bake the played note-processing result into ordinary notes |
 
 **Per-note expression (`add_note`).** Each note in `add_note` accepts two
 optional fields beyond pitch/start/duration/velocity:
@@ -232,19 +238,19 @@ optional fields beyond pitch/start/duration/velocity:
   glides onto the still-active voice without retriggering the envelope (the flag
   sits on the later note of the tie).
 - `glide` — portamento/glissando *into* the note:
-  - `from_semitones` (f32) — source as a semitone offset relative to the note
-    (negative = below), **or** `from_pitch` (0–127) for an absolute source
-    (takes precedence). Default `-2`.
-  - `time_ms` (f32) — glide time, default `100`.
-  - `interp` — `"continuous"` (smooth portamento, default) or `"stepped"`
-    (chromatic glissando).
+    - `from_semitones` (f32) — source as a semitone offset relative to the note
+      (negative = below), **or** `from_pitch` (0–127) for an absolute source
+      (takes precedence). Default `-2`.
+    - `time_ms` (f32) — glide time, default `100`.
+    - `interp` — `"continuous"` (smooth portamento, default) or `"stepped"`
+      (chromatic glissando).
 - `expression` — per-note shaping + vibrato:
-  - `accent` (f32) — velocity multiplier (`1.0` = unchanged, `>1` louder).
-  - `gate` (0–1) — note length as a fraction of its duration (staccato).
-  - `ghost` (bool) — force a soft velocity.
-  - `probability` (0–1) — chance the note plays (resolved at playback; preview
-    always sounds it).
-  - `vibrato` — `{ depth (semitones), rate (Hz), delay_ms (depth fade-in),
+    - `accent` (f32) — velocity multiplier (`1.0` = unchanged, `>1` louder).
+    - `gate` (0–1) — note length as a fraction of its duration (staccato).
+    - `ghost` (bool) — force a soft velocity.
+    - `probability` (0–1) — chance the note plays (resolved at playback; preview
+      always sounds it).
+    - `vibrato` — `{ depth (semitones), rate (Hz), delay_ms (depth fade-in),
     shape: sine|triangle|square|saw }`.
 
 ### Note Grid
@@ -253,15 +259,15 @@ Pooled Note Grid graphs transform note streams at playback time. A graph can be
 shared by patterns, overridden on individual notes, duplicated before diverging,
 or frozen into concrete notes.
 
-| Tool | Purpose |
-|------|---------|
-| `list_note_graphs`, `get_note_graph` | Discover graphs and inspect nodes, connections, metadata, and usage |
-| `create_note_graph`, `duplicate_note_graph`, `delete_note_graph` | Graph lifecycle |
-| `set_note_graph_metadata` | Update graph name, description, and color |
-| `add_note_graph_module`, `set_note_graph_module`, `remove_note_graph_module` | Edit nodes |
-| `connect_note_graph` | Connect the linear note-stream spine or Value/Gate modulation edges |
-| `set_note_graph_script` | Compile/install a YAMS `note_event` program on a Script node |
-| `set_pattern_note_graph`, `set_note_note_graph` | Bind or clear graph references at pattern or note scope |
+| Tool                                                                         | Purpose                                                             |
+|------------------------------------------------------------------------------|---------------------------------------------------------------------|
+| `list_note_graphs`, `get_note_graph`                                         | Discover graphs and inspect nodes, connections, metadata, and usage |
+| `create_note_graph`, `duplicate_note_graph`, `delete_note_graph`             | Graph lifecycle                                                     |
+| `set_note_graph_metadata`                                                    | Update graph name, description, and color                           |
+| `add_note_graph_module`, `set_note_graph_module`, `remove_note_graph_module` | Edit nodes                                                          |
+| `connect_note_graph`                                                         | Connect the linear note-stream spine or Value/Gate modulation edges |
+| `set_note_graph_script`                                                      | Compile/install a YAMS `note_event` program on a Script node        |
+| `set_pattern_note_graph`, `set_note_note_graph`                              | Bind or clear graph references at pattern or note scope             |
 
 The node catalog includes Scale Quantize, Chord, Arpeggiator, Humanize,
 Euclidean Generator, Probability Gate, Note/Step LFO, Note Envelope, Script,
@@ -274,14 +280,14 @@ Pooled Mod Grid graphs run continuously at control rate and write additive
 offsets into the same target space used by automation. A global graph has one
 instance; a track-scope graph has one independent instance per assigned track.
 
-| Tool | Purpose |
-|------|---------|
-| `list_mod_graphs`, `get_mod_graph` | Discover graphs and inspect nodes, cables, scope, and assignments |
-| `create_mod_graph`, `duplicate_mod_graph`, `delete_mod_graph` | Graph lifecycle |
-| `set_mod_graph_metadata`, `set_mod_graph_scope`, `assign_mod_graph` | Metadata and execution scope |
-| `add_mod_graph_node`, `set_mod_graph_node`, `remove_mod_graph_node` | Edit hosted modules, sources, and Target nodes |
-| `connect_mod_graph`, `disconnect_mod_graph` | Edit validated control cables |
-| `list_mod_targets` | Discover writable global, track, instrument, and module targets |
+| Tool                                                                | Purpose                                                           |
+|---------------------------------------------------------------------|-------------------------------------------------------------------|
+| `list_mod_graphs`, `get_mod_graph`                                  | Discover graphs and inspect nodes, cables, scope, and assignments |
+| `create_mod_graph`, `duplicate_mod_graph`, `delete_mod_graph`       | Graph lifecycle                                                   |
+| `set_mod_graph_metadata`, `set_mod_graph_scope`, `assign_mod_graph` | Metadata and execution scope                                      |
+| `add_mod_graph_node`, `set_mod_graph_node`, `remove_mod_graph_node` | Edit hosted modules, sources, and Target nodes                    |
+| `connect_mod_graph`, `disconnect_mod_graph`                         | Edit validated control cables                                     |
+| `list_mod_targets`                                                  | Discover writable global, track, instrument, and module targets   |
 
 Source nodes include macros, transport, MIDI CC, and smoothed audio taps;
 hosted module nodes reuse compatible control modules such as LFO/MSEG. Target
@@ -289,32 +295,32 @@ nodes identify their destination by stable address.
 
 ### Tracks & Arrangement
 
-| Tool | Purpose |
-|------|---------|
-| `list_tracks`, `create_track` | Track lifecycle (`create_track` takes one or many) |
-| `rename_track`, `delete_track`, `set_track_instrument` | (each takes one or many; `set_track_instrument` null = unassign) |
-| `set_track_mixer` | Volume / pan / mute / solo per track, array of updates |
+| Tool                                                                        | Purpose                                                                                                                                     |
+|-----------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------|
+| `list_tracks`, `create_track`                                               | Track lifecycle (`create_track` takes one or many)                                                                                          |
+| `rename_track`, `delete_track`, `set_track_instrument`                      | (each takes one or many; `set_track_instrument` null = unassign)                                                                            |
+| `set_track_mixer`                                                           | Volume / pan / mute / solo per track, array of updates                                                                                      |
 | `list_arrangement`, `place_pattern`, `update_placement`, `remove_placement` | Complete pattern placements: beat/tick position, transpose, gain, and optional length (`place_pattern`/`update_placement` take one or many) |
 
 ### Instrument Mixing
 
-| Tool | Purpose |
-|------|---------|
-| `set_instrument_mixer` | Volume / pan / muted / solo / enabled per instrument, array of updates |
-| `set_instrument_midi_channel` | Multitimbral routing (one or many) |
+| Tool                          | Purpose                                                                |
+|-------------------------------|------------------------------------------------------------------------|
+| `set_instrument_mixer`        | Volume / pan / muted / solo / enabled per instrument, array of updates |
+| `set_instrument_midi_channel` | Multitimbral routing (one or many)                                     |
 
 ### Mixer, Returns & Master Effects
 
-| Tool | Purpose |
-|------|---------|
-| `list_return_busses`, `create_return_bus`, `delete_return_bus`, `rename_return_bus` | Return-bus lifecycle |
-| `set_track_send`, `set_return_send`, `remove_track_send`, `remove_return_send` | Track-to-return and return-to-return routing |
-| `set_return_bus_mixer`, `set_return_bus_description`, `set_return_bus_color` | Return metadata and channel controls |
-| `list_return_busses`, `add_return_effect`, `remove_return_effect`, `reorder_return_effect` | Inspect and edit return insert chains |
-| `set_return_effect_parameter`, `set_return_effect_enabled` | Return-effect control |
-| `list_master_effects`, `add_master_effect`, `remove_master_effect`, `reorder_master_effect` | Master insert chain |
-| `set_master_effect_parameter`, `set_master_effect_enabled` | Master-effect control |
-| `get_master_volume`, `set_master_volume` | Master output level |
+| Tool                                                                                        | Purpose                                      |
+|---------------------------------------------------------------------------------------------|----------------------------------------------|
+| `list_return_busses`, `create_return_bus`, `delete_return_bus`, `rename_return_bus`         | Return-bus lifecycle                         |
+| `set_track_send`, `set_return_send`, `remove_track_send`, `remove_return_send`              | Track-to-return and return-to-return routing |
+| `set_return_bus_mixer`, `set_return_bus_description`, `set_return_bus_color`                | Return metadata and channel controls         |
+| `list_return_busses`, `add_return_effect`, `remove_return_effect`, `reorder_return_effect`  | Inspect and edit return insert chains        |
+| `set_return_effect_parameter`, `set_return_effect_enabled`                                  | Return-effect control                        |
+| `list_master_effects`, `add_master_effect`, `remove_master_effect`, `reorder_master_effect` | Master insert chain                          |
+| `set_master_effect_parameter`, `set_master_effect_enabled`                                  | Master-effect control                        |
+| `get_master_volume`, `set_master_volume`                                                    | Master output level                          |
 
 ### Automation
 
@@ -324,22 +330,22 @@ per-module parameter. Targets can be given as a structured `target` object or th
 `module:<type>:<instance>:<param>` DSL string; the `Exponential` curve takes a
 `curve_strength` (-127..=127). See [AI-Friendly Features](#ai-friendly-features).
 
-| Tool | Purpose |
-|------|---------|
-| `get_instrument_automation_targets` | Discover the valid targets (per-module + macros) for an instrument before editing |
-| `add_automation_points`, `remove_automation_points` | Edit |
-| `list_automation_lanes`, `get_automation_points` | Read |
-| `clear_automation_lane` | Wipe |
+| Tool                                                | Purpose                                                                           |
+|-----------------------------------------------------|-----------------------------------------------------------------------------------|
+| `get_instrument_automation_targets`                 | Discover the valid targets (per-module + macros) for an instrument before editing |
+| `add_automation_points`, `remove_automation_points` | Edit                                                                              |
+| `list_automation_lanes`, `get_automation_points`    | Read                                                                              |
+| `clear_automation_lane`                             | Wipe                                                                              |
 
 ### Audio Analysis (the AI killer feature)
 
 Offline-rendered, deterministic, quantitative feedback. These let an agent hear what it built.
 
-| Tool | Returns |
-|------|---------|
-| `analyze_harmony` | Chord progression (18 templates), key inference (24 keys via Krumhansl–Schmuckler), in-key ratio, out-of-scale notes |
+| Tool              | Returns                                                                                                                                 |
+|-------------------|-----------------------------------------------------------------------------------------------------------------------------------------|
+| `analyze_harmony` | Chord progression (18 templates), key inference (24 keys via Krumhansl–Schmuckler), in-key ratio, out-of-scale notes                    |
 | `analyze_mix_bus` | LUFS-I, peak, RMS, crest factor, 4-band frequency balance, stereo correlation, mid/side energy, mono-compat score, clipped-sample count |
-| `analyze_section` | Same as `analyze_mix_bus` plus per-track contribution breakdown (via soloing) |
+| `analyze_section` | Same as `analyze_mix_bus` plus per-track contribution breakdown (via soloing)                                                           |
 
 All three are bit-exact reproducible across calls — `fastrand` is reseeded and
 `BTreeMap` is used for module iteration.
@@ -352,11 +358,11 @@ assuming all analysis tools share the same scope fields.
 
 ### YAMS Scripting
 
-| Tool | Purpose |
-|------|---------|
-| `get_yams_reference` | Return the canonical YAMS reference used by this build |
+| Tool                    | Purpose                                                           |
+|-------------------------|-------------------------------------------------------------------|
+| `get_yams_reference`    | Return the canonical YAMS reference used by this build            |
 | `set_mod_matrix_script` | Install/clear YAMS on a Mod Matrix, Script, or AudioScript module |
-| `set_note_graph_script` | Install/clear the note-event dialect on a Note Grid Script node |
+| `set_note_graph_script` | Install/clear the note-event dialect on a Note Grid Script node   |
 
 `set_mod_matrix_script.slot` is 1-based: Mod Matrix accepts `1..=16`; Script
 and AudioScript are each one program and require slot `1`. Script exposes
@@ -366,26 +372,26 @@ Both module hosts may declare persistent, automatable `param` knobs. See
 
 ### Samples & Sampler
 
-| Tool | Purpose |
-|------|---------|
-| `list_samples`, `import_sample`, `delete_sample`, `rename_sample`, `duplicate_sample`, `export_sample` | Library |
-| `get_sample_info` | Length, sample rate, channels, root note |
-| `normalize_sample`, `reverse_sample`, `trim_sample_silence` | DSP |
-| `set_sample_loop`, `set_sample_crop`, `set_sample_root_note` | Slicing & mapping |
-| `assign_sample_to_module`, `get_sampler_state`, `set_sampler_parameter` | Sampler module |
+| Tool                                                                                                   | Purpose                                  |
+|--------------------------------------------------------------------------------------------------------|------------------------------------------|
+| `list_samples`, `import_sample`, `delete_sample`, `rename_sample`, `duplicate_sample`, `export_sample` | Library                                  |
+| `get_sample_info`                                                                                      | Length, sample rate, channels, root note |
+| `normalize_sample`, `reverse_sample`, `trim_sample_silence`                                            | DSP                                      |
+| `set_sample_loop`, `set_sample_crop`, `set_sample_root_note`                                           | Slicing & mapping                        |
+| `assign_sample_to_module`, `get_sampler_state`, `set_sampler_parameter`                                | Sampler module                           |
 
 ### Audio Input
 
-| Tool | Purpose |
-|------|---------|
+| Tool                                    | Purpose            |
+|-----------------------------------------|--------------------|
 | `list_input_devices`, `get_input_state` | Live input routing |
 
 ### Batch & Utility
 
-| Tool | Purpose |
-|------|---------|
-| `batch_execute` | Run up to 50 arbitrary tool calls in one request |
-| `optimize_project` | Remove unused patterns, instruments, samples |
+| Tool               | Purpose                                          |
+|--------------------|--------------------------------------------------|
+| `batch_execute`    | Run up to 50 arbitrary tool calls in one request |
+| `optimize_project` | Remove unused patterns, instruments, samples     |
 
 ---
 
@@ -426,10 +432,22 @@ instead of guessing a stringly-typed DSL:
 ```json
 // get_instrument_automation_targets(instrument_id=1) -> a flat array of targets
 [
-  { "target": "module:flt:4:cutoff", "kind": "module", "module_id": "flt-4",
-    "param_id": "cutoff", "display_name": "Cutoff", "unit": "Hz",
-    "min": 20.0, "max": 20000.0, "response_curve": "Logarithmic" },
-  { "target": "FilterCutoff", "kind": "instrument", "display_name": "Filter Cutoff" }
+  {
+    "target": "module:flt:4:cutoff",
+    "kind": "module",
+    "module_id": "flt-4",
+    "param_id": "cutoff",
+    "display_name": "Cutoff",
+    "unit": "Hz",
+    "min": 20.0,
+    "max": 20000.0,
+    "response_curve": "Logarithmic"
+  },
+  {
+    "target": "FilterCutoff",
+    "kind": "instrument",
+    "display_name": "Filter Cutoff"
+  }
 ]
 ```
 
@@ -445,11 +463,31 @@ Each entry's `target` string is ready to pass straight to the automation tools;
 {
   "pattern_id": 0,
   "points": [
-    { "target": { "module": { "module_type": "flt", "instance": 1, "param_id": "cutoff" } },
-      "instrument_id": 1, "beat": 0.0, "value": 0.1, "curve": "Linear" },
-    { "target": { "instrument": { "param": "FilterCutoff" } },
-      "instrument_id": 1, "beat": 4.0, "value": 0.9,
-      "curve": "Exponential", "curve_strength": -40 }
+    {
+      "target": {
+        "module": {
+          "module_type": "flt",
+          "instance": 1,
+          "param_id": "cutoff"
+        }
+      },
+      "instrument_id": 1,
+      "beat": 0.0,
+      "value": 0.1,
+      "curve": "Linear"
+    },
+    {
+      "target": {
+        "instrument": {
+          "param": "FilterCutoff"
+        }
+      },
+      "instrument_id": 1,
+      "beat": 4.0,
+      "value": 0.9,
+      "curve": "Exponential",
+      "curve_strength": -40
+    }
   ]
 }
 ```

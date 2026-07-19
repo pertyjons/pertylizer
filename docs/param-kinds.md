@@ -10,19 +10,19 @@
 > type. The totals below describe that historical audit and are not a live module
 > inventory. Supersedes the plan's *provisional* counts, which had no `Reference`
 > bucket and over-counted `Enum`.
-
+ 
 ## Classification rules
 
 A variant's kind is the kind of its **value-bearing carried type**:
 
-| Carried type | `ParamKind` |
-|--------------|-------------|
-| f32-wrapping newtype (`Hertz`, `Gain`, `Decibels`, `Seconds`, `Milliseconds`, `Cents`, `Semitones`, `NormalizedValue`, `BipolarValue`, `Phase`, `Ratio`, `BeatDivision`, `TimeScale`, `PulseWidth`, `BitDepth`, `DecayTrim`) | **Continuous** |
-| raw `f32` | **Continuous** (should get a newtype — see findings) |
-| integer primitive (`u8`/`i32`/`u32`/`usize`) **or integer-backed newtype** (`VoiceCount`, `MidiNote`, `Octaves`, `StepCount`) | **Integer** |
-| `bool` | **Bool** |
-| choice/mode enum (`Waveform`, `FilterMode`, …) | **Enum** |
-| `SampleId`, `Option<SrcAddr>`, `Option<DestAddr>` | **Reference** |
+| Carried type                                                                                                                                                                                                                 | `ParamKind`                                          |
+|------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------------------------|
+| f32-wrapping newtype (`Hertz`, `Gain`, `Decibels`, `Seconds`, `Milliseconds`, `Cents`, `Semitones`, `NormalizedValue`, `BipolarValue`, `Phase`, `Ratio`, `BeatDivision`, `TimeScale`, `PulseWidth`, `BitDepth`, `DecayTrim`) | **Continuous**                                       |
+| raw `f32`                                                                                                                                                                                                                    | **Continuous** (should get a newtype — see findings) |
+| integer primitive (`u8`/`i32`/`u32`/`usize`) **or integer-backed newtype** (`VoiceCount`, `MidiNote`, `Octaves`, `StepCount`)                                                                                                | **Integer**                                          |
+| `bool`                                                                                                                                                                                                                       | **Bool**                                             |
+| choice/mode enum (`Waveform`, `FilterMode`, …)                                                                                                                                                                               | **Enum**                                             |
+| `SampleId`, `Option<SrcAddr>`, `Option<DestAddr>`                                                                                                                                                                            | **Reference**                                        |
 
 For two-field variants `Variant(u8, T)` the kind is **T**'s kind; the leading `u8` is
 a structural index/slot, not a parameter value.
@@ -31,24 +31,24 @@ a structural index/slot, not a parameter value.
 
 **378 parameter variants across 67 module param enums.**
 
-| `ParamKind` | Count | Share |
-|-------------|-------|-------|
-| **Continuous** | 307 | 81.2 % |
-| **Enum** | 31 | 8.2 % |
-| **Bool** | 20 | 5.3 % |
-| **Integer** | 17 | 4.5 % |
-| **Reference** | 3 | 0.8 % |
-| **Total** | **378** | |
+| `ParamKind`    | Count   | Share  |
+|----------------|---------|--------|
+| **Continuous** | 307     | 81.2 % |
+| **Enum**       | 31      | 8.2 %  |
+| **Bool**       | 20      | 5.3 %  |
+| **Integer**    | 17      | 4.5 %  |
+| **Reference**  | 3       | 0.8 %  |
+| **Total**      | **378** |        |
 
 Per-batch sub-totals (file groups), after reclassification:
 
-| Batch | Files | C | I | B | E | R | Σ |
-|-------|-------|---|---|---|---|---|---|
-| 1 | oscillators, sub_osc, noise, filters, envelopes, lfo, modules | 53 | 1 | 8 | 10 | 0 | 72 |
-| 2 | effects (21 enums) | 111 | 5 | 4 | 5 | 0 | 125 |
-| 3 | mod_matrix, ring_mod, envelope_follower, mseg, wavetable, additive, granular, signal_monitor, spectrum_analyzer, vector_mixer, kinetic | 38 | 5 | 6 | 7 | 2 | 58 |
-| 4 | fractal_osc, la_synth, pitch_tracker, generative, physical, drift_generator, chaotic_osc, formant_filter, fooglers, beat_detector | 49 | 6 | 0 | 4 | 0 | 59 |
-| 5 | padsynth, am_formant, convolver, phase_vocoder, frequency_shifter, voice_synth, vocal_tract, fof, sampler, waveshaper | 56 | 0 | 2 | 5 | 1 | 64 |
+| Batch | Files                                                                                                                                  | C   | I | B | E  | R | Σ   |
+|-------|----------------------------------------------------------------------------------------------------------------------------------------|-----|---|---|----|---|-----|
+| 1     | oscillators, sub_osc, noise, filters, envelopes, lfo, modules                                                                          | 53  | 1 | 8 | 10 | 0 | 72  |
+| 2     | effects (21 enums)                                                                                                                     | 111 | 5 | 4 | 5  | 0 | 125 |
+| 3     | mod_matrix, ring_mod, envelope_follower, mseg, wavetable, additive, granular, signal_monitor, spectrum_analyzer, vector_mixer, kinetic | 38  | 5 | 6 | 7  | 2 | 58  |
+| 4     | fractal_osc, la_synth, pitch_tracker, generative, physical, drift_generator, chaotic_osc, formant_filter, fooglers, beat_detector      | 49  | 6 | 0 | 4  | 0 | 59  |
+| 5     | padsynth, am_formant, convolver, phase_vocoder, frequency_shifter, voice_synth, vocal_tract, fof, sampler, waveshaper                  | 56  | 0 | 2 | 5  | 1 | 64  |
 
 ## Findings (feed back into the plan)
 
@@ -68,10 +68,10 @@ Per-batch sub-totals (file groups), after reclassification:
    in the tables): `ChorusParam::Voices`, `EnsembleChorusParam::Voices`,
    `ModalResonatorParam::{BaseNote, Modes}`, `WavetableParam::Octave`.
    (`KeyboardPannerParam::CenterNote` was already Integer.)
-   - **Watch the `Octaves` newtype vs the `SubOscOctave` enum:**
-     `WavetableParam::Octave` carries the integer-backed `Octaves` newtype →
-     **Integer**, but `SubOscParam::Octave` carries the `SubOscOctave` *enum* →
-     **Enum**. Same display name, different kind.
+    - **Watch the `Octaves` newtype vs the `SubOscOctave` enum:**
+      `WavetableParam::Octave` carries the integer-backed `Octaves` newtype →
+      **Integer**, but `SubOscParam::Octave` carries the `SubOscOctave` *enum* →
+      **Enum**. Same display name, different kind.
 5. **Two raw-`f32` params confirmed:** `KineticParam::{OutputVel, OutputAcc}` (read-out
    values). They classify Continuous but should get newtypes (tracked separately).
 6. **Inconsistent `UnisonVoices` backing across modules:** `OscillatorParam::UnisonVoices`
@@ -84,14 +84,14 @@ Per-batch sub-totals (file groups), after reclassification:
 
 ## `ScalarParam::KIND` assignments implied (for Phase 1)
 
-| Value type | `KIND` |
-|------------|--------|
-| `Hertz`, `Gain`, `Decibels`, `Seconds`, `Milliseconds`, `Cents`, `Semitones`, `NormalizedValue`, `BipolarValue`, `Phase`, `Ratio`, `BeatDivision`, `TimeScale`, `PulseWidth`, `BitDepth`*, `DecayTrim` | `Continuous` |
-| `f32` (raw) | `Continuous` |
-| `u8`, `i32`, `u32`, `usize`, `VoiceCount`, `MidiNote`, `Octaves`, `StepCount` | `Integer` |
-| `bool` | `Bool` |
-| `Waveform`, `MathAlgo`, `FmMode`, `AntiAliasMode`, `SubOscWaveform`, `SubOscOctave`, `NoiseType`, `FilterMode`, `FilterModel`, `LfoWaveform`, `DelayMode`, `DistortionMode`, `ReverseGateMode`, `ReverseGateTrigger`, `FftSizeOption`, `GrainSource`, `GrainWindow`, `EasingCurve`, `KineticLoopMode`, `ChaoticSystem`, `MechanicalNoiseType`, `TuringScale`, `Polarity`, `ImpulseResponse`, `SamplerPlayMode`, `PlayDirection`, `WaveshaperCurve`, `WavetableSelect`, `ModMatrixGridSize` | `Enum` |
-| `SampleId`, `Option<SrcAddr>`, `Option<DestAddr>` | `Reference` |
+| Value type                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 | `KIND`       |
+|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|--------------|
+| `Hertz`, `Gain`, `Decibels`, `Seconds`, `Milliseconds`, `Cents`, `Semitones`, `NormalizedValue`, `BipolarValue`, `Phase`, `Ratio`, `BeatDivision`, `TimeScale`, `PulseWidth`, `BitDepth`*, `DecayTrim`                                                                                                                                                                                                                                                                                     | `Continuous` |
+| `f32` (raw)                                                                                                                                                                                                                                                                                                                                                                                                                                                                                | `Continuous` |
+| `u8`, `i32`, `u32`, `usize`, `VoiceCount`, `MidiNote`, `Octaves`, `StepCount`                                                                                                                                                                                                                                                                                                                                                                                                              | `Integer`    |
+| `bool`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     | `Bool`       |
+| `Waveform`, `MathAlgo`, `FmMode`, `AntiAliasMode`, `SubOscWaveform`, `SubOscOctave`, `NoiseType`, `FilterMode`, `FilterModel`, `LfoWaveform`, `DelayMode`, `DistortionMode`, `ReverseGateMode`, `ReverseGateTrigger`, `FftSizeOption`, `GrainSource`, `GrainWindow`, `EasingCurve`, `KineticLoopMode`, `ChaoticSystem`, `MechanicalNoiseType`, `TuringScale`, `Polarity`, `ImpulseResponse`, `SamplerPlayMode`, `PlayDirection`, `WaveshaperCurve`, `WavetableSelect`, `ModMatrixGridSize` | `Enum`       |
+| `SampleId`, `Option<SrcAddr>`, `Option<DestAddr>`                                                                                                                                                                                                                                                                                                                                                                                                                                          | `Reference`  |
 
 \* `BitDepth` pending the verify in finding #7.
 
@@ -104,119 +104,162 @@ Legend: **†** = reclassified Continuous → Integer (integer-backed newtype, f
 ### Batch 1 — core voice
 
 #### OscillatorParam (oscillators.rs:596)
-| Variant | Type | Kind |
-|---|---|---|
-| Waveform | Waveform | Enum |
-| Frequency | Hertz | Continuous |
-| Detune | Cents | Continuous |
-| Octave | Semitones | Continuous |
-| PulseWidth | PulseWidth | Continuous |
-| Level | Gain | Continuous |
-| Phase | Phase | Continuous |
-| FmMode | FmMode | Enum |
-| FmAmount | BipolarValue | Continuous |
-| UnisonVoices | u8 | Integer |
-| UnisonDetune | Cents | Continuous |
-| UnisonSpread | NormalizedValue | Continuous |
+
+| Variant           | Type            | Kind       |
+|-------------------|-----------------|------------|
+| Waveform          | Waveform        | Enum       |
+| Frequency         | Hertz           | Continuous |
+| Detune            | Cents           | Continuous |
+| Octave            | Semitones       | Continuous |
+| PulseWidth        | PulseWidth      | Continuous |
+| Level             | Gain            | Continuous |
+| Phase             | Phase           | Continuous |
+| FmMode            | FmMode          | Enum       |
+| FmAmount          | BipolarValue    | Continuous |
+| UnisonVoices      | u8              | Integer    |
+| UnisonDetune      | Cents           | Continuous |
+| UnisonSpread      | NormalizedValue | Continuous |
 | UnisonPhaseRandom | NormalizedValue | Continuous |
-| CrossModAmount | NormalizedValue | Continuous |
-| AntiAlias | AntiAliasMode | Enum |
+| CrossModAmount    | NormalizedValue | Continuous |
+| AntiAlias         | AntiAliasMode   | Enum       |
 
 `C=11 I=1 B=0 E=3 R=0` (15)
 
 #### MathOscillatorParam (oscillators.rs:764)
+
 Algorithm→Enum; Frequency(Hertz), ParamA/B/C(NormalizedValue), Level(Gain)→Continuous. `C=5 I=0 B=0 E=1 R=0` (6)
 
 #### SubOscParam (sub_osc.rs:164)
+
 Waveform(SubOscWaveform)→Enum; Octave(SubOscOctave)→Enum; Level(Gain)→Continuous. `C=1 I=0 B=0 E=2 R=0` (3)
 
 #### NoiseParam (noise.rs:108)
+
 Type(NoiseType)→Enum; Level(Gain)→Continuous. `C=1 I=0 B=0 E=1 R=0` (2)
 
 #### FilterParam (filters.rs:191)
-Mode(FilterMode)→Enum; Model(FilterModel)→Enum; Cutoff(Hertz), Resonance/KeyTracking/Morph(NormalizedValue), Drive(Gain), EnvAmount/CutoffMod(BipolarValue)→Continuous. `C=7 I=0 B=0 E=2 R=0` (9)
+
+Mode(FilterMode)→Enum; Model(FilterModel)→Enum; Cutoff(Hertz), Resonance/KeyTracking/Morph(NormalizedValue), Drive(
+Gain), EnvAmount/CutoffMod(BipolarValue)→Continuous. `C=7 I=0 B=0 E=2 R=0` (9)
 
 #### EnvelopeParam (envelopes.rs:9)
-Attack/Decay/Release(Seconds), Sustain/VelocitySensitivity(NormalizedValue), Attack/Decay/ReleaseCurve(BipolarValue)→Continuous. `C=8 I=0 B=0 E=0 R=0` (8)
+
+Attack/Decay/Release(Seconds), Sustain/VelocitySensitivity(NormalizedValue), Attack/Decay/ReleaseCurve(BipolarValue)
+→Continuous. `C=8 I=0 B=0 E=0 R=0` (8)
 
 #### LfoParam (lfo.rs:98)
-Waveform(LfoWaveform)→Enum; TempoSync/Retrigger(bool)→Bool; Rate(Hertz), Depth(NormalizedValue), Phase(Phase), SyncDivision(BeatDivision)→Continuous. `C=4 I=0 B=2 E=1 R=0` (7)
+
+Waveform(LfoWaveform)→Enum; TempoSync/Retrigger(bool)→Bool; Rate(Hertz), Depth(NormalizedValue), Phase(Phase),
+SyncDivision(BeatDivision)→Continuous. `C=4 I=0 B=2 E=1 R=0` (7)
 
 #### AmplifierParam (modules.rs:13)
+
 Level(Gain), Pan(BipolarValue)→Continuous; CvBipolar(bool)→Bool. `C=2 I=0 B=1 E=0 R=0` (3)
 
 #### MixerParam (modules.rs:77)
+
 Input1–8 + Master(Gain)→Continuous; Mute/Limit/Dither(bool)→Bool. `C=9 I=0 B=3 E=0 R=0` (12)
 
 #### OscilloscopeParam (modules.rs:177)
+
 Time(Seconds), Gain(Gain), Trigger(NormalizedValue)→Continuous; Frozen(bool)→Bool. `C=3 I=0 B=1 E=0 R=0` (4)
 
 #### LevelMeterParam (modules.rs:239)
+
 PeakHold(Seconds), DecayRate(NormalizedValue)→Continuous; ShowRms(bool)→Bool. `C=2 I=0 B=1 E=0 R=0` (3)
 
 ### Batch 2 — effects (effects.rs)
 
 #### DelayParam (157)
-Mode(DelayMode)→Enum; TempoSync(bool)→Bool; Time/TimeLeft/TimeRight(Seconds), Feedback/Mix/Damping(NormalizedValue), SyncDivision(BeatDivision)→Continuous. `C=7 I=0 B=1 E=1 R=0` (9)
+
+Mode(DelayMode)→Enum; TempoSync(bool)→Bool; Time/TimeLeft/TimeRight(Seconds), Feedback/Mix/Damping(NormalizedValue),
+SyncDivision(BeatDivision)→Continuous. `C=7 I=0 B=1 E=1 R=0` (9)
 
 #### ReverbParam (231)
+
 RoomSize/Damping/Width/Mix/Decay/Diffusion(NormalizedValue), PreDelay(Seconds), LowCut(Hertz)→Continuous. `C=8` (8)
 
 #### DistortionParam (302)
+
 Mode(DistortionMode)→Enum; Drive/Tone/Mix(NormalizedValue), BitDepth(BitDepth*)→Continuous. `C=4 E=1` (5)
 
 #### ChorusParam (359)
-Rate(Hertz), Depth/Feedback/Mix(NormalizedValue), Delay(Milliseconds)→Continuous; **Voices(VoiceCount)→Integer †**. `C=5 I=1` (6)
+
+Rate(Hertz), Depth/Feedback/Mix(NormalizedValue), Delay(Milliseconds)→Continuous; **Voices(VoiceCount)→Integer †**.
+`C=5 I=1` (6)
 
 #### PhaserParam (417)
+
 Stages(u8)→Integer; Rate/CenterFreq(Hertz), Depth/Mix(NormalizedValue), Feedback(BipolarValue)→Continuous. `C=5 I=1` (6)
 
 #### FlangerParam (475)
+
 Rate(Hertz), Depth/Mix(NormalizedValue), Feedback(BipolarValue), Delay(Milliseconds)→Continuous. `C=5` (5)
 
 #### CompressorParam (530)
-SidechainEnabled(bool)→Bool; Threshold/Makeup(Decibels), Ratio(Ratio), Attack/Release(Milliseconds), Mix(NormalizedValue), SidechainFilter(Hertz)→Continuous. `C=7 B=1` (8)
+
+SidechainEnabled(bool)→Bool; Threshold/Makeup(Decibels), Ratio(Ratio), Attack/Release(Milliseconds), Mix(
+NormalizedValue), SidechainFilter(Hertz)→Continuous. `C=7 B=1` (8)
 
 #### EqParam (604)
+
 Low/Mid/HighFreq(Hertz), Low/Mid/HighGain(Decibels), MidQ/Mix(NormalizedValue)→Continuous. `C=8` (8)
 
 #### BbdDelayParam (667)
+
 Time(Seconds), Feedback/Tone/WowFlutter/ClockNoise/Mix(NormalizedValue)→Continuous. `C=6` (6)
 
 #### MidSideParam (727)
+
 Width/Mix(NormalizedValue), Mid/SideGain(Decibels), Rotation(BipolarValue)→Continuous. `C=5` (5)
 
 #### LimiterParam (787)
+
 Ceiling(Decibels), LookAhead/Release(Milliseconds), Mix(NormalizedValue)→Continuous. `C=4` (4)
 
 #### EnsembleChorusParam (842)
-Rate(Hertz), Depth/BaseDelay(Milliseconds), Mix/Tone/Noise/StereoWidth(NormalizedValue)→Continuous; **Voices(VoiceCount)→Integer †**. `C=7 I=1` (8)
+
+Rate(Hertz), Depth/BaseDelay(Milliseconds), Mix/Tone/Noise/StereoWidth(NormalizedValue)→Continuous; **Voices(VoiceCount)
+→Integer †**. `C=7 I=1` (8)
 
 #### ShimmerReverbParam (906)
-RoomSize/Decay/Damping/ShimmerMix/Mix(NormalizedValue), PreDelay(Seconds), PitchSemitones(Semitones)→Continuous. `C=7` (7)
+
+RoomSize/Decay/Damping/ShimmerMix/Mix(NormalizedValue), PreDelay(Seconds), PitchSemitones(Semitones)→Continuous. `C=7` (
+7)
 
 #### GranularFxParam (970)
-Freeze(bool)→Bool; BufferTime(Seconds), GrainSize(Milliseconds), Density/Position/PositionSpread/PitchSpread/PanSpread/Mix(NormalizedValue)→Continuous. `C=8 B=1` (9)
+
+Freeze(bool)→Bool; BufferTime(Seconds), GrainSize(Milliseconds),
+Density/Position/PositionSpread/PitchSpread/PanSpread/Mix(NormalizedValue)→Continuous. `C=8 B=1` (9)
 
 #### SpectralBlurParam (1048)
+
 FftSize(FftSizeOption)→Enum; Freeze(bool)→Bool; BlurTime/BlurFreq/Mix(NormalizedValue)→Continuous. `C=3 B=1 E=1` (5)
 
 #### ModalResonatorParam (1108)
-**BaseNote(MidiNote)→Integer †**; **Modes(VoiceCount)→Integer †**; Spread/Decay/Brightness/Mix(NormalizedValue)→Continuous. `C=4 I=2` (6)
+
+**BaseNote(MidiNote)→Integer †**; **Modes(VoiceCount)→Integer †**; Spread/Decay/Brightness/Mix(NormalizedValue)
+→Continuous. `C=4 I=2` (6)
 
 #### ReverseGateReverbParam (1279)
-Mode(ReverseGateMode)→Enum; Trigger(ReverseGateTrigger)→Enum; WindowTime/GateTime(Milliseconds), Threshold(Decibels), Mix(NormalizedValue)→Continuous. `C=4 E=2` (6)
+
+Mode(ReverseGateMode)→Enum; Trigger(ReverseGateTrigger)→Enum; WindowTime/GateTime(Milliseconds), Threshold(Decibels),
+Mix(NormalizedValue)→Continuous. `C=4 E=2` (6)
 
 #### TiltEqParam (1345)
+
 Tilt(BipolarValue), CenterFreq(Hertz), Mix(NormalizedValue)→Continuous. `C=3` (3)
 
 #### UnivibeParam (1399)
+
 Rate(Hertz), Depth/Feedback/Mix(NormalizedValue)→Continuous. `C=4` (4)
 
 #### CrossoverParam (1456)
+
 Frequency(Hertz), LowGain/HighGain/Mix(NormalizedValue)→Continuous. `C=4` (4)
 
 #### VocoderParam (1513)
+
 Order/Mix(NormalizedValue), WindowSize(Milliseconds)→Continuous. `C=3` (3)
 
 > Batch 2 after reclassification: `C=111 I=5 B=4 E=5 R=0` (125). (3 `Voices/Modes` +
@@ -225,37 +268,55 @@ Order/Mix(NormalizedValue), WindowSize(Milliseconds)→Continuous. `C=3` (3)
 ### Batch 3 — modulation / util / granular
 
 #### ModMatrixParam (mod_matrix.rs:863)
-GridSize(ModMatrixGridSize)→Enum; SlotSource(u8, Option\<SrcAddr\>)→**Reference**; SlotDestination(u8, Option\<DestAddr\>)→**Reference**; SlotAmount(u8, BipolarValue)→Continuous; SlotEnabled(u8, bool)→Bool. `C=1 B=1 E=1 R=2` (5)
+
+GridSize(ModMatrixGridSize)→Enum; SlotSource(u8, Option\<SrcAddr\>)→**Reference**; SlotDestination(u8,
+Option\<DestAddr\>)→**Reference**; SlotAmount(u8, BipolarValue)→Continuous; SlotEnabled(u8, bool)→Bool.
+`C=1 B=1 E=1 R=2` (5)
 
 #### RingModParam (ring_mod.rs:15)
-CarrierWaveform(Waveform)→Enum; CarrierFreq(Hertz), Mix/FreqRatio/TrackKeyboard(NormalizedValue)→Continuous. `C=4 E=1` (5)
+
+CarrierWaveform(Waveform)→Enum; CarrierFreq(Hertz), Mix/FreqRatio/TrackKeyboard(NormalizedValue)→Continuous. `C=4 E=1` (
+5)
 
 #### EnvelopeFollowerParam (envelope_follower.rs:13)
+
 Attack/Release(Milliseconds), Sensitivity(NormalizedValue)→Continuous. `C=3` (3)
 
 #### MsegParam (mseg.rs:9)
-SegmentCount/SustainSegment/LoopStart/LoopEnd(u8)→Integer; LoopEnabled(bool)→Bool; TimeScale(TimeScale)→Continuous; SegmentTime(u8,Seconds)/SegmentLevel(u8,NormalizedValue)/SegmentCurve(u8,BipolarValue)→Continuous. `C=4 I=4 B=1` (9)
+
+SegmentCount/SustainSegment/LoopStart/LoopEnd(u8)→Integer; LoopEnabled(bool)→Bool; TimeScale(TimeScale)→Continuous;
+SegmentTime(u8,Seconds)/SegmentLevel(u8,NormalizedValue)/SegmentCurve(u8,BipolarValue)→Continuous. `C=4 I=4 B=1` (9)
 
 #### WavetableParam (wavetable.rs:110)
-Table(WavetableSelect)→Enum; **Octave(Octaves)→Integer †**; Position(NormalizedValue), Detune(Cents), Level(Gain)→Continuous. `C=3 I=1 E=1` (5)
+
+Table(WavetableSelect)→Enum; **Octave(Octaves)→Integer †**; Position(NormalizedValue), Detune(Cents), Level(Gain)
+→Continuous. `C=3 I=1 E=1` (5)
 
 #### AdditiveParam (additive.rs:9)
+
 Tilt/OddEven/Brightness/Stretch/Randomize/Level(NormalizedValue)→Continuous. `C=6` (6)
 
 #### GranularParam (granular.rs:125)
-Window(GrainWindow)→Enum; Source(GrainSource)→Enum; Freeze(bool)→Bool; GrainSize(Milliseconds), Density/Position/PositionSpread/PitchSpread/PanSpread(NormalizedValue), Level(Gain)→Continuous. `C=7 B=1 E=2` (10)
+
+Window(GrainWindow)→Enum; Source(GrainSource)→Enum; Freeze(bool)→Bool; GrainSize(Milliseconds),
+Density/Position/PositionSpread/PitchSpread/PanSpread(NormalizedValue), Level(Gain)→Continuous. `C=7 B=1 E=2` (10)
 
 #### SignalMonitorParam (signal_monitor.rs:16)
+
 Time(Seconds), Gain(Gain), Trigger(NormalizedValue)→Continuous; Frozen(bool)→Bool. `C=3 B=1` (4)
 
 #### SpectrumAnalyzerParam (spectrum_analyzer.rs:9)
+
 Gain(Gain)→Continuous. `C=1` (1)
 
 #### VectorMixerParam (vector_mixer.rs:9)
+
 X/Y(BipolarValue)→Continuous. `C=2` (2)
 
 #### KineticParam (kinetic.rs:191)
-CurveType(EasingCurve)→Enum; LoopMode(KineticLoopMode)→Enum; Bipolar/Retrigger(bool)→Bool; Duration(Seconds), Overshoot(NormalizedValue), **OutputVel/OutputAcc(f32, raw)**→Continuous. `C=4 B=2 E=2` (8)
+
+CurveType(EasingCurve)→Enum; LoopMode(KineticLoopMode)→Enum; Bipolar/Retrigger(bool)→Bool; Duration(Seconds), Overshoot(
+NormalizedValue), **OutputVel/OutputAcc(f32, raw)**→Continuous. `C=4 B=2 E=2` (8)
 
 > Batch 3 after reclassification: `C=38 I=5 B=6 E=7 R=2` (58). (`WavetableParam::Octave`
 > moved C→I.)
@@ -263,45 +324,61 @@ CurveType(EasingCurve)→Enum; LoopMode(KineticLoopMode)→Enum; Bipolar/Retrigg
 ### Batch 4 — synthesis / physical / generative
 
 #### FractalOscParam (fractal_osc.rs:11)
+
 Roughness/FractalSpacing/Dispersion/Spread/Level(NormalizedValue)→Continuous. `C=5` (5)
 
 #### LaSynthParam (la_synth.rs:9)
+
 AttackType/AttackLevel/Brightness(NormalizedValue), AttackTime/CrossfadeTime(Milliseconds)→Continuous. `C=5` (5)
 
 #### PitchTrackerParam (pitch_tracker.rs:9)
+
 Sensitivity/Smoothing(NormalizedValue), MinFreq/MaxFreq(Hertz)→Continuous. `C=4` (4)
 
 #### EuclideanParam (generative.rs:13)
+
 Steps/Pulses/Rotation(StepCount)→Integer; Swing(NormalizedValue)→Continuous. `C=1 I=3` (4)
 
 #### TuringMachineParam (generative.rs:127)
+
 Scale(TuringScale)→Enum; Length(StepCount)→Integer; MutationRate/Range(NormalizedValue)→Continuous. `C=2 I=1 E=1` (4)
 
 #### RandomGatesParam (generative.rs:184)
+
 Seed(u32)→Integer; Density/BurstProbability/GateLength(NormalizedValue)→Continuous. `C=3 I=1` (4)
 
 #### KeyboardPannerParam (physical.rs:18)
-Invert(Polarity)→Enum; CenterNote(MidiNote)→Integer; Spread(NormalizedValue), Curve(BipolarValue)→Continuous. `C=2 I=1 E=1` (4)
+
+Invert(Polarity)→Enum; CenterNote(MidiNote)→Integer; Spread(NormalizedValue), Curve(BipolarValue)→Continuous.
+`C=2 I=1 E=1` (4)
 
 #### BodyResonanceParam (physical.rs:80)
+
 Frequency(Hertz), Resonance/Size/Brightness/Mix(NormalizedValue)→Continuous. `C=5` (5)
 
 #### MechanicalNoiseParam (physical.rs:202)
-NoiseType(MechanicalNoiseType)→Enum; Duration(Milliseconds), Cutoff(Hertz), VelocitySens(NormalizedValue), Level(Gain)→Continuous. `C=4 E=1` (5)
+
+NoiseType(MechanicalNoiseType)→Enum; Duration(Milliseconds), Cutoff(Hertz), VelocitySens(NormalizedValue), Level(Gain)
+→Continuous. `C=4 E=1` (5)
 
 #### DriftGeneratorParam (drift_generator.rs:12)
+
 Rate(Hertz), Depth/Smoothness(NormalizedValue)→Continuous. `C=3` (3)
 
 #### ChaoticOscParam (chaotic_osc.rs:58)
+
 System(ChaoticSystem)→Enum; Rate(Hertz), Chaos/Depth(NormalizedValue)→Continuous. `C=3 E=1` (4)
 
 #### FormantFilterParam (formant_filter.rs:12)
+
 Vowel/Resonance/Mix(NormalizedValue), Cutoff(Hertz)→Continuous. `C=4` (4)
 
 #### FooglersParam (fooglers.rs:12)
+
 Tap1/Tap2/Feedback/Damping/Level(NormalizedValue)→Continuous. `C=5` (5)
 
 #### BeatDetectorParam (beat_detector.rs:12)
+
 Sensitivity(NormalizedValue), FilterFreq(Hertz), HoldTime(Milliseconds)→Continuous. `C=3` (3)
 
 > Batch 4: `C=49 I=6 B=0 E=4 R=0` (59). (Choice-enum *definitions* `TuringScale`,
@@ -311,33 +388,49 @@ Sensitivity(NormalizedValue), FilterFreq(Hertz), HoldTime(Milliseconds)→Contin
 ### Batch 5 — advanced voice / spectral / sampler
 
 #### PadSynthParam (padsynth.rs:12)
+
 Bandwidth/Tilt/Detune/Level(NormalizedValue), BaseFreq(Hertz)→Continuous. `C=5` (5)
 
 #### AmFormantParam (am_formant.rs:12)
+
 Vowel/CarrierRatio/Depth/Level(NormalizedValue)→Continuous. `C=4` (4)
 
 #### ConvolverParam (convolver.rs:64)
-Ir(ImpulseResponse)→Enum; Mix/Brightness/DynamicMode(NormalizedValue), PreDelay(Milliseconds), DecayTrim(DecayTrim)→Continuous. `C=5 E=1` (6)
+
+Ir(ImpulseResponse)→Enum; Mix/Brightness/DynamicMode(NormalizedValue), PreDelay(Milliseconds), DecayTrim(DecayTrim)
+→Continuous. `C=5 E=1` (6)
 
 #### PhaseVocoderParam (phase_vocoder.rs:78)
-FftSize(FftSizeOption)→Enum; Freeze(bool)→Bool; PitchShift(Semitones), Mix(NormalizedValue)→Continuous. `C=2 B=1 E=1` (4)
+
+FftSize(FftSizeOption)→Enum; Freeze(bool)→Bool; PitchShift(Semitones), Mix(NormalizedValue)→Continuous. `C=2 B=1 E=1` (
+4)
 
 #### FrequencyShifterParam (frequency_shifter.rs:9)
+
 Shift(Hertz), Mix/Mode(NormalizedValue)→Continuous. `C=3` (3)
 
 #### VoiceSynthParam (voice_synth.rs:13)
-All NormalizedValue/Hertz/Cents → Continuous (Vowel/FormantShift/Breathiness/OpenQuotient/Tilt/UnisonVoices/UnisonSpread/Level=NormalizedValue, VibratoRate=Hertz, VibratoDepth/UnisonDetune=Cents). `C=11` (11)
+
+All NormalizedValue/Hertz/Cents → Continuous (
+Vowel/FormantShift/Breathiness/OpenQuotient/Tilt/UnisonVoices/UnisonSpread/Level=NormalizedValue, VibratoRate=Hertz,
+VibratoDepth/UnisonDetune=Cents). `C=11` (11)
 
 #### VocalTractParam (vocal_tract.rs:13)
+
 Tongue/Constriction/Lips/Length/Nasality/Breathiness/Level(NormalizedValue)→Continuous. `C=7` (7)
 
 #### FofParam (fof.rs:14)
-Vowel/FormantShift/Skirt/Bandwidth/Breathiness/UnisonVoices/UnisonSpread/Level(NormalizedValue), VibratoRate(Hertz), VibratoDepth/UnisonDetune(Cents)→Continuous. `C=11` (11)
+
+Vowel/FormantShift/Skirt/Bandwidth/Breathiness/UnisonVoices/UnisonSpread/Level(NormalizedValue), VibratoRate(Hertz),
+VibratoDepth/UnisonDetune(Cents)→Continuous. `C=11` (11)
 
 #### SamplerParam (sampler.rs:40)
-**SampleSelect(SampleId)→Reference**; PitchTracking(bool)→Bool; PlayMode(SamplerPlayMode)→Enum; Direction(PlayDirection)→Enum; Level(Gain), VelocitySensitivity/StartOffset(NormalizedValue), FineTune(Cents)→Continuous. `C=4 B=1 E=2 R=1` (8)
+
+**SampleSelect(SampleId)→Reference**; PitchTracking(bool)→Bool; PlayMode(SamplerPlayMode)→Enum; Direction(PlayDirection)
+→Enum; Level(Gain), VelocitySensitivity/StartOffset(NormalizedValue), FineTune(Cents)→Continuous. `C=4 B=1 E=2 R=1` (8)
 
 #### WaveshaperParam (waveshaper.rs:96)
+
 Curve(WaveshaperCurve)→Enum; Drive/Mix(NormalizedValue), Bias/Symmetry(BipolarValue)→Continuous. `C=4 E=1` (5)
 
 > Batch 5: `C=56 I=0 B=2 E=5 R=1` (64).

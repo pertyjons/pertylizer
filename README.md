@@ -117,7 +117,8 @@ up from scratch.
 - **25 effects** — delay, BBD delay, reverb, shimmer reverb, reverse gate reverb, chorus, ensemble chorus, flanger,
   phaser, univibe, distortion, waveshaper, compressor, limiter, EQ, tilt EQ, mid/side, crossover splitter, convolver,
   phase vocoder, vocoder, frequency shifter, granular FX, spectral blur, modal resonator
-- **68 built-in patches** — from acid bass and grand piano to fractal cosmos and spectral freeze pad, plus solo voice, choir, vocal tract and the SATB section voices
+- **68 built-in patches** — from acid bass and grand piano to fractal cosmos and spectral freeze pad, plus solo voice,
+  choir, vocal tract and the SATB section voices
 
 ### Signature capabilities
 
@@ -232,13 +233,13 @@ driven by audio analysis. It runs as its own binary, so the synth stays lean whe
 ### Visual Effects (27 effects)
 
 Effects are organized into layered scene slots:
-
-| Slot           | Effects                                                                                                                                |
-|----------------|----------------------------------------------------------------------------------------------------------------------------------------|
+ 
+| Slot           | Effects                                                                                                                                              |
+|----------------|------------------------------------------------------------------------------------------------------------------------------------------------------|
 | **Terrain**    | Base Floor, FFT Bars, Waveform Ring, Spectral Waterfall, Pulse Terrain, Spectral Origami, Phase Rings, Voronoi Shatter, FFT Terrain, Cyber Wireframe |
-| **Hero**       | CPU Overdrive Core, Flux Supernova, Fractal Pulse, Ferrofluid Tendrils, Note Tree, Orbital Satellites                                  |
-| **Ambient**    | Centroid Nebula, Spectral Cathedral, Reaction Diffusion, Spectral Aurora                                                               |
-| **Transients** | Note Particles, Velocity Meteors, Harmonic Ribbons, Chord Bloom, Neon Calligraphy, Instrument Cubes, Beat Fracture                     |
+| **Hero**       | CPU Overdrive Core, Flux Supernova, Fractal Pulse, Ferrofluid Tendrils, Note Tree, Orbital Satellites                                                |
+| **Ambient**    | Centroid Nebula, Spectral Cathedral, Reaction Diffusion, Spectral Aurora                                                                             |
+| **Transients** | Note Particles, Velocity Meteors, Harmonic Ribbons, Chord Bloom, Neon Calligraphy, Instrument Cubes, Beat Fracture                                   |
 
 ### Scene Presets (11 presets)
 
@@ -343,17 +344,17 @@ cargo test && cargo clippy --all-targets && cargo fmt --check
 
 ## Workspace Crates
 
-| Crate                | Description                                                  |
-|----------------------|--------------------------------------------------------------|
-| `synth_core`         | Domain types, module traits, audio abstractions              |
+| Crate                | Description                                                   |
+|----------------------|---------------------------------------------------------------|
+| `synth_core`         | Domain types, module traits, audio abstractions               |
 | `synth_config`       | Runtime config (`pertylizer.toml`) shared by app & visualizer |
-| `synth_dsp`          | DSP primitives: oscillators, filters, delay lines, FFT       |
-| `synth_sampler`      | Sample loading, playback, and waveform analysis              |
-| `synth_sequencer`    | Pattern and song sequencing                                  |
-| `synth_modules`      | 70 module types including 25 effects                         |
-| `synth_engine`       | Audio engine: voice allocation, modular graph, mixing        |
-| `synth_mcp`          | MCP server with 200+ tools for AI agent integration          |
-| `synth_osc`          | OSC telemetry sender (spectrum, notes, transport over UDP)   |
-| `synth_osc_protocol` | Shared OSC protocol definitions for synth and visualizer     |
-| `pertylizer`         | Main application: GUI, audio I/O, MIDI                       |
-| `visualizer`         | Bevy 3D visualizer driven by OSC telemetry (separate binary) |
+| `synth_dsp`          | DSP primitives: oscillators, filters, delay lines, FFT        |
+| `synth_sampler`      | Sample loading, playback, and waveform analysis               |
+| `synth_sequencer`    | Pattern and song sequencing                                   |
+| `synth_modules`      | 70 module types including 25 effects                          |
+| `synth_engine`       | Audio engine: voice allocation, modular graph, mixing         |
+| `synth_mcp`          | MCP server with 200+ tools for AI agent integration           |
+| `synth_osc`          | OSC telemetry sender (spectrum, notes, transport over UDP)    |
+| `synth_osc_protocol` | Shared OSC protocol definitions for synth and visualizer      |
+| `pertylizer`         | Main application: GUI, audio I/O, MIDI                        |
+| `visualizer`         | Bevy 3D visualizer driven by OSC telemetry (separate binary)  |

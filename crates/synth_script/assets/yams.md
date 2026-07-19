@@ -2,7 +2,7 @@
 
 YAMS is Pertylizer's bounded real-time scripting language. The same parser and
 bytecode VM serve four host-specific dialects:
-
+ 
 - a **Mod Matrix slot** computes one normalized modulation offset with `out`;
 - a **Script** module runs one control-rate program with four CV inputs
   (`in1..in4`) and four CV outputs (`out1..out4`);
@@ -234,18 +234,18 @@ shadowing.
 
 ### Context (per-voice, filled each block)
 
-| Name        | Meaning                                                                                                                                                              |
-|-------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `gate`      | `1` while the note is held, else `0`                                                                                                                                 |
-| `gate_on`   | `1` for the single block of note-on, else `0`                                                                                                                        |
-| `age`       | seconds since note-on                                                                                                                                                |
-| `cr`        | **control** rate in Hz — `sample_rate / block_size`, ~hundreds of Hz (device-dependent). **Not** the audio sample rate; a 48 kHz device yields `cr ≈ 750`, not 48000 |
-| `sr`        | **audio sample** rate in Hz — the device / render rate (e.g. 48000, or 44100 in the offline render). `sr / cr` is the block size. Use it to keep an audio-rate script portable instead of hardcoding a rate |
+| Name        | Meaning                                                                                                                                                                                                                                                           |
+|-------------|-------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `gate`      | `1` while the note is held, else `0`                                                                                                                                                                                                                              |
+| `gate_on`   | `1` for the single block of note-on, else `0`                                                                                                                                                                                                                     |
+| `age`       | seconds since note-on                                                                                                                                                                                                                                             |
+| `cr`        | **control** rate in Hz — `sample_rate / block_size`, ~hundreds of Hz (device-dependent). **Not** the audio sample rate; a 48 kHz device yields `cr ≈ 750`, not 48000                                                                                              |
+| `sr`        | **audio sample** rate in Hz — the device / render rate (e.g. 48000, or 44100 in the offline render). `sr / cr` is the block size. Use it to keep an audio-rate script portable instead of hardcoding a rate                                                       |
 | `note_hz`   | the voice's current playing frequency in Hz — glide, pitch bend, and per-note vibrato included (not per-oscillator detune). A scripted oscillator tracks the note with `phasor(note_hz)`, more faithfully than `mtof(note)` (which sees only the raw note number) |
-| `beat`      | absolute transport position in beats (grows unbounded; `sin(beat * tau)` is a tempo-locked sine)                                                                     |
-| `bar_phase` | phase within the current bar, `0..1` (4/4); wraps every bar                                                                                                          |
-| `tempo`     | transport tempo in BPM (`tempo / 60` is beats per second)                                                                                                            |
-| `playing`   | `1` while the transport is running, else `0`                                                                                                                         |
+| `beat`      | absolute transport position in beats (grows unbounded; `sin(beat * tau)` is a tempo-locked sine)                                                                                                                                                                  |
+| `bar_phase` | phase within the current bar, `0..1` (4/4); wraps every bar                                                                                                                                                                                                       |
+| `tempo`     | transport tempo in BPM (`tempo / 60` is beats per second)                                                                                                                                                                                                         |
+| `playing`   | `1` while the transport is running, else `0`                                                                                                                                                                                                                      |
 
 The transport vars (`beat`, `bar_phase`, `tempo`, `playing`) are global —
 every voice sees the same value each block — so they drive tempo-synced
@@ -536,12 +536,12 @@ Use `set_mod_matrix_script` to install or clear a program on a Mod Matrix,
 Script, or AudioScript module. Despite the tool's historical name, the module id
 selects the dialect:
 
-| Field           | Meaning                                                                                         |
-|-----------------|-------------------------------------------------------------------------------------------------|
-| `instrument_id` | instrument (0 = default)                                                                        |
-| `module_id`     | Mod Matrix (`mmx-N`), Script (`scr-N`), or AudioScript (`asc-N`)                  |
-| `slot`          | 1-based: Mod Matrix `1..=16`; Script and AudioScript **must use `1`**             |
-| `source`        | YAMS source text; an **empty string clears** the selected slot/program            |
+| Field           | Meaning                                                                |
+|-----------------|------------------------------------------------------------------------|
+| `instrument_id` | instrument (0 = default)                                               |
+| `module_id`     | Mod Matrix (`mmx-N`), Script (`scr-N`), or AudioScript (`asc-N`)       |
+| `slot`          | 1-based: Mod Matrix `1..=16`; Script and AudioScript **must use `1`**  |
+| `source`        | YAMS source text; an **empty string clears** the selected slot/program |
 
 A compile error comes back with diagnostics (all errors, not just the first).
 Read back installed scripts with `get_mod_matrix_routings` (Mod Matrix — a slot
