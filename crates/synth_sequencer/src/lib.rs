@@ -77,7 +77,7 @@ pub use note_processor::{
     MAX_RATCHET_SUBDIVISIONS, NoteProcessor, PitchClass, ScaleMask, ScaleQuantize, StrumDirection,
     lookback_pool,
 };
-pub use pattern::{Pattern, RowResolution};
+pub use pattern::{HiddenEventSummary, Pattern, RowResolution};
 pub use pitch::{NoteName, Pitch, Velocity};
 pub use shared_song::{SharedSong, SharedSongWriteGuard};
 pub use song::{FreezeStats, LoopRegion, PatternPlacement, Song, TempoChange, TimeSignatureChange};

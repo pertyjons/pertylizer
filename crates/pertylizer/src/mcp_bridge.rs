@@ -597,6 +597,42 @@ impl SynthBridge for AppSynthBridge {
             .collect())
     }
 
+    fn list_hidden_events(
+        &self,
+    ) -> Result<Vec<synth_mcp::types::HiddenEventsLint>, McpBridgeError> {
+        let song = self.shared.song.read();
+        let mut lints = Vec::new();
+        for pattern in song.patterns() {
+            if pattern.length.0 == 0 {
+                continue;
+            }
+            let s = pattern.hidden_event_summary();
+            if !s.has_hidden() {
+                continue;
+            }
+            // `ticks_to_beats` (quarter-note beats, 960 PPQN) — same conversion
+            // every other MCP beat field uses.
+            let length_beats = ticks_to_beats(pattern.length.0);
+            lints.push(synth_mcp::types::HiddenEventsLint {
+                pattern_id: pattern.id,
+                pattern_name: pattern.name.clone(),
+                pattern_length_beats: length_beats,
+                last_hidden_note_start_beats: ticks_to_beats(s.last_hidden_note_start.0),
+                last_note_end_beats: ticks_to_beats(s.last_note_end.0),
+                last_hidden_automation_beats: ticks_to_beats(s.last_hidden_automation.0),
+                hidden_note_count: s.hidden_note_count,
+                hidden_automation_count: s.hidden_automation_count,
+                message: format!(
+                    "pattern {} is {length_beats:.3} beats long but has {} note onset(s) and {} \
+                     automation point(s) at/after that boundary; they remain in the file but are \
+                     never played — raise the pattern length to reveal them",
+                    pattern.id, s.hidden_note_count, s.hidden_automation_count
+                ),
+            });
+        }
+        Ok(lints)
+    }
+
     fn get_instrument_profiles(
         &self,
     ) -> Result<Vec<synth_mcp::types::InstrumentProfileResult>, McpBridgeError> {

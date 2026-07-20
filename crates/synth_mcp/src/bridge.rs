@@ -15,13 +15,14 @@ use crate::types::{
     AutomationPointInfo, AutomationSummaryGroup, AutomationSummaryLane, AutomationSummaryResult,
     AutomationTargetInfo, BatchResult, BuildInstrumentResult, ChordProgressionStep,
     ConnectionCheckResult, ConnectionInfo, CreateChordProgressionResult, DetailedSampleInfo,
-    DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic, InputDeviceInfo,
-    InputStateInfo, InsertModuleResult, InstrumentInfo, InstrumentProfileResult, MatrixRoutingInfo,
-    ModGraphDetail, ModGraphInfo, ModTargetInfo, ModuleInfo, ModuleSearchResult, ModuleTypeBrief,
-    ModuleTypeInfo, NoteGraphDetail, NoteGraphInfo, NoteInfo, OptimizeResult, OrphanedTrackLint,
-    ParameterInfo, PatchResourceData, PatternInfo, PlacementInfo, ProjectLintEntry,
-    ProjectLintReport, ProjectSchemaInfo, ReturnBusInfo, ReturnEffectInfo, SampleInfo,
-    SamplerStateInfo, SetSongResult, SongInfo, TempoPoint, TrackInfo, UiSnapshot, VersionInfo,
+    DiagnosticSeverity, EngineStatus, ExamplePatchInfo, GraphDiagnostic, HiddenEventsLint,
+    InputDeviceInfo, InputStateInfo, InsertModuleResult, InstrumentInfo, InstrumentProfileResult,
+    MatrixRoutingInfo, ModGraphDetail, ModGraphInfo, ModTargetInfo, ModuleInfo, ModuleSearchResult,
+    ModuleTypeBrief, ModuleTypeInfo, NoteGraphDetail, NoteGraphInfo, NoteInfo, OptimizeResult,
+    OrphanedTrackLint, ParameterInfo, PatchResourceData, PatternInfo, PlacementInfo,
+    ProjectLintEntry, ProjectLintReport, ProjectSchemaInfo, ReturnBusInfo, ReturnEffectInfo,
+    SampleInfo, SamplerStateInfo, SetSongResult, SongInfo, TempoPoint, TrackInfo, UiSnapshot,
+    VersionInfo,
 };
 
 /// Canonical exact position used to locate an arrangement placement.
@@ -596,6 +597,13 @@ pub trait SynthBridge: Send + Sync + 'static {
         Ok(Vec::new())
     }
 
+    /// Return patterns whose notes/automation extend at or beyond the pattern's
+    /// active length — content the sequencer never plays. Bridges that do not
+    /// expose song data may keep the empty default.
+    fn list_hidden_events(&self) -> Result<Vec<HiddenEventsLint>, McpBridgeError> {
+        Ok(Vec::new())
+    }
+
     /// Run the graph diagnostics over every instrument and aggregate the results
     /// into one project-wide load-lint report — a single call that surfaces
     /// *behavioural* warnings (unconnected ports, silent voices, feedback loops)
@@ -621,6 +629,8 @@ pub trait SynthBridge: Send + Sync + 'static {
         let mut report = build_lint_report(per_instrument);
         report.orphaned_tracks = self.list_orphaned_tracks()?;
         report.error_count += report.orphaned_tracks.len();
+        report.hidden_events = self.list_hidden_events()?;
+        report.warning_count += report.hidden_events.len();
         Ok(report)
     }
 
@@ -2877,6 +2887,7 @@ pub(crate) fn build_lint_report(
         info_count,
         entries,
         orphaned_tracks: Vec::new(),
+        hidden_events: Vec::new(),
     }
 }
 

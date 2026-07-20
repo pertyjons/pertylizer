@@ -71,6 +71,27 @@ next pass, while automation restarts in pattern space each pass.
   nothing: it creates lanes that silently do nothing. Land 1–4 together. **L,
   feature.**
 
+### 1.4 Independent pattern lengths on project load
+
+- [x] **Fixed — the truncation was a GUI clamp, not a deserialize leak.** A full
+  trace confirmed the load/serde/apply path is clean (pattern `length` is a
+  required, verbatim `Duration` field; no shared/default accumulator, no global
+  clamp). The real cause: the piano-roll header's pattern-length `DragValue` was
+  range-capped to `1..=64` bars, so egui clamped the *shown* value for any pattern
+  longer than 64 bars (a 161-bar / 619560-tick pattern → 64 bars) and reported
+  `changed()`, which wrote `64 * ticks_per_bar` (245760 ticks) straight back to the
+  song the instant the piano roll rendered — clobbering lengths set via MCP or
+  load, and re-clobbering an MCP `set_pattern_length` before the next `save_project`
+  (the "state divergence" / "forced back keyed by pattern id" symptom).
+  `piano_roll.rs`: the range now grows to fit the pattern's own length, and the
+  song is written only during an active user edit (never on a passive re-render).
+  Regression: `song::independently_sized_patterns_survive_serde_round_trip` guards
+  the reconstruction path.
+- [x] **Lint hidden events beyond effective pattern length.** `lint_project` now
+  returns `hidden_events`: per pattern, the note onsets and automation points at/
+  after the pattern length (never played), with counts + last-beat + the last note
+  end for context. New pure `Pattern::hidden_event_summary` (unit-tested) drives it.
+
 ## 2. Sound Design — Expanded Capabilities
 
 ### 2.1 Sample & wavetable import

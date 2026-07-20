@@ -1628,6 +1628,39 @@ mod tests {
     use synth_core::{BipolarValue, NormalizedValue};
 
     #[test]
+    fn independently_sized_patterns_survive_serde_round_trip() {
+        // Regression for the cross-pattern length-truncation report: two patterns
+        // with different lengths must each keep their own length through a full
+        // serialize → deserialize cycle (no shared/default length leaking between
+        // them), and each placement must report the matching effective length.
+        let mut song = Song::new("Lengths");
+        let long = song.create_pattern(Duration(619_560));
+        let short = song.create_pattern(Duration(245_760));
+        let t_long = song.create_track("long");
+        let t_short = song.create_track("short");
+        assert!(song.place_pattern(long, t_long, Tick(0)));
+        assert!(song.place_pattern(short, t_short, Tick(0)));
+
+        let json = serde_json::to_string(&song).unwrap();
+        let back: Song = serde_json::from_str(&json).unwrap();
+
+        assert_eq!(back.pattern(long).unwrap().length.0, 619_560);
+        assert_eq!(back.pattern(short).unwrap().length.0, 245_760);
+
+        // Each placement (no length_override) reports its own pattern's length.
+        let mut effective: Vec<u32> = back
+            .arrangement()
+            .iter()
+            .map(|p| {
+                let len = back.pattern(p.pattern_id).unwrap().length;
+                p.effective_length(len).0
+            })
+            .collect();
+        effective.sort_unstable();
+        assert_eq!(effective, vec![245_760, 619_560]);
+    }
+
+    #[test]
     fn return_busses_and_sends_round_trip_json() {
         let mut song = Song::new("rt");
         let rid = song.create_return_bus("Reverb");

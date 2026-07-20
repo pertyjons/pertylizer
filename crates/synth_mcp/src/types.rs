@@ -322,6 +322,30 @@ pub struct OrphanedTrackLint {
     pub message: String,
 }
 
+/// A pattern that carries note onsets or automation points *at or beyond* its
+/// own length — content the sequencer never plays because playback clips/loops
+/// at `length`. Surfaces silently-inaudible events (e.g. a pattern truncated by
+/// an edit while thousands of later notes/automation stay in the file), which
+/// schema validation and the graph diagnostics cannot see.
+#[derive(Debug, Clone, Serialize)]
+pub struct HiddenEventsLint {
+    pub pattern_id: PatternId,
+    pub pattern_name: String,
+    /// The pattern's active length, in quarter-note beats.
+    pub pattern_length_beats: f32,
+    /// Beat of the latest note that starts at/after the length (0 if none).
+    pub last_hidden_note_start_beats: f32,
+    /// End beat of the latest note in the pattern (may extend past the length).
+    pub last_note_end_beats: f32,
+    /// Beat of the latest automation point at/after the length (0 if none).
+    pub last_hidden_automation_beats: f32,
+    /// Count of note onsets that fall at/after the length (never triggered).
+    pub hidden_note_count: usize,
+    /// Count of automation points at/after the length (never applied).
+    pub hidden_automation_count: usize,
+    pub message: String,
+}
+
 /// Project-wide load-lint report: runs the graph diagnostics over every
 /// instrument and aggregates the results. Surfaces *behavioural* warnings
 /// (unconnected ports, silent voices, feedback loops, …) that schema validation
@@ -350,6 +374,9 @@ pub struct ProjectLintReport {
     /// Invalid track-to-instrument references that would silently bypass track
     /// mixer, automation, and Mod Grid control during playback.
     pub orphaned_tracks: Vec<OrphanedTrackLint>,
+    /// Patterns carrying note onsets / automation beyond their active length —
+    /// events that stay in the file but are never played.
+    pub hidden_events: Vec<HiddenEventsLint>,
 }
 
 /// The authoritative on-disk JSON Schema for `.ptz` project files, paired

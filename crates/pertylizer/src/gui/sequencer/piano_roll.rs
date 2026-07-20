@@ -3105,16 +3105,36 @@ fn draw_piano_roll_toolbar(
             }
         }
 
-        // Pattern length (whole bars)
+        // Pattern length (whole bars).
+        //
+        // Two guards protect a pattern from being silently truncated by merely
+        // *drawing* this control:
+        //  1. The range's upper bound grows to fit the pattern's current length,
+        //     so a pattern longer than the nominal cap (e.g. a 161-bar / 619560-
+        //     tick SID import) is never clamped down. A fixed `1..=64` cap made
+        //     egui clamp the shown value to 64 and report `changed()`, which wrote
+        //     `64 * ticks_per_bar` (245760 ticks) straight back to the song —
+        //     truncating the pattern the instant the piano roll rendered it and
+        //     clobbering lengths set via MCP or project load.
+        //  2. The song is written only while the user is actively editing *this*
+        //     pattern's control (`pattern_length_drag_start` is armed for it), so a
+        //     passive re-render's `changed()` can never mutate pattern data.
         {
             let ticks_per_bar = data.time_sig.ticks_per_bar().max(1);
             let mut bars = (data.length_ticks.0 / ticks_per_bar).max(1) as i32;
-            let bars_resp = unit_drag_value(ui, &mut bars, 1..=64, 0.1, " bars")
+            // Never let the range clamp the pattern's own length; 256 bars keeps a
+            // sane drag ceiling for short patterns (≈ the MCP 1024-beat cap).
+            let max_bars = bars.max(256);
+            let bars_resp = unit_drag_value(ui, &mut bars, 1..=max_bars, 0.1, " bars")
                 .on_hover_text("Pattern length in bars");
             if bars_resp.drag_started() || bars_resp.gained_focus() {
                 view_state.pattern_length_drag_start = Some((data.pattern_id, data.length_ticks));
             }
-            if bars_resp.changed() {
+            let editing_this = matches!(
+                view_state.pattern_length_drag_start,
+                Some((pid, _)) if pid == data.pattern_id
+            );
+            if bars_resp.changed() && editing_this {
                 let new_len = SeqDuration(bars.max(1) as u32 * ticks_per_bar);
                 let pid = data.pattern_id;
                 let mut song_w = song.write();
