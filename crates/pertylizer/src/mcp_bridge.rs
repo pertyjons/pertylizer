@@ -13026,12 +13026,30 @@ pub fn analyze_masking_matrix_impl(
     top_pairs: Option<u32>,
     scope: synth_mcp::AnalysisScope,
 ) -> Result<AnalyzeMaskingMatrixResult, McpBridgeError> {
-    let (start_tick, end_tick) = {
-        let song = shared.song.read();
-        resolve_arrangement_range(&song, arrangement_start_tick, arrangement_end_tick)?
-    };
-
     let mut warnings: Vec<String> = Vec::new();
+    let (start_tick, requested_end_tick, end_tick) = {
+        let song = shared.song.read();
+        let (start, requested_end) =
+            resolve_arrangement_range(&song, arrangement_start_tick, arrangement_end_tick)?;
+        // A single offline render is capped at MAX_ANALYSIS_WINDOW_SECONDS, so on
+        // a longer requested range every per-track render would silently trim its
+        // tail while the reported scope still claimed the full span. Clamp the
+        // analyzed window up-front and report the real span (main fields) plus the
+        // full request (`requested_end_tick`) so partial coverage is explicit.
+        let start_s = song.tick_to_seconds(Tick(start));
+        let cap_end = song
+            .seconds_to_tick(start_s + f64::from(MAX_ANALYSIS_WINDOW_SECONDS))
+            .0;
+        (start, requested_end, requested_end.min(cap_end))
+    };
+    if end_tick < requested_end_tick {
+        warnings.push(format!(
+            "requested range exceeds the {MAX_ANALYSIS_WINDOW_SECONDS:.0}s render limit; analyzed \
+             only the first {MAX_ANALYSIS_WINDOW_SECONDS:.0}s (see start_tick/end_tick; \
+             requested_end_tick is the full request)"
+        ));
+    }
+
     let contributions = render_per_track_contributions(
         session,
         sample_library,
@@ -13087,6 +13105,7 @@ pub fn analyze_masking_matrix_impl(
     let ts = shared.song.read().time_signature_at(Tick(start_tick));
     let (start_bar, start_beat) = tick_to_bar_beat_1based(Tick(start_tick), ts);
     let (end_bar, end_beat) = tick_to_bar_beat_1based(Tick(end_tick), ts);
+    let (requested_end_bar, _) = tick_to_bar_beat_1based(Tick(requested_end_tick), ts);
 
     Ok(AnalyzeMaskingMatrixResult {
         start_bar,
@@ -13095,6 +13114,8 @@ pub fn analyze_masking_matrix_impl(
         end_beat,
         start_tick: Tick(start_tick),
         end_tick: Tick(end_tick),
+        requested_end_tick: Tick(requested_end_tick),
+        requested_end_bar,
         track_count: audible.len() as u32,
         total_pair_count,
         pairs,

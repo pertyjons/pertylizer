@@ -2664,12 +2664,22 @@ pub struct TrackBelowFloor {
 /// itself is computed in-memory from the per-track band energies.
 #[derive(Debug, Clone, Serialize)]
 pub struct AnalyzeMaskingMatrixResult {
+    /// Bar/beat/tick fields below describe the range that was **actually
+    /// analyzed**. A single offline render is capped at 300 seconds, so on a
+    /// longer requested range these reflect the analyzed sub-window, not the full
+    /// request — compare against `requested_end_tick` to detect partial coverage.
     pub start_bar: u32,
     pub start_beat: u32,
     pub end_bar: u32,
     pub end_beat: u32,
     pub start_tick: Tick,
     pub end_tick: Tick,
+    /// End of the range the caller *requested*, before the 300-second render cap
+    /// was applied. Equal to `end_tick` when the whole request was analyzed;
+    /// greater than `end_tick` when the tail was outside the analyzed window.
+    pub requested_end_tick: Tick,
+    /// 1-indexed bar number at `requested_end_tick` (companion to `end_bar`).
+    pub requested_end_bar: u32,
     /// Number of audible tracks that overlapped the section. The pair
     /// count is `track_count·(track_count − 1) / 2`.
     pub track_count: u32,
