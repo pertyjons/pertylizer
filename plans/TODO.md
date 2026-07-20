@@ -1,5 +1,21 @@
 # TODO - Pertylizer
 
+## 0. MCP reliability
+
+### 0.1 Isolate offline validation mixer state
+
+- [x] **Investigated — the validate path is already isolated; no leak reproduced.**
+  `validate_instrument_audio` → `analyze_note` → `OfflineNoteSession` builds a
+  *fresh* `SynthEngine` per call and only reads the live song snapshot; every
+  command targets the offline handle, so it cannot mutate a live track's
+  solo/mute even under concurrency. Added a concurrency regression test
+  (`tests/validate_instrument_audio_isolation.rs`) that snapshots all track mixer
+  flags, runs several validations concurrently (incl. the unknown-instrument
+  error path), and asserts byte-for-byte preservation — it passes. The observed
+  `solo: true` in that session most likely came from an explicit
+  `set_track_mixer`/`set_track_solo` call (the only MCP paths that write a live
+  track's solo). Reopen with the exact tool sequence if it recurs.
+
 ## 1. Sequencer & Arrangement
 
 ### 1.1 Section markers
@@ -20,6 +36,40 @@ next pass, while automation restarts in pattern space each pass.
   `Repeat` to match DAW expectations). Surface in the placement context menu and in the right-edge
   resize-grab tooltip so the user can choose per placement. Migration of older songs: default existing
   placements to `Clip` so behaviour is preserved, or `Repeat` if we accept a one-time semantic change.
+
+### 1.3 Automation targets for send/return routing
+
+- [ ] **Expose track send levels and return-bus volume/mute as automatable
+  targets.** Today the automation DSL covers instrument macros, module params,
+  track mixer params (Volume/Pan/Mute/Pitch), and `global:MasterVolume`, but not a
+  track's send level to a return bus, nor a return bus's own volume/mute. So
+  transition-only effects (reverse-reverb swells, granular/spectral throws for a
+  few bars) can't be automated — `set_track_send` only sets a static value, forcing
+  a permanently-low constant send instead. Requested target DSL:
+  `track:Send:<return_id>` (and the relative `track:Send:<return_id>` on the host
+  track) plus `return:<return_id>:Volume` / `return:<return_id>:Mute`.
+
+  This is a **real-time audio feature, not a quick fix** — deliberately deferred
+  from the 2026-07-20 MCP feedback batch (items 1–7 shipped). Scope, in order:
+  1. **`synth_sequencer`** — add `AutomationTarget` variants (e.g.
+     `TrackSend { track: Option<TrackId>, return_bus: ReturnBusId }` and
+     `Return { bus: ReturnBusId, param: ReturnParam { Volume, Mute } }`). They must
+     stay `Eq`/`Hash` (lane-map keys) with serde + `display_name` + the
+     `to_target_string` DSL round-trip.
+  2. **`synth_engine` mixdown** — apply the lane values per block to the send
+     matrix and return-bus gain/mute, RT-safe (no alloc/lock on the audio thread;
+     mirror the pre-keyed slot pattern used by `mod_grid.track_offsets`).
+  3. **Offline render parity** — `arrangement_render` must apply the same so
+     analysis/export match live playback.
+  4. **MCP** — `build_(live_)automation_target` DSL parse/format, structured
+     target variant, boundary validation (return id exists), and **discovery** in
+     `list_mod_targets`, `get_instrument_automation_targets`, and
+     `list_automation_lanes`.
+  5. **GUI (optional, separate)** — draw/edit these lanes in the arrangement view.
+
+  A partial version (DSL + discovery without the engine application) is worse than
+  nothing: it creates lanes that silently do nothing. Land 1–4 together. **L,
+  feature.**
 
 ## 2. Sound Design — Expanded Capabilities
 
