@@ -374,6 +374,7 @@ per-module parameter. Targets can be given as a structured `target` object or th
 | `add_automation_points`, `remove_automation_points` | Edit                                                                              |
 | `list_automation_lanes`, `get_automation_points`    | Read                                                                              |
 | `clear_automation_lane`                             | Wipe                                                                              |
+| `simplify_automation`                               | Curve-aware breakpoint reduction (dry-run by default; preserves Step holds)       |
 
 ### Audio Analysis (the AI killer feature)
 

@@ -3179,6 +3179,30 @@ pub struct ClearAutomationLaneParam {
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SimplifyAutomationParam {
+    #[schemars(
+        description = "Normalized error tolerance (0.0..1.0). A point is removed only when the surrounding segment reproduces its value within this margin, so it bounds the maximum change to the automation. Larger = more aggressive. Typical: 0.005–0.02.",
+        range(min = 0.0, max = 1.0)
+    )]
+    pub tolerance: f32,
+    #[schemars(description = "Restrict to one pattern (omit = every pattern in the song).")]
+    pub pattern_id: Option<PatternId>,
+    #[schemars(
+        description = "Restrict to a single lane by target DSL (omit = every lane in scope). Same target strings list_automation_lanes returns."
+    )]
+    pub target: Option<AutomationTargetSelector>,
+    #[schemars(
+        description = "Instrument ID used to resolve an instrument/module `target` (default 0). Ignored when `target` is omitted."
+    )]
+    pub instrument_id: Option<InstrumentId>,
+    #[serde(default)]
+    #[schemars(
+        description = "false (default) = dry-run: report the before/after counts and max error without changing anything. true = rewrite the lanes."
+    )]
+    pub apply: bool,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ScaleAutomationLaneInput {
     #[schemars(description = "Pattern ID")]
     pub pattern_id: PatternId,
@@ -3967,7 +3991,7 @@ pub struct ModuleDefInput {
     )]
     pub module_type: String,
     #[schemars(
-        description = "Parameters as {name: value}. Values can be numbers (440.0), strings for choices ('sawtooth'), or booleans. Use get_module_info to discover parameter names."
+        description = "Parameters as {name: value}. Values can be numbers (440.0), strings for choices ('sawtooth'), or booleans. Parameter names are module-specific and must match exactly — call get_module_type_info(<module_type>) for the valid names/ranges/choices. An unknown name is skipped (not applied) and reported per-result in `errors` with `partial_success: true`; it does NOT fail the call, so check `partial_success` before treating the patch as complete."
     )]
     pub params: Option<std::collections::BTreeMap<String, ParamValueInput>>,
 }
@@ -4840,6 +4864,7 @@ impl SynthMcpServer {
             "get_automation_points" => get_automation_points(GetAutomationPointsParam),
             "remove_automation_points" => remove_automation_points(RemoveAutomationPointsParam),
             "clear_automation_lane" => clear_automation_lane(ClearAutomationLaneParam),
+            "simplify_automation" => simplify_automation(SimplifyAutomationParam),
             "scale_automation_lane" => scale_automation_lane(ScaleAutomationLaneParam),
             "offset_automation_lane" => offset_automation_lane(OffsetAutomationLaneParam),
             "copy_automation_lane" => copy_automation_lane(CopyAutomationLaneParam),
@@ -7906,6 +7931,40 @@ impl SynthMcpServer {
     }
 
     #[tool(
+        description = "Curve-aware automation simplifier: removes redundant breakpoints a lane's own \
+                       interpolation already reproduces, so dense frame-derived lanes (e.g. imported SID \
+                       automation with tens of thousands of points) shrink without audibly changing. \
+                       DRY-RUN BY DEFAULT (`apply` = false): reports per-lane points_before/after, removed, \
+                       and max_error (never exceeds `tolerance`) so you can preview before committing; set \
+                       `apply` = true to rewrite. `tolerance` is a normalized 0..1 error bound. Step holds are \
+                       preserved exactly (step points and their landing points are always kept, and no segment \
+                       is simplified across a step boundary); Linear/Exponential/S-Curve segments are measured \
+                       with their own interpolation. Scope with `pattern_id` and/or `target` (both omitted = \
+                       every lane in every pattern). Unlike optimize_project (which only prunes unused objects) \
+                       this rewrites lane point sets."
+    )]
+    async fn simplify_automation(&self, params: Parameters<SimplifyAutomationParam>) -> String {
+        let p = params.0;
+        if let Err(e) = validate_range("tolerance", p.tolerance, 0.0, 1.0) {
+            return validation_err(e);
+        }
+        let target = p
+            .target
+            .as_ref()
+            .map(AutomationTargetSelector::to_target_string);
+        match self.bridge.simplify_automation(
+            p.pattern_id,
+            target.as_deref(),
+            p.instrument_id.unwrap_or_default(),
+            p.tolerance,
+            p.apply,
+        ) {
+            Ok(r) => to_json(&r),
+            Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
         description = "Scale one or more automation lanes' values around a pivot, in place (tick + curve preserved). \
                        Makes a filter sweep (or any lane) more or less dramatic without re-entering points. \
                        value' = clamp((value - pivot) * scale + pivot, 0..1)."
@@ -9067,6 +9126,7 @@ impl SynthMcpServer {
         description = "Build one or more complete instruments in one call. Each instrument has its own modules and connections; \
                        modules are referenced by 0-based array index in connections. Returns per-instrument results with instrument_id and module_ids. \
                        Port names must match the module's ports (osc/amp/out expose 'out'/'in'); the aliases 'output'→'out' and 'input'→'in' are also accepted. If every requested connection fails the whole call errors instead of returning a zero-connection instrument (a freshly-created instrument is rolled back, so no orphan is left). \
+                       PARTIAL SUCCESS: an unknown parameter name or a single failed connection does NOT fail the call — the instrument is still created and each result carries `partial_success: true` plus an `errors` list. Always check `partial_success` (parameter names are module-specific; use get_module_type_info for the valid names) before treating the patch as complete. \
                        Example instrument: modules=[{module_type:'osc'},{module_type:'amp'},{module_type:'out'}], connections=[{from:0,from_port:'out',to:1,to_port:'in'},{from:1,from_port:'out',to:2,to_port:'in'}]"
     )]
     async fn build_instrument(&self, params: Parameters<BuildInstrumentsParam>) -> String {

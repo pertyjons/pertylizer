@@ -621,6 +621,14 @@ pub struct SetSongResult {
 pub struct BuildInstrumentResult {
     /// Assigned instrument ID.
     pub instrument_id: InstrumentId,
+    /// `true` when the instrument was created but one or more of its requested
+    /// modules, parameters, or connections failed (see `errors`) — the patch is
+    /// **incomplete**, e.g. an unknown parameter name was silently skipped.
+    /// `false` means the whole spec applied cleanly. Check this at the top level:
+    /// the call still succeeds (a partial build is not a hard error), so a
+    /// non-empty `errors` with `partial_success: true` must not be treated as a
+    /// fully-configured instrument.
+    pub partial_success: bool,
     /// Module IDs in the same order as the input modules array.
     pub module_ids: Vec<String>,
     /// Number of connections successfully created.
@@ -1066,6 +1074,44 @@ pub struct AutomationLaneInfo {
     pub scope: String,
     /// Number of automation points.
     pub point_count: usize,
+}
+
+/// Per-lane result of `simplify_automation`.
+#[derive(Debug, Clone, Serialize)]
+pub struct LaneSimplification {
+    /// Pattern the lane belongs to.
+    pub pattern_id: PatternId,
+    /// Round-trippable target string identifying the lane.
+    pub target: String,
+    /// Point count before simplification.
+    pub points_before: usize,
+    /// Point count after simplification.
+    pub points_after: usize,
+    /// Points that were (or would be) removed.
+    pub removed: usize,
+    /// Largest reconstruction error (normalized 0..1 value units) introduced for
+    /// any removed point — always `<= tolerance`.
+    pub max_error: f32,
+}
+
+/// Output of `simplify_automation`. In dry-run (`applied: false`) nothing is
+/// mutated; the per-lane `removed`/`max_error` preview what an apply would do.
+#[derive(Debug, Clone, Serialize)]
+pub struct SimplifyAutomationResult {
+    /// `true` if the lanes were rewritten; `false` for a dry-run preview.
+    pub applied: bool,
+    /// The tolerance actually used (normalized 0..1, after clamping).
+    pub tolerance: f32,
+    /// One entry per lane that had points to remove (unchanged lanes omitted).
+    pub lanes: Vec<LaneSimplification>,
+    /// Sum of `points_before` across the reported lanes.
+    pub total_points_before: usize,
+    /// Sum of `points_after` across the reported lanes.
+    pub total_points_after: usize,
+    /// Sum of `removed` across the reported lanes.
+    pub total_removed: usize,
+    /// Non-fatal warnings.
+    pub warnings: Vec<String>,
 }
 
 /// A valid automation target for an instrument, returned by

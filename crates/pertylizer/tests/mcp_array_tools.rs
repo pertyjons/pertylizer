@@ -431,3 +431,70 @@ async fn set_track_send_rejects_levels_above_unity() {
         "unity send level accepted: {unity}"
     );
 }
+
+#[tokio::test]
+async fn build_instrument_flags_unknown_params_as_partial_success() {
+    let server = build_server();
+    // An unknown parameter name does not fail the call — the instrument is still
+    // created — but it must be visible at the top level via `partial_success`.
+    let resp = call(
+        &server,
+        "build_instrument",
+        serde_json::json!({
+            "instruments": [{
+                "name": "Bad",
+                "modules": [{ "module_type": "osc", "params": { "not_a_real_param": 1.0 } }]
+            }]
+        }),
+    )
+    .await;
+    let results: serde_json::Value = serde_json::from_str(&resp).expect("build result json");
+    let r = &results[0];
+    assert_eq!(
+        r["partial_success"], true,
+        "unknown param must flag partial_success: {resp}"
+    );
+    assert!(
+        r["errors"].as_array().is_some_and(|a| !a.is_empty()),
+        "the unknown param must be listed in errors: {resp}"
+    );
+    assert!(
+        r["instrument_id"].as_u64().is_some(),
+        "instrument is still created: {resp}"
+    );
+}
+
+#[tokio::test]
+async fn build_instrument_clean_build_is_not_partial() {
+    let server = build_server();
+    let resp = call(
+        &server,
+        "build_instrument",
+        serde_json::json!({
+            "instruments": [{
+                "name": "Good",
+                "modules": [
+                    { "module_type": "osc" },
+                    { "module_type": "amp" },
+                    { "module_type": "out" }
+                ],
+                "connections": [
+                    { "from": 0, "from_port": "out", "to": 1, "to_port": "in" },
+                    { "from": 1, "from_port": "out", "to": 2, "to_port": "in" }
+                ]
+            }]
+        }),
+    )
+    .await;
+    let results: serde_json::Value = serde_json::from_str(&resp).expect("build result json");
+    assert_eq!(
+        results[0]["partial_success"], false,
+        "a clean build must not be partial: {resp}"
+    );
+    assert!(
+        results[0]["errors"]
+            .as_array()
+            .is_some_and(|a| a.is_empty()),
+        "no errors on a clean build: {resp}"
+    );
+}

@@ -1549,6 +1549,20 @@ pub trait SynthBridge: Send + Sync + 'static {
         instrument_id: InstrumentId,
     ) -> Result<usize, McpBridgeError>;
 
+    /// Curve-aware simplification of automation lanes: drop points the
+    /// surrounding segment reproduces within `tolerance` (normalized 0..1).
+    /// `pattern_id` / `target` narrow the scope (both `None` = every lane in
+    /// every pattern); `apply` = false is a dry-run that only reports. Step holds
+    /// are preserved exactly. Returns per-lane before/after counts + max error.
+    fn simplify_automation(
+        &self,
+        pattern_id: Option<PatternId>,
+        target: Option<&str>,
+        instrument_id: InstrumentId,
+        tolerance: f32,
+        apply: bool,
+    ) -> Result<crate::types::SimplifyAutomationResult, McpBridgeError>;
+
     /// Scale and/or offset every point's value in an existing automation lane,
     /// in place (tick + curve preserved). Each value becomes
     /// `clamp((value - pivot) * scale + pivot + offset, 0..1)`. Returns the

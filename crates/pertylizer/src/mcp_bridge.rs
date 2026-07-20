@@ -3857,6 +3857,7 @@ impl SynthBridge for AppSynthBridge {
 
         Ok(BuildInstrumentResult {
             instrument_id: inst_id,
+            partial_success: !errors.is_empty(),
             module_ids: module_id_strings,
             connection_count,
             errors,
@@ -4319,6 +4320,109 @@ impl SynthBridge for AppSynthBridge {
         let count = lane.len();
         lane.clear();
         Ok(count)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn simplify_automation(
+        &self,
+        pattern_id: Option<PatternId>,
+        target: Option<&str>,
+        instrument_id: InstrumentId,
+        tolerance: f32,
+        apply: bool,
+    ) -> Result<synth_mcp::types::SimplifyAutomationResult, McpBridgeError> {
+        use synth_mcp::types::{LaneSimplification, SimplifyAutomationResult};
+
+        let tol = tolerance.clamp(0.0, 1.0);
+        let mut warnings = Vec::new();
+        if tolerance.is_nan() || tolerance < 0.0 {
+            return Err(McpBridgeError::Other(
+                "tolerance must be a non-negative normalized value (0.0..1.0)".to_string(),
+            ));
+        }
+
+        // Optional single-lane filter: resolve the DSL target once.
+        let target_filter = match target {
+            Some(t) => {
+                let valid = self.instrument_module_ids(instrument_id);
+                Some(self.build_live_automation_target(t, instrument_id, &valid)?)
+            }
+            None => None,
+        };
+
+        // Take the write lock unconditionally: a dry-run simply skips the
+        // mutation, keeping one code path for read and apply.
+        let mut song = self.shared.song.write();
+        let pattern_ids: Vec<PatternId> = match pattern_id {
+            Some(pid) => {
+                if song.pattern(pid).is_none() {
+                    return Err(McpBridgeError::PatternNotFound(pid));
+                }
+                vec![pid]
+            }
+            None => song.patterns().map(|p| p.id).collect(),
+        };
+
+        let mut lanes = Vec::new();
+        let mut total_before = 0usize;
+        let mut total_after = 0usize;
+        for pid in pattern_ids {
+            let Some(pattern) = song.pattern_mut(pid) else {
+                continue;
+            };
+            for lane in pattern.automation.iter_mut() {
+                if let Some(tf) = &target_filter
+                    && &lane.target != tf
+                {
+                    continue;
+                }
+                let before = lane.points().len();
+                if before <= 2 {
+                    continue;
+                }
+                let (kept, max_error) = simplify_automation_points(lane.points(), tol);
+                let after = kept.len();
+                if after >= before {
+                    continue;
+                }
+                if apply {
+                    lane.clear();
+                    for p in &kept {
+                        lane.add_point(*p);
+                    }
+                }
+                total_before += before;
+                total_after += after;
+                lanes.push(LaneSimplification {
+                    pattern_id: pid,
+                    target: automation_target_info(&lane.target).0,
+                    points_before: before,
+                    points_after: after,
+                    removed: before - after,
+                    max_error,
+                });
+            }
+        }
+        drop(song);
+
+        if let Some(t) = target
+            && target_filter.is_some()
+            && lanes.is_empty()
+        {
+            warnings.push(format!(
+                "no simplifiable lane matched target '{t}' in the requested scope"
+            ));
+        }
+
+        Ok(SimplifyAutomationResult {
+            applied: apply,
+            tolerance: tol,
+            total_points_before: total_before,
+            total_points_after: total_after,
+            total_removed: total_before - total_after,
+            lanes,
+            warnings,
+        })
     }
 
     fn transform_automation_lane(
@@ -8283,6 +8387,111 @@ fn automation_target_info(
             "module",
         ),
     }
+}
+
+/// Reconstruct the value the engine would produce at `tick` on the segment
+/// `a → b`, using `a`'s own interpolation curve (the curve stored on a point
+/// governs the segment leaving it). This is exactly what playback does once the
+/// interior points between `a` and `b` are removed, so it is the right yardstick
+/// for measuring simplification error.
+fn reconstruct_on_segment(
+    a: &synth_sequencer::AutomationPoint,
+    b: &synth_sequencer::AutomationPoint,
+    tick: synth_sequencer::PatternTick,
+) -> f32 {
+    let span = b.tick.0.saturating_sub(a.tick.0);
+    if span == 0 {
+        return a.value.as_f32();
+    }
+    let t = synth_core::NormalizedValue::new((tick.0 - a.tick.0) as f32 / span as f32);
+    a.curve.interpolate(a.value, b.value, t).as_f32()
+}
+
+/// Curve-aware Douglas–Peucker over `points[lo..=hi]` (both anchors already
+/// kept). Marks the interior points that must survive so every dropped point
+/// stays within `tolerance` of the value the surrounding segment reproduces.
+/// Iterative (explicit stack) so a 25k-point lane can't blow the call stack.
+/// Updates `max_err` with the largest error actually accepted.
+fn rdp_simplify(
+    points: &[synth_sequencer::AutomationPoint],
+    lo: usize,
+    hi: usize,
+    tolerance: f32,
+    keep: &mut [bool],
+    max_err: &mut f32,
+) {
+    let mut stack = vec![(lo, hi)];
+    while let Some((lo, hi)) = stack.pop() {
+        if hi <= lo + 1 {
+            continue;
+        }
+        let a = &points[lo];
+        let b = &points[hi];
+        let mut worst = 0.0f32;
+        let mut worst_idx = 0usize;
+        for k in (lo + 1)..hi {
+            let err =
+                (points[k].value.as_f32() - reconstruct_on_segment(a, b, points[k].tick)).abs();
+            if err > worst {
+                worst = err;
+                worst_idx = k;
+            }
+        }
+        if worst > tolerance {
+            keep[worst_idx] = true;
+            stack.push((lo, worst_idx));
+            stack.push((worst_idx, hi));
+        } else if worst > *max_err {
+            // Whole interior dropped within tolerance — record its true error.
+            *max_err = worst;
+        }
+    }
+}
+
+/// Simplify a sorted automation-point list: drop points whose value the
+/// surrounding segment reproduces within `tolerance` (normalized 0..1 units).
+///
+/// Step points, and the point that ends each Step hold, are always kept, and no
+/// segment is simplified across a Step boundary — so hold timing is preserved
+/// exactly. Linear / Exponential / S-Curve segments are measured with their own
+/// interpolation. Returns the kept points (sorted) and the maximum
+/// reconstruction error incurred.
+fn simplify_automation_points(
+    points: &[synth_sequencer::AutomationPoint],
+    tolerance: f32,
+) -> (Vec<synth_sequencer::AutomationPoint>, f32) {
+    let n = points.len();
+    if n <= 2 {
+        return (points.to_vec(), 0.0);
+    }
+    let tolerance = tolerance.max(0.0);
+
+    // Force-keep the endpoints, every Step point (it starts a hold), and the
+    // point right after a Step (it lands the jump / ends the hold).
+    let mut keep = vec![false; n];
+    keep[0] = true;
+    keep[n - 1] = true;
+    for i in 0..n {
+        if matches!(points[i].curve, synth_sequencer::CurveType::Step) {
+            keep[i] = true;
+            if i + 1 < n {
+                keep[i + 1] = true;
+            }
+        }
+    }
+
+    // Run curve-aware RDP within each run between consecutive force-kept anchors
+    // (no run spans a Step boundary, so hold segments are never flattened).
+    let anchors: Vec<usize> = (0..n).filter(|&i| keep[i]).collect();
+    let mut max_err = 0.0f32;
+    for w in anchors.windows(2) {
+        if w[1] > w[0] + 1 {
+            rdp_simplify(points, w[0], w[1], tolerance, &mut keep, &mut max_err);
+        }
+    }
+
+    let kept = (0..n).filter(|&i| keep[i]).map(|i| points[i]).collect();
+    (kept, max_err)
 }
 
 /// Insert automation points from `BridgeAutomationPointData` into a pattern.
@@ -14867,6 +15076,73 @@ mod mcp_helper_tests {
     use super::*;
     use std::assert_matches;
     use synth_core::ModuleType;
+
+    fn ap(
+        tick: u32,
+        value: f32,
+        curve: synth_sequencer::CurveType,
+    ) -> synth_sequencer::AutomationPoint {
+        synth_sequencer::AutomationPoint {
+            tick: synth_sequencer::PatternTick(tick),
+            value: synth_core::NormalizedValue::new(value),
+            curve,
+        }
+    }
+
+    #[test]
+    fn simplify_drops_collinear_linear_points() {
+        use synth_sequencer::CurveType::Linear;
+        // A perfectly straight ramp: every interior point is reproduced exactly.
+        let pts = [
+            ap(0, 0.0, Linear),
+            ap(100, 0.25, Linear),
+            ap(200, 0.5, Linear),
+            ap(300, 0.75, Linear),
+            ap(400, 1.0, Linear),
+        ];
+        let (kept, max_err) = simplify_automation_points(&pts, 0.01);
+        assert_eq!(kept.len(), 2, "collinear interior removed: {kept:?}");
+        assert_eq!(kept[0].tick.0, 0);
+        assert_eq!(kept[1].tick.0, 400);
+        assert!(max_err <= 0.01);
+    }
+
+    #[test]
+    fn simplify_preserves_step_points() {
+        use synth_sequencer::CurveType::{Linear, Step};
+        // Values are collinear (0, 0.5, 1.0) but the middle point is a Step edge,
+        // so it must survive even though a linear fit would drop it.
+        let pts = [ap(0, 0.0, Linear), ap(100, 0.5, Step), ap(200, 1.0, Linear)];
+        let (kept, _) = simplify_automation_points(&pts, 0.1);
+        assert_eq!(kept.len(), 3, "step point must be kept: {kept:?}");
+        assert!(
+            kept.iter()
+                .any(|p| p.tick.0 == 100 && matches!(p.curve, Step))
+        );
+    }
+
+    #[test]
+    fn simplify_respects_tolerance() {
+        use synth_sequencer::CurveType::Linear;
+        // Middle point sits 0.1 above the 0→1 line at its tick.
+        let pts = [
+            ap(0, 0.0, Linear),
+            ap(100, 0.6, Linear),
+            ap(200, 1.0, Linear),
+        ];
+
+        // Tight tolerance keeps the deviating point.
+        let (kept_tight, _) = simplify_automation_points(&pts, 0.01);
+        assert_eq!(kept_tight.len(), 3, "0.1 deviation exceeds 0.01 tol");
+
+        // Loose tolerance drops it, and the reported error is within tolerance.
+        let (kept_loose, max_err) = simplify_automation_points(&pts, 0.2);
+        assert_eq!(kept_loose.len(), 2, "0.1 deviation within 0.2 tol");
+        assert!(
+            (0.09..=0.11).contains(&max_err),
+            "reported max error ~0.1: {max_err}"
+        );
+    }
 
     #[test]
     fn module_category_classifies_known_types() {
