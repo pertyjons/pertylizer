@@ -489,6 +489,39 @@ impl CompressorParam {
     }
 }
 
+impl TransientShaperParam {
+    /// Value-kind of this parameter, dispatched on the bound value.
+    #[must_use]
+    pub fn kind(&self) -> ParamKind {
+        match self {
+            Self::Attack(v) | Self::Sustain(v) => v.scalar_kind(),
+            Self::Sensitivity(v) | Self::Mix(v) => v.scalar_kind(),
+            Self::Window(v) => v.scalar_kind(),
+        }
+    }
+
+    /// Display unit of this parameter, dispatched on the bound value.
+    #[must_use]
+    pub fn unit(&self) -> ParameterUnit {
+        match self {
+            Self::Attack(v) | Self::Sustain(v) => v.scalar_unit(),
+            Self::Sensitivity(v) | Self::Mix(v) => v.scalar_unit(),
+            Self::Window(v) => v.scalar_unit(),
+        }
+    }
+
+    /// Suggested response curve for this parameter's value type
+    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
+    #[must_use]
+    pub fn default_curve(&self) -> ResponseCurve {
+        match self {
+            Self::Attack(v) | Self::Sustain(v) => v.scalar_curve(),
+            Self::Sensitivity(v) | Self::Mix(v) => v.scalar_curve(),
+            Self::Window(v) => v.scalar_curve(),
+        }
+    }
+}
+
 impl EqParam {
     /// Value-kind of this parameter, dispatched on the bound value.
     #[must_use]
@@ -2731,6 +2764,7 @@ impl Param {
             Self::Univibe(p) => p.kind(),
             Self::Crossover(p) => p.kind(),
             Self::Vocoder(p) => p.kind(),
+            Self::TransientShaper(p) => p.kind(),
             Self::VoiceSynth(p) => p.kind(),
             Self::VocalTract(p) => p.kind(),
             Self::Fof(p) => p.kind(),
@@ -2808,6 +2842,7 @@ impl Param {
             Self::Univibe(p) => p.unit(),
             Self::Crossover(p) => p.unit(),
             Self::Vocoder(p) => p.unit(),
+            Self::TransientShaper(p) => p.unit(),
             Self::VoiceSynth(p) => p.unit(),
             Self::VocalTract(p) => p.unit(),
             Self::Fof(p) => p.unit(),
@@ -2885,6 +2920,7 @@ impl Param {
             Self::Univibe(p) => p.default_curve(),
             Self::Crossover(p) => p.default_curve(),
             Self::Vocoder(p) => p.default_curve(),
+            Self::TransientShaper(p) => p.default_curve(),
             Self::VoiceSynth(p) => p.default_curve(),
             Self::VocalTract(p) => p.default_curve(),
             Self::Fof(p) => p.default_curve(),

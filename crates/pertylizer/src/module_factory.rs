@@ -290,6 +290,11 @@ pub fn create_effect(module_type: ModuleType) -> Option<(Box<dyn AudioEffect>, M
             let d = e.descriptor();
             Some((Box::new(e), d))
         }
+        ModuleType::TransientShaper => {
+            let e = synth_modules::effects::TransientShaper::new();
+            let d = e.descriptor();
+            Some((Box::new(e), d))
+        }
         ModuleType::Eq => {
             let e = synth_modules::effects::Eq::new();
             let d = e.descriptor();

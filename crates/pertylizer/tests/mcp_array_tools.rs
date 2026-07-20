@@ -389,3 +389,45 @@ async fn set_track_mixer_applies_across_a_track() {
         "track mixer applied: {resp}"
     );
 }
+
+#[tokio::test]
+async fn set_track_send_rejects_levels_above_unity() {
+    let server = build_server();
+    let _ = call(
+        &server,
+        "create_return_bus",
+        serde_json::json!({ "names": ["Reverb"] }),
+    )
+    .await;
+    let _ = call(
+        &server,
+        "create_track",
+        serde_json::json!({ "tracks": [ { "name": "Lead" } ] }),
+    )
+    .await;
+
+    // Above unity: the send level is capped at 1.0, so this must be rejected
+    // with a clear range error — not silently clamped and reported OK.
+    let over = call(
+        &server,
+        "set_track_send",
+        serde_json::json!({ "sends": [ { "track_id": 0, "return_id": 0, "level": 1.2 } ] }),
+    )
+    .await;
+    assert!(
+        over.contains("level") && !over.starts_with("OK"),
+        "over-unity send level must be rejected, got: {over}"
+    );
+
+    // Exactly unity is accepted.
+    let unity = call(
+        &server,
+        "set_track_send",
+        serde_json::json!({ "sends": [ { "track_id": 0, "return_id": 0, "level": 1.0 } ] }),
+    )
+    .await;
+    assert!(
+        unity.starts_with("OK"),
+        "unity send level accepted: {unity}"
+    );
+}

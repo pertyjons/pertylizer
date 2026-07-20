@@ -3417,8 +3417,11 @@ pub struct TrackSendInput {
     pub track_id: TrackId,
     #[schemars(description = "Destination return bus ID")]
     pub return_id: ReturnBusId,
-    #[schemars(description = "Send level (0.0 = none, 1.0 = unity)")]
-    pub level: NormalizedValue,
+    #[schemars(
+        description = "Send level: 0.0 = none, 1.0 = unity (the maximum). Values above 1.0 are rejected — boosted sends are not supported; raise the return-bus volume or add a second return instead.",
+        range(min = 0.0, max = 1.0)
+    )]
+    pub level: f32,
     #[serde(default)]
     #[schemars(
         description = "Tap point: true = pre-fader, false = post-fader (default). Post-fader follows the channel fader."
@@ -3537,8 +3540,11 @@ pub struct ReturnSendInput {
     pub from_id: ReturnBusId,
     #[schemars(description = "Destination return bus ID")]
     pub to_id: ReturnBusId,
-    #[schemars(description = "Send level (0.0 = none, 1.0 = unity)")]
-    pub level: NormalizedValue,
+    #[schemars(
+        description = "Send level: 0.0 = none, 1.0 = unity (the maximum). Values above 1.0 are rejected — raise the destination return-bus volume instead of boosting the send.",
+        range(min = 0.0, max = 1.0)
+    )]
+    pub level: f32,
     #[serde(default = "default_true")]
     #[schemars(
         description = "Whether the send is active (default true). false = non-destructive bypass."
@@ -8274,9 +8280,11 @@ impl SynthMcpServer {
         description = "Add or update one or more track effect sends to return busses (upsert by track+return target). pre_fader taps before the channel fader."
     )]
     async fn set_track_send(&self, params: Parameters<SetTrackSendParam>) -> String {
-        // Stored as NormalizedValue (clamps to [0, 1]); validate to match.
+        // The raw f32 is validated *before* it becomes a NormalizedValue (which
+        // would clamp to [0, 1] and hide an over-unity request); sends max out at
+        // unity, so anything above is a hard error rather than a silent clamp.
         for s in &params.0.sends {
-            if let Err(e) = validate_range("level", s.level.as_f32(), 0.0, 1.0) {
+            if let Err(e) = validate_range("level", s.level, 0.0, 1.0) {
                 return validation_err(e);
             }
         }
@@ -8286,7 +8294,7 @@ impl SynthMcpServer {
             match self.bridge.set_track_send(
                 s.track_id,
                 s.return_id,
-                s.level,
+                NormalizedValue::new(s.level),
                 s.pre_fader,
                 s.enabled,
             ) {
@@ -8320,18 +8328,22 @@ impl SynthMcpServer {
         description = "Add or update one or more bus-to-bus sends: route one return bus's output into another (e.g. a delay return into a reverb return). Upsert by from+to target; each is rejected if it would create a routing cycle."
     )]
     async fn set_return_send(&self, params: Parameters<SetReturnSendParam>) -> String {
+        // Validate the raw f32 before it becomes a NormalizedValue (see
+        // set_track_send): over-unity sends are rejected, not silently clamped.
         for s in &params.0.sends {
-            if let Err(e) = validate_range("level", s.level.as_f32(), 0.0, 1.0) {
+            if let Err(e) = validate_range("level", s.level, 0.0, 1.0) {
                 return validation_err(e);
             }
         }
         let mut ok_count = 0usize;
         let mut errors = Vec::new();
         for s in &params.0.sends {
-            match self
-                .bridge
-                .set_return_send(s.from_id, s.to_id, s.level, s.enabled)
-            {
+            match self.bridge.set_return_send(
+                s.from_id,
+                s.to_id,
+                NormalizedValue::new(s.level),
+                s.enabled,
+            ) {
                 Ok(()) => ok_count += 1,
                 Err(e) => errors.push(format!("return {} → return {}: {e}", s.from_id, s.to_id)),
             }

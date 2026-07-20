@@ -595,6 +595,66 @@ impl Default for CompressorParam {
     }
 }
 
+/// Transient-shaper effect parameter with typed value.
+///
+/// A differential-envelope transient designer: it boosts or cuts a signal's
+/// attack (onset) and sustain (body/tail) independently, without touching the
+/// underlying amplitude — useful for adding punch to reconstructed drums whose
+/// detailed amplitude automation must stay intact.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum TransientShaperParam {
+    /// Onset gain in dB (negative softens the attack, positive adds punch).
+    Attack(Decibels),
+    /// Body/tail gain in dB (negative tightens/gates, positive lengthens).
+    Sustain(Decibels),
+    /// Overall effect amount (0 = bypass-equivalent, 1 = full shaping).
+    Sensitivity(NormalizedValue),
+    /// Detection window in ms — how quickly the transient detector responds.
+    Window(Milliseconds),
+    /// Dry/wet mix.
+    Mix(NormalizedValue),
+}
+
+impl TransientShaperParam {
+    pub fn same_kind(&self, other: &Self) -> bool {
+        std::mem::discriminant(self) == std::mem::discriminant(other)
+    }
+
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Attack(_) => "Attack",
+            Self::Sustain(_) => "Sustain",
+            Self::Sensitivity(_) => "Sensitivity",
+            Self::Window(_) => "Window",
+            Self::Mix(_) => "Mix",
+        }
+    }
+
+    pub fn as_f32(&self) -> f32 {
+        match self {
+            Self::Attack(db) | Self::Sustain(db) => db.as_f32(),
+            Self::Sensitivity(v) | Self::Mix(v) => v.as_f32(),
+            Self::Window(ms) => ms.as_f32(),
+        }
+    }
+
+    pub fn with_f32(&self, value: f32) -> Self {
+        match self {
+            Self::Attack(_) => Self::Attack(Decibels::new(value)),
+            Self::Sustain(_) => Self::Sustain(Decibels::new(value)),
+            Self::Sensitivity(_) => Self::Sensitivity(NormalizedValue::new(value)),
+            Self::Window(_) => Self::Window(Milliseconds::new(value)),
+            Self::Mix(_) => Self::Mix(NormalizedValue::new(value)),
+        }
+    }
+}
+
+impl Default for TransientShaperParam {
+    fn default() -> Self {
+        Self::Attack(Decibels::new(0.0))
+    }
+}
+
 // ============================================================================
 // EQ PARAMETER ENUM (with typed values)
 // ============================================================================

@@ -8335,6 +8335,90 @@
           "type": "object"
         },
         {
+          "description": "Transient Shaper (transient_shaper) — Differential-envelope transient designer: independent attack/sustain gain shaping",
+          "properties": {
+            "description": {
+              "description": "Free-text per-instance note (distinct from the module *type* description above). Omitted when empty.",
+              "type": "string"
+            },
+            "id": {
+              "description": "Module instance ID, e.g. `tsh-1`.",
+              "pattern": "^tsh-\\d+$",
+              "type": "string"
+            },
+            "parameters": {
+              "additionalProperties": false,
+              "default": {},
+              "description": "Parameter values for this module.",
+              "properties": {
+                "attack": {
+                  "default": 0.0,
+                  "description": "Onset gain in dB (+ adds punch, − softens the attack) — unit: dB",
+                  "maximum": 24.0,
+                  "minimum": -24.0,
+                  "title": "Attack",
+                  "type": "number"
+                },
+                "mix": {
+                  "default": 1.0,
+                  "description": "Dry/wet mix",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Mix",
+                  "type": "number"
+                },
+                "sensitivity": {
+                  "default": 1.0,
+                  "description": "Overall effect amount (0 = off, 1 = full shaping)",
+                  "maximum": 1.0,
+                  "minimum": 0.0,
+                  "title": "Sensitivity",
+                  "type": "number"
+                },
+                "sustain": {
+                  "default": 0.0,
+                  "description": "Body/tail gain in dB (+ lengthens/fills, − tightens/gates) — unit: dB",
+                  "maximum": 24.0,
+                  "minimum": -24.0,
+                  "title": "Sustain",
+                  "type": "number"
+                },
+                "window": {
+                  "default": 10.0,
+                  "description": "Transient detection window in ms — how fast onsets are detected — unit: ms",
+                  "maximum": 50.0,
+                  "minimum": 1.0,
+                  "title": "Window",
+                  "type": "number"
+                }
+              },
+              "type": "object"
+            },
+            "position": {
+              "$ref": "#/$defs/Position"
+            },
+            "scripts": {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {},
+              "description": "Per-slot YAMS control scripts (Step 2), keyed by 1-based slot number as a string (e.g. `\"1\"`). Held separate from `parameters` because a script is canonical source text compiled on load, not a descriptor-driven value. Omitted when empty.",
+              "type": "object"
+            },
+            "type": {
+              "const": "transient_shaper",
+              "description": "Module type discriminator."
+            }
+          },
+          "required": [
+            "id",
+            "type",
+            "position"
+          ],
+          "title": "Transient Shaper",
+          "type": "object"
+        },
+        {
           "description": "Voice Synth (voice_synth) — Physically-inspired singing voice / choir (glottal source → formants)",
           "properties": {
             "description": {
@@ -9480,6 +9564,11 @@
             "fof",
             "script"
           ],
+          "type": "string"
+        },
+        {
+          "const": "transient_shaper",
+          "description": "Differential-envelope transient designer: independent attack/sustain\ngain shaping without altering the underlying amplitude.",
           "type": "string"
         },
         {

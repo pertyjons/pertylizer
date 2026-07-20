@@ -70,7 +70,7 @@ pub use effects::{
     DistortionMode, DistortionParam, EnsembleChorusParam, EqParam, FlangerParam, GranularFxParam,
     LimiterParam, MidSideParam, ModalResonatorParam, PhaserParam, ReverbParam, ReverseGateMode,
     ReverseGateReverbParam, ReverseGateTrigger, ShimmerReverbParam, SpectralBlurParam, TiltEqParam,
-    UnivibeParam, VocoderParam,
+    TransientShaperParam, UnivibeParam, VocoderParam,
 };
 pub use envelope_follower::EnvelopeFollowerParam;
 pub use envelopes::EnvelopeParam;
@@ -237,6 +237,9 @@ pub enum ModuleType {
     Univibe,
     CrossoverSplitter,
     Vocoder,
+    /// Differential-envelope transient designer: independent attack/sustain
+    /// gain shaping without altering the underlying amplitude.
+    TransientShaper,
     // Synthesis (voice)
     VoiceSynth,
     VocalTract,
@@ -374,6 +377,7 @@ impl ModuleType {
                 | Self::Univibe
                 | Self::CrossoverSplitter
                 | Self::Vocoder
+                | Self::TransientShaper
         )
     }
 
@@ -503,6 +507,7 @@ impl ModuleType {
             Self::Univibe => "Univibe",
             Self::CrossoverSplitter => "Crossover Splitter",
             Self::Vocoder => "LPC Vocoder",
+            Self::TransientShaper => "Transient Shaper",
             Self::VoiceSynth => "Voice Synth",
             Self::VocalTract => "Vocal Tract",
             Self::Fof => "FOF",
@@ -588,6 +593,7 @@ impl ModuleType {
             Self::Univibe => "uvb",
             Self::CrossoverSplitter => "cxo",
             Self::Vocoder => "vcd",
+            Self::TransientShaper => "tsh",
             Self::VoiceSynth => "vox",
             Self::VocalTract => "vtr",
             Self::Fof => "fof",
@@ -673,6 +679,7 @@ impl ModuleType {
             "uvb" => Some(Self::Univibe),
             "cxo" => Some(Self::CrossoverSplitter),
             "vcd" => Some(Self::Vocoder),
+            "tsh" => Some(Self::TransientShaper),
             "vox" => Some(Self::VoiceSynth),
             "vtr" => Some(Self::VocalTract),
             "fof" => Some(Self::Fof),
@@ -807,6 +814,7 @@ pub enum Param {
     Univibe(UnivibeParam),
     Crossover(CrossoverParam),
     Vocoder(VocoderParam),
+    TransientShaper(TransientShaperParam),
     // Synthesis (voice)
     VoiceSynth(VoiceSynthParam),
     VocalTract(VocalTractParam),
@@ -909,6 +917,7 @@ impl Param {
             (Self::Univibe(a), Self::Univibe(b)) => a.same_kind(b),
             (Self::Crossover(a), Self::Crossover(b)) => a.same_kind(b),
             (Self::Vocoder(a), Self::Vocoder(b)) => a.same_kind(b),
+            (Self::TransientShaper(a), Self::TransientShaper(b)) => a.same_kind(b),
             (Self::VoiceSynth(a), Self::VoiceSynth(b)) => a.same_kind(b),
             (Self::VocalTract(a), Self::VocalTract(b)) => a.same_kind(b),
             (Self::Fof(a), Self::Fof(b)) => a.same_kind(b),
@@ -991,6 +1000,7 @@ impl Param {
             Self::Univibe(_) => ModuleType::Univibe,
             Self::Crossover(_) => ModuleType::CrossoverSplitter,
             Self::Vocoder(_) => ModuleType::Vocoder,
+            Self::TransientShaper(_) => ModuleType::TransientShaper,
             Self::VoiceSynth(_) => ModuleType::VoiceSynth,
             Self::VocalTract(_) => ModuleType::VocalTract,
             Self::Fof(_) => ModuleType::Fof,
@@ -1075,6 +1085,7 @@ impl Param {
             Self::Univibe(p) => p.name(),
             Self::Crossover(p) => p.name(),
             Self::Vocoder(p) => p.name(),
+            Self::TransientShaper(p) => p.name(),
             Self::VoiceSynth(p) => p.name(),
             Self::VocalTract(p) => p.name(),
             Self::Fof(p) => p.name(),
@@ -1156,6 +1167,7 @@ impl Param {
             Self::Univibe(p) => p.as_f32(),
             Self::Crossover(p) => p.as_f32(),
             Self::Vocoder(p) => p.as_f32(),
+            Self::TransientShaper(p) => p.as_f32(),
             Self::VoiceSynth(p) => p.as_f32(),
             Self::VocalTract(p) => p.as_f32(),
             Self::Fof(p) => p.as_f32(),
@@ -1237,6 +1249,7 @@ impl Param {
             Self::Univibe(p) => Self::Univibe(p.with_f32(value)),
             Self::Crossover(p) => Self::Crossover(p.with_f32(value)),
             Self::Vocoder(p) => Self::Vocoder(p.with_f32(value)),
+            Self::TransientShaper(p) => Self::TransientShaper(p.with_f32(value)),
             Self::VoiceSynth(p) => Self::VoiceSynth(p.with_f32(value)),
             Self::VocalTract(p) => Self::VocalTract(p.with_f32(value)),
             Self::Fof(p) => Self::Fof(p.with_f32(value)),

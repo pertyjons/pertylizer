@@ -7394,6 +7394,72 @@
         }
       }
     },
+    "transient_shaper": {
+      "description": "Differential-envelope transient designer: independent attack/sustain gain shaping",
+      "name": "Transient Shaper",
+      "parameters": {
+        "attack": {
+          "default": 0.0,
+          "description": "Onset gain in dB (+ adds punch, − softens the attack)",
+          "max": 24.0,
+          "min": -24.0,
+          "modulatable": true,
+          "name": "Attack",
+          "response_curve": "linear",
+          "type": "number",
+          "unit": "decibels",
+          "value_kind": "continuous"
+        },
+        "mix": {
+          "default": 1.0,
+          "description": "Dry/wet mix",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Mix",
+          "response_curve": "linear",
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
+        },
+        "sensitivity": {
+          "default": 1.0,
+          "description": "Overall effect amount (0 = off, 1 = full shaping)",
+          "max": 1.0,
+          "min": 0.0,
+          "modulatable": true,
+          "name": "Sensitivity",
+          "response_curve": "linear",
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
+        },
+        "sustain": {
+          "default": 0.0,
+          "description": "Body/tail gain in dB (+ lengthens/fills, − tightens/gates)",
+          "max": 24.0,
+          "min": -24.0,
+          "modulatable": true,
+          "name": "Sustain",
+          "response_curve": "linear",
+          "type": "number",
+          "unit": "decibels",
+          "value_kind": "continuous"
+        },
+        "window": {
+          "default": 10.0,
+          "description": "Transient detection window in ms — how fast onsets are detected",
+          "max": 50.0,
+          "min": 1.0,
+          "modulatable": true,
+          "name": "Window",
+          "response_curve": "linear",
+          "type": "number",
+          "unit": "milliseconds",
+          "value_kind": "continuous"
+        }
+      }
+    },
     "turing_machine": {
       "description": "Shift-register random melody generator",
       "name": "Turing Machine",
