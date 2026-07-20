@@ -5024,7 +5024,9 @@ impl SynthApp {
             // Handle deferred export start (avoids borrow conflict)
             if self.dialog_state.export_state.wants_export {
                 let project = self.create_project_from_app();
-                self.dialog_state.export_state.begin_export(project);
+                self.dialog_state
+                    .export_state
+                    .begin_export(project, std::sync::Arc::clone(&self.sample_library));
             }
         }
 

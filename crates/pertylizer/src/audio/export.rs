@@ -14,11 +14,18 @@ use synth_core::{
 };
 use synth_engine::commands::PortId;
 use synth_engine::instrument::{InstrumentId, MidiChannel};
-use synth_engine::{EngineCommand, SynthEngine};
+use synth_engine::{EngineCommand, EngineHandle, SynthEngine};
+use synth_sampler::SampleLibrary;
 
 use crate::patch::ParamValue;
 use crate::project::ProjectFile;
 use crate::session::SynthSession;
+
+/// Shared sample library handle — the audio buffers Sampler modules reference by
+/// id. The `ProjectFile` only carries the ids; the buffers live here, so the
+/// export needs this to render samplers instead of silence. Matches the alias
+/// used by the project loader.
+pub(crate) type SharedSampleLibrary = Arc<std::sync::RwLock<SampleLibrary>>;
 
 /// Bit depth for WAV export.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -184,14 +191,18 @@ pub(crate) fn write_interleaved_wav_f32(
 ///
 /// Returns an `ExportProgress` handle that can be polled from the GUI
 /// to show a progress bar and detect completion.
-pub fn start_export(project: ProjectFile, config: ExportConfig) -> ExportProgress {
+pub fn start_export(
+    project: ProjectFile,
+    sample_library: SharedSampleLibrary,
+    config: ExportConfig,
+) -> ExportProgress {
     let progress = ExportProgress::new(config.total_frames());
     let progress_clone = progress.clone_internals();
 
     let spawn_result = std::thread::Builder::new()
         .name("wav-export".to_string())
         .spawn(move || {
-            match render_to_wav(&project, &config, &progress_clone) {
+            match render_to_wav(&project, &sample_library, &config, &progress_clone) {
                 Ok(warnings) => {
                     if !warnings.is_empty() {
                         let msg =
@@ -227,35 +238,38 @@ pub fn start_export(project: ProjectFile, config: ExportConfig) -> ExportProgres
     progress
 }
 
-/// Render the project to a WAV file (blocking, runs in background thread).
+/// Build a fresh offline engine with the *entire* project loaded and ready to
+/// play: instrument voice graphs + per-instrument effect chains, the global mix
+/// chain (send/return-bus channels, return effects, master effects), sampler
+/// audio buffers, the Mod Grid runtime, and the master volume. This is the same
+/// signal path the live engine plays, so the exported WAV matches playback.
 ///
-/// Returns a list of non-fatal warnings (e.g. instruments that failed to load).
-fn render_to_wav(
+/// The load runs in two phases separated by a silent `process` call: the
+/// per-instrument commands are enqueued and drained first, then the mix chain +
+/// sample data are enqueued into the now-empty queue. That ordering matters —
+/// the engine's command ring holds only 256 entries and nothing drains it until
+/// `process` runs, so batching a whole project at once could overflow the ring
+/// and silently drop commands (the same constraint the MCP offline renderer
+/// works under).
+fn build_loaded_export_engine(
     project: &ProjectFile,
-    config: &ExportConfig,
-    progress: &ExportProgress,
-) -> Result<Vec<String>, ExportError> {
-    // Flush denormals (FTZ/DAZ) for the whole export, matching the real-time
-    // audio callback so the rendered WAV agrees with live playback and avoids
-    // denormal slowdowns on decaying filter tails. Restored on return by RAII.
-    let _denormal_guard = DenormalGuard::new();
-
-    // 1. Create a fresh engine
+    sample_library: &SharedSampleLibrary,
+    sample_rate: u32,
+) -> Result<(SynthEngine, EngineHandle, Vec<String>), ExportError> {
+    // 1. Fresh engine + a session for loading.
     let (mut engine, mut handle) = SynthEngine::new();
-
-    // 2. Create a session for loading
     let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
 
-    // 3. Set up the song
+    // 2. Attach the song.
     let song = synth_engine::shared_song(project.song.clone());
     handle.send_blocking(EngineCommand::SetSong {
         song: Arc::clone(&song),
     });
 
-    // 4. Load all instruments and their patches into the engine
+    // 3. Load all instruments (voice graphs + per-instrument effect chains).
     let warnings = load_project_into_engine(project, &session, &mut handle)?;
 
-    // Build and ship the Mod Grid runtime so an offline render reproduces the
+    // 4. Build and ship the Mod Grid runtime so an offline render reproduces the
     // live control-rate modulation (seeded random nodes render bit-identically).
     // Sent *after* the instruments so their InstrumentId → InstrumentId mapping
     // exists when `SetModGrid` pre-creates the per-instrument offset slots for
@@ -267,12 +281,13 @@ fn render_to_wav(
         runtime: Box::new(mod_grid),
     });
 
-    // 5. Apply global settings
+    // 5. Global settings.
     handle.send_blocking(EngineCommand::SetMasterVolume(project.global.master_volume));
     handle.send_blocking(EngineCommand::SetGlideTime(project.global.glide_time));
 
-    // 6. Notify the engine about the stream configuration
-    let hw_sample_rate = HwSampleRate::new(config.sample_rate);
+    // 6. Stream configuration — sets the engine sample rate, which the
+    // effect-add handlers stamp onto each mix-chain effect created in step 8.
+    let hw_sample_rate = HwSampleRate::new(sample_rate);
     let stream_info = synth_core::StreamInfo {
         sample_rate: hw_sample_rate,
         buffer_size: synth_core::BufferSize::new(256),
@@ -282,25 +297,70 @@ fn render_to_wav(
     };
     engine.on_stream_start(&stream_info);
 
-    // 7. Process one buffer of silence to let the engine initialize
-    let channels: usize = 2;
-    let buffer_size: usize = 256;
-    let mut buffer = vec![0.0f32; buffer_size * channels];
+    // 7. Drain the queued instrument/song/mod-grid/volume commands with one
+    // silent block (the sequencer is still Stopped, so the song does not
+    // advance). This initializes the engine and empties the 256-slot command
+    // ring so the mix-chain load below cannot overflow it.
+    let mut buffer = vec![0.0f32; 256 * 2];
     let init_context = AudioCallbackContext {
         sample_rate: hw_sample_rate,
-        frames: buffer_size,
-        channels: channels as u16,
+        frames: 256,
+        channels: 2,
         stream_time: 0.0,
         sample_position: 0,
         output_latency: synth_core::Seconds::ZERO,
     };
     engine.process(&mut buffer, &init_context);
 
-    // 8. Start playback via the handle (sends Play command through ring buffer)
+    // 8. Reconstruct the global mix chain (send/return busses + return effects +
+    // master effects) into the drained engine, reusing the canonical loader the
+    // live app uses. `send_blocking` because this engine is not draining on its
+    // own between commands — without a running audio thread, non-blocking sends
+    // would drop under backpressure.
+    let sender = handle.command_sender();
+    crate::project_apply::apply_global_mix_chain(project, |c| sender.send_blocking(c));
+
+    // 9. Sampler audio buffers — referenced by id in the patch, but the data
+    // lives in the shared library, not the `ProjectFile`. Without this, samplers
+    // export as silence.
+    crate::project_apply::push_loaded_sample_data(&sender, project, sample_library);
+
+    // 10. Drain the mix-chain + sample-data commands before the caller plays.
+    buffer.fill(0.0);
+    engine.process(&mut buffer, &init_context);
+
+    Ok((engine, handle, warnings))
+}
+
+/// Render the project to a WAV file (blocking, runs in background thread).
+///
+/// Returns a list of non-fatal warnings (e.g. instruments that failed to load).
+fn render_to_wav(
+    project: &ProjectFile,
+    sample_library: &SharedSampleLibrary,
+    config: &ExportConfig,
+    progress: &ExportProgress,
+) -> Result<Vec<String>, ExportError> {
+    // Flush denormals (FTZ/DAZ) for the whole export, matching the real-time
+    // audio callback so the rendered WAV agrees with live playback and avoids
+    // denormal slowdowns on decaying filter tails. Restored on return by RAII.
+    let _denormal_guard = DenormalGuard::new();
+
+    // Build a fully-loaded engine: instruments + per-instrument effects + the
+    // send/return + master mix chain + sampler audio + Mod Grid + master volume.
+    let (mut engine, mut handle, warnings) =
+        build_loaded_export_engine(project, sample_library, config.sample_rate)?;
+
+    let hw_sample_rate = HwSampleRate::new(config.sample_rate);
+    let channels: usize = 2;
+    let buffer_size: usize = 256;
+    let mut buffer = vec![0.0f32; buffer_size * channels];
+
+    // Start playback via the handle (sends Play command through ring buffer).
     handle.send_blocking(EngineCommand::Rewind);
     handle.send_blocking(EngineCommand::Play);
 
-    // Process one more buffer to let the Play command take effect
+    // Process one buffer to let the Play command take effect.
     buffer.fill(0.0);
     let warmup_context = AudioCallbackContext {
         sample_rate: hw_sample_rate,
@@ -598,5 +658,86 @@ fn apply_module_parameters(
                 });
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    use crate::patch::{ModuleState, Position};
+    use crate::project::{GlobalProjectState, ReturnBusEffectsState};
+    use synth_core::ModuleType;
+    use synth_engine::ModuleId;
+    use synth_sequencer::Song;
+
+    /// A minimal effect `ModuleState` with a parseable id and no parameters.
+    fn effect_module(module_type: ModuleType, instance: u16) -> ModuleState {
+        ModuleState {
+            id: ModuleId::new(module_type, instance).to_string(),
+            module_type,
+            position: Position::default(),
+            description: String::new(),
+            parameters: BTreeMap::new(),
+            scripts: BTreeMap::new(),
+        }
+    }
+
+    /// Regression guard for the reported "Export WAV drops effects" bug: the
+    /// offline export engine must reconstruct the *whole* mix chain — the master
+    /// effect chain and the send/return busses (with their return effects) — not
+    /// just the dry instrument voices. Before the fix `build_loaded_export_engine`
+    /// loaded only instruments + master volume, so master and return effects were
+    /// silently absent from the rendered WAV (and every send routed nowhere).
+    #[test]
+    fn export_engine_loads_master_and_return_mix_chain() {
+        // A song with one return bus, plus a master effect and a return effect in
+        // the global mix state. No instruments are needed to prove the mix chain
+        // is installed — this isolates the stage that used to be dropped.
+        let mut song = Song::new("Export Mix");
+        let bus_id = song.create_return_bus("Reverb Return");
+
+        let global = GlobalProjectState {
+            master_effects: vec![effect_module(ModuleType::Delay, 1)],
+            return_bus_effects: vec![ReturnBusEffectsState {
+                id: bus_id.0,
+                effects: vec![effect_module(ModuleType::Reverb, 1)],
+            }],
+            ..Default::default()
+        };
+        let project = ProjectFile::new(Vec::new(), 0, None, song, global);
+
+        let sample_library: SharedSampleLibrary =
+            Arc::new(std::sync::RwLock::new(SampleLibrary::default()));
+
+        let (mut engine, handle, _warnings) =
+            build_loaded_export_engine(&project, &sample_library, 44_100)
+                .expect("build export engine");
+
+        // Drive a few silent blocks so any residual queued commands drain and the
+        // shared snapshots the assertions read are up to date.
+        let ctx = AudioCallbackContext {
+            sample_rate: HwSampleRate::new(44_100),
+            frames: 256,
+            channels: 2,
+            stream_time: 0.0,
+            sample_position: 0,
+            output_latency: synth_core::Seconds::ZERO,
+        };
+        let mut buffer = vec![0.0f32; 256 * 2];
+        for _ in 0..4 {
+            buffer.fill(0.0);
+            engine.process(&mut buffer, &ctx);
+        }
+
+        assert!(
+            !handle.state.master_effects.read().is_empty(),
+            "export engine must install the master effect chain"
+        );
+        let returns = handle.state.return_bus_effects.read();
+        assert!(
+            returns.iter().any(|bus| !bus.effects.is_empty()),
+            "export engine must install send/return-bus effect chains"
+        );
     }
 }

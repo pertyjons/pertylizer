@@ -145,73 +145,11 @@ pub fn apply_project(
     sender.send(EngineCommand::SetMasterVolume(project.global.master_volume));
     sender.send(EngineCommand::SetGlideTime(project.global.glide_time));
 
-    // Reset any return-bus channels left over from a previously-loaded project
-    // before recreating this project's — otherwise CreateReturnBus is a no-op
-    // for a surviving id and AddReturnEffect would stack onto the old chain.
-    sender.send(EngineCommand::ClearReturnBusses);
-    // Create the engine-side runtime channel for each return bus defined in the
-    // song (faders are read live from the song), then rebuild its effect chain
-    // in order. Commands drain in order, so AddReturnEffect after CreateReturnBus
-    // is safe.
-    for bus in project.song.return_busses() {
-        sender.send(EngineCommand::CreateReturnBus { id: bus.id });
-    }
-    for rb in &project.global.return_bus_effects {
-        let return_id = synth_sequencer::ReturnBusId(rb.id);
-        for fx in &rb.effects {
-            let Ok(module_id) = fx.id.parse::<ModuleId>() else {
-                continue;
-            };
-            let Some((effect, descriptor)) = crate::module_factory::create_effect(fx.module_type)
-            else {
-                continue;
-            };
-            sender.send(EngineCommand::AddReturnEffect {
-                return_id,
-                id: module_id,
-                effect,
-            });
-            for (type_id, value) in &fx.parameters {
-                if let Some(param_desc) =
-                    descriptor.parameters.iter().find(|p| &p.type_id == type_id)
-                {
-                    sender.send(EngineCommand::SetReturnEffectParameter {
-                        return_id,
-                        module_id,
-                        param: value.to_param(param_desc),
-                    });
-                }
-            }
-        }
-    }
-
-    // Rebuild the master effect chain (instrument_id: None). Clear first so a
-    // load over a previous project starts from an empty master chain rather than
-    // stacking onto leftover effects.
-    sender.send(EngineCommand::ClearMasterEffects);
-    for fx in &project.global.master_effects {
-        let Ok(module_id) = fx.id.parse::<ModuleId>() else {
-            continue;
-        };
-        let Some((effect, descriptor)) = crate::module_factory::create_effect(fx.module_type)
-        else {
-            continue;
-        };
-        sender.send(EngineCommand::AddEffectInstance {
-            instrument_id: None,
-            id: module_id,
-            effect,
-        });
-        for (type_id, value) in &fx.parameters {
-            if let Some(param_desc) = descriptor.parameters.iter().find(|p| &p.type_id == type_id) {
-                sender.send(EngineCommand::SetEffectParameter {
-                    instrument_id: None,
-                    module_id,
-                    param: value.to_param(param_desc),
-                });
-            }
-        }
-    }
+    // Reconstruct the send/return-bus channels + return-effect chains + master
+    // effect chain. Non-blocking `send`: the live audio thread drains the queue
+    // continuously. The offline WAV export shares this exact reconstruction via
+    // `apply_global_mix_chain` (with `send_blocking`), so both hear the same mix.
+    apply_global_mix_chain(project, |c| sender.send(c));
 
     // Bridge the async gap between queued `AddInstrument` commands and the
     // audio thread updating its snapshot — without this, a client calling
@@ -240,6 +178,95 @@ pub fn apply_project(
         pattern_count,
         track_count
     ))
+}
+
+/// Reconstruct a project's global mix chain in the engine: the send/return-bus
+/// channels, each return bus's effect chain, and the master effect chain. Shared
+/// by the live project loader ([`apply_project`]) and the offline WAV export so
+/// both render the exact same send/return + master processing — a loader that
+/// only installs instrument voices silently drops every send, return effect, and
+/// master effect.
+///
+/// `send` is the caller's enqueue closure: the live loader passes a non-blocking
+/// `CommandSender::send` (the audio thread drains the queue continuously); the
+/// offline export passes `send_blocking`, because its fresh engine is not
+/// draining while it loads. Commands are emitted in dependency order
+/// (Clear → CreateReturnBus → AddReturnEffect → params; Clear → AddEffectInstance
+/// → params), so an in-order queue reconstructs the chains correctly.
+///
+/// `on_stream_start` must have run on the target engine first: the effect-add
+/// handlers stamp each effect with the engine's current sample rate.
+pub(crate) fn apply_global_mix_chain(
+    project: &ProjectFile,
+    mut send: impl FnMut(EngineCommand) -> bool,
+) {
+    // Reset any return-bus channels left over from a previously-loaded project
+    // before recreating this project's — otherwise CreateReturnBus is a no-op
+    // for a surviving id and AddReturnEffect would stack onto the old chain.
+    send(EngineCommand::ClearReturnBusses);
+    // Create the engine-side runtime channel for each return bus defined in the
+    // song (faders are read live from the song), then rebuild its effect chain
+    // in order. Commands drain in order, so AddReturnEffect after CreateReturnBus
+    // is safe.
+    for bus in project.song.return_busses() {
+        send(EngineCommand::CreateReturnBus { id: bus.id });
+    }
+    for rb in &project.global.return_bus_effects {
+        let return_id = synth_sequencer::ReturnBusId(rb.id);
+        for fx in &rb.effects {
+            let Ok(module_id) = fx.id.parse::<ModuleId>() else {
+                continue;
+            };
+            let Some((effect, descriptor)) = crate::module_factory::create_effect(fx.module_type)
+            else {
+                continue;
+            };
+            send(EngineCommand::AddReturnEffect {
+                return_id,
+                id: module_id,
+                effect,
+            });
+            for (type_id, value) in &fx.parameters {
+                if let Some(param_desc) =
+                    descriptor.parameters.iter().find(|p| &p.type_id == type_id)
+                {
+                    send(EngineCommand::SetReturnEffectParameter {
+                        return_id,
+                        module_id,
+                        param: value.to_param(param_desc),
+                    });
+                }
+            }
+        }
+    }
+
+    // Rebuild the master effect chain (instrument_id: None). Clear first so a
+    // load over a previous project starts from an empty master chain rather than
+    // stacking onto leftover effects.
+    send(EngineCommand::ClearMasterEffects);
+    for fx in &project.global.master_effects {
+        let Ok(module_id) = fx.id.parse::<ModuleId>() else {
+            continue;
+        };
+        let Some((effect, descriptor)) = crate::module_factory::create_effect(fx.module_type)
+        else {
+            continue;
+        };
+        send(EngineCommand::AddEffectInstance {
+            instrument_id: None,
+            id: module_id,
+            effect,
+        });
+        for (type_id, value) in &fx.parameters {
+            if let Some(param_desc) = descriptor.parameters.iter().find(|p| &p.type_id == type_id) {
+                send(EngineCommand::SetEffectParameter {
+                    instrument_id: None,
+                    module_id,
+                    param: value.to_param(param_desc),
+                });
+            }
+        }
+    }
 }
 
 /// Reset to an empty project — clears all instruments and replaces the song
@@ -879,8 +906,9 @@ fn tear_down_all_instruments(session: &SynthSession) {
 /// Send `LoadSampleData` for every Sampler module in the project that
 /// references a non-zero sample id — `set_parameter` on a sampler only stores
 /// the id; the engine also needs the audio buffer. Mirrors
-/// `egui_backend::send_loaded_sample_data`.
-fn push_loaded_sample_data(
+/// `egui_backend::send_loaded_sample_data`. Also called by the offline WAV
+/// export so its samplers render audio instead of silence.
+pub(crate) fn push_loaded_sample_data(
     sender: &CommandSender,
     project: &ProjectFile,
     sample_library: &SharedSampleLibrary,

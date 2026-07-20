@@ -7,7 +7,9 @@ use std::path::PathBuf;
 
 use egui::{Align, Layout, ProgressBar, RichText};
 
-use crate::audio::export::{BitDepth, ExportConfig, ExportProgress, start_export};
+use crate::audio::export::{
+    BitDepth, ExportConfig, ExportProgress, SharedSampleLibrary, start_export,
+};
 use crate::gui::theme::theme;
 use crate::gui::widgets::time_drag_value;
 use crate::project::ProjectFile;
@@ -60,8 +62,12 @@ impl ExportDialogState {
 
     /// Start the export with the given project snapshot.
     ///
+    /// `sample_library` carries the audio buffers Sampler modules reference by
+    /// id (the `ProjectFile` stores only the ids), so the export renders
+    /// samplers instead of silence.
+    ///
     /// Call this after checking `wants_export` is true.
-    pub fn begin_export(&mut self, project: ProjectFile) {
+    pub fn begin_export(&mut self, project: ProjectFile, sample_library: SharedSampleLibrary) {
         self.wants_export = false;
         if let Some(ref path) = self.export_path {
             let sample_rate = SAMPLE_RATES[self.sample_rate_index];
@@ -72,7 +78,7 @@ impl ExportDialogState {
                 duration_seconds: self.duration_seconds,
                 tail_seconds: self.tail_seconds,
             };
-            self.progress = Some(start_export(project, config));
+            self.progress = Some(start_export(project, sample_library, config));
         }
     }
 }
