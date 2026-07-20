@@ -55,7 +55,7 @@ const MATRIX_VIRTUAL_PORT: &str = "matrix";
 /// enforced (the soft limit is advisory).
 const MAX_MODULE_DESCRIPTION_LEN: usize = 2000;
 
-/// The committed `.pertyproj` JSON Schema, embedded at build time. Surfaced by
+/// The committed `.ptz` JSON Schema, embedded at build time. Surfaced by
 /// `get_project_schema` so external tools validate or diff project files against
 /// the exact on-disk artifact — returning this (rather than a live `schema_for!`
 /// re-derivation) guarantees zero introspection-vs-disk drift. The `gen_schemas`
@@ -419,8 +419,35 @@ impl AppSynthBridge {
         let (module_type, instance, param_id) = parse_module_automation_target(body)?;
         let module_id = synth_engine::ModuleId::new(module_type, instance);
         if !valid_modules.contains(&module_id) {
+            // instrument_id defaults to 0, so a caller who omitted it (or passed
+            // the wrong one) otherwise gets a misleading "no such module". Point
+            // them at the instrument(s) that actually own this module instead.
+            let elsewhere: Vec<u64> = self
+                .session
+                .list_instruments()
+                .iter()
+                .map(|snap| snap.id)
+                .filter(|&iid| {
+                    iid != instrument_id && self.instrument_module_ids(iid).contains(&module_id)
+                })
+                .map(|iid| iid.as_u64())
+                .collect();
+            let hint = if elsewhere.is_empty() {
+                String::new()
+            } else {
+                let ids = elsewhere
+                    .iter()
+                    .map(u64::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    " — it exists on instrument(s) {ids}; pass instrument_id to target it \
+                     (instrument_id defaults to 0)"
+                )
+            };
             return Err(McpBridgeError::Other(format!(
-                "instrument has no '{}-{instance}' module to automate",
+                "instrument {} has no '{}-{instance}' module to automate{hint}",
+                instrument_id.as_u64(),
                 module_type.prefix()
             )));
         }
@@ -10486,6 +10513,108 @@ pub fn analyze_tension_curve_impl(
     })
 }
 
+/// The offline-render window `suggest_music_fixes`' audio-backed rules analyze.
+struct AudioAnalysisWindow {
+    start_tick: Tick,
+    end_tick: Tick,
+    duration_seconds: f32,
+}
+
+/// Return the start (in the same unit as the inputs) of the `window`-long span
+/// that covers the most `onsets`, or `fallback` when there are no onsets.
+///
+/// `onsets` must be sorted ascending. Candidate starts are the onsets
+/// themselves: a window opening exactly on an onset can only cover at least as
+/// many onsets as one opening just before it, so the optimum is always onset-
+/// aligned. Two-pointer sweep, O(n).
+fn densest_window_start(onsets: &[f32], window: f32, fallback: f32) -> f32 {
+    let mut best_start = fallback;
+    let mut best_count = 0usize;
+    let mut hi = 0usize;
+    for (lo, &lo_time) in onsets.iter().enumerate() {
+        if hi < lo {
+            hi = lo;
+        }
+        while hi < onsets.len() && onsets[hi] < lo_time + window {
+            hi += 1;
+        }
+        let count = hi - lo;
+        if count > best_count {
+            best_count = count;
+            best_start = lo_time;
+        }
+    }
+    best_start
+}
+
+/// Pick the offline-render window for `suggest_music_fixes`' audio-backed rules.
+///
+/// A single offline render is capped at [`MAX_ANALYSIS_WINDOW_SECONDS`]. When
+/// the analyzed scope fits under the cap it is analyzed whole (unchanged
+/// behavior). When it is longer — a full song rather than a section — the
+/// densest cap-length window is sampled instead, because clipping, masking, and
+/// loudness problems concentrate where the arrangement is busiest, and a warning
+/// records the sampled range so the caller knows the audio rules judged a
+/// sub-window rather than the whole song. This lets the mix rules run on long
+/// songs instead of being skipped, without the caller reproducing the
+/// meta-analyzer by hand.
+fn resolve_representative_audio_window(
+    shared: &McpSharedState,
+    scope: &FormScopeData,
+    warnings: &mut Vec<String>,
+) -> AudioAnalysisWindow {
+    let song = shared.song.read();
+    let scope_start = scope.start_tick;
+    let scope_end = scope.end_tick;
+    let start_seconds = song.tick_to_seconds(scope_start) as f32;
+    let end_seconds = song.tick_to_seconds(scope_end) as f32;
+    let full_dur = (end_seconds - start_seconds).max(0.0);
+
+    // Short enough to render in one pass: analyze the whole scope.
+    if full_dur <= MAX_ANALYSIS_WINDOW_SECONDS {
+        return AudioAnalysisWindow {
+            start_tick: scope_start,
+            end_tick: scope_end,
+            duration_seconds: full_dur,
+        };
+    }
+
+    // Long scope: slide a cap-length window and keep the one covering the most
+    // note onsets — that busiest span is where mix problems concentrate.
+    let window = MAX_ANALYSIS_WINDOW_SECONDS;
+    let mut onsets: Vec<f32> = scope
+        .notes
+        .iter()
+        .map(|n| song.tick_to_seconds(Tick(scope_start.0 + u64::from(n.tick))) as f32)
+        .collect();
+    onsets.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+    let best_start = densest_window_start(&onsets, window, start_seconds);
+
+    // Keep the window inside the scope.
+    let max_start = (end_seconds - window).max(start_seconds);
+    let win_start_seconds = best_start.clamp(start_seconds, max_start);
+    let win_end_seconds = (win_start_seconds + window).min(end_seconds);
+    let dur = (win_end_seconds - win_start_seconds).max(0.0);
+
+    let start_tick = song.seconds_to_tick(f64::from(win_start_seconds));
+    let end_tick = song.seconds_to_tick(f64::from(win_end_seconds));
+    let ts = song.time_signature_at(start_tick);
+    let (start_bar, _) = tick_to_bar_beat_1based(start_tick, ts);
+    let (end_bar, _) = tick_to_bar_beat_1based(end_tick, ts);
+    drop(song);
+
+    warnings.push(format!(
+        "Audio mix analysis sampled a {dur:.0}s window (bars {start_bar}–{end_bar}, the densest \
+         region) because the full {full_dur:.0}s scope exceeds the {window:.0}s single-render limit"
+    ));
+
+    AudioAnalysisWindow {
+        start_tick,
+        end_tick,
+        duration_seconds: dur,
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 pub fn suggest_music_fixes_impl(
     session: &SynthSession,
@@ -10675,43 +10804,48 @@ pub fn suggest_music_fixes_impl(
     };
 
     // ─── Audio-render-backed checks ─────────────────────────────────────
-    let mix_bus = if cat_enabled("mix") && include_audio_v && pattern_id.is_none() {
-        let song = shared.song.read();
-        let start_seconds =
-            song.tick_to_seconds(synth_sequencer::Tick(scope_data.start_tick.0)) as f32;
-        let end_seconds = song.tick_to_seconds(scope_data.end_tick) as f32;
-        let dur = (end_seconds - start_seconds).max(0.0);
-        drop(song);
-        if dur <= 0.0 {
-            None
-        } else {
-            match analyze_mix_bus_impl(
-                session,
-                sample_library,
-                shared,
-                dur,
-                Some(scope_data.start_tick),
-                None,
-                synth_mcp::AnalysisScope::default(),
-            ) {
-                Ok(r) => Some(r),
-                Err(e) => {
-                    warnings.push(format!("mix-bus analyzer skipped: {e}"));
-                    None
-                }
-            }
-        }
+    // Both mix-bus and masking render the arrangement offline, and one render
+    // window is capped at MAX_ANALYSIS_WINDOW_SECONDS. A full-song scope exceeds
+    // that cap, so sample a bounded representative window (the densest region)
+    // and let both audio analyzers share it — otherwise mix-bus errored out
+    // ("exceeds the 300-second maximum") and masking rendered the whole song
+    // per track.
+    let audio_window = if cat_enabled("mix") && include_audio_v && pattern_id.is_none() {
+        Some(resolve_representative_audio_window(
+            shared,
+            &scope_data,
+            &mut warnings,
+        ))
     } else {
         None
     };
 
-    let masking = if cat_enabled("mix") && include_audio_v && pattern_id.is_none() {
-        match analyze_masking_matrix_impl(
+    let mix_bus = match &audio_window {
+        Some(win) if win.duration_seconds > 0.0 => match analyze_mix_bus_impl(
             session,
             sample_library,
             shared,
-            Some(scope_data.start_tick),
-            Some(scope_data.end_tick),
+            win.duration_seconds,
+            Some(win.start_tick),
+            None,
+            synth_mcp::AnalysisScope::default(),
+        ) {
+            Ok(r) => Some(r),
+            Err(e) => {
+                warnings.push(format!("mix-bus analyzer skipped: {e}"));
+                None
+            }
+        },
+        _ => None,
+    };
+
+    let masking = match &audio_window {
+        Some(win) if win.duration_seconds > 0.0 => match analyze_masking_matrix_impl(
+            session,
+            sample_library,
+            shared,
+            Some(win.start_tick),
+            Some(win.end_tick),
             None,
             synth_mcp::AnalysisScope::default(),
         ) {
@@ -10720,9 +10854,8 @@ pub fn suggest_music_fixes_impl(
                 warnings.push(format!("masking-matrix analyzer skipped: {e}"));
                 None
             }
-        }
-    } else {
-        None
+        },
+        _ => None,
     };
 
     let inputs = crate::analysis::suggest_fixes::SuggestionInputs {
@@ -10754,6 +10887,11 @@ pub fn suggest_music_fixes_impl(
 
 /// Default mix-bus render duration when the caller leaves it unspecified.
 const DEFAULT_MIX_BUS_SECONDS: f32 = 10.0;
+
+/// Longest window (seconds) a single offline analysis render may span. Enforced
+/// by [`resolve_duration_window`] and used by `suggest_music_fixes` to decide
+/// when the analyzed scope must be sub-sampled into a representative window.
+const MAX_ANALYSIS_WINDOW_SECONDS: f32 = 300.0;
 
 /// Convert a `MixAnalysis` into the wire-format `MixBusMetrics`.
 fn mix_metrics_from_analysis(
@@ -10817,9 +10955,9 @@ fn resolve_duration_window(
     } else {
         duration_seconds
     };
-    if dur > 300.0 {
+    if dur > MAX_ANALYSIS_WINDOW_SECONDS {
         return Err(McpBridgeError::Other(format!(
-            "duration_seconds {dur} exceeds the 300-second maximum"
+            "duration_seconds {dur} exceeds the {MAX_ANALYSIS_WINDOW_SECONDS}-second maximum"
         )));
     }
     let start = start_tick.map_or(0, |tick| tick.0);
@@ -12724,6 +12862,15 @@ const MASKING_HINT_MIN_ENERGY: f32 = 0.01;
 /// even competition.
 const MASKING_DOMINANCE_DB_THRESHOLD: f32 = 6.0;
 
+/// Soloed-render RMS (dBFS) below which a track is treated as effectively
+/// silent in the window and excluded from the pair matrix. Without this gate two
+/// tracks that both sit at the renderer noise floor (~-85 dBFS) produce
+/// near-identical band energies whose ratio normalizes to a spurious
+/// `conflict_score` of 1.0, burying the genuine audible conflicts. -60 dBFS is
+/// far below any part that actually contributes to the mix, so real (if quiet)
+/// material is kept while noise-floor silence is dropped.
+const MASKING_SILENCE_FLOOR_DBFS: f32 = -60.0;
+
 fn masking_band_overlap(name: &str, lo: f32, hi: f32, a: f32, b: f32) -> BandOverlap {
     let lower = a.min(b).max(0.0);
     let upper = a.max(b).max(0.0);
@@ -12895,14 +13042,40 @@ pub fn analyze_masking_matrix_impl(
         &mut warnings,
     )?;
 
-    if contributions.len() < 2 {
+    // Drop tracks that are effectively silent in this window before scoring. Two
+    // tracks sitting at the renderer noise floor have near-identical band
+    // energies, so `masking_conflict_score` would rank them at a spurious 1.0 —
+    // burying the genuine audible conflicts. Report them separately so the caller
+    // can tell silence apart from missing data.
+    let (audible, silent): (Vec<_>, Vec<_>) = contributions
+        .into_iter()
+        .partition(|c| c.metrics.rms_dbfs >= MASKING_SILENCE_FLOOR_DBFS);
+    let mut tracks_below_floor: Vec<synth_mcp::types::TrackBelowFloor> = silent
+        .into_iter()
+        .map(|c| synth_mcp::types::TrackBelowFloor {
+            track_id: c.track_id,
+            track_name: c.track_name,
+            rms_dbfs: c.metrics.rms_dbfs,
+        })
+        .collect();
+    tracks_below_floor.sort_by_key(|t| t.track_id);
+    if !tracks_below_floor.is_empty() {
         warnings.push(format!(
-            "analyze_masking_matrix needs at least 2 audible tracks in the section; got {}",
-            contributions.len()
+            "{} track(s) below the {:.0} dBFS audibility floor excluded from the masking \
+             matrix (see tracks_below_floor)",
+            tracks_below_floor.len(),
+            MASKING_SILENCE_FLOOR_DBFS
         ));
     }
 
-    let mut pairs = build_masking_pairs(&contributions);
+    if audible.len() < 2 {
+        warnings.push(format!(
+            "analyze_masking_matrix needs at least 2 audible tracks in the section; got {}",
+            audible.len()
+        ));
+    }
+
+    let mut pairs = build_masking_pairs(&audible);
     let total_pair_count = pairs.len() as u32;
     let cap = top_pairs
         .unwrap_or(MASKING_TOP_PAIRS_DEFAULT)
@@ -12922,9 +13095,10 @@ pub fn analyze_masking_matrix_impl(
         end_beat,
         start_tick: Tick(start_tick),
         end_tick: Tick(end_tick),
-        track_count: contributions.len() as u32,
+        track_count: audible.len() as u32,
         total_pair_count,
         pairs,
+        tracks_below_floor,
         warnings,
     })
 }
@@ -14681,6 +14855,72 @@ mod mcp_helper_tests {
     }
 
     #[test]
+    fn densest_window_start_empty_returns_fallback() {
+        assert_eq!(densest_window_start(&[], 30.0, 7.5), 7.5);
+    }
+
+    #[test]
+    fn densest_window_start_picks_the_busiest_cluster() {
+        // Two onsets early, then a tight cluster of four near t=100. A 10 s
+        // window should anchor on the cluster, not the sparse intro.
+        let onsets = [0.0, 5.0, 100.0, 101.0, 102.0, 103.0];
+        assert_eq!(densest_window_start(&onsets, 10.0, 0.0), 100.0);
+    }
+
+    #[test]
+    fn densest_window_start_window_is_half_open() {
+        // The window is half-open: an onset exactly `window` after the start is
+        // NOT counted (`<`, not `<=`). So [0,10) covers only {0.0}, while
+        // [10,20) covers {10.0, 11.0} — the busier span wins at 10.0. (Under
+        // closed-interval `<=` semantics the tie would instead resolve to 0.0.)
+        let onsets = [0.0, 10.0, 11.0];
+        assert_eq!(densest_window_start(&onsets, 10.0, 0.0), 10.0);
+    }
+
+    #[test]
+    fn masking_conflict_score_flags_identical_noise_floor_as_perfect() {
+        // Two tracks parked at the renderer noise floor have identical, tiny
+        // band energies, so the raw overlap/max ratio normalizes to ~1.0 — the
+        // exact false positive MASKING_SILENCE_FLOOR_DBFS gates out before
+        // scoring. This documents the failure mode the floor exists to prevent.
+        let n = 2e-7_f32;
+        let bands = masking_pair_bands(
+            &synth_mcp::types::AnalyzeEnergyBands {
+                sub: n,
+                low: n,
+                mid: n,
+                high: n,
+            },
+            &synth_mcp::types::AnalyzeEnergyBands {
+                sub: n,
+                low: n,
+                mid: n,
+                high: n,
+            },
+        );
+        assert!(
+            masking_conflict_score(&bands) > 0.99,
+            "identical noise-floor tracks score as a near-perfect conflict"
+        );
+    }
+
+    #[test]
+    fn masking_silence_floor_excludes_noise_keeps_audible() {
+        // The partition keeps a track when its soloed RMS is >= the floor. A
+        // track at the renderer noise floor (~-85 dBFS) or reported silence
+        // (-200.0) is dropped; the boundary (-60) and normal levels are kept.
+        let audible = |rms_dbfs: f32| rms_dbfs >= MASKING_SILENCE_FLOOR_DBFS;
+        for (rms, expected) in [
+            (-200.0_f32, false),
+            (-85.0, false),
+            (-60.0, true),
+            (-20.0, true),
+        ] {
+            assert_eq!(audible(rms), expected, "rms {rms} dBFS");
+        }
+    }
+
+    #[test]
     fn brief_catalog_entries_are_well_formed() {
         use crate::module_factory::ALL_MODULE_TYPES;
 
@@ -14748,7 +14988,7 @@ mod mcp_helper_tests {
         );
     }
 
-    /// The embedded `.pertyproj` schema that `get_project_schema` ships is valid
+    /// The embedded `.ptz` schema that `get_project_schema` ships is valid
     /// JSON and a well-formed JSON Schema document (has `$schema`, an object
     /// root, and `properties`). Guards against the tool returning a truncated or
     /// corrupt artifact, and pins the bytes external tools diff against.

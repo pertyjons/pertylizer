@@ -177,7 +177,7 @@ Read the current state of instruments, modules, ports, parameters, and the audio
 | `get_parameter`                     | Current value of one parameter                                                                                                                                          |
 | `get_graph_diagnostics`             | Detect feedback loops, unreachable modules, missing outputs (one instrument)                                                                                            |
 | `lint_project`                      | Project-wide load-lint: graph diagnostics over every instrument + error/warning/info totals                                                                             |
-| `get_project_schema`                | Authoritative on-disk `.pertyproj` JSON Schema + format/build version (validate/diff project files without introspection drift)                                         |
+| `get_project_schema`                | Authoritative on-disk `.ptz` JSON Schema + format/build version (validate/diff project files without introspection drift)                                         |
 | `get_ui_snapshot`                   | Current GUI focus, selection, view                                                                                                                                      |
 | `get_engine_status`                 | Sample rate, transport state, BPM, voice count                                                                                                                          |
 | `get_version`                       | Application version, build profile, target, and git revision                                                                                                            |
@@ -301,6 +301,44 @@ nodes identify their destination by stable address.
 | `rename_track`, `delete_track`, `set_track_instrument`                      | (each takes one or many; `set_track_instrument` null = unassign)                                                                            |
 | `set_track_mixer`                                                           | Volume / pan / mute / solo per track, array of updates                                                                                      |
 | `list_arrangement`, `place_pattern`, `update_placement`, `remove_placement` | Complete pattern placements: beat/tick position, transpose, gain, and optional length (`place_pattern`/`update_placement` take one or many) |
+
+A placement carries more than a position: `transpose_semitones`, `gain`, and a
+length override (`length_beats` **or** `length_ticks`, mutually exclusive) are all
+optional and default to no change. Position may be given as `start_beat`,
+`start_tick`, or both (they must agree). The same optional fields are available
+whether you place one pattern or many:
+
+```json
+// place_pattern — single placement, transposed up a fifth, quieter, clipped to 8 beats
+{
+  "placements": [
+    {
+      "pattern_id": 2,
+      "track_id": 0,
+      "start_beat": 16.0,
+      "transpose_semitones": 7,
+      "gain": 0.8,
+      "length_beats": 8.0
+    }
+  ]
+}
+```
+
+```json
+// place_pattern — batch: a plain drop plus two transposed reprises at exact ticks
+{
+  "placements": [
+    { "pattern_id": 2, "track_id": 0, "start_beat": 0.0 },
+    { "pattern_id": 2, "track_id": 0, "start_tick": 15360, "transpose_semitones": 5 },
+    { "pattern_id": 2, "track_id": 0, "start_tick": 30720, "transpose_semitones": 12, "gain": 0.7 }
+  ]
+}
+```
+
+`update_placement` locates an existing placement by `pattern_id` + `track_id` +
+position and replaces any of `new_track_id`, `new_start_beat`/`new_start_tick`,
+`transpose_semitones`, `gain`, or the length override (`clear_length_override:
+true` removes it).
 
 ### Instrument Mixing
 

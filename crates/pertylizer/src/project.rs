@@ -85,7 +85,7 @@ impl Default for GlobalProjectState {
 }
 
 impl ProjectFile {
-    /// The `.pertyproj` on-disk format version. Bumped **only** when the project
+    /// The `.ptz` on-disk format version. Bumped **only** when the project
     /// file format itself changes — unlike the app's `CARGO_PKG_VERSION`, which
     /// moves every release. This is the value external tooling should pin to
     /// detect a format change (see `get_project_schema`).
@@ -137,20 +137,50 @@ pub enum LoadedFile {
 
 /// The file extension a project should be saved with given whether the
 /// sample library is non-empty: `"zip"` for bundles (sample-embedded),
-/// `"json"` otherwise. Lets the filename on disk tell the truth about
+/// `"ptz"` otherwise. Lets the filename on disk tell the truth about
 /// the format inside.
 #[must_use]
 pub fn project_extension(has_samples: bool) -> &'static str {
-    if has_samples { "zip" } else { "json" }
+    if has_samples { "zip" } else { "ptz" }
 }
 
-/// Return `path` with its extension forced to match the save format
-/// for `has_samples`. Idempotent.
+/// Extensions accepted as-is for a plain-JSON (sample-free) project. `.ptz` is
+/// the Pertylizer project extension; `.json` is kept for backward
+/// compatibility. Both hold identical content — the loader auto-detects the
+/// format by magic bytes / `file_type`, not by extension.
+const PLAIN_PROJECT_EXTENSIONS: &[&str] = &["ptz", "json"];
+
+/// Return `path` with an extension appropriate for the save format.
+///
+/// - **Bundle** (`has_samples`): forced to `.zip`, because a sample-embedded
+///   project is a ZIP archive and the filename must not claim otherwise.
+/// - **Plain project** (no samples): a caller-supplied `.ptz` or `.json` is
+///   **preserved** rather than silently rewritten; any other (or missing)
+///   extension is normalized to the default `.ptz`.
+///
+/// Idempotent.
 #[must_use]
 pub fn normalize_project_path(path: &Path, has_samples: bool) -> PathBuf {
-    let mut p = path.to_path_buf();
-    p.set_extension(project_extension(has_samples));
-    p
+    if has_samples {
+        let mut p = path.to_path_buf();
+        p.set_extension("zip");
+        return p;
+    }
+    let keep = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|ext| {
+            PLAIN_PROJECT_EXTENSIONS
+                .iter()
+                .any(|allowed| allowed.eq_ignore_ascii_case(ext))
+        });
+    if keep {
+        path.to_path_buf()
+    } else {
+        let mut p = path.to_path_buf();
+        p.set_extension(project_extension(false));
+        p
+    }
 }
 
 /// Read a file, auto-detect whether it's a ZIP bundle, patch, or project,
@@ -266,9 +296,9 @@ mod tests {
     }
 
     #[test]
-    fn project_extension_picks_zip_for_samples_json_otherwise() {
+    fn project_extension_picks_zip_for_samples_ptz_otherwise() {
         assert_eq!(project_extension(true), "zip");
-        assert_eq!(project_extension(false), "json");
+        assert_eq!(project_extension(false), "ptz");
     }
 
     #[test]
@@ -317,20 +347,53 @@ mod tests {
     }
 
     #[test]
-    fn normalize_project_path_forces_the_format_extension() {
-        // Samples present → always `.zip`, whatever the user typed.
+    fn normalize_project_path_forces_zip_for_bundles() {
+        // Samples present → always `.zip`, whatever the user typed (a bundle is
+        // a ZIP archive; the filename must not claim otherwise).
         assert_eq!(
             normalize_project_path(Path::new("/songs/track.json"), true),
+            PathBuf::from("/songs/track.zip")
+        );
+        assert_eq!(
+            normalize_project_path(Path::new("/songs/track.ptz"), true),
             PathBuf::from("/songs/track.zip")
         );
         assert_eq!(
             normalize_project_path(Path::new("/songs/track"), true),
             PathBuf::from("/songs/track.zip")
         );
-        // No samples → always `.json`, even if the user typed `.zip`.
+    }
+
+    #[test]
+    fn normalize_project_path_preserves_recognized_plain_extensions() {
+        // A caller-supplied `.ptz` is kept, not silently rewritten to `.json` —
+        // this was the reported MCP surprise.
+        assert_eq!(
+            normalize_project_path(Path::new("/songs/track.ptz"), false),
+            PathBuf::from("/songs/track.ptz")
+        );
+        // `.json` is still accepted for backward compatibility.
+        assert_eq!(
+            normalize_project_path(Path::new("/songs/track.json"), false),
+            PathBuf::from("/songs/track.json")
+        );
+        // Case-insensitive match on the extension.
+        assert_eq!(
+            normalize_project_path(Path::new("/songs/track.PTZ"), false),
+            PathBuf::from("/songs/track.PTZ")
+        );
+    }
+
+    #[test]
+    fn normalize_project_path_defaults_unknown_plain_extensions_to_ptz() {
+        // An unrecognized (or missing) extension normalizes to the default.
         assert_eq!(
             normalize_project_path(Path::new("/songs/track.zip"), false),
-            PathBuf::from("/songs/track.json")
+            PathBuf::from("/songs/track.ptz")
+        );
+        assert_eq!(
+            normalize_project_path(Path::new("/songs/track"), false),
+            PathBuf::from("/songs/track.ptz")
         );
     }
 

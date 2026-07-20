@@ -214,7 +214,10 @@ impl DialogState {
         self.ensure_dialog(FileDialogMode::OpenProject, initial_dir, |d| {
             d.add_file_filter(
                 "Project files",
-                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "json" || e == "zip")),
+                Filter::new(|p: &Path| {
+                    p.extension()
+                        .is_some_and(|e| e == "ptz" || e == "json" || e == "zip")
+                }),
             )
             .add_file_filter("All files", Filter::new(|_: &Path| true))
         });
@@ -226,7 +229,10 @@ impl DialogState {
         self.ensure_dialog(FileDialogMode::SaveProject, initial_dir, |d| {
             d.add_file_filter(
                 "Project files",
-                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "json" || e == "zip")),
+                Filter::new(|p: &Path| {
+                    p.extension()
+                        .is_some_and(|e| e == "ptz" || e == "json" || e == "zip")
+                }),
             )
         });
         self.file_dialog.config_mut().default_file_name = default_name.to_string();

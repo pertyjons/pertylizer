@@ -583,7 +583,7 @@ pub trait SynthBridge: Send + Sync + 'static {
         instrument_id: InstrumentId,
     ) -> Result<Vec<GraphDiagnostic>, McpBridgeError>;
 
-    /// Return the authoritative on-disk `.pertyproj` JSON Schema plus the format
+    /// Return the authoritative on-disk `.ptz` JSON Schema plus the format
     /// and build versions. The implementor embeds the committed
     /// `schemas/project.schema.json` (the exact artifact external tools must
     /// match), so callers can validate or diff project files without re-deriving

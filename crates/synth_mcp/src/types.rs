@@ -352,7 +352,7 @@ pub struct ProjectLintReport {
     pub orphaned_tracks: Vec<OrphanedTrackLint>,
 }
 
-/// The authoritative on-disk JSON Schema for `.pertyproj` project files, paired
+/// The authoritative on-disk JSON Schema for `.ptz` project files, paired
 /// with the format and build versions.
 ///
 /// Returned by `get_project_schema`. The `schema` is the exact committed
@@ -367,7 +367,7 @@ pub struct ProjectLintReport {
 pub struct ProjectSchemaInfo {
     /// File name of the schema artifact (e.g. `"project.schema.json"`).
     pub schema_file: String,
-    /// The `.pertyproj` format version — bumped only when the on-disk format
+    /// The `.ptz` format version — bumped only when the on-disk format
     /// changes. Pin this for format-change detection.
     pub schema_format_version: String,
     /// Build version of the application (a release stamp; changes every release,
@@ -2644,6 +2644,19 @@ pub struct MaskingPair {
     pub hint: Option<String>,
 }
 
+/// A track excluded from the masking matrix because its soloed render sat below
+/// the audibility floor in the analyzed window — effectively silent (e.g. a part
+/// that does not play in this section). Reported so callers can tell a silent
+/// track apart from missing data, rather than seeing it as a spurious `1.0`
+/// conflict against another equally-silent track.
+#[derive(Debug, Clone, Serialize)]
+pub struct TrackBelowFloor {
+    pub track_id: TrackId,
+    pub track_name: String,
+    /// Soloed-render RMS in dBFS (silence reported as -200.0).
+    pub rms_dbfs: f32,
+}
+
 /// Output of `analyze_masking_matrix`. Pairwise spectral overlap report
 /// across every audible track in the section. Reuses the same soloed per-
 /// track renders as `analyze_section` with `include_per_track = true`, so the
@@ -2665,6 +2678,11 @@ pub struct AnalyzeMaskingMatrixResult {
     /// One entry per unordered pair, sorted by descending `conflict_score`,
     /// truncated to the caller's `top_pairs` (default 20).
     pub pairs: Vec<MaskingPair>,
+    /// Tracks that were audible-in-principle but sat below the audibility floor
+    /// in this window, so they were excluded from the pair matrix. Prevents two
+    /// equally-silent tracks from being ranked as a perfect (`1.0`) conflict.
+    /// Empty when every rendered track cleared the floor.
+    pub tracks_below_floor: Vec<TrackBelowFloor>,
     /// Non-fatal warnings emitted during the render.
     pub warnings: Vec<String>,
 }

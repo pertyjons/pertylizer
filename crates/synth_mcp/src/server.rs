@@ -11,9 +11,9 @@ use futures_util::FutureExt;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    CallToolResult, ContentBlock, Implementation, ListResourceTemplatesResult, ListResourcesResult,
-    PaginatedRequestParams, ReadResourceRequestParams, ReadResourceResult, Resource,
-    ResourceContents, ResourceTemplate, ServerCapabilities, ServerInfo,
+    CallToolResult, ContentBlock, Implementation, JsonObject, ListResourceTemplatesResult,
+    ListResourcesResult, PaginatedRequestParams, ReadResourceRequestParams, ReadResourceResult,
+    Resource, ResourceContents, ResourceTemplate, ServerCapabilities, ServerInfo,
 };
 use rmcp::service::{NotificationContext, RequestContext};
 use rmcp::{ErrorData, RoleServer, ServerHandler, tool, tool_handler, tool_router};
@@ -4048,7 +4048,9 @@ pub struct ApplyExamplePatchParam {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ProjectPathParam {
-    #[schemars(description = "Absolute file path for the project (.json)")]
+    #[schemars(
+        description = "Absolute file path for the project. `.ptz` (recommended) and `.json` are both accepted and preserved; any other extension is normalized to `.ptz`. A project that embeds samples is always written as a `.zip` bundle regardless of the requested extension. Loading auto-detects the format by content, so the extension never blocks a round-trip. save_project returns the actual path written."
+    )]
     pub path: String,
 }
 
@@ -4309,8 +4311,104 @@ impl SynthMcpServer {
         for name in disabled_tools {
             router.disable_route(*name);
         }
+        // rmcp generates each tool's input schema with schemars, which emits a
+        // `$ref` into `$defs` for every nested struct (array item types, enums,
+        // …). MCP clients that don't resolve `$ref` then render those as
+        // `Array<unknown>`, hiding the required fields. Inline the refs once here
+        // so every tool's schema is self-describing regardless of client.
+        for route in router.map.values_mut() {
+            let inlined = inline_schema_refs(route.attr.input_schema.as_ref());
+            route.attr.input_schema = std::sync::Arc::new(inlined);
+        }
         router
     }
+}
+
+/// Recursively inline every local `$ref` (`#/$defs/…` or `#/definitions/…`) in a
+/// JSON-Schema value, resolving names against `defs`. `path` holds the
+/// definition names currently being expanded so reference cycles terminate: a
+/// `$ref` that would revisit a name on the path — or points at an unknown
+/// definition — is left intact and sets `retained`, telling the caller to keep
+/// `$defs` as a fallback. Sibling keys on a `$ref` node (e.g. `description`) are
+/// merged over the resolved definition.
+fn inline_refs_value(
+    value: &serde_json::Value,
+    defs: &serde_json::Map<String, serde_json::Value>,
+    path: &mut Vec<String>,
+    retained: &mut bool,
+) -> serde_json::Value {
+    use serde_json::Value;
+    match value {
+        Value::Object(map) => {
+            if let Some(Value::String(reference)) = map.get("$ref")
+                && let Some(name) = reference
+                    .strip_prefix("#/$defs/")
+                    .or_else(|| reference.strip_prefix("#/definitions/"))
+            {
+                if path.iter().any(|p| p == name) {
+                    *retained = true; // cycle — leave the $ref in place
+                    return value.clone();
+                }
+                if let Some(target) = defs.get(name) {
+                    path.push(name.to_string());
+                    let mut resolved = inline_refs_value(target, defs, path, retained);
+                    if let Value::Object(res) = &mut resolved {
+                        for (k, v) in map {
+                            if k != "$ref" {
+                                res.insert(k.clone(), inline_refs_value(v, defs, path, retained));
+                            }
+                        }
+                    }
+                    path.pop();
+                    return resolved;
+                }
+                *retained = true; // unknown definition — leave the $ref in place
+                return value.clone();
+            }
+            let mut out = serde_json::Map::with_capacity(map.len());
+            for (k, v) in map {
+                out.insert(k.clone(), inline_refs_value(v, defs, path, retained));
+            }
+            Value::Object(out)
+        }
+        Value::Array(items) => Value::Array(
+            items
+                .iter()
+                .map(|v| inline_refs_value(v, defs, path, retained))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// Inline a tool input schema's local `$ref`s and drop the now-redundant
+/// `$defs`, so array/object item schemas are concrete for MCP clients that do
+/// not resolve `$ref`. If any `$ref` could not be inlined (a reference cycle or
+/// a dangling name), `$defs` is retained as a fallback so the schema stays
+/// valid.
+fn inline_schema_refs(schema: &JsonObject) -> JsonObject {
+    let defs = schema
+        .get("$defs")
+        .or_else(|| schema.get("definitions"))
+        .and_then(serde_json::Value::as_object)
+        .cloned()
+        .unwrap_or_default();
+    if defs.is_empty() {
+        return schema.clone();
+    }
+    let root = serde_json::Value::Object(schema.clone());
+    let mut path: Vec<String> = Vec::new();
+    let mut retained = false;
+    let resolved = inline_refs_value(&root, &defs, &mut path, &mut retained);
+    let mut out = match resolved {
+        serde_json::Value::Object(map) => map,
+        _ => return schema.clone(),
+    };
+    if !retained {
+        out.remove("$defs");
+        out.remove("definitions");
+    }
+    out
 }
 
 /// Macro to generate dispatch arms for `batch_execute`.
@@ -5294,7 +5392,7 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Return the authoritative on-disk JSON Schema for `.pertyproj` project files \
+        description = "Return the authoritative on-disk JSON Schema for `.ptz` project files \
                        plus the build version that generated it. Use this to validate or diff project \
                        files against the exact committed schema — it avoids the introspection-vs-disk \
                        encoding drift you'd get from reading parameter values live (e.g. an enum reported \
@@ -5783,7 +5881,7 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Pairwise spectral-masking report across every audible track in an arrangement range. Renders each audible track soloed once, then for every pair (a, b) compares their per-band RMS in the 4-band split (sub 0-100 Hz, low 100-500 Hz, mid 500-2000 Hz, high 2 kHz+) used elsewhere. Each pair carries the per-band overlap energy, the dominance margin in dB, an overall conflict_score in 0..=1, the dominant track id when one side leads by >6 dB on the worst-overlap band, and a textual hint such as 'Pad(2) masks Lead(3) in mid (500-2000 Hz)'. Pairs are returned sorted by descending conflict_score so the most contested combination appears first. Renders are O(track_count) (same as analyze_section with include_per_track=true); the pair matrix itself is in-memory and O(N²). Use when a section sounds muddy or when one element is being smothered and you need to know which other track is doing it."
+        description = "Pairwise spectral-masking report across every audible track in an arrangement range. Renders each audible track soloed once, then for every pair (a, b) compares their per-band RMS in the 4-band split (sub 0-100 Hz, low 100-500 Hz, mid 500-2000 Hz, high 2 kHz+) used elsewhere. Each pair carries the per-band overlap energy, the dominance margin in dB, an overall conflict_score in 0..=1, the dominant track id when one side leads by >6 dB on the worst-overlap band, and a textual hint such as 'Pad(2) masks Lead(3) in mid (500-2000 Hz)'. Pairs are returned sorted by descending conflict_score so the most contested combination appears first. Tracks whose soloed render sits below the -60 dBFS audibility floor in the window (i.e. effectively silent — a part that does not play in this section) are excluded from the matrix and listed under `tracks_below_floor` instead; this stops two equally-silent tracks from being ranked as a spurious 1.0 conflict. Renders are O(track_count) (same as analyze_section with include_per_track=true); the pair matrix itself is in-memory and O(N²). Use when a section sounds muddy or when one element is being smothered and you need to know which other track is doing it."
     )]
     async fn analyze_masking_matrix(
         &self,
@@ -5967,7 +6065,7 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Meta-analysis: runs the relevant analyzers across harmony, mix, groove, arrangement, composition, and patch categories, applies a rule set per category, and returns ranked fix suggestions with supporting evidence. No new measurements — every suggestion references metrics already produced by the underlying analyzer tools. `categories` is a subset of [harmony, mix, groove, arrangement, composition, patch] (empty/null = all). `include_audio` (default true) gates the mix-bus / masking / audio-augmented tension-curve checks. `max_suggestions` defaults to 15."
+        description = "Meta-analysis: runs the relevant analyzers across harmony, mix, groove, arrangement, composition, and patch categories, applies a rule set per category, and returns ranked fix suggestions with supporting evidence. No new measurements — every suggestion references metrics already produced by the underlying analyzer tools. `categories` is a subset of [harmony, mix, groove, arrangement, composition, patch] (empty/null = all). `include_audio` (default true) gates the mix-bus / masking / audio-augmented tension-curve checks. The audio-backed mix rules render the arrangement offline, which is capped at 300 seconds per window; when the analyzed scope is longer the densest 300-second window is sampled automatically (mix problems concentrate where the arrangement is busiest) and a `warnings` entry reports the sampled bar range — so the mix rules run on long songs instead of being skipped. `max_suggestions` defaults to 15."
     )]
     async fn suggest_music_fixes(&self, params: Parameters<SuggestMusicFixesParam>) -> String {
         run_blocking_json(|| {
@@ -9057,7 +9155,7 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Save the current project (all instruments, patches, song, arrangement) to a JSON file."
+        description = "Save the current project (all instruments, patches, song, arrangement). A caller-supplied `.ptz` (recommended) or `.json` path is preserved as-is; any other extension is normalized to `.ptz`. If the project embeds samples it is written as a `.zip` bundle instead (the filename must tell the truth about the format). The returned message reports the exact path written."
     )]
     async fn save_project(&self, params: Parameters<ProjectPathParam>) -> String {
         if let Err(e) = validate_file_path(&params.0.path) {
@@ -10101,5 +10199,46 @@ mod schema_range_tests {
         );
         let mod_connections = schema_text::<ConnectModGraphParam>();
         assert!(mod_connections.contains("from_port") && mod_connections.contains("to_port"));
+    }
+
+    #[test]
+    fn inline_schema_refs_makes_array_item_schemas_concrete() {
+        // Precondition: the raw schema references its array item type via a
+        // `$ref` into `$defs` — the shape that renders as `Array<unknown>` in
+        // clients that don't resolve `$ref`.
+        let raw = serde_json::to_value(schemars::schema_for!(ClearAutomationLaneParam))
+            .expect("schema serializes");
+        let raw_obj = raw.as_object().expect("schema is an object").clone();
+        assert!(
+            serde_json::to_string(&raw_obj).unwrap().contains("$ref"),
+            "precondition: schemars emits $ref for nested item types"
+        );
+
+        // After inlining, no `$ref`/`$defs` remain and the array item schema is
+        // a concrete object exposing the required fields.
+        let inlined = serde_json::Value::Object(inline_schema_refs(&raw_obj));
+        let text = serde_json::to_string(&inlined).unwrap();
+        assert!(!text.contains("$ref"), "all refs inlined: {text}");
+        assert!(!text.contains("$defs"), "defs dropped once inlined: {text}");
+
+        let item = &inlined["properties"]["items"]["items"];
+        assert_eq!(item["type"], "object", "array item is a concrete object");
+        let props = &item["properties"];
+        assert!(props.get("pattern_id").is_some(), "pattern_id visible");
+        assert!(
+            props.get("instrument_id").is_some(),
+            "instrument_id visible"
+        );
+        assert!(props.get("target").is_some(), "target visible");
+    }
+
+    #[test]
+    fn inline_schema_refs_is_a_noop_without_defs() {
+        // A schema with no `$defs` (all-primitive fields) is returned unchanged.
+        let raw = serde_json::to_value(schemars::schema_for!(ProjectPathParam))
+            .expect("schema serializes");
+        let obj = raw.as_object().expect("object").clone();
+        assert!(!serde_json::to_string(&obj).unwrap().contains("$defs"));
+        assert_eq!(inline_schema_refs(&obj), obj);
     }
 }

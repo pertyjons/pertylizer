@@ -87,7 +87,7 @@ fn rack_and_ornament_survive_project_save_load_and_play_identically() {
     let before = play(&song, pid, 1920);
     assert!(!before.is_empty(), "the rack must produce notes to compare");
 
-    // Round-trip through the real .pertyproj file path.
+    // Round-trip through the real .ptz file path.
     let project = ProjectFile::new(Vec::new(), 0, None, song, GlobalProjectState::default());
     let tmp = tempfile::NamedTempFile::new().expect("temp file");
     project.save(tmp.path()).expect("save project");
