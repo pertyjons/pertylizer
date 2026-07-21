@@ -8314,10 +8314,16 @@ fn build_module_automation_target(
     let prefix = module_type.prefix();
 
     // Validate the instance actually exists in the instrument's graph, so a
-    // target can't silently bind to a missing module.
+    // target can't silently bind to a missing module. Name the instrument and
+    // point at instrument_id: the module often *does* exist, just on another
+    // instrument, and instrument_id defaults to 0 when omitted — so the bare
+    // "no such module" wording otherwise sends callers hunting a phantom bug.
+    // (The live-authoring path additionally reports which instrument owns it.)
     if !valid_modules.contains(&synth_engine::ModuleId::new(module_type, instance)) {
         return Err(McpBridgeError::Other(format!(
-            "instrument has no '{prefix}-{instance}' module to automate"
+            "instrument {} has no '{prefix}-{instance}' module to automate — check \
+             instrument_id (it defaults to 0)",
+            instrument.as_u64()
         )));
     }
 
@@ -15057,8 +15063,15 @@ mod automation_target_tests {
             ModuleId::new(synth_core::ModuleType::Filter, 4),
             ModuleId::new(synth_core::ModuleType::Filter, 5),
         ];
+        let err = build_automation_target("module:flt:1:cutoff", InstrumentId::new(1), &modules)
+            .expect_err("a flt-1 target must be rejected when the instrument has no flt-1");
+        // The error must name the instrument and point at instrument_id — the
+        // module often exists on *another* instrument and instrument_id defaults
+        // to 0, so a bare "no such module" sent callers chasing a phantom bug.
+        let msg = err.to_string();
         assert!(
-            build_automation_target("module:flt:1:cutoff", InstrumentId::new(1), &modules).is_err()
+            msg.contains("instrument 1") && msg.contains("instrument_id"),
+            "missing-instance error must name the instrument and mention instrument_id; got: {msg}"
         );
         // The instances that do exist are accepted.
         assert!(
