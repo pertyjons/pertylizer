@@ -143,3 +143,44 @@ pub(crate) fn replay_module_scripts(
         }
     }
 }
+
+/// Pending-command count below the ring's 256-slot capacity at which an offline
+/// load drains. Leaves headroom so a batch enqueued between two drain checks
+/// can't push past capacity (and get silently dropped by `send_blocking`).
+const OFFLINE_LOAD_DRAIN_THRESHOLD: u64 = 192;
+
+/// Process one silent block so the engine drains its **entire** queued command
+/// ring (`process_commands` pops until empty). During an offline load the
+/// sequencer is Stopped, so this advances no audio — it only applies the queued
+/// commands. Use at phase boundaries where the next step must observe the
+/// commands' effect (e.g. instruments applied before `SetModGrid` resolves their
+/// id mapping).
+pub(crate) fn drain_command_queue(
+    engine: &mut synth_engine::SynthEngine,
+    buffer: &mut [f32],
+    ctx: &synth_core::AudioCallbackContext,
+) {
+    buffer.fill(0.0);
+    engine.process(buffer, ctx);
+}
+
+/// Drain the command ring only when it nears the fixed 256-slot capacity, so a
+/// bulk offline load can't overflow it however many commands one instrument (or
+/// one huge voice graph) enqueues. Cheap when the ring has room — two atomic
+/// loads and no processing. `send_blocking` silently *drops* once the ring is
+/// full, so this must run often enough during a large load (per module /
+/// connection) to keep the pending count below capacity. `enqueued` is bumped by
+/// the sender per push and `processed` by the audio-thread drain, on the same
+/// shared `CommandSync`, so their difference is the exact ring occupancy.
+pub(crate) fn drain_if_ring_filling(
+    engine: &mut synth_engine::SynthEngine,
+    handle: &synth_engine::EngineHandle,
+    buffer: &mut [f32],
+    ctx: &synth_core::AudioCallbackContext,
+) {
+    let sync = &handle.state.command_sync;
+    let pending = sync.enqueued().saturating_sub(sync.processed());
+    if pending >= OFFLINE_LOAD_DRAIN_THRESHOLD {
+        drain_command_queue(engine, buffer, ctx);
+    }
+}

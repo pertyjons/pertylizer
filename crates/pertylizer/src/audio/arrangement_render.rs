@@ -283,8 +283,31 @@ impl OfflineEngineSession {
 
         let mut setup_warnings: Vec<String> = Vec::new();
 
+        // Start the audio stream *before* loading instruments so we can drain the
+        // command ring by processing silent blocks during the load (see the loop
+        // below), and so the render sample rate is stamped onto each instrument's
+        // modules at add time — matching the live app, where instruments are
+        // always added after the stream has started.
+        let sample_rate = scope.render_sample_rate;
+        let stream_info = synth_core::StreamInfo {
+            sample_rate: HwSampleRate::new(sample_rate),
+            buffer_size: synth_core::BufferSize::new(BUFFER_SIZE as u32),
+            channels: synth_core::ChannelCount::Stereo,
+            output_latency: std::time::Duration::ZERO,
+            input_latency: None,
+        };
+        engine.on_stream_start(&stream_info);
+        let mut drain_buf = vec![0.0f32; BUFFER_SIZE * CHANNELS];
+        // Non-time-advancing sentinel position: a pure command-drain block. No
+        // song is attached yet and the sequencer is Stopped, so it advances no
+        // audio; it only lets the engine drain its queued load commands.
+        let drain_ctx = offline_callback_ctx(BUFFER_SIZE, u64::MAX, 0.0, sample_rate);
+
         // Use each instrument's live ID so the sequencer's InstrumentId →
-        // InstrumentId mapping survives into the offline engine.
+        // InstrumentId mapping survives into the offline engine. Drain the
+        // command ring after each instrument so a many-instrument project cannot
+        // overflow the fixed 256-slot ring — nothing else drains it during setup,
+        // and `send_blocking` drops (rather than blocks) once the ring is full.
         for inst_snap in &live_instruments {
             if let Err(e) = tmp_session.add_instrument_with_id(inst_snap.id, &inst_snap.name) {
                 setup_warnings.push(format!(
@@ -302,7 +325,12 @@ impl OfflineEngineSession {
                 &mut handle,
                 sample_library,
                 &mut setup_warnings,
+                &mut engine,
+                &mut drain_buf,
+                &drain_ctx,
             );
+            // Apply this instrument's remaining commands before the next one.
+            crate::audio::drain_command_queue(&mut engine, &mut drain_buf, &drain_ctx);
         }
 
         // Capture the master + return effect chains here, but replay them per
@@ -323,20 +351,11 @@ impl OfflineEngineSession {
             Vec::new()
         };
 
-        let sample_rate = scope.render_sample_rate;
-        let stream_info = synth_core::StreamInfo {
-            sample_rate: HwSampleRate::new(sample_rate),
-            buffer_size: synth_core::BufferSize::new(BUFFER_SIZE as u32),
-            channels: synth_core::ChannelCount::Stereo,
-            output_latency: std::time::Duration::ZERO,
-            input_latency: None,
-        };
-        engine.on_stream_start(&stream_info);
-
         // The master fader is always in the live output path, so offline
         // analysis must reflect it — without this, `set_master_volume` has no
         // effect on `analyze_mix_bus` / `analyze_section` metrics. Sent once;
         // it persists across `render_range` calls (no Clear command resets it).
+        // Drains at the first `render_range` warm-up (one command — no overflow).
         handle.send_blocking(EngineCommand::SetMasterVolume(synth_core::Gain::new(
             engine_state.master_volume.load(),
         )));
@@ -674,6 +693,12 @@ fn earliest_active_note_start(song: &Song, start_tick: Tick) -> Tick {
 /// offline engine under the live instrument's own `InstrumentId` (instead of
 /// `InstrumentId::FIRST`) so the sequencer's InstrumentId → engine ID
 /// mapping survives.
+///
+/// `offline_engine` is the engine being built (distinct from `engine_state`, the
+/// live source read from); it plus `drain_buf`/`drain_ctx` let the load
+/// adaptively drain the command ring per module/connection, so a single large
+/// voice graph can't overflow the fixed 256-slot ring.
+#[allow(clippy::too_many_arguments)]
 fn load_instrument_into_offline(
     inst_snap: &synth_engine::shared_state::InstrumentSnapshot,
     engine_state: &synth_engine::EngineState,
@@ -681,6 +706,9 @@ fn load_instrument_into_offline(
     handle: &mut synth_engine::EngineHandle,
     sample_library: &crate::audio::preview::SharedSampleLibrary,
     warnings: &mut Vec<String>,
+    offline_engine: &mut SynthEngine,
+    drain_buf: &mut [f32],
+    drain_ctx: &AudioCallbackContext,
 ) {
     let instrument_id = inst_snap.id;
 
@@ -705,7 +733,10 @@ fn load_instrument_into_offline(
     let apply_module_state = |handle: &mut synth_engine::EngineHandle,
                               module_snap: &synth_engine::ModuleStateSnapshot,
                               descriptor: &synth_core::ModuleDescriptor,
-                              warnings: &mut Vec<String>| {
+                              warnings: &mut Vec<String>,
+                              offline_engine: &mut SynthEngine,
+                              drain_buf: &mut [f32],
+                              drain_ctx: &AudioCallbackContext| {
         let module_id = module_snap.id;
         let is_effect = module_id.module_type.is_effect();
         for desc_param in &descriptor.parameters {
@@ -771,6 +802,11 @@ fn load_instrument_into_offline(
             warnings,
             "arrangement_render",
         );
+
+        // Bound the command ring on a large voice graph: one module's params +
+        // scripts is a handful of commands, so an adaptive check per module keeps
+        // an arbitrarily large instrument from overflowing the 256-slot ring.
+        crate::audio::drain_if_ring_filling(offline_engine, handle, drain_buf, drain_ctx);
     };
 
     let mut voice_modules: Vec<&synth_engine::ModuleStateSnapshot> = Vec::new();
@@ -801,7 +837,15 @@ fn load_instrument_into_offline(
                     continue;
                 }
             };
-        apply_module_state(handle, module_snap, &descriptor, warnings);
+        apply_module_state(
+            handle,
+            module_snap,
+            &descriptor,
+            warnings,
+            offline_engine,
+            drain_buf,
+            drain_ctx,
+        );
     }
 
     crate::audio::preview::load_sample_data_for_samplers(
@@ -830,7 +874,15 @@ fn load_instrument_into_offline(
                     continue;
                 }
             };
-            apply_module_state(handle, module_snap, &descriptor, warnings);
+            apply_module_state(
+                handle,
+                module_snap,
+                &descriptor,
+                warnings,
+                offline_engine,
+                drain_buf,
+                drain_ctx,
+            );
         }
     }
     for (module_id, module_snap) in &effect_modules {
@@ -853,7 +905,15 @@ fn load_instrument_into_offline(
                 continue;
             }
         };
-        apply_module_state(handle, module_snap, &descriptor, warnings);
+        apply_module_state(
+            handle,
+            module_snap,
+            &descriptor,
+            warnings,
+            offline_engine,
+            drain_buf,
+            drain_ctx,
+        );
     }
 
     for conn in &connections {
@@ -873,6 +933,9 @@ fn load_instrument_into_offline(
                 conn.from_module, conn.to_module
             ));
         }
+        // Same adaptive drain for the connection phase (a heavily-patched graph
+        // can have hundreds of cables).
+        crate::audio::drain_if_ring_filling(offline_engine, handle, drain_buf, drain_ctx);
     }
 
     // Mirror live enable/mix state. `inst_snap.enabled` already encodes the

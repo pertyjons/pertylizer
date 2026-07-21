@@ -266,10 +266,43 @@ fn build_loaded_export_engine(
         song: Arc::clone(&song),
     });
 
-    // 3. Load all instruments (voice graphs + per-instrument effect chains).
-    let warnings = load_project_into_engine(project, &session, &mut handle)?;
+    // 3. Stream configuration first — sets the engine sample rate (so effects
+    // added below are stamped with it) AND lets us drain the command ring by
+    // processing silent blocks *during* the load. `on_stream_start` before the
+    // instrument load also matches the live app, where instruments are always
+    // added after the audio stream starts.
+    let hw_sample_rate = HwSampleRate::new(sample_rate);
+    let stream_info = synth_core::StreamInfo {
+        sample_rate: hw_sample_rate,
+        buffer_size: synth_core::BufferSize::new(256),
+        channels: synth_core::ChannelCount::Stereo,
+        output_latency: std::time::Duration::ZERO,
+        input_latency: None,
+    };
+    engine.on_stream_start(&stream_info);
+    let mut buffer = vec![0.0f32; 256 * 2];
+    let drain_ctx = AudioCallbackContext {
+        sample_rate: hw_sample_rate,
+        frames: 256,
+        channels: 2,
+        stream_time: 0.0,
+        sample_position: 0,
+        output_latency: synth_core::Seconds::ZERO,
+    };
 
-    // 4. Build and ship the Mod Grid runtime so an offline render reproduces the
+    // 4. Load all instruments (voice graphs + per-instrument effect chains),
+    // draining the command ring after each so a large multi-instrument project
+    // (the SetSong command included) cannot overflow it.
+    let warnings = load_project_into_engine(
+        project,
+        &session,
+        &mut handle,
+        &mut engine,
+        &mut buffer,
+        &drain_ctx,
+    )?;
+
+    // 5. Build and ship the Mod Grid runtime so an offline render reproduces the
     // live control-rate modulation (seeded random nodes render bit-identically).
     // Sent *after* the instruments so their InstrumentId → InstrumentId mapping
     // exists when `SetModGrid` pre-creates the per-instrument offset slots for
@@ -281,38 +314,12 @@ fn build_loaded_export_engine(
         runtime: Box::new(mod_grid),
     });
 
-    // 5. Global settings.
+    // 6. Global settings, then drain the mod-grid + global-settings commands.
     handle.send_blocking(EngineCommand::SetMasterVolume(project.global.master_volume));
     handle.send_blocking(EngineCommand::SetGlideTime(project.global.glide_time));
+    crate::audio::drain_command_queue(&mut engine, &mut buffer, &drain_ctx);
 
-    // 6. Stream configuration — sets the engine sample rate, which the
-    // effect-add handlers stamp onto each mix-chain effect created in step 8.
-    let hw_sample_rate = HwSampleRate::new(sample_rate);
-    let stream_info = synth_core::StreamInfo {
-        sample_rate: hw_sample_rate,
-        buffer_size: synth_core::BufferSize::new(256),
-        channels: synth_core::ChannelCount::Stereo,
-        output_latency: std::time::Duration::ZERO,
-        input_latency: None,
-    };
-    engine.on_stream_start(&stream_info);
-
-    // 7. Drain the queued instrument/song/mod-grid/volume commands with one
-    // silent block (the sequencer is still Stopped, so the song does not
-    // advance). This initializes the engine and empties the 256-slot command
-    // ring so the mix-chain load below cannot overflow it.
-    let mut buffer = vec![0.0f32; 256 * 2];
-    let init_context = AudioCallbackContext {
-        sample_rate: hw_sample_rate,
-        frames: 256,
-        channels: 2,
-        stream_time: 0.0,
-        sample_position: 0,
-        output_latency: synth_core::Seconds::ZERO,
-    };
-    engine.process(&mut buffer, &init_context);
-
-    // 8. Reconstruct the global mix chain (send/return busses + return effects +
+    // 7. Reconstruct the global mix chain (send/return busses + return effects +
     // master effects) into the drained engine, reusing the canonical loader the
     // live app uses. `send_blocking` because this engine is not draining on its
     // own between commands — without a running audio thread, non-blocking sends
@@ -320,14 +327,13 @@ fn build_loaded_export_engine(
     let sender = handle.command_sender();
     crate::project_apply::apply_global_mix_chain(project, |c| sender.send_blocking(c));
 
-    // 9. Sampler audio buffers — referenced by id in the patch, but the data
+    // 8. Sampler audio buffers — referenced by id in the patch, but the data
     // lives in the shared library, not the `ProjectFile`. Without this, samplers
     // export as silence.
     crate::project_apply::push_loaded_sample_data(&sender, project, sample_library);
 
-    // 10. Drain the mix-chain + sample-data commands before the caller plays.
-    buffer.fill(0.0);
-    engine.process(&mut buffer, &init_context);
+    // 9. Drain the mix-chain + sample-data commands before the caller plays.
+    crate::audio::drain_command_queue(&mut engine, &mut buffer, &drain_ctx);
 
     Ok((engine, handle, warnings))
 }
@@ -464,10 +470,19 @@ fn render_to_wav(
 ///
 /// This is a simplified version of `egui_backend::load_project_data` that
 /// doesn't need any GUI types (no `PatchEditor`, `PianoKeyboard`, etc.).
+///
+/// The command ring is drained (via `engine`/`drain_buf`/`drain_ctx`) after each
+/// instrument, so a project with many instruments cannot overflow the fixed-size
+/// (256-slot) ring — nothing else drains it during an offline load. A single
+/// instrument whose own load exceeds 256 commands is the remaining theoretical
+/// edge (an extreme patch), well beyond any realistic voice graph.
 fn load_project_into_engine(
     project: &ProjectFile,
     session: &SynthSession,
     handle: &mut synth_engine::EngineHandle,
+    engine: &mut SynthEngine,
+    drain_buf: &mut [f32],
+    drain_ctx: &AudioCallbackContext,
 ) -> Result<Vec<String>, ExportError> {
     let mut warnings = Vec::new();
 
@@ -540,13 +555,26 @@ fn load_project_into_engine(
         });
 
         // Load modules (skip visualizers - they need GUI)
-        load_patch_modules(&inst_state.patch, inst_id, session, handle);
+        load_patch_modules(
+            &inst_state.patch,
+            inst_id,
+            session,
+            handle,
+            engine,
+            drain_buf,
+            drain_ctx,
+        );
 
         // Enable the instrument
         handle.send_blocking(EngineCommand::SetInstrumentEnabled {
             instrument_id: inst_id,
             enabled: true,
         });
+
+        // Drain this instrument's commands before loading the next, so the ring
+        // never accumulates more than one instrument's worth (the sequencer is
+        // Stopped, so this advances no audio).
+        crate::audio::drain_command_queue(engine, drain_buf, drain_ctx);
     }
 
     Ok(warnings)
@@ -558,6 +586,9 @@ fn load_patch_modules(
     instrument_id: InstrumentId,
     session: &SynthSession,
     handle: &mut synth_engine::EngineHandle,
+    engine: &mut SynthEngine,
+    drain_buf: &mut [f32],
+    drain_ctx: &AudioCallbackContext,
 ) {
     use synth_engine::ModuleId;
 
@@ -591,6 +622,11 @@ fn load_patch_modules(
             handle,
             instrument_id,
         );
+
+        // Keep the command ring from overflowing on a very large voice graph:
+        // one module's add + params is a handful of commands, so an adaptive
+        // check per module bounds an arbitrarily large instrument.
+        crate::audio::drain_if_ring_filling(engine, handle, drain_buf, drain_ctx);
     }
 
     // Add connections
@@ -615,6 +651,9 @@ fn load_patch_modules(
                 to: PortId::new(to_id, &*conn.to.1),
             });
         }
+        // Same adaptive drain for the connection phase (a heavily-patched graph
+        // can have hundreds of cables).
+        crate::audio::drain_if_ring_filling(engine, handle, drain_buf, drain_ctx);
     }
 
     // NOTE: SetMasterVolume and SetGlideTime are global (not per-instrument) settings.
@@ -738,6 +777,129 @@ mod tests {
         assert!(
             returns.iter().any(|bus| !bus.effects.is_empty()),
             "export engine must install send/return-bus effect chains"
+        );
+    }
+
+    /// Regression for the 256-slot command-ring overflow: loading a project whose
+    /// commands far exceed the ring must not silently drop any. The offline loader
+    /// drains the ring per instrument; 40 empty instruments enqueue ~440 commands
+    /// (well past 256), yet all must arrive. Before the per-instrument drain, the
+    /// commands past 256 were dropped and the later instruments never loaded.
+    #[test]
+    fn many_instrument_project_loads_without_dropping_commands() {
+        let instruments: Vec<_> = (1..=40u64)
+            .map(|i| {
+                let mut inst = crate::project::default_instrument_state();
+                inst.id = InstrumentId::new(i);
+                inst.name = format!("inst{i}");
+                inst
+            })
+            .collect();
+        let project = ProjectFile::new(
+            instruments,
+            1,
+            None,
+            Song::new("Many"),
+            GlobalProjectState::default(),
+        );
+        let sample_library: SharedSampleLibrary =
+            Arc::new(std::sync::RwLock::new(SampleLibrary::default()));
+
+        let (mut engine, handle, warnings) =
+            build_loaded_export_engine(&project, &sample_library, 44_100)
+                .expect("build export engine");
+        assert!(
+            warnings.is_empty(),
+            "no instrument should fail to load: {warnings:?}"
+        );
+
+        // Drive a few silent blocks so instrument-snapshot mirroring settles.
+        let ctx = AudioCallbackContext {
+            sample_rate: HwSampleRate::new(44_100),
+            frames: 256,
+            channels: 2,
+            stream_time: 0.0,
+            sample_position: 0,
+            output_latency: synth_core::Seconds::ZERO,
+        };
+        let mut buffer = vec![0.0f32; 256 * 2];
+        for _ in 0..4 {
+            buffer.fill(0.0);
+            engine.process(&mut buffer, &ctx);
+        }
+
+        let loaded = handle.state.instrument_snapshots.read().len();
+        assert_eq!(
+            loaded, 40,
+            "all 40 instruments must load; a dropped command would leave fewer"
+        );
+    }
+
+    /// A *single* instrument whose load exceeds the 256-slot ring must also load
+    /// intact: the loader drains the ring adaptively per module, so an arbitrarily
+    /// large voice graph can't overflow it. 100 oscillators enqueue ~300 commands
+    /// in one instrument; every module must arrive.
+    #[test]
+    fn single_large_instrument_loads_all_modules() {
+        use crate::patch::{ModuleBuilder, Patch};
+        use synth_core::ModuleType;
+
+        const N: u16 = 100;
+        let mut patch = Patch::new("Big");
+        for i in 1..=N {
+            patch.add_module(
+                ModuleBuilder::new(i, ModuleType::Oscillator)
+                    .waveform("sawtooth")
+                    .param_f("level", 0.5)
+                    .build(),
+            );
+        }
+        let mut inst = crate::project::default_instrument_state();
+        inst.id = InstrumentId::new(1);
+        inst.name = "big".to_string();
+        inst.patch = patch;
+        let project = ProjectFile::new(
+            vec![inst],
+            1,
+            None,
+            Song::new("Big"),
+            GlobalProjectState::default(),
+        );
+        let sample_library: SharedSampleLibrary =
+            Arc::new(std::sync::RwLock::new(SampleLibrary::default()));
+
+        let (mut engine, handle, warnings) =
+            build_loaded_export_engine(&project, &sample_library, 44_100)
+                .expect("build export engine");
+        assert!(
+            warnings.is_empty(),
+            "no module should fail to load: {warnings:?}"
+        );
+
+        let ctx = AudioCallbackContext {
+            sample_rate: HwSampleRate::new(44_100),
+            frames: 256,
+            channels: 2,
+            stream_time: 0.0,
+            sample_position: 0,
+            output_latency: synth_core::Seconds::ZERO,
+        };
+        let mut buffer = vec![0.0f32; 256 * 2];
+        for _ in 0..4 {
+            buffer.fill(0.0);
+            engine.process(&mut buffer, &ctx);
+        }
+
+        let osc_count = handle
+            .state
+            .shared_graph
+            .get_modules_for_instrument(InstrumentId::new(1))
+            .iter()
+            .filter(|m| m.module_type == ModuleType::Oscillator)
+            .count();
+        assert_eq!(
+            osc_count, N as usize,
+            "all {N} oscillators must load; dropped commands would leave fewer"
         );
     }
 }
