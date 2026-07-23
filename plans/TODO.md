@@ -20,7 +20,10 @@
 
 ### 1.1 Section markers
 
-- [ ] Verse, chorus, bridge labels in the arrangement
+- [x] **Verse, chorus, bridge labels in the arrangement.** A pinned form lane above the
+  ruler now renders persisted, colored section intervals. Double-click creates a section;
+  sections can be selected, moved, resized, renamed, retyped/recolored, duplicated, and
+  deleted with undo/redo support.
 
 ### 1.2 Pattern-loop presentation and controls
 

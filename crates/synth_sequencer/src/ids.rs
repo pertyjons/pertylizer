@@ -39,6 +39,31 @@ impl PatternId {
     }
 }
 
+/// Unique identifier for an arrangement section marker.
+#[must_use]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
+pub struct SectionId(pub u32);
+
+impl SectionId {
+    /// Create a new section ID.
+    #[inline]
+    pub const fn new(id: u32) -> Self {
+        Self(id)
+    }
+}
+
 /// Unique identifier for a Note Grid graph in the project pool.
 #[must_use]
 #[derive(
@@ -662,6 +687,7 @@ impl NoteId {
 
 impl_id_display!(
     PatternId,
+    SectionId,
     TrackId,
     ReturnBusId,
     NoteId,

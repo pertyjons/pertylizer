@@ -52,7 +52,7 @@ pub use automation::{
 pub use events::SequencerEvent;
 pub use ids::{
     InstrumentId, ModGraphId, ModNodeId, NoteGraphId, NoteId, NoteLane, NoteModuleId, PatternId,
-    ReturnBusId, RowCount, RowIndex, TicksPerRow, TrackCount, TrackId, TrackIndex,
+    ReturnBusId, RowCount, RowIndex, SectionId, TicksPerRow, TrackCount, TrackId, TrackIndex,
 };
 pub use input::{InputCommand, InputMultiplexer, InputSource, KeyboardInputSource};
 pub use mod_grid::{
@@ -81,8 +81,8 @@ pub use pattern::{HiddenEventSummary, Pattern, RowResolution};
 pub use pitch::{NoteName, Pitch, Velocity};
 pub use shared_song::{SharedSong, SharedSongWriteGuard};
 pub use song::{
-    FreezeStats, LoopRegion, PatternPlacement, PlacementLoopMode, Song, TempoChange,
-    TimeSignatureChange,
+    ArrangementSection, FreezeStats, LoopRegion, PatternPlacement, PlacementLoopMode, SectionColor,
+    SectionKind, Song, TempoChange, TimeSignatureChange,
 };
 pub use time::{Duration, PatternTick, TICKS_PER_QUARTER, Tick, TimeSignature};
 pub use track::{ReturnBus, ReturnSend, SequencerTrack, TrackColor, TrackMode, TrackSend};
@@ -92,8 +92,8 @@ pub mod prelude {
     pub use super::automation::{AutomationLane, AutomationPoint, AutomationTarget, CurveType};
     pub use super::events::SequencerEvent;
     pub use super::ids::{
-        InstrumentId, NoteId, NoteLane, PatternId, ReturnBusId, RowCount, RowIndex, TicksPerRow,
-        TrackCount, TrackId, TrackIndex,
+        InstrumentId, NoteId, NoteLane, PatternId, ReturnBusId, RowCount, RowIndex, SectionId,
+        TicksPerRow, TrackCount, TrackId, TrackIndex,
     };
     pub use super::input::{InputCommand, InputSource};
     pub use super::note::Note;

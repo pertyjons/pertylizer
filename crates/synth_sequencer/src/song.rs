@@ -3,7 +3,8 @@
 use serde::{Deserialize, Serialize};
 
 use super::ids::{
-    InstrumentId, ModGraphId, NoteGraphId, NoteId, NoteModuleId, PatternId, ReturnBusId, TrackId,
+    InstrumentId, ModGraphId, NoteGraphId, NoteId, NoteModuleId, PatternId, ReturnBusId, SectionId,
+    TrackId,
 };
 use super::mod_grid::{ModGraph, ModGraphScope};
 use super::note::Note;
@@ -107,6 +108,119 @@ pub struct TimeSignatureChange {
     pub tick: Tick,
     /// New time signature.
     pub signature: TimeSignature,
+}
+
+/// Semantic role of an arrangement section.
+#[derive(
+    Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum SectionKind {
+    Intro,
+    Verse,
+    PreChorus,
+    Chorus,
+    Bridge,
+    Break,
+    Solo,
+    Outro,
+    #[default]
+    Custom,
+}
+
+impl SectionKind {
+    /// Human-readable section type.
+    #[must_use]
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::Intro => "Intro",
+            Self::Verse => "Verse",
+            Self::PreChorus => "Pre-Chorus",
+            Self::Chorus => "Chorus",
+            Self::Bridge => "Bridge",
+            Self::Break => "Break",
+            Self::Solo => "Solo",
+            Self::Outro => "Outro",
+            Self::Custom => "Custom",
+        }
+    }
+
+    /// Default display color for this section type.
+    pub const fn default_color(self) -> SectionColor {
+        match self {
+            Self::Intro => SectionColor::new(66, 168, 117),
+            Self::Verse => SectionColor::new(66, 133, 214),
+            Self::PreChorus => SectionColor::new(55, 170, 190),
+            Self::Chorus => SectionColor::new(224, 142, 52),
+            Self::Bridge => SectionColor::new(150, 92, 190),
+            Self::Break => SectionColor::new(205, 91, 112),
+            Self::Solo => SectionColor::new(218, 183, 48),
+            Self::Outro => SectionColor::new(194, 72, 72),
+            Self::Custom => SectionColor::new(112, 122, 140),
+        }
+    }
+}
+
+/// Persisted RGB color for an arrangement section.
+#[must_use]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct SectionColor {
+    /// Red channel.
+    pub red: u8,
+    /// Green channel.
+    pub green: u8,
+    /// Blue channel.
+    pub blue: u8,
+}
+
+impl SectionColor {
+    /// Create an opaque RGB section color.
+    pub const fn new(red: u8, green: u8, blue: u8) -> Self {
+        Self { red, green, blue }
+    }
+}
+
+/// A named interval describing the high-level form of the arrangement.
+#[must_use]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct ArrangementSection {
+    /// Stable section identifier.
+    pub id: SectionId,
+    /// User-facing label, independent of the semantic kind.
+    pub name: String,
+    /// Semantic role used for presets and future form-aware features.
+    pub kind: SectionKind,
+    /// Start position on the song timeline.
+    pub start: Tick,
+    /// Section duration.
+    pub length: Duration,
+    /// Display color.
+    pub color: SectionColor,
+}
+
+impl ArrangementSection {
+    /// Create a section with its kind's default color.
+    pub fn new(
+        id: SectionId,
+        name: impl Into<String>,
+        kind: SectionKind,
+        start: Tick,
+        length: Duration,
+    ) -> Self {
+        Self {
+            id,
+            name: name.into(),
+            kind,
+            start,
+            length: Duration(length.0.max(1)),
+            color: kind.default_color(),
+        }
+    }
+
+    /// Exclusive end position.
+    pub fn end(&self) -> Tick {
+        Tick(self.start.0.saturating_add(u64::from(self.length.0)))
+    }
 }
 
 /// Playback behavior when a placement outlasts its source pattern.
@@ -262,6 +376,10 @@ pub struct Song {
 
     // Arrangement
     arrangement: Vec<PatternPlacement>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    sections: Vec<ArrangementSection>,
+    #[serde(default)]
+    next_section_id: u32,
 
     // Tempo and time signature
     tempo_changes: Vec<TempoChange>,
@@ -337,6 +455,8 @@ impl Song {
             tracks: Vec::new(),
             next_track_id: 0,
             arrangement: Vec::new(),
+            sections: Vec::new(),
+            next_section_id: 0,
             tempo_changes: Vec::new(),
             time_signature_changes: Vec::new(),
             default_tempo: Bpm::new(120.0),
@@ -381,6 +501,66 @@ impl Song {
     /// bump even when a change is merely possible (e.g. a `&mut Pattern` handout).
     fn bump_structure(&mut self) {
         self.structure_generation = self.structure_generation.wrapping_add(1);
+    }
+
+    // === Arrangement sections ===
+
+    /// Create a named arrangement section and return its stable ID.
+    pub fn create_section(
+        &mut self,
+        name: impl Into<String>,
+        kind: SectionKind,
+        start: Tick,
+        length: Duration,
+    ) -> SectionId {
+        let id = SectionId(self.next_section_id);
+        self.next_section_id = self.next_section_id.saturating_add(1);
+        self.sections
+            .push(ArrangementSection::new(id, name, kind, start, length));
+        self.sections.sort_by_key(|section| section.start);
+        self.bump_structure();
+        id
+    }
+
+    /// Arrangement sections in timeline order.
+    pub fn sections(&self) -> &[ArrangementSection] {
+        &self.sections
+    }
+
+    /// Replace a section while retaining its ID.
+    pub fn set_section(&mut self, section: ArrangementSection) -> bool {
+        let Some(existing) = self
+            .sections
+            .iter_mut()
+            .find(|existing| existing.id == section.id)
+        else {
+            return false;
+        };
+        *existing = section;
+        existing.length = Duration(existing.length.0.max(1));
+        self.sections.sort_by_key(|item| item.start);
+        self.bump_structure();
+        true
+    }
+
+    /// Remove and return an arrangement section.
+    pub fn remove_section(&mut self, id: SectionId) -> Option<ArrangementSection> {
+        let index = self.sections.iter().position(|section| section.id == id)?;
+        let removed = self.sections.remove(index);
+        self.bump_structure();
+        Some(removed)
+    }
+
+    /// Replace all sections, used by atomic undo/redo snapshots.
+    pub fn replace_sections(&mut self, mut sections: Vec<ArrangementSection>) {
+        sections.sort_by_key(|section| section.start);
+        self.next_section_id = sections
+            .iter()
+            .map(|section| section.id.0)
+            .max()
+            .map_or(0, |id| id.saturating_add(1));
+        self.sections = sections;
+        self.bump_structure();
     }
 
     /// Set the author (builder pattern).
@@ -1679,13 +1859,21 @@ impl Song {
         (removed_patterns, removed_tracks, used_instruments)
     }
 
-    /// Calculate total length based on arrangement.
+    /// Calculate total length based on placements and arrangement sections.
     pub fn calculate_length(&self) -> Tick {
-        self.arrangement
+        let placement_end = self
+            .arrangement
             .iter()
             .filter_map(|p| self.pattern(p.pattern_id).map(|pat| p.end(pat.length)))
             .max()
-            .unwrap_or(Tick(0))
+            .unwrap_or(Tick(0));
+        let section_end = self
+            .sections
+            .iter()
+            .map(ArrangementSection::end)
+            .max()
+            .unwrap_or(Tick(0));
+        placement_end.max(section_end)
     }
 
     /// Get length in seconds.
@@ -1707,6 +1895,39 @@ mod tests {
     use super::*;
     use crate::track::TrackSend;
     use synth_core::{BipolarValue, NormalizedValue};
+
+    #[test]
+    fn arrangement_sections_round_trip_and_extend_song_length() {
+        let mut song = Song::new("Form");
+        let verse = song.create_section("Verse 1", SectionKind::Verse, Tick(0), Duration(15_360));
+        let chorus =
+            song.create_section("Chorus", SectionKind::Chorus, Tick(15_360), Duration(7_680));
+
+        assert_ne!(verse, chorus);
+        assert_eq!(song.calculate_length(), Tick(23_040));
+        assert_eq!(song.sections()[0].color, SectionKind::Verse.default_color());
+
+        let json = serde_json::to_string(&song).unwrap();
+        let mut back: Song = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.sections(), song.sections());
+
+        let mut moved = back.sections()[1].clone();
+        moved.start = Tick(30_720);
+        assert!(back.set_section(moved));
+        assert_eq!(back.calculate_length(), Tick(38_400));
+        assert_eq!(back.remove_section(verse).unwrap().name, "Verse 1");
+    }
+
+    #[test]
+    fn arrangement_section_ids_continue_after_snapshot_restore() {
+        let mut song = Song::new("Form");
+        let first = song.create_section("Intro", SectionKind::Intro, Tick(0), Duration(3_840));
+        let snapshot = song.sections().to_vec();
+        song.replace_sections(snapshot);
+        let second = song.create_section("Verse", SectionKind::Verse, Tick(3_840), Duration(7_680));
+
+        assert!(second.0 > first.0);
+    }
 
     #[test]
     fn independently_sized_patterns_survive_serde_round_trip() {

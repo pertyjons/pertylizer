@@ -4878,6 +4878,9 @@ impl SynthApp {
                 let mut song_w = self.song.write();
                 song_w.set_placement_loop_mode(*pattern_id, *track_id, *start, *new_mode);
             }
+            UndoAction::SetArrangementSections { new, .. } => {
+                self.song.write().replace_sections(new.clone());
+            }
             UndoAction::MoveAutomationPoint {
                 pattern_id,
                 target,

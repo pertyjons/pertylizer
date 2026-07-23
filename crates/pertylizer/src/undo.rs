@@ -229,6 +229,11 @@ pub(crate) enum UndoAction {
         old_mode: synth_sequencer::PlacementLoopMode,
         new_mode: synth_sequencer::PlacementLoopMode,
     },
+    /// Arrangement sections were edited as one atomic operation.
+    SetArrangementSections {
+        old: Vec<synth_sequencer::ArrangementSection>,
+        new: Vec<synth_sequencer::ArrangementSection>,
+    },
 
     // ── Automation ──
     /// An automation point was added.
@@ -719,6 +724,10 @@ impl UndoManager {
                 old_mode: *new_mode,
                 new_mode: *old_mode,
             },
+            UndoAction::SetArrangementSections { old, new } => UndoAction::SetArrangementSections {
+                old: new.clone(),
+                new: old.clone(),
+            },
             UndoAction::MoveAutomationPoint {
                 pattern_id,
                 target,
@@ -1063,6 +1072,36 @@ mod tests {
         } else {
             panic!("Expected MoveTempo inverse");
         }
+    }
+
+    #[test]
+    fn test_inverse_of_section_snapshot_swaps_lists() {
+        let old = vec![synth_sequencer::ArrangementSection::new(
+            synth_sequencer::SectionId::new(1),
+            "Verse",
+            synth_sequencer::SectionKind::Verse,
+            Tick(0),
+            SeqDuration(3_840),
+        )];
+        let new = vec![synth_sequencer::ArrangementSection::new(
+            synth_sequencer::SectionId::new(2),
+            "Chorus",
+            synth_sequencer::SectionKind::Chorus,
+            Tick(3_840),
+            SeqDuration(3_840),
+        )];
+        let inverse = UndoManager::inverse(&UndoAction::SetArrangementSections {
+            old: old.clone(),
+            new: new.clone(),
+        });
+
+        assert_matches!(
+            inverse,
+            UndoAction::SetArrangementSections {
+                old: inverse_old,
+                new: inverse_new
+            } if inverse_old == new && inverse_new == old
+        );
     }
 
     #[test]

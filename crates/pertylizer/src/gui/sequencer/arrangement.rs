@@ -8,6 +8,26 @@ use super::*;
 use crate::gui::widgets::{expose, expose_selected, mute_toggle, solo_toggle};
 
 const PLACEMENT_RESIZE_ZONE: f32 = 8.0;
+const SECTION_RESIZE_ZONE: f32 = 7.0;
+
+/// Apply one section edit and record the complete before/after section list as
+/// a single undo step.
+fn edit_sections(
+    song: &Arc<synth_sequencer::SharedSong>,
+    undo_manager: &mut crate::undo::UndoManager,
+    edit: impl FnOnce(&mut synth_sequencer::Song),
+) {
+    let (old, new) = {
+        let mut song_w = song.write();
+        let old = song_w.sections().to_vec();
+        edit(&mut song_w);
+        let new = song_w.sections().to_vec();
+        (old, new)
+    };
+    if old != new {
+        undo_manager.push(crate::undo::UndoAction::SetArrangementSections { old, new });
+    }
+}
 
 /// Collect arrangement data from song (short read-lock, then release).
 pub(super) fn collect_arrangement_data(
@@ -40,7 +60,7 @@ pub(super) fn collect_arrangement_data(
         })
         .collect();
 
-    let mut song_end_tick: u64 = 0;
+    let mut song_end_tick = song.calculate_length().0;
     let placements: Vec<PlacementInfo> = song
         .arrangement()
         .iter()
@@ -129,6 +149,7 @@ pub(super) fn collect_arrangement_data(
         tracks,
         placements,
         patterns,
+        sections: song.sections().to_vec(),
         time_sig,
         song_end_tick,
         tempo_changes,
@@ -495,8 +516,8 @@ pub(super) fn draw_arrangement(
         }
     }
 
-    // ── Pinned bar-number ruler strip (fixed top, mirrors horizontal scroll) ──
-    // Only the ruler is pinned; the tempo lane stays in the scrolling canvas
+    // ── Pinned section and bar-number strips (mirror horizontal scroll) ──
+    // The form lane and ruler are pinned; the tempo lane stays in the scrolling canvas
     // below and scrolls away with the tracks. Read the offset after auto-follow
     // has set it so the strip tracks playback with no frame of lag. Mirrors the
     // piano roll's pinned ruler (`draw_pr_ruler_strip`). Drawn after the left
@@ -504,6 +525,28 @@ pub(super) fn draw_arrangement(
     let ruler_offset = egui::scroll_area::State::load(ui.ctx(), scroll_id)
         .map(|s| s.offset)
         .unwrap_or_default();
+    egui::Panel::top("seq_sections")
+        .exact_size(SECTION_LANE_HEIGHT)
+        .resizable(false)
+        .frame(egui::Frame::NONE)
+        .show(ui, |ui| {
+            let mut ctx = ArrangementCtx {
+                data,
+                song,
+                handle: &mut *handle,
+                view_state: &mut *view_state,
+                undo_manager: &mut *undo_manager,
+                instruments,
+            };
+            draw_arrangement_section_strip(
+                &mut ctx,
+                ui,
+                ruler_offset.x,
+                ticks_per_bar,
+                ticks_per_beat,
+                pixels_per_beat,
+            );
+        });
     egui::Panel::top("seq_ruler")
         .exact_size(RULER_HEIGHT)
         .resizable(false)
@@ -773,6 +816,425 @@ fn draw_arrangement_timeline(
             instruments,
         };
         draw_arrangement_playhead(&mut ctx, &painter, &coords, current_tick, track_count);
+    }
+}
+
+/// Draw and edit the pinned song-form lane above the bar ruler.
+#[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+fn draw_arrangement_section_strip(
+    ctx: &mut ArrangementCtx<'_>,
+    ui: &mut egui::Ui,
+    offset_x: f32,
+    ticks_per_bar: u64,
+    ticks_per_beat: u64,
+    pixels_per_beat: f32,
+) {
+    let t = theme();
+    let area = ui.max_rect();
+    let coords = ArrangementCoords {
+        tl_x: area.left() - offset_x,
+        tl_y: area.top(),
+        ticks_per_beat,
+        pixels_per_beat,
+        track_count: ctx.data.tracks.len(),
+        snap_ticks: ctx.view_state.arrangement_snap_ticks as u64,
+    };
+    let painter = ui.painter().with_clip_rect(area);
+    painter.rect_filled(area, 0.0, t.colors.bg_panel);
+    painter.line_segment(
+        [area.left_bottom(), area.right_bottom()],
+        Stroke::new(1.0, t.colors.border),
+    );
+    let mut section_rects = Vec::with_capacity(ctx.data.sections.len());
+    for section in &ctx.data.sections {
+        let left = coords.tick_to_x(section.start.0);
+        let right = coords.tick_to_x(section.end().0).max(left + 2.0);
+        let rect = Rect::from_min_max(
+            Pos2::new(left, area.top() + 2.0),
+            Pos2::new(right, area.bottom() - 2.0),
+        );
+        section_rects.push(rect);
+
+        let color = Color32::from_rgb(section.color.red, section.color.green, section.color.blue);
+        let selected = ctx.view_state.selected_section == Some(section.id);
+        painter.rect_filled(
+            rect,
+            3.0,
+            color.gamma_multiply(if selected { 0.9 } else { 0.68 }),
+        );
+        painter.rect_stroke(
+            rect,
+            3.0,
+            Stroke::new(
+                if selected { 2.0 } else { 1.0 },
+                if selected {
+                    Color32::WHITE
+                } else {
+                    color.gamma_multiply(1.25)
+                },
+            ),
+            egui::StrokeKind::Inside,
+        );
+
+        let resize_rect = Rect::from_min_max(
+            Pos2::new(
+                (rect.right() - SECTION_RESIZE_ZONE).max(rect.left()),
+                rect.top(),
+            ),
+            rect.right_bottom(),
+        );
+        let body_rect = Rect::from_min_max(
+            rect.left_top(),
+            Pos2::new(resize_rect.left().max(rect.left()), rect.bottom()),
+        );
+        let body = ui
+            .interact(
+                body_rect,
+                ui.id().with(("arr_section_body", section.id.0)),
+                Sense::click_and_drag(),
+            )
+            .on_hover_text(format!(
+                "{} · {}\nDrag to move · Right-click to edit",
+                section.name,
+                section.kind.display_name()
+            ));
+        let resize = ui
+            .interact(
+                resize_rect,
+                ui.id().with(("arr_section_resize", section.id.0)),
+                Sense::click_and_drag(),
+            )
+            .on_hover_text("Drag to resize section");
+        expose(
+            &body,
+            egui::WidgetType::Button,
+            format!("{} section {}", section.kind.display_name(), section.name),
+            None,
+        );
+
+        if body.clicked() || resize.clicked() {
+            ctx.view_state.selected_section = Some(section.id);
+        }
+        if body.hovered() {
+            ui.output_mut(|output| output.cursor_icon = CursorIcon::Grab);
+        }
+        if resize.hovered() || resize.dragged() {
+            ui.output_mut(|output| output.cursor_icon = CursorIcon::ResizeHorizontal);
+        }
+
+        let label = if section.name.trim().is_empty() {
+            section.kind.display_name()
+        } else {
+            section.name.as_str()
+        };
+        painter.with_clip_rect(rect.shrink(2.0)).text(
+            Pos2::new(rect.left() + 6.0, rect.center().y),
+            egui::Align2::LEFT_CENTER,
+            label,
+            egui::FontId::proportional(12.0),
+            Color32::WHITE,
+        );
+
+        if body.drag_started_by(egui::PointerButton::Primary)
+            && let Some(pos) = ui.input(|input| input.pointer.press_origin())
+        {
+            let grab_tick = coords.x_to_tick(pos.x);
+            ctx.view_state.drag = Some(DragState::MoveSection {
+                section_id: section.id,
+                original_start: section.start,
+                current_start: section.start,
+                grab_offset_ticks: Tick(grab_tick.saturating_sub(section.start.0)),
+            });
+        }
+        if body.dragged_by(egui::PointerButton::Primary)
+            && let Some(pos) = body.interact_pointer_pos()
+            && let Some(DragState::MoveSection {
+                section_id,
+                current_start,
+                grab_offset_ticks,
+                ..
+            }) = &mut ctx.view_state.drag
+            && *section_id == section.id
+        {
+            let raw_start = coords.x_to_tick(pos.x).saturating_sub(grab_offset_ticks.0);
+            *current_start = Tick(coords.snap_tick(raw_start));
+        }
+        if let Some(DragState::MoveSection {
+            section_id,
+            current_start,
+            ..
+        }) = &ctx.view_state.drag
+            && *section_id == section.id
+        {
+            let moved_start = current_start.0;
+            let ghost = Rect::from_min_max(
+                Pos2::new(coords.tick_to_x(moved_start), rect.top()),
+                Pos2::new(
+                    coords.tick_to_x(moved_start.saturating_add(u64::from(section.length.0))),
+                    rect.bottom(),
+                ),
+            );
+            painter.rect_stroke(
+                ghost,
+                3.0,
+                Stroke::new(2.0, Color32::WHITE),
+                egui::StrokeKind::Inside,
+            );
+        }
+        if body.drag_stopped_by(egui::PointerButton::Primary) {
+            match ctx.view_state.drag.take() {
+                Some(DragState::MoveSection {
+                    section_id,
+                    original_start,
+                    current_start,
+                    ..
+                }) if section_id == section.id => {
+                    if current_start != original_start {
+                        let mut moved = section.clone();
+                        moved.start = current_start;
+                        edit_sections(ctx.song, ctx.undo_manager, |song| {
+                            song.set_section(moved);
+                        });
+                    }
+                }
+                other => ctx.view_state.drag = other,
+            }
+        }
+
+        if resize.drag_started_by(egui::PointerButton::Primary) {
+            ctx.view_state.drag = Some(DragState::ResizeSection {
+                section_id: section.id,
+                start: section.start,
+                original_length: section.length,
+                current_length: section.length,
+            });
+        }
+        if resize.dragged_by(egui::PointerButton::Primary)
+            && let Some(pos) = resize.interact_pointer_pos()
+            && let Some(DragState::ResizeSection {
+                section_id,
+                start,
+                current_length,
+                ..
+            }) = &mut ctx.view_state.drag
+            && *section_id == section.id
+        {
+            let minimum = section.start.0.saturating_add(coords.snap_ticks.max(1));
+            let end = coords.snap_tick(coords.x_to_tick(pos.x)).max(minimum);
+            *current_length =
+                SeqDuration(u32::try_from(end.saturating_sub(start.0)).unwrap_or(u32::MAX));
+        }
+        if let Some(DragState::ResizeSection {
+            section_id,
+            current_length,
+            ..
+        }) = &ctx.view_state.drag
+            && *section_id == section.id
+        {
+            let ghost = Rect::from_min_max(
+                rect.left_top(),
+                Pos2::new(
+                    coords.tick_to_x(section.start.0.saturating_add(u64::from(current_length.0))),
+                    rect.bottom(),
+                ),
+            );
+            painter.rect_stroke(
+                ghost,
+                3.0,
+                Stroke::new(2.0, Color32::WHITE),
+                egui::StrokeKind::Inside,
+            );
+        }
+        if resize.drag_stopped_by(egui::PointerButton::Primary) {
+            match ctx.view_state.drag.take() {
+                Some(DragState::ResizeSection {
+                    section_id,
+                    original_length,
+                    current_length,
+                    ..
+                }) if section_id == section.id => {
+                    if current_length != original_length {
+                        let mut resized = section.clone();
+                        resized.length = current_length;
+                        edit_sections(ctx.song, ctx.undo_manager, |song| {
+                            song.set_section(resized);
+                        });
+                    }
+                }
+                other => ctx.view_state.drag = other,
+            }
+        }
+
+        egui::Popup::context_menu(&body)
+            .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+            .show(|ui| {
+                draw_section_context_menu(ctx, ui, section, ticks_per_bar);
+            });
+    }
+
+    // Read empty-lane double-clicks directly instead of placing one large
+    // background Response over the strip. An overlapping background Response
+    // can capture the primary pointer before the section body/right-edge
+    // Responses, which makes their drag gestures inert.
+    let empty_lane_double_click = ui.input(|input| {
+        input
+            .pointer
+            .button_double_clicked(egui::PointerButton::Primary)
+    });
+    if empty_lane_double_click
+        && let Some(pos) = ui.input(|input| input.pointer.interact_pos())
+        && area.contains(pos)
+        && !section_rects.iter().any(|rect| rect.contains(pos))
+    {
+        let start = coords.snap_tick(coords.x_to_tick(pos.x));
+        let length = u32::try_from(ticks_per_bar.saturating_mul(4)).unwrap_or(u32::MAX);
+        edit_sections(ctx.song, ctx.undo_manager, |song| {
+            let _ = song.create_section(
+                "Section",
+                SectionKind::Custom,
+                Tick(start),
+                SeqDuration(length.max(1)),
+            );
+        });
+    }
+
+    if ctx.data.sections.is_empty() {
+        painter.text(
+            area.center(),
+            egui::Align2::CENTER_CENTER,
+            "Double-click to add a section",
+            egui::FontId::proportional(11.0),
+            t.colors.text_dim,
+        );
+    }
+}
+
+/// Context menu for one arrangement section.
+fn draw_section_context_menu(
+    ctx: &mut ArrangementCtx<'_>,
+    ui: &mut egui::Ui,
+    section: &synth_sequencer::ArrangementSection,
+    ticks_per_bar: u64,
+) {
+    if ctx
+        .view_state
+        .editing_section_name
+        .as_ref()
+        .is_none_or(|(id, _)| *id != section.id)
+    {
+        ctx.view_state.editing_section_name = Some((section.id, section.name.clone()));
+    }
+    if ctx
+        .view_state
+        .editing_section_color
+        .as_ref()
+        .is_none_or(|(id, _)| *id != section.id)
+    {
+        ctx.view_state.editing_section_color = Some((
+            section.id,
+            [section.color.red, section.color.green, section.color.blue],
+        ));
+    }
+
+    ui.label(RichText::new("Section").strong());
+    if let Some((_, draft)) = &mut ctx.view_state.editing_section_name {
+        let edit = ui.text_edit_singleline(draft);
+        let apply_with_enter =
+            edit.lost_focus() && ui.input(|input| input.key_pressed(egui::Key::Enter));
+        if ui.button("Apply name").clicked() || apply_with_enter {
+            let name = draft.trim().to_owned();
+            let mut renamed = section.clone();
+            renamed.name = name;
+            edit_sections(ctx.song, ctx.undo_manager, |song| {
+                song.set_section(renamed);
+            });
+            ui.close();
+        }
+    }
+
+    ui.menu_button(format!("Type: {}", section.kind.display_name()), |ui| {
+        const KINDS: [SectionKind; 9] = [
+            SectionKind::Intro,
+            SectionKind::Verse,
+            SectionKind::PreChorus,
+            SectionKind::Chorus,
+            SectionKind::Bridge,
+            SectionKind::Break,
+            SectionKind::Solo,
+            SectionKind::Outro,
+            SectionKind::Custom,
+        ];
+        for kind in KINDS {
+            if ui
+                .selectable_label(section.kind == kind, kind.display_name())
+                .clicked()
+            {
+                let mut changed = section.clone();
+                changed.kind = kind;
+                changed.color = kind.default_color();
+                edit_sections(ctx.song, ctx.undo_manager, |song| {
+                    song.set_section(changed);
+                });
+                ui.close();
+            }
+        }
+    });
+
+    if let Some((_, draft)) = &mut ctx.view_state.editing_section_color {
+        ui.horizontal(|ui| {
+            ui.label("Color");
+            ui.color_edit_button_srgb(draft);
+            if ui.button("Apply").clicked() {
+                let mut changed = section.clone();
+                changed.color = synth_sequencer::SectionColor::new(draft[0], draft[1], draft[2]);
+                edit_sections(ctx.song, ctx.undo_manager, |song| {
+                    song.set_section(changed);
+                });
+                ui.close();
+            }
+        });
+    }
+
+    ui.separator();
+    if ui.button("Duplicate after").clicked() {
+        let section = section.clone();
+        edit_sections(ctx.song, ctx.undo_manager, |song| {
+            let id = song.create_section(
+                section.name.clone(),
+                section.kind,
+                section.end(),
+                section.length,
+            );
+            if let Some(mut duplicate) = song.sections().iter().find(|item| item.id == id).cloned()
+            {
+                duplicate.color = section.color;
+                song.set_section(duplicate);
+            }
+        });
+        ui.close();
+    }
+    if ui.button("Set to 4 bars").clicked() {
+        let mut changed = section.clone();
+        changed.length =
+            SeqDuration(u32::try_from(ticks_per_bar.saturating_mul(4)).unwrap_or(u32::MAX));
+        edit_sections(ctx.song, ctx.undo_manager, |song| {
+            song.set_section(changed);
+        });
+        ui.close();
+    }
+    ui.separator();
+    if ui
+        .button(RichText::new("Delete section").color(theme().colors.accent_red))
+        .clicked()
+    {
+        let id = section.id;
+        edit_sections(ctx.song, ctx.undo_manager, |song| {
+            song.remove_section(id);
+        });
+        if ctx.view_state.selected_section == Some(id) {
+            ctx.view_state.selected_section = None;
+        }
+        ui.close();
     }
 }
 
@@ -2343,11 +2805,21 @@ fn draw_arrangement_track_headers(
         .show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 0.0;
 
-            // Ruler-height corner placeholder (pinned, outside the scroll area)
-            // so the header column stays aligned with the pinned ruler strip.
-            // Only the ruler height is fixed now; the tempo-lane "Tempo" label
-            // moves inside the scroll area so it scrolls with the timeline's
-            // tempo lane (which is now the first scroll content).
+            // Pinned form-lane label and ruler corner, matching the two fixed
+            // strips above the right-side timeline.
+            let (section_label_rect, _) = ui.allocate_exact_size(
+                Vec2::new(TRACK_HEADER_WIDTH, SECTION_LANE_HEIGHT),
+                Sense::hover(),
+            );
+            ui.painter()
+                .rect_filled(section_label_rect, 0.0, theme().colors.bg_panel);
+            ui.painter().text(
+                section_label_rect.left_center() + Vec2::new(8.0, 0.0),
+                egui::Align2::LEFT_CENTER,
+                "Sections",
+                egui::FontId::proportional(11.0),
+                theme().colors.text_secondary,
+            );
             ui.allocate_space(Vec2::new(TRACK_HEADER_WIDTH, RULER_HEIGHT));
 
             egui::ScrollArea::vertical()
@@ -2789,4 +3261,149 @@ fn draw_arrangement_track_headers(
                     }
                 });
         });
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pointer_input(events: Vec<egui::Event>) -> egui::RawInput {
+        egui::RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(800.0, 80.0))),
+            events,
+            ..Default::default()
+        }
+    }
+
+    fn pointer_button(pos: Pos2, pressed: bool) -> egui::Event {
+        egui::Event::PointerButton {
+            pos,
+            button: egui::PointerButton::Primary,
+            pressed,
+            modifiers: egui::Modifiers::default(),
+        }
+    }
+
+    fn draw_section_test_frame(
+        egui_ctx: &egui::Context,
+        input: egui::RawInput,
+        song: &Arc<synth_sequencer::SharedSong>,
+        handle: &mut EngineHandle,
+        view_state: &mut SequencerViewState,
+        undo_manager: &mut crate::undo::UndoManager,
+    ) {
+        let data = collect_arrangement_data(song).expect("arrangement snapshot");
+        let _ = egui_ctx.run_ui(input, |ui| {
+            let mut arrangement_ctx = ArrangementCtx {
+                data: &data,
+                song,
+                handle,
+                view_state,
+                undo_manager,
+                instruments: &[],
+            };
+            draw_arrangement_section_strip(&mut arrangement_ctx, ui, 0.0, 3_840, 960, 40.0);
+        });
+    }
+
+    #[test]
+    fn section_body_drag_and_right_edge_resize_commit_on_release() {
+        let song = Arc::new(synth_sequencer::SharedSong::new(Song::new("Drag test")));
+        let section_id =
+            song.write()
+                .create_section("Verse", SectionKind::Verse, Tick(0), SeqDuration(15_360));
+        let (_engine, mut handle) = synth_engine::SynthEngine::new();
+        let mut view_state = SequencerViewState::new();
+        let mut undo_manager = crate::undo::UndoManager::new();
+        let egui_ctx = egui::Context::default();
+
+        let body_start = Pos2::new(100.0, 14.0);
+        let body_end = Pos2::new(220.0, 14.0);
+        draw_section_test_frame(
+            &egui_ctx,
+            pointer_input(vec![egui::Event::PointerMoved(body_start)]),
+            &song,
+            &mut handle,
+            &mut view_state,
+            &mut undo_manager,
+        );
+        draw_section_test_frame(
+            &egui_ctx,
+            pointer_input(vec![pointer_button(body_start, true)]),
+            &song,
+            &mut handle,
+            &mut view_state,
+            &mut undo_manager,
+        );
+        draw_section_test_frame(
+            &egui_ctx,
+            pointer_input(vec![egui::Event::PointerMoved(body_end)]),
+            &song,
+            &mut handle,
+            &mut view_state,
+            &mut undo_manager,
+        );
+        draw_section_test_frame(
+            &egui_ctx,
+            pointer_input(vec![pointer_button(body_end, false)]),
+            &song,
+            &mut handle,
+            &mut view_state,
+            &mut undo_manager,
+        );
+
+        let moved = song
+            .read()
+            .sections()
+            .iter()
+            .find(|section| section.id == section_id)
+            .cloned()
+            .expect("moved section");
+        assert_eq!(moved.start, Tick(2_880));
+
+        let resize_start = Pos2::new(755.0, 14.0);
+        let resize_end = Pos2::new(720.0, 14.0);
+        draw_section_test_frame(
+            &egui_ctx,
+            pointer_input(vec![egui::Event::PointerMoved(resize_start)]),
+            &song,
+            &mut handle,
+            &mut view_state,
+            &mut undo_manager,
+        );
+        draw_section_test_frame(
+            &egui_ctx,
+            pointer_input(vec![pointer_button(resize_start, true)]),
+            &song,
+            &mut handle,
+            &mut view_state,
+            &mut undo_manager,
+        );
+        draw_section_test_frame(
+            &egui_ctx,
+            pointer_input(vec![egui::Event::PointerMoved(resize_end)]),
+            &song,
+            &mut handle,
+            &mut view_state,
+            &mut undo_manager,
+        );
+        draw_section_test_frame(
+            &egui_ctx,
+            pointer_input(vec![pointer_button(resize_end, false)]),
+            &song,
+            &mut handle,
+            &mut view_state,
+            &mut undo_manager,
+        );
+
+        let resized = song
+            .read()
+            .sections()
+            .iter()
+            .find(|section| section.id == section_id)
+            .cloned()
+            .expect("resized section");
+        assert_eq!(resized.length, SeqDuration(14_400));
+        assert!(undo_manager.can_undo());
+    }
 }

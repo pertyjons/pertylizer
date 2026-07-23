@@ -4062,6 +4062,8 @@ fn handle_piano_roll_interaction(
             }
             Some(DragState::DragPlacement { .. })
             | Some(DragState::ResizePlacement { .. })
+            | Some(DragState::MoveSection { .. })
+            | Some(DragState::ResizeSection { .. })
             | None => {}
         }
     }
@@ -4268,8 +4270,11 @@ fn handle_piano_roll_interaction(
                     }
                 }
             }
-            // Placement drag + resize are handled in the arrangement view.
-            DragState::DragPlacement { .. } | DragState::ResizePlacement { .. } => {}
+            // Arrangement-only drags are handled in the arrangement view.
+            DragState::DragPlacement { .. }
+            | DragState::ResizePlacement { .. }
+            | DragState::MoveSection { .. }
+            | DragState::ResizeSection { .. } => {}
         }
     }
 }

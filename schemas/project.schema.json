@@ -254,6 +254,44 @@
       },
       "type": "object"
     },
+    "ArrangementSection": {
+      "description": "A named interval describing the high-level form of the arrangement.",
+      "properties": {
+        "color": {
+          "$ref": "#/$defs/SectionColor",
+          "description": "Display color."
+        },
+        "id": {
+          "$ref": "#/$defs/SectionId",
+          "description": "Stable section identifier."
+        },
+        "kind": {
+          "$ref": "#/$defs/SectionKind",
+          "description": "Semantic role used for presets and future form-aware features."
+        },
+        "length": {
+          "$ref": "#/$defs/Duration",
+          "description": "Section duration."
+        },
+        "name": {
+          "description": "User-facing label, independent of the semantic kind.",
+          "type": "string"
+        },
+        "start": {
+          "$ref": "#/$defs/Tick",
+          "description": "Start position on the song timeline."
+        }
+      },
+      "required": [
+        "id",
+        "name",
+        "kind",
+        "start",
+        "length",
+        "color"
+      ],
+      "type": "object"
+    },
     "AudioTapNode": {
       "description": "A grid-native pre-fader level tap (source only; one-block latency).",
       "properties": {
@@ -10851,6 +10889,59 @@
       },
       "type": "object"
     },
+    "SectionColor": {
+      "description": "Persisted RGB color for an arrangement section.",
+      "properties": {
+        "blue": {
+          "description": "Blue channel.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "green": {
+          "description": "Green channel.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        },
+        "red": {
+          "description": "Red channel.",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "red",
+        "green",
+        "blue"
+      ],
+      "type": "object"
+    },
+    "SectionId": {
+      "description": "Unique identifier for an arrangement section marker.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    },
+    "SectionKind": {
+      "description": "Semantic role of an arrangement section.",
+      "enum": [
+        "intro",
+        "verse",
+        "pre_chorus",
+        "chorus",
+        "bridge",
+        "break",
+        "solo",
+        "outro",
+        "custom"
+      ],
+      "type": "string"
+    },
     "Semitones": {
       "description": "Pitch offset in semitones.\n\n1 semitone = 100 cents\n12 semitones = 1 octave",
       "format": "float",
@@ -10982,6 +11073,12 @@
           "minimum": 0,
           "type": "integer"
         },
+        "next_section_id": {
+          "default": 0,
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
         "next_track_id": {
           "format": "uint16",
           "maximum": 65535,
@@ -11015,6 +11112,12 @@
             "ticks_per_row": 240
           },
           "description": "Row resolution for pattern grid display and quantization."
+        },
+        "sections": {
+          "items": {
+            "$ref": "#/$defs/ArrangementSection"
+          },
+          "type": "array"
         },
         "tempo_changes": {
           "items": {

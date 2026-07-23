@@ -14,7 +14,8 @@ use synth_sequencer::{
     AutoInstrumentParam, AutomationPoint, AutomationTarget, CurveType, Duration as SeqDuration,
     ExpansionBuffer, Glide, GlideFrom, GlideInterp, GlobalParam, Note, NoteExpression, NoteId,
     NoteLane, NoteName, NoteProcessor, Ornament, PatternId, PatternTick, Pitch, PlacementLoopMode,
-    Song, Tick, TimeSignature, TrackId, TrackParam, Velocity, Vibrato, VibratoShape,
+    SectionId, SectionKind, Song, Tick, TimeSignature, TrackId, TrackParam, Velocity, Vibrato,
+    VibratoShape,
 };
 
 use crate::gui::input::KEY_MAP;
@@ -136,6 +137,21 @@ enum DragState {
         /// Current length while dragging (snapped to grid).
         current_length: SeqDuration,
     },
+    /// Drag-move an arrangement section.
+    MoveSection {
+        section_id: SectionId,
+        original_start: Tick,
+        current_start: Tick,
+        /// Offset from section start to the pointer grab position.
+        grab_offset_ticks: Tick,
+    },
+    /// Drag-resize an arrangement section's right edge.
+    ResizeSection {
+        section_id: SectionId,
+        start: Tick,
+        original_length: SeqDuration,
+        current_length: SeqDuration,
+    },
 }
 
 // ============================================================================
@@ -243,6 +259,12 @@ pub struct SequencerViewState {
     context_menu_pos: Option<Pos2>,
     /// Track to highlight (set on right-click, cleared on primary click).
     highlighted_track: Option<TrackId>,
+    /// Selected arrangement section.
+    selected_section: Option<SectionId>,
+    /// Name draft kept alive while a section context menu is open.
+    editing_section_name: Option<(SectionId, String)>,
+    /// RGB draft kept alive while a section context menu is open.
+    editing_section_color: Option<(SectionId, [u8; 3])>,
     /// Selected track for pattern follow mode.
     selected_track: Option<TrackId>,
     /// Arrangement timeline zoom level (1.0 = default).
@@ -363,6 +385,9 @@ impl SequencerViewState {
             pattern_solo: true,
             context_menu_pos: None,
             highlighted_track: None,
+            selected_section: None,
+            editing_section_name: None,
+            editing_section_color: None,
             selected_track: None,
             zoom_level: 1.0,
             auto_follow_playhead: true,
@@ -671,6 +696,8 @@ const TRACK_HEADER_WIDTH: f32 = 150.0;
 const TRACK_ROW_HEIGHT: f32 = 64.0;
 /// Height of the timeline ruler at the top.
 const RULER_HEIGHT: f32 = 24.0;
+/// Height of the pinned arrangement-section lane.
+const SECTION_LANE_HEIGHT: f32 = 28.0;
 /// Height of the tempo-map lane, drawn between the ruler and the track rows.
 const TEMPO_LANE_HEIGHT: f32 = 48.0;
 /// Pixels per beat at default zoom.
@@ -777,6 +804,7 @@ struct ArrangementData {
     tracks: Vec<TrackInfo>,
     placements: Vec<PlacementInfo>,
     patterns: Vec<PatternInfo>,
+    sections: Vec<synth_sequencer::ArrangementSection>,
     time_sig: TimeSignature,
     song_end_tick: u64,
     /// Tempo automation points: (tick, BPM, ramp). `ramp` = linear ramp toward
