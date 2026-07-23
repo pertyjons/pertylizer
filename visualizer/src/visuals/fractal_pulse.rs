@@ -134,7 +134,7 @@ pub fn update(
         transform.scale = Vec3::splat(base_scale + pulse_amount * 2.0);
 
         if (fade < 1.0 || state.full_update_needed || hue_changed)
-            && let Some(material) = materials.get_mut(&material_handle.0)
+            && let Some(mut material) = materials.get_mut(&material_handle.0)
         {
             let sat = (0.9 + policy.saturation_offset).clamp(0.0, 1.0);
             let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);

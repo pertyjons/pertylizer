@@ -10,7 +10,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
-use bevy::render::storage::ShaderStorageBuffer;
+use bevy::render::storage::ShaderBuffer;
 use bevy::shader::ShaderRef;
 
 use super::effects::{EffectId, EffectLayer, EffectState};
@@ -52,7 +52,7 @@ pub struct FftTerrainMaterial {
     #[uniform(0)]
     pub uniforms: FftTerrainUniforms,
     #[storage(1, read_only)]
-    pub heights: Handle<ShaderStorageBuffer>,
+    pub heights: Handle<ShaderBuffer>,
 }
 
 impl Material for FftTerrainMaterial {
@@ -71,7 +71,7 @@ pub struct FftTerrainState {
     /// Smoothed heights per cell (COLS * ROWS).
     smoothed_heights: Vec<f32>,
     material_handle: Handle<FftTerrainMaterial>,
-    buffer_handle: Handle<ShaderStorageBuffer>,
+    buffer_handle: Handle<ShaderBuffer>,
 }
 
 impl Default for FftTerrainState {
@@ -120,18 +120,21 @@ fn create_fft_terrain_mesh() -> Mesh {
         }
     }
 
-    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
-        .with_inserted_indices(Indices::U32(indices))
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+    .with_inserted_indices(Indices::U32(indices))
 }
 
 pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<FftTerrainMaterial>>,
-    mut buffers: ResMut<Assets<ShaderStorageBuffer>>,
+    mut buffers: ResMut<Assets<ShaderBuffer>>,
     mut state: ResMut<FftTerrainState>,
     policy: Res<ThemeMaterialPolicy>,
 ) {
@@ -141,7 +144,7 @@ pub fn setup(
     let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
     let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
 
-    let buffer = buffers.add(ShaderStorageBuffer::from(vec![0.0_f32; COLS * ROWS]));
+    let buffer = buffers.add(ShaderBuffer::from(vec![0.0_f32; COLS * ROWS]));
     state.buffer_handle = buffer.clone();
 
     let material = materials.add(FftTerrainMaterial {
@@ -176,7 +179,7 @@ pub fn update(
     policy: Res<ThemeMaterialPolicy>,
     mut state: ResMut<FftTerrainState>,
     mut materials: ResMut<Assets<FftTerrainMaterial>>,
-    mut buffers: ResMut<Assets<ShaderStorageBuffer>>,
+    mut buffers: ResMut<Assets<ShaderBuffer>>,
 ) {
     let fade = effect_state.fade;
     let dt = time.delta_secs();
@@ -206,7 +209,7 @@ pub fn update(
     }
 
     // Upload heights to GPU
-    if let Some(buf) = buffers.get_mut(&state.buffer_handle) {
+    if let Some(mut buf) = buffers.get_mut(&state.buffer_handle) {
         buf.set_data(state.smoothed_heights.clone());
     }
 
@@ -217,7 +220,7 @@ pub fn update(
     let flux_boost = 1.0 + telemetry_color::flux_emissive_boost(telemetry.flux, &policy);
     let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
 
-    if let Some(mat) = materials.get_mut(&state.material_handle) {
+    if let Some(mut mat) = materials.get_mut(&state.material_handle) {
         mat.uniforms = FftTerrainUniforms {
             num_cols: COLS as u32,
             num_rows: ROWS as u32,

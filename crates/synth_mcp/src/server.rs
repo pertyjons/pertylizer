@@ -5532,6 +5532,16 @@ impl SynthMcpServer {
             .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
         use base64::Engine;
+        #[cfg(any(target_arch = "x86_64", target_arch = "aarch64"))]
+        let encoded = {
+            static ENGINE: std::sync::OnceLock<base64::engine::Simd> = std::sync::OnceLock::new();
+            ENGINE
+                .get_or_init(|| {
+                    base64::engine::Simd::standard(base64::engine::general_purpose::PAD)
+                })
+                .encode(&preview.wav_data)
+        };
+        #[cfg(not(any(target_arch = "x86_64", target_arch = "aarch64")))]
         let encoded = base64::engine::general_purpose::STANDARD.encode(&preview.wav_data);
 
         let audio = ContentBlock::audio(encoded, "audio/wav");

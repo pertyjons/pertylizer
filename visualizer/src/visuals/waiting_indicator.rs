@@ -16,7 +16,7 @@ pub fn setup(mut commands: Commands) {
     commands.spawn((
         Text::new("Waiting for signal..."),
         TextFont {
-            font_size: 28.0,
+            font_size: FontSize::Px(28.0),
             ..default()
         },
         TextColor(Color::srgba(0.7, 0.7, 0.8, 0.0)),

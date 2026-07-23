@@ -9,7 +9,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
-use bevy::render::storage::ShaderStorageBuffer;
+use bevy::render::storage::ShaderBuffer;
 use bevy::shader::ShaderRef;
 
 use super::effects::{EffectId, EffectLayer, EffectState};
@@ -55,7 +55,7 @@ pub struct CyberWireframeMaterial {
     #[uniform(0)]
     pub uniforms: CyberWireframeUniforms,
     #[storage(1, read_only)]
-    pub heights: Handle<ShaderStorageBuffer>,
+    pub heights: Handle<ShaderBuffer>,
 }
 
 impl Material for CyberWireframeMaterial {
@@ -74,7 +74,7 @@ pub struct CyberWireframeState {
     /// Smoothed heights per node (COLS * ROWS).
     smoothed_heights: Vec<f32>,
     material_handle: Handle<CyberWireframeMaterial>,
-    buffer_handle: Handle<ShaderStorageBuffer>,
+    buffer_handle: Handle<ShaderBuffer>,
 }
 
 impl Default for CyberWireframeState {
@@ -149,7 +149,7 @@ pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<CyberWireframeMaterial>>,
-    mut buffers: ResMut<Assets<ShaderStorageBuffer>>,
+    mut buffers: ResMut<Assets<ShaderBuffer>>,
     mut state: ResMut<CyberWireframeState>,
     policy: Res<ThemeMaterialPolicy>,
 ) {
@@ -159,7 +159,7 @@ pub fn setup(
     let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
     let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
 
-    let buffer = buffers.add(ShaderStorageBuffer::from(vec![0.0_f32; COLS * ROWS]));
+    let buffer = buffers.add(ShaderBuffer::from(vec![0.0_f32; COLS * ROWS]));
     state.buffer_handle = buffer.clone();
 
     let material = materials.add(CyberWireframeMaterial {
@@ -198,7 +198,7 @@ pub fn update(
     policy: Res<ThemeMaterialPolicy>,
     mut state: ResMut<CyberWireframeState>,
     mut materials: ResMut<Assets<CyberWireframeMaterial>>,
-    mut buffers: ResMut<Assets<ShaderStorageBuffer>>,
+    mut buffers: ResMut<Assets<ShaderBuffer>>,
 ) {
     let fade = effect_state.fade;
     let dt = time.delta_secs();
@@ -228,7 +228,7 @@ pub fn update(
     }
 
     // Upload heights to GPU
-    if let Some(buf) = buffers.get_mut(&state.buffer_handle) {
+    if let Some(mut buf) = buffers.get_mut(&state.buffer_handle) {
         buf.set_data(state.smoothed_heights.clone());
     }
 
@@ -239,7 +239,7 @@ pub fn update(
     let flux_boost = 1.0 + telemetry_color::flux_emissive_boost(telemetry.flux, &policy);
     let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
 
-    if let Some(mat) = materials.get_mut(&state.material_handle) {
+    if let Some(mut mat) = materials.get_mut(&state.material_handle) {
         mat.uniforms = CyberWireframeUniforms {
             time: time.elapsed_secs(),
             fade,

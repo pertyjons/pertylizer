@@ -86,7 +86,6 @@ pub struct SynthTelemetry {
     pub cpu: f32,
     /// Event ring buffer drops since last report.
     pub event_drops: u32,
-
 }
 
 impl Default for SynthTelemetry {

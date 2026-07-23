@@ -65,7 +65,7 @@ pub fn setup(
             ..default()
         }));
     }
-    
+
     let crit_material = materials.add(StandardMaterial {
         base_color: Color::WHITE,
         emissive: LinearRgba::from(Color::WHITE) * emissive * 2.0,
@@ -120,8 +120,12 @@ pub fn spawn(
         } else {
             meteor_materials.materials[note_idx].clone()
         };
-        
-        let base_scale = if is_crit { vel_scale * 4.0 } else { vel_scale * 2.0 };
+
+        let base_scale = if is_crit {
+            vel_scale * 4.0
+        } else {
+            vel_scale * 2.0
+        };
 
         commands.spawn((
             Mesh3d(meteor_mesh.0.clone()),
@@ -162,7 +166,7 @@ pub fn update(
         let emissive = 6.0 * policy.emissive_multiplier;
 
         for (note, handle) in meteor_materials.materials.iter().enumerate() {
-            if let Some(material) = materials.get_mut(handle) {
+            if let Some(mut material) = materials.get_mut(handle) {
                 let hue = ((note as f32 / 127.0) * 360.0 + hue_offset) % 360.0;
                 let color = Color::hsl(hue, sat, lit);
                 material.base_color = color;

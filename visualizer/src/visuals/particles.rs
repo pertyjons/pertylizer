@@ -159,7 +159,7 @@ pub fn update(
         let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
 
         for (note, handle) in particle_materials.materials.iter().enumerate() {
-            if let Some(material) = materials.get_mut(handle) {
+            if let Some(mut material) = materials.get_mut(handle) {
                 let hue = ((note as f32 / 127.0) * 360.0 + hue_offset) % 360.0;
                 let color = Color::hsl(hue, sat, lit);
                 material.base_color = color;

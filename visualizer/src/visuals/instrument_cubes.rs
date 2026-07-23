@@ -10,7 +10,6 @@ use bevy::prelude::*;
 use super::effects::{EffectId, EffectLayer};
 use super::theme::ThemeMaterialPolicy;
 
-
 /// Maximum live cubes across all instruments.
 const MAX_CUBES: usize = 1024;
 
@@ -148,7 +147,10 @@ pub fn setup(
         ..default()
     });
 
-    commands.insert_resource(CubeMaterials { materials: mats, crit_material });
+    commands.insert_resource(CubeMaterials {
+        materials: mats,
+        crit_material,
+    });
     commands.insert_resource(EmitterRegistry::default());
     commands.insert_resource(CubeCount::default());
 }
@@ -188,7 +190,7 @@ pub fn spawn(
 
             // Vary initial rotation and spin based on note + index
             let seed = (event.midi_note as f32 * 0.1 + i as f32 * 0.7).sin();
-            
+
             // 5% chance of being a crit
             let is_crit = rng.f32() < 0.05;
             let material = if is_crit {
@@ -196,10 +198,10 @@ pub fn spawn(
             } else {
                 base_material.clone()
             };
-            
+
             // Crit cubes spin much faster
             let spin_multiplier = if is_crit { 3.0 } else { 1.0 };
-            
+
             let spin = Vec3::new(
                 seed * 4.0,
                 (seed * 1.3).cos() * 3.0,
@@ -246,7 +248,7 @@ pub fn update(
     if *last_policy_version != policy.version {
         let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
         for (cat, handle) in cube_materials.materials.iter().enumerate() {
-            if let Some(material) = materials.get_mut(handle) {
+            if let Some(mut material) = materials.get_mut(handle) {
                 let (hue, base_sat, base_lit) = category_hsl(cat as u8);
                 let sat = (base_sat + policy.saturation_offset).clamp(0.0, 1.0);
                 let lit = (base_lit + policy.lightness_offset).clamp(0.0, 1.0);

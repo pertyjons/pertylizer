@@ -38,14 +38,14 @@ description = "Pertylizer — a modular synthesizer with 70 module types (includ
 # "rc" enables Serialize/Deserialize for Rc/Arc (used by AutomationTarget's
 # Arc<str> param id). Inert for existing types — a serialized struct holding
 # Rc/Arc would not compile without it, so none exist today.
-serde = { version = "1.0.228", features = ["derive", "rc"] }
+serde = { version = "1.0.229", features = ["derive", "rc"] }
 # `raw_value` lets `get_project_schema` pass the embedded 251 KB schema through
 # verbatim (Box<RawValue>) instead of parsing it into a Value tree and
 # re-serializing on every call.
-serde_json = { version = "1.0.150", features = ["raw_value"] }
+serde_json = { version = "1.0.151", features = ["raw_value"] }
 # TOML parsing for the runtime config file (pertylizer.toml).
-toml = "1.1.2"
-thiserror = "2.0.18"
+toml = "1.1.3"
+thiserror = "2.0.19"
 # Date/time. `clock` pulls in `Local`/`Utc::now()` via `iana-time-zone` for
 # correct, multithreaded-safe local time (unlike `time`'s `now_local`); we drop
 # the default `wasmbind`/`oldtime` features. Used for the activity-log console's
@@ -65,8 +65,8 @@ cpal = { version = "0.18.1", features = ["realtime"] }
 midir = "0.11.0"
 
 # Lock-free communication
-ringbuf = "0.5.0"
-arc-swap = "1.8.2"
+ringbuf = "0.5.1"
+arc-swap = "1.9.2"
 
 # Compile-time assertions (Send bounds / layout of thread-transferred structs).
 static_assertions = "1.1.0"
@@ -81,7 +81,7 @@ realfft = "3.5.0"
 rosc = "0.11.4"
 
 # Fast random number generation
-fastrand = "2.4.1"
+fastrand = "2.5.0"
 
 # Data parallelism (used by offline per-track renderers)
 rayon = "1.12.0"
@@ -90,14 +90,14 @@ rayon = "1.12.0"
 hound = "3.5.1"
 
 # Base64 encoding
-base64 = "0.22.1"
+base64 = "0.23.0"
 
 # ZIP archive (bundle project format)
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 # Testing
 tempfile = "3.27.0"
-jsonschema = "0.47.0"
+jsonschema = "0.48.5"
 
 # Fixed-size heap-free collections
 arrayvec = "0.7.8"
@@ -107,14 +107,14 @@ dirs = "6.0.0"
 
 # Async combinators (FutureExt::catch_unwind for MCP panic isolation).
 # Only the `std` feature is needed (catch_unwind); already pulled transitively.
-futures-util = { version = "0.3.32", default-features = false, features = ["std"] }
+futures-util = { version = "0.3.33", default-features = false, features = ["std"] }
 
 # MCP (Model Context Protocol)
 rmcp = { version = "2.2.0", features = ["server", "transport-io", "transport-streamable-http-server"] }
-tokio = { version = "1.52.3", features = ["rt-multi-thread", "macros", "io-std", "net"] }
+tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "io-std", "net"] }
 schemars = "1.2.1"
 axum = "0.8.9"
-tokio-util = { version = "0.7.18", features = ["rt"] }
+tokio-util = { version = "0.7.19", features = ["rt"] }
 
 # Structured logging (used by MCP server to trace session lifecycle / errors)
 tracing = "0.1.44"

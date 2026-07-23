@@ -65,7 +65,6 @@ pub struct SatelliteMaterials {
     pub laser_material: Handle<StandardMaterial>,
 }
 
-
 /// Spawn satellites and their paired laser beams.
 pub fn setup(
     mut commands: Commands,
@@ -76,7 +75,6 @@ pub fn setup(
     let sphere_mesh = meshes.add(Sphere::new(SATELLITE_RADIUS));
     // Thin cylinder for laser beams (radius 0.03, half-height = LASER_LENGTH / 2)
     let cylinder_mesh = meshes.add(Cylinder::new(0.03, LASER_LENGTH));
-
 
     let sat_value = (0.8 + policy.saturation_offset).clamp(0.0, 1.0);
     let lit = (0.5 + policy.lightness_offset).clamp(0.0, 1.0);
@@ -268,7 +266,7 @@ pub fn update(
         let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier * flux_boost;
 
         for (i, handle) in sat_materials.satellite_materials.iter().enumerate() {
-            if let Some(material) = materials.get_mut(handle) {
+            if let Some(mut material) = materials.get_mut(handle) {
                 #[allow(clippy::cast_precision_loss)]
                 let hue = ((i as f32 / NUM_SATELLITES as f32) * 360.0 + hue_offset) % 360.0;
                 let color = Color::hsl(hue, sat_value, lit * fade);
@@ -280,7 +278,7 @@ pub fn update(
         }
 
         // Update laser material
-        if let Some(laser_mat) = materials.get_mut(&sat_materials.laser_material) {
+        if let Some(mut laser_mat) = materials.get_mut(&sat_materials.laser_material) {
             let laser_color = Color::hsl((200.0 + hue_offset) % 360.0, 0.9, 0.8 * fade);
             laser_mat.base_color = laser_color;
             laser_mat.emissive = LinearRgba::from(laser_color) * emissive * 2.0 * fade;

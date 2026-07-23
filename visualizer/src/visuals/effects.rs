@@ -502,7 +502,7 @@ pub fn update_hue_materials_for_fade(
 
     let num_buckets = handles.len();
     for (bucket, handle) in handles.iter().enumerate() {
-        if let Some(material) = materials.get_mut(handle) {
+        if let Some(mut material) = materials.get_mut(handle) {
             #[allow(clippy::cast_precision_loss)]
             let base_hue = if config.frequency_mapped {
                 telemetry_color::band_frequency_hue(bucket as f32 / num_buckets as f32)

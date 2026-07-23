@@ -60,13 +60,16 @@ pub fn setup(
         let emissive_mult = 1.0 + (level as f32 * 0.8);
         tree_mats.push(materials.add(StandardMaterial {
             base_color,
-            emissive: LinearRgba::from(base_color) * EMISSIVE_STRENGTH * emissive_mult * policy.emissive_multiplier,
+            emissive: LinearRgba::from(base_color)
+                * EMISSIVE_STRENGTH
+                * emissive_mult
+                * policy.emissive_multiplier,
             metallic: policy.metallic,
             perceptual_roughness: policy.roughness,
             ..default()
         }));
     }
-    
+
     commands.insert_resource(TreeMaterials(tree_mats.clone()));
 
     // Define the tree structure
@@ -173,7 +176,7 @@ pub fn setup(
         };
 
         let mat_idx = def.level.min(2) as usize;
-        
+
         commands.spawn((
             Mesh3d(mesh_handle),
             MeshMaterial3d(tree_mats[mat_idx].clone()),
@@ -225,26 +228,26 @@ pub fn update(
     if rms_changed {
         *last_rms = rms_mono;
     }
-    
+
     let fade_changed = (fade - *last_fade).abs() > super::effects::FADE_EPSILON;
     if fade_changed {
         *last_fade = fade;
     }
-    
+
     if policy_changed || fade_changed || rms_changed {
         let hue = telemetry_color::centroid_to_hue(telemetry.centroid_hz, &policy);
         let sat = (0.6 + policy.saturation_offset).clamp(0.0, 1.0);
-        
+
         for (level, handle) in tree_materials.0.iter().enumerate() {
             // Inner branches are darker, outer branches are brighter
             let lit_boost = level as f32 * 0.15;
             let lit = (0.3 + lit_boost + rms_mono * 0.3 + policy.lightness_offset).clamp(0.0, 1.0);
-            
+
             // Outer branches glow more
             let emissive_mult = 1.0 + (level as f32 * 0.8);
             let emissive = EMISSIVE_STRENGTH * emissive_mult * policy.emissive_multiplier;
 
-            if let Some(material) = materials.get_mut(handle) {
+            if let Some(mut material) = materials.get_mut(handle) {
                 let color = Color::hsl(hue, sat, lit * fade);
                 material.base_color = color;
                 material.emissive = LinearRgba::from(color) * emissive * fade;

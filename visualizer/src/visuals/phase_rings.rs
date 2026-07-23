@@ -159,7 +159,7 @@ pub fn spawn_and_update(
             (&ring_materials.downbeat, 200.0),
             (&ring_materials.offbeat, 320.0),
         ] {
-            if let Some(material) = materials.get_mut(handle) {
+            if let Some(mut material) = materials.get_mut(handle) {
                 let hue = (base_hue + hue_offset) % 360.0;
                 let color = Color::hsl(hue, sat, lit * fade);
                 material.base_color = color;

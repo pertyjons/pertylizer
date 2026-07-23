@@ -143,7 +143,7 @@ pub fn update(
 
     // Update shared material when theme changes
     if *last_policy_version != policy.version {
-        if let Some(material) = materials.get_mut(&resources.material) {
+        if let Some(mut material) = materials.get_mut(&resources.material) {
             let hue = telemetry_color::centroid_to_hue(telemetry.centroid_hz, &policy);
             let base_color = Color::hsla(hue, 0.9, 0.7, 0.3);
             let emissive_color = Color::hsl(hue, 0.9, 0.7);

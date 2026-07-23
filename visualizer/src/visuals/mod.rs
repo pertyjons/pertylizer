@@ -25,8 +25,8 @@ pub mod phase_rings;
 pub mod pulse_terrain;
 pub mod reaction_diffusion;
 pub mod rms_light;
-pub mod spectral_cathedral;
 pub mod spectral_aurora;
+pub mod spectral_cathedral;
 pub mod spectral_origami;
 pub mod spectral_waterfall;
 pub mod telemetry_color;
@@ -41,21 +41,21 @@ fn rand_f32(rng: &mut fastrand::Rng, range: std::ops::Range<f32>) -> f32 {
     range.start + rng.f32() * (range.end - range.start)
 }
 
+use bevy::camera::Hdr;
 use bevy::core_pipeline::tonemapping::Tonemapping;
 use bevy::diagnostic::FrameTimeDiagnosticsPlugin;
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
-use bevy::render::view::Hdr;
 use bevy::ui::IsDefaultUiCamera;
 
-use ferrofluid_tendrils::FerrofluidMaterial;
-use voronoi_shatter::VoronoiShatterMaterial;
 use cyber_wireframe::CyberWireframeMaterial;
+use ferrofluid_tendrils::FerrofluidMaterial;
 use fft_terrain::FftTerrainMaterial;
 use pulse_terrain::PulseTerrainMaterial;
 use reaction_diffusion::ReactionDiffusionDisplayMaterial;
 use spectral_aurora::SpectralAuroraMaterial;
 use spectral_waterfall::WaterfallMaterial;
+use voronoi_shatter::VoronoiShatterMaterial;
 
 /// System set for effect switching (runs before visual updates).
 #[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
@@ -319,7 +319,7 @@ fn setup_scene(mut commands: Commands) {
             intensity: 0.0,
             range: 40.0,
             color: Color::srgb(1.0, 0.9, 0.8),
-            shadows_enabled: true,
+            shadow_maps_enabled: true,
             ..default()
         },
         Transform::from_xyz(0.0, 10.0, 0.0),
@@ -332,7 +332,7 @@ fn setup_scene(mut commands: Commands) {
             intensity: 40_000.0,
             range: 80.0,
             color: Color::srgb(0.2, 0.4, 1.0),
-            shadows_enabled: true,
+            shadow_maps_enabled: true,
             ..default()
         },
         Transform::from_xyz(-20.0, 18.0, -15.0),

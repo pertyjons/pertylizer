@@ -9,8 +9,8 @@ target platforms).
 > `cargo about generate --manifest-path crates/pertylizer/Cargo.toml about.hbs -o THIRD-PARTY-LICENSES.md`
 
 ## Licenses in use
- 
-- **MIT License** — 334 crate(s)
+
+- **MIT License** — 336 crate(s)
 - **Apache License 2.0** — 22 crate(s)
 - **Unicode License v3** — 19 crate(s)
 - **BSD 3-Clause "New" or "Revised" License** — 3 crate(s)
@@ -462,7 +462,7 @@ Used by:
 Used by:
 
 - moxcms 0.8.1 — <https://github.com/awxkee/moxcms.git>
-- pxfm 0.1.29 — <https://github.com/awxkee/pxfm>
+- pxfm 0.1.30 — <https://github.com/awxkee/pxfm>
 
 <details>
 <summary>License text</summary>
@@ -679,7 +679,7 @@ Used by:
 Used by:
 
 - cpal 0.18.1 — <https://github.com/RustAudio/cpal>
-- self_cell 1.2.2 — <https://github.com/Voultapher/self_cell>
+- self_cell 1.3.0 — <https://github.com/Voultapher/self_cell>
 
 <details>
 <summary>License text</summary>
@@ -2247,7 +2247,7 @@ Used by:
 
 - cfg-if 1.0.4 — <https://github.com/rust-lang/cfg-if>
 - scoped-tls 1.0.1 — <https://github.com/alexcrichton/scoped-tls>
-- socket2 0.6.4 — <https://github.com/rust-lang/socket2>
+- socket2 0.6.5 — <https://github.com/rust-lang/socket2>
 
 <details>
 <summary>License text</summary>
@@ -2287,7 +2287,7 @@ DEALINGS IN THE SOFTWARE.
 
 Used by:
 
-- mio 1.2.1 — <https://github.com/tokio-rs/mio>
+- mio 1.2.2 — <https://github.com/tokio-rs/mio>
 
 <details>
 <summary>License text</summary>
@@ -2436,12 +2436,12 @@ THE SOFTWARE.
 Used by:
 
 - bitflags 1.3.2 — <https://github.com/bitflags/bitflags>
-- bitflags 2.13.0 — <https://github.com/bitflags/bitflags>
+- bitflags 2.13.1 — <https://github.com/bitflags/bitflags>
 - log 0.4.33 — <https://github.com/rust-lang/log>
 - num-complex 0.4.6 — <https://github.com/rust-num/num-complex>
 - num-integer 0.1.46 — <https://github.com/rust-num/num-integer>
 - num-traits 0.2.19 — <https://github.com/rust-num/num-traits>
-- regex-automata 0.4.14 — <https://github.com/rust-lang/regex>
+- regex-automata 0.4.16 — <https://github.com/rust-lang/regex>
 - regex-syntax 0.8.11 — <https://github.com/rust-lang/regex>
 
 <details>
@@ -2482,7 +2482,7 @@ DEALINGS IN THE SOFTWARE.
 
 Used by:
 
-- uuid 1.23.4 — <https://github.com/uuid-rs/uuid>
+- uuid 1.24.0 — <https://github.com/uuid-rs/uuid>
 
 <details>
 <summary>License text</summary>
@@ -2598,7 +2598,7 @@ DEALINGS IN THE SOFTWARE.
 
 Used by:
 
-- hyper 1.10.1 — <https://github.com/hyperium/hyper>
+- hyper 1.11.0 — <https://github.com/hyperium/hyper>
 
 <details>
 <summary>License text</summary>
@@ -2709,15 +2709,15 @@ DEALINGS IN THE SOFTWARE.
 
 Used by:
 
-- wayland-backend 0.3.15 — <https://github.com/smithay/wayland-rs>
-- wayland-client 0.31.14 — <https://github.com/smithay/wayland-rs>
+- wayland-backend 0.3.16 — <https://github.com/smithay/wayland-rs>
+- wayland-client 0.31.15 — <https://github.com/smithay/wayland-rs>
 - wayland-cursor 0.31.14 — <https://github.com/smithay/wayland-rs>
 - wayland-protocols-experimental 20250721.0.1 — <https://github.com/smithay/wayland-rs>
 - wayland-protocols-misc 0.3.12 — <https://github.com/smithay/wayland-rs>
 - wayland-protocols-plasma 0.3.12 — <https://github.com/smithay/wayland-rs>
 - wayland-protocols-wlr 0.3.12 — <https://github.com/smithay/wayland-rs>
 - wayland-protocols 0.32.13 — <https://github.com/smithay/wayland-rs>
-- wayland-scanner 0.31.10 — <https://github.com/smithay/wayland-rs>
+- wayland-scanner 0.31.11 — <https://github.com/smithay/wayland-rs>
 - wayland-sys 0.31.11 — <https://github.com/smithay/wayland-rs>
 
 <details>
@@ -2970,15 +2970,15 @@ THE SOFTWARE.
 
 Used by:
 
-- futures-channel 0.3.32 — <https://github.com/rust-lang/futures-rs>
-- futures-core 0.3.32 — <https://github.com/rust-lang/futures-rs>
-- futures-executor 0.3.32 — <https://github.com/rust-lang/futures-rs>
-- futures-io 0.3.32 — <https://github.com/rust-lang/futures-rs>
-- futures-macro 0.3.32 — <https://github.com/rust-lang/futures-rs>
-- futures-sink 0.3.32 — <https://github.com/rust-lang/futures-rs>
-- futures-task 0.3.32 — <https://github.com/rust-lang/futures-rs>
-- futures-util 0.3.32 — <https://github.com/rust-lang/futures-rs>
-- futures 0.3.32 — <https://github.com/rust-lang/futures-rs>
+- futures-channel 0.3.33 — <https://github.com/rust-lang/futures-rs>
+- futures-core 0.3.33 — <https://github.com/rust-lang/futures-rs>
+- futures-executor 0.3.33 — <https://github.com/rust-lang/futures-rs>
+- futures-io 0.3.33 — <https://github.com/rust-lang/futures-rs>
+- futures-macro 0.3.33 — <https://github.com/rust-lang/futures-rs>
+- futures-sink 0.3.33 — <https://github.com/rust-lang/futures-rs>
+- futures-task 0.3.33 — <https://github.com/rust-lang/futures-rs>
+- futures-util 0.3.33 — <https://github.com/rust-lang/futures-rs>
+- futures 0.3.33 — <https://github.com/rust-lang/futures-rs>
 
 <details>
 <summary>License text</summary>
@@ -3136,7 +3136,7 @@ Used by:
 - lock_api 0.4.14 — <https://github.com/Amanieu/parking_lot>
 - parking_lot 0.12.5 — <https://github.com/Amanieu/parking_lot>
 - parking_lot_core 0.9.12 — <https://github.com/Amanieu/parking_lot>
-- thread_local 1.1.9 — <https://github.com/Amanieu/thread_local-rs>
+- thread_local 1.1.10 — <https://github.com/Amanieu/thread_local-rs>
 
 <details>
 <summary>License text</summary>
@@ -3408,7 +3408,7 @@ DEALINGS IN THE SOFTWARE.
 
 Used by:
 
-- foreign-types-macros 0.2.3 — <https://github.com/sfackler/foreign-types>
+- foreign-types-macros 0.2.4 — <https://github.com/sfackler/foreign-types>
 - foreign-types-shared 0.3.1 — <https://github.com/sfackler/foreign-types>
 - foreign-types 0.5.0 — <https://github.com/sfackler/foreign-types>
 
@@ -3524,7 +3524,7 @@ DEALINGS IN THE SOFTWARE.
 
 Used by:
 
-- bytes 1.12.0 — <https://github.com/tokio-rs/bytes>
+- bytes 1.12.1 — <https://github.com/tokio-rs/bytes>
 
 <details>
 <summary>License text</summary>
@@ -4016,7 +4016,7 @@ DEALINGS IN THE SOFTWARE.
 
 Used by:
 
-- ringbuf 0.5.0 — <https://github.com/agerasev/ringbuf.git>
+- ringbuf 0.5.1 — <https://github.com/agerasev/ringbuf.git>
 
 <details>
 <summary>License text</summary>
@@ -4413,53 +4413,14 @@ DEALINGS IN THE SOFTWARE.
 
 Used by:
 
-- http-body 1.0.1 — <https://github.com/hyperium/http-body>
+- http-body-util 0.1.4 — <https://github.com/hyperium/http-body>
+- http-body 1.1.0 — <https://github.com/hyperium/http-body>
 
 <details>
 <summary>License text</summary>
 
 ```text
-Copyright (c) 2019-2024 Sean McArthur & Hyper Contributors
-
-Permission is hereby granted, free of charge, to any
-person obtaining a copy of this software and associated
-documentation files (the "Software"), to deal in the
-Software without restriction, including without
-limitation the rights to use, copy, modify, merge,
-publish, distribute, sublicense, and/or sell copies of
-the Software, and to permit persons to whom the Software
-is furnished to do so, subject to the following
-conditions:
-
-The above copyright notice and this permission notice
-shall be included in all copies or substantial portions
-of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
-ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
-TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
-PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
-SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
-CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
-IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
-DEALINGS IN THE SOFTWARE.
-
-```
-
-</details>
-
-## MIT License
-
-Used by:
-
-- http-body-util 0.1.3 — <https://github.com/hyperium/http-body>
-
-<details>
-<summary>License text</summary>
-
-```text
-Copyright (c) 2019-2025 Sean McArthur & Hyper Contributors
+Copyright (c) 2019-2026 Sean McArthur & Hyper Contributors
 
 Permission is hereby granted, free of charge, to any
 person obtaining a copy of this software and associated
@@ -5048,10 +5009,10 @@ SOFTWARE.
 Used by:
 
 - serde_spanned 1.1.1 — <https://github.com/toml-rs/toml>
-- toml 1.1.2+spec-1.1.0 — <https://github.com/toml-rs/toml>
+- toml 1.1.3+spec-1.1.0 — <https://github.com/toml-rs/toml>
 - toml_datetime 1.1.1+spec-1.1.0 — <https://github.com/toml-rs/toml>
 - toml_parser 1.1.2+spec-1.1.0 — <https://github.com/toml-rs/toml>
-- toml_writer 1.1.1+spec-1.1.0 — <https://github.com/toml-rs/toml>
+- toml_writer 1.1.2+spec-1.1.0 — <https://github.com/toml-rs/toml>
 
 <details>
 <summary>License text</summary>
@@ -5120,7 +5081,7 @@ SOFTWARE.
 Used by:
 
 - time-core 0.1.9 — <https://github.com/time-rs/time>
-- time 0.3.51 — <https://github.com/time-rs/time>
+- time 0.3.54 — <https://github.com/time-rs/time>
 
 <details>
 <summary>License text</summary>
@@ -5154,7 +5115,7 @@ SOFTWARE.
 
 Used by:
 
-- libc 0.2.186 — <https://github.com/rust-lang/libc>
+- libc 0.2.189 — <https://github.com/rust-lang/libc>
 
 <details>
 <summary>License text</summary>
@@ -5296,7 +5257,7 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 Used by:
 
-- rand 0.10.1 — <https://github.com/rust-random/rand>
+- rand 0.10.2 — <https://github.com/rust-random/rand>
 
 <details>
 <summary>License text</summary>
@@ -5492,8 +5453,8 @@ DEALINGS IN THE SOFTWARE.
 
 Used by:
 
-- zerocopy-derive 0.8.52 — <https://github.com/google/zerocopy>
-- zerocopy 0.8.52 — <https://github.com/google/zerocopy>
+- zerocopy-derive 0.8.55 — <https://github.com/google/zerocopy>
+- zerocopy 0.8.55 — <https://github.com/google/zerocopy>
 
 <details>
 <summary>License text</summary>
@@ -5894,8 +5855,8 @@ SOFTWARE.
 
 Used by:
 
-- bytemuck 1.25.0 — <https://github.com/Lokathor/bytemuck>
-- bytemuck_derive 1.10.2 — <https://github.com/Lokathor/bytemuck>
+- bytemuck 1.25.2 — <https://github.com/Lokathor/bytemuck>
+- bytemuck_derive 1.11.0 — <https://github.com/Lokathor/bytemuck>
 
 <details>
 <summary>License text</summary>
@@ -6029,7 +5990,7 @@ SOFTWARE.
 
 Used by:
 
-- tokio-macros 2.7.0 — <https://github.com/tokio-rs/tokio>
+- tokio-macros 2.7.1 — <https://github.com/tokio-rs/tokio>
 
 <details>
 <summary>License text</summary>
@@ -6323,7 +6284,43 @@ SOFTWARE.
 
 Used by:
 
-- pertylizer 0.315.0
+- sse-stream 0.2.5 — <https://github.com/4t145/sse-stream/>
+
+<details>
+<summary>License text</summary>
+
+```text
+MIT License
+
+Copyright (c) 2024 4t145
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+```
+
+</details>
+
+## MIT License
+
+Used by:
+
+- pertylizer 0.316.0
 - synth_config 0.1.0
 - synth_core 0.1.0
 - synth_dsp 0.1.0
@@ -6369,7 +6366,6 @@ Used by:
 - profiling 1.0.18 — <https://github.com/aclysma/profiling>
 - realfft 3.5.0 — <https://github.com/HEnquist/realfft>
 - rosc 0.11.4 — <https://github.com/klingtnet/rosc>
-- sse-stream 0.2.3 — <https://github.com/4t145/sse-stream/>
 - windows-collections 0.3.2 — <https://github.com/microsoft/windows-rs>
 - windows-core 0.62.2 — <https://github.com/microsoft/windows-rs>
 - windows-future 0.3.2 — <https://github.com/microsoft/windows-rs>
@@ -6448,9 +6444,9 @@ THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLI
 
 Used by:
 
-- tokio-stream 0.1.18 — <https://github.com/tokio-rs/tokio>
-- tokio-util 0.7.18 — <https://github.com/tokio-rs/tokio>
-- tokio 1.52.3 — <https://github.com/tokio-rs/tokio>
+- tokio-stream 0.1.19 — <https://github.com/tokio-rs/tokio>
+- tokio-util 0.7.19 — <https://github.com/tokio-rs/tokio>
+- tokio 1.53.1 — <https://github.com/tokio-rs/tokio>
 
 <details>
 <summary>License text</summary>
@@ -6486,7 +6482,7 @@ SOFTWARE.
 
 Used by:
 
-- simd-adler32 0.3.9 — <https://github.com/mcountryman/simd-adler32>
+- simd-adler32 0.3.10 — <https://github.com/mcountryman/simd-adler32>
 
 <details>
 <summary>License text</summary>
@@ -6678,13 +6674,13 @@ SOFTWARE.
 Used by:
 
 - adler2 2.0.1 — <https://github.com/oyvindln/adler2>
-- async-trait 0.1.89 — <https://github.com/dtolnay/async-trait>
+- async-trait 0.1.91 — <https://github.com/dtolnay/async-trait>
 - atomic-waker 1.1.2 — <https://github.com/smol-rs/atomic-waker>
 - concurrent-queue 2.5.0 — <https://github.com/smol-rs/concurrent-queue>
 - displaydoc 0.2.6 — <https://github.com/yaahc/displaydoc>
 - dyn-clone 1.0.20 — <https://github.com/dtolnay/dyn-clone>
 - enumn 0.1.14 — <https://github.com/dtolnay/enumn>
-- fastrand 2.4.1 — <https://github.com/smol-rs/fastrand>
+- fastrand 2.5.0 — <https://github.com/smol-rs/fastrand>
 - home 0.5.12 — <https://github.com/rust-lang/cargo>
 - itoa 1.0.18 — <https://github.com/dtolnay/itoa>
 - linux-raw-sys 0.12.1 — <https://github.com/sunfishcode/linux-raw-sys>
@@ -6694,30 +6690,31 @@ Used by:
 - pastey 0.2.3 — <https://github.com/as1100k/pastey>
 - pin-project-lite 0.2.17 — <https://github.com/taiki-e/pin-project-lite>
 - polling 3.11.0 — <https://github.com/smol-rs/polling>
-- proc-macro2 1.0.106 — <https://github.com/dtolnay/proc-macro2>
-- quote 1.0.46 — <https://github.com/dtolnay/quote>
-- ref-cast-impl 1.0.25 — <https://github.com/dtolnay/ref-cast>
-- ref-cast 1.0.25 — <https://github.com/dtolnay/ref-cast>
+- proc-macro2 1.0.107 — <https://github.com/dtolnay/proc-macro2>
+- quote 1.0.47 — <https://github.com/dtolnay/quote>
+- ref-cast-impl 1.0.26 — <https://github.com/dtolnay/ref-cast>
+- ref-cast 1.0.26 — <https://github.com/dtolnay/ref-cast>
 - rustix 0.38.44 — <https://github.com/bytecodealliance/rustix>
 - rustix 1.1.4 — <https://github.com/bytecodealliance/rustix>
-- rustversion 1.0.22 — <https://github.com/dtolnay/rustversion>
-- serde 1.0.228 — <https://github.com/serde-rs/serde>
-- serde_core 1.0.228 — <https://github.com/serde-rs/serde>
-- serde_derive 1.0.228 — <https://github.com/serde-rs/serde>
+- rustversion 1.0.23 — <https://github.com/dtolnay/rustversion>
+- serde 1.0.229 — <https://github.com/serde-rs/serde>
+- serde_core 1.0.229 — <https://github.com/serde-rs/serde>
+- serde_derive 1.0.229 — <https://github.com/serde-rs/serde>
 - serde_derive_internals 0.29.1 — <https://github.com/serde-rs/serde>
-- serde_json 1.0.150 — <https://github.com/serde-rs/json>
+- serde_json 1.0.151 — <https://github.com/serde-rs/json>
 - serde_path_to_error 0.1.20 — <https://github.com/dtolnay/path-to-error>
 - smol_str 0.2.2 — <https://github.com/rust-analyzer/smol_str>
-- syn 2.0.118 — <https://github.com/dtolnay/syn>
+- syn 2.0.119 — <https://github.com/dtolnay/syn>
+- syn 3.0.3 — <https://github.com/dtolnay/syn>
 - thiserror-impl 1.0.69 — <https://github.com/dtolnay/thiserror>
-- thiserror-impl 2.0.18 — <https://github.com/dtolnay/thiserror>
+- thiserror-impl 2.0.19 — <https://github.com/dtolnay/thiserror>
 - thiserror 1.0.69 — <https://github.com/dtolnay/thiserror>
-- thiserror 2.0.18 — <https://github.com/dtolnay/thiserror>
+- thiserror 2.0.19 — <https://github.com/dtolnay/thiserror>
 - typed-path 0.12.3 — <https://github.com/chipsenkbeil/typed-path>
 - typeid 1.0.3 — <https://github.com/dtolnay/typeid>
 - unicode-ident 1.0.24 — <https://github.com/dtolnay/unicode-ident>
 - x11-dl 2.21.0 — <https://github.com/AltF02/x11-rs.git>
-- zmij 1.0.21 — <https://github.com/dtolnay/zmij>
+- zmij 1.0.23 — <https://github.com/dtolnay/zmij>
 
 <details>
 <summary>License text</summary>
@@ -6792,7 +6789,7 @@ DEALINGS IN THE SOFTWARE.
 
 Used by:
 
-- winnow 1.0.3 — <https://github.com/winnow-rs/winnow>
+- winnow 1.0.4 — <https://github.com/winnow-rs/winnow>
 
 <details>
 <summary>License text</summary>
@@ -6899,7 +6896,7 @@ Used by:
 
 - byteorder-lite 0.1.0 — <https://github.com/image-rs/byteorder-lite>
 - byteorder 1.5.0 — <https://github.com/BurntSushi/byteorder>
-- memchr 2.8.2 — <https://github.com/BurntSushi/memchr>
+- memchr 2.8.3 — <https://github.com/BurntSushi/memchr>
 
 <details>
 <summary>License text</summary>
@@ -7010,7 +7007,7 @@ SOFTWARE.
 
 Used by:
 
-- sysinfo 0.39.5 — <https://github.com/GuillaumeGomez/sysinfo>
+- sysinfo 0.39.6 — <https://github.com/GuillaumeGomez/sysinfo>
 
 <details>
 <summary>License text</summary>
@@ -7196,9 +7193,9 @@ CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 Used by:
 
-- crossbeam-deque 0.8.6 — <https://github.com/crossbeam-rs/crossbeam>
-- crossbeam-epoch 0.9.18 — <https://github.com/crossbeam-rs/crossbeam>
-- crossbeam-utils 0.8.21 — <https://github.com/crossbeam-rs/crossbeam>
+- crossbeam-deque 0.8.7 — <https://github.com/crossbeam-rs/crossbeam>
+- crossbeam-epoch 0.9.20 — <https://github.com/crossbeam-rs/crossbeam>
+- crossbeam-utils 0.8.22 — <https://github.com/crossbeam-rs/crossbeam>
 
 <details>
 <summary>License text</summary>
@@ -7267,6 +7264,42 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
+
+```
+
+</details>
+
+## MIT License
+
+Used by:
+
+- base64 0.23.0 — <https://github.com/marshallpierce/rust-base64>
+
+<details>
+<summary>License text</summary>
+
+```text
+The MIT License (MIT)
+
+Copyright (c) 2025 Alice Maz, Marshall Pierce
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
 
 ```
 
@@ -7386,7 +7419,7 @@ THE SOFTWARE.
 
 Used by:
 
-- quick-xml 0.39.4 — <https://github.com/tafia/quick-xml>
+- quick-xml 0.41.0 — <https://github.com/tafia/quick-xml>
 
 <details>
 <summary>License text</summary>
@@ -8551,7 +8584,7 @@ ICU 1.8.1 to ICU 57.1 © 1995-2016 International Business Machines Corporation a
 
 Used by:
 
-- zlib-rs 0.6.4 — <https://github.com/trifectatechfoundation/zlib-rs>
+- zlib-rs 0.6.6 — <https://github.com/trifectatechfoundation/zlib-rs>
 
 <details>
 <summary>License text</summary>

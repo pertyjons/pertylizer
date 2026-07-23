@@ -97,7 +97,7 @@ pub fn update(
         let pulse = (time.elapsed_secs() * (2.0 + strain * 10.0)).sin() * 0.1 * strain;
         transform.scale = Vec3::splat(BASE_SCALE + strain * 2.0 + pulse);
 
-        if needs_material_update && let Some(material) = materials.get_mut(&material_handle.0) {
+        if needs_material_update && let Some(mut material) = materials.get_mut(&material_handle.0) {
             // Map 0.0->1.0 to 220.0->0.0
             let hue = 220.0 * (1.0 - strain);
             let lightness = 0.5 + (strain * 0.3); // Gets brighter when hot

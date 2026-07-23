@@ -9,7 +9,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
-use bevy::render::storage::ShaderStorageBuffer;
+use bevy::render::storage::ShaderBuffer;
 use bevy::shader::ShaderRef;
 
 use super::effects::{EffectId, EffectLayer, EffectState};
@@ -58,7 +58,7 @@ pub struct WaterfallMaterial {
     #[uniform(0)]
     pub uniforms: WaterfallUniforms,
     #[storage(1, read_only)]
-    pub fft_history: Handle<ShaderStorageBuffer>,
+    pub fft_history: Handle<ShaderBuffer>,
 }
 
 impl Material for WaterfallMaterial {
@@ -83,7 +83,7 @@ pub struct WaterfallState {
     /// Handle to the waterfall material asset.
     material_handle: Handle<WaterfallMaterial>,
     /// Handle to the GPU storage buffer for FFT data.
-    buffer_handle: Handle<ShaderStorageBuffer>,
+    buffer_handle: Handle<ShaderBuffer>,
 }
 
 impl Default for WaterfallState {
@@ -139,11 +139,14 @@ fn create_waterfall_mesh() -> Mesh {
         }
     }
 
-    Mesh::new(PrimitiveTopology::TriangleList, RenderAssetUsages::default())
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
-        .with_inserted_indices(Indices::U32(indices))
+    Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::default(),
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
+    .with_inserted_indices(Indices::U32(indices))
 }
 
 /// Downsample FFT bands to the waterfall band count.
@@ -177,7 +180,7 @@ pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<WaterfallMaterial>>,
-    mut buffers: ResMut<Assets<ShaderStorageBuffer>>,
+    mut buffers: ResMut<Assets<ShaderBuffer>>,
     mut state: ResMut<WaterfallState>,
     policy: Res<ThemeMaterialPolicy>,
 ) {
@@ -189,7 +192,7 @@ pub fn setup(
 
     // Create storage buffer for FFT history data
     let fft_data = vec![0.0_f32; BANDS * ROWS];
-    let buffer = buffers.add(ShaderStorageBuffer::from(fft_data));
+    let buffer = buffers.add(ShaderBuffer::from(fft_data));
     state.buffer_handle = buffer.clone();
 
     let material = materials.add(WaterfallMaterial {
@@ -226,7 +229,7 @@ pub fn update(
     policy: Res<ThemeMaterialPolicy>,
     mut state: ResMut<WaterfallState>,
     mut materials: ResMut<Assets<WaterfallMaterial>>,
-    mut buffers: ResMut<Assets<ShaderStorageBuffer>>,
+    mut buffers: ResMut<Assets<ShaderBuffer>>,
     mut last_policy_version: Local<u64>,
     mut last_hue_offset: Local<f32>,
 ) {
@@ -271,12 +274,12 @@ pub fn update(
     let scroll_fraction = state.timer / SCROLL_INTERVAL;
 
     // Update the storage buffer with latest FFT history
-    if let Some(buf) = buffers.get_mut(&state.buffer_handle) {
+    if let Some(mut buf) = buffers.get_mut(&state.buffer_handle) {
         buf.set_data(state.history.clone());
     }
 
     // Update material uniforms
-    if let Some(mat) = materials.get_mut(&state.material_handle) {
+    if let Some(mut mat) = materials.get_mut(&state.material_handle) {
         mat.uniforms = WaterfallUniforms {
             front_row: state.front_row as u32,
             fade,

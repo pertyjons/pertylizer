@@ -9,14 +9,14 @@
 
 use std::borrow::Cow;
 
+use bevy::core_pipeline::schedule::camera_driver;
 use bevy::image::{ImageSampler, ImageSamplerDescriptor};
 use bevy::prelude::*;
 use bevy::render::extract_resource::{ExtractResource, ExtractResourcePlugin};
 use bevy::render::render_asset::RenderAssets;
-use bevy::render::render_graph::{self, RenderGraph, RenderLabel};
 use bevy::render::render_resource::binding_types::{texture_storage_2d, uniform_buffer};
 use bevy::render::render_resource::*;
-use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue};
+use bevy::render::renderer::{RenderContext, RenderDevice, RenderGraph, RenderQueue};
 use bevy::render::texture::GpuImage;
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::shader::ShaderRef;
@@ -110,7 +110,6 @@ pub struct ReactionDiffusionState {
     display_parity: bool,
 }
 
-
 // ============================================================================
 // Main world: setup and update systems
 // ============================================================================
@@ -151,9 +150,8 @@ fn create_sim_texture() -> Image {
         bevy::asset::RenderAssetUsages::RENDER_WORLD,
     );
 
-    image.texture_descriptor.usage = TextureUsages::COPY_DST
-        | TextureUsages::STORAGE_BINDING
-        | TextureUsages::TEXTURE_BINDING;
+    image.texture_descriptor.usage =
+        TextureUsages::COPY_DST | TextureUsages::STORAGE_BINDING | TextureUsages::TEXTURE_BINDING;
 
     image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor::linear());
 
@@ -242,7 +240,7 @@ pub fn update(
     let sat = (0.7 + policy.saturation_offset).clamp(0.0, 1.0);
     let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
 
-    if let Some(mat) = materials.get_mut(&state.material_handle) {
+    if let Some(mut mat) = materials.get_mut(&state.material_handle) {
         mat.texture = display_texture;
         mat.display = DisplayUniforms {
             hue_base,
@@ -257,10 +255,6 @@ pub fn update(
 // Render world: compute pipeline plugin
 // ============================================================================
 
-/// Label for the compute node in the render graph.
-#[derive(Debug, Hash, PartialEq, Eq, Clone, RenderLabel)]
-struct ReactionDiffusionLabel;
-
 /// Plugin that sets up the compute shader pipeline in the render world.
 pub struct ReactionDiffusionComputePlugin;
 
@@ -273,18 +267,15 @@ impl Plugin for ReactionDiffusionComputePlugin {
 
         let render_app = app.sub_app_mut(RenderApp);
 
-        render_app.add_systems(RenderStartup, init_compute_pipeline);
-        render_app.add_systems(
-            Render,
-            prepare_bind_group.in_set(RenderSystems::PrepareBindGroups),
-        );
-
-        let mut render_graph = render_app.world_mut().resource_mut::<RenderGraph>();
-        render_graph.add_node(ReactionDiffusionLabel, ReactionDiffusionNode::default());
-        render_graph.add_node_edge(
-            ReactionDiffusionLabel,
-            bevy::render::graph::CameraDriverLabel,
-        );
+        render_app
+            .init_resource::<RdState>()
+            .add_systems(RenderStartup, init_compute_pipeline)
+            .add_systems(
+                Render,
+                prepare_bind_group.in_set(RenderSystems::PrepareBindGroups),
+            )
+            .add_systems(Render, update_compute_state.in_set(RenderSystems::Prepare))
+            .add_systems(RenderGraph, run_reaction_diffusion.before(camera_driver));
     }
 }
 
@@ -313,7 +304,8 @@ fn init_compute_pipeline(
         ),
     );
 
-    let shader = asset_server.load("embedded://pertylizer_visualizer/shaders/reaction_diffusion_compute.wgsl");
+    let shader = asset_server
+        .load("embedded://pertylizer_visualizer/shaders/reaction_diffusion_compute.wgsl");
 
     let pipeline = pipeline_cache.queue_compute_pipeline(ComputePipelineDescriptor {
         label: Some(Cow::from("rd_compute_pipeline")),
@@ -321,7 +313,7 @@ fn init_compute_pipeline(
         shader,
         shader_defs: vec![],
         entry_point: Some(Cow::from("update")),
-        push_constant_ranges: vec![],
+        immediate_size: 0,
         zero_initialize_workgroup_memory: false,
     });
 
@@ -383,89 +375,69 @@ fn prepare_bind_group(
     let bg_b_to_a = render_device.create_bind_group(
         Some("rd_bind_group_b_to_a"),
         &layout,
-        &BindGroupEntries::sequential((
-            &gpu_b.texture_view,
-            &gpu_a.texture_view,
-            uniform_binding,
-        )),
+        &BindGroupEntries::sequential((&gpu_b.texture_view, &gpu_a.texture_view, uniform_binding)),
     );
 
     commands.insert_resource(RdBindGroups([bg_a_to_b, bg_b_to_a]));
 }
 
 // ============================================================================
-// Render graph node
+// Render graph systems
 // ============================================================================
 
+#[derive(Resource, Default)]
 enum RdState {
+    #[default]
     Loading,
     Update(usize), // 0 or 1 — ping-pong parity
 }
 
-struct ReactionDiffusionNode {
-    state: RdState,
-}
-
-impl Default for ReactionDiffusionNode {
-    fn default() -> Self {
-        Self {
-            state: RdState::Loading,
+fn update_compute_state(
+    pipeline: Res<RdComputePipeline>,
+    pipeline_cache: Res<PipelineCache>,
+    mut state: ResMut<RdState>,
+) {
+    match *state {
+        RdState::Loading => {
+            if let CachedPipelineState::Ok(_) =
+                pipeline_cache.get_compute_pipeline_state(pipeline.pipeline)
+            {
+                *state = RdState::Update(0);
+            }
+        }
+        RdState::Update(index) => {
+            *state = RdState::Update(1 - index);
         }
     }
 }
 
-impl render_graph::Node for ReactionDiffusionNode {
-    fn update(&mut self, world: &mut World) {
-        let pipeline = world.resource::<RdComputePipeline>();
-        let pipeline_cache = world.resource::<PipelineCache>();
+fn run_reaction_diffusion(
+    mut render_context: RenderContext,
+    bind_groups: Option<Res<RdBindGroups>>,
+    pipeline_cache: Res<PipelineCache>,
+    pipeline: Res<RdComputePipeline>,
+    state: Res<RdState>,
+) {
+    let RdState::Update(index) = *state else {
+        return;
+    };
 
-        match self.state {
-            RdState::Loading => {
-                if let CachedPipelineState::Ok(_) =
-                    pipeline_cache.get_compute_pipeline_state(pipeline.pipeline)
-                {
-                    self.state = RdState::Update(0);
-                }
-            }
-            RdState::Update(index) => {
-                self.state = RdState::Update(1 - index);
-            }
-        }
-    }
+    let Some(bind_groups) = bind_groups else {
+        return;
+    };
 
-    fn run(
-        &self,
-        _graph: &mut render_graph::RenderGraphContext,
-        render_context: &mut RenderContext,
-        world: &World,
-    ) -> Result<(), render_graph::NodeRunError> {
-        let RdState::Update(index) = self.state else {
-            return Ok(());
-        };
+    let Some(compute_pipeline) = pipeline_cache.get_compute_pipeline(pipeline.pipeline) else {
+        return;
+    };
 
-        let Some(bind_groups) = world.get_resource::<RdBindGroups>() else {
-            return Ok(());
-        };
+    let mut pass = render_context
+        .command_encoder()
+        .begin_compute_pass(&ComputePassDescriptor {
+            label: Some("reaction_diffusion_compute"),
+            ..default()
+        });
 
-        let pipeline_cache = world.resource::<PipelineCache>();
-        let pipeline = world.resource::<RdComputePipeline>();
-
-        let Some(compute_pipeline) = pipeline_cache.get_compute_pipeline(pipeline.pipeline) else {
-            return Ok(());
-        };
-
-        let mut pass =
-            render_context
-                .command_encoder()
-                .begin_compute_pass(&ComputePassDescriptor {
-                    label: Some("reaction_diffusion_compute"),
-                    ..default()
-                });
-
-        pass.set_bind_group(0, &bind_groups.0[index], &[]);
-        pass.set_pipeline(compute_pipeline);
-        pass.dispatch_workgroups(SIM_SIZE / WORKGROUP_SIZE, SIM_SIZE / WORKGROUP_SIZE, 1);
-
-        Ok(())
-    }
+    pass.set_bind_group(0, &bind_groups.0[index], &[]);
+    pass.set_pipeline(compute_pipeline);
+    pass.dispatch_workgroups(SIM_SIZE / WORKGROUP_SIZE, SIM_SIZE / WORKGROUP_SIZE, 1);
 }

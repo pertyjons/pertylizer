@@ -115,7 +115,7 @@ pub fn spawn_and_update(
         let mut segments = Vec::with_capacity(SEGMENTS_PER_BLOOM);
         for i in 0..SEGMENTS_PER_BLOOM {
             let angle = (i as f32 / SEGMENTS_PER_BLOOM as f32) * PI * 2.0;
-            
+
             // Alternate between base color and a slightly offset color for variety
             let segment_mat_idx = (mat_idx + (i % 2)) % NUM_MATERIAL_BUCKETS;
             let material = bloom_materials.materials[segment_mat_idx].clone();

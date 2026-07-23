@@ -10,7 +10,7 @@
 
 use bevy::prelude::*;
 use bevy::render::render_resource::{AsBindGroup, ShaderType};
-use bevy::render::storage::ShaderStorageBuffer;
+use bevy::render::storage::ShaderBuffer;
 use bevy::shader::ShaderRef;
 
 use super::effects::{EffectId, EffectLayer, EffectState};
@@ -42,7 +42,7 @@ pub struct FerrofluidMaterial {
     #[uniform(0)]
     pub uniforms: FerrofluidUniforms,
     #[storage(1, read_only)]
-    pub tendrils: Handle<ShaderStorageBuffer>,
+    pub tendrils: Handle<ShaderBuffer>,
 }
 
 impl Material for FerrofluidMaterial {
@@ -74,7 +74,7 @@ pub struct FerrofluidState {
     /// Pre-computed XZ positions and hues per tendril.
     positions: Vec<(f32, f32, f32)>, // (x, z, base_hue)
     material_handle: Handle<FerrofluidMaterial>,
-    buffer_handle: Handle<ShaderStorageBuffer>,
+    buffer_handle: Handle<ShaderBuffer>,
 }
 
 impl Default for FerrofluidState {
@@ -92,7 +92,7 @@ pub fn setup(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<FerrofluidMaterial>>,
-    mut buffers: ResMut<Assets<ShaderStorageBuffer>>,
+    mut buffers: ResMut<Assets<ShaderBuffer>>,
     mut state: ResMut<FerrofluidState>,
     policy: Res<ThemeMaterialPolicy>,
 ) {
@@ -117,7 +117,7 @@ pub fn setup(
         .iter()
         .map(|(x, z, hue)| [*x, *z, 0.01, *hue])
         .collect();
-    let buffer = buffers.add(ShaderStorageBuffer::from(tendril_data));
+    let buffer = buffers.add(ShaderBuffer::from(tendril_data));
     state.buffer_handle = buffer.clone();
 
     let sat = (0.7 + policy.saturation_offset).clamp(0.0, 1.0);
@@ -157,7 +157,7 @@ pub fn update(
     policy: Res<ThemeMaterialPolicy>,
     mut state: ResMut<FerrofluidState>,
     mut materials: ResMut<Assets<FerrofluidMaterial>>,
-    mut buffers: ResMut<Assets<ShaderStorageBuffer>>,
+    mut buffers: ResMut<Assets<ShaderBuffer>>,
 ) {
     let dt = time.delta_secs();
     let fade = effect_state.fade;
@@ -185,7 +185,7 @@ pub fn update(
         .map(|((x, z, hue), h)| [*x, *z, *h, *hue])
         .collect();
 
-    if let Some(buf) = buffers.get_mut(&state.buffer_handle) {
+    if let Some(mut buf) = buffers.get_mut(&state.buffer_handle) {
         buf.set_data(tendril_data);
     }
 
@@ -193,7 +193,7 @@ pub fn update(
     let lit = (0.3 + policy.lightness_offset).clamp(0.0, 1.0);
     let emissive = EMISSIVE_STRENGTH * policy.emissive_multiplier;
 
-    if let Some(mat) = materials.get_mut(&state.material_handle) {
+    if let Some(mut mat) = materials.get_mut(&state.material_handle) {
         mat.uniforms = FerrofluidUniforms {
             time: time.elapsed_secs(),
             fade,

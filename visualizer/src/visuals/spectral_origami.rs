@@ -50,7 +50,7 @@ pub fn setup(
 
     // Double sided so we see it when it folds over
     for handle in &material_handles {
-        if let Some(mat) = materials.get_mut(handle) {
+        if let Some(mut mat) = materials.get_mut(handle) {
             mat.double_sided = true;
         }
     }
@@ -132,8 +132,7 @@ pub fn update(
             stored[2] += (target_y - stored[2]) * y_alpha;
 
             // Apply smoothed rotation
-            transform.rotation =
-                Quat::from_euler(EulerRot::XYZ, stored[0], 0.0, stored[1]);
+            transform.rotation = Quat::from_euler(EulerRot::XYZ, stored[0], 0.0, stored[1]);
             // Apply smoothed Y position
             transform.translation.y = stored[2];
         }
@@ -177,7 +176,7 @@ pub fn update_material(
     let roughness = policy.roughness;
 
     for (i, handle) in origami_materials.0.iter().enumerate() {
-        if let Some(material) = materials.get_mut(handle) {
+        if let Some(mut material) = materials.get_mut(handle) {
             // Vary hue slightly per material bucket to give each tile a distinct look
             let tile_hue = (*last_hue + (i as f32 * 11.0)) % 360.0;
             let color = Color::hsl(tile_hue, sat, lit * fade);

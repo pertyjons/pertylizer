@@ -719,7 +719,7 @@ pub fn apply_theme(
 
         // Floor material color
         for mat_handle in &mut floor_query {
-            if let Some(material) = materials.get_mut(&mat_handle.0) {
+            if let Some(mut material) = materials.get_mut(&mat_handle.0) {
                 material.base_color =
                     lerp_color(current_cfg.floor_color, target_cfg.floor_color, t);
                 material.metallic =
@@ -758,7 +758,7 @@ pub fn apply_theme(
         }
 
         for mat_handle in &mut floor_query {
-            if let Some(material) = materials.get_mut(&mat_handle.0) {
+            if let Some(mut material) = materials.get_mut(&mat_handle.0) {
                 material.base_color = current_cfg.floor_color;
                 material.metallic = current_cfg.floor_metallic.clamp(0.0, 1.0);
                 material.perceptual_roughness = current_cfg.floor_roughness.clamp(0.0, 1.0);

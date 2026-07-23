@@ -194,7 +194,7 @@ pub fn update(
         let roughness = policy.roughness;
 
         for (band, handle) in cathedral_materials.materials.iter().enumerate() {
-            if let Some(material) = materials.get_mut(handle) {
+            if let Some(mut material) = materials.get_mut(handle) {
                 let hue = (telemetry_color::band_frequency_hue(band as f32 / ARCH_BANDS as f32)
                     + hue_offset)
                     % 360.0;

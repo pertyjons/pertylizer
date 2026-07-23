@@ -47,7 +47,7 @@ pub fn setup(mut commands: Commands) {
         .with_child((
             Text::new(""),
             TextFont {
-                font_size: 14.0,
+                font_size: FontSize::Px(14.0),
                 ..default()
             },
             TextColor(Color::srgba(0.0, 1.0, 0.6, 0.95)),

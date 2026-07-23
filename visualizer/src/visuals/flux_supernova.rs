@@ -115,7 +115,7 @@ pub fn update(
 
         // Only mutate material if exploding, fading, theme changed, or just entered idle state
         if state.explosion > 0.0 || fade < 1.0 || policy_changed || !state.is_idle {
-            if let Some(material) = materials.get_mut(&material_handle.0) {
+            if let Some(mut material) = materials.get_mut(&material_handle.0) {
                 // Base hue from theme's flux burst, shifting toward centroid on explosion
                 let base_hue = policy.flux_burst_hue;
                 let centroid_hue = telemetry_color::centroid_to_hue(telemetry.centroid_hz, &policy);
