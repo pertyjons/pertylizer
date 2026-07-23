@@ -10562,7 +10562,12 @@
             }
           ],
           "default": null,
-          "description": "Optional per-placement length override. When `None`, the placement\noccupies exactly `pattern.length` ticks. When `Some(d)`, the\nplacement extends/clips to that length; the engine still walks the\npattern's note timeline up to `min(d, pattern.length)`."
+          "description": "Optional per-placement length override. When `None`, the placement\noccupies exactly `pattern.length` ticks. When `Some(d)`, the\nplacement extends/clips to that length; [`PlacementLoopMode`] decides\nwhether playback repeats or stops at the source-pattern boundary."
+        },
+        "loop_mode": {
+          "$ref": "#/$defs/PlacementLoopMode",
+          "default": "repeat",
+          "description": "Whether a placement longer than its source plays once or repeats."
         },
         "pattern_id": {
           "$ref": "#/$defs/PatternId",
@@ -10609,6 +10614,21 @@
       "maximum": 255,
       "minimum": 0,
       "type": "integer"
+    },
+    "PlacementLoopMode": {
+      "description": "Playback behavior when a placement outlasts its source pattern.",
+      "oneOf": [
+        {
+          "const": "clip",
+          "description": "Play the source pattern once, leaving any remaining placement time silent.",
+          "type": "string"
+        },
+        {
+          "const": "repeat",
+          "description": "Repeat the source pattern until the placement ends.",
+          "type": "string"
+        }
+      ]
     },
     "Position": {
       "description": "2D position in the rack view, serialized as `{\"x\": ..., \"y\": ...}`.",

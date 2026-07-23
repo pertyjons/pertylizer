@@ -80,7 +80,10 @@ pub use note_processor::{
 pub use pattern::{HiddenEventSummary, Pattern, RowResolution};
 pub use pitch::{NoteName, Pitch, Velocity};
 pub use shared_song::{SharedSong, SharedSongWriteGuard};
-pub use song::{FreezeStats, LoopRegion, PatternPlacement, Song, TempoChange, TimeSignatureChange};
+pub use song::{
+    FreezeStats, LoopRegion, PatternPlacement, PlacementLoopMode, Song, TempoChange,
+    TimeSignatureChange,
+};
 pub use time::{Duration, PatternTick, TICKS_PER_QUARTER, Tick, TimeSignature};
 pub use track::{ReturnBus, ReturnSend, SequencerTrack, TrackColor, TrackMode, TrackSend};
 

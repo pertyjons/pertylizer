@@ -6,7 +6,8 @@ use synth_core::{
     Semitones,
 };
 use synth_sequencer::{
-    ModGraphId, ModNodeId, NoteGraphId, NoteId, NoteModuleId, PatternId, ReturnBusId, Tick, TrackId,
+    ModGraphId, ModNodeId, NoteGraphId, NoteId, NoteModuleId, PatternId, PlacementLoopMode,
+    ReturnBusId, Tick, TrackId,
 };
 
 /// Information about an instrument.
@@ -1077,6 +1078,8 @@ pub struct PlacementInfo {
     /// Optional exact placement length override in ticks.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub length_ticks: Option<u32>,
+    /// Playback behavior beyond the source pattern.
+    pub loop_mode: PlacementLoopMode,
     /// Effective length after applying the optional override.
     pub effective_length_beats: f32,
     /// Exact effective length in ticks.

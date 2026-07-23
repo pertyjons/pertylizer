@@ -796,19 +796,12 @@ impl SequencerEngine {
                     continue;
                 };
 
-                // length_override gives clip semantics when set.
-                let placement_len = placement.length_override.unwrap_or(pattern.length);
-                let pattern_end = Tick(placement.start.0 + placement_len.0 as u64);
-                if self.current_tick < placement.start || self.current_tick >= pattern_end {
-                    continue;
-                }
-
-                // A placement longer than its source pattern loops in pattern
-                // space. Notes crossing the boundary keep ringing; a note at
-                // the next loop onset retriggers as a separate voice unless it
-                // lands exactly on the predecessor's end (the tie logic below).
+                // Repeat placements wrap in pattern space; Clip placements
+                // play the source once and leave a longer tail silent. Notes
+                // crossing a repeat boundary keep ringing, while a note at the
+                // next loop onset retriggers unless the tie logic below joins it.
                 let Some(pattern_tick) =
-                    PatternTick::looping_at(self.current_tick, placement.start, pattern.length)
+                    placement.pattern_tick_at(self.current_tick, pattern.length)
                 else {
                     continue;
                 };
@@ -1331,6 +1324,36 @@ mod tests {
         seq.current_tick = Tick(u64::from(Duration::QUARTER.0));
         seq.collect_events_at_tick(&mut events);
         assert_eq!(events.iter().filter(|event| event.is_note_on()).count(), 1);
+    }
+
+    #[test]
+    fn clip_placement_does_not_retrigger_after_source_ends() {
+        let mut song = Song::new("Clipped placement").with_tempo(Bpm::new(120.0));
+        let pattern_id = song.create_pattern(Duration::QUARTER);
+        if let Some(pattern) = song.pattern_mut(pattern_id) {
+            let _ = pattern.add_note(PatternTick::ZERO, Pitch::new(60).unwrap(), Velocity::MF);
+        }
+        let track_id = song.create_track("Clip track");
+        song.place_pattern(pattern_id, track_id, Tick::ZERO);
+        assert!(song.set_placement_length(pattern_id, track_id, Tick::ZERO, Some(Duration::HALF),));
+        assert!(song.set_placement_loop_mode(
+            pattern_id,
+            track_id,
+            Tick::ZERO,
+            synth_sequencer::PlacementLoopMode::Clip,
+        ));
+        let song = Arc::new(SharedSong::new(song));
+        let mut seq = SequencerEngine::with_song(song, SampleRate::DVD_QUALITY);
+        let mut events = Vec::new();
+
+        seq.current_tick = Tick::ZERO;
+        seq.collect_events_at_tick(&mut events);
+        assert_eq!(events.iter().filter(|event| event.is_note_on()).count(), 1);
+
+        events.clear();
+        seq.current_tick = Tick(u64::from(Duration::QUARTER.0));
+        seq.collect_events_at_tick(&mut events);
+        assert_eq!(events.iter().filter(|event| event.is_note_on()).count(), 0);
     }
 
     #[test]

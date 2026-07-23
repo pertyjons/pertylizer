@@ -13,8 +13,8 @@ use synth_engine::{EngineCommand, EngineHandle, InstrumentId, RecordingState};
 use synth_sequencer::{
     AutoInstrumentParam, AutomationPoint, AutomationTarget, CurveType, Duration as SeqDuration,
     ExpansionBuffer, Glide, GlideFrom, GlideInterp, GlobalParam, Note, NoteExpression, NoteId,
-    NoteLane, NoteName, NoteProcessor, Ornament, PatternId, PatternTick, Pitch, Song, Tick,
-    TimeSignature, TrackId, TrackParam, Velocity, Vibrato, VibratoShape,
+    NoteLane, NoteName, NoteProcessor, Ornament, PatternId, PatternTick, Pitch, PlacementLoopMode,
+    Song, Tick, TimeSignature, TrackId, TrackParam, Velocity, Vibrato, VibratoShape,
 };
 
 use crate::gui::input::KEY_MAP;
@@ -762,8 +762,12 @@ struct PlacementInfo {
     color: Color32,
     /// Instrument of this placement's track — drives miniature colour.
     instrument: InstrumentId,
-    /// Length in beats (for tooltip).
-    length_beats: f32,
+    /// Native source-pattern length in ticks.
+    pattern_length: SeqDuration,
+    /// Placement length after applying its override.
+    effective_length: SeqDuration,
+    /// Whether the source repeats inside the placement.
+    loop_mode: PlacementLoopMode,
     /// Note miniatures for preview drawing.
     note_miniatures: Vec<NoteMiniature>,
 }

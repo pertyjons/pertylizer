@@ -7,6 +7,8 @@
 use super::*;
 use crate::gui::widgets::{expose, expose_selected, mute_toggle, solo_toggle};
 
+const PLACEMENT_RESIZE_ZONE: f32 = 8.0;
+
 /// Collect arrangement data from song (short read-lock, then release).
 pub(super) fn collect_arrangement_data(
     song: &Arc<synth_sequencer::SharedSong>,
@@ -55,7 +57,7 @@ pub(super) fn collect_arrangement_data(
                 .unwrap_or(Color32::GRAY);
             let instrument = track.map(|t| t.instrument).unwrap_or_default();
 
-            let length_beats = pattern.length.0 as f32 / synth_sequencer::TICKS_PER_QUARTER as f32;
+            let effective_length = p.effective_length(pattern.length);
 
             // Build note miniatures for preview
             let notes = pattern.notes();
@@ -71,16 +73,18 @@ pub(super) fn collect_arrangement_data(
                 let pitch_range = (max_pitch - min_pitch).max(1) as f32;
 
                 // Bound the snapshot at what the draw loop could ever use:
-                // a placement is at most length_beats × PIXELS_PER_BEAT ×
+                // a placement is at most effective-length beats × PIXELS_PER_BEAT ×
                 // MAX_ZOOM pixels wide, and past MINIATURE_NOTES_PER_PIXEL
                 // notes per pixel drawing is invisible. Decimate evenly past
                 // that (notes are sorted by start tick) so a pathologically
                 // dense pattern cannot blow up the per-frame snapshot cost.
                 #[allow(clippy::cast_sign_loss)]
-                let budget =
-                    ((length_beats * PIXELS_PER_BEAT * MAX_ZOOM * MINIATURE_NOTES_PER_PIXEL)
-                        as usize)
-                        .max(1);
+                let budget = (((effective_length.0 as f32
+                    / synth_sequencer::TICKS_PER_QUARTER as f32)
+                    * PIXELS_PER_BEAT
+                    * MAX_ZOOM
+                    * MINIATURE_NOTES_PER_PIXEL) as usize)
+                    .max(1);
                 let step = notes.len().div_ceil(budget).max(1);
 
                 notes
@@ -106,7 +110,9 @@ pub(super) fn collect_arrangement_data(
                 note_count: pattern.notes().len(),
                 color,
                 instrument,
-                length_beats,
+                pattern_length: pattern.length,
+                effective_length,
+                loop_mode: p.loop_mode,
                 note_miniatures,
             })
         })
@@ -1260,22 +1266,39 @@ fn draw_arrangement_placements(
                 // All notes in a placement play the placement's track instrument.
                 let inst_color =
                     cached_instrument_color(&inst_color_cache, placement.instrument, fallback);
-                // Pixel budget: drawing more notes than the box has
-                // horizontal pixels is invisible, so decimate evenly
-                // (notes are sorted by start tick, so every Nth note
-                // preserves the pattern's shape over its full length).
+                let repeat_count = if placement.loop_mode == PlacementLoopMode::Repeat {
+                    placement
+                        .effective_length
+                        .0
+                        .div_ceil(placement.pattern_length.0.max(1))
+                } else {
+                    1
+                };
+                let cycle_width = mini_width * placement.pattern_length.0 as f32
+                    / placement.effective_length.0.max(1) as f32;
+                // Pixel budget: drawing more notes than the box has horizontal
+                // pixels is invisible. Walk the conceptual repeated note list
+                // by index so even enormous placements draw bounded work while
+                // preserving the miniature across their full length.
                 #[allow(clippy::cast_sign_loss)]
                 let budget = ((mini_width * MINIATURE_NOTES_PER_PIXEL) as usize).max(1);
-                let step = placement.note_miniatures.len().div_ceil(budget).max(1);
+                let candidate_count = placement
+                    .note_miniatures
+                    .len()
+                    .saturating_mul(repeat_count as usize);
+                let step = candidate_count.div_ceil(budget).max(1);
                 let note_color = Color32::from_rgba_unmultiplied(
                     inst_color.r(),
                     inst_color.g(),
                     inst_color.b(),
                     200,
                 );
-                for mini in placement.note_miniatures.iter().step_by(step) {
-                    let nx = rect.min.x + 2.0 + mini.start_frac * mini_width;
-                    let nw = (mini.duration_frac * mini_width).max(1.0);
+                for candidate in (0..candidate_count).step_by(step) {
+                    let cycle = candidate / placement.note_miniatures.len();
+                    let mini =
+                        &placement.note_miniatures[candidate % placement.note_miniatures.len()];
+                    let nx = rect.min.x + 2.0 + (cycle as f32 + mini.start_frac) * cycle_width;
+                    let nw = (mini.duration_frac * cycle_width).max(1.0);
                     let ny = mini_top + (1.0 - mini.pitch_frac) * (mini_height - 2.0);
                     clipped.rect_filled(
                         Rect::from_min_size(Pos2::new(nx, ny), Vec2::new(nw, 2.0)),
@@ -1353,9 +1376,14 @@ fn handle_arrangement_pointer(
             .zip(placement_rects.iter())
             .find(|(_, (r, _, _, _))| r.contains(pos));
 
-        if let Some((pl, _)) = hovered_placement {
+        if let Some((pl, (rect, _, _, _))) = hovered_placement {
+            let resize_hover = pos.x >= rect.max.x - PLACEMENT_RESIZE_ZONE;
             ui.output_mut(|o| {
-                o.cursor_icon = CursorIcon::PointingHand;
+                o.cursor_icon = if resize_hover {
+                    CursorIcon::ResizeHorizontal
+                } else {
+                    CursorIcon::PointingHand
+                };
             });
             // Tooltip with pattern info
             let instr_name = data
@@ -1366,13 +1394,27 @@ fn handle_arrangement_pointer(
                 .and_then(|seq_id| instruments.iter().find(|inst| inst.id == seq_id))
                 .map_or_else(|| "---".to_owned(), |inst| inst.name.clone());
             let tip_name = pl.pattern_name.clone();
-            let tip_beats = pl.length_beats;
+            let tip_beats =
+                pl.effective_length.0 as f32 / synth_sequencer::TICKS_PER_QUARTER as f32;
+            let source_beats =
+                pl.pattern_length.0 as f32 / synth_sequencer::TICKS_PER_QUARTER as f32;
             let tip_notes = pl.note_count;
+            let loop_mode = pl.loop_mode;
             response.clone().on_hover_ui(|ui: &mut egui::Ui| {
                 strong_label(ui, &tip_name, Some(t.colors.text_primary));
-                ui.label(format!("{tip_beats:.1} beats"));
+                ui.label(format!(
+                    "{tip_beats:.1} beats ({source_beats:.1}-beat source)"
+                ));
+                ui.label(format!("Playback: {}", loop_mode.display_name()));
                 ui.label(format!("{tip_notes} notes"));
                 ui.label(format!("Instrument: {instr_name}"));
+                if resize_hover {
+                    ui.separator();
+                    ui.label(format!(
+                        "Drag to resize in {} mode; right-click to change",
+                        loop_mode.display_name()
+                    ));
+                }
             });
         }
     }
@@ -1408,7 +1450,6 @@ fn handle_arrangement_pointer(
     }
 
     // ── Drag-to-move / resize placements ──
-    const PLACEMENT_RESIZE_ZONE: f32 = 8.0;
     if response.drag_started_by(egui::PointerButton::Primary)
         && let Some(pos) = response.interact_pointer_pos()
         && let Some((rect, pat_id, trk_id, start_tick)) =
@@ -2097,6 +2138,45 @@ fn draw_arrangement_context_menu(
             *double_clicked_pattern = Some(pat_id);
             ui.close();
         }
+
+        let current_loop_mode = data
+            .placements
+            .iter()
+            .find(|placement| {
+                placement.pattern_id == pat_id
+                    && placement.track_id == trk_id
+                    && placement.start_tick == start_tick
+            })
+            .map_or(PlacementLoopMode::Repeat, |placement| placement.loop_mode);
+        ui.menu_button(
+            format!("Playback: {}", current_loop_mode.display_name()),
+            |ui| {
+                for loop_mode in [PlacementLoopMode::Repeat, PlacementLoopMode::Clip] {
+                    if ui
+                        .selectable_label(current_loop_mode == loop_mode, loop_mode.display_name())
+                        .clicked()
+                    {
+                        if loop_mode != current_loop_mode
+                            && song.write().set_placement_loop_mode(
+                                pat_id,
+                                trk_id,
+                                Tick(start_tick),
+                                loop_mode,
+                            )
+                        {
+                            undo_manager.push(crate::undo::UndoAction::SetPlacementLoopMode {
+                                pattern_id: pat_id,
+                                track_id: trk_id,
+                                start: Tick(start_tick),
+                                old_mode: current_loop_mode,
+                                new_mode: loop_mode,
+                            });
+                        }
+                        ui.close();
+                    }
+                }
+            },
+        );
 
         // Pattern length editing — free-input bars
         ui.menu_button("Set Length…", |ui| {

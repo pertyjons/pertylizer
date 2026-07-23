@@ -184,6 +184,7 @@ async fn pattern_placement_full_state_round_trips_and_updates() {
     assert_eq!(listed[0]["transpose_semitones"], 7.0);
     assert_eq!(listed[0]["gain"], 0.5);
     assert_eq!(listed[0]["length_ticks"], 777);
+    assert_eq!(listed[0]["loop_mode"], "repeat");
     assert_eq!(listed[0]["effective_length_ticks"], 777);
     assert_eq!(listed[0]["end_tick"], 900);
 
@@ -201,6 +202,7 @@ async fn pattern_placement_full_state_round_trips_and_updates() {
                 "new_start_tick": 456,
                 "transpose_semitones": -5.0,
                 "gain": 1.25,
+                "loop_mode": "clip",
                 "clear_length_override": true
             }]
         }),
@@ -215,6 +217,7 @@ async fn pattern_placement_full_state_round_trips_and_updates() {
     assert_eq!(listed[0]["start_tick"], 456);
     assert_eq!(listed[0]["transpose_semitones"], -5.0);
     assert_eq!(listed[0]["gain"], 1.25);
+    assert_eq!(listed[0]["loop_mode"], "clip");
     assert!(listed[0].get("length_ticks").is_none());
     assert_eq!(listed[0]["effective_length_ticks"], 3840);
 }

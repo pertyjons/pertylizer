@@ -4868,6 +4868,16 @@ impl SynthApp {
                 let mut song_w = self.song.write();
                 song_w.set_placement_length(*pattern_id, *track_id, *start, *new_length);
             }
+            UndoAction::SetPlacementLoopMode {
+                pattern_id,
+                track_id,
+                start,
+                new_mode,
+                ..
+            } => {
+                let mut song_w = self.song.write();
+                song_w.set_placement_loop_mode(*pattern_id, *track_id, *start, *new_mode);
+            }
             UndoAction::MoveAutomationPoint {
                 pattern_id,
                 target,

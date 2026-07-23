@@ -109,6 +109,30 @@ pub struct TimeSignatureChange {
     pub signature: TimeSignature,
 }
 
+/// Playback behavior when a placement outlasts its source pattern.
+#[derive(
+    Debug, Default, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum PlacementLoopMode {
+    /// Play the source pattern once, leaving any remaining placement time silent.
+    Clip,
+    /// Repeat the source pattern until the placement ends.
+    #[default]
+    Repeat,
+}
+
+impl PlacementLoopMode {
+    /// Human-readable mode name for user interfaces.
+    #[must_use]
+    pub const fn display_name(self) -> &'static str {
+        match self {
+            Self::Clip => "Clip",
+            Self::Repeat => "Repeat",
+        }
+    }
+}
+
 /// A pattern placement in the arrangement.
 #[must_use]
 #[derive(Debug, Clone, Serialize, Deserialize, schemars::JsonSchema)]
@@ -125,10 +149,13 @@ pub struct PatternPlacement {
     pub gain: Gain,
     /// Optional per-placement length override. When `None`, the placement
     /// occupies exactly `pattern.length` ticks. When `Some(d)`, the
-    /// placement extends/clips to that length; the engine still walks the
-    /// pattern's note timeline up to `min(d, pattern.length)`.
+    /// placement extends/clips to that length; [`PlacementLoopMode`] decides
+    /// whether playback repeats or stops at the source-pattern boundary.
     #[serde(default)]
     pub length_override: Option<Duration>,
+    /// Whether a placement longer than its source plays once or repeats.
+    #[serde(default)]
+    pub loop_mode: PlacementLoopMode,
 }
 
 impl PatternPlacement {
@@ -141,6 +168,7 @@ impl PatternPlacement {
             transpose: Semitones::ZERO,
             gain: Gain::UNITY,
             length_override: None,
+            loop_mode: PlacementLoopMode::default(),
         }
     }
 
@@ -156,6 +184,12 @@ impl PatternPlacement {
         self
     }
 
+    /// Set the playback mode (builder pattern).
+    pub fn with_loop_mode(mut self, loop_mode: PlacementLoopMode) -> Self {
+        self.loop_mode = loop_mode;
+        self
+    }
+
     /// Calculate end position. Respects `length_override` when set,
     /// otherwise uses the pattern's own length.
     pub fn end(&self, pattern_length: Duration) -> Tick {
@@ -166,6 +200,31 @@ impl PatternPlacement {
     /// Effective length (override if set, otherwise the pattern's length).
     pub fn effective_length(&self, pattern_length: Duration) -> Duration {
         self.length_override.unwrap_or(pattern_length)
+    }
+
+    /// Resolve an absolute song tick into this placement's pattern space.
+    ///
+    /// `Repeat` wraps at the source pattern boundary. `Clip` plays the source
+    /// once and leaves the remainder of a longer placement silent.
+    pub fn pattern_tick_at(
+        &self,
+        song_tick: Tick,
+        pattern_length: Duration,
+    ) -> Option<PatternTick> {
+        let placement_end = self.end(pattern_length);
+        if song_tick < self.start || song_tick >= placement_end {
+            return None;
+        }
+        match self.loop_mode {
+            PlacementLoopMode::Clip => {
+                let offset = song_tick.0.saturating_sub(self.start.0);
+                let offset = u32::try_from(offset).ok()?;
+                (offset < pattern_length.0).then_some(PatternTick(offset))
+            }
+            PlacementLoopMode::Repeat => {
+                PatternTick::looping_at(song_tick, self.start, pattern_length)
+            }
+        }
     }
 }
 
@@ -1296,6 +1355,28 @@ impl Song {
         }
     }
 
+    /// Set a placement's clip/repeat mode. Identified by
+    /// `(pattern_id, track_id, start)`. Returns true if found and updated.
+    pub fn set_placement_loop_mode(
+        &mut self,
+        pattern_id: PatternId,
+        track_id: TrackId,
+        start: Tick,
+        loop_mode: PlacementLoopMode,
+    ) -> bool {
+        let pos = self
+            .arrangement
+            .iter()
+            .position(|p| p.pattern_id == pattern_id && p.track_id == track_id && p.start == start);
+        if let Some(idx) = pos {
+            self.arrangement[idx].loop_mode = loop_mode;
+            self.bump_structure();
+            true
+        } else {
+            false
+        }
+    }
+
     /// Replace a placement while preserving its identity lookup separately
     /// from the new track, start, and playback properties.
     pub fn update_placement(
@@ -1658,6 +1739,50 @@ mod tests {
             .collect();
         effective.sort_unstable();
         assert_eq!(effective, vec![245_760, 619_560]);
+    }
+
+    #[test]
+    fn placement_loop_mode_defaults_to_repeat_and_round_trips() {
+        let mut placement = PatternPlacement::new(PatternId(1), TrackId(2), Tick(100));
+        placement.length_override = Some(Duration(1_920));
+        assert_eq!(placement.loop_mode, PlacementLoopMode::Repeat);
+        assert_eq!(
+            placement.pattern_tick_at(Tick(1_100), Duration(960)),
+            Some(PatternTick(40))
+        );
+
+        let json = serde_json::to_string(&placement).unwrap();
+        let back: PatternPlacement = serde_json::from_str(&json).unwrap();
+        assert_eq!(back.loop_mode, PlacementLoopMode::Repeat);
+
+        let legacy_json = r#"{
+            "pattern_id": 1,
+            "track_id": 2,
+            "start": 100,
+            "transpose": 0.0,
+            "gain": 1.0,
+            "length_override": 1920
+        }"#;
+        let legacy: PatternPlacement = serde_json::from_str(legacy_json).unwrap();
+        assert_eq!(legacy.loop_mode, PlacementLoopMode::Repeat);
+    }
+
+    #[test]
+    fn clip_placement_plays_source_once_within_longer_placement() {
+        let mut placement = PatternPlacement::new(PatternId(1), TrackId(2), Tick(100))
+            .with_loop_mode(PlacementLoopMode::Clip);
+        placement.length_override = Some(Duration(1_920));
+        let pattern_length = Duration(960);
+
+        assert_eq!(
+            placement.pattern_tick_at(Tick(100), pattern_length),
+            Some(PatternTick::ZERO)
+        );
+        assert_eq!(
+            placement.pattern_tick_at(Tick(1_059), pattern_length),
+            Some(PatternTick(959))
+        );
+        assert_eq!(placement.pattern_tick_at(Tick(1_060), pattern_length), None);
     }
 
     #[test]

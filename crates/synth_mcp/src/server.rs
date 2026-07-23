@@ -21,7 +21,8 @@ use synth_core::{
     BipolarValue, Bpm, Gain, InstrumentId, MidiChannel, MidiNote, NormalizedValue, Semitones,
 };
 use synth_sequencer::{
-    ModGraphId, ModNodeId, NoteGraphId, NoteId, NoteModuleId, PatternId, ReturnBusId, Tick, TrackId,
+    ModGraphId, ModNodeId, NoteGraphId, NoteId, NoteModuleId, PatternId, PlacementLoopMode,
+    ReturnBusId, Tick, TrackId,
 };
 
 use crate::bridge::SynthBridge;
@@ -119,6 +120,7 @@ fn placement_to_bridge(
         transpose_semitones: transpose,
         gain,
         length_ticks: arrangement_length(placement.length_beats, placement.length_ticks)?,
+        loop_mode: placement.loop_mode.unwrap_or_default(),
     })
 }
 
@@ -3830,6 +3832,9 @@ pub struct PlacementInput {
         description = "Optional exact placement length override in ticks; mutually exclusive with length_beats"
     )]
     pub length_ticks: Option<u32>,
+    #[serde(default)]
+    #[schemars(description = "Playback beyond the source pattern: repeat (default) or clip")]
+    pub loop_mode: Option<PlacementLoopMode>,
 }
 
 /// The exact identity of an existing pattern placement.
@@ -3886,6 +3891,8 @@ pub struct PlacementUpdateInput {
     #[serde(default)]
     #[schemars(description = "Remove the existing length override")]
     pub clear_length_override: bool,
+    #[schemars(description = "Replace the playback mode: repeat or clip")]
+    pub loop_mode: Option<PlacementLoopMode>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -3951,6 +3958,9 @@ pub struct SongPlacementDef {
         description = "Optional exact placement length in ticks; mutually exclusive with length_beats"
     )]
     pub length_ticks: Option<u32>,
+    #[serde(default)]
+    #[schemars(description = "Playback beyond the source pattern: repeat (default) or clip")]
+    pub loop_mode: Option<PlacementLoopMode>,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -8897,7 +8907,7 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Place one or more patterns with complete PatternPlacement properties. Address positions and optional lengths in beats or exact ticks; transpose_semitones defaults to 0 and gain to 1."
+        description = "Place one or more patterns with complete PatternPlacement properties. Address positions and optional lengths in beats or exact ticks; transpose_semitones defaults to 0, gain to 1, and loop_mode to repeat."
     )]
     async fn place_pattern(&self, params: Parameters<PlacePatternsParam>) -> String {
         let placements = match params
@@ -8917,7 +8927,7 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Update or move one or more existing pattern placements. Identify each by pattern_id, track_id and start_beat/start_tick; optionally set a new track/start, transpose, gain, or length. Set clear_length_override to restore the pattern length."
+        description = "Update or move one or more existing pattern placements. Identify each by pattern_id, track_id and start_beat/start_tick; optionally set a new track/start, transpose, gain, length, or loop_mode (repeat/clip). Set clear_length_override to restore the pattern length."
     )]
     async fn update_placement(&self, params: Parameters<UpdatePlacementsParam>) -> String {
         let mut updates = Vec::with_capacity(params.0.updates.len());
@@ -8971,6 +8981,7 @@ impl SynthMcpServer {
                 transpose_semitones: update.transpose_semitones,
                 gain: update.gain,
                 length_ticks,
+                loop_mode: update.loop_mode,
             });
         }
         match self.bridge.update_placements(&updates) {
@@ -9084,6 +9095,7 @@ impl SynthMcpServer {
                 transpose_semitones: pl.transpose_semitones.unwrap_or(0.0),
                 gain: pl.gain.unwrap_or(1.0),
                 length_ticks,
+                loop_mode: pl.loop_mode.unwrap_or_default(),
             });
         }
         let tempo = p.tempo.unwrap_or(120.0);

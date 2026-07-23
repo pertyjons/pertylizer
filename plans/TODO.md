@@ -28,14 +28,13 @@
 `PatternTick::looping_at`; crossing notes keep their absolute NoteOff and retrigger on the
 next pass, while automation restarts in pattern space each pass.
 
-- [ ] **Mini-note visualization should mirror the loop.** `NoteMiniature.start_frac` is currently
-  fraction-of-pattern-length. For loop-within semantics the rendering in
-  `gui/sequencer/arrangement.rs` (mini-note loop, near the `inst_color_cache` use) should repeat the miniature
-  across the placement's `effective_length / pattern.length` iterations, so the user sees what they hear.
-- [ ] **Add a toggle on `PatternPlacement`** (`loop_mode: PlacementLoopMode { Clip, Repeat }`, default
-  `Repeat` to match DAW expectations). Surface in the placement context menu and in the right-edge
-  resize-grab tooltip so the user can choose per placement. Migration of older songs: default existing
-  placements to `Clip` so behaviour is preserved, or `Repeat` if we accept a one-time semantic change.
+- [x] **Mini-note visualization mirrors placement playback.** Repeat placements draw the source
+  miniature across every full or partial iteration, with bounded drawing work for very long/dense
+  placements; Clip placements draw it once and leave any longer tail blank.
+- [x] **Per-placement Clip/Repeat mode.** `PatternPlacement::loop_mode` defaults to `Repeat`
+  (including projects without the field), is applied by the real-time engine, round-trips through
+  MCP, and is selectable with undo from the placement context menu. The hover cursor and right-edge
+  resize tooltip expose the active mode.
 
 ### 1.3 Automation targets for send/return routing
 

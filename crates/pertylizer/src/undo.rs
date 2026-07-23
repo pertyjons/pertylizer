@@ -221,6 +221,14 @@ pub(crate) enum UndoAction {
         old_length: Option<SeqDuration>,
         new_length: Option<SeqDuration>,
     },
+    /// A placement switched between one-shot Clip and looping Repeat playback.
+    SetPlacementLoopMode {
+        pattern_id: PatternId,
+        track_id: TrackId,
+        start: Tick,
+        old_mode: synth_sequencer::PlacementLoopMode,
+        new_mode: synth_sequencer::PlacementLoopMode,
+    },
 
     // ── Automation ──
     /// An automation point was added.
@@ -697,6 +705,19 @@ impl UndoManager {
                 start: *start,
                 old_length: *new_length,
                 new_length: *old_length,
+            },
+            UndoAction::SetPlacementLoopMode {
+                pattern_id,
+                track_id,
+                start,
+                old_mode,
+                new_mode,
+            } => UndoAction::SetPlacementLoopMode {
+                pattern_id: *pattern_id,
+                track_id: *track_id,
+                start: *start,
+                old_mode: *new_mode,
+                new_mode: *old_mode,
             },
             UndoAction::MoveAutomationPoint {
                 pattern_id,

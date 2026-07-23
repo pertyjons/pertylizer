@@ -6,7 +6,8 @@
 
 use synth_core::{BipolarValue, Bpm, Gain, InstrumentId, MidiChannel, MidiNote, Semitones};
 use synth_sequencer::{
-    ModGraphId, ModNodeId, NoteGraphId, NoteId, NoteModuleId, PatternId, ReturnBusId, Tick, TrackId,
+    ModGraphId, ModNodeId, NoteGraphId, NoteId, NoteModuleId, PatternId, PlacementLoopMode,
+    ReturnBusId, Tick, TrackId,
 };
 
 use crate::error::McpBridgeError;
@@ -154,6 +155,8 @@ pub struct BridgePlacementData {
     pub gain: f32,
     /// Optional exact placement length override in ticks.
     pub length_ticks: Option<u32>,
+    /// Playback behavior beyond the source pattern.
+    pub loop_mode: PlacementLoopMode,
 }
 
 /// Partial update to one existing arrangement placement.
@@ -167,6 +170,7 @@ pub struct BridgePlacementUpdate {
     pub gain: Option<f32>,
     /// Omitted means unchanged; `Some(None)` clears the override.
     pub length_ticks: Option<Option<u32>>,
+    pub loop_mode: Option<PlacementLoopMode>,
 }
 
 /// Placement using array indices (for `set_song` where IDs don't exist yet).
@@ -180,6 +184,7 @@ pub struct BridgeSongPlacement {
     pub transpose_semitones: f32,
     pub gain: f32,
     pub length_ticks: Option<u32>,
+    pub loop_mode: PlacementLoopMode,
 }
 
 // === Bridge-level data structures for batch instrument building ===

@@ -3113,6 +3113,7 @@ impl SynthBridge for AppSynthBridge {
                     gain: p.gain.as_f32(),
                     length_beats: p.length_override.map(|length| ticks_to_beats(length.0)),
                     length_ticks: p.length_override.map(|length| length.0),
+                    loop_mode: p.loop_mode,
                     effective_length_beats: ticks_to_beats(effective_length.0),
                     effective_length_ticks: effective_length.0,
                     end_tick: p.end(pattern_length),
@@ -3505,6 +3506,9 @@ impl SynthBridge for AppSynthBridge {
             if let Some(length_ticks) = update.length_ticks {
                 replacement.length_override = length_ticks.map(synth_sequencer::Duration);
             }
+            if let Some(loop_mode) = update.loop_mode {
+                replacement.loop_mode = loop_mode;
+            }
             let replacement_end = song
                 .pattern(replacement.pattern_id)
                 .map(|pattern| replacement.end(pattern.length));
@@ -3632,6 +3636,7 @@ impl SynthBridge for AppSynthBridge {
                 transpose_semitones: pl.transpose_semitones,
                 gain: pl.gain,
                 length_ticks: pl.length_ticks,
+                loop_mode: pl.loop_mode,
             };
             let placement = placement_from_bridge(&data);
             if song.arrangement().iter().any(|existing| {
@@ -7755,6 +7760,7 @@ fn placement_from_bridge(data: &BridgePlacementData) -> synth_sequencer::Pattern
             .with_transpose(synth_core::Semitones::new(data.transpose_semitones))
             .with_gain(synth_core::Gain::new(data.gain));
     placement.length_override = data.length_ticks.map(synth_sequencer::Duration);
+    placement.loop_mode = data.loop_mode;
     placement
 }
 
