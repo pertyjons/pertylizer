@@ -23,6 +23,9 @@ pub struct RandomGates {
 
     // State
     rng_state: u32,
+    /// Voice slot this instance drives, folded into the seed so a chord's voices
+    /// get decorrelated gate patterns instead of firing in lockstep.
+    voice_index: u32,
     sample_rate: SampleRate,
     step_counter: f32,
     samples_per_step: f32,
@@ -51,6 +54,7 @@ impl RandomGates {
             gate_length: NormalizedValue::CENTER,
 
             rng_state: 42,
+            voice_index: 0,
             sample_rate: SampleRate::DVD_QUALITY,
             step_counter: 0.0,
             samples_per_step: 5512.5,
@@ -72,6 +76,16 @@ impl RandomGates {
     #[inline]
     fn next_random(&mut self) -> f32 {
         crate::math::xorshift32(&mut self.rng_state)
+    }
+
+    /// Derive the RNG state from the `seed` param and this instance's voice slot,
+    /// so a patch's voices decorrelate: voice 0 keeps the bare seed, the rest are
+    /// spread by a golden-ratio hash. Kept non-zero (xorshift stalls at 0).
+    #[inline]
+    fn seeded_state(&self) -> u32 {
+        self.seed
+            .wrapping_add(self.voice_index.wrapping_mul(0x9E37_79B9))
+            .max(1)
     }
 }
 
@@ -252,7 +266,7 @@ impl PolyModule for RandomGates {
                 RandomGatesParam::Density(v) => self.density = v,
                 RandomGatesParam::Seed(s) => {
                     self.seed = s;
-                    self.rng_state = s.max(1);
+                    self.rng_state = self.seeded_state();
                 }
                 RandomGatesParam::BurstProbability(v) => self.burst_probability = v,
                 RandomGatesParam::GateLength(v) => self.gate_length = v,
@@ -295,14 +309,23 @@ impl PolyModule for RandomGates {
         self.gate_active = false;
         self.gate_remaining = 0.0;
         self.burst_remaining = 0;
-        self.rng_state = self.seed.max(1);
+        self.rng_state = self.seeded_state();
     }
 
     fn set_seed(&mut self, seed: u64) {
         // Fold the 64-bit seed into the 32-bit generator; `reset` re-derives
-        // `rng_state` from `self.seed`, so store both.
+        // `rng_state` from `self.seed` (+ voice slot), so store the seed.
         self.seed = seed as u32;
-        self.rng_state = self.seed.max(1);
+        self.rng_state = self.seeded_state();
+    }
+
+    fn set_voice_index(&mut self, voice_index: u32) {
+        // Decorrelate per voice (the graph folds the module id into `voice_index`)
+        // so a chord's random gates aren't identical across voices — matches
+        // DriftGenerator. TuringMachine is deliberately left in lockstep: its
+        // identity is a single evolving shift-register sequence.
+        self.voice_index = voice_index;
+        self.rng_state = self.seeded_state();
     }
 
     fn note_on(&mut self, _note: MidiNote, _velocity: Velocity) {
@@ -399,6 +422,43 @@ mod tests {
             cv_sum(777),
             cv_sum(777),
             "the same seed must reproduce the same sequence"
+        );
+    }
+
+    /// Per-voice decorrelation: voices of one patch (same seed, different
+    /// `voice_index`) produce independent gate/CV streams instead of firing in
+    /// lockstep, while voice 0 keeps the bare-seed sequence (backward-compatible).
+    #[test]
+    fn voices_decorrelate_from_the_seed() {
+        let n = 64000;
+        let cv_sum = |voice: Option<u32>| -> f32 {
+            let mut rg = RandomGates::new();
+            if let Some(v) = voice {
+                rg.set_voice_index(v);
+            }
+            let ctx = ProcessContext {
+                samples: synth_core::SampleCount::new(n),
+                ..ProcessContext::default()
+            };
+            let mut outs = HashMap::new();
+            outs.insert(PortName::GATE, AudioBuffer::new(n));
+            outs.insert(PortName::CV, AudioBuffer::new(n));
+            rg.process(InputPorts::empty(), &mut outs, &ctx);
+            let b = &outs[&PortName::CV];
+            (0..b.len()).map(|i| b[i]).sum::<f32>()
+        };
+        assert!(
+            (cv_sum(Some(0)) - cv_sum(Some(1))).abs() > 1e-6,
+            "different voice indices should decorrelate the output"
+        );
+        assert!(
+            (cv_sum(Some(1)) - cv_sum(Some(2))).abs() > 1e-6,
+            "adjacent voices should decorrelate too"
+        );
+        assert_eq!(
+            cv_sum(Some(0)),
+            cv_sum(None),
+            "voice 0 must match the un-indexed bare-seed sequence"
         );
     }
 }

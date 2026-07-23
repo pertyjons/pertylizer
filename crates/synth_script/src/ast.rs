@@ -94,6 +94,9 @@ pub struct ParamDecl {
     pub range: Option<(Expr, Expr)>,
     pub label: Option<String>,
     pub tooltip: Option<String>,
+    /// Display unit from an optional `unit <token>` clause; `None` when absent
+    /// or unrecognized.
+    pub unit: synth_core::ParameterUnit,
     pub span: Span,
 }
 

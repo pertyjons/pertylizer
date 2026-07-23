@@ -138,6 +138,8 @@ pub struct ScriptParamDecl {
     pub label: Option<String>,
     /// Optional tooltip shown on hover.
     pub tooltip: Option<String>,
+    /// Display unit (drives the knob's value suffix); `None` when unset.
+    pub unit: crate::ParameterUnit,
 }
 
 /// A compiled YAMS program paired with the addresses its source registers read.

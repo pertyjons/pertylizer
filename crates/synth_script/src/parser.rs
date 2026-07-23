@@ -226,6 +226,21 @@ impl Parser {
         } else {
             None
         };
+        // Optional `unit <token>` clause (e.g. `unit hz`) — a bare `unit`
+        // identifier followed by a unit token. An unrecognized token maps to
+        // `None`, so scripts stay forward-compatible.
+        let unit = if matches!(self.cur_kind(), TokenKind::Ident(n) if n == "unit") {
+            self.advance(); // `unit`
+            match self.eat_ident() {
+                Some(tok) => synth_core::ParameterUnit::from_token(&tok.name),
+                None => {
+                    self.error_here("expected a unit token after 'unit' (e.g. hz, db, ms)");
+                    synth_core::ParameterUnit::None
+                }
+            }
+        } else {
+            synth_core::ParameterUnit::None
+        };
         let span = start.to(self.cur_span());
         self.expect_terminator();
         Some(ParamDecl {
@@ -234,6 +249,7 @@ impl Parser {
             range,
             label,
             tooltip,
+            unit,
             span,
         })
     }

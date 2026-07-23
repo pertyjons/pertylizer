@@ -404,6 +404,7 @@ impl Compiler {
             max,
             label: p.label.clone(),
             tooltip: p.tooltip.clone(),
+            unit: p.unit,
         });
     }
 
@@ -2576,6 +2577,24 @@ mod tests {
         assert!(approx(d.min, 20.0) && approx(d.max, 20000.0));
         assert_eq!(d.label.as_deref(), Some("Cutoff"));
         assert_eq!(d.tooltip.as_deref(), Some("filter cutoff"));
+    }
+
+    #[test]
+    fn param_unit_clause_parses() {
+        // Full form: range + strings + `unit hz`.
+        let prog = compile_cp_ok(
+            "param cutoff = 1000 [20, 20000] \"Cutoff\" \"tip\" unit hz\nout1 = cutoff",
+        );
+        assert_eq!(prog.params[0].unit, synth_core::ParameterUnit::Hertz);
+        // `unit` works with no label/tooltip too.
+        let bare = compile_cp_ok("param drive = 0.5 unit db\nout1 = drive");
+        assert_eq!(bare.params[0].unit, synth_core::ParameterUnit::Decibels);
+        // An unrecognized token is simply unitless (forward-compatible), not an error.
+        let unknown = compile_cp_ok("param x = 0.5 unit wat\nout1 = x");
+        assert_eq!(unknown.params[0].unit, synth_core::ParameterUnit::None);
+        // No clause → None.
+        let none = compile_cp_ok("param y = 0.5\nout1 = y");
+        assert_eq!(none.params[0].unit, synth_core::ParameterUnit::None);
     }
 
     #[test]

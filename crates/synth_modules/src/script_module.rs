@@ -439,6 +439,7 @@ mod tests {
                 max: 1.0,
                 label: Some("Drive".to_string()),
                 tooltip: None,
+                unit: synth_core::ParameterUnit::None,
             }]),
         )
     }

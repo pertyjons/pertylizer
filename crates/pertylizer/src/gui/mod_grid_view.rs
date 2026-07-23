@@ -141,9 +141,10 @@ pub(crate) struct ModGridViewState {
     /// The instruments `(id, name)`, snapshotted each frame from the app (the
     /// `Song` has no instrument names) — for the Module-target picker.
     instruments: Vec<(InstrumentId, String)>,
-    /// Per-instrument automatable module-param targets, snapshotted each frame
-    /// from the live descriptors — the per-module submenus of the Target picker
-    /// (shared enumeration, so it matches MCP + the pattern-view lane picker).
+    /// Per-instrument automatable module-param targets from the live descriptors
+    /// — the per-module submenus of the Target picker (shared enumeration, so it
+    /// matches MCP + the pattern-view lane picker). Refreshed only when the caller
+    /// rebuilds it (the module graph changed), not every frame.
     module_groups: HashMap<InstrumentId, Vec<crate::module_targets::ModuleTargetGroup>>,
     /// The Mod Grid pre-pass CPU load (fraction of the buffer budget), shown in
     /// the canvas header. Snapshotted from the engine each frame.
@@ -167,14 +168,17 @@ pub(crate) fn draw_mod_grid_view(
     state: &mut ModGridViewState,
     undo_manager: &mut UndoManager,
     instruments: &[(InstrumentId, String)],
-    module_groups: HashMap<InstrumentId, Vec<crate::module_targets::ModuleTargetGroup>>,
+    module_groups: Option<HashMap<InstrumentId, Vec<crate::module_targets::ModuleTargetGroup>>>,
     cpu_mod_grid: f32,
 ) {
-    // Snapshot the instrument list + per-instrument module targets (names and
-    // descriptors come from the app, not the Song) for the Module-target picker.
+    // Snapshot the instrument list for the Module-target picker. The per-instrument
+    // module targets are refreshed only when the caller rebuilds them (the module
+    // graph changed); otherwise the previous frame's `state.module_groups` stands.
     state.instruments.clear();
     state.instruments.extend_from_slice(instruments);
-    state.module_groups = module_groups;
+    if let Some(groups) = module_groups {
+        state.module_groups = groups;
+    }
     state.cpu_mod_grid = cpu_mod_grid;
 
     let selected_at_entry = state.selected;

@@ -360,6 +360,12 @@ display label, and tooltip are optional and positional. Defaults and range
 bounds must be compile-time constants. With no explicit range, the knob uses
 `0..1`; with no label, the identifier is humanized for display.
 
+A trailing `unit <token>` clause tags the knob's display unit, e.g.
+`param cutoff = 1000 [20, 20000] "Cutoff" unit hz`. Recognized tokens are `hz`,
+`db`, `percent`/`pct`, `ms`, `s`/`sec`, `st`/`semitones`, `cents`,
+`oct`/`octaves`, `beats`, `bpm`, `samples`, and `ratio`; an unrecognized token
+is simply unitless, so scripts stay forward-compatible.
+
 Declared knobs are real module parameters: they appear on the faceplate and in
 MCP discovery, persist with the patch, and can be automated or targeted by the
 Mod Matrix and Mod Grid. The program reads the parameter by its declared name:

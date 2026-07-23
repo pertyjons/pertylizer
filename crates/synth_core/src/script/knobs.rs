@@ -195,6 +195,7 @@ pub fn knob_descriptor(decl: &ScriptParamDecl, value: f32) -> ParameterDescripto
     let mut d = ParameterDescriptor::float(decl.name_str, id, label)
         .range(decl.min, decl.max)
         .default(decl.default)
+        .unit(decl.unit)
         .modulatable(true);
     if let Some(tip) = &decl.tooltip {
         d = d.description(tip.clone());
@@ -216,6 +217,7 @@ mod tests {
             max: 1.0,
             label: None,
             tooltip: None,
+            unit: crate::ParameterUnit::None,
         }
     }
 
@@ -281,11 +283,13 @@ mod tests {
             max: 20000.0,
             label: Some("Cutoff".to_string()),
             tooltip: Some("filter".to_string()),
+            unit: crate::ParameterUnit::Hertz,
         };
         let pd = knob_descriptor(&d, 1500.0);
         assert_eq!(pd.type_id, "cutoff");
         assert_eq!(pd.name, "Cutoff");
         assert_eq!(pd.description, "filter");
+        assert_eq!(pd.unit, crate::ParameterUnit::Hertz);
         assert!(pd.modulatable);
         assert!((pd.range.min - 20.0).abs() < 1e-6);
         assert!((pd.range.max - 20000.0).abs() < 1e-6);

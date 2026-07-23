@@ -234,7 +234,6 @@ pub fn draw_sample_view(
                         let ref_count = sample_ref_counts.get(&row.id.0).copied().unwrap_or(0);
                         let used = ref_count > 0;
 
-                        let mut select = false;
                         let mut rename = false;
                         let mut export = false;
                         let mut delete = false;
@@ -287,11 +286,8 @@ pub fn draw_sample_view(
                             row.duration,
                             chan,
                         ));
-                        if response.clicked() && !is_selected {
-                            select = true;
-                        }
-
-                        if select || rename {
+                        // A fresh click selects the row; a rename implies selection too.
+                        if (response.clicked() && !is_selected) || rename {
                             state.selected_sample = Some(row.id);
                             state.peaks_dirty = true;
                             state.scroll_offset = 0.0;

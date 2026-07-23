@@ -571,6 +571,28 @@ pub enum ParameterUnit {
 }
 
 impl ParameterUnit {
+    /// Map a lowercase token to a unit, returning [`Self::None`] for anything
+    /// unrecognized. Used by the YAMS `param … unit <token>` clause, so it stays
+    /// forward-compatible (an unknown token is simply unitless, not an error).
+    #[must_use]
+    pub fn from_token(token: &str) -> Self {
+        match token {
+            "hz" => Self::Hertz,
+            "db" => Self::Decibels,
+            "percent" | "pct" => Self::Percent,
+            "ms" => Self::Milliseconds,
+            "s" | "sec" => Self::Seconds,
+            "st" | "semitones" => Self::Semitones,
+            "cents" => Self::Cents,
+            "oct" | "octaves" => Self::Octaves,
+            "beats" => Self::Beats,
+            "bpm" => Self::BeatsPerMinute,
+            "samples" => Self::Samples,
+            "ratio" => Self::Ratio,
+            _ => Self::None,
+        }
+    }
+
     /// Get the unit suffix string.
     pub fn suffix(&self) -> &'static str {
         match self {

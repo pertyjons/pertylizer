@@ -177,10 +177,12 @@ knobs through the GUI, Mod Matrix, automation, persistence, and cross-script rea
   knobs to user-side per-sample smoothing in the script (`s = s + (drive - s) * 0.005` via a
   `state` cell); a built-in `smooth(x, coeff)` helper (or a `param … smooth` modifier) would
   remove the boilerplate. Defer unless the manual one-pole proves too fiddly.
-- [ ] **Unit keyword for `param` metadata.** v1 carries default + `[min,max]` + `"label"` +
-  `"tooltip"`; the `ParameterUnit` (Hz/dB/…), bipolar-vs-unipolar, and response curve are
-  deferred (default linear/unipolar). A later optional `param … unit hz` keyword maps a
-  recognized token → the `ParameterUnit` enum, else `None`. **S**.
+- [x] **Unit keyword for `param` metadata.** Added the optional trailing
+  `param … unit <token>` clause: a recognized token (`hz`/`db`/`ms`/`s`/`percent`/
+  `st`/`cents`/`oct`/`beats`/`bpm`/`samples`/`ratio`) maps via
+  `ParameterUnit::from_token` to the enum (else `None`), threaded AST → compile →
+  `ScriptParamDecl` → `knob_descriptor`. Bipolar-vs-unipolar and response curve
+  remain deferred (still default linear/unipolar).
 
 ### 2.6 Per-oscillator glide (portamento)
 
@@ -216,11 +218,11 @@ offline rendering. Remaining refinements follow.
   no lane; a Track graph on two tracks; `LFO → Pitch` host-only; an Audio-tap duck;
   routing-removal returns to base; a seeded render matches live; `Macro → LFO.rate_cv`;
   a live `MidiCc`; sustain hold+release.
-- [ ] **Cache the Module-target snapshot (7.1 refinement).** `egui_backend` rebuilds
-  the per-instrument `module_target_groups` for **every** instrument every frame the
-  Mod Grid view is open (a registry lock + descriptor clone each). Fine for a handful
-  of instruments (egui repaints on demand), but cache it on a structure-generation
-  bump — or build only for the target's selected instrument — for large projects. **S.**
+- [x] **Cached the Module-target snapshot (7.1 refinement).** `egui_backend` now
+  rebuilds the per-instrument `module_target_groups` only when
+  `shared_graph.version()` changes (tracked in `mod_target_groups_version`), passing
+  `Option<_>` to `draw_mod_grid_view` so an unchanged frame keeps the view's existing
+  groups — no registry lock + descriptor clone per instrument every repaint.
 - [ ] **Per-graph CPU attribution (7.6 refinement).** The header CPU is total across
   all running instances (reuses the per-stage timing). Per-graph cost needs separate
   instrumentation (time each `ModGridInstance` and map to its `ModGraphId`, exposed to
@@ -229,13 +231,21 @@ offline rendering. Remaining refinements follow.
   use the measured instance cost to decide whether track-scoped graphs need a soft
   assignment limit. Warn in the GUI when the estimated aggregate cost exceeds the
   budget; do not impose a hard limit unless real projects demonstrate a need. **S–M.**
-- [ ] **Per-voice decorrelation for RandomGates / TuringMachine (optional).**
-  DriftGenerator now decorrelates per voice via `set_voice_index`; RandomGates and
-  TuringMachine still run in lockstep across a patch's voices (they don't override it).
-  Add `set_voice_index` to them too if per-voice variation is wanted — but it may be
-  intentional for rhythmic modules (a consistent gate pattern), so decide per module. **S.**
-- [ ] **Full sustain-pedal is CC64-specific.** The pedal path only handles CC64; other
-  hold-type pedals (sostenuto CC66, soft CC67) are not modelled. Low priority. **S.**
+- [x] **Per-voice decorrelation — decided per module.** **RandomGates**: now
+  overrides `set_voice_index`, folding the voice slot into the seed via a shared
+  `seeded_state()` (voice 0 keeps the bare seed) so a chord's voices get
+  independent gate/CV streams instead of firing in lockstep; matches
+  DriftGenerator (test `voices_decorrelate_from_the_seed`). **TuringMachine**:
+  deliberately **left in lockstep** — its identity is a single evolving
+  shift-register sequence, and per-voice variation would change its character.
+- [ ] **Sostenuto (CC66) is unmodelled — re-scoped from "S" to "M".** The pedal
+  path only handles CC64 (defer NoteOffs while held). **CC67 (soft) is NOT a code
+  gap**: all CC state already feeds Mod Grid `MidiCc` sources, so a soft pedal is a
+  routing answer today (CC67 → a volume/gain destination). **CC66 (sostenuto)** is a
+  real feature but bigger than a CC64 mirror: it must snapshot the keys *down at the
+  moment the pedal is pressed* and defer only those NoteOffs (notes struck after are
+  not held), which needs new per-channel keys-down tracking + a captured set +
+  selective deferral. Do as its own small-M task if a use case appears. Low priority.
 - [ ] **CPU metering uses `Instant::now()` every audio callback (review finding 5).**
   The mod-grid stage timing follows the *pre-existing* per-stage pattern (voices /
   module-graph / master-fx already do 4 clock reads per callback). `Instant::now()`
@@ -296,16 +306,11 @@ Surfaced during the shared left-list-panel work (`feat/uniform-list-panels`,
 correctness bugs (those were fixed in that branch); these are the cleanup/
 efficiency/altitude items deliberately left out of that change.
 
-- [ ] **Cache sample-usage instead of recomputing every frame.** The Sample view
-  rebuilds `used_sample_ids` on every repaint by calling
-  `self.session.state().shared_graph.get_all_modules()` (which clones *every*
-  module snapshot incl. its full `parameters` vec) and scanning for
-  `Param::Sampler(SamplerParam::SampleSelect(..))` — see the sample-view call site
-  in `gui/egui_backend.rs` (the `used_sample_ids` block just before
-  `draw_sample_view`). Only runs while the Sample tab is open, but it allocates +
-  walks the whole graph ~60×/sec. Fix: cache the id set and invalidate on a
-  graph-version change (`shared_graph.version()`), or expose a lighter query that
-  yields just the referenced `SampleId`s without cloning snapshots.
+- [x] **Cached sample-usage instead of recomputing every frame.** The Sample view
+  now recomputes the sampler→sample reference counts only when
+  `shared_graph.version()` changes (any module add/remove or parameter edit bumps
+  it), caching them on `SynthApp` (`sample_ref_counts_cache`/`_version`), instead
+  of cloning every module snapshot ~60×/sec while the tab is open.
 - [ ] **Generalize the per-panel scaffolding (altitude).** `list_panel::row`/
   `header`/`search_box` centralize the row visuals, but the three call sites
   (`render_instruments_panel` in `gui/egui_backend.rs`, `draw_browser_row` in
@@ -315,10 +320,9 @@ efficiency/altitude items deliberately left out of that change.
   empty-state placeholder. A higher-altitude helper taking
   `(selected, used, name, tip, kebab) -> RowOutcome { clicked, double_clicked }`
   would remove the repetition the first pass left behind.
-- [ ] **Drop the redundant `select` flag in the sample row loop**
-  (`gui/sample_view.rs`). It is only ever read in `if select || rename` and
-  `rename` already implies selection; the selection assignment can test the row
-  response (and `rename`) directly. Pure cleanup, no behavior change.
+- [x] **Dropped the redundant `select` flag in the sample row loop**
+  (`gui/sample_view.rs`) — inlined the click-vs-selected + rename test directly
+  into the selection assignment. Pure cleanup, no behavior change.
 
 ### 3.4 Shared widget helpers follow-ups (evaluating Phase 2 residual)
 

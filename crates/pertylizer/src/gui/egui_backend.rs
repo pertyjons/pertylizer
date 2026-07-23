@@ -376,6 +376,18 @@ struct SynthApp {
 
     /// Sample view state.
     sample_view_state: crate::gui::sample_view::SampleViewState,
+    /// Cached sampler→sample reference counts for the Sample view, paired with the
+    /// `shared_graph` version they were computed at. Recomputed only when that
+    /// version changes (any module add/remove or parameter edit bumps it) rather
+    /// than cloning every module snapshot each repaint while the tab is open.
+    sample_ref_counts_cache: std::collections::HashMap<u64, usize>,
+    sample_ref_counts_version: u64,
+    /// `shared_graph` version the Mod Grid view's per-instrument module-target
+    /// groups were last built at. The groups themselves live in
+    /// `mod_grid_view_state.module_groups`; this only tracks when to rebuild them
+    /// (they derive from module structure/types, so only a graph change matters),
+    /// instead of re-deriving from live descriptors for every instrument each frame.
+    mod_target_groups_version: u64,
 
     /// Mixer view state (rename buffer + smoothed meter levels).
     mixer_view_state: crate::gui::mixer_view::MixerViewState,
@@ -500,6 +512,12 @@ impl SynthApp {
             last_title: String::new(),
             sample_library: config.sample_library,
             sample_view_state: crate::gui::sample_view::SampleViewState::new(),
+            sample_ref_counts_cache: std::collections::HashMap::new(),
+            // u64::MAX so the first Sample-view frame always recomputes (the live
+            // graph version starts well below it).
+            sample_ref_counts_version: u64::MAX,
+            // u64::MAX so the first Mod Grid frame always builds the target groups.
+            mod_target_groups_version: u64::MAX,
             mixer_view_state: crate::gui::mixer_view::MixerViewState::default(),
             audio_input: crate::audio::input::AudioInputManager::new(),
             analyze_window: crate::gui::analyze::AnalyzeWindow::new(),
@@ -928,21 +946,33 @@ impl eframe::App for SynthApp {
                         .collect();
                     // Per-instrument automatable module targets, from the live
                     // descriptors (shared enumeration → matches MCP + the lane
-                    // picker). Built for the modules only, so the transient
-                    // descriptor clones are dropped immediately.
-                    let module_groups: std::collections::HashMap<
-                        synth_sequencer::InstrumentId,
-                        Vec<crate::module_targets::ModuleTargetGroup>,
-                    > = instruments
-                        .iter()
-                        .map(|(seq_id, _)| {
-                            let modules = self.session.all_modules_for_instrument(*seq_id);
-                            (
-                                *seq_id,
-                                crate::module_targets::module_target_groups(&modules),
-                            )
-                        })
-                        .collect();
+                    // picker). These derive from module structure/types, so rebuild
+                    // only when the shared graph changed (a registry lock +
+                    // descriptor clone per instrument each frame is wasteful on large
+                    // projects); otherwise `None` keeps the view's existing groups.
+                    let graph_version = self.session.state().shared_graph.version();
+                    let module_groups: Option<
+                        std::collections::HashMap<
+                            synth_sequencer::InstrumentId,
+                            Vec<crate::module_targets::ModuleTargetGroup>,
+                        >,
+                    > = if graph_version != self.mod_target_groups_version {
+                        self.mod_target_groups_version = graph_version;
+                        Some(
+                            instruments
+                                .iter()
+                                .map(|(seq_id, _)| {
+                                    let modules = self.session.all_modules_for_instrument(*seq_id);
+                                    (
+                                        *seq_id,
+                                        crate::module_targets::module_target_groups(&modules),
+                                    )
+                                })
+                                .collect(),
+                        )
+                    } else {
+                        None
+                    };
                     let cpu_mod_grid = self.handle.cpu_breakdown().mod_grid;
                     crate::gui::mod_grid_view::draw_mod_grid_view(
                         ui,
@@ -1015,33 +1045,40 @@ impl eframe::App for SynthApp {
                         self.sample_view_state.devices_dirty = false;
                     }
 
-                    // Count how many sampler modules reference each sample (by raw
-                    // id) — drives both dimming unused samples in the list and
-                    // blocking deletion of an in-use sample.
-                    let mut sample_ref_counts: std::collections::HashMap<u64, usize> =
-                        std::collections::HashMap::new();
-                    for id in self
-                        .session
-                        .state()
-                        .shared_graph
-                        .get_all_modules()
-                        .iter()
-                        .flat_map(|m| &m.parameters)
-                        .filter_map(|p| match p {
-                            synth_core::params::Param::Sampler(
-                                synth_core::params::SamplerParam::SampleSelect(id),
-                            ) => Some(id.as_u64()),
-                            _ => None,
-                        })
-                    {
-                        *sample_ref_counts.entry(id).or_insert(0) += 1;
+                    // How many sampler modules reference each sample (by raw id) —
+                    // drives both dimming unused samples in the list and blocking
+                    // deletion of an in-use sample. Recompute only when the shared
+                    // graph changed since last frame; otherwise reuse the cache, so
+                    // an open Sample tab doesn't clone every module snapshot ~60×/s.
+                    let graph_version = self.session.state().shared_graph.version();
+                    if graph_version != self.sample_ref_counts_version {
+                        let mut counts: std::collections::HashMap<u64, usize> =
+                            std::collections::HashMap::new();
+                        for id in self
+                            .session
+                            .state()
+                            .shared_graph
+                            .get_all_modules()
+                            .iter()
+                            .flat_map(|m| &m.parameters)
+                            .filter_map(|p| match p {
+                                synth_core::params::Param::Sampler(
+                                    synth_core::params::SamplerParam::SampleSelect(id),
+                                ) => Some(id.as_u64()),
+                                _ => None,
+                            })
+                        {
+                            *counts.entry(id).or_insert(0) += 1;
+                        }
+                        self.sample_ref_counts_cache = counts;
+                        self.sample_ref_counts_version = graph_version;
                     }
                     let action = crate::gui::sample_view::draw_sample_view(
                         ui,
                         &self.sample_library,
                         &mut self.sample_view_state,
                         &mut self.audio_input,
-                        &sample_ref_counts,
+                        &self.sample_ref_counts_cache,
                     );
                     match action {
                         crate::gui::sample_view::SampleViewAction::None => {}
