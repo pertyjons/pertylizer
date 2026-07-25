@@ -124,50 +124,6 @@ pub enum WavetableParam {
 }
 
 impl WavetableParam {
-    /// Check if two parameters are the same kind (ignoring values).
-    pub fn same_kind(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-
-    /// Get the parameter name.
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Table(_) => "Table",
-            Self::Position(_) => "Position",
-            Self::Detune(_) => "Detune",
-            Self::Octave(_) => "Octave",
-            Self::Level(_) => "Level",
-            Self::GlideTime(_) => "Glide",
-        }
-    }
-
-    /// Get the value as f32 (for GUI).
-    pub fn as_f32(&self) -> f32 {
-        match self {
-            Self::Table(t) => t.index() as f32,
-            Self::Position(v) => v.as_f32(),
-            Self::Detune(c) => c.as_f32(),
-            Self::Octave(o) => o.as_i32() as f32,
-            Self::Level(g) => g.as_f32(),
-            Self::GlideTime(s) => s.as_f32(),
-        }
-    }
-
-    /// Create the same parameter variant with a new f32 value (for GUI).
-    #[allow(clippy::cast_possible_truncation)]
-    pub fn with_f32(&self, value: f32) -> Self {
-        match self {
-            Self::Table(_) => {
-                Self::Table(WavetableSelect::from_index(value as usize).unwrap_or_default())
-            }
-            Self::Position(_) => Self::Position(NormalizedValue::new(value)),
-            Self::Detune(_) => Self::Detune(Cents::new(value)),
-            Self::Octave(_) => Self::Octave(Octaves::new(value.round() as i32)),
-            Self::Level(_) => Self::Level(Gain::new(value)),
-            Self::GlideTime(_) => Self::GlideTime(Seconds::new(value.max(0.0))),
-        }
-    }
-
     /// Default templates
     pub fn table_default() -> Self {
         Self::Table(WavetableSelect::default())

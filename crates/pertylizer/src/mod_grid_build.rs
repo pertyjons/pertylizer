@@ -8,6 +8,7 @@
 
 use std::collections::HashMap;
 
+use synth_core::ModuleParam;
 use synth_core::{DestAddr, ModuleType, PortName};
 use synth_engine::ModuleId;
 use synth_engine::graph::ModuleGraph;

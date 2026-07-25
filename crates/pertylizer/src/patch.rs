@@ -26,6 +26,7 @@ use synth_core::{
 use synth_engine::instrument::InstrumentId;
 use thiserror::Error;
 
+use synth_core::ModuleParam;
 use synth_core::ModuleType;
 use synth_engine::ModuleId;
 use synth_engine::graph::Connection;

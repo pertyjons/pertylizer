@@ -26,47 +26,6 @@ pub enum KeyboardPannerParam {
     Invert(Polarity),
 }
 
-impl KeyboardPannerParam {
-    pub fn same_kind(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Spread(_) => "Spread",
-            Self::CenterNote(_) => "Center",
-            Self::Curve(_) => "Curve",
-            Self::Invert(_) => "Invert",
-        }
-    }
-
-    pub fn as_f32(&self) -> f32 {
-        match self {
-            Self::Spread(v) => v.as_f32(),
-            Self::CenterNote(n) => f32::from(n.as_u8()),
-            Self::Curve(c) => c.as_f32(),
-            Self::Invert(p) => {
-                if p.is_inverted() {
-                    1.0
-                } else {
-                    0.0
-                }
-            }
-        }
-    }
-
-    pub fn with_f32(&self, value: f32) -> Self {
-        match self {
-            Self::Spread(_) => Self::Spread(NormalizedValue::new(value)),
-            Self::CenterNote(_) => {
-                Self::CenterNote(MidiNote::new(value.round().clamp(0.0, 127.0) as u8))
-            }
-            Self::Curve(_) => Self::Curve(BipolarValue::new(value)),
-            Self::Invert(_) => Self::Invert(Polarity::from(value > 0.5)),
-        }
-    }
-}
-
 impl Default for KeyboardPannerParam {
     fn default() -> Self {
         Self::Spread(NormalizedValue::new(0.5))
@@ -106,52 +65,6 @@ pub enum SpatialPannerParam {
     Distance(NormalizedValue),
 }
 
-impl SpatialPannerParam {
-    pub fn same_kind(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::X(_) => "X",
-            Self::Y(_) => "Y",
-            Self::Z(_) => "Z",
-            Self::Diffusion(_) => "Diffusion",
-            Self::ErLevel(_) => "ER Level",
-            Self::DirectLevel(_) => "Direct Level",
-            Self::Absorption(_) => "Absorption",
-            Self::AirAbsorption(_) => "Air Absorption",
-            Self::Distance(_) => "Distance",
-        }
-    }
-
-    pub fn as_f32(&self) -> f32 {
-        match self {
-            Self::X(v) | Self::Y(v) | Self::Z(v) => v.as_f32(),
-            Self::Diffusion(v)
-            | Self::ErLevel(v)
-            | Self::DirectLevel(v)
-            | Self::Absorption(v)
-            | Self::AirAbsorption(v)
-            | Self::Distance(v) => v.as_f32(),
-        }
-    }
-
-    pub fn with_f32(&self, value: f32) -> Self {
-        match self {
-            Self::X(_) => Self::X(BipolarValue::new(value)),
-            Self::Y(_) => Self::Y(BipolarValue::new(value)),
-            Self::Z(_) => Self::Z(BipolarValue::new(value)),
-            Self::Diffusion(_) => Self::Diffusion(NormalizedValue::new(value)),
-            Self::ErLevel(_) => Self::ErLevel(NormalizedValue::new(value)),
-            Self::DirectLevel(_) => Self::DirectLevel(NormalizedValue::new(value)),
-            Self::Absorption(_) => Self::Absorption(NormalizedValue::new(value)),
-            Self::AirAbsorption(_) => Self::AirAbsorption(NormalizedValue::new(value)),
-            Self::Distance(_) => Self::Distance(NormalizedValue::new(value)),
-        }
-    }
-}
-
 impl Default for SpatialPannerParam {
     fn default() -> Self {
         Self::X(BipolarValue::CENTER)
@@ -175,39 +88,6 @@ pub enum BodyResonanceParam {
     Brightness(NormalizedValue),
     /// Wet/dry mix
     Mix(NormalizedValue),
-}
-
-impl BodyResonanceParam {
-    pub fn same_kind(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Frequency(_) => "Freq",
-            Self::Resonance(_) => "Resonance",
-            Self::Size(_) => "Size",
-            Self::Brightness(_) => "Bright",
-            Self::Mix(_) => "Mix",
-        }
-    }
-
-    pub fn as_f32(&self) -> f32 {
-        match self {
-            Self::Frequency(f) => f.as_f32(),
-            Self::Resonance(v) | Self::Size(v) | Self::Brightness(v) | Self::Mix(v) => v.as_f32(),
-        }
-    }
-
-    pub fn with_f32(&self, value: f32) -> Self {
-        match self {
-            Self::Frequency(_) => Self::Frequency(Hertz::new(value.clamp(50.0, 2000.0))),
-            Self::Resonance(_) => Self::Resonance(NormalizedValue::new(value)),
-            Self::Size(_) => Self::Size(NormalizedValue::new(value)),
-            Self::Brightness(_) => Self::Brightness(NormalizedValue::new(value)),
-            Self::Mix(_) => Self::Mix(NormalizedValue::new(value)),
-        }
-    }
 }
 
 impl Default for BodyResonanceParam {
@@ -297,44 +177,6 @@ pub enum MechanicalNoiseParam {
     VelocitySens(NormalizedValue),
     /// Output level
     Level(Gain),
-}
-
-impl MechanicalNoiseParam {
-    pub fn same_kind(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::NoiseType(_) => "Type",
-            Self::Duration(_) => "Duration",
-            Self::Cutoff(_) => "Cutoff",
-            Self::VelocitySens(_) => "Vel Sens",
-            Self::Level(_) => "Level",
-        }
-    }
-
-    pub fn as_f32(&self) -> f32 {
-        match self {
-            Self::NoiseType(t) => t.index() as f32,
-            Self::Duration(d) => d.as_f32(),
-            Self::Cutoff(f) => f.as_f32(),
-            Self::VelocitySens(v) => v.as_f32(),
-            Self::Level(g) => g.as_f32(),
-        }
-    }
-
-    pub fn with_f32(&self, value: f32) -> Self {
-        match self {
-            Self::NoiseType(_) => {
-                Self::NoiseType(MechanicalNoiseType::from_index(value as usize).unwrap_or_default())
-            }
-            Self::Duration(_) => Self::Duration(Milliseconds::new(value.clamp(1.0, 100.0))),
-            Self::Cutoff(_) => Self::Cutoff(Hertz::new(value.clamp(100.0, 10000.0))),
-            Self::VelocitySens(_) => Self::VelocitySens(NormalizedValue::new(value)),
-            Self::Level(_) => Self::Level(Gain::new(value)),
-        }
-    }
 }
 
 impl Default for MechanicalNoiseParam {

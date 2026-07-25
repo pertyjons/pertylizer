@@ -26,46 +26,6 @@ pub enum RingModParam {
 }
 
 impl RingModParam {
-    /// Check if two parameters are the same kind (ignoring values).
-    pub fn same_kind(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-
-    /// Get the parameter name.
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::CarrierFreq(_) => "Carrier Freq",
-            Self::CarrierWaveform(_) => "Carrier Wave",
-            Self::Mix(_) => "Mix",
-            Self::FreqRatio(_) => "Freq Ratio",
-            Self::TrackKeyboard(_) => "Key Track",
-        }
-    }
-
-    /// Get the value as f32 (for GUI).
-    pub fn as_f32(&self) -> f32 {
-        match self {
-            Self::CarrierFreq(h) => h.as_f32(),
-            Self::CarrierWaveform(w) => w.index() as f32,
-            Self::Mix(v) => v.as_f32(),
-            Self::FreqRatio(v) => v.as_f32(),
-            Self::TrackKeyboard(v) => v.as_f32(),
-        }
-    }
-
-    /// Create the same parameter variant with a new f32 value (for GUI).
-    pub fn with_f32(&self, value: f32) -> Self {
-        match self {
-            Self::CarrierFreq(_) => Self::CarrierFreq(Hertz::new(value)),
-            Self::CarrierWaveform(_) => {
-                Self::CarrierWaveform(Waveform::from_index(value as usize).unwrap_or_default())
-            }
-            Self::Mix(_) => Self::Mix(NormalizedValue::new(value)),
-            Self::FreqRatio(_) => Self::FreqRatio(NormalizedValue::new(value)),
-            Self::TrackKeyboard(_) => Self::TrackKeyboard(NormalizedValue::new(value)),
-        }
-    }
-
     /// Default templates
     pub fn carrier_freq_default() -> Self {
         Self::CarrierFreq(Hertz::new(440.0))

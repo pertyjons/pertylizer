@@ -113,35 +113,6 @@ pub enum NoiseParam {
 }
 
 impl NoiseParam {
-    /// Check if two parameters are the same kind (ignoring values).
-    pub fn same_kind(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-
-    /// Get the parameter name.
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Type(_) => "Type",
-            Self::Level(_) => "Level",
-        }
-    }
-
-    /// Get the value as f32 (for GUI).
-    pub fn as_f32(&self) -> f32 {
-        match self {
-            Self::Type(t) => t.index() as f32,
-            Self::Level(g) => g.as_f32(),
-        }
-    }
-
-    /// Create the same parameter variant with a new f32 value (for GUI).
-    pub fn with_f32(&self, value: f32) -> Self {
-        match self {
-            Self::Type(_) => Self::Type(NoiseType::from_index(value as usize).unwrap_or_default()),
-            Self::Level(_) => Self::Level(Gain::new(value)),
-        }
-    }
-
     /// Default templates
     pub fn type_default() -> Self {
         Self::Type(NoiseType::default())

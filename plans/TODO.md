@@ -249,26 +249,12 @@ offline rendering. Remaining refinements follow.
   settings use compact discrete controls. The hidden segment parameters remain the shared
   persistence/MCP backing, with `set_mseg_segments` available for complete single-call shape updates.
 
-### 3.2 `ModuleParam` single-definition cleanup (MAYBE — aesthetics only, future)
+### 3.2 `ModuleParam` single-definition cleanup
 
-- [ ] **Collapse the inherent-vs-trait duplication for the param method set — purely for
-  "one definition" tidiness, low priority.** Phase 7 of the param-type-system work
-  (`plans/param-type-system-plan.md` §10, shipped) added the `ModuleParam` trait via a
-  delegation macro: each of the 67 `*Param` enums + `Param` `impl ModuleParam` by
-  *forwarding* to the existing inherent methods (`fn as_f32(&self) { Self::as_f32(self) }`).
-  So the bodies live in the inherent impls and the trait is a thin forwarding layer — there
-  is a small amount of duplication (the ~470 macro-generated one-liners). The "pure" form
-  would make `ModuleParam` the **single** definition and delete the inherent methods.
-    - **Why it's only a maybe:** the literal version means the trait must be in scope at the
-      **~2489 call sites** of `.as_f32()`/`.with_f32()`/`.same_kind()` across the workspace
-      (via a `synth_core::prelude` glob in dozens of files). That is a large, sprawling,
-      purely-cosmetic diff with **zero functional/correctness gain** — the aggregate `Param`
-      match + the macro already force the full contract on every enum (a missing method is a
-      compile error today). YAGNI: nothing currently needs it.
-    - **If we ever do it:** **own branch + own session** (it touches most files in the
-      workspace). Mechanism: move each method body into `impl ModuleParam for X`, delete the
-      inherent method, and add `use synth_core::prelude::*` where the compiler flags missing
-      trait scope. Let the compiler drive the call-site fixes; gate per crate.
+- [x] **Collapse the inherent-vs-trait duplication for the param method set.** Every fixed
+  `*Param` enum, the aggregate `Param`, and `ScriptParam` now implement the complete
+  `ModuleParam` contract directly. The forwarding macro and duplicate inherent methods are
+  gone, and call sites import the trait explicitly where required.
 
 ### 3.3 Unified list-panel follow-ups (deferred from code review)
 

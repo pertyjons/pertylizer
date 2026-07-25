@@ -24,48 +24,6 @@ pub enum AdditiveParam {
     GlideTime(Seconds),
 }
 
-impl AdditiveParam {
-    pub fn same_kind(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Tilt(_) => "Tilt",
-            Self::OddEven(_) => "Odd/Even",
-            Self::Brightness(_) => "Brightness",
-            Self::Stretch(_) => "Stretch",
-            Self::Randomize(_) => "Randomize",
-            Self::Level(_) => "Level",
-            Self::GlideTime(_) => "Glide",
-        }
-    }
-
-    pub fn as_f32(&self) -> f32 {
-        match self {
-            Self::Tilt(v)
-            | Self::OddEven(v)
-            | Self::Brightness(v)
-            | Self::Stretch(v)
-            | Self::Randomize(v)
-            | Self::Level(v) => v.as_f32(),
-            Self::GlideTime(s) => s.as_f32(),
-        }
-    }
-
-    pub fn with_f32(&self, value: f32) -> Self {
-        match self {
-            Self::Tilt(_) => Self::Tilt(NormalizedValue::new(value)),
-            Self::OddEven(_) => Self::OddEven(NormalizedValue::new(value)),
-            Self::Brightness(_) => Self::Brightness(NormalizedValue::new(value)),
-            Self::Stretch(_) => Self::Stretch(NormalizedValue::new(value)),
-            Self::Randomize(_) => Self::Randomize(NormalizedValue::new(value)),
-            Self::Level(_) => Self::Level(NormalizedValue::new(value)),
-            Self::GlideTime(_) => Self::GlideTime(Seconds::new(value.max(0.0))),
-        }
-    }
-}
-
 impl Default for AdditiveParam {
     fn default() -> Self {
         Self::Level(NormalizedValue::MAX)

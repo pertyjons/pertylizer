@@ -98,47 +98,6 @@ pub enum PhaseVocoderParam {
     Mix(NormalizedValue),
 }
 
-impl PhaseVocoderParam {
-    pub fn same_kind(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::PitchShift(_) => "Pitch Shift",
-            Self::Freeze(_) => "Freeze",
-            Self::FftSize(_) => "FFT Size",
-            Self::Mix(_) => "Mix",
-        }
-    }
-
-    #[allow(clippy::cast_precision_loss)]
-    pub fn as_f32(&self) -> f32 {
-        match self {
-            Self::PitchShift(st) => st.as_f32(),
-            Self::Freeze(b) => {
-                if *b {
-                    1.0
-                } else {
-                    0.0
-                }
-            }
-            Self::FftSize(f) => f.index() as f32,
-            Self::Mix(v) => v.as_f32(),
-        }
-    }
-
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    pub fn with_f32(&self, value: f32) -> Self {
-        match self {
-            Self::PitchShift(_) => Self::PitchShift(Semitones::new(value)),
-            Self::Freeze(_) => Self::Freeze(value > 0.5),
-            Self::FftSize(_) => Self::FftSize(FftSizeOption::from_index(value as usize)),
-            Self::Mix(_) => Self::Mix(NormalizedValue::new(value)),
-        }
-    }
-}
-
 impl Default for PhaseVocoderParam {
     fn default() -> Self {
         Self::Mix(NormalizedValue::MAX)

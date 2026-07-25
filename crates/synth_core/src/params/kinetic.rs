@@ -207,64 +207,6 @@ pub enum KineticParam {
     OutputAcc(f32),
 }
 
-impl KineticParam {
-    pub fn same_kind(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Duration(_) => "Duration",
-            Self::CurveType(_) => "Curve",
-            Self::Overshoot(_) => "Overshoot",
-            Self::Bipolar(_) => "Bipolar",
-            Self::LoopMode(_) => "Loop Mode",
-            Self::Retrigger(_) => "Retrigger",
-            Self::OutputVel(_) => "Out Vel",
-            Self::OutputAcc(_) => "Out Acc",
-        }
-    }
-
-    #[allow(clippy::cast_precision_loss)]
-    pub fn as_f32(&self) -> f32 {
-        match self {
-            Self::Duration(s) => s.as_f32(),
-            Self::CurveType(c) => c.index() as f32,
-            Self::Overshoot(v) => v.as_f32(),
-            Self::Bipolar(b) => {
-                if *b {
-                    1.0
-                } else {
-                    0.0
-                }
-            }
-            Self::LoopMode(m) => m.index() as f32,
-            Self::Retrigger(b) => {
-                if *b {
-                    1.0
-                } else {
-                    0.0
-                }
-            }
-            Self::OutputVel(v) | Self::OutputAcc(v) => *v,
-        }
-    }
-
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    pub fn with_f32(&self, value: f32) -> Self {
-        match self {
-            Self::Duration(_) => Self::Duration(Seconds::new(value)),
-            Self::CurveType(_) => Self::CurveType(EasingCurve::from_index(value as usize)),
-            Self::Overshoot(_) => Self::Overshoot(NormalizedValue::new(value)),
-            Self::Bipolar(_) => Self::Bipolar(value > 0.5),
-            Self::LoopMode(_) => Self::LoopMode(KineticLoopMode::from_index(value as usize)),
-            Self::Retrigger(_) => Self::Retrigger(value > 0.5),
-            Self::OutputVel(_) => Self::OutputVel(value),
-            Self::OutputAcc(_) => Self::OutputAcc(value),
-        }
-    }
-}
-
 impl Default for KineticParam {
     fn default() -> Self {
         Self::Duration(Seconds::new(0.5))

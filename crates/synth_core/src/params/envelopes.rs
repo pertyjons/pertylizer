@@ -28,56 +28,6 @@ pub enum EnvelopeParam {
 }
 
 impl EnvelopeParam {
-    /// Check if two parameters are the same kind (ignoring values).
-    pub fn same_kind(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-
-    /// Get the parameter name.
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Attack(_) => "Attack",
-            Self::Decay(_) => "Decay",
-            Self::Sustain(_) => "Sustain",
-            Self::Release(_) => "Release",
-            Self::TimeScale(_) => "Time Scale",
-            Self::AttackCurve(_) => "Attack Curve",
-            Self::DecayCurve(_) => "Decay Curve",
-            Self::ReleaseCurve(_) => "Release Curve",
-            Self::VelocitySensitivity(_) => "Velocity Sens",
-        }
-    }
-
-    /// Get the value as f32 (for GUI).
-    pub fn as_f32(&self) -> f32 {
-        match self {
-            Self::Attack(t) => t.as_f32(),
-            Self::Decay(t) => t.as_f32(),
-            Self::Sustain(v) => v.as_f32(),
-            Self::Release(t) => t.as_f32(),
-            Self::TimeScale(v) => v.as_f32(),
-            Self::AttackCurve(c) => c.as_f32(),
-            Self::DecayCurve(c) => c.as_f32(),
-            Self::ReleaseCurve(c) => c.as_f32(),
-            Self::VelocitySensitivity(v) => v.as_f32(),
-        }
-    }
-
-    /// Create the same parameter variant with a new f32 value (for GUI).
-    pub fn with_f32(&self, value: f32) -> Self {
-        match self {
-            Self::Attack(_) => Self::Attack(Seconds::new(value)),
-            Self::Decay(_) => Self::Decay(Seconds::new(value)),
-            Self::Sustain(_) => Self::Sustain(NormalizedValue::new(value)),
-            Self::Release(_) => Self::Release(Seconds::new(value)),
-            Self::TimeScale(_) => Self::TimeScale(TimeScale::new(value)),
-            Self::AttackCurve(_) => Self::AttackCurve(BipolarValue::new(value)),
-            Self::DecayCurve(_) => Self::DecayCurve(BipolarValue::new(value)),
-            Self::ReleaseCurve(_) => Self::ReleaseCurve(BipolarValue::new(value)),
-            Self::VelocitySensitivity(_) => Self::VelocitySensitivity(NormalizedValue::new(value)),
-        }
-    }
-
     /// Default templates
     pub fn attack_default() -> Self {
         Self::Attack(Seconds::new(0.01))

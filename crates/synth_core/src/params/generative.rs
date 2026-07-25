@@ -21,37 +21,6 @@ pub enum EuclideanParam {
     Swing(NormalizedValue),
 }
 
-impl EuclideanParam {
-    pub fn same_kind(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Steps(_) => "Steps",
-            Self::Pulses(_) => "Pulses",
-            Self::Rotation(_) => "Rotation",
-            Self::Swing(_) => "Swing",
-        }
-    }
-
-    pub fn as_f32(&self) -> f32 {
-        match self {
-            Self::Steps(n) | Self::Pulses(n) | Self::Rotation(n) => n.as_f32(),
-            Self::Swing(v) => v.as_f32(),
-        }
-    }
-
-    pub fn with_f32(&self, value: f32) -> Self {
-        match self {
-            Self::Steps(_) => Self::Steps(StepCount::new((value.round() as u8).clamp(1, 32))),
-            Self::Pulses(_) => Self::Pulses(StepCount::new((value.round() as u8).min(32))),
-            Self::Rotation(_) => Self::Rotation(StepCount::new((value.round() as u8).min(31))),
-            Self::Swing(_) => Self::Swing(NormalizedValue::new(value)),
-        }
-    }
-}
-
 impl Default for EuclideanParam {
     fn default() -> Self {
         Self::Steps(StepCount::new(16))
@@ -135,40 +104,6 @@ pub enum TuringMachineParam {
     Length(StepCount),
 }
 
-impl TuringMachineParam {
-    pub fn same_kind(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::MutationRate(_) => "Mutation",
-            Self::Range(_) => "Range",
-            Self::Scale(_) => "Scale",
-            Self::Length(_) => "Length",
-        }
-    }
-
-    pub fn as_f32(&self) -> f32 {
-        match self {
-            Self::MutationRate(v) | Self::Range(v) => v.as_f32(),
-            Self::Scale(s) => s.index() as f32,
-            Self::Length(n) => n.as_f32(),
-        }
-    }
-
-    pub fn with_f32(&self, value: f32) -> Self {
-        match self {
-            Self::MutationRate(_) => Self::MutationRate(NormalizedValue::new(value)),
-            Self::Range(_) => Self::Range(NormalizedValue::new(value)),
-            Self::Scale(_) => {
-                Self::Scale(TuringScale::from_index(value as usize).unwrap_or_default())
-            }
-            Self::Length(_) => Self::Length(StepCount::new(if value > 12.0 { 16 } else { 8 })),
-        }
-    }
-}
-
 impl Default for TuringMachineParam {
     fn default() -> Self {
         Self::MutationRate(NormalizedValue::CENTER)
@@ -190,37 +125,6 @@ pub enum RandomGatesParam {
     BurstProbability(NormalizedValue),
     /// Gate length.
     GateLength(NormalizedValue),
-}
-
-impl RandomGatesParam {
-    pub fn same_kind(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Density(_) => "Density",
-            Self::Seed(_) => "Seed",
-            Self::BurstProbability(_) => "Burst",
-            Self::GateLength(_) => "Gate Len",
-        }
-    }
-
-    pub fn as_f32(&self) -> f32 {
-        match self {
-            Self::Density(v) | Self::BurstProbability(v) | Self::GateLength(v) => v.as_f32(),
-            Self::Seed(s) => *s as f32,
-        }
-    }
-
-    pub fn with_f32(&self, value: f32) -> Self {
-        match self {
-            Self::Density(_) => Self::Density(NormalizedValue::new(value)),
-            Self::Seed(_) => Self::Seed(value.round() as u32),
-            Self::BurstProbability(_) => Self::BurstProbability(NormalizedValue::new(value)),
-            Self::GateLength(_) => Self::GateLength(NormalizedValue::new(value)),
-        }
-    }
 }
 
 impl Default for RandomGatesParam {

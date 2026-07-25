@@ -21,6 +21,7 @@ use std::sync::Arc;
 
 use eframe::egui::{self, Color32, RichText};
 
+use synth_core::ModuleParam;
 use synth_core::{BipolarValue, Gain, ModuleType, NormalizedValue, Param};
 use synth_engine::{EngineCommand, EngineHandle, InstrumentId, ModuleId};
 use synth_sequencer::{ReturnBusId, TrackId, TrackSend};

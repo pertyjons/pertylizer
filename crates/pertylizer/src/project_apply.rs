@@ -6,6 +6,7 @@
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
+use synth_core::ModuleParam;
 use synth_core::{ModuleType, Param, ParameterDescriptor, VoiceCount};
 use synth_engine::commands::InstrumentParam;
 use synth_engine::shared_state::{

@@ -10,7 +10,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::PortName;
-use crate::module_traits::{ParamKind, ParameterUnit, ResponseCurve};
+use crate::module_traits::{ModuleParam, ParamKind, ParameterUnit, ResponseCurve};
 
 /// A `Script`-module parameter. One variant today — a user-declared knob.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -20,12 +20,11 @@ pub enum ScriptParam {
     Knob(PortName, f32),
 }
 
-impl ScriptParam {
+impl ModuleParam for ScriptParam {
     /// Two knobs are the same kind **iff they share the interned name** — this
     /// drives descriptor-matching, so a module with several script knobs must not
     /// collapse them all onto the first descriptor entry.
-    #[must_use]
-    pub fn same_kind(&self, other: &Self) -> bool {
+    fn same_kind(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Knob(a, _), Self::Knob(b, _)) => a == b,
         }
@@ -34,16 +33,14 @@ impl ScriptParam {
     /// The knob's display name — its interned identifier, returned as a
     /// `'static str` (the intern pool never frees, so this needs no allocation
     /// and no per-module name table).
-    #[must_use]
-    pub fn name(&self) -> &'static str {
+    fn name(&self) -> &'static str {
         match self {
             Self::Knob(name, _) => name.as_str(),
         }
     }
 
     /// The stored knob value.
-    #[must_use]
-    pub fn as_f32(&self) -> f32 {
+    fn as_f32(&self) -> f32 {
         match self {
             Self::Knob(_, v) => *v,
         }
@@ -53,29 +50,25 @@ impl ScriptParam {
     /// MCP / automation value path free: the setter looks up the descriptor by
     /// `type_id`, takes its `id` (`Param::Script(Knob(name, default))`), and calls
     /// `.with_f32(value)`.
-    #[must_use]
-    pub fn with_f32(&self, value: f32) -> Self {
+    fn with_f32(&self, value: f32) -> Self {
         match self {
             Self::Knob(name, _) => Self::Knob(*name, value),
         }
     }
 
     /// A knob is a continuous f32 value.
-    #[must_use]
-    pub fn kind(&self) -> ParamKind {
+    fn kind(&self) -> ParamKind {
         ParamKind::Continuous
     }
 
     /// v1 carries no unit (a later optional `param … unit` keyword can map a
     /// recognized token to the enum; anything else stays `None`).
-    #[must_use]
-    pub fn unit(&self) -> ParameterUnit {
+    fn unit(&self) -> ParameterUnit {
         ParameterUnit::None
     }
 
     /// Linear response by default (v1 defers curve declaration).
-    #[must_use]
-    pub fn default_curve(&self) -> ResponseCurve {
+    fn default_curve(&self) -> ResponseCurve {
         ResponseCurve::Linear
     }
 }

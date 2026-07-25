@@ -18,37 +18,6 @@ pub enum PitchTrackerParam {
 }
 
 impl PitchTrackerParam {
-    pub fn same_kind(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Sensitivity(_) => "Sensitivity",
-            Self::MinFreq(_) => "Min Freq",
-            Self::MaxFreq(_) => "Max Freq",
-            Self::Smoothing(_) => "Smoothing",
-        }
-    }
-
-    pub fn as_f32(&self) -> f32 {
-        match self {
-            Self::Sensitivity(v) => v.as_f32(),
-            Self::MinFreq(h) => h.as_f32(),
-            Self::MaxFreq(h) => h.as_f32(),
-            Self::Smoothing(v) => v.as_f32(),
-        }
-    }
-
-    pub fn with_f32(&self, value: f32) -> Self {
-        match self {
-            Self::Sensitivity(_) => Self::Sensitivity(NormalizedValue::new(value)),
-            Self::MinFreq(_) => Self::MinFreq(Hertz::new(value)),
-            Self::MaxFreq(_) => Self::MaxFreq(Hertz::new(value)),
-            Self::Smoothing(_) => Self::Smoothing(NormalizedValue::new(value)),
-        }
-    }
-
     pub fn sensitivity_default() -> Self {
         Self::Sensitivity(NormalizedValue::new(0.5))
     }

@@ -15,9 +15,9 @@ use std::collections::HashMap;
 
 use synth_core::VoicePitch;
 use synth_core::{
-    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, Seconds,
-    WidgetHint,
+    AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ModuleParam,
+    ParamModOffsets, ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor,
+    ProcessContext, Seconds, WidgetHint,
 };
 
 use crate::osc_glide::OscGlide;

@@ -101,42 +101,6 @@ pub enum WaveshaperParam {
     Symmetry(BipolarValue),
 }
 
-impl WaveshaperParam {
-    pub fn same_kind(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Curve(_) => "Curve",
-            Self::Drive(_) => "Drive",
-            Self::Mix(_) => "Mix",
-            Self::Bias(_) => "Bias",
-            Self::Symmetry(_) => "Symmetry",
-        }
-    }
-
-    pub fn as_f32(&self) -> f32 {
-        match self {
-            Self::Curve(c) => c.index() as f32,
-            Self::Drive(v) | Self::Mix(v) => v.as_f32(),
-            Self::Bias(b) | Self::Symmetry(b) => b.as_f32(),
-        }
-    }
-
-    pub fn with_f32(&self, value: f32) -> Self {
-        match self {
-            Self::Curve(_) => {
-                Self::Curve(WaveshaperCurve::from_index(value as usize).unwrap_or_default())
-            }
-            Self::Drive(_) => Self::Drive(NormalizedValue::new(value)),
-            Self::Mix(_) => Self::Mix(NormalizedValue::new(value)),
-            Self::Bias(_) => Self::Bias(BipolarValue::new(value)),
-            Self::Symmetry(_) => Self::Symmetry(BipolarValue::new(value)),
-        }
-    }
-}
-
 impl Default for WaveshaperParam {
     fn default() -> Self {
         Self::Drive(NormalizedValue::new(0.3))

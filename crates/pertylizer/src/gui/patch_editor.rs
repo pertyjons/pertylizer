@@ -10,6 +10,7 @@ use eframe::egui::{self, Color32, Order, Pos2, Rect, Sense, Ui, Vec2};
 use egui_remixicon::icons as ri;
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
+use synth_core::ModuleParam;
 use synth_core::{
     DestAddr, MacroSource, ModuleCategory, ModuleDescriptor, PortDirection, PortName, PortType,
     SrcAddr,

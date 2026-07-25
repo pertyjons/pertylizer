@@ -174,45 +174,6 @@ pub enum SubOscParam {
 }
 
 impl SubOscParam {
-    /// Check if two parameters are the same kind (ignoring values).
-    pub fn same_kind(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-
-    /// Get the parameter name.
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Waveform(_) => "Waveform",
-            Self::Octave(_) => "Octave",
-            Self::Level(_) => "Level",
-            Self::GlideTime(_) => "Glide",
-        }
-    }
-
-    /// Get the value as f32 (for GUI).
-    pub fn as_f32(&self) -> f32 {
-        match self {
-            Self::Waveform(w) => w.index() as f32,
-            Self::Octave(o) => o.index() as f32,
-            Self::Level(g) => g.as_f32(),
-            Self::GlideTime(s) => s.as_f32(),
-        }
-    }
-
-    /// Create the same parameter variant with a new f32 value (for GUI).
-    pub fn with_f32(&self, value: f32) -> Self {
-        match self {
-            Self::Waveform(_) => {
-                Self::Waveform(SubOscWaveform::from_index(value as usize).unwrap_or_default())
-            }
-            Self::Octave(_) => {
-                Self::Octave(SubOscOctave::from_index(value as usize).unwrap_or_default())
-            }
-            Self::Level(_) => Self::Level(Gain::new(value)),
-            Self::GlideTime(_) => Self::GlideTime(Seconds::new(value.max(0.0))),
-        }
-    }
-
     /// Default templates
     pub fn waveform_default() -> Self {
         Self::Waveform(SubOscWaveform::default())

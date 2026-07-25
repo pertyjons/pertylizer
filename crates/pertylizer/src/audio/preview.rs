@@ -7,6 +7,7 @@
 
 use std::sync::Arc;
 
+use synth_core::ModuleParam;
 use synth_core::audio::SampleRate as HwSampleRate;
 use synth_core::{AudioCallbackContext, AudioProcessor, DenormalGuard, MidiNote, Velocity};
 use synth_engine::commands::{InstrumentParam, PortId};

@@ -27,48 +27,6 @@ pub enum VocalTractParam {
     Level(NormalizedValue),
 }
 
-impl VocalTractParam {
-    pub fn same_kind(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Tongue(_) => "Tongue",
-            Self::Constriction(_) => "Constriction",
-            Self::Lips(_) => "Lips",
-            Self::Length(_) => "Length",
-            Self::Nasality(_) => "Nasality",
-            Self::Breathiness(_) => "Breathiness",
-            Self::Level(_) => "Level",
-        }
-    }
-
-    pub fn as_f32(&self) -> f32 {
-        match self {
-            Self::Tongue(v)
-            | Self::Constriction(v)
-            | Self::Lips(v)
-            | Self::Length(v)
-            | Self::Nasality(v)
-            | Self::Breathiness(v)
-            | Self::Level(v) => v.as_f32(),
-        }
-    }
-
-    pub fn with_f32(&self, value: f32) -> Self {
-        match self {
-            Self::Tongue(_) => Self::Tongue(NormalizedValue::new(value)),
-            Self::Constriction(_) => Self::Constriction(NormalizedValue::new(value)),
-            Self::Lips(_) => Self::Lips(NormalizedValue::new(value)),
-            Self::Length(_) => Self::Length(NormalizedValue::new(value)),
-            Self::Nasality(_) => Self::Nasality(NormalizedValue::new(value)),
-            Self::Breathiness(_) => Self::Breathiness(NormalizedValue::new(value)),
-            Self::Level(_) => Self::Level(NormalizedValue::new(value)),
-        }
-    }
-}
-
 impl Default for VocalTractParam {
     fn default() -> Self {
         Self::Level(NormalizedValue::new(0.8))

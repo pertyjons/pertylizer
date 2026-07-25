@@ -76,45 +76,6 @@ pub enum ConvolverParam {
     DynamicMode(NormalizedValue),
 }
 
-impl ConvolverParam {
-    pub fn same_kind(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Ir(_) => "IR Type",
-            Self::Mix(_) => "Mix",
-            Self::PreDelay(_) => "Pre-Delay",
-            Self::DecayTrim(_) => "Decay",
-            Self::Brightness(_) => "Brightness",
-            Self::DynamicMode(_) => "Dynamic",
-        }
-    }
-
-    #[allow(clippy::cast_precision_loss)]
-    pub fn as_f32(&self) -> f32 {
-        match self {
-            Self::Ir(ir) => ir.index() as f32,
-            Self::Mix(v) | Self::Brightness(v) | Self::DynamicMode(v) => v.as_f32(),
-            Self::DecayTrim(d) => d.as_f32(),
-            Self::PreDelay(ms) => ms.as_f32(),
-        }
-    }
-
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    pub fn with_f32(&self, value: f32) -> Self {
-        match self {
-            Self::Ir(_) => Self::Ir(ImpulseResponse::from_index(value as usize)),
-            Self::Mix(_) => Self::Mix(NormalizedValue::new(value)),
-            Self::PreDelay(_) => Self::PreDelay(Milliseconds::new(value)),
-            Self::DecayTrim(_) => Self::DecayTrim(DecayTrim::new(value)),
-            Self::Brightness(_) => Self::Brightness(NormalizedValue::new(value)),
-            Self::DynamicMode(_) => Self::DynamicMode(NormalizedValue::new(value)),
-        }
-    }
-}
-
 impl Default for ConvolverParam {
     fn default() -> Self {
         Self::Mix(NormalizedValue::new(0.3))

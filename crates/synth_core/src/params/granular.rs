@@ -148,68 +148,6 @@ pub enum GranularParam {
     GlideTime(Seconds),
 }
 
-impl GranularParam {
-    pub fn same_kind(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::GrainSize(_) => "Grain Size",
-            Self::Density(_) => "Density",
-            Self::Position(_) => "Position",
-            Self::PositionSpread(_) => "Pos Spread",
-            Self::PitchSpread(_) => "Pitch Spread",
-            Self::PanSpread(_) => "Pan Spread",
-            Self::Freeze(_) => "Freeze",
-            Self::Window(_) => "Window",
-            Self::Source(_) => "Source",
-            Self::Level(_) => "Level",
-            Self::GlideTime(_) => "Glide",
-        }
-    }
-
-    #[allow(clippy::cast_precision_loss)]
-    pub fn as_f32(&self) -> f32 {
-        match self {
-            Self::GrainSize(ms) => ms.as_f32(),
-            Self::Density(v)
-            | Self::Position(v)
-            | Self::PositionSpread(v)
-            | Self::PitchSpread(v)
-            | Self::PanSpread(v) => v.as_f32(),
-            Self::Freeze(b) => {
-                if *b {
-                    1.0
-                } else {
-                    0.0
-                }
-            }
-            Self::Window(w) => w.index() as f32,
-            Self::Source(s) => s.index() as f32,
-            Self::Level(g) => g.as_f32(),
-            Self::GlideTime(s) => s.as_f32(),
-        }
-    }
-
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    pub fn with_f32(&self, value: f32) -> Self {
-        match self {
-            Self::GrainSize(_) => Self::GrainSize(Milliseconds::new(value)),
-            Self::Density(_) => Self::Density(NormalizedValue::new(value)),
-            Self::Position(_) => Self::Position(NormalizedValue::new(value)),
-            Self::PositionSpread(_) => Self::PositionSpread(NormalizedValue::new(value)),
-            Self::PitchSpread(_) => Self::PitchSpread(NormalizedValue::new(value)),
-            Self::PanSpread(_) => Self::PanSpread(NormalizedValue::new(value)),
-            Self::Freeze(_) => Self::Freeze(value > 0.5),
-            Self::Window(_) => Self::Window(GrainWindow::from_index(value as usize)),
-            Self::Source(_) => Self::Source(GrainSource::from_index(value as usize)),
-            Self::Level(_) => Self::Level(Gain::new(value)),
-            Self::GlideTime(_) => Self::GlideTime(Seconds::new(value.max(0.0))),
-        }
-    }
-}
-
 impl Default for GranularParam {
     fn default() -> Self {
         Self::Level(Gain::UNITY)

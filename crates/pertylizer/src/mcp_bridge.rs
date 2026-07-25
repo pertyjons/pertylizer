@@ -6,6 +6,7 @@
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use synth_core::ModuleParam;
 use synth_core::{
     BipolarValue, Bpm, DestAddr, Gain, MidiChannel, MidiNote, ModMatrixParam, ModuleType,
     NormalizedValue, Param, ParameterUnit, PortDescriptor, PortDirection, PortName, SampleCount,

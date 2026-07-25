@@ -17,6 +17,7 @@ use crate::patch::{
     Patch, Position,
 };
 use crate::session::SynthSession;
+use synth_core::ModuleParam;
 use synth_core::ModuleType;
 use synth_core::Param;
 use synth_core::{Describable, ModuleDescriptor};

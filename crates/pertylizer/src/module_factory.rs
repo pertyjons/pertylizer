@@ -429,6 +429,7 @@ pub static ALL_MODULE_TYPES: std::sync::LazyLock<Vec<ModuleType>> =
 #[cfg(test)]
 mod tests {
     use super::*;
+    use synth_core::ModuleParam;
 
     /// Every `ModuleType` must resolve a descriptor. Since `ALL_MODULE_TYPES`
     /// is now derived from `ModuleType::iter()` (every enum variant), this also

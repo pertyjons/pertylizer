@@ -14,31 +14,6 @@ pub enum VectorMixerParam {
 }
 
 impl VectorMixerParam {
-    pub fn same_kind(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::X(_) => "X",
-            Self::Y(_) => "Y",
-        }
-    }
-
-    pub fn as_f32(&self) -> f32 {
-        match self {
-            Self::X(v) => v.as_f32(),
-            Self::Y(v) => v.as_f32(),
-        }
-    }
-
-    pub fn with_f32(&self, value: f32) -> Self {
-        match self {
-            Self::X(_) => Self::X(BipolarValue::new(value)),
-            Self::Y(_) => Self::Y(BipolarValue::new(value)),
-        }
-    }
-
     pub fn x_default() -> Self {
         Self::X(BipolarValue::CENTER)
     }

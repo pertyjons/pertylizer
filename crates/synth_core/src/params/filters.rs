@@ -210,58 +210,6 @@ pub enum FilterParam {
 }
 
 impl FilterParam {
-    /// Check if two parameters are the same kind (ignoring values).
-    pub fn same_kind(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-
-    /// Get the parameter name.
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Mode(_) => "Mode",
-            Self::Cutoff(_) => "Cutoff",
-            Self::Resonance(_) => "Resonance",
-            Self::KeyTracking(_) => "Key Tracking",
-            Self::Drive(_) => "Drive",
-            Self::EnvAmount(_) => "Env Amount",
-            Self::CutoffMod(_) => "Cutoff Mod",
-            Self::Model(_) => "Model",
-            Self::Morph(_) => "Morph",
-        }
-    }
-
-    /// Get the value as f32 (for GUI).
-    pub fn as_f32(&self) -> f32 {
-        match self {
-            Self::Mode(m) => m.index() as f32,
-            Self::Cutoff(hz) => hz.as_f32(),
-            Self::Resonance(r) => r.as_f32(),
-            Self::KeyTracking(kt) => kt.as_f32(),
-            Self::Drive(d) => d.as_f32(),
-            Self::EnvAmount(e) => e.as_f32(),
-            Self::CutoffMod(c) => c.as_f32(),
-            Self::Model(m) => m.index() as f32,
-            Self::Morph(v) => v.as_f32(),
-        }
-    }
-
-    /// Create the same parameter variant with a new f32 value (for GUI).
-    pub fn with_f32(&self, value: f32) -> Self {
-        match self {
-            Self::Mode(_) => Self::Mode(FilterMode::from_index(value as usize).unwrap_or_default()),
-            Self::Cutoff(_) => Self::Cutoff(Hertz::new(value)),
-            Self::Resonance(_) => Self::Resonance(NormalizedValue::new(value)),
-            Self::KeyTracking(_) => Self::KeyTracking(NormalizedValue::new(value)),
-            Self::Drive(_) => Self::Drive(Gain::new(value)),
-            Self::EnvAmount(_) => Self::EnvAmount(BipolarValue::new(value)),
-            Self::CutoffMod(_) => Self::CutoffMod(BipolarValue::new(value)),
-            Self::Model(_) => {
-                Self::Model(FilterModel::from_index(value as usize).unwrap_or_default())
-            }
-            Self::Morph(_) => Self::Morph(NormalizedValue::new(value)),
-        }
-    }
-
     /// Default templates
     pub fn mode_default() -> Self {
         Self::Mode(FilterMode::default())

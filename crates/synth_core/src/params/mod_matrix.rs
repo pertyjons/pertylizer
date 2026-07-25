@@ -779,7 +779,7 @@ impl<'de> Deserialize<'de> for SrcAddr {
 // ============================================================================
 
 /// Slot name lookup table (1-indexed display names).
-const SLOT_NAMES_SOURCE: [&str; 16] = [
+pub(super) const SLOT_NAMES_SOURCE: [&str; 16] = [
     "Slot 1 Source",
     "Slot 2 Source",
     "Slot 3 Source",
@@ -798,7 +798,7 @@ const SLOT_NAMES_SOURCE: [&str; 16] = [
     "Slot 16 Source",
 ];
 
-const SLOT_NAMES_DEST: [&str; 16] = [
+pub(super) const SLOT_NAMES_DEST: [&str; 16] = [
     "Slot 1 Dest",
     "Slot 2 Dest",
     "Slot 3 Dest",
@@ -817,7 +817,7 @@ const SLOT_NAMES_DEST: [&str; 16] = [
     "Slot 16 Dest",
 ];
 
-const SLOT_NAMES_AMOUNT: [&str; 16] = [
+pub(super) const SLOT_NAMES_AMOUNT: [&str; 16] = [
     "Slot 1 Amount",
     "Slot 2 Amount",
     "Slot 3 Amount",
@@ -836,7 +836,7 @@ const SLOT_NAMES_AMOUNT: [&str; 16] = [
     "Slot 16 Amount",
 ];
 
-const SLOT_NAMES_ENABLED: [&str; 16] = [
+pub(super) const SLOT_NAMES_ENABLED: [&str; 16] = [
     "Slot 1 Enabled",
     "Slot 2 Enabled",
     "Slot 3 Enabled",
@@ -875,78 +875,6 @@ pub enum ModMatrixParam {
 }
 
 impl ModMatrixParam {
-    /// Check if two parameters are the same kind (ignoring values).
-    pub fn same_kind(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Self::GridSize(_), Self::GridSize(_)) => true,
-            (Self::SlotSource(a, _), Self::SlotSource(b, _)) => a == b,
-            (Self::SlotDestination(a, _), Self::SlotDestination(b, _)) => a == b,
-            (Self::SlotAmount(a, _), Self::SlotAmount(b, _)) => a == b,
-            (Self::SlotEnabled(a, _), Self::SlotEnabled(b, _)) => a == b,
-            _ => false,
-        }
-    }
-
-    /// Get the parameter name.
-    #[allow(clippy::cast_possible_truncation)]
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::GridSize(_) => "Grid Size",
-            Self::SlotSource(i, _) => SLOT_NAMES_SOURCE
-                .get(*i as usize)
-                .copied()
-                .unwrap_or("Slot Source"),
-            Self::SlotDestination(i, _) => SLOT_NAMES_DEST
-                .get(*i as usize)
-                .copied()
-                .unwrap_or("Slot Dest"),
-            Self::SlotAmount(i, _) => SLOT_NAMES_AMOUNT
-                .get(*i as usize)
-                .copied()
-                .unwrap_or("Slot Amount"),
-            Self::SlotEnabled(i, _) => SLOT_NAMES_ENABLED
-                .get(*i as usize)
-                .copied()
-                .unwrap_or("Slot Enabled"),
-        }
-    }
-
-    /// Get the value as f32 (for GUI).
-    #[allow(clippy::cast_precision_loss)]
-    pub fn as_f32(&self) -> f32 {
-        match self {
-            Self::GridSize(g) => g.index() as f32,
-            Self::SlotSource(_, s) => s.map_or(0, |a| a.legacy_index()) as f32,
-            Self::SlotDestination(_, d) => d.map_or(0, |a| a.legacy_index()) as f32,
-            Self::SlotAmount(_, a) => a.as_f32(),
-            Self::SlotEnabled(_, e) => {
-                if *e {
-                    1.0
-                } else {
-                    0.0
-                }
-            }
-        }
-    }
-
-    /// Create the same parameter variant with a new f32 value (for GUI).
-    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    pub fn with_f32(&self, value: f32) -> Self {
-        match self {
-            Self::GridSize(_) => Self::GridSize(ModMatrixGridSize::from_index(value as usize)),
-            Self::SlotSource(slot, _) => Self::SlotSource(
-                *slot,
-                SrcAddr::from_mod_source(ModSource::from_index(value as usize)),
-            ),
-            Self::SlotDestination(slot, _) => Self::SlotDestination(
-                *slot,
-                DestAddr::from_mod_destination(ModDestination::from_index(value as usize)),
-            ),
-            Self::SlotAmount(slot, _) => Self::SlotAmount(*slot, BipolarValue::new(value)),
-            Self::SlotEnabled(slot, _) => Self::SlotEnabled(*slot, value > 0.5),
-        }
-    }
-
     /// Get the slot index for this parameter (returns 0 for GridSize).
     pub fn slot(&self) -> u8 {
         match self {

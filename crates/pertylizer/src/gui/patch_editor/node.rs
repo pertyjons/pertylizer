@@ -8,6 +8,7 @@
 use eframe::egui::{self, Color32, Rect, Ui, Vec2};
 use egui_remixicon::icons as ri;
 
+use synth_core::ModuleParam;
 use synth_core::{ModuleCategory, ModuleDescriptor, PortName};
 use synth_engine::{EngineHandle, ModuleId};
 

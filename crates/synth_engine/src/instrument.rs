@@ -21,8 +21,8 @@ use crate::graph::ModuleGraph;
 use crate::voice::{VoiceId, VoiceState};
 use crate::voice_allocator::{AllocatorConfig, VoiceAllocator};
 use synth_core::{
-    AudioBuffer, BipolarValue, Gain, MidiNote, ModuleType, MuteState, NormalizedValue, Param,
-    ProcessContext, SampleCount, SamplePosition, SampleRate, Seconds, Semitones, SoloState,
+    AudioBuffer, BipolarValue, Gain, MidiNote, ModuleParam, ModuleType, MuteState, NormalizedValue,
+    Param, ProcessContext, SampleCount, SamplePosition, SampleRate, Seconds, Semitones, SoloState,
     Velocity,
 };
 use synth_dsp::oversampling::{Downsampler, OversamplingFactor};

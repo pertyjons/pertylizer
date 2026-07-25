@@ -66,41 +66,6 @@ pub enum ChaoticOscParam {
     Depth(NormalizedValue),
 }
 
-impl ChaoticOscParam {
-    pub fn same_kind(&self, other: &Self) -> bool {
-        std::mem::discriminant(self) == std::mem::discriminant(other)
-    }
-
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::System(_) => "System",
-            Self::Rate(_) => "Rate",
-            Self::Chaos(_) => "Chaos",
-            Self::Depth(_) => "Depth",
-        }
-    }
-
-    pub fn as_f32(&self) -> f32 {
-        match self {
-            Self::System(s) => s.index() as f32,
-            Self::Rate(hz) => hz.as_f32(),
-            Self::Chaos(c) => c.as_f32(),
-            Self::Depth(d) => d.as_f32(),
-        }
-    }
-
-    pub fn with_f32(&self, value: f32) -> Self {
-        match self {
-            Self::System(_) => {
-                Self::System(ChaoticSystem::from_index(value as usize).unwrap_or_default())
-            }
-            Self::Rate(_) => Self::Rate(Hertz::new(value)),
-            Self::Chaos(_) => Self::Chaos(NormalizedValue::new(value)),
-            Self::Depth(_) => Self::Depth(NormalizedValue::new(value)),
-        }
-    }
-}
-
 impl Default for ChaoticOscParam {
     fn default() -> Self {
         Self::System(ChaoticSystem::default())
