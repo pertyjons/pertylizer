@@ -20,6 +20,9 @@ pub use bytecode::{
     MAX_NESTING_DEPTH, MAX_SOURCE_LEN, MAX_SOURCES, MAX_STACK, MAX_STATE, Op, SCRIPT_MAX_PARAMS,
     finite_or_zero, safe_clamp, safe_div,
 };
-pub use eval::{AudioBindings, EvalContext, NoteOutputs, RegisterFile, ScriptRegister};
+pub use eval::{
+    AudioBindings, AudioBlockInputs, AudioBlockOutputs, EvalContext, NoteFrequencyRange,
+    NoteOutputs, RegisterFile, ScriptRegister,
+};
 pub use host::{SCRIPT_HOST_SLOTS, SCRIPT_PRNG_SEED, ScriptHost};
 pub use knobs::{ScriptParams, knob_descriptor};

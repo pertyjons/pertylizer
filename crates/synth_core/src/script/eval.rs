@@ -10,6 +10,7 @@ use crate::hash::{splitmix64, splitmix64_unit};
 use crate::script::bytecode::{
     Builtin, CompiledScript, MAX_LOCALS, MAX_STACK, MAX_STATE, Op, finite_or_zero, safe_div,
 };
+use crate::{Hertz, Interpolate};
 
 /// Per-evaluation context supplied by the engine.
 ///
@@ -76,9 +77,75 @@ pub struct AudioBindings {
     pub in_left: Option<ScriptRegister>,
     /// Source register fed the per-sample right audio input (`in-r`).
     pub in_right: Option<ScriptRegister>,
+    /// Source register fed the per-sample voice frequency (`note_hz`).
+    pub note_hz: Option<ScriptRegister>,
     /// Source register fed `first_sample` — `1.0` only at sample 0 of the note's
     /// very first block, `0.0` everywhere after (audio-rate one-shot init).
     pub first_sample: Option<ScriptRegister>,
+}
+
+/// The voice-frequency trajectory across one audio block.
+///
+/// Pitch is produced at block rate by the voice engine. Audio-rate scripts use
+/// this range to reconstruct the continuous trajectory without making the whole
+/// pitch pipeline sample-rate: sample `i` receives the linear interpolation at
+/// `(i + 1) / sample_count`, so the last sample reaches the block-end value.
+///
+/// The ramp is linear in Hz, while the trajectory it reconstructs is exponential
+/// (glide sweeps `from * (to/from)^t`; bend / vibrato apply semitone ratios), so
+/// *within* a block it is an approximation — a fraction of a cent for ordinary
+/// glides, growing only when a very fast glide spans a wide interval inside one
+/// block. Every block boundary is exact.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct NoteFrequencyRange {
+    start: Hertz,
+    end: Hertz,
+}
+
+impl NoteFrequencyRange {
+    #[must_use]
+    pub const fn new(start: Hertz, end: Hertz) -> Self {
+        Self { start, end }
+    }
+
+    #[must_use]
+    pub const fn constant(value: Hertz) -> Self {
+        Self::new(value, value)
+    }
+
+    #[must_use]
+    fn at(self, sample: usize, sample_count: usize) -> Hertz {
+        if sample_count == 0 {
+            return self.end;
+        }
+        let t = (sample + 1) as f32 / sample_count as f32;
+        self.start.lerp(self.end, t)
+    }
+}
+
+impl Default for NoteFrequencyRange {
+    fn default() -> Self {
+        Self::constant(Hertz::A4)
+    }
+}
+
+/// Per-sample inputs supplied to one audio-rate script evaluation block.
+///
+/// Keeping the audio buffers, pitch trajectory, and note-on one-shot together
+/// prevents the evaluator's argument list and per-sample source plumbing from
+/// drifting as more audio-rate context values are added.
+#[derive(Debug, Clone, Copy)]
+pub struct AudioBlockInputs<'a> {
+    pub in_left: &'a [f32],
+    pub in_right: &'a [f32],
+    pub note_hz: NoteFrequencyRange,
+    pub first_block: bool,
+}
+
+/// Stereo output slices filled by one audio-rate script evaluation block.
+pub struct AudioBlockOutputs<'a> {
+    pub left: &'a mut [f32],
+    pub right: &'a mut [f32],
 }
 
 /// Number of addressable output slots captured during one evaluation. The
@@ -515,43 +582,51 @@ impl CompiledScript {
     /// 64-float buffer), so per-sample overhead is just the op loop. `sources` is
     /// pre-filled by the caller with the **per-block-constant** values (macros,
     /// context vars, slow params); the registers named in `bindings` are the only
-    /// ones overwritten each sample — the audio inputs and the `first_sample`
-    /// one-shot. `ctx` carries the audio sample rate (see [`EvalContext::audio`]).
+    /// ones overwritten each sample — the audio inputs, `note_hz`, and the
+    /// `first_sample` one-shot. `ctx` carries the audio sample rate (see
+    /// [`EvalContext::audio`]).
     ///
     /// Output: each sample's left/right is the `out.left` / `out.right` value
     /// (`Op::StoreOut`) when the program writes them, else the bare
     /// `out = expr` value (the value-stack top) duplicated to both channels.
-    /// `first_block` is `true` only for the note's very first block, so
+    /// `inputs.first_block` is `true` only for the note's very first block, so
     /// `first_sample` fires exactly once at global sample 0. Real-time safe.
-    #[allow(clippy::too_many_arguments)]
     pub fn eval_block(
         &self,
         sources: &mut [f32],
         bindings: &AudioBindings,
-        in_left: &[f32],
-        in_right: &[f32],
-        out_left: &mut [f32],
-        out_right: &mut [f32],
+        inputs: &AudioBlockInputs<'_>,
+        outputs: &mut AudioBlockOutputs<'_>,
         regs: &mut RegisterFile,
         ctx: &EvalContext,
-        first_block: bool,
     ) {
         let dt = ctx.dt();
-        let n = out_left.len().min(out_right.len());
+        let n = outputs.left.len().min(outputs.right.len());
         let mut stack = Stack::new();
         let mut locals = [0.0f32; MAX_LOCALS];
 
         for i in 0..n {
-            // Per-sample source injection: only the audio-in and `first_sample`
-            // registers tick; every other source stays at its block-constant value.
+            // Per-sample source injection: audio inputs, `note_hz`, and
+            // `first_sample` tick; every other source stays block-constant.
             if let Some(r) = bindings.in_left {
-                set_source(sources, r.as_u16(), in_left.get(i).copied().unwrap_or(0.0));
+                set_source(
+                    sources,
+                    r.as_u16(),
+                    inputs.in_left.get(i).copied().unwrap_or(0.0),
+                );
             }
             if let Some(r) = bindings.in_right {
-                set_source(sources, r.as_u16(), in_right.get(i).copied().unwrap_or(0.0));
+                set_source(
+                    sources,
+                    r.as_u16(),
+                    inputs.in_right.get(i).copied().unwrap_or(0.0),
+                );
+            }
+            if let Some(r) = bindings.note_hz {
+                set_source(sources, r.as_u16(), inputs.note_hz.at(i, n).as_f32());
             }
             if let Some(r) = bindings.first_sample {
-                set_source(sources, r.as_u16(), f32::from(first_block && i == 0));
+                set_source(sources, r.as_u16(), f32::from(inputs.first_block && i == 0));
             }
 
             stack.clear(); // reset sp only — keep the warm buffer
@@ -561,8 +636,8 @@ impl CompiledScript {
             // Mono fallback: a bare `out = expr` leaves its value on the stack;
             // an unwritten channel (no `out.left`/`out.right`) duplicates it.
             let mono = finite_or_zero(stack.top());
-            out_left[i] = out.slots[0].unwrap_or(mono);
-            out_right[i] = out.slots[1].unwrap_or(mono);
+            outputs.left[i] = out.slots[0].unwrap_or(mono);
+            outputs.right[i] = out.slots[1].unwrap_or(mono);
         }
     }
 }
@@ -952,16 +1027,23 @@ mod tests {
         let n = input.len();
         let mut l = vec![0.0; n];
         let mut r = vec![0.0; n];
+        let inputs = AudioBlockInputs {
+            in_left: input,
+            in_right: input,
+            note_hz: NoteFrequencyRange::default(),
+            first_block,
+        };
+        let mut outputs = AudioBlockOutputs {
+            left: &mut l,
+            right: &mut r,
+        };
         script.eval_block(
             sources,
             bindings,
-            input,
-            input,
-            &mut l,
-            &mut r,
+            &inputs,
+            &mut outputs,
             &mut regs,
             &EvalContext::audio(SR),
-            first_block,
         );
         (l, r)
     }
@@ -1117,6 +1199,41 @@ mod tests {
             false,
         );
         assert!(l1.iter().all(|&v| approx(v, 0.0)));
+    }
+
+    #[test]
+    fn eval_block_interpolates_note_hz_per_sample() {
+        let script = CompiledScript::new(vec![Op::PushSource(0)], vec![], 1, 0);
+        let bindings = AudioBindings {
+            note_hz: Some(ScriptRegister::new(0)),
+            ..Default::default()
+        };
+        let mut sources = vec![0.0; 1];
+        let mut left = vec![0.0; 4];
+        let mut right = vec![0.0; 4];
+        let mut regs = RegisterFile::new(0, SEED);
+        let inputs = AudioBlockInputs {
+            in_left: &[],
+            in_right: &[],
+            note_hz: NoteFrequencyRange::new(Hertz::new(100.0), Hertz::new(200.0)),
+            first_block: false,
+        };
+        let mut outputs = AudioBlockOutputs {
+            left: &mut left,
+            right: &mut right,
+        };
+
+        script.eval_block(
+            &mut sources,
+            &bindings,
+            &inputs,
+            &mut outputs,
+            &mut regs,
+            &EvalContext::audio(SR),
+        );
+
+        assert_eq!(left, vec![125.0, 150.0, 175.0, 200.0]);
+        assert_eq!(right, left);
     }
 
     // ---- note_event dialect: `eval_note` ----------------------------------

@@ -17,7 +17,9 @@
 use crate::ModuleId;
 use crate::graph::ModuleGraph;
 use synth_core::params::LfoWaveform;
-use synth_core::script::{BoundScript, EvalContext, MAX_SOURCES, ScriptContext, ScriptInput};
+use synth_core::script::{
+    BoundScript, EvalContext, MAX_SOURCES, NoteFrequencyRange, ScriptContext, ScriptInput,
+};
 use synth_core::tuning::TuningTable;
 use synth_core::{AudioBuffer, DestAddr, Phase, PortName, ProcessContext, VoicePitch};
 use synth_core::{
@@ -520,6 +522,13 @@ pub struct Voice {
     /// `true` only during the first process block after note-on — the `gate_on`
     /// context value. Set in `note_on_expr`, cleared after the mod-matrix pass.
     note_on_block: bool,
+    /// Finished playing frequency from the previous block. AudioScript uses it
+    /// as the start of this block's per-sample `note_hz` trajectory.
+    previous_note_hz: Option<Hertz>,
+    /// Base-frequency start captured when a note-on seeds a glide. Kept until
+    /// the first block so AudioScript can reconstruct that block even though the
+    /// instrument advances the glide before calling [`Self::process_audio`].
+    note_hz_first_block_start: Option<Hertz>,
 
     /// Temporary mono buffer for graph processing.
     mono_buffer: AudioBuffer,
@@ -563,6 +572,8 @@ impl Voice {
             script_scratch: Self::new_script_scratch(),
             script_eval_queue: Vec::with_capacity(MAX_MOD_MATRIX_SLOTS),
             note_on_block: false,
+            previous_note_hz: None,
+            note_hz_first_block_start: None,
         }
     }
 
@@ -608,6 +619,8 @@ impl Voice {
             script_scratch: Self::new_script_scratch(),
             script_eval_queue: Vec::with_capacity(MAX_MOD_MATRIX_SLOTS),
             note_on_block: false,
+            previous_note_hz: None,
+            note_hz_first_block_start: None,
         };
         voice.refresh_voice_index();
         voice
@@ -745,6 +758,12 @@ impl Voice {
         let target_freq = Hertz::new(self.note_to_freq(note));
         let was_active = matches!(self.state, VoiceState::Active { .. });
         self.seed_glide(target_freq, was_active, trigger.glide);
+        self.note_hz_first_block_start = Some(self.glide.get_frequency());
+        // A retrigger is its own trajectory: drop the previous note's endpoint so
+        // the new note can never ramp from it (the first block uses
+        // `note_hz_first_block_start`; this is the fallback if that block is
+        // degenerate, e.g. a zero-sample process call).
+        self.previous_note_hz = None;
         self.seed_vibrato(trigger.vibrato);
         // Tag the voice with its source track and drop any previous track-pitch
         // offset; the engine refreshes it from `track_auto` every block.
@@ -807,6 +826,9 @@ impl Voice {
                 let from_freq = g.from_offset.apply(target_freq);
                 self.glide
                     .start_from(from_freq, target_freq, g.time, g.stepped);
+                let bend = self.expression.pitch_bend_range * self.pitch_bend.as_f32();
+                let expr = bend + self.vibrato_offset + self.track_pitch;
+                self.previous_note_hz = self.glide.active.then_some(expr.apply(from_freq));
             }
             None if self.glide_time.as_f32() > 0.0 => {
                 self.glide.start(target_freq, self.glide_time);
@@ -815,6 +837,9 @@ impl Voice {
                 self.glide.current_freq = target_freq;
                 self.glide.to_freq = target_freq;
                 self.glide.active = false;
+                // A legato note change with glide disabled is an intentional
+                // pitch step, not a one-block ramp.
+                self.previous_note_hz = None;
             }
         }
 
@@ -981,6 +1006,8 @@ impl Voice {
         // Drop the `gate_on` pulse so a Mod Matrix attached to this voice later
         // can't read a stale `gate_on = 1` for a note that already ended.
         self.note_on_block = false;
+        self.previous_note_hz = None;
+        self.note_hz_first_block_start = None;
         self.glide = GlideState::default();
         self.vibrato = None;
         self.vibrato_phase = Phase::ZERO;
@@ -1041,6 +1068,13 @@ impl Voice {
         };
         self.graph.set_voice_pitch(voice_pitch);
 
+        // A stepped (glissando) glide holds at chromatic steps on purpose, so
+        // AudioScript's per-sample `note_hz` must not smooth it into a sweep.
+        // `GlideState` leaves `stepped` latched once the glide lands, hence the
+        // `active` half: after the glissando is done, bend / vibrato / track-pitch
+        // movement over the rest of the note interpolates like any other note.
+        let stepping_glide = self.glide.stepped && self.glide.active;
+
         // === Control scripts: evaluate the Mod Matrix and Script modules ===
         // Both read the same per-block source snapshot (so `gate_on` is seen by
         // every consumer this block) and run before graph processing.
@@ -1053,6 +1087,21 @@ impl Voice {
             let block = samples.as_usize().max(1) as f32;
             let control_rate = context.sample_rate.as_f32() / block;
             let macros = self.macro_values();
+            // AudioScript reconstructs the block-rate pitch trajectory per sample.
+            // A fresh note starts at its current pitch instead of gliding from a
+            // stale voice allocation; subsequent blocks interpolate from the
+            // previous endpoint. Stepped glissando deliberately remains stepped.
+            let note_hz = if stepping_glide {
+                NoteFrequencyRange::constant(freq)
+            } else if self.note_on_block {
+                let start = self
+                    .note_hz_first_block_start
+                    .map(|base| expr.apply(base))
+                    .unwrap_or(freq);
+                NoteFrequencyRange::new(start, freq)
+            } else {
+                NoteFrequencyRange::new(self.previous_note_hz.unwrap_or(freq), freq)
+            };
             // `freq` is the voice's current playing pitch (glide + bend + vibrato),
             // just delivered to the sound sources above; expose it to scripts as
             // `note_hz` so a scripted oscillator tracks the note.
@@ -1071,9 +1120,14 @@ impl Voice {
             // them over; its per-sample `eval_block` runs later, in graph.process().
             for i in 0..self.audio_script_ids.len() {
                 let id = self.audio_script_ids[i];
-                self.prepare_audio_script(id, &macros, &sctx);
+                self.prepare_audio_script(id, &macros, &sctx, note_hz);
             }
         }
+        // This block's end pitch is the next block's trajectory start. While a
+        // glissando is stepping, forget it instead: the block that lands the final
+        // step must be a step too, not a ramp up from the last held semitone.
+        self.previous_note_hz = (!stepping_glide).then_some(freq);
+        self.note_hz_first_block_start = None;
 
         // `gate_on` is a one-block pulse: consume it after every control-script
         // consumer has read it this block. Cleared unconditionally — a voice with
@@ -1281,6 +1335,7 @@ impl Voice {
         id: crate::ModuleId,
         macros: &MacroValues,
         sctx: &ScriptCtx,
+        note_hz: NoteFrequencyRange,
     ) {
         // Pass 1: resolve the slot-0 script's sources into scratch row 0.
         let n = {
@@ -1309,7 +1364,7 @@ impl Voice {
         };
         // Pass 2: copy the resolved block constants into the module.
         if let Some(module) = self.graph.get_module_mut(id) {
-            module.set_audio_block_sources(&self.script_scratch[0][..n]);
+            module.set_audio_block_sources(&self.script_scratch[0][..n], note_hz);
         }
     }
 
@@ -1573,6 +1628,8 @@ impl Voice {
             script_scratch: Self::new_script_scratch(),
             script_eval_queue: Vec::with_capacity(MAX_MOD_MATRIX_SLOTS),
             note_on_block: false,
+            previous_note_hz: None,
+            note_hz_first_block_start: None,
         };
         // The clone inherits the source voice's id; re-seed its hosts to that id
         // (the allocator may override the id afterwards via `set_id`, which
@@ -2113,6 +2170,57 @@ mod tests {
         assert!(
             silent_peak < 1e-4,
             "clearing the script must silence the node"
+        );
+    }
+
+    #[test]
+    fn audio_script_note_hz_interpolates_voice_pitch_across_the_block() {
+        use synth_core::script::{BoundScript, CompiledScript, Op, ScriptInput};
+        use synth_core::{SampleCount, SampleRate};
+        use synth_modules::AudioScript;
+
+        let mut voice = Voice::new(VoiceId::new(0));
+        let asc = voice.graph.add_module(Box::new(AudioScript::new()));
+        voice.update_output_cache();
+
+        let program = std::sync::Arc::new(BoundScript::new(
+            CompiledScript::new(vec![Op::PushSource(0)], Vec::new(), 1, 0),
+            vec![ScriptInput::Context(ScriptContext::NoteHz)],
+            "out = note_hz".to_string(),
+        ));
+        let _ = voice.graph.set_script(asc, 0, Some(program));
+
+        let ctx = ProcessContext {
+            samples: SampleCount::new(4),
+            sample_rate: SampleRate::DVD_QUALITY,
+            ..ProcessContext::default()
+        };
+        let mut left = AudioBuffer::new(4);
+        let mut right = AudioBuffer::new(4);
+        voice.note_on(MidiNote::A4, Velocity::MAX, SamplePosition::ZERO);
+        voice.process_audio(&mut left, &mut right, &ctx);
+
+        let first = voice
+            .graph
+            .get_module_output(asc, PortName::OUT_L)
+            .expect("audio-script output");
+        assert!(
+            first.as_slice().iter().all(|v| (*v - 440.0).abs() < 1e-4),
+            "a fresh note must start at its own frequency"
+        );
+
+        voice.pitch_bend = BipolarValue::new(1.0);
+        voice.process_audio(&mut left, &mut right, &ctx);
+        let bent = voice
+            .graph
+            .get_module_output(asc, PortName::OUT_L)
+            .expect("audio-script output");
+        let target = DEFAULT_PITCH_BEND_RANGE.apply(Hertz::A4).as_f32();
+        let values = bent.as_slice();
+        assert!(values.windows(2).all(|pair| pair[1] > pair[0]));
+        assert!(
+            (values[3] - target).abs() < 1e-4,
+            "last sample must reach the block-end pitch"
         );
     }
 

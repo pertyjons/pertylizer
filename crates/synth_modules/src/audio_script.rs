@@ -10,18 +10,20 @@
 //!
 //! The compiled program is installed via [`set_script`](PolyModule::set_script)
 //! (compiled with `audio_rate` enabled). Its **block-constant** sources
-//! (macros, context vars, module addresses) are resolved by the `Voice` once per
-//! block and delivered via
+//! (macros, most context vars, module addresses) are resolved by the `Voice`
+//! once per block and delivered via
 //! [`set_audio_block_sources`](PolyModule::set_audio_block_sources); the
-//! per-sample audio inputs and `first_sample` one-shot are injected by the VM's
-//! `eval_block` from the [`AudioBindings`] computed at install time.
+//! per-sample audio inputs, interpolated `note_hz`, and `first_sample` one-shot
+//! are injected by the VM's `eval_block` from the [`AudioBindings`] computed at
+//! install time.
 
 use std::collections::HashMap;
 use std::sync::Arc;
 
 use synth_core::script::{
-    AudioBindings, AudioInputChannel, BoundScript, EvalContext, RegisterFile, SCRIPT_PRNG_SEED,
-    ScriptContext, ScriptInput, ScriptParams, knob_descriptor,
+    AudioBindings, AudioBlockInputs, AudioBlockOutputs, AudioInputChannel, BoundScript,
+    EvalContext, NoteFrequencyRange, RegisterFile, SCRIPT_PRNG_SEED, ScriptContext, ScriptInput,
+    ScriptParams, knob_descriptor,
 };
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ModuleType, Param,
@@ -47,12 +49,15 @@ pub struct AudioScript {
     voice_index: u32,
     /// Resolved block-constant source values for the current block (filled by the
     /// voice via [`set_audio_block_sources`](PolyModule::set_audio_block_sources));
-    /// the per-sample audio-in / `first_sample` registers are overwritten by
-    /// `eval_block`. Sized to the installed script's source count.
+    /// the per-sample audio-in / `note_hz` / `first_sample` registers are
+    /// overwritten by `eval_block`. Sized to the installed script's source count.
     sources: Vec<f32>,
-    /// Which source registers carry the per-sample audio inputs / `first_sample`,
-    /// computed from the script's inputs at install time.
+    /// Which source registers carry the per-sample audio inputs / `note_hz` /
+    /// `first_sample`, computed from the script's inputs at install time.
     bindings: AudioBindings,
+    /// Voice-frequency trajectory for this block, supplied by the voice alongside
+    /// the block-constant sources and injected into `note_hz` per sample.
+    note_hz: NoteFrequencyRange,
     /// Per-channel output scratch, filled by `eval_block` then copied into the
     /// output port buffers (a `HashMap` cannot yield two `&mut` channel buffers at
     /// once). Pre-grown to the block size; reused every block.
@@ -75,6 +80,7 @@ impl AudioScript {
             voice_index: 0,
             sources: Vec::new(),
             bindings: AudioBindings::default(),
+            note_hz: NoteFrequencyRange::default(),
             out_l: Vec::new(),
             out_r: Vec::new(),
             first_block: true,
@@ -92,6 +98,7 @@ impl AudioScript {
             match input {
                 ScriptInput::AudioIn(AudioInputChannel::Left) => b.in_left = Some(reg),
                 ScriptInput::AudioIn(AudioInputChannel::Right) => b.in_right = Some(reg),
+                ScriptInput::Context(ScriptContext::NoteHz) => b.note_hz = Some(reg),
                 ScriptInput::Context(ScriptContext::FirstSample) => b.first_sample = Some(reg),
                 _ => {}
             }
@@ -180,16 +187,23 @@ impl PolyModule for AudioScript {
         // does not conflict with the mutable `sources`/`regs`/output borrows.
         let script = self.script.clone();
         let ran = if let Some(s) = &script {
+            let inputs = AudioBlockInputs {
+                in_left: in_l,
+                in_right: in_r,
+                note_hz: self.note_hz,
+                first_block: self.first_block,
+            };
+            let mut outputs = AudioBlockOutputs {
+                left: &mut self.out_l[..n],
+                right: &mut self.out_r[..n],
+            };
             s.script.eval_block(
                 &mut self.sources,
                 &self.bindings,
-                in_l,
-                in_r,
-                &mut self.out_l[..n],
-                &mut self.out_r[..n],
+                &inputs,
+                &mut outputs,
                 &mut self.regs,
                 &ctx,
-                self.first_block,
             );
             true
         } else {
@@ -311,11 +325,13 @@ impl PolyModule for AudioScript {
         replaced
     }
 
-    fn set_audio_block_sources(&mut self, sources: &[f32]) {
+    fn set_audio_block_sources(&mut self, sources: &[f32], note_hz: NoteFrequencyRange) {
         // Copy the voice-resolved block constants into our buffer, preserving the
-        // per-sample audio-in / `first_sample` registers (overwritten in `process`).
+        // per-sample audio-in / `note_hz` / `first_sample` registers (overwritten
+        // in `process`).
         let n = sources.len().min(self.sources.len());
         self.sources[..n].copy_from_slice(&sources[..n]);
+        self.note_hz = note_hz;
     }
 
     fn set_voice_index(&mut self, voice_index: u32) {
@@ -389,6 +405,7 @@ mod tests {
                 ScriptInput::AudioIn(AudioInputChannel::Right),
                 ScriptInput::Context(ScriptContext::FirstSample),
                 ScriptInput::AudioIn(AudioInputChannel::Left),
+                ScriptInput::Context(ScriptContext::NoteHz),
             ],
         );
         let b = AudioScript::bindings_for(&s);
@@ -398,6 +415,7 @@ mod tests {
             Some(synth_core::script::ScriptRegister::new(1))
         );
         assert_eq!(b.in_left, Some(synth_core::script::ScriptRegister::new(2)));
+        assert_eq!(b.note_hz, Some(synth_core::script::ScriptRegister::new(3)));
     }
 
     #[test]
@@ -474,12 +492,34 @@ mod tests {
                 ],
             )),
         );
-        m.set_audio_block_sources(&[0.0, 0.5]); // register 0 (audio-in) ignored, reg 1 = 0.5
+        m.set_audio_block_sources(&[0.0, 0.5], NoteFrequencyRange::default());
+        // Register 0 (audio-in) is ignored; register 1 receives the block gain.
         let (l, _r) = run(&mut m, &[1.0; N]);
         assert!(
             l.iter().all(|&v| (v - 0.5).abs() < 1e-6),
             "gain from block source"
         );
+    }
+
+    #[test]
+    fn note_hz_uses_the_voice_frequency_range_per_sample() {
+        let mut m = AudioScript::new();
+        let _ = m.set_script(
+            0,
+            Some(bound(
+                vec![Op::PushSource(0)],
+                vec![],
+                vec![ScriptInput::Context(ScriptContext::NoteHz)],
+            )),
+        );
+        m.set_audio_block_sources(
+            &[0.0],
+            NoteFrequencyRange::new(synth_core::Hertz::new(100.0), synth_core::Hertz::new(200.0)),
+        );
+
+        let (left, right) = run(&mut m, &[0.0; 4]);
+        assert_eq!(left, vec![125.0, 150.0, 175.0, 200.0]);
+        assert_eq!(right, left);
     }
 
     #[test]

@@ -13,8 +13,8 @@ use std::hint::black_box;
 use std::time::Instant;
 
 use synth_core::script::{
-    AudioBindings, AudioInputChannel, BoundScript, EvalContext, RegisterFile, ScriptContext,
-    ScriptInput,
+    AudioBindings, AudioBlockInputs, AudioBlockOutputs, AudioInputChannel, BoundScript,
+    EvalContext, NoteFrequencyRange, RegisterFile, ScriptContext, ScriptInput,
 };
 use synth_script::{CompileOptions, compile};
 
@@ -41,6 +41,7 @@ fn build(src: &str) -> (BoundScript, AudioBindings, usize) {
         match input {
             ScriptInput::AudioIn(AudioInputChannel::Left) => b.in_left = Some(reg),
             ScriptInput::AudioIn(AudioInputChannel::Right) => b.in_right = Some(reg),
+            ScriptInput::Context(ScriptContext::NoteHz) => b.note_hz = Some(reg),
             ScriptInput::Context(ScriptContext::FirstSample) => b.first_sample = Some(reg),
             _ => {}
         }
@@ -58,34 +59,42 @@ fn bench(label: &str, src: &str) {
     let mut out_l = vec![0.0f32; BLOCK];
     let mut out_r = vec![0.0f32; BLOCK];
     let ctx = EvalContext::audio(SAMPLE_RATE);
+    let inputs = AudioBlockInputs {
+        in_left: &input,
+        in_right: &input,
+        note_hz: NoteFrequencyRange::default(),
+        first_block: false,
+    };
 
     // Warm up.
     for _ in 0..64 {
+        let mut outputs = AudioBlockOutputs {
+            left: &mut out_l,
+            right: &mut out_r,
+        };
         bound.script.eval_block(
             &mut sources,
             &bindings,
-            &input,
-            &input,
-            &mut out_l,
-            &mut out_r,
+            &inputs,
+            &mut outputs,
             &mut regs,
             &ctx,
-            false,
         );
     }
 
     let start = Instant::now();
     for _ in 0..BLOCKS {
+        let mut outputs = AudioBlockOutputs {
+            left: black_box(&mut out_l),
+            right: black_box(&mut out_r),
+        };
         bound.script.eval_block(
             black_box(&mut sources),
             black_box(&bindings),
-            black_box(&input),
-            black_box(&input),
-            black_box(&mut out_l),
-            black_box(&mut out_r),
+            black_box(&inputs),
+            black_box(&mut outputs),
             black_box(&mut regs),
             black_box(&ctx),
-            false,
         );
     }
     let elapsed = start.elapsed();

@@ -304,7 +304,7 @@ pub fn resolve_fn(name: &str) -> Option<FnSpec> {
         "mtof" => stateless(B::Mtof),
         "unipolar" => stateless(B::Unipolar),
         "bipolar" => stateless(B::Bipolar),
-        "lag" => stateful(Stateful::Lag, 2, 2),
+        "lag" | "smooth" => stateful(Stateful::Lag, 2, 2),
         "slew" => stateful(Stateful::Slew, 3, 3),
         "sah" => stateful(Stateful::Sah, 2, 2),
         "accum" => stateful(Stateful::Accum, 1, 2),

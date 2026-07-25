@@ -1059,20 +1059,52 @@ impl Compiler {
         }
     }
 
-    /// Emit the `lag` smoothing coefficient onto the stack. If the time argument
-    /// is a constant, alpha is precomputed here (coefficient caching); otherwise
-    /// `alpha = 1 - exp(-1 / (cr * t))` is emitted as runtime bytecode.
+    /// Emit the `lag`/`smooth` smoothing coefficient onto the stack.
+    ///
+    /// Alpha depends on the *evaluation* rate, i.e. how often the `Lag` op steps:
+    /// once per block in a control script (`cr`), once per **sample** in an
+    /// audio-rate script (`sr`). Only the control rate is known at compile time
+    /// ([`CompileOptions::control_rate`]), so a constant time folds its coefficient
+    /// here (coefficient caching) for the control dialect; the audio dialect
+    /// derives `alpha = 1 - exp(-1 / (t * sr))` at runtime from the `sr` context
+    /// var. That keeps the requested time constant honest at any device / offline
+    /// render rate — exactly like `slew`/`phasor`, which take their timing from the
+    /// evaluator's `dt` rather than a folded constant. Folding it against `cr`
+    /// instead would make an audio-rate `smooth(x, 5ms)` smooth one *block size*
+    /// too fast (~80 µs at 48 kHz / 64-sample blocks).
     fn emit_lag_alpha(&mut self, time: &Expr, depth: usize) {
         if let Some(t) = const_eval(time) {
-            self.emit_const(self.lag_alpha(t));
+            if !self.audio_rate {
+                self.emit_const(self.lag_alpha(t));
+                return;
+            }
+            // Audio rate, constant time: `-1/t` still folds; only the rate has to
+            // be read at runtime. `t <= 0` degenerates to "follow instantly",
+            // matching `lag_alpha`.
+            if t <= 0.0 {
+                self.emit_const(1.0);
+                return;
+            }
+            self.emit_const(-1.0 / t);
+            self.push_source(SourceInput::Context(Context::Sr));
+            self.code.push(Op::Div); // -1 / (t * sr)
+            self.code.push(Op::Call(Builtin::Exp));
+            self.code.push(Op::Neg);
+            self.emit_const(1.0);
+            self.code.push(Op::Add); // 1 - exp(...)
             return;
         }
-        // Runtime: 1 - exp(-1 / (t * cr)).  Stack already has x below.
+        // Runtime: 1 - exp(-1 / (t * rate)).  Stack already has x below.
+        let rate = if self.audio_rate {
+            Context::Sr
+        } else {
+            Context::Cr
+        };
         self.emit_const(1.0);
         self.compile_expr(time, depth + 1);
-        self.push_source(SourceInput::Context(Context::Cr));
-        self.code.push(Op::Mul); // t * cr
-        self.code.push(Op::Div); // 1 / (t * cr)
+        self.push_source(SourceInput::Context(rate));
+        self.code.push(Op::Mul); // t * rate
+        self.code.push(Op::Div); // 1 / (t * rate)
         self.code.push(Op::Neg);
         self.code.push(Op::Call(Builtin::Exp));
         self.code.push(Op::Neg);
@@ -1477,6 +1509,15 @@ mod tests {
         let prog = compile_ok("out = lag(velocity, 50ms)");
         let alpha = 1.0 - (-1.0f32 / (CR * 0.05)).exp();
         assert!(approx(eval(&prog, |_| 1.0), alpha));
+    }
+
+    #[test]
+    fn smooth_is_an_alias_for_lag() {
+        let lag = compile_ok("out = lag(velocity, 50ms)");
+        let smooth = compile_ok("out = smooth(velocity, 50ms)");
+        assert_eq!(smooth.script.code(), lag.script.code());
+        assert_eq!(smooth.script.constants(), lag.script.constants());
+        assert!(approx(eval(&smooth, |_| 1.0), eval(&lag, |_| 1.0)));
     }
 
     #[test]
@@ -2175,7 +2216,9 @@ mod tests {
 
     #[test]
     fn audio_waveshaper_round_trips_through_eval_block() {
-        use synth_core::script::AudioBindings;
+        use synth_core::script::{
+            AudioBindings, AudioBlockInputs, AudioBlockOutputs, NoteFrequencyRange,
+        };
         // Compile a real audio DSP program and run it through eval_block, building
         // the per-sample bindings from the compiled input list (as the module will).
         let prog = compile_audio_ok("out = tanh(in * 4)");
@@ -2194,22 +2237,100 @@ mod tests {
         let mut regs = RegisterFile::new(0, SEED);
         let mut l = vec![0.0; input.len()];
         let mut r = vec![0.0; input.len()];
+        let inputs = AudioBlockInputs {
+            in_left: &input,
+            in_right: &input,
+            note_hz: NoteFrequencyRange::default(),
+            first_block: true,
+        };
+        let mut outputs = AudioBlockOutputs {
+            left: &mut l,
+            right: &mut r,
+        };
         prog.script.eval_block(
             &mut sources,
             &bindings,
-            &input,
-            &input,
-            &mut l,
-            &mut r,
+            &inputs,
+            &mut outputs,
             &mut regs,
             &EvalContext::audio(48_000.0),
-            true,
         );
         for i in 0..input.len() {
             let expected = (input[i] * 4.0).tanh();
             assert!(approx(l[i], expected), "sample {i}: {} != {expected}", l[i]);
             assert!(approx(r[i], expected), "mono duplicated to right");
         }
+    }
+
+    #[test]
+    fn audio_param_smooth_runs_per_sample() {
+        use synth_core::script::{
+            AudioBindings, AudioBlockInputs, AudioBlockOutputs, NoteFrequencyRange,
+        };
+
+        // Exactly the dialect the app installs an AudioScript with: `audio_rate`
+        // plus the *default* control rate, since no caller knows the device rate
+        // at compile time. The smoothing must still honor the requested 1 ms.
+        let opts = CompileOptions {
+            audio_rate: true,
+            ..CompileOptions::default()
+        };
+        let (prog, diags) = compile("param drive = 1\nout = smooth(drive, 1ms)", &opts);
+        assert!(
+            diags.iter().all(|d| !d.is_error()),
+            "unexpected errors: {diags:?}"
+        );
+        let prog = prog.expect("a compiled audio program");
+        let drive_reg = prog
+            .inputs
+            .iter()
+            .position(|input| matches!(input, SourceInput::LocalParam(_)))
+            .expect("the drive param source register");
+        let sr_reg = prog
+            .inputs
+            .iter()
+            .position(|input| matches!(input, SourceInput::Context(Context::Sr)))
+            .expect("the audio-rate alpha reads `sr`");
+        const SR: f32 = 48_000.0;
+        let mut sources = vec![0.0; prog.inputs.len()];
+        sources[drive_reg] = 1.0;
+        sources[sr_reg] = SR;
+        let mut regs = RegisterFile::new(0, SEED);
+        // One millisecond of samples: a 1 ms time constant must land on 1-1/e.
+        let n = (SR / 1000.0) as usize;
+        let mut left = vec![0.0; n];
+        let mut right = vec![0.0; n];
+        let inputs = AudioBlockInputs {
+            in_left: &[],
+            in_right: &[],
+            note_hz: NoteFrequencyRange::default(),
+            first_block: true,
+        };
+        let mut outputs = AudioBlockOutputs {
+            left: &mut left,
+            right: &mut right,
+        };
+
+        prog.script.eval_block(
+            &mut sources,
+            &AudioBindings::default(),
+            &inputs,
+            &mut outputs,
+            &mut regs,
+            &EvalContext::audio(SR),
+        );
+
+        assert!(left[0] > 0.0 && left[0] < 1.0);
+        assert!(left.windows(2).all(|pair| pair[1] > pair[0]));
+        assert_eq!(right, left);
+        // The whole point of the audio dialect: alpha is derived from `sr`, not
+        // from the block-rate `cr`, so after one time constant the one-pole has
+        // covered 1-1/e ≈ 0.632 — not the ~1.0 a control-rate alpha would give.
+        let one_tau = left[n - 1];
+        assert!(
+            (one_tau - 0.632).abs() < 0.01,
+            "1 ms of a 1 ms smooth should reach ~0.632, got {one_tau}"
+        );
     }
 
     // ---- Phase 7 B1: `note_event` dialect ---------------------------------

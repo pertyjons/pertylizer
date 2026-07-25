@@ -1638,14 +1638,18 @@ pub trait PolyModule: Describable + Send {
     /// the voice id is assigned. Default: no-op (the module hosts no scripts).
     fn set_voice_index(&mut self, _voice_index: u32) {}
 
-    /// Hand an audio-rate script module its **block-constant** source values for
-    /// this block. The voice resolves them from the graph (macros, context vars,
-    /// module addresses) before processing — exactly like the control-script
-    /// resolve pass — and the module stores them; it then overwrites only the
-    /// per-sample audio-in / `first_sample` registers itself inside `process`
-    /// (its `eval_block` runs one eval per sample). Default: no-op (not an
-    /// audio-rate script module). Real-time safe.
-    fn set_audio_block_sources(&mut self, _sources: &[f32]) {}
+    /// Hand an audio-rate script module its source values for this block. The
+    /// voice resolves block constants from the graph (macros, context vars,
+    /// module addresses) and supplies the voice-frequency start/end range; the
+    /// module overwrites its audio inputs, `note_hz`, and `first_sample`
+    /// registers per sample inside `process`. Default: no-op (not an audio-rate
+    /// script module). Real-time safe.
+    fn set_audio_block_sources(
+        &mut self,
+        _sources: &[f32],
+        _note_hz: crate::script::NoteFrequencyRange,
+    ) {
+    }
 
     /// Apply a transient parameter override from sequencer automation.
     ///

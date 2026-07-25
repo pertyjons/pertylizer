@@ -241,7 +241,7 @@ shadowing.
 | `age`       | seconds since note-on                                                                                                                                                                                                                                             |
 | `cr`        | **control** rate in Hz — `sample_rate / block_size`, ~hundreds of Hz (device-dependent). **Not** the audio sample rate; a 48 kHz device yields `cr ≈ 750`, not 48000                                                                                              |
 | `sr`        | **audio sample** rate in Hz — the device / render rate (e.g. 48000, or 44100 in the offline render). `sr / cr` is the block size. Use it to keep an audio-rate script portable instead of hardcoding a rate                                                       |
-| `note_hz`   | the voice's current playing frequency in Hz — glide, pitch bend, and per-note vibrato included (not per-oscillator detune). A scripted oscillator tracks the note with `phasor(note_hz)`, more faithfully than `mtof(note)` (which sees only the raw note number) |
+| `note_hz`   | the voice's current playing frequency in Hz — glide, pitch bend, and per-note vibrato included (not per-oscillator detune). AudioScript linearly reconstructs the block's start→end pitch per sample; a scripted oscillator tracks it with `phasor(note_hz)`, more faithfully than `mtof(note)` (which sees only the raw note number) |
 | `beat`      | absolute transport position in beats (grows unbounded; `sin(beat * tau)` is a tempo-locked sine)                                                                                                                                                                  |
 | `bar_phase` | phase within the current bar, `0..1` (4/4); wraps every bar                                                                                                                                                                                                       |
 | `tempo`     | transport tempo in BPM (`tempo / 60` is beats per second)                                                                                                                                                                                                         |
@@ -292,6 +292,7 @@ declared in the header — see [Arrays](#arrays--const-lookup-tables).
 
 | Function             | Meaning                                                                                                                                                                                                                                                                                                      |
 |----------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
+| `smooth(x, t)`       | one-pole (exponential) smoothing toward `x`, time constant `t`; a readable alias of `lag(x, t)`, especially for AudioScript `param` knobs                                                                                                                                                                    |
 | `lag(x, t)`          | one-pole (exponential) smoothing toward `x`, time constant `t` — decelerates near the target (e.g. mod-wheel glide)                                                                                                                                                                                          |
 | `slew(x, up, down)`  | **linear** slew limiter / portamento — constant rate, `up`/`down` in **units per second** (separate rise/fall)                                                                                                                                                                                               |
 | `sah(x, trig)`       | sample-and-hold: latch `x` on a rising edge of `trig`                                                                                                                                                                                                                                                        |
@@ -320,10 +321,14 @@ value plus the previous block's trigger, for edge detection), and
 form is what lets a custom LFO phase-align to note-on (`phasor(r, gate_on)`) or to
 the bar.
 
-**Coefficient caching.** For `lag`/`slew`, when the time argument is a *literal*
-(`50ms`) the smoothing coefficient is precomputed at compile time and the audio
-thread runs a single multiply-accumulate. A time *expression* costs a per-block
-coefficient computation.
+**Coefficient caching.** For `smooth`/`lag` in a **control-rate** script, when the
+time argument is a *literal* (`50ms`) the smoothing coefficient is precomputed at
+compile time and the audio thread runs a single multiply-accumulate. A time
+*expression* costs a per-block coefficient computation. In an **AudioScript** the
+coefficient depends on the device sample rate (the one-pole steps once per
+sample), which is unknown at compile time, so it is always derived at runtime from
+`sr` — a handful of ops plus one `exp` per sample. That is what keeps the
+requested time constant exact at 44.1 kHz, 48 kHz, and in the offline render.
 
 ### Declared state cells (`state`)
 
@@ -380,6 +385,16 @@ out1 = sin(phasor(rate) * tau) * depth
 `param` is rejected in Mod Matrix and note-event scripts because those hosts do
 not own module knobs. A Script or AudioScript program may declare at most 32
 parameters.
+
+AudioScript evaluates stateful functions once per sample. Wrap a rapidly
+automated or modulated knob in `smooth` to remove block-edge steps, or use
+`slew` when separate linear rise/fall rates are preferable:
+
+```yams
+param drive = 0.5 [0, 2]
+let soft_drive = smooth(drive, 5ms)
+out = tanh(in * soft_drive)
+```
 
 ---
 

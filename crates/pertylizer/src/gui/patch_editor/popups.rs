@@ -587,7 +587,7 @@ pub(super) fn draw_yams_help_window(
                 code(ui, "semis(x)->ratio  mtof(x)->Hz");
 
                 head(ui, "Functions - stateful (per-voice, reset on note-on)");
-                code(ui, "lag(x,t)         one-pole smoothing");
+                code(ui, "smooth/lag(x,t)  one-pole smoothing");
                 code(ui, "slew(x,up,down)  separate rise/fall rates");
                 code(ui, "sah(x,trig)      sample & hold on rising trig");
                 code(ui, "accum(x)         running sum   delta(x) change/block");
@@ -596,8 +596,10 @@ pub(super) fn draw_yams_help_window(
                 code(ui, "rand([lo,hi])    white()   (decorrelated per voice)");
                 body(
                     ui,
-                    "A literal time arg (lag(x, 50ms)) precomputes its coefficient; \
-                     an expression arg costs a per-block recompute.",
+                    "In a control script a literal time arg (smooth(x, 50ms)) \
+                     precomputes its coefficient; an expression arg costs a \
+                     per-block recompute. An AudioScript always derives it from \
+                     sr at runtime, so the time constant is exact per sample.",
                 );
 
                 head(ui, "Operators (low -> high precedence)");

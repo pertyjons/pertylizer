@@ -127,28 +127,11 @@ next pass, while automation restarts in pattern space each pass.
 
 ### 2.4 YAMS scripting follow-ups
 
-- [ ] **Per-sample pitch binding for `note_hz` in AudioScript.** The `note_hz`
-  context var is currently *block-constant* — resolved once per block by the
-  voice (`ScriptCtx`), same as the oscillator's own `set_voice_pitch`. So an
-  audio-rate `phasor(note_hz)` does not follow intra-block pitch bend / glide at
-  per-sample resolution; fast portamento steps once per block. A future
-  per-sample pitch binding (analogous to how the audio-in registers are injected
-  each sample in `eval_block`, via `AudioBindings`) would make scripted
-  oscillators track fast portamento faithfully. Small-to-medium; only matters for
-  audible fast glides.
-  **Investigated 2026-07-03 (deferred until someone actually needs it):** the
-  `AudioBindings`/`eval_block` half is trivial (add
-  `note_hz: Option<ScriptRegister>`, a
-  `bindings_for` arm, and a per-sample `set_source`). The real work is that
-  **there is no per-sample pitch signal in the engine at all** — the whole voice
-  pitch pipeline is block-rate: `glide.update` runs once per block
-  (`instrument.rs:~1277`) and `process_audio` delivers a single scalar
-  `set_voice_pitch(freq)` (`voice.rs:~973`). Pragmatic fix: have the voice expose
-  this block's start→end frequency (remember the previous block's `note_hz`) via a
-  small new module method, and **lerp per sample inside `eval_block`** — glide/bend
-  are piecewise-linear, so a per-block linear ramp reconstructs the trajectory
-  exactly. Bundle the per-sample inputs into a struct rather than growing
-  `eval_block`'s already-`too_many_arguments` signature.
+- [x] **Per-sample pitch binding for `note_hz` in AudioScript.** The voice now
+  supplies a type-safe start→end frequency range for each block, and
+  `AudioBindings` injects its linear interpolation into `note_hz` per sample.
+  Fresh notes and stepped glissando remain intentional pitch steps; continuous
+  glide, bend, vibrato, and track-pitch movement reach the exact block endpoint.
 
 ### 2.5 Script-exposed params follow-ups
 
@@ -173,12 +156,11 @@ knobs through the GUI, Mod Matrix, automation, persistence, and cross-script rea
   labels did not; ports show bare `in1..in4` / `out1..out4`. Needs a small header-declaration
   grammar addition (a bare `in1 "label"` statement) + carrying the label onto the port
   descriptor (it must NOT change the port id, so no cable churn). **S–M**, purely cosmetic.
-- [ ] **Built-in knob smoothing (`smooth()` / slew) for audio-rate params.** Plan §6: a
-  declared `param` is block-constant, so under fast automation/mod it *steps* at each block
-  boundary — audible on a steep `audio_script` knob (filter cutoff, gain). v1 leaves click-free
-  knobs to user-side per-sample smoothing in the script (`s = s + (drive - s) * 0.005` via a
-  `state` cell); a built-in `smooth(x, coeff)` helper (or a `param … smooth` modifier) would
-  remove the boilerplate. Defer unless the manual one-pole proves too fiddly.
+- [x] **Built-in knob smoothing for audio-rate params.** Added
+  `smooth(x, time)` as the readable alias of the existing RT-safe `lag` one-pole;
+  in AudioScript it evaluates per sample and works directly around an automated
+  or modulated `param`. `slew(x, up, down)` remains available for separate linear
+  rise/fall rates, with both forms documented in the editor and YAMS guide.
 - [x] **Unit keyword for `param` metadata.** Added the optional trailing
   `param … unit <token>` clause: a recognized token (`hz`/`db`/`ms`/`s`/`percent`/
   `st`/`cents`/`oct`/`beats`/`bpm`/`samples`/`ratio`) maps via
