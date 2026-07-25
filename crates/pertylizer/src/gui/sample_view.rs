@@ -217,106 +217,95 @@ pub fn draw_sample_view(
                 })
                 .unwrap_or_default();
 
-            let needle = state.sample_search.to_lowercase();
-            let shown: Vec<&SampleRow> = rows
-                .iter()
-                .filter(|r| needle.is_empty() || r.name.to_lowercase().contains(&needle))
-                .collect();
+            list_panel::browser_rows(
+                ui,
+                &rows,
+                &state.sample_search,
+                "No samples",
+                |row| row.name.as_str(),
+                |ui, row| {
+                    let is_selected = state.selected_sample == Some(row.id);
+                    let ref_count = sample_ref_counts.get(&row.id.0).copied().unwrap_or(0);
+                    let used = ref_count > 0;
 
-            egui::ScrollArea::vertical()
-                .auto_shrink([false; 2])
-                .show(ui, |ui| {
-                    if shown.is_empty() {
-                        list_panel::empty(ui, "No samples");
-                    }
-                    for row in &shown {
-                        let is_selected = state.selected_sample == Some(row.id);
-                        let ref_count = sample_ref_counts.get(&row.id.0).copied().unwrap_or(0);
-                        let used = ref_count > 0;
+                    let mut rename = false;
+                    let mut export = false;
+                    let mut delete = false;
 
-                        let mut rename = false;
-                        let mut export = false;
-                        let mut delete = false;
-                        let response = list_panel::row(
-                            ui,
-                            is_selected,
-                            &row.name,
-                            list_panel::row_text_color(is_selected, used),
-                            |ui| {
-                                if ui.button((ri::EDIT_LINE, "Rename / edit…")).clicked() {
-                                    rename = true;
-                                    ui.close();
-                                }
-                                if ui.button("Export WAV…").clicked() {
-                                    export = true;
-                                    ui.close();
-                                }
-                                ui.separator();
-                                // Block deleting a sample that sampler modules
-                                // still reference — otherwise those modules would
-                                // silently lose their audio on the next load.
-                                let del =
-                                    ui.add_enabled_ui(!used, |ui| danger_button(ui, "Delete"));
-                                if used {
-                                    del.inner.on_disabled_hover_text(format!(
-                                        "Can't delete — used by {ref_count} sampler module{}",
-                                        if ref_count == 1 { "" } else { "s" }
-                                    ));
-                                } else if del.inner.clicked() {
-                                    delete = true;
-                                    ui.close();
-                                }
-                            },
-                        );
-
-                        let chan = match row.channels {
-                            synth_core::ChannelCount::Mono => "Mono",
-                            synth_core::ChannelCount::Stereo => "Stereo",
-                            synth_core::ChannelCount::Multi(n) => {
-                                if n <= 2 {
-                                    "Stereo"
-                                } else {
-                                    "Multi"
-                                }
+                    let chan = match row.channels {
+                        synth_core::ChannelCount::Mono => "Mono",
+                        synth_core::ChannelCount::Stereo => "Stereo",
+                        synth_core::ChannelCount::Multi(n) => {
+                            if n <= 2 {
+                                "Stereo"
+                            } else {
+                                "Multi"
                             }
+                        }
+                    };
+                    let tip = format!(
+                        "{} · {:.1}s {}",
+                        if used { "Used" } else { "Unused" },
+                        row.duration,
+                        chan,
+                    );
+                    let outcome =
+                        list_panel::browser_row(ui, is_selected, used, &row.name, tip, |ui| {
+                            if ui.button((ri::EDIT_LINE, "Rename / edit…")).clicked() {
+                                rename = true;
+                                ui.close();
+                            }
+                            if ui.button("Export WAV…").clicked() {
+                                export = true;
+                                ui.close();
+                            }
+                            ui.separator();
+                            // Block deleting a sample that sampler modules
+                            // still reference — otherwise those modules would
+                            // silently lose their audio on the next load.
+                            let del = ui.add_enabled_ui(!used, |ui| danger_button(ui, "Delete"));
+                            if used {
+                                del.inner.on_disabled_hover_text(format!(
+                                    "Can't delete — used by {ref_count} sampler module{}",
+                                    if ref_count == 1 { "" } else { "s" }
+                                ));
+                            } else if del.inner.clicked() {
+                                delete = true;
+                                ui.close();
+                            }
+                        });
+
+                    // A fresh click selects the row; a rename implies selection too.
+                    if (outcome.clicked && !is_selected) || rename {
+                        state.selected_sample = Some(row.id);
+                        state.peaks_dirty = true;
+                        state.scroll_offset = 0.0;
+                        state.zoom = 1.0;
+                    }
+                    if rename {
+                        state.editing = Some(SampleEditState {
+                            id: row.id,
+                            name: row.name.clone(),
+                            description: row.description.clone(),
+                        });
+                    }
+                    if export {
+                        action = SampleViewAction::ExportWav {
+                            name: row.name.clone(),
                         };
-                        let response = response.on_hover_text(format!(
-                            "{} · {:.1}s {}",
-                            if used { "Used" } else { "Unused" },
-                            row.duration,
-                            chan,
-                        ));
-                        // A fresh click selects the row; a rename implies selection too.
-                        if (response.clicked() && !is_selected) || rename {
-                            state.selected_sample = Some(row.id);
+                    }
+                    if delete {
+                        if let Ok(mut lib) = library.write() {
+                            lib.remove(row.id);
+                        }
+                        if state.selected_sample == Some(row.id) {
+                            state.selected_sample = None;
+                            state.peak_cache = None;
                             state.peaks_dirty = true;
-                            state.scroll_offset = 0.0;
-                            state.zoom = 1.0;
-                        }
-                        if rename {
-                            state.editing = Some(SampleEditState {
-                                id: row.id,
-                                name: row.name.clone(),
-                                description: row.description.clone(),
-                            });
-                        }
-                        if export {
-                            action = SampleViewAction::ExportWav {
-                                name: row.name.clone(),
-                            };
-                        }
-                        if delete {
-                            if let Ok(mut lib) = library.write() {
-                                lib.remove(row.id);
-                            }
-                            if state.selected_sample == Some(row.id) {
-                                state.selected_sample = None;
-                                state.peak_cache = None;
-                                state.peaks_dirty = true;
-                            }
                         }
                     }
-                });
+                },
+            );
         });
 
     // ---- Input monitor bar (bottom) ----

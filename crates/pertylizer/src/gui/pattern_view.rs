@@ -72,7 +72,13 @@ pub struct PatternEditState {
 #[derive(Debug, Clone)]
 struct PatternBrowserRow {
     id: PatternId,
+    /// The stored name — may be empty (a freshly created pattern has none); the
+    /// rename dialog edits this one.
     name: String,
+    /// What the row shows and what the search box matches: `name`, or the
+    /// `pattern-<id>` fallback for an unnamed pattern (so a search query can't
+    /// hide every unnamed pattern).
+    display_name: String,
     placement_count: u32,
     length_beats: f32,
 }
@@ -83,7 +89,6 @@ struct PatternBrowserRow {
 /// currently write-locked (caller should skip rendering this frame).
 fn collect_pattern_browser_data(
     song: &Arc<synth_sequencer::SharedSong>,
-    query: &str,
 ) -> Option<Vec<PatternBrowserRow>> {
     let song = song.try_read()?;
 
@@ -92,16 +97,18 @@ fn collect_pattern_browser_data(
         *counts.entry(placement.pattern_id).or_insert(0) += 1;
     }
 
-    let needle = query.to_lowercase();
     let mut rows = Vec::new();
 
     for pattern in song.patterns() {
-        if !needle.is_empty() && !pattern.name.to_lowercase().contains(&needle) {
-            continue;
-        }
+        let display_name = if pattern.name.is_empty() {
+            format!("pattern-{}", pattern.id.0)
+        } else {
+            pattern.name.clone()
+        };
         rows.push(PatternBrowserRow {
             id: pattern.id,
             name: pattern.name.clone(),
+            display_name,
             placement_count: counts.get(&pattern.id).copied().unwrap_or(0),
             length_beats: pattern.length.as_beats(),
         });
@@ -278,28 +285,27 @@ fn draw_pattern_browser(
                 seq_view_state.opened_pattern = Some(new_id);
             }
 
-            let Some(rows) = collect_pattern_browser_data(song, &pattern_view_state.search_query)
-            else {
+            let Some(rows) = collect_pattern_browser_data(song) else {
                 return;
             };
 
-            egui::ScrollArea::vertical()
-                .auto_shrink([false; 2])
-                .show(ui, |ui| {
-                    if rows.is_empty() {
-                        list_panel::empty(ui, "No patterns");
-                    }
-                    for row in &rows {
-                        draw_browser_row(
-                            ui,
-                            row,
-                            song,
-                            seq_view_state,
-                            &mut pattern_view_state.editing,
-                            undo_manager,
-                        );
-                    }
-                });
+            list_panel::browser_rows(
+                ui,
+                &rows,
+                &pattern_view_state.search_query,
+                "No patterns",
+                |row| row.display_name.as_str(),
+                |ui, row| {
+                    draw_browser_row(
+                        ui,
+                        row,
+                        song,
+                        seq_view_state,
+                        &mut pattern_view_state.editing,
+                        undo_manager,
+                    );
+                },
+            );
         });
 }
 
@@ -313,36 +319,10 @@ fn draw_browser_row(
 ) {
     let is_selected = seq_view_state.opened_pattern == Some(row.id);
     let used = row.placement_count > 0;
-    let name_text = if row.name.is_empty() {
-        format!("pattern-{}", row.id.0)
-    } else {
-        row.name.clone()
-    };
 
     let mut edit = false;
     let mut duplicate = false;
     let mut delete = false;
-    let response = list_panel::row(
-        ui,
-        is_selected,
-        &name_text,
-        list_panel::row_text_color(is_selected, used),
-        |ui| {
-            if ui.button((ri::EDIT_LINE, "Rename / edit…")).clicked() {
-                edit = true;
-                ui.close();
-            }
-            if ui.button("Duplicate").clicked() {
-                duplicate = true;
-                ui.close();
-            }
-            ui.separator();
-            if danger_button(ui, "Delete").clicked() {
-                delete = true;
-                ui.close();
-            }
-        },
-    );
 
     // Usage tooltip — surfaces what the dimming means.
     let tip = if used {
@@ -355,7 +335,21 @@ fn draw_browser_row(
     } else {
         format!("Unused · {:.0} beats", row.length_beats)
     };
-    let response = response.on_hover_text(tip);
+    let outcome = list_panel::browser_row(ui, is_selected, used, &row.display_name, tip, |ui| {
+        if ui.button((ri::EDIT_LINE, "Rename / edit…")).clicked() {
+            edit = true;
+            ui.close();
+        }
+        if ui.button("Duplicate").clicked() {
+            duplicate = true;
+            ui.close();
+        }
+        ui.separator();
+        if danger_button(ui, "Delete").clicked() {
+            delete = true;
+            ui.close();
+        }
+    });
 
     if edit {
         let description = song
@@ -397,7 +391,7 @@ fn draw_browser_row(
                 seq_view_state.close_piano_roll();
             }
         }
-    } else if response.clicked() {
+    } else if outcome.clicked {
         seq_view_state.opened_pattern = Some(row.id);
     }
 }

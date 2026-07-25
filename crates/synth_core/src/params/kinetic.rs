@@ -569,6 +569,7 @@ fn max_acceleration(curve: EasingCurve, overshoot: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::module_traits::ModuleParam;
 
     #[test]
     fn test_easing_curve_endpoints() {

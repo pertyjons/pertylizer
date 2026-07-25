@@ -1,8 +1,8 @@
 //! Shared building blocks for the left-hand browser lists (Instruments,
-//! Patterns, Samples) so they share one uniform look: an icon + title header
-//! with a right-aligned add button, a search field, frame-styled rows with a
-//! per-row kebab (⋮) menu, and a consistent "used / unused" treatment (unused
-//! rows are dimmed).
+//! Patterns, Samples, Mod Graphs, and Note Graphs) so they share one uniform
+//! look: an icon + title header with a right-aligned add button, a search field,
+//! frame-styled rows with a per-row kebab (⋮) menu, and a consistent
+//! "used / unused" treatment (unused rows are dimmed).
 //!
 //! The sequencer track-header list is intentionally NOT built from these — it
 //! has to row-align with the arrangement timeline — but it borrows the same
@@ -64,7 +64,7 @@ pub fn search_box(ui: &mut egui::Ui, query: &mut String) {
 /// The text color a row's primary label should use, so every list colors its
 /// rows the same way: cyan when selected, dimmed when unused, otherwise normal.
 #[must_use]
-pub fn row_text_color(selected: bool, used: bool) -> egui::Color32 {
+fn row_text_color(selected: bool, used: bool) -> egui::Color32 {
     let t = theme();
     if selected {
         t.colors.accent_cyan
@@ -88,7 +88,7 @@ pub fn row_text_color(selected: bool, used: bool) -> egui::Color32 {
 /// kebab is a real widget drawn last, so on the overlap it wins its own clicks
 /// (egui's hit-test breaks ties in favor of the top-most/last widget) while the
 /// rest of the row selects.
-pub fn row(
+fn row(
     ui: &mut egui::Ui,
     selected: bool,
     text: &str,
@@ -152,8 +152,96 @@ pub fn row(
     resp.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
+/// Click state returned by [`browser_row`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub(crate) struct RowOutcome {
+    /// Whether the row was clicked this frame.
+    pub clicked: bool,
+    /// Whether the row was double-clicked this frame.
+    pub double_clicked: bool,
+}
+
+/// Draw a complete browser row with the shared selection/usage treatment.
+///
+/// This is the normal entry point for every left-hand browser list. Callers
+/// only provide domain-specific text, tooltip, and menu actions.
+pub(crate) fn browser_row(
+    ui: &mut egui::Ui,
+    selected: bool,
+    used: bool,
+    text: &str,
+    tooltip: impl Into<egui::WidgetText>,
+    kebab: impl FnOnce(&mut egui::Ui),
+) -> RowOutcome {
+    let response =
+        row(ui, selected, text, row_text_color(selected, used), kebab).on_hover_text(tooltip);
+    RowOutcome {
+        clicked: response.clicked(),
+        double_clicked: response.double_clicked(),
+    }
+}
+
+/// Draw a searchable, vertically scrolling browser list.
+///
+/// Search matching is case-insensitive and the shared empty placeholder is
+/// rendered when either the source is empty or no row matches the query.
+pub(crate) fn browser_rows<T>(
+    ui: &mut egui::Ui,
+    rows: &[T],
+    query: &str,
+    empty_text: &str,
+    name: impl Fn(&T) -> &str,
+    mut draw_row: impl FnMut(&mut egui::Ui, &T),
+) {
+    let needle = query.to_lowercase();
+    let mut any_shown = false;
+
+    egui::ScrollArea::vertical()
+        .auto_shrink([false; 2])
+        .show(ui, |ui| {
+            for row in rows {
+                if !matches_query(name(row), &needle) {
+                    continue;
+                }
+                any_shown = true;
+                draw_row(ui, row);
+            }
+
+            if !any_shown {
+                empty(ui, empty_text);
+            }
+        });
+}
+
+/// Whether `name` matches the search box's current query.
+///
+/// `lowercase_query` MUST already be lowercased — [`browser_rows`] lowercases the
+/// query once per frame instead of once per row, so this helper only lowercases
+/// the side it has to. An empty query matches everything.
+fn matches_query(name: &str, lowercase_query: &str) -> bool {
+    lowercase_query.is_empty() || name.to_lowercase().contains(lowercase_query)
+}
+
 /// Italic placeholder shown when a list has no entries.
-pub fn empty(ui: &mut egui::Ui, text: &str) {
+fn empty(ui: &mut egui::Ui, text: &str) {
     let t = theme();
     ui.label(egui::RichText::new(text).color(t.colors.text_dim).italics());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::matches_query;
+
+    #[test]
+    fn browser_search_is_case_insensitive() {
+        assert!(matches_query("Warm Pad", "warm"));
+        assert!(matches_query("Warm Pad", "pad"));
+        assert!(!matches_query("Warm Pad", "bass"));
+    }
+
+    #[test]
+    fn empty_browser_search_matches_every_row() {
+        assert!(matches_query("Any row", ""));
+    }
 }

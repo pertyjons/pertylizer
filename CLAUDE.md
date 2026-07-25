@@ -17,9 +17,17 @@ Before committing, ensure the working tree is clean:
 ```bash
 cargo fmt --check
 cargo build
-cargo clippy --all-targets
-cargo test
+cargo clippy --workspace --all-targets
+cargo test --workspace
 ```
+
+`--workspace` is required, not optional. `default-members = ["crates/pertylizer"]`
+means a bare `cargo test` / `cargo clippy --all-targets` selects only the
+`pertylizer` package. Every other crate's *lib* still compiles (they are all
+dependencies of it), but their `#[cfg(test)]` modules, `tests/`, `benches/` and
+`examples/` do not — that blind spot once hid a whole crate's test module failing
+to compile, and it kept ~2/3 of the workspace's tests from ever running. `cargo
+build` needs no flag: it already covers all lib code.
 
 Then:
 
@@ -228,9 +236,9 @@ fn set_frequency(freq: Hertz) { ... }
 ALL must pass with **zero warnings or errors**:
 
 ```bash
-cargo build                  # RUSTFLAGS="-D warnings" in .cargo/config.toml
-cargo clippy --all-targets   # Lints configured in Cargo.toml
-cargo test
+cargo build                            # RUSTFLAGS="-D warnings" in .cargo/config.toml
+cargo clippy --workspace --all-targets # Lints configured in Cargo.toml
+cargo test --workspace                 # `--workspace` is required — see `git commit` above
 cargo fmt --check
 ```
 

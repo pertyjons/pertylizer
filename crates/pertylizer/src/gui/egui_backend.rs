@@ -3297,69 +3297,52 @@ impl SynthApp {
                         }
                         counts
                     });
-                let needle = self.instrument_search.to_lowercase();
-
-                let shown = self
-                    .instruments
-                    .iter()
-                    .filter(|i| needle.is_empty() || i.name.to_lowercase().contains(&needle))
-                    .count();
-
                 let mut clicked: Option<InstrumentId> = None;
                 let mut edit_requested: Option<InstrumentId> = None;
                 let mut delete_requested: Option<InstrumentId> = None;
-                egui::ScrollArea::vertical()
-                    .auto_shrink([false; 2])
-                    .show(ui, |ui| {
-                        if shown == 0 {
-                            list_panel::empty(ui, "No instruments");
-                        }
-                        for inst in &self.instruments {
-                            if !needle.is_empty() && !inst.name.to_lowercase().contains(&needle) {
-                                continue;
-                            }
-                            let is_active = Some(inst.id) == active_id;
-                            let track_count = usage
-                                .as_ref()
-                                .map_or(1, |m| m.get(&inst.id).copied().unwrap_or(0));
-                            let used = track_count > 0;
+                list_panel::browser_rows(
+                    ui,
+                    &self.instruments,
+                    &self.instrument_search,
+                    "No instruments",
+                    |instrument| instrument.name.as_str(),
+                    |ui, inst| {
+                        let is_active = Some(inst.id) == active_id;
+                        let track_count = usage
+                            .as_ref()
+                            .map_or(1, |m| m.get(&inst.id).copied().unwrap_or(0));
+                        let used = track_count > 0;
 
-                            let response = list_panel::row(
-                                ui,
-                                is_active,
-                                &inst.name,
-                                list_panel::row_text_color(is_active, used),
-                                |ui| {
-                                    if ui.button((ri::EDIT_LINE, "Rename / edit…")).clicked() {
-                                        edit_requested = Some(inst.id);
-                                        ui.close();
-                                    }
-                                    ui.separator();
-                                    if danger_button(ui, format!("{} Delete…", ri::DELETE_BIN_LINE))
-                                        .clicked()
-                                    {
-                                        delete_requested = Some(inst.id);
-                                        ui.close();
-                                    }
-                                },
-                            );
-                            let tip = if used {
-                                format!(
-                                    "Used — {track_count} track{}",
-                                    if track_count == 1 { "" } else { "s" }
-                                )
-                            } else {
-                                "Unused — no track plays this instrument".to_owned()
-                            };
-                            let response = response.on_hover_text(tip);
-                            if response.clicked() && !is_active {
-                                clicked = Some(inst.id);
-                            }
-                            if response.double_clicked() {
-                                edit_requested = Some(inst.id);
-                            }
+                        let tip = if used {
+                            format!(
+                                "Used — {track_count} track{}",
+                                if track_count == 1 { "" } else { "s" }
+                            )
+                        } else {
+                            "Unused — no track plays this instrument".to_owned()
+                        };
+                        let outcome =
+                            list_panel::browser_row(ui, is_active, used, &inst.name, tip, |ui| {
+                                if ui.button((ri::EDIT_LINE, "Rename / edit…")).clicked() {
+                                    edit_requested = Some(inst.id);
+                                    ui.close();
+                                }
+                                ui.separator();
+                                if danger_button(ui, format!("{} Delete…", ri::DELETE_BIN_LINE))
+                                    .clicked()
+                                {
+                                    delete_requested = Some(inst.id);
+                                    ui.close();
+                                }
+                            });
+                        if outcome.clicked && !is_active {
+                            clicked = Some(inst.id);
                         }
-                    });
+                        if outcome.double_clicked {
+                            edit_requested = Some(inst.id);
+                        }
+                    },
+                );
 
                 if let Some(id) = clicked {
                     self.active_instrument_id = Some(id);

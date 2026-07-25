@@ -912,6 +912,7 @@ impl PolyModule for Oscillator {
 mod tests {
     use super::*;
     use std::assert_matches;
+    use synth_core::prelude::ModuleParam;
 
     #[test]
     fn test_oscillator_param_automatable_allowlist() {

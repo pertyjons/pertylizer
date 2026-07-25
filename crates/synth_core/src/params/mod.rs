@@ -1025,6 +1025,7 @@ impl Port {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::module_traits::ModuleParam;
     use crate::types::Hertz;
 
     #[test]

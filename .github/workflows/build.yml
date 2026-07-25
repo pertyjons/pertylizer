@@ -25,9 +25,9 @@ jobs:
       - name: Build
         run: cargo build --release
       - name: Clippy
-        run: cargo clippy --all-targets
+        run: cargo clippy --workspace --all-targets
       - name: Test
-        run: cargo test
+        run: cargo test --workspace
       - name: Format check
         run: cargo fmt --check
       - name: Build visualizer
@@ -52,9 +52,9 @@ jobs:
       - name: Build
         run: cargo build --release
       - name: Clippy
-        run: cargo clippy --all-targets
+        run: cargo clippy --workspace --all-targets
       - name: Test
-        run: cargo test
+        run: cargo test --workspace
       - name: Format check
         run: cargo fmt --check
       - name: Build visualizer
@@ -79,9 +79,9 @@ jobs:
       - name: Build
         run: cargo build --release
       - name: Clippy
-        run: cargo clippy --all-targets
+        run: cargo clippy --workspace --all-targets
       - name: Test
-        run: cargo test
+        run: cargo test --workspace
       - name: Format check
         run: cargo fmt --check
       - name: Build visualizer

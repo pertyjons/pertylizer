@@ -268,15 +268,11 @@ efficiency/altitude items deliberately left out of that change.
   `shared_graph.version()` changes (any module add/remove or parameter edit bumps
   it), caching them on `SynthApp` (`sample_ref_counts_cache`/`_version`), instead
   of cloning every module snapshot ~60×/sec while the tab is open.
-- [ ] **Generalize the per-panel scaffolding (altitude).** `list_panel::row`/
-  `header`/`search_box` centralize the row visuals, but the three call sites
-  (`render_instruments_panel` in `gui/egui_backend.rs`, `draw_browser_row` in
-  `gui/pattern_view.rs`, and the sample loop in `gui/sample_view.rs`) still repeat
-  the same surrounding boilerplate: build the used/unused tooltip string, dispatch
-  `clicked()`/`double_clicked()`, apply the search-needle filter, and render the
-  empty-state placeholder. A higher-altitude helper taking
-  `(selected, used, name, tip, kebab) -> RowOutcome { clicked, double_clicked }`
-  would remove the repetition the first pass left behind.
+- [x] **Generalized the per-panel scaffolding.** `list_panel::browser_row` now
+  owns selection/usage styling, tooltips, and click outcomes, while
+  `list_panel::browser_rows` owns scrolling, case-insensitive filtering, and the
+  empty state. Instruments, Patterns, Samples, Mod Grid, and Note Grid now
+  provide only their domain-specific row data, decorations, and menu actions.
 - [x] **Dropped the redundant `select` flag in the sample row loop**
   (`gui/sample_view.rs`) — inlined the click-vs-selected + rename test directly
   into the selection assignment. Pure cleanup, no behavior change.

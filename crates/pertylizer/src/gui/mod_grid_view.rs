@@ -255,83 +255,70 @@ fn draw_pool_panel(
                 list_panel::search_box(ui, &mut state.search);
             });
 
-            let needle = state.search.to_lowercase();
-            let shown: Vec<_> = rows
-                .iter()
-                .filter(|(_, name, ..)| needle.is_empty() || name.to_lowercase().contains(&needle))
-                .collect();
+            list_panel::browser_rows(
+                ui,
+                &rows,
+                &state.search,
+                "No mod graphs",
+                |(_, name, ..)| name.as_str(),
+                |ui, (id, name, scope, usage)| {
+                    let is_active = state.selected == Some(*id);
+                    ui.horizontal(|ui| {
+                        // A GLOBAL/TRACK scope chip in the row.
+                        let (chip, chip_col) = match scope {
+                            ModGraphScope::Global => ("GLOBAL", theme().colors.accent_cyan),
+                            ModGraphScope::Track => ("TRACK", theme().colors.accent_green),
+                        };
+                        ui.label(RichText::new(chip).size(9.0).color(chip_col));
 
-            egui::ScrollArea::vertical()
-                .auto_shrink([false; 2])
-                .show(ui, |ui| {
-                    if shown.is_empty() {
-                        list_panel::empty(ui, "No mod graphs");
-                    }
-                    for (id, name, scope, usage) in shown {
-                        let is_active = state.selected == Some(*id);
-                        ui.horizontal(|ui| {
-                            // A GLOBAL/TRACK scope chip in the row.
-                            let (chip, chip_col) = match scope {
-                                ModGraphScope::Global => ("GLOBAL", theme().colors.accent_cyan),
-                                ModGraphScope::Track => ("TRACK", theme().colors.accent_green),
-                            };
-                            ui.label(RichText::new(chip).size(9.0).color(chip_col));
-
-                            let rename = &mut state.rename;
-                            let response = list_panel::row(
-                                ui,
-                                is_active,
-                                name,
-                                list_panel::row_text_color(is_active, true),
-                                |ui| {
-                                    if rename.as_ref().is_none_or(|(rid, _)| rid != id) {
-                                        *rename = Some((*id, name.clone()));
-                                    }
-                                    if let Some((_, buf)) = rename.as_mut() {
-                                        let inline = crate::gui::widgets::inline_editable_text(
-                                            ui,
-                                            buf,
-                                            false,
-                                            |t| t,
-                                        );
-                                        if inline.ended {
-                                            let new_name = buf.trim();
-                                            if !new_name.is_empty() && new_name != name {
-                                                edit = Some(PoolEdit::Rename(*id, new_name.into()));
-                                                ui.close();
-                                            }
-                                            *rename = None;
-                                        }
-                                    }
-                                    ui.separator();
-                                    if ui.button((ri::FILE_COPY_LINE, "Duplicate")).clicked() {
-                                        edit = Some(PoolEdit::Duplicate(*id));
-                                        ui.close();
-                                    }
-                                    ui.separator();
-                                    if danger_button(ui, format!("{} Delete…", ri::DELETE_BIN_LINE))
-                                        .clicked()
-                                    {
-                                        edit = Some(PoolEdit::Delete(*id));
-                                        ui.close();
-                                    }
-                                },
-                            );
-                            let tip = match scope {
-                                ModGraphScope::Global => {
-                                    "Global — one always-on instance".to_string()
+                        let tip = match scope {
+                            ModGraphScope::Global => "Global — one always-on instance".to_string(),
+                            ModGraphScope::Track => format!(
+                                "Track-scoped — assigned to {usage} track{}",
+                                if *usage == 1 { "" } else { "s" }
+                            ),
+                        };
+                        let rename = &mut state.rename;
+                        let outcome =
+                            list_panel::browser_row(ui, is_active, true, name, tip, |ui| {
+                                if rename.as_ref().is_none_or(|(rid, _)| rid != id) {
+                                    *rename = Some((*id, name.clone()));
                                 }
-                                ModGraphScope::Track => format!(
-                                    "Track-scoped — assigned to {usage} track{}",
-                                    if *usage == 1 { "" } else { "s" }
-                                ),
-                            };
-                            if response.on_hover_text(tip).clicked() && !is_active {
-                                clicked = Some(*id);
-                            }
-                        });
-                    }
-                });
+                                if let Some((_, buf)) = rename.as_mut() {
+                                    let inline = crate::gui::widgets::inline_editable_text(
+                                        ui,
+                                        buf,
+                                        false,
+                                        |t| t,
+                                    );
+                                    if inline.ended {
+                                        let new_name = buf.trim();
+                                        if !new_name.is_empty() && new_name != name {
+                                            edit = Some(PoolEdit::Rename(*id, new_name.into()));
+                                            ui.close();
+                                        }
+                                        *rename = None;
+                                    }
+                                }
+                                ui.separator();
+                                if ui.button((ri::FILE_COPY_LINE, "Duplicate")).clicked() {
+                                    edit = Some(PoolEdit::Duplicate(*id));
+                                    ui.close();
+                                }
+                                ui.separator();
+                                if danger_button(ui, format!("{} Delete…", ri::DELETE_BIN_LINE))
+                                    .clicked()
+                                {
+                                    edit = Some(PoolEdit::Delete(*id));
+                                    ui.close();
+                                }
+                            });
+                        if outcome.clicked && !is_active {
+                            clicked = Some(*id);
+                        }
+                    });
+                },
+            );
         });
 
     if let Some(id) = clicked {

@@ -206,6 +206,7 @@ pub fn knob_descriptor(decl: &ScriptParamDecl, value: f32) -> ParameterDescripto
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::module_traits::ModuleParam;
 
     fn decl(name: &str, default: f32) -> ScriptParamDecl {
         let n = PortName::intern(name);

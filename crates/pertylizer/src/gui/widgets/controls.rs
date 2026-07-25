@@ -635,7 +635,8 @@ pub fn strong_label(ui: &mut Ui, text: impl Into<WidgetText>, color: Option<Colo
 
 /// A centered, dimmed empty-state placeholder filling the available area — the
 /// "nothing selected / nothing here yet" message for a main panel. (For an inline
-/// sidebar-list empty note, `list_panel::empty` stays its own italic variant.)
+/// sidebar-list empty note, `list_panel::browser_rows` draws its own italic
+/// variant.)
 pub fn empty_state(ui: &mut Ui, text: &str) {
     ui.centered_and_justified(|ui| {
         ui.label(RichText::new(text).color(theme().colors.text_dim));

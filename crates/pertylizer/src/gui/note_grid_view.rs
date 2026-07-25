@@ -274,128 +274,111 @@ fn draw_pool_panel(
                 list_panel::search_box(ui, &mut state.search);
             });
 
-            let needle = state.search.to_lowercase();
-            // Filter once per frame; the same list drives the rows and the
-            // empty-state label.
-            let shown: Vec<_> = rows
-                .iter()
-                .filter(|(_, name, ..)| needle.is_empty() || name.to_lowercase().contains(&needle))
-                .collect();
+            list_panel::browser_rows(
+                ui,
+                &rows,
+                &state.search,
+                "No note graphs",
+                |(_, name, ..)| name.as_str(),
+                |ui, (id, name, color, description, usage)| {
+                    let is_active = state.selected == Some(*id);
+                    let used = *usage > 0;
 
-            egui::ScrollArea::vertical()
-                .auto_shrink([false; 2])
-                .show(ui, |ui| {
-                    if shown.is_empty() {
-                        list_panel::empty(ui, "No note graphs");
-                    }
-                    for (id, name, color, description, usage) in shown {
-                        let is_active = state.selected == Some(*id);
-                        let used = *usage > 0;
+                    // Color swatch + row on one line; the row hosts the kebab.
+                    ui.horizontal(|ui| {
+                        let (rect, _) = ui.allocate_exact_size(Vec2::splat(10.0), Sense::empty());
+                        let swatch = color.map_or(theme().colors.text_dim, |c| {
+                            Color32::from_rgb(c.r, c.g, c.b)
+                        });
+                        ui.painter().rect_filled(rect.shrink(1.0), 2.0, swatch);
 
-                        // Color swatch + row on one line; the row hosts the kebab.
-                        ui.horizontal(|ui| {
-                            let (rect, _) =
-                                ui.allocate_exact_size(Vec2::splat(10.0), Sense::empty());
-                            let swatch = color.map_or(theme().colors.text_dim, |c| {
-                                Color32::from_rgb(c.r, c.g, c.b)
-                            });
-                            ui.painter().rect_filled(rect.shrink(1.0), 2.0, swatch);
-
-                            let rename = &mut state.rename;
-                            let response = list_panel::row(
-                                ui,
-                                is_active,
-                                name,
-                                list_panel::row_text_color(is_active, used),
-                                |ui| {
-                                    // Rename: an auto-focused inline editor;
-                                    // Enter / focus loss commits (Escape still
-                                    // reverts via egui's TextEdit).
-                                    if rename.as_ref().is_none_or(|(rid, _)| rid != id) {
-                                        *rename = Some((*id, name.clone()));
-                                    }
-                                    if let Some((_, buf)) = rename.as_mut() {
-                                        let inline = crate::gui::widgets::inline_editable_text(
-                                            ui,
-                                            buf,
-                                            false,
-                                            |t| t,
-                                        );
-                                        if inline.ended {
-                                            // Commit + close only on a real
-                                            // change, so tabbing into the other
-                                            // menu items doesn't slam the menu.
-                                            let new_name = buf.trim();
-                                            if !new_name.is_empty() && new_name != name {
-                                                edit = Some(PoolEdit::Rename(*id, new_name.into()));
-                                                ui.close();
-                                            }
-                                            *rename = None;
-                                        }
-                                    }
-                                    ui.separator();
-                                    submenu_button(ui, (ri::PALETTE_LINE, "Color"), |ui| {
-                                        // Swatch row from the shared presets,
-                                        // plus a clear entry.
-                                        ui.horizontal(|ui| {
-                                            for &preset in TrackColor::presets() {
-                                                let color =
-                                                    crate::gui::sequencer::track_color_to_egui(
-                                                        preset,
-                                                    );
-                                                let (rect, resp) = ui.allocate_exact_size(
-                                                    Vec2::splat(16.0),
-                                                    Sense::click(),
-                                                );
-                                                ui.painter().rect_filled(rect, 3.0, color);
-                                                expose(
-                                                    &resp,
-                                                    egui::WidgetType::Button,
-                                                    format!(
-                                                        "color {:02X}{:02X}{:02X}",
-                                                        preset.r, preset.g, preset.b
-                                                    ),
-                                                    None,
-                                                );
-                                                if resp.clicked() {
-                                                    edit =
-                                                        Some(PoolEdit::Recolor(*id, Some(preset)));
-                                                    ui.close();
-                                                }
-                                            }
-                                        });
-                                        if ui.button("No color").clicked() {
-                                            edit = Some(PoolEdit::Recolor(*id, None));
+                        let tip = if used {
+                            format!(
+                                "{description}\nUsed by {usage} pattern{}",
+                                if *usage == 1 { "" } else { "s" }
+                            )
+                        } else {
+                            format!("{description}\nUnused — no pattern binds this graph")
+                        };
+                        let rename = &mut state.rename;
+                        let outcome =
+                            list_panel::browser_row(ui, is_active, used, name, tip.trim(), |ui| {
+                                // Rename: an auto-focused inline editor;
+                                // Enter / focus loss commits (Escape still
+                                // reverts via egui's TextEdit).
+                                if rename.as_ref().is_none_or(|(rid, _)| rid != id) {
+                                    *rename = Some((*id, name.clone()));
+                                }
+                                if let Some((_, buf)) = rename.as_mut() {
+                                    let inline = crate::gui::widgets::inline_editable_text(
+                                        ui,
+                                        buf,
+                                        false,
+                                        |t| t,
+                                    );
+                                    if inline.ended {
+                                        // Commit + close only on a real
+                                        // change, so tabbing into the other
+                                        // menu items doesn't slam the menu.
+                                        let new_name = buf.trim();
+                                        if !new_name.is_empty() && new_name != name {
+                                            edit = Some(PoolEdit::Rename(*id, new_name.into()));
                                             ui.close();
                                         }
+                                        *rename = None;
+                                    }
+                                }
+                                ui.separator();
+                                submenu_button(ui, (ri::PALETTE_LINE, "Color"), |ui| {
+                                    // Swatch row from the shared presets,
+                                    // plus a clear entry.
+                                    ui.horizontal(|ui| {
+                                        for &preset in TrackColor::presets() {
+                                            let color =
+                                                crate::gui::sequencer::track_color_to_egui(preset);
+                                            let (rect, resp) = ui.allocate_exact_size(
+                                                Vec2::splat(16.0),
+                                                Sense::click(),
+                                            );
+                                            ui.painter().rect_filled(rect, 3.0, color);
+                                            expose(
+                                                &resp,
+                                                egui::WidgetType::Button,
+                                                format!(
+                                                    "color {:02X}{:02X}{:02X}",
+                                                    preset.r, preset.g, preset.b
+                                                ),
+                                                None,
+                                            );
+                                            if resp.clicked() {
+                                                edit = Some(PoolEdit::Recolor(*id, Some(preset)));
+                                                ui.close();
+                                            }
+                                        }
                                     });
-                                    if ui.button((ri::FILE_COPY_LINE, "Duplicate")).clicked() {
-                                        edit = Some(PoolEdit::Duplicate(*id));
+                                    if ui.button("No color").clicked() {
+                                        edit = Some(PoolEdit::Recolor(*id, None));
                                         ui.close();
                                     }
-                                    ui.separator();
-                                    if danger_button(ui, format!("{} Delete…", ri::DELETE_BIN_LINE))
-                                        .clicked()
-                                    {
-                                        edit = Some(PoolEdit::Delete(*id));
-                                        ui.close();
-                                    }
-                                },
-                            );
-                            let tip = if used {
-                                format!(
-                                    "{description}\nUsed by {usage} pattern{}",
-                                    if *usage == 1 { "" } else { "s" }
-                                )
-                            } else {
-                                format!("{description}\nUnused — no pattern binds this graph")
-                            };
-                            if response.on_hover_text(tip.trim()).clicked() && !is_active {
-                                clicked = Some(*id);
-                            }
-                        });
-                    }
-                });
+                                });
+                                if ui.button((ri::FILE_COPY_LINE, "Duplicate")).clicked() {
+                                    edit = Some(PoolEdit::Duplicate(*id));
+                                    ui.close();
+                                }
+                                ui.separator();
+                                if danger_button(ui, format!("{} Delete…", ri::DELETE_BIN_LINE))
+                                    .clicked()
+                                {
+                                    edit = Some(PoolEdit::Delete(*id));
+                                    ui.close();
+                                }
+                            });
+                        if outcome.clicked && !is_active {
+                            clicked = Some(*id);
+                        }
+                    });
+                },
+            );
         });
 
     if let Some(id) = clicked {
