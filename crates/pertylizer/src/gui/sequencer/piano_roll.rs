@@ -6,7 +6,7 @@
 //! (`snap_to_step`, `quantize_tick`) live in the parent module.
 
 use super::*;
-use crate::gui::widgets::{expose, icon_button, solo_toggle};
+use crate::gui::widgets::{expose, icon_button, solo_toggle, submenu_button};
 
 /// Ordered automation targets shown as stacked zones: every existing lane,
 /// plus the edit-selected target if it has no lane yet (so a brand-new lane
@@ -907,10 +907,6 @@ fn draw_piano_roll_selection_inspector(
 /// they belong to another instrument), every instrument param, and the automatable
 /// module params of the selected instrument. Used by both the piano-roll toolbar and
 /// the tracker's "add automation column" control.
-/// Minimum width for the automation-picker submenus so short param names
-/// ("Pan", "Rate") don't collapse them to a sliver.
-const SUBMENU_MIN_WIDTH: f32 = 150.0;
-
 pub(crate) fn draw_automation_target_selector(
     ui: &mut egui::Ui,
     view_state: &mut SequencerViewState,
@@ -951,8 +947,7 @@ pub(crate) fn draw_automation_target_selector(
                 // stacked zone, so the list would duplicate them.)
 
                 // Instrument-level macros for the selected instrument.
-                ui.menu_button("Instrument", |ui| {
-                    ui.set_min_width(SUBMENU_MIN_WIDTH);
+                submenu_button(ui, "Instrument", |ui| {
                     for param in AutoInstrumentParam::ALL {
                         let target = AutomationTarget::Instrument {
                             instrument: view_state.selected_instrument,
@@ -972,8 +967,7 @@ pub(crate) fn draw_automation_target_selector(
                 //    is placed on — offered flat as "This Track: <param>". A
                 //    "Cross-track" submenu lists explicit tracks for the rare
                 //    deliberate case of automating another track from here.
-                ui.menu_button("Track", |ui| {
-                    ui.set_min_width(SUBMENU_MIN_WIDTH);
+                submenu_button(ui, "Track", |ui| {
                     for param in TrackParam::ALL {
                         let target = AutomationTarget::Track {
                             track: None,
@@ -990,11 +984,9 @@ pub(crate) fn draw_automation_target_selector(
                     // the song has tracks to point at.
                     if !data.all_tracks.is_empty() {
                         ui.separator();
-                        ui.menu_button("Cross-track", |ui| {
-                            ui.set_min_width(SUBMENU_MIN_WIDTH);
+                        submenu_button(ui, "Cross-track", |ui| {
                             for (track_id, track_name) in &data.all_tracks {
-                                ui.menu_button(track_name, |ui| {
-                                    ui.set_min_width(SUBMENU_MIN_WIDTH);
+                                submenu_button(ui, track_name, |ui| {
                                     for param in TrackParam::ALL {
                                         let target = AutomationTarget::Track {
                                             track: Some(*track_id),
@@ -1018,8 +1010,7 @@ pub(crate) fn draw_automation_target_selector(
 
                 // Global params (master volume). Song-spanning, so authoring
                 //    one here hosts the lane on this pattern.
-                ui.menu_button("Global", |ui| {
-                    ui.set_min_width(SUBMENU_MIN_WIDTH);
+                submenu_button(ui, "Global", |ui| {
                     let target = AutomationTarget::Global(GlobalParam::MasterVolume);
                     let is_selected = view_state.selected_automation.as_ref() == Some(&target);
                     if ui
@@ -1053,8 +1044,7 @@ pub(crate) fn draw_automation_target_selector(
                             continue;
                         }
                         let module_label = format!("{} {}", desc.name, module_id.instance);
-                        ui.menu_button(module_label, |ui| {
-                            ui.set_min_width(SUBMENU_MIN_WIDTH);
+                        submenu_button(ui, module_label, |ui| {
                             for param in &desc.parameters {
                                 if !param.is_automatable() {
                                     continue;

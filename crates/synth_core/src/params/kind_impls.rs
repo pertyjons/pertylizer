@@ -1067,6 +1067,7 @@ impl EnvelopeParam {
     pub fn kind(&self) -> ParamKind {
         match self {
             Self::Attack(v) | Self::Decay(v) | Self::Release(v) => v.scalar_kind(),
+            Self::TimeScale(v) => v.scalar_kind(),
             Self::Sustain(v) | Self::VelocitySensitivity(v) => v.scalar_kind(),
             Self::AttackCurve(v) | Self::DecayCurve(v) | Self::ReleaseCurve(v) => v.scalar_kind(),
         }
@@ -1077,6 +1078,7 @@ impl EnvelopeParam {
     pub fn unit(&self) -> ParameterUnit {
         match self {
             Self::Attack(v) | Self::Decay(v) | Self::Release(v) => v.scalar_unit(),
+            Self::TimeScale(v) => v.scalar_unit(),
             Self::Sustain(v) | Self::VelocitySensitivity(v) => v.scalar_unit(),
             Self::AttackCurve(v) | Self::DecayCurve(v) | Self::ReleaseCurve(v) => v.scalar_unit(),
         }
@@ -1088,6 +1090,7 @@ impl EnvelopeParam {
     pub fn default_curve(&self) -> ResponseCurve {
         match self {
             Self::Attack(v) | Self::Decay(v) | Self::Release(v) => v.scalar_curve(),
+            Self::TimeScale(v) => v.scalar_curve(),
             Self::Sustain(v) | Self::VelocitySensitivity(v) => v.scalar_curve(),
             Self::AttackCurve(v) | Self::DecayCurve(v) | Self::ReleaseCurve(v) => v.scalar_curve(),
         }

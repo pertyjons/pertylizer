@@ -7,6 +7,8 @@
 
 #![cfg(feature = "mcp")]
 
+mod common;
+
 use std::sync::Arc;
 
 use synth_engine::SynthEngine;
@@ -18,8 +20,14 @@ use pertylizer::mcp_bridge::AppSynthBridge;
 use pertylizer::mcp_shared::McpSharedState;
 use pertylizer::session::SynthSession;
 
+use common::process_block;
+
 fn build_server() -> SynthMcpServer {
-    let (_engine, handle) = SynthEngine::new();
+    build_server_with_engine().0
+}
+
+fn build_server_with_engine() -> (SynthMcpServer, SynthEngine) {
+    let (engine, handle) = SynthEngine::new();
     let song = Arc::new(synth_sequencer::SharedSong::new(Song::new("ArrayTools")));
     let _ = handle
         .command_sender()
@@ -35,7 +43,10 @@ fn build_server() -> SynthMcpServer {
     ));
     let shared = Arc::new(McpSharedState::with_song(Arc::clone(&song)));
     let bridge = AppSynthBridge::new(session, shared, sample_library);
-    SynthMcpServer::new(Arc::new(bridge) as Arc<dyn SynthBridge>)
+    (
+        SynthMcpServer::new(Arc::new(bridge) as Arc<dyn SynthBridge>),
+        engine,
+    )
 }
 
 async fn call(server: &SynthMcpServer, tool: &str, params: serde_json::Value) -> String {
@@ -115,6 +126,111 @@ async fn set_instrument_mixer_rejects_out_of_range_volume_before_applying() {
     assert!(
         resp.starts_with("Error:"),
         "out-of-range volume rejected: {resp}"
+    );
+}
+
+#[tokio::test]
+async fn set_mseg_segments_replaces_the_complete_shape() {
+    let (server, mut engine) = build_server_with_engine();
+    let created = call(
+        &server,
+        "create_instrument",
+        serde_json::json!({ "names": ["Modulator"] }),
+    )
+    .await;
+    let instrument_id = serde_json::from_str::<serde_json::Value>(&created)
+        .expect("create instrument response")["created"][0]["id"]
+        .as_u64()
+        .expect("instrument id");
+    process_block(&mut engine, 1);
+    let added = call(
+        &server,
+        "add_module",
+        serde_json::json!({
+            "instrument_id": instrument_id,
+            "module_types": ["mseg"]
+        }),
+    )
+    .await;
+    assert!(added.starts_with("OK: 1 modules added"), "{added}");
+    process_block(&mut engine, 1);
+
+    let modules = call(
+        &server,
+        "list_modules",
+        serde_json::json!({ "instrument_id": instrument_id }),
+    )
+    .await;
+    let listed: serde_json::Value = serde_json::from_str(&modules).expect("module list");
+    assert!(listed.is_array(), "expected module array: {modules}");
+    let module_id = listed
+        .as_array()
+        .and_then(|items| items.iter().find(|module| module["module_type"] == "MSEG"))
+        .and_then(|module| module["id"].as_str())
+        .unwrap_or_else(|| panic!("MSEG module id in {modules}"))
+        .to_string();
+
+    let response = call(
+        &server,
+        "set_mseg_segments",
+        serde_json::json!({
+            "instrument_id": instrument_id,
+            "module_id": module_id,
+            "segments": [
+                { "time": 0.25, "level": 1.0, "curve": 0.5 },
+                { "time": 0.75, "level": 0.2, "curve": -0.25 }
+            ]
+        }),
+    )
+    .await;
+    let result: serde_json::Value =
+        serde_json::from_str(&response).expect("set_mseg_segments batch result");
+    assert_eq!(result["failed"], 0, "{response}");
+    assert_eq!(result["succeeded"], 7, "{response}");
+    process_block(&mut engine, 1);
+
+    let info = call(
+        &server,
+        "get_module_info",
+        serde_json::json!({
+            "instrument_id": instrument_id,
+            "module_id": module_id
+        }),
+    )
+    .await;
+    let module: serde_json::Value = serde_json::from_str(&info).expect("MSEG module info");
+    let parameter = |type_id: &str| {
+        module["parameters"]
+            .as_array()
+            .and_then(|parameters| {
+                parameters
+                    .iter()
+                    .find(|parameter| parameter["type_id"] == type_id)
+            })
+            .and_then(|parameter| parameter["value"].as_f64())
+    };
+    assert_eq!(parameter("segments"), Some(2.0));
+    assert_eq!(parameter("seg0_time"), Some(0.25));
+    assert_eq!(parameter("seg1_level"), Some(0.2));
+    assert_eq!(parameter("seg1_curve"), Some(-0.25));
+}
+
+#[tokio::test]
+async fn set_mseg_segments_validates_the_entire_shape_before_mutating() {
+    let server = build_server();
+    let response = call(
+        &server,
+        "set_mseg_segments",
+        serde_json::json!({
+            "instrument_id": 0,
+            "module_id": "msg-1",
+            "segments": [{ "time": 0.1, "level": 1.5, "curve": 0.0 }]
+        }),
+    )
+    .await;
+    assert!(
+        response.starts_with("Error: segments[0].level"),
+        "{response}"
     );
 }
 

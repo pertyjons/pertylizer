@@ -1218,6 +1218,18 @@
           "unit": "percent",
           "value_kind": "continuous"
         },
+        "time_scale": {
+          "default": 1.0,
+          "description": "Global multiplier for attack, decay, and release times (0.01-10.0)",
+          "max": 10.0,
+          "min": 0.009999999776482582,
+          "modulatable": true,
+          "name": "Time Scale",
+          "response_curve": "linear",
+          "type": "number",
+          "unit": "none",
+          "value_kind": "continuous"
+        },
         "vel_sens": {
           "default": 1.0,
           "description": "How much note velocity scales the envelope (0 = ignore, 1 = full)",

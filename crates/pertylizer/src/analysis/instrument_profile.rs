@@ -366,6 +366,7 @@ pub fn envelope_shape(modules: &[ModuleStateSnapshot]) -> EnvelopeShape {
     let mut decay = 0.0_f32;
     let mut sustain = 1.0_f32;
     let mut release = 0.0_f32;
+    let mut time_scale = 1.0_f32;
     for p in &first.parameters {
         if let Param::Envelope(ep) = p {
             match ep {
@@ -373,10 +374,14 @@ pub fn envelope_shape(modules: &[ModuleStateSnapshot]) -> EnvelopeShape {
                 EnvelopeParam::Decay(s) => decay = s.as_f32(),
                 EnvelopeParam::Sustain(v) => sustain = v.as_f32(),
                 EnvelopeParam::Release(s) => release = s.as_f32(),
+                EnvelopeParam::TimeScale(v) => time_scale = v.as_f32(),
                 _ => {}
             }
         }
     }
+    attack *= time_scale;
+    decay *= time_scale;
+    release *= time_scale;
 
     // Order matters — return the first matching bucket.
     if sustain < 0.05 && (decay + release) < 0.2 {

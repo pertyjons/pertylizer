@@ -2221,6 +2221,14 @@
                   "title": "Sustain",
                   "type": "number"
                 },
+                "time_scale": {
+                  "default": 1.0,
+                  "description": "Global multiplier for attack, decay, and release times (0.01-10.0)",
+                  "maximum": 10.0,
+                  "minimum": 0.009999999776482582,
+                  "title": "Time Scale",
+                  "type": "number"
+                },
                 "vel_sens": {
                   "default": 1.0,
                   "description": "How much note velocity scales the envelope (0 = ignore, 1 = full)",

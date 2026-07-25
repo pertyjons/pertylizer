@@ -45,7 +45,8 @@ use crate::gui::widgets::{
     ModMarkers, ModuleCard, ModuleCardGeometry, ModuleColumn, ModulePort, ModulePortEndpoint,
     PortWidget, WidgetPortDirection, WidgetPortType, danger_button, dim_label, draw_cable,
     draw_cable_dragging, draw_cable_highlighted, draw_module_port_column, draw_module_port_layout,
-    draw_parameter_grid, expose, icon_button, module_port_accessible_label, tree_picker_button,
+    draw_parameter_grid, expose, icon_button, module_port_accessible_label, submenu_button,
+    tree_picker_button,
 };
 use crate::undo::{UndoAction, UndoManager};
 
@@ -1138,8 +1139,7 @@ fn edit_target_body(
 
         // This-track relative params (the default authoring form). Mute is
         // excluded — the grid can't modulate a bool.
-        ui.menu_button("This Track", |ui| {
-            ui.set_min_width(150.0);
+        submenu_button(ui, "This Track", |ui| {
             for param in [TrackParam::Volume, TrackParam::Pan, TrackParam::Pitch] {
                 let t = AutomationTarget::Track { track: None, param };
                 if ui
@@ -1153,8 +1153,7 @@ fn edit_target_body(
         });
 
         // Global (master volume).
-        ui.menu_button("Global", |ui| {
-            ui.set_min_width(150.0);
+        submenu_button(ui, "Global", |ui| {
             let t = AutomationTarget::Global(GlobalParam::MasterVolume);
             if ui.selectable_label(cur == t, "Master volume").clicked() {
                 target.target = t;
@@ -1169,8 +1168,7 @@ fn edit_target_body(
             ui.separator();
         }
         for (seq_id, name) in &state.instruments {
-            ui.menu_button(format!("{}: {name}", seq_id.as_u64()), |ui| {
-                ui.set_min_width(150.0);
+            submenu_button(ui, format!("{}: {name}", seq_id.as_u64()), |ui| {
                 for param in [AutoInstrumentParam::Volume, AutoInstrumentParam::Pan] {
                     let t = AutomationTarget::Instrument {
                         instrument: *seq_id,
@@ -1189,8 +1187,7 @@ fn edit_target_body(
                         ui.separator();
                     }
                     for g in groups {
-                        ui.menu_button(&g.label, |ui| {
-                            ui.set_min_width(150.0);
+                        submenu_button(ui, &g.label, |ui| {
                             for (type_id, pname) in &g.params {
                                 let t = AutomationTarget::Module {
                                     instrument: *seq_id,

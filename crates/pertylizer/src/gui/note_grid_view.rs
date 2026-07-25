@@ -49,6 +49,7 @@ use crate::gui::widgets::{
     danger_button, dim_label, draw_cable, draw_cable_dragging, draw_cable_highlighted,
     draw_flow_particles, draw_module_port_column, draw_module_port_layout, enum_combo, expose,
     icon_button, knob_normalized, labeled_row, module_port_accessible_label, seed_reroll,
+    submenu_button,
 };
 use crate::undo::{UndoAction, UndoManager};
 
@@ -333,7 +334,7 @@ fn draw_pool_panel(
                                         }
                                     }
                                     ui.separator();
-                                    ui.menu_button((ri::PALETTE_LINE, "Color"), |ui| {
+                                    submenu_button(ui, (ri::PALETTE_LINE, "Color"), |ui| {
                                         // Swatch row from the shared presets,
                                         // plus a clear entry.
                                         ui.horizontal(|ui| {

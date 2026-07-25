@@ -260,25 +260,12 @@ offline rendering. Remaining refinements follow.
 
 ## 3. UI & Visual Polish
 
-### 3.1 MSEG UI overhaul (problematic — needs review)
+### 3.1 MSEG UI overhaul
 
-- [ ] **The MSEG module UI is very problematic and must be reworked.** MSEG is a multi-segment
-  envelope (up to 16 segments, each with time/level/curve, plus loop start/end), but it currently has
-  **no graphical editor** — the only UI is the generic descriptor-driven knob grid. Consequences:
-    1. **The actual envelope shape is not editable in the GUI.** The 48 per-segment params
-       (`seg{0..15}_{time,level,curve}`) are deliberately `WidgetHint::Hidden` (added so the shape
-       round-trips through save/load and is MCP-settable — see the State Sync work), so the only way
-       to draw/shape the envelope today is per-id via MCP `set_parameter`. There is no way to do it by
-       hand in the app.
-    2. **The visible knobs are awkward.** `Segments`/`Sustain Seg`/`Loop Start`/`Loop End` are integer
-       knobs (now `.step(1.0)`-snapped) and `Time Scale` is a multiplier — a grid of knobs is a poor fit
-       for what is fundamentally a *curve*.
-       Fix direction: build a proper **graphical multi-segment envelope editor** (drag segment
-       nodes for time/level, drag handles for per-segment curve, visible sustain + loop-region markers),
-       rendered via a custom widget (`WidgetHint::EnvelopeEditor` already exists as a hint). The Hidden
-       segment params can stay as the persistence/MCP backing; the editor just reads/writes them. Also
-       consider an array-style MCP tool (`set_mseg_segments`) so the shape can be set in one call instead of
-       ~50 individual `set_parameter`s. Review the whole MSEG UX as part of this.
+- [x] **Give MSEG a purpose-built graphical editor.** Segment endpoints now edit time and level,
+  curve handles edit each segment's shape, sustain and loop regions are visible, and the structural
+  settings use compact discrete controls. The hidden segment parameters remain the shared
+  persistence/MCP backing, with `set_mseg_segments` available for complete single-call shape updates.
 
 ### 3.2 `ModuleParam` single-definition cleanup (MAYBE — aesthetics only, future)
 

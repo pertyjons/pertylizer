@@ -29,7 +29,7 @@ use super::module_panel::{ModulePanelState, PortPosition, category_color};
 use super::theme::theme;
 use super::widgets::{
     CaptionTone, ModMarkers, ModuleCard, WidgetPortDirection, WidgetPortType, cable_color, caption,
-    draw_cable_dragging, tree_picker_button,
+    draw_cable_dragging, submenu_button, tree_picker_button,
 };
 
 mod canvas;
@@ -885,7 +885,7 @@ fn mod_source_picker(
             if target.source_ports.is_empty() && target.params.is_empty() {
                 continue;
             }
-            ui.menu_button(&target.label, |ui| {
+            submenu_button(ui, &target.label, |ui| {
                 for port in &target.source_ports {
                     let addr = SrcAddr::module(target.id.module_type, target.id.instance, port);
                     if ui
@@ -919,7 +919,7 @@ fn mod_source_picker(
             });
         }
         ui.separator();
-        ui.menu_button("Macros", |ui| {
+        submenu_button(ui, "Macros", |ui| {
             for m in MacroSource::ALL {
                 let addr = SrcAddr::Macro(m);
                 if ui
@@ -959,7 +959,7 @@ fn mod_dest_picker(
             if target.params.is_empty() {
                 continue;
             }
-            ui.menu_button(&target.label, |ui| {
+            submenu_button(ui, &target.label, |ui| {
                 for (type_id, label) in &target.params {
                     let addr = DestAddr::new(target.id.module_type, target.id.instance, type_id);
                     if ui
@@ -2007,11 +2007,23 @@ impl PatchEditor {
     /// round-trip of a mid-drag knob must not clobber the user's value,
     /// so equal values are a no-op.
     pub fn sync_module_params(&mut self, module_id: ModuleId, params: &[Param]) {
+        let descriptor = self.descriptors.get(&module_id);
         let Some(panel) = self.panels.get_mut(&module_id) else {
             return;
         };
         for param in params {
-            let name = param.name();
+            // Indexed parameters (MSEG segments, Mod Matrix slots, etc.) can
+            // intentionally share a runtime display name. Resolve the exact
+            // descriptor entry by typed identity so each value lands in its
+            // unique GUI cache key (`Seg 0 Time`, `Seg 1 Time`, ...).
+            let name = descriptor
+                .and_then(|descriptor| {
+                    descriptor
+                        .parameters
+                        .iter()
+                        .find(|parameter| parameter.id.same_kind(param))
+                })
+                .map_or_else(|| param.name(), |parameter| parameter.name.as_str());
 
             // Mod Matrix routings are address-based; mirror the full address into
             // `slot_addrs` (the lossy f32 mirror below can only hold the legacy
@@ -4000,7 +4012,7 @@ fn draw_select_input_menu(ui: &mut Ui, catalog: &ModAddrCatalog) -> Option<Picke
                     if target.source_ports.is_empty() && target.params.is_empty() {
                         continue;
                     }
-                    ui.menu_button(&target.label, |ui| {
+                    submenu_button(ui, &target.label, |ui| {
                         for port in &target.source_ports {
                             if ui.button(port).clicked() {
                                 let addr = SrcAddr::module(
@@ -4039,7 +4051,7 @@ fn draw_select_input_menu(ui: &mut Ui, catalog: &ModAddrCatalog) -> Option<Picke
                 }
                 ui.separator();
                 // Macros and context vars are bare identifiers (no `src` needed).
-                ui.menu_button("Macros", |ui| {
+                submenu_button(ui, "Macros", |ui| {
                     for (name, label) in synth_script::symbols::MACRO_CATALOG {
                         if ui.button(format!("{label}  ({name})")).clicked() {
                             picked = Some(PickedInput::Bare((*name).to_string()));
@@ -4047,7 +4059,7 @@ fn draw_select_input_menu(ui: &mut Ui, catalog: &ModAddrCatalog) -> Option<Picke
                         }
                     }
                 });
-                ui.menu_button("Context", |ui| {
+                submenu_button(ui, "Context", |ui| {
                     for (name, label) in synth_script::symbols::CONTEXT_CATALOG {
                         if ui.button(format!("{label}  ({name})")).clicked() {
                             picked = Some(PickedInput::Bare((*name).to_string()));
@@ -4716,6 +4728,34 @@ mod patch_analysis_tests {
     fn stub_panel(mt: ModuleType, instance: u16) -> (ModuleId, ModulePanelState) {
         let id = ModuleId::new(mt, instance);
         (id, ModulePanelState::new(id, Pos2::ZERO))
+    }
+
+    #[test]
+    fn indexed_mseg_params_sync_to_unique_descriptor_keys() {
+        use synth_core::{BipolarValue, Describable, MsegParam, NormalizedValue, Seconds};
+
+        let id = ModuleId::new(ModuleType::Mseg, 1);
+        let mut editor = PatchEditor::new();
+        editor.add_module(id, synth_modules::Mseg::new().descriptor());
+        editor.sync_module_params(
+            id,
+            &[
+                Param::Mseg(MsegParam::SegmentTime(0, Seconds::new(0.25))),
+                Param::Mseg(MsegParam::SegmentTime(1, Seconds::new(0.75))),
+                Param::Mseg(MsegParam::SegmentLevel(1, NormalizedValue::new(0.4))),
+                Param::Mseg(MsegParam::SegmentCurve(1, BipolarValue::new(-0.5))),
+            ],
+        );
+
+        let panel = editor.panels.get(&id).expect("MSEG panel");
+        assert_eq!(panel.param_values.get("Seg 0 Time"), Some(&0.25));
+        assert_eq!(panel.param_values.get("Seg 1 Time"), Some(&0.75));
+        assert_eq!(panel.param_values.get("Seg 1 Level"), Some(&0.4));
+        assert_eq!(panel.param_values.get("Seg 1 Curve"), Some(&-0.5));
+        assert!(
+            !panel.param_values.contains_key("Seg Time"),
+            "ambiguous runtime names must not enter the GUI cache"
+        );
     }
 
     /// Address-based resolution: `env-6.out → flt-3.cutoff` flags exactly env-6

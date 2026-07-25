@@ -777,15 +777,22 @@ impl SynthBridge for AppSynthBridge {
                         .parameters
                         .iter()
                         .map(|p| {
-                            // Match against the descriptor first so we can format the value
-                            // with its declared unit (the name-based fallback misformats
-                            // e.g. EFL attack/release stored as Milliseconds).
+                            // Match by typed parameter identity first. Indexed parameters such
+                            // as MSEG segments deliberately share a display name, so a
+                            // name-only lookup loses their index and cannot attach the stable
+                            // `segN_*` type_id. Retain the normalized-name fallback for legacy
+                            // modules whose runtime and descriptor parameter variants differ.
                             let name = p.name().to_string();
                             let pd = descriptor.as_ref().and_then(|desc| {
                                 let needle = normalize_param_name(&name);
                                 desc.parameters
                                     .iter()
-                                    .find(|pd| normalize_param_name(&pd.name) == needle)
+                                    .find(|pd| pd.id.same_kind(p))
+                                    .or_else(|| {
+                                        desc.parameters
+                                            .iter()
+                                            .find(|pd| normalize_param_name(&pd.name) == needle)
+                                    })
                             });
                             ParameterInfo {
                                 name: name.clone(),

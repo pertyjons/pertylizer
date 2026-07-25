@@ -14,6 +14,7 @@ use synth_engine::graph::Connection;
 
 use crate::gui::module_panel::category_color;
 use crate::gui::theme::theme;
+use crate::gui::widgets::submenu_button;
 
 use super::{
     BgContextMenuState, CanvasInteraction, GroupTemplateAction, PaletteSelection, PatchAnalysis,
@@ -412,7 +413,8 @@ impl PatchEditor {
                 if !module_catalog().iter().any(|(_, cat, _)| *cat == category) {
                     continue;
                 }
-                ui.menu_button(
+                submenu_button(
+                    ui,
                     egui::RichText::new(format!("{} {title}", category_icon(category)))
                         .color(category_color(category)),
                     |ui| {

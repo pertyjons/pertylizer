@@ -2,9 +2,12 @@
 
 use eframe::egui::{self, Color32, Pos2, Sense, Shape, Stroke, Ui, Vec2};
 
+use super::controls::{EnvelopeCurveDirection, envelope_curve_after_vertical_drag};
 use crate::gui::theme::theme;
-use synth_core::{NormalizedValue, Seconds};
+use synth_core::{BipolarValue, NormalizedValue, Seconds, TimeScale};
 use synth_modules::EnvelopeStage;
+
+const CURVE_STEPS: usize = 16;
 
 /// Draw an ADSR envelope visualization (non-interactive).
 pub fn draw_adsr_curve(
@@ -64,6 +67,29 @@ enum DragPoint {
     Decay,
     Sustain,
     Release,
+    AttackCurve,
+    DecayCurve,
+    ReleaseCurve,
+}
+
+impl DragPoint {
+    #[must_use]
+    const fn is_curve(self) -> bool {
+        matches!(
+            self,
+            Self::AttackCurve | Self::DecayCurve | Self::ReleaseCurve
+        )
+    }
+}
+
+/// State captured at pointer-down so curve drags remain relative and stable.
+#[derive(Debug, Clone, Copy)]
+struct DragState {
+    point: DragPoint,
+    pointer_origin: Pos2,
+    time_origin: Seconds,
+    display_time: Seconds,
+    curve_origin: BipolarValue,
 }
 
 /// Result of an envelope edit - contains changed values.
@@ -73,6 +99,9 @@ pub struct EnvelopeChanges {
     pub decay: Option<Seconds>,
     pub sustain: Option<NormalizedValue>,
     pub release: Option<Seconds>,
+    pub attack_curve: Option<BipolarValue>,
+    pub decay_curve: Option<BipolarValue>,
+    pub release_curve: Option<BipolarValue>,
 }
 
 impl EnvelopeChanges {
@@ -83,16 +112,70 @@ impl EnvelopeChanges {
             || self.decay.is_some()
             || self.sustain.is_some()
             || self.release.is_some()
+            || self.attack_curve.is_some()
+            || self.decay_curve.is_some()
+            || self.release_curve.is_some()
     }
 }
 
 /// Format time value for display.
 /// Uses seconds (s) for values >= 1.0, milliseconds (ms) for smaller values.
-fn format_time(seconds: f32) -> String {
-    if seconds >= 1.0 {
-        format!("{:.2}s", seconds)
+fn format_time(seconds: Seconds) -> String {
+    if seconds.as_f32() >= 1.0 {
+        format!("{:.2}s", seconds.as_f32())
     } else {
-        format!("{:.0}ms", seconds * 1000.0)
+        format!("{:.0}ms", seconds.as_millis())
+    }
+}
+
+fn scaled_stage_time(time: Seconds, scale: TimeScale) -> Seconds {
+    time * scale.as_f32()
+}
+
+fn timed_node_tooltip(time: Seconds, level: NormalizedValue) -> String {
+    format!("{}  •  {:.0}%", format_time(time), level.as_f32() * 100.0)
+}
+
+fn attack_node_tooltip(time: Seconds) -> String {
+    format!("{}  •  100% peak (fixed)", format_time(time))
+}
+
+fn curve_handle_position(from: Pos2, to: Pos2, curve: BipolarValue) -> Pos2 {
+    let phase = 0.5;
+    let y = synth_modules::math::interpolate_with_curve(from.y, to.y, phase, curve.as_f32());
+    Pos2::new(egui::lerp(from.x..=to.x, phase), y)
+}
+
+fn append_curved_segment(points: &mut Vec<Pos2>, from: Pos2, to: Pos2, curve: BipolarValue) {
+    if points.is_empty() {
+        points.push(from);
+    }
+    for step in 1..=CURVE_STEPS {
+        let phase = step as f32 / CURVE_STEPS as f32;
+        let y = synth_modules::math::interpolate_with_curve(from.y, to.y, phase, curve.as_f32());
+        points.push(Pos2::new(egui::lerp(from.x..=to.x, phase), y));
+    }
+}
+
+fn stage_time_after_drag(
+    origin: Seconds,
+    delta_x: f32,
+    width: f32,
+    display_time: Seconds,
+    maximum: Seconds,
+) -> Seconds {
+    let requested = origin + display_time * (delta_x / width.max(1.0));
+    Seconds::new(requested.as_f32().clamp(0.0, maximum.as_f32()))
+}
+
+fn drag_cursor(point: DragPoint) -> egui::CursorIcon {
+    match point {
+        DragPoint::Attack | DragPoint::Release => egui::CursorIcon::ResizeHorizontal,
+        DragPoint::Sustain
+        | DragPoint::AttackCurve
+        | DragPoint::DecayCurve
+        | DragPoint::ReleaseCurve => egui::CursorIcon::ResizeVertical,
+        DragPoint::Decay => egui::CursorIcon::Move,
     }
 }
 
@@ -108,11 +191,16 @@ pub struct EnvelopeEditor<'a> {
     decay: &'a mut f32,
     sustain: &'a mut f32,
     release: &'a mut f32,
+    attack_curve: &'a mut f32,
+    decay_curve: &'a mut f32,
+    release_curve: &'a mut f32,
     accent_color: Color32,
     width: f32,
     height: f32,
     /// Maximum time value for A/D/R (seconds).
     max_time: f32,
+    /// Global multiplier applied to all three timed stages.
+    time_scale: TimeScale,
     /// Current playback position for visualization (stage, time_in_stage_seconds).
     playback_position: Option<(EnvelopeStage, Seconds)>,
 }
@@ -125,16 +213,23 @@ impl<'a> EnvelopeEditor<'a> {
         decay: &'a mut f32,
         sustain: &'a mut f32,
         release: &'a mut f32,
+        attack_curve: &'a mut f32,
+        decay_curve: &'a mut f32,
+        release_curve: &'a mut f32,
     ) -> Self {
         Self {
             attack,
             decay,
             sustain,
             release,
+            attack_curve,
+            decay_curve,
+            release_curve,
             accent_color: theme().colors.accent_green,
             width: 200.0,
             height: 100.0,
             max_time: 10.0,
+            time_scale: TimeScale::UNITY,
             playback_position: None,
         }
     }
@@ -161,6 +256,13 @@ impl<'a> EnvelopeEditor<'a> {
         self
     }
 
+    /// Set the global A/D/R time multiplier used by playback and readouts.
+    #[must_use]
+    pub fn time_scale(mut self, scale: TimeScale) -> Self {
+        self.time_scale = scale;
+        self
+    }
+
     /// Set the current playback position for visualization.
     ///
     /// A vertical time indicator line will be drawn at the position
@@ -180,7 +282,7 @@ impl<'a> EnvelopeEditor<'a> {
         let mut changes = EnvelopeChanges::default();
 
         // Get or initialize drag state
-        let dragging: Option<DragPoint> = ui.memory(|m| m.data.get_temp(id));
+        let dragging: Option<DragState> = ui.memory(|m| m.data.get_temp(id));
 
         let (rect, response) =
             ui.allocate_exact_size(Vec2::new(self.width, self.height), Sense::click_and_drag());
@@ -226,8 +328,12 @@ impl<'a> EnvelopeEditor<'a> {
             );
         }
 
-        // Draw total time in upper right corner (A + D + R)
-        let total_sound_time = *self.attack + *self.decay + *self.release;
+        let effective_attack = scaled_stage_time(Seconds::new(*self.attack), self.time_scale);
+        let effective_decay = scaled_stage_time(Seconds::new(*self.decay), self.time_scale);
+        let effective_release = scaled_stage_time(Seconds::new(*self.release), self.time_scale);
+
+        // Draw effective total time in upper right corner (A + D + R).
+        let total_sound_time = effective_attack + effective_decay + effective_release;
         let total_text = format!("Σ {}", format_time(total_sound_time));
         painter.text(
             Pos2::new(right - 2.0, top + 2.0),
@@ -263,35 +369,31 @@ impl<'a> EnvelopeEditor<'a> {
         let sustain_point = Pos2::new(sustain_x.clamp(left, right), sustain_y);
         let release_point = Pos2::new(release_x.clamp(left, right), bottom);
 
-        // Draw envelope shape
-        let points = [
-            Pos2::new(left, bottom), // Start
-            attack_point,            // Peak after attack
-            decay_point,             // After decay
-            sustain_point,           // Sustain hold
-            release_point,           // End
-        ];
+        let attack_curve = BipolarValue::new(*self.attack_curve);
+        let decay_curve = BipolarValue::new(*self.decay_curve);
+        let release_curve = BipolarValue::new(*self.release_curve);
+        let start_point = Pos2::new(left, bottom);
+        let attack_curve_point = curve_handle_position(start_point, attack_point, attack_curve);
+        let decay_curve_point = curve_handle_position(attack_point, decay_point, decay_curve);
+        let release_curve_point =
+            curve_handle_position(sustain_point, release_point, release_curve);
 
-        // Fill under curve
-        let fill_points: Vec<_> = points
-            .iter()
-            .copied()
-            .chain(std::iter::once(Pos2::new(right, bottom)))
-            .chain(std::iter::once(Pos2::new(left, bottom)))
-            .collect();
+        // Draw the shaped A/D/R segments and the level sustain section.
+        let mut points = Vec::with_capacity(CURVE_STEPS * 3 + 3);
+        append_curved_segment(&mut points, start_point, attack_point, attack_curve);
+        append_curved_segment(&mut points, attack_point, decay_point, decay_curve);
+        points.push(sustain_point);
+        append_curved_segment(&mut points, sustain_point, release_point, release_curve);
 
-        painter.add(Shape::Path(eframe::epaint::PathShape {
-            points: fill_points,
-            closed: true,
-            fill: self.accent_color.gamma_multiply(0.15),
-            stroke: Stroke::NONE.into(),
-        }));
+        super::controls::paint_envelope_curve_fill(
+            painter,
+            &points,
+            bottom,
+            self.accent_color.gamma_multiply(0.15),
+        );
 
         // Curve line
-        painter.add(Shape::line(
-            points.to_vec(),
-            Stroke::new(2.5, self.accent_color),
-        ));
+        painter.add(Shape::line(points, Stroke::new(2.5, self.accent_color)));
 
         // Draw playback time indicator (vertical line)
         if let Some((stage, time_in_stage)) = self.playback_position {
@@ -300,13 +402,13 @@ impl<'a> EnvelopeEditor<'a> {
                 EnvelopeStage::Idle => None,
                 EnvelopeStage::Attack => {
                     // Time progress through attack phase
-                    let attack_time = (*self.attack).max(0.001);
+                    let attack_time = effective_attack.as_f32().max(0.001);
                     let progress = (t / attack_time).clamp(0.0, 1.0);
                     Some(left + progress * (attack_x - left))
                 }
                 EnvelopeStage::Decay => {
                     // Time progress through decay phase
-                    let decay_time = (*self.decay).max(0.001);
+                    let decay_time = effective_decay.as_f32().max(0.001);
                     let progress = (t / decay_time).clamp(0.0, 1.0);
                     Some(attack_x + progress * (decay_x - attack_x))
                 }
@@ -317,7 +419,7 @@ impl<'a> EnvelopeEditor<'a> {
                 }
                 EnvelopeStage::Release => {
                     // Time progress through release phase
-                    let release_time = (*self.release).max(0.001);
+                    let release_time = effective_release.as_f32().max(0.001);
                     let progress = (t / release_time).clamp(0.0, 1.0);
                     Some(sustain_x + progress * (release_x - sustain_x))
                 }
@@ -352,9 +454,14 @@ impl<'a> EnvelopeEditor<'a> {
                 attack_point,
                 DragPoint::Attack,
                 "A",
-                format_time(*self.attack),
+                attack_node_tooltip(effective_attack),
             ),
-            (decay_point, DragPoint::Decay, "D", format_time(*self.decay)),
+            (
+                decay_point,
+                DragPoint::Decay,
+                "D",
+                timed_node_tooltip(effective_decay, NormalizedValue::new(sustain_norm)),
+            ),
             (
                 sustain_point,
                 DragPoint::Sustain,
@@ -365,7 +472,25 @@ impl<'a> EnvelopeEditor<'a> {
                 release_point,
                 DragPoint::Release,
                 "R",
-                format_time(*self.release),
+                timed_node_tooltip(effective_release, NormalizedValue::MIN),
+            ),
+            (
+                attack_curve_point,
+                DragPoint::AttackCurve,
+                "",
+                format!("Attack Curve {:+.2}", attack_curve.as_f32()),
+            ),
+            (
+                decay_curve_point,
+                DragPoint::DecayCurve,
+                "",
+                format!("Decay Curve {:+.2}", decay_curve.as_f32()),
+            ),
+            (
+                release_curve_point,
+                DragPoint::ReleaseCurve,
+                "",
+                format!("Release Curve {:+.2}", release_curve.as_f32()),
             ),
         ];
 
@@ -403,7 +528,20 @@ impl<'a> EnvelopeEditor<'a> {
         // Draw control points
         for (point, drag_type, label, value_text) in &control_points {
             let is_hovered = hovered_point == Some(*drag_type);
-            let is_dragging = dragging == Some(*drag_type);
+            let is_dragging = dragging.map(|state| state.point) == Some(*drag_type);
+
+            if drag_type.is_curve() {
+                super::controls::paint_envelope_curve_handle(
+                    painter,
+                    *point,
+                    self.accent_color,
+                    is_hovered || is_dragging,
+                );
+                if is_hovered || is_dragging {
+                    super::tooltip::draw_tooltip_above(ui, *point, value_text, self.accent_color);
+                }
+                continue;
+            }
 
             let radius = if is_dragging {
                 8.0
@@ -450,40 +588,70 @@ impl<'a> EnvelopeEditor<'a> {
         // Handle drag start
         if response.drag_started()
             && let Some(hovered) = hovered_point
+            && let Some(pointer_origin) = hover_pos
         {
-            ui.memory_mut(|m| m.data.insert_temp(id, hovered));
+            let curve_origin = match hovered {
+                DragPoint::AttackCurve => attack_curve,
+                DragPoint::DecayCurve => decay_curve,
+                DragPoint::ReleaseCurve => release_curve,
+                _ => BipolarValue::CENTER,
+            };
+            let time_origin = match hovered {
+                DragPoint::Attack => Seconds::new(*self.attack),
+                DragPoint::Decay => Seconds::new(*self.decay),
+                DragPoint::Release => Seconds::new(*self.release),
+                _ => Seconds::ZERO,
+            };
+            ui.memory_mut(|m| {
+                m.data.insert_temp(
+                    id,
+                    DragState {
+                        point: hovered,
+                        pointer_origin,
+                        time_origin,
+                        display_time: Seconds::new(total_time),
+                        curve_origin,
+                    },
+                );
+            });
         }
 
         // Handle drag end
         if response.drag_stopped() {
-            ui.memory_mut(|m| m.data.remove::<DragPoint>(id));
+            ui.memory_mut(|m| m.data.remove::<DragState>(id));
         }
 
         // Handle dragging - each point moves freely within its range
-        if let Some(drag_point) = dragging
+        if let Some(drag) = dragging
             && let Some(pos) = ui.input(|i| i.pointer.interact_pos()).map(to_local_pos)
         {
-            match drag_point {
+            match drag.point {
                 DragPoint::Attack => {
-                    // Attack: horizontal drag, 0 to max_time
-                    // Position relative to left edge
-                    let relative_x = (pos.x - left).max(0.0);
-                    let new_attack = (relative_x / scale).clamp(0.0, self.max_time);
-                    if (new_attack - *self.attack).abs() > 0.001 {
-                        *self.attack = new_attack;
-                        changes.attack = Some(Seconds::new(new_attack));
+                    let new_attack = stage_time_after_drag(
+                        drag.time_origin,
+                        pos.x - drag.pointer_origin.x,
+                        width,
+                        drag.display_time,
+                        Seconds::new(self.max_time),
+                    );
+                    if (new_attack.as_f32() - *self.attack).abs() > 0.001 {
+                        *self.attack = new_attack.as_f32();
+                        changes.attack = Some(new_attack);
                     }
                 }
                 DragPoint::Decay => {
-                    // Decay: horizontal drag for time (0 to max_time), vertical for sustain level
-                    // Position relative to attack point
-                    let relative_x = (pos.x - attack_x).max(0.0);
-                    let new_decay = (relative_x / scale).clamp(0.0, self.max_time);
+                    let new_decay = stage_time_after_drag(
+                        drag.time_origin,
+                        pos.x - drag.pointer_origin.x,
+                        width,
+                        drag.display_time,
+                        Seconds::new(self.max_time),
+                    );
                     let new_sustain = (1.0 - (pos.y - top) / height).clamp(0.0, 1.0);
 
-                    if (new_decay - *self.decay).abs() > 0.001 {
-                        *self.decay = new_decay;
-                        changes.decay = Some(Seconds::new(new_decay));
+                    if (new_decay.as_f32() - *self.decay).abs() > 0.001 {
+                        *self.decay = new_decay.as_f32();
+                        changes.decay = Some(new_decay);
                     }
                     if (new_sustain - *self.sustain).abs() > 0.005 {
                         *self.sustain = new_sustain;
@@ -499,21 +667,62 @@ impl<'a> EnvelopeEditor<'a> {
                     }
                 }
                 DragPoint::Release => {
-                    // Release: horizontal drag, 0 to max_time
-                    // Position relative to sustain point
-                    let relative_x = (pos.x - sustain_x).max(0.0);
-                    let new_release = (relative_x / scale).clamp(0.0, self.max_time);
-                    if (new_release - *self.release).abs() > 0.001 {
-                        *self.release = new_release;
-                        changes.release = Some(Seconds::new(new_release));
+                    let new_release = stage_time_after_drag(
+                        drag.time_origin,
+                        pos.x - drag.pointer_origin.x,
+                        width,
+                        drag.display_time,
+                        Seconds::new(self.max_time),
+                    );
+                    if (new_release.as_f32() - *self.release).abs() > 0.001 {
+                        *self.release = new_release.as_f32();
+                        changes.release = Some(new_release);
+                    }
+                }
+                DragPoint::AttackCurve => {
+                    let curve = envelope_curve_after_vertical_drag(
+                        drag.curve_origin,
+                        pos.y - drag.pointer_origin.y,
+                        height,
+                        EnvelopeCurveDirection::Rising,
+                    );
+                    if (curve.as_f32() - *self.attack_curve).abs() > f32::EPSILON {
+                        *self.attack_curve = curve.as_f32();
+                        changes.attack_curve = Some(curve);
+                    }
+                }
+                DragPoint::DecayCurve => {
+                    let curve = envelope_curve_after_vertical_drag(
+                        drag.curve_origin,
+                        pos.y - drag.pointer_origin.y,
+                        height,
+                        EnvelopeCurveDirection::Falling,
+                    );
+                    if (curve.as_f32() - *self.decay_curve).abs() > f32::EPSILON {
+                        *self.decay_curve = curve.as_f32();
+                        changes.decay_curve = Some(curve);
+                    }
+                }
+                DragPoint::ReleaseCurve => {
+                    let curve = envelope_curve_after_vertical_drag(
+                        drag.curve_origin,
+                        pos.y - drag.pointer_origin.y,
+                        height,
+                        EnvelopeCurveDirection::Falling,
+                    );
+                    if (curve.as_f32() - *self.release_curve).abs() > f32::EPSILON {
+                        *self.release_curve = curve.as_f32();
+                        changes.release_curve = Some(curve);
                     }
                 }
             }
         }
 
-        // Set cursor when hovering over a point
-        if hovered_point.is_some() || dragging.is_some() {
-            ui.ctx().set_cursor_icon(egui::CursorIcon::Grab);
+        // Match the cursor to each point's editable axes. The ADSR attack peak
+        // is fixed at 100%, so its node intentionally exposes horizontal time
+        // adjustment only.
+        if let Some(point) = dragging.map(|state| state.point).or(hovered_point) {
+            ui.ctx().set_cursor_icon(drag_cursor(point));
         }
 
         if changes.any_changed() {
@@ -521,5 +730,142 @@ impl<'a> EnvelopeEditor<'a> {
         } else {
             None
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn curve_handle_tracks_the_shaped_segment_midpoint() {
+        let from = Pos2::new(0.0, 100.0);
+        let to = Pos2::new(100.0, 0.0);
+
+        let linear = curve_handle_position(from, to, BipolarValue::CENTER);
+        let exponential = curve_handle_position(from, to, BipolarValue::MAX);
+        let logarithmic = curve_handle_position(from, to, BipolarValue::MIN);
+
+        assert_eq!(linear, Pos2::new(50.0, 50.0));
+        assert_eq!(exponential.x, 50.0);
+        assert!(exponential.y > linear.y);
+        assert_eq!(logarithmic.x, 50.0);
+        assert!(logarithmic.y < linear.y);
+    }
+
+    #[test]
+    fn curve_drag_uses_and_clamps_the_full_bipolar_range() {
+        assert_eq!(
+            envelope_curve_after_vertical_drag(
+                BipolarValue::CENTER,
+                -25.0,
+                100.0,
+                EnvelopeCurveDirection::Falling,
+            ),
+            BipolarValue::MAX
+        );
+        assert_eq!(
+            envelope_curve_after_vertical_drag(
+                BipolarValue::CENTER,
+                25.0,
+                100.0,
+                EnvelopeCurveDirection::Falling,
+            ),
+            BipolarValue::MIN
+        );
+        assert_eq!(
+            envelope_curve_after_vertical_drag(
+                BipolarValue::CENTER,
+                -100.0,
+                100.0,
+                EnvelopeCurveDirection::Falling,
+            ),
+            BipolarValue::MAX
+        );
+    }
+
+    #[test]
+    fn rising_curve_drag_follows_the_pointer_direction() {
+        let upward = envelope_curve_after_vertical_drag(
+            BipolarValue::CENTER,
+            -25.0,
+            100.0,
+            EnvelopeCurveDirection::Rising,
+        );
+        let downward = envelope_curve_after_vertical_drag(
+            BipolarValue::CENTER,
+            25.0,
+            100.0,
+            EnvelopeCurveDirection::Rising,
+        );
+
+        assert_eq!(upward, BipolarValue::MIN);
+        assert_eq!(downward, BipolarValue::MAX);
+    }
+
+    #[test]
+    fn stage_time_drag_can_lower_and_raise_from_its_origin() {
+        let origin = Seconds::new(0.5);
+        let display_time = Seconds::new(2.0);
+        let maximum = Seconds::new(10.0);
+
+        assert_eq!(
+            stage_time_after_drag(origin, -10.0, 100.0, display_time, maximum),
+            Seconds::new(0.3)
+        );
+        assert_eq!(
+            stage_time_after_drag(origin, 10.0, 100.0, display_time, maximum),
+            Seconds::new(0.7)
+        );
+    }
+
+    #[test]
+    fn timed_node_tooltip_includes_time_and_level() {
+        assert_eq!(
+            timed_node_tooltip(Seconds::new(0.25), NormalizedValue::new(0.7)),
+            "250ms  •  70%"
+        );
+    }
+
+    #[test]
+    fn attack_tooltip_marks_the_peak_as_fixed() {
+        assert_eq!(
+            attack_node_tooltip(Seconds::new(0.25)),
+            "250ms  •  100% peak (fixed)"
+        );
+    }
+
+    #[test]
+    fn adsr_cursors_match_the_editable_axes() {
+        assert_eq!(
+            drag_cursor(DragPoint::Attack),
+            egui::CursorIcon::ResizeHorizontal
+        );
+        assert_eq!(
+            drag_cursor(DragPoint::Sustain),
+            egui::CursorIcon::ResizeVertical
+        );
+        assert_eq!(drag_cursor(DragPoint::Decay), egui::CursorIcon::Move);
+    }
+
+    #[test]
+    fn curve_edits_are_reported_as_envelope_changes() {
+        let changes = EnvelopeChanges {
+            attack_curve: Some(BipolarValue::new(0.5)),
+            ..EnvelopeChanges::default()
+        };
+
+        assert!(changes.any_changed());
+    }
+
+    #[test]
+    fn time_scale_changes_effective_point_readouts() {
+        let raw = Seconds::new(0.25);
+
+        assert_eq!(scaled_stage_time(raw, TimeScale::UNITY), Seconds::new(0.25));
+        assert_eq!(
+            scaled_stage_time(raw, TimeScale::new(2.0)),
+            Seconds::new(0.5)
+        );
     }
 }

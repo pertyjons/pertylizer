@@ -32,7 +32,7 @@ use crate::gui::patch_editor::{
 use crate::gui::theme::theme;
 use crate::gui::widgets::{
     danger_button, dim_label, draw_oscilloscope, draw_stereo_meter, empty_state, expose_selected,
-    stepper,
+    stepper, submenu_button,
 };
 use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
 use crate::io::settings::AppSettings;
@@ -1862,7 +1862,7 @@ impl SynthApp {
                 ui.close();
             }
             // --- Recent Projects ---
-            ui.menu_button((ri::HISTORY_LINE, "Recent Projects"), |ui| {
+            submenu_button(ui, (ri::HISTORY_LINE, "Recent Projects"), |ui| {
                 let projects = self.settings.recent_projects.clone();
                 if projects.is_empty() {
                     ui.label("(none)");
@@ -1922,9 +1922,9 @@ impl SynthApp {
                 ui.close();
             }
             ui.separator();
-            ui.menu_button((ri::FILE_LIST_LINE, "Example Patches"), |ui| {
+            submenu_button(ui, (ri::FILE_LIST_LINE, "Example Patches"), |ui| {
                 for (category, patches) in categorized_patches() {
-                    ui.menu_button(category, |ui| {
+                    submenu_button(ui, category, |ui| {
                         for patch in patches {
                             if ui.button(&patch.name).clicked() {
                                 self.load_patch_data(&patch);
@@ -3575,7 +3575,8 @@ impl SynthApp {
                             ui.close();
                         }
                         // Per-row actions menu.
-                        ui.menu_button(
+                        submenu_button(
+                            ui,
                             RichText::new(ri::MORE_FILL).color(theme().colors.text_dim),
                             |ui| {
                                 if ui.button((ri::EDIT_LINE, "Rename / edit…")).clicked() {

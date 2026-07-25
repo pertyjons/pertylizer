@@ -10,7 +10,7 @@ use synth_core::{
     WidgetHint,
 };
 use synth_core::{
-    BipolarValue, MidiNote, NormalizedValue, PortName, SampleRate, Seconds, Velocity,
+    BipolarValue, MidiNote, NormalizedValue, PortName, SampleRate, Seconds, TimeScale, Velocity,
 };
 use synth_core::{EnvelopeParam, ModuleType, Param};
 
@@ -126,6 +126,7 @@ pub struct Envelope {
     decay: Seconds,
     sustain: NormalizedValue,
     release: Seconds,
+    time_scale: TimeScale,
     attack_curve: BipolarValue,
     decay_curve: BipolarValue,
     release_curve: BipolarValue,
@@ -151,6 +152,7 @@ pub struct Envelope {
     override_decay: Option<Seconds>,
     override_sustain: Option<NormalizedValue>,
     override_release: Option<Seconds>,
+    override_time_scale: Option<TimeScale>,
     /// Generic mod-matrix offsets (descriptor-driven). See [`ParamModOffsets`].
     mod_offsets: ParamModOffsets,
 }
@@ -162,6 +164,7 @@ impl Envelope {
             decay: Seconds::new(0.1),
             sustain: NormalizedValue::new(0.7),
             release: Seconds::new(0.3),
+            time_scale: TimeScale::UNITY,
             attack_curve: BipolarValue::CENTER,
             decay_curve: BipolarValue::CENTER,
             release_curve: BipolarValue::CENTER,
@@ -179,6 +182,7 @@ impl Envelope {
             override_decay: None,
             override_sustain: None,
             override_release: None,
+            override_time_scale: None,
             mod_offsets: ParamModOffsets::new(),
         }
     }
@@ -260,10 +264,16 @@ impl Envelope {
 
         // Effective ADSR values: a transient automation override replaces the
         // base for the duration it is active; the base is left untouched.
-        let attack = self.override_attack.unwrap_or(self.attack);
-        let decay = self.override_decay.unwrap_or(self.decay);
+        let time_scale = self.override_time_scale.unwrap_or(self.time_scale);
+        let attack = Seconds::new(
+            self.override_attack.unwrap_or(self.attack).as_f32() * time_scale.as_f32(),
+        );
+        let decay =
+            Seconds::new(self.override_decay.unwrap_or(self.decay).as_f32() * time_scale.as_f32());
         let sustain = self.override_sustain.unwrap_or(self.sustain);
-        let release = self.override_release.unwrap_or(self.release);
+        let release = Seconds::new(
+            self.override_release.unwrap_or(self.release).as_f32() * time_scale.as_f32(),
+        );
 
         match self.stage {
             EnvelopeStage::Idle => {
@@ -430,6 +440,17 @@ impl Describable for Envelope {
             )
             .parameter(
                 ParameterDescriptor::float(
+                    "time_scale",
+                    Param::Envelope(EnvelopeParam::TimeScale(TimeScale::UNITY)),
+                    "Time Scale",
+                )
+                .description("Global multiplier for attack, decay, and release times (0.01-10.0)")
+                .range(0.01, 10.0)
+                .default(1.0)
+                .widget(WidgetHint::Knob),
+            )
+            .parameter(
+                ParameterDescriptor::float(
                     "vel_sens",
                     Param::Envelope(EnvelopeParam::VelocitySensitivity(NormalizedValue::MAX)),
                     "Vel Sens",
@@ -499,7 +520,7 @@ impl PolyModule for Envelope {
         let gate_reader = inputs.reader(PortName::GATE, 0.0);
         let velocity_reader = inputs.reader(PortName::VELOCITY, 1.0);
 
-        // The ADSR params + curves + vel_sens are read per sample inside
+        // The ADSR params + time scale + curves + vel_sens are read per sample inside
         // process_sample / trigger, so apply their generic mod offsets to the
         // fields for the block and restore after (single loop, no early return).
         // Sequencer automation overrides (override_*) still take precedence over
@@ -510,6 +531,7 @@ impl PolyModule for Envelope {
             self.decay,
             self.sustain,
             self.release,
+            self.time_scale,
             self.velocity_sensitivity,
             self.attack_curve,
             self.decay_curve,
@@ -520,6 +542,10 @@ impl PolyModule for Envelope {
         self.sustain =
             NormalizedValue::new(self.mod_offsets.effective("sustain", self.sustain.as_f32()));
         self.release = Seconds::new(self.mod_offsets.effective("release", self.release.as_f32()));
+        self.time_scale = TimeScale::new(
+            self.mod_offsets
+                .effective("time_scale", self.time_scale.as_f32()),
+        );
         self.velocity_sensitivity = NormalizedValue::new(
             self.mod_offsets
                 .effective("vel_sens", self.velocity_sensitivity.as_f32()),
@@ -557,6 +583,7 @@ impl PolyModule for Envelope {
             self.decay,
             self.sustain,
             self.release,
+            self.time_scale,
             self.velocity_sensitivity,
             self.attack_curve,
             self.decay_curve,
@@ -579,6 +606,7 @@ impl PolyModule for Envelope {
                 EnvelopeParam::Decay(d) => self.decay = Seconds::new(d.as_f32().max(0.0)),
                 EnvelopeParam::Sustain(s) => self.sustain = s,
                 EnvelopeParam::Release(r) => self.release = Seconds::new(r.as_f32().max(0.0)),
+                EnvelopeParam::TimeScale(v) => self.time_scale = v,
                 EnvelopeParam::VelocitySensitivity(v) => self.velocity_sensitivity = v,
                 EnvelopeParam::AttackCurve(c) => self.attack_curve = c,
                 EnvelopeParam::DecayCurve(c) => self.decay_curve = c,
@@ -594,6 +622,7 @@ impl PolyModule for Envelope {
                 EnvelopeParam::Decay(_) => self.decay.as_f32(),
                 EnvelopeParam::Sustain(_) => self.sustain.as_f32(),
                 EnvelopeParam::Release(_) => self.release.as_f32(),
+                EnvelopeParam::TimeScale(_) => self.time_scale.as_f32(),
                 EnvelopeParam::VelocitySensitivity(_) => self.velocity_sensitivity.as_f32(),
                 EnvelopeParam::AttackCurve(_) => self.attack_curve.as_f32(),
                 EnvelopeParam::DecayCurve(_) => self.decay_curve.as_f32(),
@@ -610,6 +639,7 @@ impl PolyModule for Envelope {
             Param::Envelope(EnvelopeParam::Decay(self.decay)),
             Param::Envelope(EnvelopeParam::Sustain(self.sustain)),
             Param::Envelope(EnvelopeParam::Release(self.release)),
+            Param::Envelope(EnvelopeParam::TimeScale(self.time_scale)),
             Param::Envelope(EnvelopeParam::VelocitySensitivity(
                 self.velocity_sensitivity,
             )),
@@ -659,6 +689,7 @@ impl PolyModule for Envelope {
                 EnvelopeParam::Release(r) => {
                     self.override_release = Some(Seconds::new(r.as_f32().max(0.0)));
                 }
+                EnvelopeParam::TimeScale(v) => self.override_time_scale = Some(v),
                 // Curves and velocity sensitivity are not automation targets here.
                 _ => {}
             }
@@ -670,6 +701,7 @@ impl PolyModule for Envelope {
         self.override_decay = None;
         self.override_sustain = None;
         self.override_release = None;
+        self.override_time_scale = None;
     }
 
     fn box_clone(&self) -> Box<dyn PolyModule> {
@@ -781,6 +813,84 @@ mod tests {
     }
 
     #[test]
+    fn time_scale_multiplies_all_timed_stages() {
+        let mut env = Envelope::new();
+        env.sample_rate = SampleRate::DVD_QUALITY;
+        let sr = env.sample_rate.as_f32();
+        env.set_param(Param::Envelope(EnvelopeParam::Attack(Seconds::new(0.02))));
+        env.set_param(Param::Envelope(EnvelopeParam::Decay(Seconds::new(0.03))));
+        env.set_param(Param::Envelope(EnvelopeParam::Sustain(
+            NormalizedValue::new(0.5),
+        )));
+        env.set_param(Param::Envelope(EnvelopeParam::Release(Seconds::new(0.04))));
+        env.set_param(Param::Envelope(EnvelopeParam::TimeScale(TimeScale::new(
+            2.0,
+        ))));
+
+        fn count_stage(env: &mut Envelope, stage: EnvelopeStage) -> usize {
+            let mut samples = 0;
+            while env.stage() == stage && samples < 480_000 {
+                let _ = env.process_sample();
+                samples += 1;
+            }
+            samples
+        }
+
+        env.trigger(Velocity::MAX);
+        let attack_s = count_stage(&mut env, EnvelopeStage::Attack) as f32 / sr;
+        let decay_s = count_stage(&mut env, EnvelopeStage::Decay) as f32 / sr;
+        env.release();
+        let release_s = count_stage(&mut env, EnvelopeStage::Release) as f32 / sr;
+
+        assert!((attack_s - 0.04).abs() < 0.004, "attack took {attack_s}s");
+        assert!((decay_s - 0.06).abs() < 0.004, "decay took {decay_s}s");
+        assert!(
+            (release_s - 0.08).abs() < 0.004,
+            "release took {release_s}s"
+        );
+    }
+
+    #[test]
+    fn time_scale_mod_offset_changes_rate_and_restores() {
+        use std::collections::HashMap;
+
+        let mut env = Envelope::new();
+        env.set_param(Param::Envelope(EnvelopeParam::Attack(Seconds::new(0.1))));
+        let descriptor = env.descriptor();
+        env.mod_offsets_mut().unwrap().populate(&descriptor);
+        let samples = 2_400;
+        let context = ProcessContext {
+            samples: synth_core::SampleCount::new(samples),
+            ..ProcessContext::default()
+        };
+
+        fn render_attack(env: &mut Envelope, context: &ProcessContext, samples: usize) -> f32 {
+            env.reset();
+            let mut gate = AudioBuffer::new(samples);
+            for index in 0..samples {
+                gate[index] = 1.0;
+            }
+            let ports = [(PortName::GATE, &gate)];
+            let inputs = InputPorts::new(&ports);
+            let mut outputs = HashMap::new();
+            outputs.insert(PortName::OUT, AudioBuffer::new(samples));
+            env.process(inputs, &mut outputs, context);
+            outputs[&PortName::OUT][samples - 1]
+        }
+
+        let base = render_attack(&mut env, &context, samples);
+        let scale_before = env.time_scale;
+        env.set_mod_offset("time_scale", 1.0);
+        let slowed = render_attack(&mut env, &context, samples);
+
+        assert_eq!(env.time_scale, scale_before);
+        assert!(
+            slowed < base - 0.1,
+            "larger time scale should slow the attack: {slowed} vs {base}"
+        );
+    }
+
+    #[test]
     fn test_envelope_trigger() {
         let mut env = Envelope::new();
         env.sample_rate = SampleRate::DVD_QUALITY;
@@ -796,6 +906,9 @@ mod tests {
             NormalizedValue::new(0.5),
         )));
         env.set_param(Param::Envelope(EnvelopeParam::Attack(Seconds::new(0.2))));
+        env.set_param(Param::Envelope(EnvelopeParam::TimeScale(TimeScale::new(
+            2.0,
+        ))));
 
         // In the sustain stage the level tracks the base sustain.
         env.stage = EnvelopeStage::Sustain;
@@ -807,6 +920,9 @@ mod tests {
             NormalizedValue::new(0.9),
         )));
         env.set_param_override(Param::Envelope(EnvelopeParam::Attack(Seconds::new(0.01))));
+        env.set_param_override(Param::Envelope(EnvelopeParam::TimeScale(TimeScale::new(
+            0.5,
+        ))));
         env.stage = EnvelopeStage::Sustain;
         let _ = env.process_sample();
         assert!((env.level.as_f32() - 0.9).abs() < 1e-6);
@@ -815,6 +931,7 @@ mod tests {
         assert!((env.sustain.as_f32() - 0.5).abs() < 1e-6);
         assert!((env.attack.as_f32() - 0.2).abs() < 1e-6);
         assert_matches!(env.override_attack, Some(a) if (a.as_f32() - 0.01).abs() < 1e-6);
+        assert_eq!(env.override_time_scale, Some(TimeScale::new(0.5)));
 
         // Clearing reverts to the base.
         env.clear_param_overrides();
@@ -823,5 +940,6 @@ mod tests {
         assert!((env.level.as_f32() - 0.5).abs() < 1e-6);
         assert!(env.override_sustain.is_none());
         assert!(env.override_attack.is_none());
+        assert!(env.override_time_scale.is_none());
     }
 }

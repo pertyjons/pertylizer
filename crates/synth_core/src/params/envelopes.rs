@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::types::{BipolarValue, NormalizedValue, Seconds};
+use crate::types::{BipolarValue, NormalizedValue, Seconds, TimeScale};
 
 /// Envelope (ADSR) parameter with typed value.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
@@ -15,6 +15,8 @@ pub enum EnvelopeParam {
     Sustain(NormalizedValue),
     /// Release time in seconds
     Release(Seconds),
+    /// Global multiplier applied to attack, decay, and release times
+    TimeScale(TimeScale),
     /// Attack curve shape (-1.0 to 1.0, 0 = linear)
     AttackCurve(BipolarValue),
     /// Decay curve shape
@@ -38,6 +40,7 @@ impl EnvelopeParam {
             Self::Decay(_) => "Decay",
             Self::Sustain(_) => "Sustain",
             Self::Release(_) => "Release",
+            Self::TimeScale(_) => "Time Scale",
             Self::AttackCurve(_) => "Attack Curve",
             Self::DecayCurve(_) => "Decay Curve",
             Self::ReleaseCurve(_) => "Release Curve",
@@ -52,6 +55,7 @@ impl EnvelopeParam {
             Self::Decay(t) => t.as_f32(),
             Self::Sustain(v) => v.as_f32(),
             Self::Release(t) => t.as_f32(),
+            Self::TimeScale(v) => v.as_f32(),
             Self::AttackCurve(c) => c.as_f32(),
             Self::DecayCurve(c) => c.as_f32(),
             Self::ReleaseCurve(c) => c.as_f32(),
@@ -66,6 +70,7 @@ impl EnvelopeParam {
             Self::Decay(_) => Self::Decay(Seconds::new(value)),
             Self::Sustain(_) => Self::Sustain(NormalizedValue::new(value)),
             Self::Release(_) => Self::Release(Seconds::new(value)),
+            Self::TimeScale(_) => Self::TimeScale(TimeScale::new(value)),
             Self::AttackCurve(_) => Self::AttackCurve(BipolarValue::new(value)),
             Self::DecayCurve(_) => Self::DecayCurve(BipolarValue::new(value)),
             Self::ReleaseCurve(_) => Self::ReleaseCurve(BipolarValue::new(value)),
@@ -85,6 +90,9 @@ impl EnvelopeParam {
     }
     pub fn release_default() -> Self {
         Self::Release(Seconds::new(0.3))
+    }
+    pub const fn time_scale_default() -> Self {
+        Self::TimeScale(TimeScale::UNITY)
     }
     pub fn attack_curve_default() -> Self {
         Self::AttackCurve(BipolarValue::new(0.0))

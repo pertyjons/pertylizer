@@ -3769,6 +3769,36 @@ pub struct SetParametersParam {
     pub params: Vec<ParamSetInput>,
 }
 
+/// One MSEG segment in a complete shape update.
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct MsegSegmentInput {
+    #[schemars(
+        description = "Segment duration in seconds",
+        range(min = 0.0, max = 60.0)
+    )]
+    pub time: f32,
+    #[schemars(
+        description = "Target level at the end of the segment",
+        range(min = 0.0, max = 1.0)
+    )]
+    pub level: f32,
+    #[schemars(
+        description = "Curve shape: -1 logarithmic, 0 linear, +1 exponential",
+        range(min = -1.0, max = 1.0)
+    )]
+    pub curve: f32,
+}
+
+#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
+pub struct SetMsegSegmentsParam {
+    #[schemars(description = "Instrument ID (0 for default instrument)")]
+    pub instrument_id: InstrumentId,
+    #[schemars(description = "MSEG module ID (e.g. 'msg-1')")]
+    pub module_id: String,
+    #[schemars(description = "Complete MSEG shape, from 1 to 16 segments")]
+    pub segments: Vec<MsegSegmentInput>,
+}
+
 /// A pattern to create in a batch operation.
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct PatternInput {
@@ -4726,6 +4756,7 @@ impl SynthMcpServer {
 
             // Parameters
             "set_parameter" => set_parameter(SetParametersParam),
+            "set_mseg_segments" => set_mseg_segments(SetMsegSegmentsParam),
 
             // Notes
             "note_on" => note_on(NoteOnParam),
@@ -8829,6 +8860,69 @@ impl SynthMcpServer {
         match self.bridge.set_parameters(p.instrument_id, &param_sets) {
             Ok(result) => to_json(&result),
             Err(e) => format!("Error: {e}"),
+        }
+    }
+
+    #[tool(
+        description = "Replace an MSEG module's complete shape in one call. Pass 1-16 ordered \
+        segments with time (0-60 seconds), target level (0-1), and curve (-1 logarithmic, 0 \
+        linear, +1 exponential). The tool sets the active segment count automatically and \
+        updates the descriptor-backed segN_time/level/curve parameters used by the GUI and \
+        project persistence."
+    )]
+    async fn set_mseg_segments(&self, params: Parameters<SetMsegSegmentsParam>) -> String {
+        let p = params.0;
+        if p.segments.is_empty() || p.segments.len() > 16 {
+            return "Error: segments must contain between 1 and 16 items".to_string();
+        }
+        for (index, segment) in p.segments.iter().enumerate() {
+            for (field, value, minimum, maximum) in [
+                ("time", segment.time, 0.0, 60.0),
+                ("level", segment.level, 0.0, 1.0),
+                ("curve", segment.curve, -1.0, 1.0),
+            ] {
+                if let Err(error) = validate_range(field, value, minimum, maximum) {
+                    return format!("Error: segments[{index}].{error}");
+                }
+            }
+        }
+
+        match self.bridge.get_module_info(p.instrument_id, &p.module_id) {
+            Ok(module) if module.module_type.eq_ignore_ascii_case("MSEG") => {}
+            Ok(module) => {
+                return format!(
+                    "Error: module '{}' is {}, not MSEG",
+                    p.module_id, module.module_type
+                );
+            }
+            Err(error) => return format!("Error: {error}"),
+        }
+
+        let mut parameter_sets = Vec::with_capacity(1 + p.segments.len() * 3);
+        parameter_sets.push(crate::bridge::BridgeParamSet {
+            module_id: p.module_id.clone(),
+            param_name: "segments".to_string(),
+            value: crate::bridge::BridgeParamValue::Number(f64::from(
+                u8::try_from(p.segments.len()).unwrap_or(16),
+            )),
+        });
+        for (index, segment) in p.segments.into_iter().enumerate() {
+            for (suffix, value) in [
+                ("time", segment.time),
+                ("level", segment.level),
+                ("curve", segment.curve),
+            ] {
+                parameter_sets.push(crate::bridge::BridgeParamSet {
+                    module_id: p.module_id.clone(),
+                    param_name: format!("seg{index}_{suffix}"),
+                    value: crate::bridge::BridgeParamValue::Number(f64::from(value)),
+                });
+            }
+        }
+
+        match self.bridge.set_parameters(p.instrument_id, &parameter_sets) {
+            Ok(result) => to_json(&result),
+            Err(error) => format!("Error: {error}"),
         }
     }
 

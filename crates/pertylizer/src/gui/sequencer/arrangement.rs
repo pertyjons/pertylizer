@@ -5,7 +5,7 @@
 //! both this view and `draw_sequencer_view` can read them.
 
 use super::*;
-use crate::gui::widgets::{expose, expose_selected, mute_toggle, solo_toggle};
+use crate::gui::widgets::{expose, expose_selected, mute_toggle, solo_toggle, submenu_button};
 
 const PLACEMENT_RESIZE_ZONE: f32 = 8.0;
 const SECTION_RESIZE_ZONE: f32 = 7.0;
@@ -1152,7 +1152,7 @@ fn draw_section_context_menu(
         }
     }
 
-    ui.menu_button(format!("Type: {}", section.kind.display_name()), |ui| {
+    submenu_button(ui, format!("Type: {}", section.kind.display_name()), |ui| {
         const KINDS: [SectionKind; 9] = [
             SectionKind::Intro,
             SectionKind::Verse,
@@ -1459,12 +1459,10 @@ fn draw_ruler_context_menu(
         },
         |(b, _)| b,
     );
-    ui.menu_button("Tempo point here…", |ui| {
+    submenu_button(ui, "Tempo point here…", |ui| {
         // A position-specific point in the tempo *map*, distinct from the
         // song's global default (set via the transport tempo field).
-        ui.label(
-            RichText::new("Tempo-map point (not the song default)").color(t.colors.text_dim),
-        );
+        ui.label(RichText::new("Tempo-map point (not the song default)").color(t.colors.text_dim));
         ui.separator();
         // Live-apply BPM edit: the song is the buffer (like the knobs and the
         // ramp toggle). A per-frame `let mut bpm = default` local resets every
@@ -2610,7 +2608,8 @@ fn draw_arrangement_context_menu(
                     && placement.start_tick == start_tick
             })
             .map_or(PlacementLoopMode::Repeat, |placement| placement.loop_mode);
-        ui.menu_button(
+        submenu_button(
+            ui,
             format!("Playback: {}", current_loop_mode.display_name()),
             |ui| {
                 for loop_mode in [PlacementLoopMode::Repeat, PlacementLoopMode::Clip] {
@@ -2641,7 +2640,7 @@ fn draw_arrangement_context_menu(
         );
 
         // Pattern length editing — free-input bars
-        ui.menu_button("Set Length…", |ui| {
+        submenu_button(ui, "Set Length…", |ui| {
             let ticks_per_bar = data.time_sig.ticks_per_bar().max(1);
             let current_len = data
                 .patterns
@@ -2766,7 +2765,7 @@ fn draw_arrangement_context_menu(
 
             // Place existing pattern submenu
             if !data.patterns.is_empty() {
-                ui.menu_button("Place Existing Pattern", |ui| {
+                submenu_button(ui, "Place Existing Pattern", |ui| {
                     for pat in &data.patterns {
                         let beats =
                             pat.length_ticks as f32 / synth_sequencer::TICKS_PER_QUARTER as f32;

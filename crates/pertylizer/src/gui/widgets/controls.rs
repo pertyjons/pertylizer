@@ -8,8 +8,8 @@
 use std::ops::RangeInclusive;
 
 use eframe::egui::{
-    self, Button, Color32, DragValue, InnerResponse, Rect, Response, RichText, Slider, Ui, Vec2,
-    WidgetText,
+    self, Button, Color32, ComboBox, DragValue, InnerResponse, Pos2, Rect, Response, RichText,
+    Slider, Stroke, Ui, Vec2, WidgetText,
 };
 
 use egui_remixicon::icons as ri;
@@ -17,7 +17,7 @@ use egui_remixicon::icons as ri;
 use super::ModMarkers;
 use super::knob::Knob;
 use crate::gui::theme::theme;
-use synth_core::NormalizedValue;
+use synth_core::{BipolarValue, NormalizedValue};
 
 /// Paint each active modulation marker in its fixed corner of `rect`, each with its
 /// own hover tooltip. Painter-based so the glyphs never change the widget's
@@ -43,6 +43,125 @@ pub fn paint_marker_corners(ui: &Ui, rect: Rect, markers: ModMarkers, outside: b
         )
         .on_hover_text(m.tooltip());
     }
+}
+
+/// Shared minimum width for every nested menu.
+///
+/// A submenu without an explicit minimum can be squeezed to the narrow strip
+/// between its parent and the viewport edge, wrapping module names one character
+/// per line. Keep this value centralized so all menu trees behave consistently.
+pub const SUBMENU_MIN_WIDTH: f32 = 150.0;
+
+/// A nested menu with the project's shared minimum popup width.
+///
+/// Use this instead of a raw `ui.menu_button` inside another menu. Standalone
+/// menu buttons may keep a task-specific popup width.
+pub fn submenu_button<'a, R>(
+    ui: &mut Ui,
+    atoms: impl egui::IntoAtoms<'a>,
+    contents: impl FnOnce(&mut Ui) -> R,
+) -> InnerResponse<Option<R>> {
+    ui.menu_button(atoms, |ui| {
+        ui.set_min_width(SUBMENU_MIN_WIDTH);
+        contents(ui)
+    })
+}
+
+/// A horizontally wrapping row for compact module controls.
+///
+/// The explicit row height keeps mixed controls such as `DragValue` and
+/// `ComboBox` vertically centered. Call [`wrapped_row_break`] inside `contents`
+/// when a module needs a deliberate new line independent of available width.
+pub fn wrapped_control_row<R>(
+    ui: &mut Ui,
+    contents: impl FnOnce(&mut Ui) -> R,
+) -> InnerResponse<R> {
+    ui.horizontal_wrapped(|ui| {
+        ui.set_row_height(ui.spacing().interact_size.y);
+        contents(ui)
+    })
+}
+
+/// Force the next control onto a new line inside [`wrapped_control_row`].
+pub fn wrapped_row_break(ui: &mut Ui) {
+    ui.end_row();
+}
+
+/// Paint the hollow midpoint handle used to shape envelope segments.
+///
+/// ADSR and MSEG editors share this painter helper so curve handles keep the
+/// same size, stroke, and active-state treatment across both graph editors.
+pub fn paint_envelope_curve_handle(
+    painter: &egui::Painter,
+    position: Pos2,
+    accent: Color32,
+    active: bool,
+) {
+    painter.circle_stroke(
+        position,
+        if active { 5.0 } else { 3.5 },
+        Stroke::new(1.5, accent.gamma_multiply(if active { 1.0 } else { 0.7 })),
+    );
+}
+
+/// Fill the area between a sampled envelope curve and its horizontal baseline.
+///
+/// Each pair of curve samples becomes its own quad. This keeps concave envelope
+/// shapes from being incorrectly triangulated across distant points and makes
+/// the fill end exactly at the first and last curve samples.
+pub fn paint_envelope_curve_fill(
+    painter: &egui::Painter,
+    points: &[Pos2],
+    baseline_y: f32,
+    color: Color32,
+) {
+    painter.add(egui::Shape::mesh(envelope_curve_fill_mesh(
+        points, baseline_y, color,
+    )));
+}
+
+fn envelope_curve_fill_mesh(points: &[Pos2], baseline_y: f32, color: Color32) -> egui::Mesh {
+    let mut mesh = egui::Mesh::default();
+    for segment in points.windows(2) {
+        let Ok(first_vertex) = u32::try_from(mesh.vertices.len()) else {
+            break;
+        };
+        let from = segment[0];
+        let to = segment[1];
+
+        mesh.colored_vertex(from, color);
+        mesh.colored_vertex(to, color);
+        mesh.colored_vertex(Pos2::new(to.x, baseline_y), color);
+        mesh.colored_vertex(Pos2::new(from.x, baseline_y), color);
+        mesh.add_triangle(first_vertex, first_vertex + 1, first_vertex + 2);
+        mesh.add_triangle(first_vertex, first_vertex + 2, first_vertex + 3);
+    }
+    mesh
+}
+
+/// Whether an envelope segment rises or falls from its starting level.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum EnvelopeCurveDirection {
+    Rising,
+    Falling,
+}
+
+/// Update an envelope curve from a vertical handle drag.
+///
+/// Screen-space Y grows downward, while the curve parameter's visual direction
+/// depends on whether the segment rises or falls. Accounting for both here
+/// keeps ADSR and MSEG curve handles moving with the pointer.
+pub(crate) fn envelope_curve_after_vertical_drag(
+    origin: BipolarValue,
+    delta_y: f32,
+    height: f32,
+    direction: EnvelopeCurveDirection,
+) -> BipolarValue {
+    let direction = match direction {
+        EnvelopeCurveDirection::Rising => 1.0,
+        EnvelopeCurveDirection::Falling => -1.0,
+    };
+    BipolarValue::new(origin.as_f32() + delta_y / height.max(1.0) * 4.0 * direction)
 }
 
 // --- AccessKit exposure -----------------------------------------------------
@@ -441,6 +560,33 @@ pub fn enum_combo<T: PartialEq + Copy>(
         .response
 }
 
+/// Compact selector for an optional one-based item number.
+///
+/// The caller keeps a zero-based index while the UI shows `1..=count`; `None`
+/// is presented as `Off` when `allow_none` is true. This is useful for optional
+/// markers such as an MSEG sustain point without leaking the backing store's
+/// sentinel value into the UI.
+pub fn optional_index_combo(
+    ui: &mut Ui,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    current: &mut Option<usize>,
+    count: usize,
+    allow_none: bool,
+) -> Response {
+    let selected = current.map_or_else(|| "Off".to_string(), |index| (index + 1).to_string());
+    ComboBox::from_id_salt(id_salt)
+        .selected_text(selected)
+        .show_ui(ui, |ui| {
+            if allow_none {
+                ui.selectable_value(current, None, "Off");
+            }
+            for index in 0..count {
+                ui.selectable_value(current, Some(index), (index + 1).to_string());
+            }
+        })
+        .response
+}
+
 /// A `menu_button` styled as a fixed-width dropdown, for **hierarchical** (tree)
 /// pickers built from nested `menu_button`s — the shape used by the Script ƒx
 /// "Select input" picker, the Mod Matrix source/destination pickers, and the
@@ -616,4 +762,87 @@ pub fn stepper(ui: &mut Ui, leading: RichText) -> i32 {
         delta += 1;
     }
     delta
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        EnvelopeCurveDirection, envelope_curve_after_vertical_drag, envelope_curve_fill_mesh,
+        wrapped_control_row, wrapped_row_break,
+    };
+    use eframe::egui::{Color32, Pos2};
+    use synth_core::BipolarValue;
+
+    #[test]
+    fn envelope_fill_uses_independent_quads_to_the_baseline() {
+        let points = [
+            Pos2::new(10.0, 90.0),
+            Pos2::new(30.0, 10.0),
+            Pos2::new(70.0, 60.0),
+        ];
+
+        let mesh = envelope_curve_fill_mesh(&points, 90.0, Color32::GREEN);
+
+        assert_eq!(mesh.vertices.len(), 8);
+        assert_eq!(mesh.indices.len(), 12);
+        for (segment, vertices) in points.windows(2).zip(mesh.vertices.chunks_exact(4)) {
+            assert_eq!(vertices[0].pos, segment[0]);
+            assert_eq!(vertices[1].pos, segment[1]);
+            assert_eq!(vertices[2].pos, Pos2::new(segment[1].x, 90.0));
+            assert_eq!(vertices[3].pos, Pos2::new(segment[0].x, 90.0));
+        }
+    }
+
+    #[test]
+    fn envelope_fill_ends_at_the_last_curve_sample() {
+        let points = [
+            Pos2::new(5.0, 80.0),
+            Pos2::new(25.0, 20.0),
+            Pos2::new(65.0, 80.0),
+        ];
+
+        let mesh = envelope_curve_fill_mesh(&points, 80.0, Color32::GREEN);
+        let rightmost = mesh
+            .vertices
+            .iter()
+            .map(|vertex| vertex.pos.x)
+            .fold(f32::NEG_INFINITY, f32::max);
+
+        assert_eq!(rightmost, 65.0);
+    }
+
+    #[test]
+    fn envelope_curve_drag_accounts_for_segment_direction() {
+        let rising = envelope_curve_after_vertical_drag(
+            BipolarValue::CENTER,
+            -25.0,
+            100.0,
+            EnvelopeCurveDirection::Rising,
+        );
+        let falling = envelope_curve_after_vertical_drag(
+            BipolarValue::CENTER,
+            -25.0,
+            100.0,
+            EnvelopeCurveDirection::Falling,
+        );
+
+        assert_eq!(rising, BipolarValue::MIN);
+        assert_eq!(falling, BipolarValue::MAX);
+    }
+
+    #[test]
+    fn wrapped_control_row_honors_explicit_row_break() {
+        egui::__run_test_ui(|ui| {
+            let (first, second) = wrapped_control_row(ui, |ui| {
+                let first = ui.button("First").rect;
+                wrapped_row_break(ui);
+                let second = ui.button("Second").rect;
+                (first, second)
+            })
+            .inner;
+
+            assert!(second.top() >= first.bottom());
+            assert!((second.left() - first.left()).abs() < f32::EPSILON);
+        });
+    }
 }

@@ -15,7 +15,8 @@ use crate::audio::input::InputState;
 use crate::gui::module_panel::{ModulePanelState, PortPosition};
 use crate::gui::theme::theme;
 use crate::gui::widgets::{
-    CaptionTone, ModMarkers, ModuleColumn, ModulePort, WidgetPortDirection, caption,
+    CaptionTone, MAX_MSEG_SEGMENTS, ModMarkers, ModuleColumn, ModulePort, MsegEditor,
+    MsegLoopRegion, MsegSegment, MsegSegmentCount, MsegSegmentIndex, WidgetPortDirection, caption,
     draw_module_port_column, draw_module_port_layout, expose, module_port_accessible_label,
 };
 
@@ -314,13 +315,26 @@ pub(super) fn draw_module_panel_params(
         };
     }
 
-    // Special handling for Envelope modules - use interactive EnvelopeEditor
+    // MSEG is an envelope category module, but its shape is not ADSR. Render its
+    // descriptor-backed segment array before the generic envelope branch.
+    if descriptor.type_id.as_str() == "mseg" {
+        return draw_mseg_panel(ui, state, descriptor, accent_color, markers);
+    }
+
+    // Special handling for ADSR Envelope modules - use interactive EnvelopeEditor
     if descriptor.category == ModuleCategory::Envelope {
-        // Get current ADSR values
-        let mut attack = state.param_values.get("Attack").copied().unwrap_or(0.01);
-        let mut decay = state.param_values.get("Decay").copied().unwrap_or(0.1);
-        let mut sustain = state.param_values.get("Sustain").copied().unwrap_or(0.7);
-        let mut release = state.param_values.get("Release").copied().unwrap_or(0.3);
+        // Resolve through stable type IDs, then use each descriptor's current
+        // display name to read the panel cache. Display labels are deliberately
+        // renameable and therefore must not be used as parameter identities.
+        let mut attack = descriptor_param_value(state, descriptor, "attack");
+        let mut decay = descriptor_param_value(state, descriptor, "decay");
+        let mut sustain = descriptor_param_value(state, descriptor, "sustain");
+        let mut release = descriptor_param_value(state, descriptor, "release");
+        let mut attack_curve = descriptor_param_value(state, descriptor, "atk_curve");
+        let mut decay_curve = descriptor_param_value(state, descriptor, "dec_curve");
+        let mut release_curve = descriptor_param_value(state, descriptor, "rel_curve");
+        let time_scale =
+            synth_core::TimeScale::new(descriptor_param_value(state, descriptor, "time_scale"));
 
         // Get envelope playback position (lock-free)
         let envelope_pos = state.envelope_position.as_ref().map(|buf| buf.get());
@@ -333,10 +347,19 @@ pub(super) fn draw_module_panel_params(
         let width = ui.available_width().max(150.0);
         let height = (width * 0.5).clamp(80.0, 140.0);
 
-        let mut editor = EnvelopeEditor::new(&mut attack, &mut decay, &mut sustain, &mut release)
-            .accent_color(accent_color)
-            .size(width, height)
-            .max_time(10.0);
+        let mut editor = EnvelopeEditor::new(
+            &mut attack,
+            &mut decay,
+            &mut sustain,
+            &mut release,
+            &mut attack_curve,
+            &mut decay_curve,
+            &mut release_curve,
+        )
+        .accent_color(accent_color)
+        .size(width, height)
+        .max_time(10.0)
+        .time_scale(time_scale);
 
         // Add playback position if available
         if let Some((stage, level)) = envelope_pos {
@@ -344,54 +367,73 @@ pub(super) fn draw_module_panel_params(
         }
 
         if let Some(changes) = editor.show(ui) {
-            // Find parameter descriptors and push changes
-            for param in &descriptor.parameters {
-                if param.name == "Attack" && changes.attack.is_some() {
-                    state.param_values.insert("Attack".to_string(), attack);
-                    param_changes.push(param.id.with_f32(attack));
-                }
-                if param.name == "Decay" && changes.decay.is_some() {
-                    state.param_values.insert("Decay".to_string(), decay);
-                    param_changes.push(param.id.with_f32(decay));
-                }
-                if param.name == "Sustain" && changes.sustain.is_some() {
-                    state.param_values.insert("Sustain".to_string(), sustain);
-                    param_changes.push(param.id.with_f32(sustain));
-                }
-                if param.name == "Release" && changes.release.is_some() {
-                    state.param_values.insert("Release".to_string(), release);
-                    param_changes.push(param.id.with_f32(release));
+            for (changed, type_id, value) in [
+                (changes.attack.is_some(), "attack", attack),
+                (changes.decay.is_some(), "decay", decay),
+                (changes.sustain.is_some(), "sustain", sustain),
+                (changes.release.is_some(), "release", release),
+                (changes.attack_curve.is_some(), "atk_curve", attack_curve),
+                (changes.decay_curve.is_some(), "dec_curve", decay_curve),
+                (changes.release_curve.is_some(), "rel_curve", release_curve),
+            ] {
+                if changed {
+                    push_descriptor_param_change(
+                        state,
+                        descriptor,
+                        type_id,
+                        value,
+                        &mut param_changes,
+                    );
                 }
             }
         }
 
         ui.add_space(theme().spacing.xs);
 
-        // Only show knob parameters for Envelope (Vel Sens, curves etc)
+        // Match MSEG's hierarchy: the global time multiplier gets its own row
+        // directly below the graph, while velocity and curve controls remain a
+        // compact four-knob group.
+        let time_scale_params: Vec<_> = descriptor
+            .parameters
+            .iter()
+            .filter(|parameter| parameter.type_id.as_str() == "time_scale")
+            .collect();
         let knob_params: Vec<_> = descriptor
             .parameters
             .iter()
-            .filter(|p| matches!(p.widget_hint, WidgetHint::Knob))
+            .filter(|parameter| {
+                matches!(parameter.widget_hint, WidgetHint::Knob)
+                    && parameter.type_id.as_str() != "time_scale"
+            })
             .collect();
 
+        let get_value = |parameter: &synth_core::ParameterDescriptor| {
+            state
+                .param_values
+                .get(&parameter.name)
+                .copied()
+                .unwrap_or(parameter.range.default)
+        };
+        let mut changes = crate::gui::widgets::draw_knobs(
+            ui,
+            &time_scale_params,
+            accent_color,
+            get_value,
+            markers,
+        );
         if !knob_params.is_empty() {
-            let changes = crate::gui::widgets::draw_knobs(
+            ui.add_space(theme().spacing.xs);
+            changes.extend(crate::gui::widgets::draw_knobs(
                 ui,
                 &knob_params,
                 accent_color,
-                |p| {
-                    state
-                        .param_values
-                        .get(&p.name)
-                        .copied()
-                        .unwrap_or(p.range.default)
-                },
+                get_value,
                 markers,
-            );
-            for (param, value) in changes {
-                state.param_values.insert(param.name.clone(), value);
-                param_changes.push(param.id.with_f32(value));
-            }
+            ));
+        }
+        for (param, value) in changes {
+            state.param_values.insert(param.name.clone(), value);
+            param_changes.push(param.id.with_f32(value));
         }
 
         return PanelParamsResult {
@@ -645,5 +687,309 @@ pub(super) fn draw_module_panel_params(
         param_changes,
         audio_input_action,
         mod_script_actions: Vec::new(),
+    }
+}
+
+fn draw_mseg_panel(
+    ui: &mut Ui,
+    state: &mut ModulePanelState,
+    descriptor: &ModuleDescriptor,
+    accent_color: Color32,
+    markers: impl Fn(&synth_core::ParameterDescriptor) -> ModMarkers,
+) -> PanelParamsResult {
+    use crate::gui::widgets::{
+        CaptionTone, caption, optional_index_combo, toggle_button_colored, unit_drag_value,
+        wrapped_control_row, wrapped_row_break,
+    };
+
+    let mut param_changes = Vec::new();
+    let mut segment_count =
+        MsegSegmentCount::new(descriptor_param_value(state, descriptor, "segments").round() as u8);
+    let mut sustain_segment = MsegSegmentIndex::new(
+        descriptor_param_value(state, descriptor, "sustain_seg").round() as u8,
+    );
+    let mut loop_enabled = descriptor_param_value(state, descriptor, "loop") > 0.5;
+    let mut loop_start = MsegSegmentIndex::new(
+        descriptor_param_value(state, descriptor, "loop_start").round() as u8,
+    );
+    let mut loop_end =
+        MsegSegmentIndex::new(descriptor_param_value(state, descriptor, "loop_end").round() as u8);
+
+    ui.add_space(theme().spacing.xs);
+    wrapped_control_row(ui, |ui| {
+        caption(ui, "Segments", CaptionTone::Dim);
+        let mut count_value = segment_count.as_u8();
+        if unit_drag_value(ui, &mut count_value, 1..=16, 0.15, "").changed() {
+            segment_count = MsegSegmentCount::new(count_value);
+            push_descriptor_param_change(
+                state,
+                descriptor,
+                "segments",
+                f32::from(segment_count.as_u8()),
+                &mut param_changes,
+            );
+            let last_index = segment_count.as_u8().saturating_sub(1);
+            if loop_start.as_u8() > last_index {
+                loop_start = MsegSegmentIndex::new(last_index);
+                push_descriptor_param_change(
+                    state,
+                    descriptor,
+                    "loop_start",
+                    f32::from(last_index),
+                    &mut param_changes,
+                );
+            }
+            if loop_end.as_u8() > last_index || loop_end.as_u8() < loop_start.as_u8() {
+                loop_end = loop_start;
+                push_descriptor_param_change(
+                    state,
+                    descriptor,
+                    "loop_end",
+                    f32::from(loop_end.as_u8()),
+                    &mut param_changes,
+                );
+            }
+        }
+
+        ui.add_space(theme().spacing.md);
+        caption(ui, "Sustain", CaptionTone::Dim);
+        let active_count = usize::from(segment_count.as_u8());
+        let mut sustain_selection = (usize::from(sustain_segment.as_u8()) < active_count)
+            .then_some(usize::from(sustain_segment.as_u8()));
+        if optional_index_combo(
+            ui,
+            ("mseg_sustain", state.id),
+            &mut sustain_selection,
+            active_count,
+            active_count < MAX_MSEG_SEGMENTS,
+        )
+        .changed()
+        {
+            let backing_index = sustain_selection
+                .map(|index| u8::try_from(index).unwrap_or(15))
+                .unwrap_or(15);
+            sustain_segment = MsegSegmentIndex::new(backing_index);
+            push_descriptor_param_change(
+                state,
+                descriptor,
+                "sustain_seg",
+                f32::from(backing_index),
+                &mut param_changes,
+            );
+        }
+
+        wrapped_row_break(ui);
+        if toggle_button_colored(ui, "Loop", loop_enabled, accent_color).clicked() {
+            loop_enabled = !loop_enabled;
+            push_descriptor_param_change(
+                state,
+                descriptor,
+                "loop",
+                if loop_enabled { 1.0 } else { 0.0 },
+                &mut param_changes,
+            );
+        }
+        if loop_enabled {
+            caption(ui, "from", CaptionTone::Dim);
+            let max_number = segment_count.as_u8();
+            let mut start_number = loop_start.as_u8().saturating_add(1).min(max_number);
+            if unit_drag_value(ui, &mut start_number, 1..=max_number, 0.15, "").changed() {
+                let start_index = start_number.saturating_sub(1);
+                loop_start = MsegSegmentIndex::new(start_index);
+                if loop_end.as_u8() < start_index {
+                    loop_end = loop_start;
+                    push_descriptor_param_change(
+                        state,
+                        descriptor,
+                        "loop_end",
+                        f32::from(start_index),
+                        &mut param_changes,
+                    );
+                }
+                push_descriptor_param_change(
+                    state,
+                    descriptor,
+                    "loop_start",
+                    f32::from(start_index),
+                    &mut param_changes,
+                );
+            }
+            caption(ui, "to", CaptionTone::Dim);
+            let mut end_number = loop_end
+                .as_u8()
+                .saturating_add(1)
+                .clamp(start_number, max_number);
+            if unit_drag_value(ui, &mut end_number, start_number..=max_number, 0.15, "").changed() {
+                let end_index = end_number.saturating_sub(1);
+                loop_end = MsegSegmentIndex::new(end_index);
+                push_descriptor_param_change(
+                    state,
+                    descriptor,
+                    "loop_end",
+                    f32::from(end_index),
+                    &mut param_changes,
+                );
+            }
+        }
+    });
+
+    let mut segments = std::array::from_fn(|index| {
+        let time_id = format!("seg{index}_time");
+        let level_id = format!("seg{index}_level");
+        let curve_id = format!("seg{index}_curve");
+        MsegSegment {
+            time: synth_core::Seconds::new(descriptor_param_value(state, descriptor, &time_id)),
+            level: synth_core::NormalizedValue::new(descriptor_param_value(
+                state, descriptor, &level_id,
+            )),
+            curve: synth_core::BipolarValue::new(descriptor_param_value(
+                state, descriptor, &curve_id,
+            )),
+        }
+    });
+
+    let width = ui.available_width().max(220.0);
+    let height = (width * 0.42).clamp(120.0, 190.0);
+    let loop_is_valid = usize::from(loop_start.as_u8()) < usize::from(segment_count.as_u8())
+        && usize::from(loop_end.as_u8()) < usize::from(segment_count.as_u8())
+        && loop_start.as_u8() <= loop_end.as_u8();
+    let loop_region = (loop_enabled && loop_is_valid).then_some(MsegLoopRegion {
+        start: loop_start,
+        end: loop_end,
+    });
+    if let Some(changes) =
+        MsegEditor::new(&mut segments, segment_count, sustain_segment, loop_region)
+            .accent_color(accent_color)
+            .size(width, height)
+            .show(ui)
+    {
+        for index in 0..MAX_MSEG_SEGMENTS {
+            let segment_index = MsegSegmentIndex::new(u8::try_from(index).unwrap_or(15));
+            if changes.time_changed(segment_index) {
+                push_descriptor_param_change(
+                    state,
+                    descriptor,
+                    &format!("seg{index}_time"),
+                    segments[index].time.as_f32(),
+                    &mut param_changes,
+                );
+            }
+            if changes.level_changed(segment_index) {
+                push_descriptor_param_change(
+                    state,
+                    descriptor,
+                    &format!("seg{index}_level"),
+                    segments[index].level.as_f32(),
+                    &mut param_changes,
+                );
+            }
+            if changes.curve_changed(segment_index) {
+                push_descriptor_param_change(
+                    state,
+                    descriptor,
+                    &format!("seg{index}_curve"),
+                    segments[index].curve.as_f32(),
+                    &mut param_changes,
+                );
+            }
+        }
+    }
+
+    caption(
+        ui,
+        "Drag nodes for time and level; drag hollow handles for curve.",
+        CaptionTone::Dim,
+    );
+    let time_scale: Vec<_> = descriptor
+        .parameters
+        .iter()
+        .filter(|parameter| parameter.type_id.as_str() == "time_scale")
+        .collect();
+    let knob_changes = crate::gui::widgets::draw_knobs(
+        ui,
+        &time_scale,
+        accent_color,
+        |parameter| {
+            state
+                .param_values
+                .get(&parameter.name)
+                .copied()
+                .unwrap_or(parameter.range.default)
+        },
+        markers,
+    );
+    for (parameter, value) in knob_changes {
+        state.param_values.insert(parameter.name.clone(), value);
+        param_changes.push(parameter.id.with_f32(value));
+    }
+
+    PanelParamsResult {
+        param_changes,
+        audio_input_action: None,
+        mod_script_actions: Vec::new(),
+    }
+}
+
+fn descriptor_param_value(
+    state: &ModulePanelState,
+    descriptor: &ModuleDescriptor,
+    type_id: &str,
+) -> f32 {
+    descriptor
+        .parameters
+        .iter()
+        .find(|parameter| parameter.type_id.as_str() == type_id)
+        .map(|parameter| {
+            state
+                .param_values
+                .get(&parameter.name)
+                .copied()
+                .unwrap_or(parameter.range.default)
+        })
+        .unwrap_or(0.0)
+}
+
+fn push_descriptor_param_change(
+    state: &mut ModulePanelState,
+    descriptor: &ModuleDescriptor,
+    type_id: &str,
+    value: f32,
+    changes: &mut Vec<synth_core::Param>,
+) {
+    if let Some(parameter) = descriptor
+        .parameters
+        .iter()
+        .find(|parameter| parameter.type_id.as_str() == type_id)
+    {
+        state.param_values.insert(parameter.name.clone(), value);
+        changes.push(parameter.id.with_f32(value));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use synth_core::{Describable, ModuleType};
+    use synth_modules::Envelope;
+
+    #[test]
+    fn envelope_curve_cache_uses_stable_type_id_and_descriptor_display_name() {
+        let descriptor = Envelope::new().descriptor();
+        let id = ModuleId::new(ModuleType::Envelope, 0);
+        let mut state = ModulePanelState::new(id, egui::Pos2::ZERO);
+        state.param_values.insert("Atk Curve".to_string(), 0.4);
+
+        assert_eq!(
+            descriptor_param_value(&state, &descriptor, "atk_curve"),
+            0.4
+        );
+
+        let mut changes = Vec::new();
+        push_descriptor_param_change(&mut state, &descriptor, "atk_curve", 0.8, &mut changes);
+
+        assert_eq!(state.param_values.get("Atk Curve"), Some(&0.8));
+        assert!(!state.param_values.contains_key("Attack Curve"));
+        assert_eq!(changes.len(), 1);
+        assert_eq!(changes[0].as_f32(), 0.8);
     }
 }
