@@ -550,20 +550,27 @@ impl SynthApp {
                     self.unsaved_dialog.open = true;
                 } else {
                     let initial_dir = self.resolve_project_dir();
-                    self.dialog_state
-                        .open_open_project_dialog(initial_dir.as_deref());
+                    self.dialog_state.open_file_dialog(
+                        FileDialogMode::OpenProject,
+                        None,
+                        initial_dir.as_deref(),
+                    );
                 }
             }
             WelcomeAction::OpenPatch => {
                 let initial_dir = self.resolve_open_dir();
-                self.dialog_state
-                    .open_open_patch_dialog(initial_dir.as_deref());
+                self.dialog_state.open_file_dialog(
+                    FileDialogMode::OpenPatch,
+                    None,
+                    initial_dir.as_deref(),
+                );
             }
             WelcomeAction::LoadBuiltinPatch => {
                 self.dialog_state.show_load_patch = true;
             }
             WelcomeAction::ImportSample => {
-                self.dialog_state.open_import_sample_dialog(None);
+                self.dialog_state
+                    .open_file_dialog(FileDialogMode::ImportSample, None, None);
                 self.active_view = AppView::Sample;
             }
             WelcomeAction::OpenRecent(path) => {
@@ -884,8 +891,11 @@ impl eframe::App for SynthApp {
                     {
                         let default_name = "activity-log.txt";
                         let initial_dir = self.resolve_save_dir();
-                        self.dialog_state
-                            .open_export_activity_log_dialog(default_name, initial_dir.as_deref());
+                        self.dialog_state.open_file_dialog(
+                            FileDialogMode::ExportActivityLog,
+                            Some(default_name),
+                            initial_dir.as_deref(),
+                        );
                     }
 
                     // Welcome / landing view — always available regardless of
@@ -1083,11 +1093,19 @@ impl eframe::App for SynthApp {
                     match action {
                         crate::gui::sample_view::SampleViewAction::None => {}
                         crate::gui::sample_view::SampleViewAction::ImportWav => {
-                            self.dialog_state.open_import_sample_dialog(None);
+                            self.dialog_state.open_file_dialog(
+                                FileDialogMode::ImportSample,
+                                None,
+                                None,
+                            );
                         }
                         crate::gui::sample_view::SampleViewAction::ExportWav { name } => {
                             let wav_name = format!("{name}.wav");
-                            self.dialog_state.open_export_sample_dialog(&wav_name, None);
+                            self.dialog_state.open_file_dialog(
+                                FileDialogMode::ExportSample,
+                                Some(&wav_name),
+                                None,
+                            );
                         }
                         crate::gui::sample_view::SampleViewAction::StartMonitoring => {
                             if let Some(host) = &self.host {
@@ -1837,8 +1855,11 @@ impl SynthApp {
                     self.unsaved_dialog.open = true;
                 } else {
                     let initial_dir = self.resolve_project_dir();
-                    self.dialog_state
-                        .open_open_project_dialog(initial_dir.as_deref());
+                    self.dialog_state.open_file_dialog(
+                        FileDialogMode::OpenProject,
+                        None,
+                        initial_dir.as_deref(),
+                    );
                 }
                 ui.close();
             }
@@ -1857,8 +1878,11 @@ impl SynthApp {
                     .and_then(|n| n.to_str())
                     .map_or(fallback, ToString::to_string);
                 let initial_dir = self.resolve_project_dir();
-                self.dialog_state
-                    .open_save_project_dialog(&default_name, initial_dir.as_deref());
+                self.dialog_state.open_file_dialog(
+                    FileDialogMode::SaveProject,
+                    Some(&default_name),
+                    initial_dir.as_deref(),
+                );
                 ui.close();
             }
             // --- Recent Projects ---
@@ -1900,8 +1924,11 @@ impl SynthApp {
             }
             if ui.button((ri::FOLDER_OPEN_LINE, "Open Patch...")).clicked() {
                 let initial_dir = self.resolve_open_dir();
-                self.dialog_state
-                    .open_open_patch_dialog(initial_dir.as_deref());
+                self.dialog_state.open_file_dialog(
+                    FileDialogMode::OpenPatch,
+                    None,
+                    initial_dir.as_deref(),
+                );
                 ui.close();
             }
             if ui
@@ -1917,8 +1944,11 @@ impl SynthApp {
                     self.current_patch_name.to_lowercase().replace(' ', "_")
                 );
                 let initial_dir = self.resolve_save_dir();
-                self.dialog_state
-                    .open_save_patch_dialog(&default_name, initial_dir.as_deref());
+                self.dialog_state.open_file_dialog(
+                    FileDialogMode::SavePatch,
+                    Some(&default_name),
+                    initial_dir.as_deref(),
+                );
                 ui.close();
             }
             ui.separator();
@@ -1947,8 +1977,11 @@ impl SynthApp {
                 // Open file dialog to choose WAV path
                 let default_name = "export.wav".to_string();
                 let initial_dir = self.resolve_project_dir();
-                self.dialog_state
-                    .open_export_wav_dialog(&default_name, initial_dir.as_deref());
+                self.dialog_state.open_file_dialog(
+                    FileDialogMode::ExportWav,
+                    Some(&default_name),
+                    initial_dir.as_deref(),
+                );
                 ui.close();
             }
             ui.separator();
@@ -5104,8 +5137,11 @@ impl SynthApp {
                 }
                 GroupTemplateBrowserResult::Browse => {
                     let initial_dir = self.resolve_group_templates_dir();
-                    self.dialog_state
-                        .open_open_group_template_dialog(initial_dir.as_deref());
+                    self.dialog_state.open_file_dialog(
+                        FileDialogMode::OpenGroupTemplate,
+                        None,
+                        initial_dir.as_deref(),
+                    );
                     self.dialog_state.group_template_selected = None;
                 }
                 GroupTemplateBrowserResult::Cancelled => {
@@ -6247,8 +6283,11 @@ impl SynthApp {
             let default_name =
                 format!("project.{}", crate::project::project_extension(has_samples));
             let initial_dir = self.resolve_project_dir();
-            self.dialog_state
-                .open_save_project_dialog(&default_name, initial_dir.as_deref());
+            self.dialog_state.open_file_dialog(
+                FileDialogMode::SaveProject,
+                Some(&default_name),
+                initial_dir.as_deref(),
+            );
             false
         }
     }
@@ -6301,8 +6340,11 @@ impl SynthApp {
             }
             Some(PendingAction::OpenProject) => {
                 let initial_dir = self.resolve_project_dir();
-                self.dialog_state
-                    .open_open_project_dialog(initial_dir.as_deref());
+                self.dialog_state.open_file_dialog(
+                    FileDialogMode::OpenProject,
+                    None,
+                    initial_dir.as_deref(),
+                );
             }
             Some(PendingAction::LoadProject(path)) => {
                 self.load_recent_project(path);

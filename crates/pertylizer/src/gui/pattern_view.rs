@@ -25,7 +25,7 @@ use crate::gui::sequencer::{
     draw_note_fx_panel, draw_piano_roll, draw_tracker,
 };
 use crate::gui::theme::theme;
-use crate::gui::widgets::{danger_button, empty_state};
+use crate::gui::widgets::{danger_button, empty_state, selectable_toggle};
 use crate::undo::UndoManager;
 
 // ============================================================================
@@ -207,15 +207,12 @@ pub(crate) fn draw_pattern_view(
                             .and_then(|s| s.pattern(pattern_id).map(|p| p.note_graph().is_some()))
                             .unwrap_or(false);
                         let label = if has_graph { "Note FX ●" } else { "Note FX" };
-                        if ui
-                            .selectable_label(seq_view_state.note_fx_panel_open, label)
-                            .on_hover_text(
-                                "Show/hide the Note FX panel (bind a note graph to this pattern)",
-                            )
-                            .clicked()
-                        {
-                            seq_view_state.note_fx_panel_open = !seq_view_state.note_fx_panel_open;
-                        }
+                        selectable_toggle(
+                            ui,
+                            &mut seq_view_state.note_fx_panel_open,
+                            label,
+                            "Show/hide the Note FX panel (bind a note graph to this pattern)",
+                        );
                     });
                     draw_tracker(
                         ui,

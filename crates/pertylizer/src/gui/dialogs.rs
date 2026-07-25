@@ -3,10 +3,11 @@
 //! This module provides reusable dialog components for settings,
 //! about information, and patch management.
 
+use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 use eframe::egui::{self, Pos2, RichText};
-use egui_file_dialog::{FileDialog, Filter};
+use egui_file_dialog::{FileDialog, FileFilter, Filter};
 
 use super::egui_backend::{BUNDLED_FONTS, apply_fonts, resolve_font, setup_custom_style};
 use super::theme::{ThemePreset, theme};
@@ -40,6 +41,51 @@ pub enum FileDialogMode {
     ExportSample,
     /// Exporting the activity log to a text file.
     ExportActivityLog,
+}
+
+/// One entry in a mode's filter dropdown: `(display name, matching extensions)`.
+/// An empty extension slice matches every file (the "All files" escape hatch).
+type FilterSpec = (&'static str, &'static [&'static str]);
+
+/// The conventional unfiltered entry, offered by every *pick* mode so a file with
+/// an unexpected extension can still be reached.
+const ANY_FILE: FilterSpec = ("All files", &[]);
+
+impl FileDialogMode {
+    /// The filters this mode offers in its dropdown.
+    ///
+    /// Data, not a builder closure, so every mode's filters read as one table and
+    /// the shared dialog can swap them on each open (see
+    /// [`DialogState::open_file_dialog`]).
+    const fn file_filters(self) -> &'static [FilterSpec] {
+        match self {
+            Self::OpenPatch => &[("Patch files", &["json"]), ANY_FILE],
+            Self::SavePatch => &[("Patch files", &["json"])],
+            Self::OpenGroupTemplate => &[("Group templates", &["json"]), ANY_FILE],
+            Self::OpenProject => &[("Project files", &["ptz", "json", "zip"]), ANY_FILE],
+            Self::SaveProject => &[("Project files", &["ptz", "json", "zip"])],
+            Self::ExportWav | Self::ExportSample => &[("WAV files", &["wav"])],
+            Self::ImportSample => &[("WAV files", &["wav"]), ANY_FILE],
+            Self::ExportActivityLog => &[("Text / log files", &["txt", "log"]), ANY_FILE],
+        }
+    }
+
+    /// Whether this mode *writes* a file.
+    ///
+    /// The single source of truth for both halves of a save: it picks
+    /// `save_file()` over `pick_file()` when opening, and
+    /// [`FileDialogResult::Saved`] over [`FileDialogResult::Picked`] when the user
+    /// confirms — so the two can no longer disagree and drop a result on the floor.
+    const fn is_save(self) -> bool {
+        matches!(
+            self,
+            Self::SavePatch
+                | Self::SaveProject
+                | Self::ExportWav
+                | Self::ExportSample
+                | Self::ExportActivityLog
+        )
+    }
 }
 
 /// State for all application dialogs.
@@ -76,15 +122,13 @@ pub struct DialogState {
     pub status_message: Option<(String, std::time::Instant)>,
     /// Currently selected theme preset.
     pub current_theme: ThemePreset,
-    /// File dialog instance. Persistent across opens so its retained directory
-    /// and highlighted entry survive; rebuilt only when the dialog kind changes.
+    /// The one file dialog instance, shared by every [`FileDialogMode`]. Never
+    /// rebuilt: its retained directory and highlighted entry live inside the
+    /// instance, so reusing it is what makes them survive — including across a
+    /// switch from Open Patch to Save Project.
     file_dialog: FileDialog,
     /// Current in-flight file dialog mode (for routing the picked result).
     file_dialog_mode: Option<FileDialogMode>,
-    /// Which mode `file_dialog`'s filters are currently configured for. Stays set
-    /// across opens (unlike `file_dialog_mode`) so reopening the same kind reuses
-    /// the instance and keeps `retain_selected_entry`'s state.
-    file_dialog_kind: Option<FileDialogMode>,
     /// Show WAV export dialog.
     pub show_export_wav: bool,
     /// Export dialog state.
@@ -110,9 +154,8 @@ impl Default for DialogState {
             patch_save_name: String::new(),
             status_message: None,
             current_theme: ThemePreset::default(),
-            file_dialog: FileDialog::new(),
+            file_dialog: Self::new_file_dialog(),
             file_dialog_mode: None,
-            file_dialog_kind: None,
             show_export_wav: false,
             export_state: crate::gui::export_dialog::ExportDialogState::default(),
         }
@@ -125,7 +168,8 @@ impl DialogState {
         Self::default()
     }
 
-    /// Build a fresh file dialog with project-wide defaults.
+    /// Build the file dialog with project-wide defaults. Called once, from
+    /// [`Default`] — see [`Self::file_dialog`] for why it is never rebuilt.
     ///
     /// `as_modal` is disabled on purpose. Under egui 0.35 `move_to_top` no longer
     /// means "last call wins" — it sets a `wants_to_be_on_top` flag resolved by a
@@ -133,35 +177,9 @@ impl DialogState {
     /// overlay can end up on top, swallowing every click and freezing the dialog.
     /// A plain top-level window has no overlay and stays fully interactive.
     fn new_file_dialog() -> FileDialog {
-        // `retain_selected_entry` keeps the highlighted entry, and the default
-        // `OpeningMode::LastPickedDir` reopens at the last directory — but BOTH
-        // live inside the FileDialog instance, so they only persist if we reuse
-        // it (see `ensure_dialog`) instead of rebuilding on every open.
         FileDialog::new()
             .as_modal(false)
             .retain_selected_entry(true)
-    }
-
-    /// Configure `self.file_dialog` for `kind`, rebuilding its filters only when
-    /// the kind changes. Reopening the same kind reuses the existing instance so
-    /// its retained directory + highlighted entry survive; switching kind builds
-    /// a fresh dialog with that kind's filters. Always records the in-flight
-    /// `file_dialog_mode` for result routing.
-    fn ensure_dialog(
-        &mut self,
-        kind: FileDialogMode,
-        initial_dir: Option<&Path>,
-        build: impl FnOnce(FileDialog) -> FileDialog,
-    ) {
-        if self.file_dialog_kind != Some(kind) {
-            let mut dialog = build(Self::new_file_dialog());
-            if let Some(dir) = initial_dir {
-                dialog = dialog.initial_directory(dir.to_path_buf());
-            }
-            self.file_dialog = dialog;
-            self.file_dialog_kind = Some(kind);
-        }
-        self.file_dialog_mode = Some(kind);
     }
 
     /// Set a status message that will auto-dismiss.
@@ -185,144 +203,64 @@ impl DialogState {
         }
     }
 
-    /// Open the file dialog for opening a patch.
-    pub fn open_open_patch_dialog(&mut self, initial_dir: Option<&Path>) {
-        self.ensure_dialog(FileDialogMode::OpenPatch, initial_dir, |d| {
-            d.add_file_filter(
-                "Patch files",
-                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "json")),
-            )
-            .add_file_filter("All files", Filter::new(|_: &Path| true))
-        });
-        self.file_dialog.pick_file();
-    }
-
-    /// Open the file dialog for saving a patch.
-    pub fn open_save_patch_dialog(&mut self, default_name: &str, initial_dir: Option<&Path>) {
-        self.ensure_dialog(FileDialogMode::SavePatch, initial_dir, |d| {
-            d.add_file_filter(
-                "Patch files",
-                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "json")),
-            )
-        });
-        self.file_dialog.config_mut().default_file_name = default_name.to_string();
-        self.file_dialog.save_file();
-    }
-
-    /// Open the file dialog for opening a project.
-    pub fn open_open_project_dialog(&mut self, initial_dir: Option<&Path>) {
-        self.ensure_dialog(FileDialogMode::OpenProject, initial_dir, |d| {
-            d.add_file_filter(
-                "Project files",
-                Filter::new(|p: &Path| {
-                    p.extension()
-                        .is_some_and(|e| e == "ptz" || e == "json" || e == "zip")
-                }),
-            )
-            .add_file_filter("All files", Filter::new(|_: &Path| true))
-        });
-        self.file_dialog.pick_file();
-    }
-
-    /// Open the file dialog for saving a project.
-    pub fn open_save_project_dialog(&mut self, default_name: &str, initial_dir: Option<&Path>) {
-        self.ensure_dialog(FileDialogMode::SaveProject, initial_dir, |d| {
-            d.add_file_filter(
-                "Project files",
-                Filter::new(|p: &Path| {
-                    p.extension()
-                        .is_some_and(|e| e == "ptz" || e == "json" || e == "zip")
-                }),
-            )
-        });
-        self.file_dialog.config_mut().default_file_name = default_name.to_string();
-        self.file_dialog.save_file();
-    }
-
-    /// Open the file dialog for choosing a WAV export path.
-    pub fn open_export_wav_dialog(&mut self, default_name: &str, initial_dir: Option<&Path>) {
-        self.ensure_dialog(FileDialogMode::ExportWav, initial_dir, |d| {
-            d.add_file_filter(
-                "WAV files",
-                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "wav")),
-            )
-        });
-        self.file_dialog.config_mut().default_file_name = default_name.to_string();
-        self.file_dialog.save_file();
-    }
-
-    /// Open the file dialog for importing a WAV sample.
-    pub fn open_import_sample_dialog(&mut self, initial_dir: Option<&Path>) {
-        self.ensure_dialog(FileDialogMode::ImportSample, initial_dir, |d| {
-            d.add_file_filter(
-                "WAV files",
-                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "wav")),
-            )
-            .add_file_filter("All files", Filter::new(|_: &Path| true))
-        });
-        self.file_dialog.pick_file();
-    }
-
-    /// Open the file dialog for exporting a sample as WAV.
-    pub fn open_export_sample_dialog(&mut self, default_name: &str, initial_dir: Option<&Path>) {
-        self.ensure_dialog(FileDialogMode::ExportSample, initial_dir, |d| {
-            d.add_file_filter(
-                "WAV files",
-                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "wav")),
-            )
-        });
-        self.file_dialog.config_mut().default_file_name = default_name.to_string();
-        self.file_dialog.save_file();
-    }
-
-    /// Open the file dialog for exporting the activity log to a text file.
-    pub fn open_export_activity_log_dialog(
+    /// Open the shared file dialog in `kind`'s mode.
+    ///
+    /// Only the per-kind configuration is re-applied — the filters, the default
+    /// file name, and the fallback directory — so the instance keeps its own
+    /// memory across kinds. `default_name` is meaningful only for save modes
+    /// ([`FileDialogMode::is_save`]); pass `None` when picking. `initial_dir` is a
+    /// *fallback*: under the default `OpeningMode::LastPickedDir` the dialog
+    /// reopens wherever the user last picked, and only falls back to this
+    /// directory before there is such a place.
+    pub fn open_file_dialog(
         &mut self,
-        default_name: &str,
+        kind: FileDialogMode,
+        default_name: Option<&str>,
         initial_dir: Option<&Path>,
     ) {
-        self.ensure_dialog(FileDialogMode::ExportActivityLog, initial_dir, |d| {
-            d.add_file_filter(
-                "Text / log files",
-                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "txt" || e == "log")),
-            )
-            .add_file_filter("All files", Filter::new(|_: &Path| true))
-        });
-        self.file_dialog.config_mut().default_file_name = default_name.to_string();
-        self.file_dialog.save_file();
-    }
+        let config = self.file_dialog.config_mut();
+        config.file_filters = kind
+            .file_filters()
+            .iter()
+            .map(|&(name, extensions)| FileFilter {
+                id: egui::Id::new(name),
+                name: name.to_owned(),
+                filter: if extensions.is_empty() {
+                    Filter::new(|_: &Path| true)
+                } else {
+                    Filter::new(move |p: &Path| {
+                        p.extension()
+                            .and_then(OsStr::to_str)
+                            .is_some_and(|ext| extensions.contains(&ext))
+                    })
+                },
+            })
+            .collect();
+        config.default_file_name = default_name.unwrap_or_default().to_string();
+        if let Some(dir) = initial_dir {
+            config.initial_directory = dir.to_path_buf();
+        }
 
-    /// Open the file dialog for opening a group template.
-    pub fn open_open_group_template_dialog(&mut self, initial_dir: Option<&Path>) {
-        self.ensure_dialog(FileDialogMode::OpenGroupTemplate, initial_dir, |d| {
-            d.add_file_filter(
-                "Group templates",
-                Filter::new(|p: &Path| p.extension().is_some_and(|e| e == "json")),
-            )
-            .add_file_filter("All files", Filter::new(|_: &Path| true))
-        });
-        self.file_dialog.pick_file();
+        self.file_dialog_mode = Some(kind);
+        // Opening clears any filter the user had selected for the previous kind,
+        // so the swapped-in filters above can never leave a dangling selection.
+        if kind.is_save() {
+            self.file_dialog.save_file();
+        } else {
+            self.file_dialog.pick_file();
+        }
     }
 
     /// Update the file dialog and return any completed result.
     pub fn update_file_dialog(&mut self, ctx: &egui::Context) -> Option<FileDialogResult> {
         self.file_dialog.update(ctx);
 
-        if let Some(path) = self.file_dialog.take_picked() {
-            let mode = self.file_dialog_mode.take();
-            // Distinguish between picked and saved based on mode
-            return match mode {
-                Some(
-                    FileDialogMode::SavePatch
-                    | FileDialogMode::SaveProject
-                    | FileDialogMode::ExportWav
-                    | FileDialogMode::ExportSample,
-                ) => Some(FileDialogResult::Saved(path, mode)),
-                _ => Some(FileDialogResult::Picked(path, mode)),
-            };
-        }
-
-        None
+        let path = self.file_dialog.take_picked()?;
+        let mode = self.file_dialog_mode.take();
+        Some(match mode {
+            Some(kind) if kind.is_save() => FileDialogResult::Saved(path, mode),
+            _ => FileDialogResult::Picked(path, mode),
+        })
     }
 
     /// Check if a file dialog is currently open.
@@ -1035,5 +973,65 @@ mod tests {
         let mut state = DialogState::new();
         state.set_status("Test message");
         assert!(state.status_message.is_some());
+    }
+
+    /// Every dialog mode. `FileDialogMode::file_filters` matches exhaustively, so
+    /// a new variant can't be forgotten there — this list only keeps the tests
+    /// below covering it too.
+    const ALL_MODES: [FileDialogMode; 9] = [
+        FileDialogMode::OpenPatch,
+        FileDialogMode::SavePatch,
+        FileDialogMode::OpenGroupTemplate,
+        FileDialogMode::OpenProject,
+        FileDialogMode::SaveProject,
+        FileDialogMode::ExportWav,
+        FileDialogMode::ImportSample,
+        FileDialogMode::ExportSample,
+        FileDialogMode::ExportActivityLog,
+    ];
+
+    #[test]
+    fn every_mode_offers_usable_filters() {
+        for mode in ALL_MODES {
+            let filters = mode.file_filters();
+            assert!(!filters.is_empty(), "{mode:?} offers no filters");
+            assert!(
+                filters.iter().any(|(_, ext)| !ext.is_empty()),
+                "{mode:?} only offers the unfiltered entry"
+            );
+            for (name, extensions) in filters {
+                // The names become `egui::Id`s in the filter dropdown; a repeat
+                // would silently overwrite the earlier entry.
+                assert_eq!(
+                    filters.iter().filter(|(n, _)| n == name).count(),
+                    1,
+                    "{mode:?} repeats the filter name {name:?}"
+                );
+                for ext in *extensions {
+                    assert!(
+                        !ext.starts_with('.') && ext.chars().all(char::is_lowercase),
+                        "{mode:?}: {ext:?} must be a bare lowercase extension"
+                    );
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn writing_modes_are_marked_as_saves() {
+        // Regression: `ExportActivityLog` opened the dialog with `save_file()` but
+        // was reported as `Picked`, while the only handler for it matches `Saved`
+        // — so the export silently did nothing. Both halves now read `is_save`.
+        for mode in ALL_MODES {
+            let expected = matches!(
+                mode,
+                FileDialogMode::SavePatch
+                    | FileDialogMode::SaveProject
+                    | FileDialogMode::ExportWav
+                    | FileDialogMode::ExportSample
+                    | FileDialogMode::ExportActivityLog
+            );
+            assert_eq!(mode.is_save(), expected, "{mode:?}");
+        }
     }
 }

@@ -19,6 +19,7 @@ use crate::gui::widgets::{
     CaptionTone, MAX_MSEG_SEGMENTS, ModMarkers, ModuleColumn, ModulePort, MsegEditor,
     MsegLoopRegion, MsegSegment, MsegSegmentCount, MsegSegmentIndex, WidgetPortDirection, caption,
     draw_module_port_column, draw_module_port_layout, expose, module_port_accessible_label,
+    monitor_toggle, record_toggle,
 };
 
 use crate::gui::node_canvas;
@@ -453,24 +454,7 @@ pub(super) fn draw_module_panel_params(
 
         // Monitor toggle button
         ui.add_space(t.spacing.xs);
-        let monitor_icon = if is_monitoring {
-            ri::MIC_FILL
-        } else {
-            ri::MIC_LINE
-        };
-        let monitor_color = if is_monitoring {
-            t.colors.meter_green
-        } else {
-            t.colors.text_dim
-        };
-        if ui
-            .button(
-                egui::RichText::new(format!("{monitor_icon} Monitor"))
-                    .color(monitor_color)
-                    .size(11.0),
-            )
-            .clicked()
-        {
+        if monitor_toggle(ui, is_monitoring, t.fonts.size_small).clicked() {
             audio_input_action = Some(if is_monitoring {
                 AudioInputAction::StopMonitoring
             } else {
@@ -479,29 +463,7 @@ pub(super) fn draw_module_panel_params(
         }
 
         // Record button (only enabled when monitoring)
-        let rec_icon = if is_recording {
-            ri::STOP_FILL
-        } else {
-            ri::RECORD_CIRCLE_FILL
-        };
-        let rec_color = if is_recording {
-            t.colors.meter_red
-        } else if is_monitoring {
-            t.colors.text_primary
-        } else {
-            t.colors.text_dim
-        };
-        if ui
-            .add_enabled(
-                is_monitoring,
-                egui::Button::new(
-                    egui::RichText::new(format!("{rec_icon} Rec"))
-                        .color(rec_color)
-                        .size(11.0),
-                ),
-            )
-            .clicked()
-        {
+        if record_toggle(ui, is_recording, is_monitoring, t.fonts.size_small).clicked() {
             audio_input_action = Some(if is_recording {
                 AudioInputAction::StopRecording
             } else {

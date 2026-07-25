@@ -6,7 +6,7 @@
 //! (`snap_to_step`, `quantize_tick`) live in the parent module.
 
 use super::*;
-use crate::gui::widgets::{expose, icon_button, solo_toggle, submenu_button};
+use crate::gui::widgets::{expose, icon_button, selectable_toggle, solo_toggle, submenu_button};
 
 /// Ordered automation targets shown as stacked zones: every existing lane,
 /// plus the edit-selected target if it has no lane yet (so a brand-new lane
@@ -3163,20 +3163,18 @@ fn draw_piano_roll_toolbar(
             .and_then(|s| s.pattern(data.pattern_id).map(|p| p.note_graph().is_some()))
             .unwrap_or(false);
         let note_fx_label = if has_graph { "Note FX ●" } else { "Note FX" };
-        if ui
-            .selectable_label(view_state.note_fx_panel_open, note_fx_label)
-            .on_hover_text("Show/hide the Note FX panel (bind a note graph to this pattern)")
-            .clicked()
-        {
-            view_state.note_fx_panel_open = !view_state.note_fx_panel_open;
-        }
-        if ui
-            .selectable_label(view_state.show_note_fx_ghosts, "Ghosts")
-            .on_hover_text("Preview the note-graph / ornament expansion as faint ghost notes")
-            .clicked()
-        {
-            view_state.show_note_fx_ghosts = !view_state.show_note_fx_ghosts;
-        }
+        selectable_toggle(
+            ui,
+            &mut view_state.note_fx_panel_open,
+            note_fx_label,
+            "Show/hide the Note FX panel (bind a note graph to this pattern)",
+        );
+        selectable_toggle(
+            ui,
+            &mut view_state.show_note_fx_ghosts,
+            "Ghosts",
+            "Preview the note-graph / ornament expansion as faint ghost notes",
+        );
         ui.separator();
 
         ui.label(

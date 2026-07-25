@@ -281,19 +281,31 @@ efficiency/altitude items deliberately left out of that change.
 
 Residual after the shared-widget-helpers work landed — these are the remaining areas to polish the GUI helpers layer:
 
-- [ ] **Global FileDialog memory across kinds.** Refactor `ensure_dialog`
-  in `gui/dialogs.rs` to reuse a single global
-  `FileDialog` instance across all kinds (Open/Save Patch, templates, etc.) rather than rebuilding it when
-  `file_dialog_kind` changes. Update its `config_mut().file_filters` dynamically on every open. This enables directory
-  memory and highlighting (`retain_selected_entry`) to survive switching between Open and Save actions.
-- [ ] **Address inline toggle button variations.** Several inline toggle styles (e.g. M/S muting/soloing badges,
-  custom-colored selections) still bypass `toggle_button_colored`. Create a flexible `toggle_badge` or
-  `selectable_toggle` helper to cover these and keep sizes consistent (preventing drift).
-- [ ] **Perform a visual eyeball check on normalized captions.** Verify that the normalized size shift (~9px to 10px
-  `size_small`) for the 24 migrated `.small()` labels does not cause visual clipping or alignment issues in tight
-  spaces (especially grid cells
-  in `gui/sequencer/tracker.rs` and Vol/Pan knob rows in
-  `gui/sequencer/arrangement.rs`).
+- [x] **Global FileDialog memory across kinds.** One `FileDialog` instance now
+  serves every kind; only the filters, default file name, and fallback directory
+  are re-applied per open, from a per-mode table on `FileDialogMode`. The eight
+  `open_*_dialog` methods collapsed into `open_file_dialog(kind, default_name,
+  initial_dir)`, and `FileDialogMode::is_save` decides both `save_file()` vs
+  `pick_file()` and `Saved` vs `Picked` — which fixed the activity-log export,
+  where the two disagreed and the result was dropped. Verified live: after
+  picking in Open Patch, Save Project As opens in the same directory with the
+  entry still highlighted. *Trade-off:* `OpeningMode::LastPickedDir` now spans
+  kinds, so the shared "where you last were" wins over the per-kind directories
+  in `settings.directories` (those remain the fallback until the first pick, and
+  after a restart). Revisit if per-kind start directories turn out to matter more.
+- [x] **Address inline toggle button variations.** Added `selectable_toggle` (a
+  boolean panel switch that owns the flip; now used by the piano roll's Note FX +
+  Ghosts, the Pattern view's Note FX, and the script editor's Help) and
+  `icon_text_button`, with `monitor_toggle` / `record_toggle` built on it. The
+  Sample view and the Audio Input faceplate had drifting copies of the same
+  monitor/record controls — different wording, a hardcoded `11.0` text size, and a
+  Stop icon labelled "Rec" — now one definition parameterized only by the call
+  site's text size. The M/S badges named here were already on the shared
+  `mute_toggle`/`solo_toggle` icon buttons.
+- [x] **Visual eyeball check on normalized captions — no clipping.** Checked live
+  at `size_small` (10px): the tracker's `Row/V1/Orn/Acc/Gat/Gho/Prb` headers and
+  cell content render in full, and the arrangement's Vol/Pan rows in the track
+  properties popup stay aligned with their sliders and value boxes.
 
 ### 3.5 Drop the vendored egui-0.35 forks once upstream ships 0.35
 

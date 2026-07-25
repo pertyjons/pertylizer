@@ -13,6 +13,7 @@ use eframe::egui::{self, Response, Ui};
 use egui_remixicon::icons as ri;
 
 use crate::gui::theme::theme;
+use crate::gui::widgets::selectable_toggle;
 
 /// The shared fixed-height YAMS code editor. The height is pinned to
 /// `rows × monospace line height` rather than derived from the available
@@ -53,16 +54,13 @@ pub(crate) fn script_editor_header(
     // the window. The hint then wraps freely on the row(s) below.
     ui.horizontal(|ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let help = ui
-                .selectable_label(
-                    *show_help,
-                    egui::RichText::new(format!("{}  Help", ri::QUESTION_LINE))
-                        .size(t.fonts.size_small),
-                )
-                .on_hover_text(help_hover);
-            if help.clicked() {
-                *show_help = !*show_help;
-            }
+            selectable_toggle(
+                ui,
+                show_help,
+                egui::RichText::new(format!("{}  Help", ri::QUESTION_LINE))
+                    .size(t.fonts.size_small),
+                help_hover,
+            );
         });
     });
     ui.add(

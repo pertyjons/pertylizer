@@ -13,7 +13,9 @@ use egui_remixicon::icons as ri;
 use crate::audio::input::{AudioInputManager, InputState};
 use crate::gui::list_panel;
 use crate::gui::theme::theme;
-use crate::gui::widgets::{danger_button, empty_state, section_header, unit_drag_value};
+use crate::gui::widgets::{
+    danger_button, empty_state, monitor_toggle, record_toggle, section_header, unit_drag_value,
+};
 use synth_core::SampleCount;
 use synth_sampler::{CropRegion, FrameIndex, LoopRegion, SampleId, SampleLibrary};
 
@@ -460,61 +462,24 @@ pub fn draw_sample_view(
             // Monitor toggle
             let input_state = audio_input.state();
             let is_monitoring = input_state != InputState::Idle;
-            let monitor_color = if is_monitoring {
-                t.colors.meter_green
-            } else {
-                t.colors.text_dim
-            };
-            let (monitor_icon, monitor_text) = if is_monitoring {
-                (ri::MIC_FILL, "Monitor: ON")
-            } else {
-                (ri::MIC_LINE, "Monitor")
-            };
-            if ui
-                .button((
-                    egui::RichText::new(monitor_icon).color(monitor_color),
-                    egui::RichText::new(monitor_text).color(monitor_color),
-                ))
-                .clicked()
-            {
-                if is_monitoring {
-                    action = SampleViewAction::StopMonitoring;
+            if monitor_toggle(ui, is_monitoring, t.fonts.size_normal).clicked() {
+                action = if is_monitoring {
+                    SampleViewAction::StopMonitoring
                 } else {
-                    action = SampleViewAction::StartMonitoring;
-                }
+                    SampleViewAction::StartMonitoring
+                };
             }
 
             ui.separator();
 
             // Record button
             let is_recording = input_state == InputState::Recording;
-            let rec_color = if is_recording {
-                t.colors.meter_red
-            } else if is_monitoring {
-                t.colors.text_primary
-            } else {
-                t.colors.text_dim
-            };
-            let (rec_icon, rec_text) = if is_recording {
-                (ri::STOP_FILL, "Stop")
-            } else {
-                (ri::RECORD_CIRCLE_FILL, "Rec")
-            };
-            if ui
-                .add_enabled(
-                    is_monitoring,
-                    egui::Button::new((
-                        egui::RichText::new(rec_icon).color(rec_color),
-                        egui::RichText::new(rec_text).color(rec_color),
-                    )),
-                )
-                .clicked()
-            {
-                if is_recording {
-                    action = SampleViewAction::StopRecording;
+            if record_toggle(ui, is_recording, is_monitoring, t.fonts.size_normal).clicked() {
+                action = if is_recording {
+                    SampleViewAction::StopRecording
                 } else {
-                    action = SampleViewAction::StartRecording;
-                }
+                    SampleViewAction::StartRecording
+                };
             }
 
             // Recording timer

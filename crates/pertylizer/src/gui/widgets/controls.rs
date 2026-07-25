@@ -253,6 +253,58 @@ pub fn toggle_button_colored(
     ui.button(label.into().strong().color(color))
 }
 
+/// A boolean toggle drawn with egui's *selection* styling (a `selectable_label`),
+/// for toolbar switches that reveal or hide something — a panel, an overlay, a
+/// ghost preview. The label stays a permanent affordance and the selected
+/// background carries the state, which is what separates this from
+/// [`toggle_button`]'s accent-colored text.
+///
+/// Flips `on` in place when clicked and returns whether it changed, so no call
+/// site can forget the flip or invert it. `tooltip` doubles as the hover text.
+pub fn selectable_toggle(
+    ui: &mut Ui,
+    on: &mut bool,
+    label: impl Into<WidgetText>,
+    tooltip: &str,
+) -> bool {
+    let clicked = ui
+        .selectable_label(*on, label)
+        .on_hover_text(tooltip)
+        .clicked();
+    if clicked {
+        *on = !*on;
+    }
+    clicked
+}
+
+/// An `icon  label` text button in a single caller-chosen color.
+///
+/// The one place that decides how a state-colored icon+label button is built, so
+/// the two-atom spacing, the disabled path, and the accessible name can't drift
+/// between call sites. `text_size` is the caller's typographic scale — pass
+/// `theme().fonts.size_small` on a compact faceplate and `size_normal` in a
+/// toolbar; both stay theme values rather than a literal. The icon is a raw Remix
+/// Icon codepoint, so the *label* is exposed as the accessible name (see
+/// [`icon_button`]). Returns the [`Response`].
+pub fn icon_text_button(
+    ui: &mut Ui,
+    icon: &str,
+    label: &str,
+    color: Color32,
+    text_size: f32,
+    enabled: bool,
+) -> Response {
+    let response = ui.add_enabled(
+        enabled,
+        Button::new((
+            RichText::new(icon).color(color).size(text_size),
+            RichText::new(label).color(color).size(text_size),
+        )),
+    );
+    expose(&response, egui::WidgetType::Button, label, None);
+    response
+}
+
 /// A frameless icon button — one uniform look for every icon: the
 /// `ICON_BUTTON_SIZE` (18×20) hit target, `size_normal` glyph, the given hover
 /// `tooltip`, and the arrow cursor. Used both for interactive controls (read
@@ -353,6 +405,45 @@ pub fn bypass_toggle(ui: &mut Ui, bypassed: bool) -> Response {
         )
     };
     icon_button(ui, icon, color, tip)
+}
+
+// --- Audio-input transport --------------------------------------------------
+//
+// The monitor/record pair appears both in the Sample view's toolbar and on the
+// Audio Input module's faceplate. Keeping the icon, wording, color rule, and the
+// "record needs monitoring" precondition here means the two can't drift apart —
+// only the typographic scale differs, which each call site passes in.
+
+/// Input-monitoring toggle — a filled green mic while the input is live, a dimmed
+/// outline mic when idle. Returns the [`Response`]; read `.clicked()` to flip.
+pub fn monitor_toggle(ui: &mut Ui, monitoring: bool, text_size: f32) -> Response {
+    let t = theme();
+    let (icon, label, color) = if monitoring {
+        (ri::MIC_FILL, "Monitor: ON", t.colors.meter_green)
+    } else {
+        (ri::MIC_LINE, "Monitor", t.colors.text_dim)
+    };
+    icon_text_button(ui, icon, label, color, text_size, true)
+}
+
+/// Record toggle for the monitored input — red "Stop" while recording, otherwise
+/// "Rec", and disabled entirely unless the input is being monitored (there is
+/// nothing to capture until then). Returns the [`Response`].
+pub fn record_toggle(ui: &mut Ui, recording: bool, monitoring: bool, text_size: f32) -> Response {
+    let t = theme();
+    let (icon, label) = if recording {
+        (ri::STOP_FILL, "Stop")
+    } else {
+        (ri::RECORD_CIRCLE_FILL, "Rec")
+    };
+    let color = if recording {
+        t.colors.meter_red
+    } else if monitoring {
+        t.colors.text_primary
+    } else {
+        t.colors.text_dim
+    };
+    icon_text_button(ui, icon, label, color, text_size, monitoring)
 }
 
 /// A section heading: a strong, accent-colored label at the theme heading size,
