@@ -75,7 +75,10 @@ mod types;
 
 pub use backends::{CpalBackend, NullBackend};
 pub use traits::{AudioBackend, AudioHost, AudioHostTrait, AudioProcessor, AudioStream};
-pub use types::*;
+pub use types::{
+    AudioCallbackContext, AudioError, AudioResult, BufferSize, ChannelCount, DeviceInfo,
+    DeviceType, SampleRate, StreamConfig, StreamInfo,
+};
 
 /// Create a default audio host using the CPAL backend.
 pub fn default_host() -> AudioResult<AudioHost> {

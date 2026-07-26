@@ -17,5 +17,8 @@ pub use error::SampleError;
 pub use library::SampleLibrary;
 pub use playback::SamplePlayer;
 pub use sample::Sample;
-pub use types::*;
+pub use types::{
+    BitDepth, CropRegion, FrameIndex, LoopRegion, PlayMode, PlaybackPosition, PlaybackSpeed,
+    SampleId, SampleMeta, SampleSource,
+};
 pub use wav::{load_wav, save_wav};

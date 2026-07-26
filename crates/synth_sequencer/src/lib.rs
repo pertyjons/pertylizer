@@ -24,7 +24,6 @@
 
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::cast_possible_truncation)]
-#![allow(clippy::too_many_lines)]
 
 pub mod automation;
 pub mod events;

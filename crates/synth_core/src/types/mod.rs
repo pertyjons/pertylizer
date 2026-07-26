@@ -43,20 +43,29 @@ mod samples;
 mod state;
 mod time;
 
-pub use amplitude::*;
-pub use audio::*;
-pub use denormal::*;
-pub use frequency::*;
-pub use geometry::*;
-pub use identifiers::*;
+pub use amplitude::{Decibels, Gain, Ratio, magnitude_to_normalized_db};
+pub use audio::{
+    AllpassState, Amplitude, BufferIndex, CpuUsage, FilterState, FrameCount, NoiseState,
+    OnePoleSmooth, PatternIndex, StepCount, StereoBalance, StereoFrameIter, StereoLevels,
+    StereoSample, VoiceCount,
+};
+pub use denormal::DenormalGuard;
+pub use frequency::{FrequencyBand, Hertz, SampleRate};
+pub use geometry::{Meters, MetersPerSecond, Position3, SampleOffset};
+pub use identifiers::InstrumentId;
 pub use interned::PortName;
-pub use module_params::*;
-pub use normalized::*;
-pub use pitch::*;
-pub use range::*;
-pub use samples::*;
-pub use state::*;
-pub use time::*;
+pub use module_params::{BitDepth, DecayTrim, PulseWidth, TimeScale};
+pub use normalized::{BipolarValue, NormalizedValue, Phase};
+pub use pitch::{
+    CcNumber, Cents, MidiCcNumber, MidiChannel, MidiNote, Octaves, Semitones, Velocity,
+};
+pub use range::ValueRange;
+pub use samples::{BlockSize, SampleCount, SamplePosition};
+pub use state::{
+    BypassState, ClipMode, EnableState, FreezeState, LimitMode, MuteState, NoteReleaseState,
+    Polarity, RetriggerMode, SoloState, SyncMode, TempoSyncState,
+};
+pub use time::{BeatDivision, BeatPosition, Bpm, Milliseconds, Seconds};
 
 /// Trait for types that can be clamped to a valid range.
 pub trait Clampable: Sized {

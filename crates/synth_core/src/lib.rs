@@ -9,7 +9,6 @@
 #![allow(clippy::must_use_candidate)]
 #![allow(clippy::missing_const_for_fn)]
 #![allow(clippy::similar_names)]
-#![allow(clippy::too_many_lines)]
 #![allow(clippy::cast_precision_loss)]
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::cast_sign_loss)]
@@ -33,9 +32,48 @@ pub use audio::{
     StreamConfig, StreamInfo,
 };
 pub use display::DisplayName;
-pub use module_traits::*;
-pub use params::*;
-pub use types::*;
+pub use module_traits::{
+    AudioBuffer, AudioEffect, ChoiceOption, Describable, InputPorts, InputReader, ModuleCategory,
+    ModuleDescriptor, ModuleParam, ModuleTypeId, ModuleWidth, ParamKind, ParamModOffsets,
+    ParamValueError, ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortDirection,
+    PortType, ProcessContext, ResponseCurve, ScalarParam, VisualizationSink, VoicePitch,
+    WidgetHint,
+};
+pub use params::{
+    AdditiveParam, AlgoParamInfo, AmFormantParam, AmplifierParam, AntiAliasMode, AudioPort,
+    BbdDelayParam, BeatDetectorParam, BodyResonanceParam, ChaoticOscParam, ChaoticSystem,
+    ChorusParam, CompressorParam, ControlPort, ConvolverParam, CrossoverParam, DelayMode,
+    DelayParam, DestAddr, DistortionMode, DistortionParam, DriftGeneratorParam, EasingCurve,
+    EnsembleChorusParam, EnvelopeFollowerParam, EnvelopeParam, EqParam, EuclideanParam,
+    FftSizeOption, FilterMode, FilterModel, FilterParam, FlangerParam, FmMode, FofParam,
+    FooglersParam, FormantFilterParam, FractalOscParam, FrequencyShifterParam, GrainSource,
+    GrainWindow, GranularFxParam, GranularParam, ImpulseResponse, KeyboardPannerParam,
+    KineticLoopMode, KineticParam, LaSynthParam, LevelMeterParam, LfoParam, LfoWaveform,
+    LimiterParam, MAX_MOD_MATRIX_SLOTS, MacroSource, MathAlgo, MathOscillatorParam,
+    MechanicalNoiseParam, MechanicalNoiseType, MidSideParam, MixerParam, ModDestination,
+    ModMatrixGridSize, ModMatrixParam, ModRouting, ModSource, ModalResonatorParam, ModuleType,
+    MsegParam, NoiseParam, NoiseType, OscillatorParam, OscilloscopeParam, PadSynthParam, Param,
+    PhaseVocoderParam, PhaserParam, PitchTrackerParam, PlayDirection, Port, RandomGatesParam,
+    ReverbParam, ReverseGateMode, ReverseGateReverbParam, ReverseGateTrigger, RingModParam,
+    SID_FREQ_REG_MAX, SID_PW_REG_MAX, SID_SEQ_STEPS, SampleId, SamplerParam, SamplerPlayMode,
+    ScriptParam, ShimmerReverbParam, SidClock, SidModel, SidNoiseSeed, SidOscillatorParam,
+    SidQuality, SignalMonitorParam, SpatialPannerParam, SpectralBlurParam, SpectrumAnalyzerParam,
+    SrcAddr, SubOscOctave, SubOscParam, SubOscWaveform, TiltEqParam, TransientShaperParam,
+    TuringMachineParam, TuringScale, UnivibeParam, VectorMixerParam, VocalTractParam, VocoderParam,
+    VoiceSynthParam, Waveform, WaveshaperCurve, WaveshaperParam, WavetableParam, WavetableSelect,
+    easing_acceleration, easing_position, easing_velocity,
+};
+pub use types::{
+    AllpassState, Amplitude, BeatDivision, BeatPosition, BipolarValue, BitDepth, BlockSize, Bpm,
+    BufferIndex, BypassState, CcNumber, Cents, Clampable, ClipMode, CpuUsage, DecayTrim, Decibels,
+    DenormalGuard, EnableState, FilterState, FrameCount, FreezeState, FrequencyBand, Gain, Hertz,
+    InstrumentId, Interpolate, LimitMode, Meters, MetersPerSecond, MidiCcNumber, MidiChannel,
+    MidiNote, Milliseconds, MuteState, NoiseState, NormalizedValue, NoteReleaseState, Octaves,
+    OnePoleSmooth, PatternIndex, Phase, Polarity, PortName, Position3, PulseWidth, Ratio,
+    RetriggerMode, SampleCount, SampleOffset, SamplePosition, SampleRate, Seconds, Semitones,
+    SoloState, StepCount, StereoBalance, StereoFrameIter, StereoLevels, StereoSample, SyncMode,
+    TempoSyncState, TimeScale, ValueRange, Velocity, VoiceCount, magnitude_to_normalized_db,
+};
 
 /// Convenience re-exports for code that works with parameters generically.
 ///

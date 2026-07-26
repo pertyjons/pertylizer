@@ -21,7 +21,47 @@ pub mod types;
 pub use bridge::{AnalysisScope, RenderQuality, SpectrumSource, SynthBridge, TimeResolvedOptions};
 pub use error::McpBridgeError;
 pub use server::{McpSessionInfo, McpSessionRegistry, SynthMcpServer};
-pub use types::*;
+pub use types::{
+    AnalysisSignalMode, AnalyzeArrangementResult, AnalyzeBassDrumLockResult,
+    AnalyzeDrumGrooveResult, AnalyzeEnergyBands, AnalyzeEnvelopeEstimate, AnalyzeFlags,
+    AnalyzeFormMapResult, AnalyzeHarmonicContent, AnalyzeHarmonicFunctionResult,
+    AnalyzeHarmonyResult, AnalyzeHookStrengthResult, AnalyzeInstrumentRangeResult,
+    AnalyzeMaskingMatrixResult, AnalyzeMasterChainResult, AnalyzeMixBusResult, AnalyzeNoteResult,
+    AnalyzePartial, AnalyzePatternResult, AnalyzeReturnBussesResult,
+    AnalyzeSampleSpectrogramResult, AnalyzeSampleSpectrumResult, AnalyzeSectionResult,
+    AnalyzeSpectrogramResult, AnalyzeSpectrumPeak, AnalyzeSpectrumResult,
+    AnalyzeTensionCurveResult, AnalyzeVelocityResponseResult, ApplyExamplePatchResult,
+    AudioPreview, AutoGainStageResult, AutomationLaneInfo, AutomationPointInfo,
+    AutomationSummaryGroup, AutomationSummaryLane, AutomationSummaryResult, AutomationTargetInfo,
+    BandOverlap, BarFeatureSummary, BassDrumAlignment, BassPitchStability, BassTrackInfo,
+    BatchExecItemResult, BatchExecResult, BatchItemResult, BatchResult, BuildInstrumentResult,
+    ChoiceInfo, ChordFunctionEvent, ChordProgressionStep, CompareEnvelopesResult, CompareMixResult,
+    CompareSpectraResult, ConnectionCheckResult, ConnectionInfo, CreateChordProgressionResult,
+    DetailedSampleInfo, DiagnosticSeverity, DrumBackbeat, DrumComposition, DrumFills,
+    DrumGhostNotes, DrumHat, DrumRepetition, DrumTrackInfo, EngineStatus, EnvelopeSide,
+    ExamplePatchInfo, FindMotifsResult, FixSuggestion, FunctionDistribution, GenerateChordResult,
+    GraphDiagnostic, HarmonicCadenceEvent, HarmonicCadenceKind, HarmonyChordEvent,
+    HarmonyKeyEstimate, HarmonyScope, HarmonyStats, HiddenEventsLint, InputDeviceInfo,
+    InputStateInfo, InsertModuleResult, InstrumentInfo, InstrumentProfileResult,
+    InstrumentRangeIssues, InstrumentRangeStep, LaneSimplification, MaskingPair, MasterEffectStage,
+    MatrixRoutingInfo, MixBusMetrics, MixDelta, ModGraphConnectionInfo, ModGraphDetail,
+    ModGraphInfo, ModGraphNodeInfo, ModTargetInfo, ModuleDescriptionEntry, ModuleInfo,
+    ModuleSearchResult, ModuleTypeBrief, ModuleTypeInfo, MotifEntry, MotifOccurrence,
+    NoteGraphConnectionInfo, NoteGraphDetail, NoteGraphInfo, NoteGraphModuleInfo, NoteInfo,
+    OptimizeResult, OrphanedAutomationLane, OrphanedTrackLint, ParamTypeInfo, ParameterInfo,
+    PartialDiff, PatchModuleInfo, PatchParamInfo, PatchParamValue, PatchResourceData,
+    PatternDensity, PatternInfo, PatternPitch, PatternRepetition, PatternRhythm, PatternVelocity,
+    PlacementInfo, PortSignalTypeInfo, PortTypeInfo, ProfileSignalResult, ProjectLintEntry,
+    ProjectLintReport, ProjectSchemaInfo, QuantizeNotesToGridResult, QuantizeNotesToScaleResult,
+    RebuildInstrumentResult, RenderToWavResult, ReturnBusContribution, ReturnBusInfo,
+    ReturnEffectInfo, ReturnEffectParamInfo, ReturnSendInfo, RoleInferenceResult, SampleInfo,
+    SamplerStateInfo, ScriptSlotInfo, SectionSpan, SendInfo, SetSongResult,
+    SimplifyAutomationResult, SongInfo, SpectrogramFrame, SpectrumDescriptor,
+    SuggestMusicFixesResult, TempoPoint, TensionCurveBar, TensionCurveSummary, TensionStats,
+    TrackBelowFloor, TrackContribution, TrackInfo, TransposeNotesResult, UiConnectionInfo,
+    UiModuleInfo, UiOverlap, UiSnapshot, ValidateInstrumentAudioResult, VelocityResponseIssues,
+    VelocityResponseStep, VersionInfo, WorstFrame,
+};
 
 use std::sync::Arc;
 
