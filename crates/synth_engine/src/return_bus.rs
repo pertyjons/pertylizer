@@ -143,11 +143,11 @@ impl ReturnBusChannel {
     /// Render this return's post-fader output into `dst` (overwriting it), using
     /// the already-processed `input` buffer. A muted channel renders silence.
     /// Returns the post-fader peak amplitude (0.0 when muted; measured pre
-    /// soft-clip, matching [`stereo_peak`]). The caller sums `dst` into the master
+    /// soft-clip, matching `stereo_peak`). The caller sums `dst` into the master
     /// mix and into any bus-to-bus send targets.
     ///
-    /// Applies the same per-sample [`soft_clip`] that [`Self::mix_into`] (via
-    /// [`mix_stereo_faded`]) applied — so splitting the old single-call path into
+    /// Applies the same per-sample `soft_clip` that [`Self::mix_into`] (via
+    /// `mix_stereo_faded`) applied — so splitting the old single-call path into
     /// process + render keeps the return's output soft-clipped on the master mix
     /// and on bus-to-bus taps, rather than letting hot returns hard-clip.
     pub fn render_output(&self, dst: &mut [f32]) -> f32 {

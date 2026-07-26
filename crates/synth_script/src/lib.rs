@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! YAMS (*Yet Another Modulation Script*) — the non-real-time front-end for the
 //! Control Script layer (the Mod Matrix modulation expression language; see
 //! `docs/yams.md`).

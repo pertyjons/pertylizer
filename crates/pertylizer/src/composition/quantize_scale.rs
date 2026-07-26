@@ -10,14 +10,16 @@
 //! sequencer-side `ScaleQuantize` once a name→`ScaleMask` bridge exists.
 
 use crate::harmony::{ScaleTemplate, scale_by_name};
+use std::str::FromStr;
 
 /// Tie-break direction used when two scale degrees are equidistant from the
 /// input pitch.
 #[must_use]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ScaleTieBreak {
     /// Prefer the higher pitch on ties (default — biases towards the
     /// melody side of dyads).
+    #[default]
     NearestUp,
     /// Prefer the lower pitch on ties.
     NearestDown,
@@ -26,13 +28,20 @@ pub enum ScaleTieBreak {
     Nearest,
 }
 
-impl ScaleTieBreak {
-    pub fn from_str_opt(s: &str) -> Option<Self> {
+/// Error returned when parsing a scale tie-break policy.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("unknown tie-break {0:?}; expected one of up, down, nearest")]
+pub struct ParseScaleTieBreakError(String);
+
+impl FromStr for ScaleTieBreak {
+    type Err = ParseScaleTieBreakError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_ascii_lowercase().as_str() {
-            "up" | "nearest_up" | "" => Some(Self::NearestUp),
-            "down" | "nearest_down" => Some(Self::NearestDown),
-            "nearest" => Some(Self::Nearest),
-            _ => None,
+            "up" | "nearest_up" | "" => Ok(Self::NearestUp),
+            "down" | "nearest_down" => Ok(Self::NearestDown),
+            "nearest" => Ok(Self::Nearest),
+            _ => Err(ParseScaleTieBreakError(s.to_string())),
         }
     }
 }
@@ -170,6 +179,14 @@ mod tests {
         let scale = ScaleConstraint::new(0, "major");
         assert!(scale.contains(60)); // C
         assert_eq!(snap_pitch_to_scale(60, &scale, ScaleTieBreak::Nearest), 60);
+    }
+
+    #[test]
+    fn tie_break_names_parse_consistently() {
+        assert_eq!("up".parse(), Ok(ScaleTieBreak::NearestUp));
+        assert_eq!("down".parse(), Ok(ScaleTieBreak::NearestDown));
+        assert_eq!("nearest".parse(), Ok(ScaleTieBreak::Nearest));
+        assert!("sideways".parse::<ScaleTieBreak>().is_err());
     }
 
     #[test]

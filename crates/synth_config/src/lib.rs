@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Runtime configuration loaded from a `pertylizer.toml` file.
 //!
 //! Both the main application (`pertylizer`) and the standalone visualizer read

@@ -79,7 +79,7 @@ pub enum DistortionMode {
     Foldback,
     Bitcrush,
     /// Variable hardness clipping (arctan-based, continuously adjustable).
-    /// Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Effects/104-variable-hardness-clipping-function.rst
+    /// Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Effects/104-variable-hardness-clipping-function.rst>
     VariableClip,
 }
 
@@ -390,7 +390,7 @@ pub enum MidSideParam {
     /// Side channel gain.
     SideGain(Decibels),
     /// Stereo field rotation angle in degrees (-180 to +180).
-    /// Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Effects/255-stereo-field-rotation-via-transformation-matrix.rst
+    /// Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Effects/255-stereo-field-rotation-via-transformation-matrix.rst>
     Rotation(BipolarValue),
     /// Dry/wet mix.
     Mix(NormalizedValue),
@@ -676,8 +676,8 @@ impl Default for ReverseGateReverbParam {
 
 /// Tilt EQ parameter with typed value.
 ///
-/// Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Filters/267-simple-tilt-equalizer.rst
-/// From the Music-DSP Source Code Archive (https://www.musicdsp.org/)
+/// Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Filters/267-simple-tilt-equalizer.rst>
+/// From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum TiltEqParam {
     /// Tilt amount (-1.0 = dark, 0.0 = flat, 1.0 = bright)
@@ -700,8 +700,8 @@ impl Default for TiltEqParam {
 
 /// Univibe effect parameter with typed value.
 ///
-/// Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Effects/277-univox-univibe-emulator.rst
-/// From the Music-DSP Source Code Archive (https://www.musicdsp.org/)
+/// Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Effects/277-univox-univibe-emulator.rst>
+/// From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum UnivibeParam {
     /// LFO rate (speed of sweep)
@@ -726,8 +726,8 @@ impl Default for UnivibeParam {
 
 /// Crossover splitter parameter with typed value.
 ///
-/// Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Filters/266-4th-order-linkwitz-riley-filters.rst
-/// From the Music-DSP Source Code Archive (https://www.musicdsp.org/)
+/// Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Filters/266-4th-order-linkwitz-riley-filters.rst>
+/// From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum CrossoverParam {
     /// Crossover frequency (Hz)
@@ -752,8 +752,8 @@ impl Default for CrossoverParam {
 
 /// LPC Vocoder parameter with typed value.
 ///
-/// Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Analysis/137-lpc-analysis-autocorrelation-levinson-durbin-recursion.rst
-/// From the Music-DSP Source Code Archive (https://www.musicdsp.org/)
+/// Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Analysis/137-lpc-analysis-autocorrelation-levinson-durbin-recursion.rst>
+/// From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub enum VocoderParam {
     /// LPC analysis order (4-32)

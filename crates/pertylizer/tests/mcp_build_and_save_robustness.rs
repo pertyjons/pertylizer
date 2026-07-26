@@ -15,7 +15,7 @@
 use std::sync::Arc;
 
 use synth_engine::{InstrumentId, SynthEngine};
-use synth_mcp::SynthBridge;
+use synth_mcp::bridge::*;
 use synth_mcp::bridge::{BridgeConnectionDef, BridgeInstrumentDef, BridgeModuleDef};
 use synth_sequencer::Song;
 

@@ -6,8 +6,8 @@
 use std::sync::Arc;
 
 use synth_engine::SynthEngine;
-use synth_mcp::SynthBridge;
 use synth_mcp::SynthMcpServer;
+use synth_mcp::bridge::*;
 use synth_sequencer::Song;
 
 use pertylizer::mcp_bridge::AppSynthBridge;
@@ -128,7 +128,7 @@ fn script_module_readback_via_get_module_info() {
     use synth_core::audio::SampleRate as HwSampleRate;
     use synth_core::{AudioCallbackContext, AudioProcessor, ModuleType};
     use synth_engine::instrument::InstrumentId;
-    use synth_mcp::SynthBridge;
+    use synth_mcp::bridge::*;
 
     let (mut engine, handle) = SynthEngine::new();
     let song = Arc::new(synth_sequencer::SharedSong::new(Song::new("ScrReadback")));
@@ -251,7 +251,7 @@ fn set_parameters_sets_address_based_mod_matrix_destination() {
     use synth_core::audio::SampleRate as HwSampleRate;
     use synth_core::{AudioCallbackContext, AudioProcessor, ModuleType};
     use synth_engine::instrument::InstrumentId;
-    use synth_mcp::SynthBridge;
+    use synth_mcp::bridge::*;
     use synth_mcp::bridge::{BridgeParamSet, BridgeParamValue};
 
     let (mut engine, handle) = SynthEngine::new();

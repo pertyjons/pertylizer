@@ -3,8 +3,8 @@
 //! Vowel-shaping filter using parallel bandpass filters tuned to formant frequencies.
 //! Smoothly morphs between A, E, I, O, U vowel sounds.
 //!
-//! Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Filters/110-formant-filter.rst
-//! From the Music-DSP Source Code Archive (https://www.musicdsp.org/)
+//! Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Filters/110-formant-filter.rst>
+//! From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
 
 use std::collections::HashMap;
 

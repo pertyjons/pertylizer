@@ -837,7 +837,7 @@ fn smooth_contour(v: &[f32], taps: usize) -> Vec<f32> {
 /// duration (used to find note-off). All times are returned in ms.
 ///
 /// The contour is smoothed before any peak/threshold detection (see
-/// [`smooth_contour`]) so sub-window RMS ripple and a noisy sustain plateau
+/// `smooth_contour`) so sub-window RMS ripple and a noisy sustain plateau
 /// don't derail the estimate, and `attack_ms` is a threshold crossing (time to
 /// first reach a fraction of the peak on the way up) rather than the exact
 /// argmax window, which wanders on a flat top.

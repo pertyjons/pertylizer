@@ -18,7 +18,7 @@ pub enum LfoWaveform {
     Square,
     SampleAndHold,
     /// Smooth random: continuous random modulation without discontinuities.
-    /// Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Synthesis/269-smooth-random-lfo-generator.rst
+    /// Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Synthesis/269-smooth-random-lfo-generator.rst>
     SmoothRandom,
 }
 

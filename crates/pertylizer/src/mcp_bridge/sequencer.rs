@@ -1,5 +1,6 @@
-macro_rules! synth_bridge_sequencer {
-    () => {
+use super::*;
+
+impl synth_mcp::bridge::SequencerBridge for AppSynthBridge {
     fn get_song_info(&self) -> Result<SongInfo, McpBridgeError> {
         let (loop_enabled, loop_start, loop_end) = self.session.transport_loop_state();
         let song = self.shared.song.read();
@@ -1714,6 +1715,4 @@ macro_rules! synth_bridge_sequencer {
             Err(McpBridgeError::CommandSendFailed { command: "seek" })
         }
     }
-
-    };
 }

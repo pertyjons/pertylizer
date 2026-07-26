@@ -208,7 +208,7 @@ impl DialogState {
     /// Only the per-kind configuration is re-applied — the filters, the default
     /// file name, and the fallback directory — so the instance keeps its own
     /// memory across kinds. `default_name` is meaningful only for save modes
-    /// ([`FileDialogMode::is_save`]); pass `None` when picking. `initial_dir` is a
+    /// (`FileDialogMode::is_save`); pass `None` when picking. `initial_dir` is a
     /// *fallback*: under the default `OpeningMode::LastPickedDir` the dialog
     /// reopens wherever the user last picked, and only falls back to this
     /// directory before there is such a place.

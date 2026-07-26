@@ -1,5 +1,6 @@
-macro_rules! synth_bridge_instruments {
-    () => {
+use super::*;
+
+impl synth_mcp::bridge::InstrumentBridge for AppSynthBridge {
     fn list_instruments(&self) -> Result<Vec<InstrumentInfo>, McpBridgeError> {
         let snapshots = self.session.list_instruments();
         Ok(snapshots.iter().map(Self::snapshot_to_info).collect())
@@ -1432,6 +1433,4 @@ macro_rules! synth_bridge_instruments {
     }
 
     // === Sequencer: Song ===
-
-    };
 }

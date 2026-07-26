@@ -4,6 +4,27 @@ use super::*;
 use crate::voice_allocator::{AllocationMode, AllocatorConfig, VoiceAllocator};
 use synth_core::{ModuleType, VoiceCount};
 
+#[test]
+fn latest_audio_samples_are_retained_in_order() {
+    let samples = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+    let mut input = samples.into_iter();
+    let mut output = [0.0; 4];
+
+    collect_latest_samples(&mut output, || input.next());
+
+    assert_eq!(output, [3.0, 4.0, 5.0, 6.0]);
+}
+
+#[test]
+fn short_audio_input_is_zero_padded() {
+    let mut input = [1.0, 2.0].into_iter();
+    let mut output = [9.0; 4];
+
+    collect_latest_samples(&mut output, || input.next());
+
+    assert_eq!(output, [1.0, 2.0, 0.0, 0.0]);
+}
+
 /// Create a default instrument and add it to the engine via command.
 fn add_default_instrument(engine: &mut SynthEngine, handle: &mut EngineHandle) {
     let mut instrument =

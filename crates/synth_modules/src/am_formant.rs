@@ -5,8 +5,8 @@
 //! each amplitude-modulated by a modulator at the note pitch. The vowel parameter
 //! morphs between A/E/I/O/U formant tables.
 //!
-//! Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Synthesis/224-am-formantic-synthesis.rst
-//! From the Music-DSP Source Code Archive (https://www.musicdsp.org/)
+//! Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Synthesis/224-am-formantic-synthesis.rst>
+//! From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
 
 use std::collections::HashMap;
 

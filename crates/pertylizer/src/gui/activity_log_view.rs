@@ -8,7 +8,7 @@
 //!
 //! Filtering happens here, over a snapshot of the buffer, so the buffer keeps
 //! full debug-level detail and the Debug toggle is instant. The snapshot is
-//! only refreshed when the log's [generation](ActivityLog::generation) changes,
+//! only refreshed when the log's `ActivityLog::generation` changes,
 //! so an idle frame does no work.
 
 use eframe::egui::{self, Color32, RichText};
@@ -143,7 +143,7 @@ fn format_line(entry: &LogEntry) -> String {
 }
 
 /// Render the whole log to plain text for export: one entry per line as
-/// [`format_line`], with any structured fields appended as ` key=value`.
+/// `format_line`, with any structured fields appended as ` key=value`.
 #[must_use]
 pub fn format_export(log: &ActivityLog) -> String {
     let mut snapshot = Vec::new();

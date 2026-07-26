@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use synth_core::Bpm;
 use synth_engine::SynthEngine;
-use synth_mcp::SynthBridge;
+use synth_mcp::bridge::*;
 use synth_sequencer::{Song, Tick};
 
 use pertylizer::mcp_bridge::AppSynthBridge;

@@ -2,14 +2,16 @@
 //! [`synth_sequencer::ModGraph`] data.
 //!
 //! The serializable graph data lives in `Song`; the **running instances** here
-//! own the actual `Box<dyn PolyModule>` DSP (inside a [`ModuleGraph`]). Because
+//! own the actual `Box<dyn PolyModule>` DSP (inside a
+//! [`ModuleGraph`](crate::graph::ModuleGraph)). Because
 //! building those modules allocates, a [`ModGridRuntime`] is constructed off the
 //! audio thread (in the app crate, via the module factory) and shipped to the
 //! engine as a pre-built [`crate::EngineCommand::SetModGrid`]; the audio thread
 //! only swaps the box in and processes it — never builds it.
 //!
 //! Each block, before instruments and before track-control composition, every
-//! instance's [`ModuleGraph`] is processed once (control-rate, mono) and each of
+//! instance's [`ModuleGraph`](crate::graph::ModuleGraph) is processed once
+//! (control-rate, mono) and each of
 //! its [`ResolvedTarget`]s reads a source output and contributes an additive,
 //! block-constant offset into the automation target space.
 
@@ -150,7 +152,7 @@ pub struct InputInjection {
 impl InputInjection {
     /// Advance the one-pole envelope follower toward `level` and return it
     /// (audio-tap sources only); `coeff` is the block-size-independent
-    /// [`tap_coeff`]. RT-safe scalar update.
+    /// `tap_coeff`. RT-safe scalar update.
     pub fn follow(&mut self, level: f32, coeff: f32) -> f32 {
         self.smooth += coeff * (level - self.smooth);
         self.smooth
@@ -301,7 +303,7 @@ pub fn buffer_level(interleaved: &[f32]) -> f32 {
 
 impl ResolvedTarget {
     /// Advance the one-pole envelope follower toward `level` and return it;
-    /// `coeff` is the block-size-independent [`tap_coeff`]. RT-safe scalar update.
+    /// `coeff` is the block-size-independent `tap_coeff`. RT-safe scalar update.
     pub fn follow(&mut self, level: f32, coeff: f32) -> f32 {
         self.smooth += coeff * (level - self.smooth);
         self.smooth

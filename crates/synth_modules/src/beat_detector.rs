@@ -3,8 +3,8 @@
 //! Envelope-following beat detection with Schmitt trigger gate output.
 //! Useful for rhythmic gating and auto-tempo detection.
 //!
-//! Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Analysis/200-beat-detector-class.rst
-//! From the Music-DSP Source Code Archive (https://www.musicdsp.org/)
+//! Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Analysis/200-beat-detector-class.rst>
+//! From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
 
 use std::collections::HashMap;
 

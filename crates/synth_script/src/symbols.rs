@@ -162,7 +162,9 @@ pub fn macro_from_name(name: &str) -> Option<Macro> {
 }
 
 /// Resolve an audio-input identifier to its channel. Audio-rate scripts only —
-/// the compiler gates these behind [`CompileOptions::audio_rate`]; in a
+/// the compiler gates these behind
+/// [`CompileOptions::audio_rate`](crate::compile::CompileOptions::audio_rate);
+/// in a
 /// control-rate script they are reserved but unresolvable. Mono `in` reads left.
 #[must_use]
 pub fn audio_in_channel(name: &str) -> Option<AudioInputChannel> {

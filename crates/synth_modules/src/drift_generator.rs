@@ -3,8 +3,8 @@
 //! Smooth, bounded random modulation that mimics analog oscillator instability.
 //! Produces natural pitch drift, filter wander, and amplitude variation.
 //!
-//! Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Synthesis/183-drift-generator.rst
-//! From the Music-DSP Source Code Archive (https://www.musicdsp.org/)
+//! Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Synthesis/183-drift-generator.rst>
+//! From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
 
 use std::collections::HashMap;
 

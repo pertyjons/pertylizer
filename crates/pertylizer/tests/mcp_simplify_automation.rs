@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use synth_core::{InstrumentId, NormalizedValue};
 use synth_engine::SynthEngine;
-use synth_mcp::SynthBridge;
+use synth_mcp::bridge::*;
 use synth_sequencer::{
     AutomationPoint, AutomationTarget, CurveType, Duration as SeqDuration, GlobalParam, PatternId,
     PatternTick, SharedSong, Song,

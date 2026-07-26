@@ -1,5 +1,6 @@
-macro_rules! synth_bridge_samples {
-    () => {
+use super::*;
+
+impl synth_mcp::bridge::SampleBridge for AppSynthBridge {
     fn list_samples(
         &self,
         filter: Option<&str>,
@@ -657,6 +658,4 @@ macro_rules! synth_bridge_samples {
     }
 
     // === Audio input ===
-
-    };
 }

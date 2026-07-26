@@ -5,7 +5,7 @@
 //! calls, engine warnings, egui id-clash diagnostics, and (via a small mirror,
 //! see `dialogs::set_status`) the user-facing status line. Rather than
 //! hand-wiring `push()` calls at every event site, we register a second
-//! `tracing_subscriber::Layer` that formats each event into a [`LogEntry`] and
+//! `tracing_subscriber::Layer` that formats each event into a `LogEntry` and
 //! stores it here. The GUI snapshots the buffer once per frame and renders it
 //! lock-free.
 //!
@@ -99,7 +99,7 @@ struct Inner {
     next_seq: AtomicU64,
 }
 
-/// Shared, bounded ring buffer of [`LogEntry`]. Cheap to `clone` — every clone
+/// Shared, bounded ring buffer of `LogEntry`. Cheap to `clone` — every clone
 /// points at the same underlying buffer.
 #[derive(Clone)]
 pub struct ActivityLog(Arc<Inner>);
@@ -111,7 +111,7 @@ impl Default for ActivityLog {
 }
 
 impl ActivityLog {
-    /// Create an empty log with capacity [`CAP`].
+    /// Create an empty log with capacity `CAP`.
     #[must_use]
     pub fn new() -> Self {
         Self(Arc::new(Inner {

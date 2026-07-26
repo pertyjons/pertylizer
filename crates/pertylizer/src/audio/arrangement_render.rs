@@ -17,8 +17,8 @@
 //! - No per-track stems. The output is the master mix only.
 //! - Notes that started before `start_tick` are pre-rolled by seeking the
 //!   offline engine to the earliest crossing note's start (capped by
-//!   [`MAX_PREROLL_SECONDS`]) and trimming the prefix from the output. Pre-roll
-//!   that would push total render time above [`MAX_RENDER_SECONDS`] is shrunk
+//!   `MAX_PREROLL_SECONDS`) and trimming the prefix from the output. Pre-roll
+//!   that would push total render time above `MAX_RENDER_SECONDS` is shrunk
 //!   to fit, with a warning. Notes that started further back than the cap are
 //!   silent for the duration of the render.
 

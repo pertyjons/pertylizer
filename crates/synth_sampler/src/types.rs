@@ -86,18 +86,35 @@ impl PlaybackPosition {
     /// Advance by a speed amount.
     #[inline]
     pub fn advance(self, speed: PlaybackSpeed) -> Self {
-        Self(self.0 + speed.0)
+        Self(self.0 + speed.as_f64())
     }
 }
 
 /// Playback speed ratio (1.0 = original pitch, 2.0 = one octave up).
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
 #[must_use]
-pub struct PlaybackSpeed(pub f64);
+pub struct PlaybackSpeed(f64);
 
 impl PlaybackSpeed {
     /// Original speed (no pitch shift).
     pub const ORIGINAL: Self = Self(1.0);
+
+    /// Create a finite, non-negative playback speed.
+    ///
+    /// Non-finite values become zero so invalid control data cannot propagate
+    /// into the audio path.
+    pub fn new(ratio: f64) -> Self {
+        Self(if ratio.is_finite() {
+            ratio.max(0.0)
+        } else {
+            0.0
+        })
+    }
+
+    /// Return the speed ratio.
+    pub const fn as_f64(self) -> f64 {
+        self.0
+    }
 
     /// Calculate speed from MIDI note offset.
     /// `speed = 2^((target_note - root_note) / 12.0)`
@@ -204,5 +221,42 @@ impl SampleMeta {
             return 0.0;
         }
         self.frame_count.as_usize() as f64 / f64::from(self.sample_rate.as_u32())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn playback_speed_always_preserves_its_invariant() {
+        for ratio in [
+            f64::NEG_INFINITY,
+            -1.0,
+            -0.0,
+            0.0,
+            0.5,
+            1.0,
+            2.0,
+            f64::INFINITY,
+            f64::NAN,
+        ] {
+            let speed = PlaybackSpeed::new(ratio).as_f64();
+            assert!(speed.is_finite());
+            assert!(speed >= 0.0);
+        }
+    }
+
+    #[test]
+    fn note_offsets_produce_finite_positive_speeds() {
+        for target in 0..=127 {
+            for root in [0, 60, 127] {
+                let speed =
+                    PlaybackSpeed::from_note_offset(MidiNote::new(target), MidiNote::new(root))
+                        .as_f64();
+                assert!(speed.is_finite());
+                assert!(speed > 0.0);
+            }
+        }
     }
 }

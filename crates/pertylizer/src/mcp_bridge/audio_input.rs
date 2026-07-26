@@ -1,5 +1,6 @@
-macro_rules! synth_bridge_audio_input {
-    () => {
+use super::*;
+
+impl synth_mcp::bridge::AudioInputBridge for AppSynthBridge {
     fn list_input_devices(&self) -> Result<Vec<synth_mcp::types::InputDeviceInfo>, McpBridgeError> {
         let host = self.audio_input_host.lock();
         let host = host.as_ref().ok_or_else(|| {
@@ -171,6 +172,4 @@ macro_rules! synth_bridge_audio_input {
     }
 
     // === Discovery ===
-
-    };
 }

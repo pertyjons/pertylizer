@@ -195,7 +195,7 @@ pub enum KineticParam {
     CurveType(EasingCurve),
     /// Overshoot strength for Back/Elastic curves (0.0 to 1.0, default 0.5).
     Overshoot(NormalizedValue),
-    /// Bipolar mode: false = [0,1], true = [-1,1].
+    /// Bipolar mode: false = `0..=1`, true = `-1..=1`.
     Bipolar(bool),
     /// Loop mode.
     LoopMode(KineticLoopMode),

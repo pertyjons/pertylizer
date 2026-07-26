@@ -1,0 +1,56 @@
+name: Quality
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  workspace:
+    name: Workspace
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - uses: Swatinem/rust-cache@v2
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev pkg-config libxkbcommon-dev libwayland-dev libudev-dev
+      - name: Format check
+        run: cargo fmt --check
+      - name: Build
+        run: cargo build
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets
+      - name: Test
+        run: cargo test --workspace
+      - name: Documentation
+        run: cargo doc --workspace --no-deps
+      - name: Minimal feature set
+        run: cargo check --workspace --all-targets --no-default-features
+      - name: Complete feature set
+        run: cargo check --workspace --all-targets --all-features
+
+  msrv:
+    name: Rust 1.97
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.97.0
+      - uses: Swatinem/rust-cache@v2
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev pkg-config libxkbcommon-dev libwayland-dev libudev-dev
+      - name: Check workspace at MSRV
+        run: cargo check --workspace

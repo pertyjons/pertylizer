@@ -3,8 +3,8 @@
 //! Positions a mono voice in a fixed virtual room by summing two parallel
 //! DSP paths on the same dry signal (the standard pro spatial-reverb split):
 //!
-//! - a **binaural direct path** ([`Spatializer`]): ITD / ILD / head-shadow,
-//! - **early reflections** ([`EarlyReflections`]): ISM taps from six walls.
+//! - a **binaural direct path** (`Spatializer`): ITD / ILD / head-shadow,
+//! - **early reflections** (`EarlyReflections`): ISM taps from six walls.
 //!
 //! Both take mono in → stereo out and their outputs are summed (never chained
 //! in series — that would collapse the direct path's stereo back to mono).

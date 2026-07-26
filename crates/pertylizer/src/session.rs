@@ -1030,7 +1030,7 @@ impl SynthSession {
     }
 
     /// Check if an instrument is known to this session. See
-    /// [`Self::alive_instruments`] for why this reads the synchronous mirror
+    /// `Self::alive_instruments` for why this reads the synchronous mirror
     /// rather than `EngineState::instrument_snapshots`.
     pub fn instrument_exists(&self, instrument_id: InstrumentId) -> bool {
         self.alive_instruments

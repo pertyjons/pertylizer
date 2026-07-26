@@ -1,7 +1,7 @@
 //! PADsynth parameter types.
 //!
-//! Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Synthesis/213-padsynth-synthesys-method.rst
-//! From the Music-DSP Source Code Archive (https://www.musicdsp.org/)
+//! Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Synthesis/213-padsynth-synthesys-method.rst>
+//! From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
 
 use serde::{Deserialize, Serialize};
 

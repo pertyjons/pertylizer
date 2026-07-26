@@ -1,6 +1,6 @@
 //! Detailed offline spectrum analysis: detected partials, harmonicity, and
 //! timbre descriptors that separate sounds the coarse 4-band
-//! [`energy_bands`](super::energy_bands) metric cannot (a plain triangle, a
+//! [`energy_bands`](crate::audio::analysis::energy_bands) metric cannot (a plain triangle, a
 //! ring-modulated triangle, and a metallic carrier have near-identical 4-band
 //! energy yet very different partial structure).
 //!
@@ -809,7 +809,7 @@ pub struct SpectrumDistance {
     pub log_spectral_distance: f32,
     /// The voiced-vs-unvoiced mismatch penalty applied to the *combined* score,
     /// reported on its own so it never saturates `log_spectral_distance`:
-    /// [`VOICING_MISMATCH_PENALTY_DB`] when `voicing_mismatch`, else 0. The old
+    /// `VOICING_MISMATCH_PENALTY_DB` when `voicing_mismatch`, else 0. The old
     /// single-scalar behaviour is `log_spectral_distance + voicing_penalty_db`.
     pub voicing_penalty_db: f32,
     /// True L2 (Euclidean) distance over the shared log-mel bands (dB): the
@@ -849,7 +849,7 @@ pub struct SpectrumDistance {
     pub floor_coverage: f32,
     /// `true` when the distance scalar should not be trusted: both sources
     /// near-floor (distance forced to 0 — the *character* agrees), or the
-    /// informative-bin fraction is below [`FLOOR_COVERAGE_MIN`] so the scalar
+    /// informative-bin fraction is below `FLOOR_COVERAGE_MIN` so the scalar
     /// rests on a handful of bins. Read `missing/extra_partials` +
     /// `centroid_delta` instead.
     pub floor_limited: bool,
@@ -1099,7 +1099,7 @@ pub struct TimeResolvedDistance {
     /// Frames dropped by the mask (paired, but the target was below threshold).
     pub frames_masked: u32,
     /// The most-diverging compared frames, descending `lsd`, at most
-    /// [`WORST_FRAMES`].
+    /// `WORST_FRAMES`.
     pub worst_frames: Vec<WorstFrame>,
 }
 
@@ -1285,7 +1285,7 @@ pub fn envelope_align(
 }
 
 /// Fraction (0..1) of a buffer's [`ENV_ALIGN_WINDOW_MS`] RMS windows whose level
-/// clears [`NEAR_FLOOR_RMS`] — i.e. how much of the window actually carries
+/// clears `NEAR_FLOOR_RMS` — i.e. how much of the window actually carries
 /// signal rather than silence/decay. The aggregate [`compare`] averages over the
 /// whole window, so a low active-time fraction flags material where that scalar
 /// is averaging over silence and the caller wants the time-resolved path

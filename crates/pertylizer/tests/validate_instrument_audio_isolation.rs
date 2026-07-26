@@ -24,7 +24,7 @@ use pertylizer::mcp_bridge::AppSynthBridge;
 use pertylizer::mcp_shared::McpSharedState;
 use pertylizer::patch::{ModuleBuilder, Patch};
 use pertylizer::session::SynthSession;
-use synth_mcp::SynthBridge;
+use synth_mcp::bridge::*;
 
 use common::TEST_SR;
 

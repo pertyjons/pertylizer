@@ -194,7 +194,7 @@ impl NoiseState {
 
     /// Generate next random value using xorshift.
     #[inline]
-    pub fn next(&mut self) -> f32 {
+    pub fn next_bipolar(&mut self) -> f32 {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 17;
         self.0 ^= self.0 << 5;
@@ -1326,8 +1326,8 @@ mod tests {
     #[test]
     fn test_noise_state() {
         let mut noise = NoiseState::DEFAULT;
-        let v1 = noise.next();
-        let v2 = noise.next();
+        let v1 = noise.next_bipolar();
+        let v2 = noise.next_bipolar();
         assert!((-1.0..=1.0).contains(&v1));
         assert!((-1.0..=1.0).contains(&v2));
         assert!((v1 - v2).abs() > 0.001); // Should be different

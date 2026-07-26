@@ -4,8 +4,8 @@
 //! 4th-order Linkwitz-Riley crossover filters. Allows independent gain
 //! control of each band.
 //!
-//! Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Filters/266-4th-order-linkwitz-riley-filters.rst
-//! From the Music-DSP Source Code Archive (https://www.musicdsp.org/)
+//! Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Filters/266-4th-order-linkwitz-riley-filters.rst>
+//! From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
 
 use synth_core::{
     AudioEffect, CrossoverParam, Describable, Hertz, ModuleCategory, ModuleDescriptor, ModuleType,

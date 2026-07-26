@@ -15,7 +15,6 @@ use synth_core::{
 use synth_engine::EngineCommand;
 use synth_engine::commands::ModuleId;
 use synth_engine::instrument::{InstrumentId, MidiChannel as EngineMidiChannel};
-use synth_mcp::bridge::SynthBridge;
 use synth_mcp::bridge::{
     BridgeAutomationPointData, BridgeExpression, BridgeGlide, BridgeInstrumentDef, BridgeNoteData,
     BridgeNoteUpdate, BridgeParamSet, BridgeParamValue, BridgePatternData, BridgePlacementData,
@@ -567,32 +566,16 @@ fn is_sound_source(module_type: synth_core::ModuleType) -> bool {
     })
 }
 
-// Rust permits only one implementation of a trait for a type. Keep the
-// `SynthBridge` implementation cohesive at the type-system level while its
-// methods remain navigable by expanding domain-oriented item fragments here.
-include!("mcp_bridge/instruments.rs");
-include!("mcp_bridge/sequencer.rs");
-include!("mcp_bridge/instrument_build.rs");
-include!("mcp_bridge/automation.rs");
-include!("mcp_bridge/mixing.rs");
-include!("mcp_bridge/project.rs");
-include!("mcp_bridge/analysis.rs");
-include!("mcp_bridge/samples.rs");
-include!("mcp_bridge/audio_input.rs");
-include!("mcp_bridge/discovery.rs");
-
-impl SynthBridge for AppSynthBridge {
-    synth_bridge_instruments!();
-    synth_bridge_sequencer!();
-    synth_bridge_instrument_build!();
-    synth_bridge_automation!();
-    synth_bridge_mixing!();
-    synth_bridge_project!();
-    synth_bridge_analysis!();
-    synth_bridge_samples!();
-    synth_bridge_audio_input!();
-    synth_bridge_discovery!();
-}
+mod analysis;
+mod audio_input;
+mod automation;
+mod discovery;
+mod instrument_build;
+mod instruments;
+mod mixing;
+mod project;
+mod samples;
+mod sequencer;
 
 /// Decoded routing from a Mod Matrix module's parameter snapshot. Address-based
 /// — no legacy enum, so arbitrary sources/destinations survive (a third LFO,
@@ -6846,7 +6829,7 @@ fn resolve_envelope_window_ms(requested: Option<f32>) -> f32 {
 }
 
 /// Analyze a rendered note with the default envelope window
-/// ([`DEFAULT_ENVELOPE_WINDOW_MS`]). Used by sweeps and the GUI, which don't
+/// (`DEFAULT_ENVELOPE_WINDOW_MS`). Used by sweeps and the GUI, which don't
 /// expose the resolution knob.
 pub fn analyze_rendered_buffer(
     rendered: &crate::audio::preview::RenderedNote,
@@ -7812,11 +7795,9 @@ pub fn generate_chord_impl(
 
     let v = match voicing {
         None => ChordVoicing::Close,
-        Some(s) => ChordVoicing::from_str_opt(s).ok_or_else(|| {
-            McpBridgeError::Other(format!(
-                "unknown voicing {s:?}; expected one of close, drop2, drop3, open"
-            ))
-        })?,
+        Some(s) => s
+            .parse::<ChordVoicing>()
+            .map_err(|error| McpBridgeError::Other(error.to_string()))?,
     };
     let generated =
         generate_chord(symbol, octave, v).map_err(|e| McpBridgeError::Other(e.to_string()))?;
@@ -8035,11 +8016,9 @@ fn parse_tie_break(s: Option<&str>) -> Result<crate::composition::ScaleTieBreak,
     use crate::composition::ScaleTieBreak;
     match s {
         None => Ok(ScaleTieBreak::NearestUp),
-        Some(raw) => ScaleTieBreak::from_str_opt(raw).ok_or_else(|| {
-            McpBridgeError::Other(format!(
-                "unknown tie_break {raw:?}; expected one of up, down, nearest"
-            ))
-        }),
+        Some(raw) => raw
+            .parse::<ScaleTieBreak>()
+            .map_err(|error| McpBridgeError::Other(error.to_string())),
     }
 }
 

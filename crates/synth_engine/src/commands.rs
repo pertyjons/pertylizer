@@ -489,7 +489,8 @@ pub enum EngineCommand {
         module_id: ModuleId,
         slot: u8,
         script: Option<std::sync::Arc<synth_core::script::BoundScript>>,
-        /// A prebuilt fresh [`ModuleDescriptor`] to swap into the module's graph
+        /// A prebuilt fresh [`ModuleDescriptor`](synth_core::ModuleDescriptor)
+        /// to swap into the module's graph
         /// nodes (template + every voice), for a script module whose `param` set
         /// may have changed. Built off the audio thread (the descriptor allocates);
         /// the audio thread only shares it in per node (cheap `Arc` clone) and

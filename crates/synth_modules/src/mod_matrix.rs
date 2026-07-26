@@ -1,7 +1,7 @@
 //! Mod Matrix module — routes modulation sources to destinations.
 //!
 //! Holds a list of up to [`MAX_MOD_MATRIX_SLOTS`] routings. Each routing is a
-//! source ([`SrcAddr`] — a macro or a module output/param) scaled by a bipolar
+//! source ([`SrcAddr`](synth_core::SrcAddr) — a macro or a module output/param) scaled by a bipolar
 //! amount into a destination ([`DestAddr`](synth_core::DestAddr) — any
 //! modulatable param on any module), plus an enabled flag. A routing with no
 //! source or destination is inactive.

@@ -4,8 +4,8 @@
 //! with optocoupler (vactrol) modeling. Produces the characteristic swirling sound
 //! of Hendrix-era recordings.
 //!
-//! Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Effects/277-univox-univibe-emulator.rst
-//! From the Music-DSP Source Code Archive (https://www.musicdsp.org/)
+//! Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Effects/277-univox-univibe-emulator.rst>
+//! From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
 
 use synth_core::{
     AudioEffect, Describable, Hertz, ModuleCategory, ModuleDescriptor, ModuleType, NormalizedValue,

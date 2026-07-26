@@ -578,7 +578,7 @@ impl CompiledScript {
     /// audio-rate counterpart to [`eval`](Self::eval).
     ///
     /// The value stack and `locals` are allocated once and kept warm across the
-    /// whole block (only `sp` is reset per sample via [`Stack::clear`], never the
+    /// whole block (only `sp` is reset per sample via `Stack::clear`, never the
     /// 64-float buffer), so per-sample overhead is just the op loop. `sources` is
     /// pre-filled by the caller with the **per-block-constant** values (macros,
     /// context vars, slow params); the registers named in `bindings` are the only

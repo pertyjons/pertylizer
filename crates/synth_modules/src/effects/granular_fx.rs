@@ -118,17 +118,17 @@ impl GranularFx {
         // Position with spread
         let pos_base = self.position.as_f32();
         let spread = self.position_spread.as_f32();
-        let pos = (pos_base + self.noise.next() * spread * 0.5).clamp(0.0, 1.0);
+        let pos = (pos_base + self.noise.next_bipolar() * spread * 0.5).clamp(0.0, 1.0);
 
         #[allow(clippy::cast_possible_truncation)]
         let start = (pos * (self.buffer_len - grain_len) as f32) as usize;
 
         // Pitch with spread
-        let pitch_rng = self.noise.next() * self.pitch_spread.as_f32();
+        let pitch_rng = self.noise.next_bipolar() * self.pitch_spread.as_f32();
         let rate = 2.0f32.powf(pitch_rng);
 
         // Pan
-        let pan = BipolarValue::new(self.noise.next() * self.pan_spread.as_f32());
+        let pan = BipolarValue::new(self.noise.next_bipolar() * self.pan_spread.as_f32());
 
         *grain = Grain {
             active: true,

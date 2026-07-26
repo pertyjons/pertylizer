@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Sequencer module for Pertylizer.
 //!
 //! This crate provides a flexible sequencer that supports piano roll-style editing.

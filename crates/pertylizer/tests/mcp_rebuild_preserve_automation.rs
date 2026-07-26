@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 use synth_core::InstrumentId;
 use synth_engine::SynthEngine;
-use synth_mcp::SynthBridge;
+use synth_mcp::bridge::*;
 use synth_mcp::bridge::{
     BridgeAutomationPointData, BridgeConnectionDef, BridgeInstrumentDef, BridgeModuleDef,
     BridgeParamValue, CurveKind,

@@ -420,7 +420,7 @@ pub enum ArpRate {
     /// Frame-/tempo-independent step rate in **millihertz** (integer, so
     /// `ArpRate` keeps `Eq`/`Hash`): 50_000 = 50 Hz PAL, 60_000 = 60 Hz NTSC.
     /// The tick length is tempo-dependent and resolved against the live BPM in
-    /// [`Arpeggiator::step_onset`] with drift-free absolute-time rounding.
+    /// `Arpeggiator::step_onset` with drift-free absolute-time rounding.
     MilliHz(u32),
 }
 
@@ -429,7 +429,7 @@ impl ArpRate {
     /// and [`Self::Ticks`] is the raw sub-grid count (clamped to ≥1). For the
     /// tempo-dependent [`Self::MilliHz`] this is only a nominal length at the
     /// default tempo — the real per-step length is resolved against the live
-    /// BPM in [`Arpeggiator::step_onset`]; this fallback is for UI/length hints.
+    /// BPM in `Arpeggiator::step_onset`; this fallback is for UI/length hints.
     #[allow(clippy::cast_precision_loss, clippy::cast_possible_truncation)]
     pub fn ticks(self) -> Duration {
         match self {
@@ -1761,7 +1761,9 @@ impl Pattern {
     ///
     /// The rack has no product authoring surface anymore — the Note Grid
     /// replaced it (a graph is bound per pattern, and legacy racks migrate to
-    /// graphs on load, [`Song::migrate_processor_racks_to_graphs`]). This
+    /// graphs on load,
+    /// [`Song::migrate_processor_racks_to_graphs`](crate::song::Song::migrate_processor_racks_to_graphs)).
+    /// This
     /// remains to construct legacy racks for the migration / persistence tests.
     pub fn add_processor(&mut self, processor: NoteProcessor) -> usize {
         let stage = processor.chain_stage();

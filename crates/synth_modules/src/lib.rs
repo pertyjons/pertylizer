@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Synth modules and audio effects for Pertylizer.
 //!
 //! This crate provides ready-to-use audio modules:

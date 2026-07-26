@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Low-level DSP primitives for Pertylizer.
 //!
 //! This module contains reusable DSP building blocks that are used

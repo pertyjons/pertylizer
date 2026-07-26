@@ -14,8 +14,8 @@ use synth_core::{Gain, Hertz, NormalizedValue, SampleRate};
 /// Accurate to within ~0.1% for |x| < 4.0, exact at 0 and monotonic.
 /// ~3-5x faster than `f32::tanh()` in audio-rate loops.
 ///
-/// Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Other/238-rational-tanh-approximation.rst
-/// From the Music-DSP Source Code Archive (https://www.musicdsp.org/)
+/// Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Other/238-rational-tanh-approximation.rst>
+/// From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
 #[inline]
 pub fn fast_tanh(x: f32) -> f32 {
     if x < -3.0 {
@@ -38,8 +38,8 @@ pub fn soft_clip(x: f32) -> f32 {
 ///
 /// `hardness` ranges from 0.0 (very soft, nearly linear) to 1.0 (nearly hard clip).
 ///
-/// Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Effects/104-variable-hardness-clipping-function.rst
-/// From the Music-DSP Source Code Archive (https://www.musicdsp.org/)
+/// Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Effects/104-variable-hardness-clipping-function.rst>
+/// From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
 #[inline]
 pub fn variable_clip(x: f32, hardness: f32) -> f32 {
     // Map hardness 0..1 to a scale factor for atan
@@ -669,7 +669,7 @@ pub fn brightness_boost(harmonic_num: f32, brightness: f32) -> f32 {
 
 /// Calculate early reflection delay times using image-mirror technique.
 /// Returns an array of (delay_samples, gain) pairs for the first 6 reflections.
-/// Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Effects/74-early-echo-s-with-image-mirror-technique.rst
+/// Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Effects/74-early-echo-s-with-image-mirror-technique.rst>
 /// Note: room dimensions use raw f32 (meters) here for the plain image-mirror
 /// helper; the `Meters`/`Position3` newtypes (in synth_core) are used by the
 /// spatial modules that need typed geometry.

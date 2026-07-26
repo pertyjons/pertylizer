@@ -114,7 +114,9 @@ impl ScriptParams {
         self.slot_of(name).map(|i| self.values[i])
     }
 
-    /// The active knobs as `Param`s, for [`PolyModule::get_params`]. Each is a
+    /// The active knobs as `Param`s, for
+    /// [`PolyModule::get_params`](crate::module_traits::PolyModule::get_params).
+    /// Each is a
     /// `Param::Script(ScriptParam::Knob(name, value))` at its current value.
     #[must_use]
     pub fn as_params(&self) -> Vec<Param> {

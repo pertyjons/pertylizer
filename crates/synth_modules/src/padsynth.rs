@@ -2,8 +2,8 @@
 //!
 //! Generates lush pad sounds using the PADsynth algorithm.
 //!
-//! Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Synthesis/213-padsynth-synthesys-method.rst
-//! From the Music-DSP Source Code Archive (https://www.musicdsp.org/)
+//! Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Synthesis/213-padsynth-synthesys-method.rst>
+//! From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
 //!
 //! The PADsynth algorithm builds a wavetable by placing bandwidth-spread
 //! Gaussian profiles around each harmonic in the frequency domain, then

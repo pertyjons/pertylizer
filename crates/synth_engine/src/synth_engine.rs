@@ -4136,6 +4136,25 @@ fn route_sequencer_events(
     }
 }
 
+/// Drain a sample source into a fixed buffer, retaining the newest samples in
+/// chronological order. The buffer is cleared when the source yields fewer
+/// samples and no work is performed per overflow beyond one final rotation.
+fn collect_latest_samples(output: &mut [f32], mut next: impl FnMut() -> Option<f32>) {
+    output.fill(0.0);
+
+    let mut received = 0;
+    while let Some(sample) = next() {
+        if !output.is_empty() {
+            output[received % output.len()] = sample;
+        }
+        received += 1;
+    }
+
+    if received > output.len() && !output.is_empty() {
+        output.rotate_left(received % output.len());
+    }
+}
+
 impl AudioProcessor for SynthEngine {
     fn process(&mut self, output: &mut [f32], context: &AudioCallbackContext) {
         let start_time = Instant::now();
@@ -4157,35 +4176,18 @@ impl AudioProcessor for SynthEngine {
         let stereo_samples = context.frames * 2;
         // No resize — buffer is pre-allocated to 8192. If block > 4096 frames,
         // we silently cap to buffer size (avoids RT allocation).
-        let buf_cap = self.audio_input_buffer.len();
+        let mut audio_input_buffer = std::mem::take(&mut self.audio_input_buffer);
+        let buf_cap = audio_input_buffer.len();
         let usable = stereo_samples.min(buf_cap);
-        self.audio_input_buffer[..usable].fill(0.0);
-
         if let Some(ref mut consumer) = self.audio_input_consumer {
-            // Drain everything available from the ring buffer to handle clock drift.
-            // We keep only the most recent `usable` samples. If the input device is
-            // slightly faster than the output, excess samples are discarded.
-            let mut write_idx = 0;
-            while let Some(sample) = consumer.try_pop() {
-                if write_idx < usable {
-                    self.audio_input_buffer[write_idx] = sample;
-                } else {
-                    // Overflow: shift buffer left and append at end (keep latest)
-                    self.audio_input_buffer.copy_within(1..usable, 0);
-                    self.audio_input_buffer[usable - 1] = sample;
-                }
-                write_idx += 1;
-            }
+            collect_latest_samples(&mut audio_input_buffer[..usable], || consumer.try_pop());
+        } else {
+            audio_input_buffer[..usable].fill(0.0);
         }
         let has_input = self.audio_input_consumer.is_some();
 
-        // SAFETY: The audio_input_buffer is pre-allocated and not modified during
-        // the remainder of this process() call. We extend its lifetime to decouple
-        // it from `self` so that `self` can be borrowed mutably for instrument
-        // processing while the buffer reference remains valid in ProcessContext.
         let audio_input_ref: Option<&[f32]> = if has_input {
-            let ptr = self.audio_input_buffer.as_ptr();
-            Some(unsafe { std::slice::from_raw_parts(ptr, usable) })
+            Some(&audio_input_buffer[..usable])
         } else {
             None
         };
@@ -4318,6 +4320,7 @@ impl AudioProcessor for SynthEngine {
         let t_stage = Instant::now();
         self.process_master_effects(&process_context);
         self.stage_master_fx_sum += t_stage.elapsed().as_secs_f32();
+        self.audio_input_buffer = audio_input_buffer;
 
         // Mix metronome click into output
         self.click_generator

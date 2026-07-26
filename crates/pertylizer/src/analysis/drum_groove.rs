@@ -171,7 +171,7 @@ pub struct DrumGhostNotes {
 }
 
 /// Fill detection on a per-bar basis. A bar is flagged as a "fill candidate"
-/// when its drum-note density exceeds [`FILL_DENSITY_MULTIPLIER`] times the
+/// when its drum-note density exceeds `FILL_DENSITY_MULTIPLIER` times the
 /// mean drum-note density across the rest of the range.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct DrumFills {

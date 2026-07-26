@@ -3,8 +3,8 @@
 //! Implements Rössler and Lorenz chaotic systems as modulation sources.
 //! Produces complex, non-repeating signals for organic modulation.
 //!
-//! Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Synthesis/184-rossler-and-lorenz-oscillators.rst
-//! From the Music-DSP Source Code Archive (https://www.musicdsp.org/)
+//! Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Synthesis/184-rossler-and-lorenz-oscillators.rst>
+//! From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
 
 use std::collections::HashMap;
 

@@ -1,4 +1,4 @@
-//! Form / section diagnostic — packages [`bar_features`] clustering output
+//! Form / section diagnostic — packages `bar_features` clustering output
 //! into per-section summaries with aggregate stats and the compact form
 //! string used by `analyze_form_map`.
 //!

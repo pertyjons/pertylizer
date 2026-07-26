@@ -159,7 +159,7 @@
         },
         {
           "additionalProperties": false,
-          "description": "Frame-/tempo-independent step rate in **millihertz** (integer, so\n`ArpRate` keeps `Eq`/`Hash`): 50_000 = 50 Hz PAL, 60_000 = 60 Hz NTSC.\nThe tick length is tempo-dependent and resolved against the live BPM in\n[`Arpeggiator::step_onset`] with drift-free absolute-time rounding.",
+          "description": "Frame-/tempo-independent step rate in **millihertz** (integer, so\n`ArpRate` keeps `Eq`/`Hash`): 50_000 = 50 Hz PAL, 60_000 = 60 Hz NTSC.\nThe tick length is tempo-dependent and resolved against the live BPM in\n`Arpeggiator::step_onset` with drift-free absolute-time rounding.",
           "properties": {
             "MilliHz": {
               "format": "uint32",
@@ -720,7 +720,7 @@
         },
         {
           "const": "StreamOnset",
-          "description": "Onsets in the *transformed* terminal stream (e.g. one retrigger per\narpeggiator step). Evaluated by a bounded backward look-back through the\nspine ([`NoteGraph::eval_prefix_at_tick`]) — more expensive than\n`SourceOnset` (each probe re-runs the spine), so it is opt-in **and its\nlook-back is capped at 1 beat** (`MAX_ENV_STREAM_WINDOW`): more than a\nbeat after the last transformed onset the level reads `0.0`, even when\n`attack + decay` is longer. Retriggers on **dry** transformed onsets\nonly — a delay's echoes do not retrigger it (RT protection: probing\nechoes would compound each in-spine delay's own look-back into an\naudio-thread stall). See `note-grid.md` §11.",
+          "description": "Onsets in the *transformed* terminal stream (e.g. one retrigger per\narpeggiator step). Evaluated by a bounded backward look-back through the\nspine (`NoteGraph::eval_prefix_at_tick`) — more expensive than\n`SourceOnset` (each probe re-runs the spine), so it is opt-in **and its\nlook-back is capped at 1 beat** (`MAX_ENV_STREAM_WINDOW`): more than a\nbeat after the last transformed onset the level reads `0.0`, even when\n`attack + decay` is longer. Retriggers on **dry** transformed onsets\nonly — a delay's echoes do not retrigger it (RT protection: probing\nechoes would compound each in-spine delay's own look-back into an\naudio-thread stall). See `note-grid.md` §11.",
           "type": "string"
         }
       ]
@@ -9805,7 +9805,7 @@
       "type": "object"
     },
     "NoteDelay": {
-      "description": "A decaying echo (plan §5.A): at tick `t` it\nkeeps the dry stream and appends copies of the onsets that entered this node\nat ticks `t − k·delay_ticks` (`k = 1..=repeats`), each scaled by `feedback^k`\nin velocity. Pure look-back — no queue, no cross-tick state. On the spine\nhead the scan reads the seeded source directly; downstream of a transform it\nre-runs the upstream prefix at each probed tick via\n[`NoteGraph::eval_prefix_at_tick`]. RT-safe: bounded by `repeats`,\n[`MAX_NOTE_DELAY_TICKS`], and the buffer cap.",
+      "description": "A decaying echo (plan §5.A): at tick `t` it\nkeeps the dry stream and appends copies of the onsets that entered this node\nat ticks `t − k·delay_ticks` (`k = 1..=repeats`), each scaled by `feedback^k`\nin velocity. Pure look-back — no queue, no cross-tick state. On the spine\nhead the scan reads the seeded source directly; downstream of a transform it\nre-runs the upstream prefix at each probed tick via\n`NoteGraph::eval_prefix_at_tick`. RT-safe: bounded by `repeats`,\n[`MAX_NOTE_DELAY_TICKS`], and the buffer cap.",
       "properties": {
         "delay_ticks": {
           "$ref": "#/$defs/Duration",

@@ -24,7 +24,8 @@ pub struct ModuleTargetGroup {
 }
 
 /// Enumerate an instrument's automatable module-param targets from its live
-/// descriptors. A param counts when [`ParameterDescriptor::is_automatable`]
+/// descriptors. A param counts when
+/// [`ParameterDescriptor::is_automatable`](synth_core::ParameterDescriptor::is_automatable)
 /// (continuous/integer and modulatable) — the same filter the MCP tool uses.
 /// Modules with no automatable param are omitted; groups are sorted by
 /// `(module_type, instance)` for stable display.

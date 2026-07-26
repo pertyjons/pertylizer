@@ -1,5 +1,6 @@
-macro_rules! synth_bridge_analysis {
-    () => {
+use super::*;
+
+impl synth_mcp::bridge::AnalysisBridge for AppSynthBridge {
     fn render_note_preview(
         &self,
         instrument_id: InstrumentId,
@@ -724,6 +725,4 @@ macro_rules! synth_bridge_analysis {
     }
 
     // === Sample library ===
-
-    };
 }

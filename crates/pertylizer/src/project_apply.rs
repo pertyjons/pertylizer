@@ -1336,6 +1336,7 @@ mod tests {
     /// (their marker glyphs disappeared). Guards that the GUI path now installs
     /// them. Note the *headless* path (`load_patch_round_trips_control_scripts`)
     /// already worked — this covers the separate GUI code path.
+    #[cfg(feature = "gui-egui")]
     #[test]
     fn gui_load_patch_installs_control_scripts() {
         use crate::gui::keyboard::PianoKeyboard;
@@ -1407,6 +1408,7 @@ mod tests {
     /// whose scripts *reference other modules* (`src o = osc-1.out`), loaded via
     /// the GUI path. The earlier test used a reference-free script and passed even
     /// while the app still dropped these.
+    #[cfg(feature = "gui-egui")]
     #[test]
     fn gui_load_patch_installs_module_referencing_scripts() {
         use crate::gui::keyboard::PianoKeyboard;
@@ -1473,6 +1475,7 @@ mod tests {
     /// control scripts from the engine snapshot — it previously hardcoded an empty
     /// map, so "Save Patch…" silently stripped every slot script (the saved file
     /// then loaded scriptless, markers gone). Complements the load-side guards.
+    #[cfg(feature = "gui-egui")]
     #[test]
     fn gui_save_patch_captures_control_scripts() {
         use crate::gui::patch_editor::PatchEditor;
@@ -1826,7 +1829,7 @@ mod tests {
     #[test]
     fn prune_unused_samples_keeps_referenced_drops_orphans() {
         use synth_sampler::Sample;
-        use synth_sampler::types::{SampleMeta, SampleSource};
+        use synth_sampler::{SampleMeta, SampleSource};
 
         fn make_sample(name: &str) -> Sample {
             Sample::new(

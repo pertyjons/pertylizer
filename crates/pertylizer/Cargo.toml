@@ -13,8 +13,16 @@ workspace = true
 
 [features]
 default = ["gui-egui", "mcp", "osc"]
-gui-egui = ["dep:eframe", "dep:egui", "dep:egui_extras", "dep:egui-file-dialog", "dep:egui-remixicon", "dep:image"]
-mcp = ["dep:synth_mcp", "dep:tokio"]
+gui-egui = [
+    "dep:eframe",
+    "dep:egui",
+    "dep:egui_extras",
+    "dep:egui-file-dialog",
+    "dep:egui-remixicon",
+    "dep:image",
+    "dep:winit",
+]
+mcp = ["dep:tokio"]
 osc = ["dep:synth_osc"]
 # Opt-in (NOT in default): pulls eframe's `inspection` feature, which links
 # `egui_inspection` + `accesskit` so an external `egui-mcp` server can drive the
@@ -81,7 +89,7 @@ egui-remixicon = { workspace = true, optional = true }
 image = { workspace = true, optional = true }
 
 # MCP server (optional)
-synth_mcp = { path = "../synth_mcp", optional = true }
+synth_mcp = { path = "../synth_mcp" }
 tokio = { workspace = true, optional = true }
 
 # Structured logging (subscriber init lives in main; library code uses
@@ -101,7 +109,7 @@ chrono = { workspace = true }
 # no title bar). Cargo unifies features across the dep graph, so adding
 # the feature here applies to the same winit crate eframe uses.
 [target.'cfg(target_os = "linux")'.dependencies]
-winit = { workspace = true, features = ["wayland-csd-adwaita"] }
+winit = { workspace = true, features = ["wayland-csd-adwaita"], optional = true }
 
 [build-dependencies]
 # UTC build-stamp formatting (replaces the hand-rolled civil-calendar math).

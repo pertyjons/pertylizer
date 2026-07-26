@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Shared OSC protocol constants and types for Pertylizer.
 //!
 //! This minimal crate defines all OSC address strings, protocol metadata,

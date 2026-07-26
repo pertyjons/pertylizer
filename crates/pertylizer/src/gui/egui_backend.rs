@@ -46,30 +46,12 @@ use synth_engine::{EngineCommand, EngineEvent, EngineHandle, ModuleId, SynthEngi
 use synth_sampler::SampleLibrary;
 
 mod dialog_flow;
+mod dialog_state;
 mod engine_events;
 mod project_flow;
 mod undo_flow;
 
-/// Action deferred until the user responds to the unsaved-changes dialog.
-enum PendingAction {
-    /// Create a new project.
-    NewProject,
-    /// Open a project via file dialog.
-    OpenProject,
-    /// Load a specific project file.
-    LoadProject(PathBuf),
-    /// Quit the application.
-    Quit,
-}
-
-/// State for the "unsaved changes" confirmation dialog.
-#[derive(Default)]
-struct UnsavedChangesDialog {
-    /// Whether the dialog is currently visible.
-    open: bool,
-    /// The action to perform once the user responds.
-    pending_action: Option<PendingAction>,
-}
+use dialog_state::{PendingAction, UnsavedChangesDialog};
 
 /// Egui-based GUI backend.
 pub struct EguiBackend;

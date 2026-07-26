@@ -1,5 +1,7 @@
-macro_rules! synth_bridge_mixing {
-    () => {
+use super::*;
+use synth_mcp::bridge::InstrumentBridge;
+
+impl synth_mcp::bridge::MixingBridge for AppSynthBridge {
     fn set_track_volume(
         &self,
         track_id: TrackId,
@@ -807,6 +809,4 @@ macro_rules! synth_bridge_mixing {
     }
 
     // === Project management ===
-
-    };
 }

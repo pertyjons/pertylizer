@@ -344,7 +344,7 @@ pub struct SpectrumSource {
 }
 
 /// The optional time-resolved (per-frame) mode of
-/// [`McpBridge::compare_spectra`]. When `enabled`, both sources are framed into
+/// [`AnalysisBridge::compare_spectra`]. When `enabled`, both sources are framed into
 /// spectrograms and compared frame-by-frame with target-energy masking — the
 /// framed distances are *added* to the aggregate result, not a replacement. The
 /// aggregate scalar averages over the whole window, so on time-sparse / staccato
@@ -508,11 +508,8 @@ fn unique_audio_cable_into(
     }
 }
 
-/// Bridge between the MCP server and the synth engine.
-///
-/// All methods use primitive types. Conversion to domain types
-/// (Hertz, MidiNote, Param, etc.) happens in the implementation.
-pub trait SynthBridge: Send + Sync + 'static {
+/// Instrument discovery, editing, and voice-graph operations.
+pub trait InstrumentBridge: DiscoveryBridge {
     // === Read operations ===
 
     /// List all instruments with basic info.
@@ -1060,7 +1057,10 @@ pub trait SynthBridge: Send + Sync + 'static {
             module_id: new_id,
         })
     }
+}
 
+/// Song, pattern, note, track, arrangement, transport, and grid operations.
+pub trait SequencerBridge {
     // === Sequencer: Song ===
 
     /// Get song info (name, tempo, length, pattern/track counts).
@@ -1473,7 +1473,10 @@ pub trait SynthBridge: Send + Sync + 'static {
         tracks: &[BridgeTrackData],
         placements: &[BridgeSongPlacement],
     ) -> Result<SetSongResult, McpBridgeError>;
+}
 
+/// Atomic instrument construction and rebuild operations.
+pub trait InstrumentBuildBridge {
     // === Batch instrument building ===
 
     /// Build a complete instrument in one call: create instrument, add modules,
@@ -1514,7 +1517,10 @@ pub trait SynthBridge: Send + Sync + 'static {
         instrument_id: Option<InstrumentId>,
         patch_name: &str,
     ) -> Result<ApplyExamplePatchResult, McpBridgeError>;
+}
 
+/// Pattern automation operations.
+pub trait AutomationBridge: SequencerBridge {
     // === Automation ===
 
     /// Add automation points to a pattern.
@@ -1668,7 +1674,10 @@ pub trait SynthBridge: Send + Sync + 'static {
             groups,
         })
     }
+}
 
+/// Track, return-bus, master-bus, and parameter mixing operations.
+pub trait MixingBridge {
     // === Track control ===
 
     /// Set track volume (0.0-1.0).
@@ -1925,7 +1934,10 @@ pub trait SynthBridge: Send + Sync + 'static {
         instrument_id: InstrumentId,
         params: &[BridgeParamSet],
     ) -> Result<BatchResult, McpBridgeError>;
+}
 
+/// Project persistence and maintenance operations.
+pub trait ProjectBridge {
     // === Project management ===
 
     /// Reset to a new empty project.
@@ -1949,7 +1961,10 @@ pub trait SynthBridge: Send + Sync + 'static {
 
     /// Optimize the project by removing unused patterns, tracks, and instruments.
     fn optimize_project(&self) -> Result<OptimizeResult, McpBridgeError>;
+}
 
+/// Offline rendering and musical analysis operations.
+pub trait AnalysisBridge: InstrumentBridge + SequencerBridge + MixingBridge {
     // === Audio preview ===
 
     /// Render a short audio preview of a note played on the given instrument.
@@ -2536,7 +2551,7 @@ pub trait SynthBridge: Send + Sync + 'static {
     ) -> Result<crate::types::GenerateChordResult, McpBridgeError>;
 
     /// Create a new pattern and fill it with a chord progression: each symbol
-    /// in `chords` is voiced via [`generate_chord`] and placed as a block of
+    /// in `chords` is voiced via [`Self::generate_chord`] and placed as a block of
     /// notes spanning `beats_per_chord`, laid end to end. Returns the new
     /// pattern id and a per-chord breakdown.
     ///
@@ -2643,7 +2658,10 @@ pub trait SynthBridge: Send + Sync + 'static {
         humanize_ticks: Option<u32>,
         humanize_seed: Option<u64>,
     ) -> Result<crate::types::QuantizeNotesToGridResult, McpBridgeError>;
+}
 
+/// Sample-library and sampler-module operations.
+pub trait SampleBridge {
     // === Sample library ===
 
     /// List all samples, optionally filtered by name substring.
@@ -2735,7 +2753,10 @@ pub trait SynthBridge: Send + Sync + 'static {
         param_name: &str,
         value: &str,
     ) -> Result<(), McpBridgeError>;
+}
 
+/// Audio-input monitoring and recording operations.
+pub trait AudioInputBridge {
     // === Audio input ===
 
     /// List available audio input devices.
@@ -2758,7 +2779,10 @@ pub trait SynthBridge: Send + Sync + 'static {
 
     /// Stop recording and commit it to the sample library.
     fn stop_recording(&self, name: Option<String>) -> Result<SampleInfo, McpBridgeError>;
+}
 
+/// Module-type and connection discovery operations.
+pub trait DiscoveryBridge {
     // === Discovery ===
 
     /// Get detailed info for a single module type by its type key (e.g. "osc", "flt").
@@ -2787,6 +2811,44 @@ pub trait SynthBridge: Send + Sync + 'static {
         to_module: &str,
         to_port: &str,
     ) -> Result<ConnectionCheckResult, McpBridgeError>;
+}
+
+/// Complete bridge contract used by the MCP server.
+///
+/// The smaller domain traits keep implementations and test doubles focused,
+/// while this marker trait preserves a single bound for server composition.
+pub trait SynthBridge:
+    InstrumentBridge
+    + SequencerBridge
+    + InstrumentBuildBridge
+    + AutomationBridge
+    + MixingBridge
+    + ProjectBridge
+    + AnalysisBridge
+    + SampleBridge
+    + AudioInputBridge
+    + DiscoveryBridge
+    + Send
+    + Sync
+    + 'static
+{
+}
+
+impl<T> SynthBridge for T where
+    T: InstrumentBridge
+        + SequencerBridge
+        + InstrumentBuildBridge
+        + AutomationBridge
+        + MixingBridge
+        + ProjectBridge
+        + AnalysisBridge
+        + SampleBridge
+        + AudioInputBridge
+        + DiscoveryBridge
+        + Send
+        + Sync
+        + 'static
+{
 }
 
 /// Interpolation curve for an automation point.

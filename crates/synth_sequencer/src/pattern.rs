@@ -395,7 +395,8 @@ impl Pattern {
         }
     }
 
-    /// Bind (or clear) a note-scope [`NoteGraph`] on a single note — per-note
+    /// Bind (or clear) a note-scope [`NoteGraph`](crate::note_graph::NoteGraph)
+    /// on a single note — per-note
     /// articulation (plan §2.1), the generalization of the per-note ornament.
     /// A dangling id resolves to plain pass-through at expansion, never a panic.
     pub fn set_note_note_graph(&mut self, id: NoteId, graph: Option<NoteGraphId>) -> bool {

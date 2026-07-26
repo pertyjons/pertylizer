@@ -245,6 +245,7 @@ pub(crate) fn warn_if_legacy_awe(value: &serde_json::Value, path: &Path) {
 /// - Linux: `~/.local/share/pertylizer/projects`
 /// - macOS: `~/Library/Application Support/pertylizer/projects`
 /// - Windows: `%APPDATA%\pertylizer\projects`
+#[cfg(feature = "gui-egui")]
 pub(crate) fn default_projects_dir() -> Result<PathBuf, String> {
     let base = dirs::data_dir()
         .or_else(dirs::home_dir)

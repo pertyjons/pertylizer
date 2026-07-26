@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! Sample loading, playback, and manipulation for Pertylizer.
 //!
 //! This crate provides:
@@ -6,16 +8,16 @@
 //! - Sample library for managing loaded samples
 //! - Sample rate conversion (linear interpolation)
 
-pub mod error;
-pub mod library;
-pub mod playback;
-pub mod sample;
-pub mod types;
-pub mod wav;
+mod error;
+mod library;
+mod playback;
+mod sample;
+mod types;
+mod wav;
 
 pub use error::SampleError;
 pub use library::SampleLibrary;
-pub use playback::SamplePlayer;
+pub use playback::{PlaybackState, SamplePlayer};
 pub use sample::Sample;
 pub use types::{
     BitDepth, CropRegion, FrameIndex, LoopRegion, PlayMode, PlaybackPosition, PlaybackSpeed,

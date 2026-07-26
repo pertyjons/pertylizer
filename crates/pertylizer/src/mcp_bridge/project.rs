@@ -1,5 +1,6 @@
-macro_rules! synth_bridge_project {
-    () => {
+use super::*;
+
+impl synth_mcp::bridge::ProjectBridge for AppSynthBridge {
     fn new_project(&self) -> Result<String, McpBridgeError> {
         self.do_new_project()
     }
@@ -59,6 +60,4 @@ macro_rules! synth_bridge_project {
             total_removed,
         })
     }
-
-    };
 }

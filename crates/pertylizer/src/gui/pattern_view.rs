@@ -45,7 +45,7 @@ pub enum PatternEditorMode {
 /// UI state owned by `SynthApp` for the Pattern tab.
 ///
 /// The currently-opened pattern lives on
-/// [`SequencerViewState::opened_pattern`]; egui persists the Used/Orphans
+/// `SequencerViewState::opened_pattern`; egui persists the Used/Orphans
 /// `CollapsingHeader` open state internally, so this struct only carries the
 /// search query and the editor mode toggle.
 #[derive(Default)]

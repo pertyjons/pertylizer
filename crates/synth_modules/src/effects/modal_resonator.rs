@@ -77,7 +77,7 @@ impl ModalResonator {
 
     fn randomize_inharmonicity(&mut self) {
         for i in 0..MAX_MODES {
-            self.inharmonicity[i] = self.noise.next();
+            self.inharmonicity[i] = self.noise.next_bipolar();
         }
     }
 

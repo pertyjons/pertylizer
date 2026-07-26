@@ -3,8 +3,8 @@
 //! Tiny 256-sample delay line with 2 controllable taps, high-frequency damping,
 //! and feedback. Cheap CPU, rich modulated sounds — similar to physical modeling.
 //!
-//! Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Synthesis/11-weird-synthesis.rst
-//! From the Music-DSP Source Code Archive (https://www.musicdsp.org/)
+//! Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Synthesis/11-weird-synthesis.rst>
+//! From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
 
 use std::collections::HashMap;
 

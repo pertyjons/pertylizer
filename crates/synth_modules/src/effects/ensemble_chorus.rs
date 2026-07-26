@@ -256,8 +256,8 @@ impl AudioEffect for EnsembleChorus {
 
                 // Add BBD noise
                 if noise_level > 0.0 {
-                    sample_l += self.noise.next() * noise_level;
-                    sample_r += self.noise.next() * noise_level;
+                    sample_l += self.noise.next_bipolar() * noise_level;
+                    sample_r += self.noise.next_bipolar() * noise_level;
                 }
 
                 wet_l += sample_l;

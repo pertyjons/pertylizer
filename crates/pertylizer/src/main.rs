@@ -16,9 +16,13 @@
 
 use std::env;
 
+#[cfg(any(feature = "gui-egui", feature = "mcp"))]
 use pertylizer::audio::{self, AudioHostTrait, BufferSize, ChannelCount, SampleRate, StreamConfig};
+#[cfg(feature = "gui-egui")]
 use pertylizer::gui::{SynthGuiConfig, create_backend};
+#[cfg(any(feature = "gui-egui", feature = "mcp"))]
 use pertylizer::synth_core::VoiceCount;
+#[cfg(any(feature = "gui-egui", feature = "mcp"))]
 use pertylizer::synth_engine::{AllocationMode, AllocatorConfig, SynthEngine};
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -28,7 +32,10 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // RUST_LOG env var overrides if set, e.g.
     //   RUST_LOG=synth_mcp=debug,pertylizer=info
     // The capture-layer clone flows to the GUI app; headless drops it.
+    #[cfg(feature = "gui-egui")]
     let activity_log = init_tracing();
+    #[cfg(not(feature = "gui-egui"))]
+    init_tracing();
 
     // Install the crash-diagnostics panic hook now that tracing is up, so a
     // panic on any thread is logged and dumped to a crash report file.
@@ -67,13 +74,25 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     #[cfg(feature = "mcp")]
     if args.iter().any(|a| a == "--headless") {
         // No GUI to render the log; drop the capture clone.
+        #[cfg(feature = "gui-egui")]
         drop(activity_log);
         return run_headless_mcp();
     }
 
-    run_gui(activity_log)
+    #[cfg(feature = "gui-egui")]
+    {
+        run_gui(activity_log)
+    }
+    #[cfg(not(feature = "gui-egui"))]
+    {
+        Err(std::io::Error::other(
+            "this build has no GUI; enable `gui-egui` or run a build with `mcp` and --headless",
+        )
+        .into())
+    }
 }
 
+#[cfg(feature = "gui-egui")]
 fn run_gui(
     activity_log: pertylizer::activity_log::ActivityLog,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -285,6 +304,7 @@ fn run_headless_mcp() -> Result<(), Box<dyn std::error::Error>> {
 ///   if the capture layer shared the stderr filter.
 ///
 /// The caller hands the returned clone to the GUI app; `--headless` drops it.
+#[cfg(feature = "gui-egui")]
 fn init_tracing() -> pertylizer::activity_log::ActivityLog {
     use pertylizer::activity_log::{ActivityLog, CaptureLayer};
     use tracing_subscriber::layer::SubscriberExt;
@@ -323,6 +343,26 @@ fn init_tracing() -> pertylizer::activity_log::ActivityLog {
     }
 
     activity_log
+}
+
+/// Install the stderr-only tracing subscriber for builds without a GUI.
+#[cfg(not(feature = "gui-egui"))]
+fn init_tracing() {
+    use tracing_subscriber::layer::SubscriberExt;
+    use tracing_subscriber::util::SubscriberInitExt;
+    use tracing_subscriber::{EnvFilter, Layer};
+
+    let _ = tracing_log::LogTracer::init();
+    let stderr_filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+        EnvFilter::new("warn,pertylizer=info,synth_mcp=info,synth_mcp::call=warn,synth_engine=info")
+    });
+    let fmt_layer = tracing_subscriber::fmt::layer()
+        .with_writer(std::io::stderr)
+        .with_target(true)
+        .with_filter(stderr_filter);
+    if let Err(error) = tracing_subscriber::registry().with(fmt_layer).try_init() {
+        eprintln!("warning: failed to install tracing subscriber: {error}");
+    }
 }
 
 fn print_help() {

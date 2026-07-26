@@ -138,7 +138,7 @@ impl FftProcessor {
 
 /// Overlap-add STFT processor with spectral processing callback.
 ///
-/// Call [`process`] each audio block. The callback receives the complex spectrum
+/// Call [`Self::process`] each audio block. The callback receives the complex spectrum
 /// for in-place modification; the processor handles windowing, overlap, and
 /// output accumulation.
 pub struct StftProcessor {

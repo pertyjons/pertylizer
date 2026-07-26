@@ -1,7 +1,7 @@
 //! Fooglers (Weird Synthesis) parameter types.
 //!
-//! Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Synthesis/11-weird-synthesis.rst
-//! From the Music-DSP Source Code Archive (https://www.musicdsp.org/)
+//! Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Synthesis/11-weird-synthesis.rst>
+//! From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
 
 use serde::{Deserialize, Serialize};
 

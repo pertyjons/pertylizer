@@ -645,7 +645,7 @@ impl KarlsenFilter {
 
 /// 4th-order Linkwitz-Riley crossover filter.
 /// LP + HP sum to unity (all-pass). Uses two cascaded 2nd-order Butterworth sections.
-/// Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Filters/266-4th-order-linkwitz-riley-filters.rst
+/// Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Filters/266-4th-order-linkwitz-riley-filters.rst>
 #[derive(Debug, Clone, Copy, Default)]
 pub struct LinkwitzRiley {
     // Two cascaded biquad stages for LP

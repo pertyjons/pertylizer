@@ -63,7 +63,7 @@ use crate::voice_allocator::{AllocatorConfig, VoiceAllocator};
 
 /// Build an engine with one default instrument holding a single sounding
 /// voice, warmed up so all lazy initialization is already done.
-fn warmed_engine_with_voice() -> (SynthEngine, AudioCallbackContext, Vec<f32>) {
+fn warmed_engine_with_voice() -> (SynthEngine, EngineHandle, AudioCallbackContext, Vec<f32>) {
     let (mut engine, mut handle) = SynthEngine::new();
 
     let mut instrument =
@@ -96,12 +96,12 @@ fn warmed_engine_with_voice() -> (SynthEngine, AudioCallbackContext, Vec<f32>) {
         engine.process(&mut out, &context);
     }
 
-    (engine, context, out)
+    (engine, handle, context, out)
 }
 
 #[test]
 fn process_does_not_allocate_in_steady_state() {
-    let (mut engine, context, mut out) = warmed_engine_with_voice();
+    let (mut engine, _handle, context, mut out) = warmed_engine_with_voice();
 
     let allocs = count_allocs(|| {
         for _ in 0..4 {
@@ -114,6 +114,35 @@ fn process_does_not_allocate_in_steady_state() {
         allocs, 0,
         "SynthEngine::process() allocated {allocs} time(s) on the audio thread; \
          the RT path must be allocation-free"
+    );
+}
+
+#[test]
+fn common_control_commands_do_not_allocate_during_process() {
+    let (mut engine, mut handle, context, mut out) = warmed_engine_with_voice();
+
+    assert!(handle.set_master_volume(Gain::new(0.5)));
+    let master_volume_allocs = count_allocs(|| {
+        out.fill(0.0);
+        engine.process(&mut out, &context);
+    });
+
+    assert!(handle.note_off(MidiNote::C4));
+    let note_off_allocs = count_allocs(|| {
+        out.fill(0.0);
+        engine.process(&mut out, &context);
+    });
+
+    assert!(handle.note_on(MidiNote::new(64), Velocity::new(0.7)));
+    let note_on_allocs = count_allocs(|| {
+        out.fill(0.0);
+        engine.process(&mut out, &context);
+    });
+
+    assert_eq!(
+        (master_volume_allocs, note_off_allocs, note_on_allocs),
+        (0, 0, 0),
+        "processing common control commands allocated on the audio thread"
     );
 }
 

@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! OSC telemetry sender for Pertylizer.
 //!
 //! Polls the engine's shared atomic state at ~30 Hz and sends OSC bundles

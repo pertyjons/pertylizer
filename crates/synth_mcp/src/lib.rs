@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 //! MCP (Model Context Protocol) server for Pertylizer.
 //!
 //! Provides remote inspection and control of the running synthesizer

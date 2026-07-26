@@ -12,8 +12,8 @@ mod common;
 use std::sync::Arc;
 
 use synth_engine::SynthEngine;
-use synth_mcp::SynthBridge;
 use synth_mcp::SynthMcpServer;
+use synth_mcp::bridge::*;
 use synth_sequencer::Song;
 
 use pertylizer::mcp_bridge::AppSynthBridge;

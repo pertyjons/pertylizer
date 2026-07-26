@@ -273,7 +273,8 @@ impl ModuleGraph {
 
     /// Borrow the cached descriptor for a module.
     ///
-    /// Unlike [`PolyModule::descriptor`], which rebuilds a fresh descriptor and
+    /// Unlike [`Describable::descriptor`](synth_core::Describable::descriptor),
+    /// which rebuilds a fresh descriptor and
     /// allocates (a `Vec` of parameters plus strings), this returns the
     /// descriptor cached at `add_module` time — zero-allocation, so it is safe
     /// to call on the audio thread (e.g. to denormalize an automation value via
@@ -669,6 +670,7 @@ impl ModuleGraph {
         // silently unmute previously bypassed modules.
         new_graph.bypassed = self.bypassed.clone();
         new_graph.order_dirty = true;
+        new_graph.prepare_realtime();
 
         new_graph
     }
@@ -842,6 +844,29 @@ impl ModuleGraph {
 
         // Cache the output module ID (avoids per-frame search)
         self.cached_output_id = self.resolve_output_module();
+    }
+
+    /// Build topology caches and seed the reusable input-buffer pool before a
+    /// graph reaches the audio thread.
+    fn prepare_realtime(&mut self) {
+        self.calculate_processing_order();
+
+        let required_buffers = self
+            .incoming_map
+            .values()
+            .map(|connections| {
+                connections
+                    .iter()
+                    .map(|(_, _, to_port)| to_port)
+                    .collect::<std::collections::HashSet<_>>()
+                    .len()
+            })
+            .max()
+            .unwrap_or(0);
+        while self.buffer_pool.len() < required_buffers {
+            self.buffer_pool
+                .push(AudioBuffer::new(self.buffer_size.as_usize()));
+        }
     }
 
     /// Resolve which module should be used as the graph output.

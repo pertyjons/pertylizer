@@ -1,5 +1,6 @@
-macro_rules! synth_bridge_automation {
-    () => {
+use super::*;
+
+impl synth_mcp::bridge::AutomationBridge for AppSynthBridge {
     fn add_automation_points(
         &self,
         pattern_id: PatternId,
@@ -500,6 +501,4 @@ macro_rules! synth_bridge_automation {
     }
 
     // === Track control ===
-
-    };
 }

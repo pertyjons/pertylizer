@@ -12,6 +12,7 @@
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::similar_names)]
 
+#[cfg(feature = "gui-egui")]
 pub mod activity_log;
 pub mod analysis;
 pub mod audio;
@@ -22,9 +23,7 @@ pub mod group_templates;
 pub mod gui;
 pub mod harmony;
 pub mod io;
-#[cfg(feature = "mcp")]
 pub mod mcp_bridge;
-#[cfg(feature = "mcp")]
 pub mod mcp_shared;
 pub mod mod_grid_build;
 pub mod module_factory;
@@ -35,6 +34,7 @@ pub mod patches;
 pub mod project;
 pub mod project_apply;
 pub mod session;
+#[cfg(feature = "gui-egui")]
 pub(crate) mod undo;
 
 // Re-export workspace crates

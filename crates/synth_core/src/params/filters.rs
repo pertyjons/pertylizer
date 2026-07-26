@@ -116,7 +116,7 @@ pub enum FilterModel {
     Screamer,
     Acid,
     /// Karlsen fast ladder filter with constant Q.
-    /// Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Filters/240-karlsen-fast-ladder.rst
+    /// Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Filters/240-karlsen-fast-ladder.rst>
     Karlsen,
 }
 

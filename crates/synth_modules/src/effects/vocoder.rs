@@ -4,8 +4,8 @@
 //! and applies it as an all-pole filter. Outputs mono (both channels receive
 //! the same filtered signal) since LPC analysis operates on a mono mixdown.
 //!
-//! Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Analysis/137-lpc-analysis-autocorrelation-levinson-durbin-recursion.rst
-//! From the Music-DSP Source Code Archive (https://www.musicdsp.org/)
+//! Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Analysis/137-lpc-analysis-autocorrelation-levinson-durbin-recursion.rst>
+//! From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
 
 use synth_core::{
     AudioEffect, Describable, Milliseconds, ModuleCategory, ModuleDescriptor, ModuleType,

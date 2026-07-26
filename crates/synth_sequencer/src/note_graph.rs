@@ -68,7 +68,7 @@ impl From<TrackId> for HostKey {
 }
 
 /// Note-scope resolution context, threaded into per-tick source seeding
-/// ([`crate::note_processor::seed_source_at_tick`]) so each source note's optional
+/// (`crate::note_processor::seed_source_at_tick`) so each source note's optional
 /// note-scope graph ([`Note::note_graph`]) can be resolved from the project pool
 /// and that single note expanded through it (plan §2.1) — per-note articulation,
 /// the generalization of the per-note ornament.
@@ -476,7 +476,7 @@ pub enum EnvelopeTrigger {
     SourceOnset,
     /// Onsets in the *transformed* terminal stream (e.g. one retrigger per
     /// arpeggiator step). Evaluated by a bounded backward look-back through the
-    /// spine ([`NoteGraph::eval_prefix_at_tick`]) — more expensive than
+    /// spine (`NoteGraph::eval_prefix_at_tick`) — more expensive than
     /// `SourceOnset` (each probe re-runs the spine), so it is opt-in **and its
     /// look-back is capped at 1 beat** (`MAX_ENV_STREAM_WINDOW`): more than a
     /// beat after the last transformed onset the level reads `0.0`, even when
@@ -578,7 +578,7 @@ impl NoteEnvelope {
 /// in velocity. Pure look-back — no queue, no cross-tick state. On the spine
 /// head the scan reads the seeded source directly; downstream of a transform it
 /// re-runs the upstream prefix at each probed tick via
-/// [`NoteGraph::eval_prefix_at_tick`]. RT-safe: bounded by `repeats`,
+/// `NoteGraph::eval_prefix_at_tick`. RT-safe: bounded by `repeats`,
 /// [`MAX_NOTE_DELAY_TICKS`], and the buffer cap.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(default)]
@@ -1149,7 +1149,7 @@ pub struct NoteGraph {
     pub processing_order: Vec<NoteModuleId>,
     /// Derived active `NoteStream` chain, head → terminal — NOT serialized.
     /// Stream nodes outside it are inert at evaluation; see
-    /// [`NoteGraph::rebuild_stream_spine`]. Rebuilt with `processing_order`.
+    /// `NoteGraph::rebuild_stream_spine`. Rebuilt with `processing_order`.
     #[serde(skip)]
     pub stream_spine: Vec<NoteModuleId>,
 }
@@ -1217,7 +1217,8 @@ impl NoteGraph {
     }
 
     /// The terminal `NoteStream` node — the one that feeds the host instrument:
-    /// the last node of the [active spine](Self::rebuild_stream_spine). `None`
+    /// the last node of the active spine built by `Self::rebuild_stream_spine`.
+    /// `None`
     /// for a graph with no stream-emitting nodes.
     #[must_use]
     pub fn stream_output_node(&self) -> Option<NoteModuleId> {

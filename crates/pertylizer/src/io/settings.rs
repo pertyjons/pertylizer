@@ -121,7 +121,7 @@ impl AppSettings {
 
     /// Save settings to disk (fire-and-forget convenience wrapper).
     ///
-    /// Logs to stderr on failure. Use [`Self::try_save`] if the caller
+    /// Logs to stderr on failure. Use `Self::try_save` if the caller
     /// needs to surface the error in the UI.
     pub fn save(&self) {
         if let Err(e) = self.try_save() {
@@ -145,7 +145,7 @@ impl AppSettings {
 
     /// Add a project path to the front of the recent projects list.
     ///
-    /// Deduplicates and caps at [`Self::MAX_RECENT_PROJECTS`].
+    /// Deduplicates and caps at `Self::MAX_RECENT_PROJECTS`.
     pub fn add_recent_project(&mut self, path: PathBuf) {
         self.recent_projects.retain(|p| p != &path);
         self.recent_projects.insert(0, path);

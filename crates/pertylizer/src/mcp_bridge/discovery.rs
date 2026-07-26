@@ -1,5 +1,6 @@
-macro_rules! synth_bridge_discovery {
-    () => {
+use super::*;
+
+impl synth_mcp::bridge::DiscoveryBridge for AppSynthBridge {
     fn get_module_type_info(&self, type_key: &str) -> Result<ModuleTypeInfo, McpBridgeError> {
         use crate::module_factory::{ALL_MODULE_TYPES, get_descriptor};
 
@@ -194,5 +195,4 @@ macro_rules! synth_bridge_discovery {
             })
         }
     }
-    };
 }

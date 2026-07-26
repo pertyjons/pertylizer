@@ -1,5 +1,7 @@
-macro_rules! synth_bridge_instrument_build {
-    () => {
+use super::*;
+use synth_mcp::bridge::{AutomationBridge, SequencerBridge};
+
+impl synth_mcp::bridge::InstrumentBuildBridge for AppSynthBridge {
     fn build_instrument(
         &self,
         spec: &BridgeInstrumentDef,
@@ -359,6 +361,4 @@ macro_rules! synth_bridge_instrument_build {
             errors: result.errors,
         })
     }
-
-    };
 }

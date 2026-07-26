@@ -6,9 +6,9 @@
 
 use std::sync::Arc;
 
-use synth_core::{ChannelCount, Velocity};
+use synth_core::{ChannelCount, NormalizedValue, Velocity};
 
-use crate::types::{CropRegion, LoopRegion, PlaybackPosition};
+use crate::types::{CropRegion, LoopRegion, PlaybackPosition, PlaybackSpeed};
 
 /// Playback state.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -44,7 +44,7 @@ pub struct SamplePlayer {
     /// Current playback position (fractional frame).
     position: PlaybackPosition,
     /// Playback speed magnitude (always positive).
-    speed: f64,
+    speed: PlaybackSpeed,
     /// Current direction (for PingPong this flips at boundaries).
     direction: Direction,
     /// Whether this is a ping-pong player (direction flips at loop boundaries).
@@ -67,7 +67,7 @@ pub struct SamplePlayer {
     release_frames: usize,
     release_counter: usize,
     /// Start offset (0.0 = crop start, 1.0 = crop end).
-    start_offset: f64,
+    start_offset: NormalizedValue,
 }
 
 impl SamplePlayer {
@@ -102,7 +102,7 @@ impl SamplePlayer {
             channels: ch,
             frame_count,
             position: PlaybackPosition::new(crop_start as f64),
-            speed: 1.0,
+            speed: PlaybackSpeed::ORIGINAL,
             direction: Direction::Forward,
             ping_pong: false,
             crop_start,
@@ -114,20 +114,13 @@ impl SamplePlayer {
             velocity_gain: 1.0,
             release_frames: 512, // ~10ms at 48kHz
             release_counter: 0,
-            start_offset: 0.0,
+            start_offset: NormalizedValue::MIN,
         }
     }
 
-    /// Set the playback speed (magnitude) directly.
-    ///
-    /// Used by the Sampler module to drive continuous pitch each block (note
-    /// pitch from the voice × the `pitch_cv` input). Direction is applied
-    /// separately, so this stores the non-negative magnitude. Non-finite input
-    /// is ignored (keeps the previous speed) to keep the audio thread safe.
-    pub fn set_speed(&mut self, speed: f64) {
-        if speed.is_finite() {
-            self.speed = speed.max(0.0);
-        }
+    /// Set the non-negative playback speed magnitude.
+    pub fn set_speed(&mut self, speed: PlaybackSpeed) {
+        self.speed = speed;
     }
 
     /// Set reverse playback direction.
@@ -144,10 +137,10 @@ impl SamplePlayer {
     }
 
     /// Set start offset (0.0 = crop start, 1.0 = crop end).
-    pub fn set_start_offset(&mut self, offset: f64) {
-        self.start_offset = offset.clamp(0.0, 1.0);
+    pub fn set_start_offset(&mut self, offset: NormalizedValue) {
+        self.start_offset = offset;
         let range = (self.crop_end - self.crop_start) as f64;
-        let start = self.crop_start as f64 + range * self.start_offset;
+        let start = self.crop_start as f64 + range * f64::from(self.start_offset.as_f32());
         self.position = PlaybackPosition::new(start);
     }
 
@@ -227,8 +220,8 @@ impl SamplePlayer {
 
             // Advance position
             let delta = match self.direction {
-                Direction::Forward => self.speed,
-                Direction::Reverse => -self.speed,
+                Direction::Forward => self.speed.as_f64(),
+                Direction::Reverse => -self.speed.as_f64(),
             };
             self.position = PlaybackPosition::new(self.position.0 + delta);
         }

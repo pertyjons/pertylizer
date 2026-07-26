@@ -1,7 +1,7 @@
 //! Beat Detector parameter types.
 //!
-//! Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Analysis/200-beat-detector-class.rst
-//! From the Music-DSP Source Code Archive (https://www.musicdsp.org/)
+//! Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Analysis/200-beat-detector-class.rst>
+//! From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
 
 use serde::{Deserialize, Serialize};
 

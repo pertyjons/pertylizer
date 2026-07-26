@@ -3,8 +3,8 @@
 //! Single-knob equalizer that tilts the frequency response around a center point.
 //! Positive = brighter, negative = darker.
 //!
-//! Algorithm source: https://github.com/bdejong/musicdsp/blob/master/source/Filters/267-simple-tilt-equalizer.rst
-//! From the Music-DSP Source Code Archive (https://www.musicdsp.org/)
+//! Algorithm source: <https://github.com/bdejong/musicdsp/blob/master/source/Filters/267-simple-tilt-equalizer.rst>
+//! From the Music-DSP Source Code Archive (<https://www.musicdsp.org/>)
 
 use synth_core::{
     AudioEffect, BipolarValue, Describable, Hertz, ModuleCategory, ModuleDescriptor, ModuleType,

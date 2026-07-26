@@ -15,6 +15,32 @@ use super::*;
 use crate::module_traits::{ModuleParam, ParamKind, ParameterUnit, ResponseCurve, ScalarParam};
 use crate::types::*;
 
+/// Generate the three pieces of scalar metadata from one variant dispatch.
+///
+/// Keeping the pattern-to-value mapping in one place prevents kind, unit, and
+/// response-curve metadata from drifting apart when a parameter is added.
+macro_rules! scalar_metadata_methods {
+    ($($pattern:pat => $value:expr),+ $(,)?) => {
+        fn kind(&self) -> ParamKind {
+            match self {
+                $($pattern => ($value).scalar_kind()),+
+            }
+        }
+
+        fn unit(&self) -> ParameterUnit {
+            match self {
+                $($pattern => ($value).scalar_unit()),+
+            }
+        }
+
+        fn default_curve(&self) -> ResponseCurve {
+            match self {
+                $($pattern => ($value).scalar_curve()),+
+            }
+        }
+    };
+}
+
 impl ModuleParam for AdditiveParam {
     fn same_kind(&self, other: &Self) -> bool {
         std::mem::discriminant(self) == std::mem::discriminant(other)
@@ -56,44 +82,14 @@ impl ModuleParam for AdditiveParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Tilt(v)
-            | Self::OddEven(v)
-            | Self::Brightness(v)
-            | Self::Stretch(v)
-            | Self::Randomize(v)
-            | Self::Level(v) => v.scalar_kind(),
-            Self::GlideTime(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Tilt(v)
-            | Self::OddEven(v)
-            | Self::Brightness(v)
-            | Self::Stretch(v)
-            | Self::Randomize(v)
-            | Self::Level(v) => v.scalar_unit(),
-            Self::GlideTime(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Tilt(v)
-            | Self::OddEven(v)
-            | Self::Brightness(v)
-            | Self::Stretch(v)
-            | Self::Randomize(v)
-            | Self::Level(v) => v.scalar_curve(),
-            Self::GlideTime(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Tilt(v)
+        | Self::OddEven(v)
+        | Self::Brightness(v)
+        | Self::Stretch(v)
+        | Self::Randomize(v)
+        | Self::Level(v) => v,
+        Self::GlideTime(v) => v,
     }
 }
 
@@ -126,31 +122,9 @@ impl ModuleParam for AmFormantParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Vowel(v) | Self::CarrierRatio(v) | Self::Depth(v) | Self::Level(v) => {
-                v.scalar_kind()
-            }
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Vowel(v) | Self::CarrierRatio(v) | Self::Depth(v) | Self::Level(v) => {
-                v.scalar_unit()
-            }
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Vowel(v) | Self::CarrierRatio(v) | Self::Depth(v) | Self::Level(v) => {
-                v.scalar_curve()
-            }
+    scalar_metadata_methods! {
+        Self::Vowel(v) | Self::CarrierRatio(v) | Self::Depth(v) | Self::Level(v) => {
+            v
         }
     }
 }
@@ -184,32 +158,10 @@ impl ModuleParam for BeatDetectorParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Sensitivity(v) => v.scalar_kind(),
-            Self::FilterFreq(v) => v.scalar_kind(),
-            Self::HoldTime(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Sensitivity(v) => v.scalar_unit(),
-            Self::FilterFreq(v) => v.scalar_unit(),
-            Self::HoldTime(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Sensitivity(v) => v.scalar_curve(),
-            Self::FilterFreq(v) => v.scalar_curve(),
-            Self::HoldTime(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Sensitivity(v) => v,
+        Self::FilterFreq(v) => v,
+        Self::HoldTime(v) => v,
     }
 }
 
@@ -247,32 +199,10 @@ impl ModuleParam for ChaoticOscParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::System(v) => v.scalar_kind(),
-            Self::Rate(v) => v.scalar_kind(),
-            Self::Chaos(v) | Self::Depth(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::System(v) => v.scalar_unit(),
-            Self::Rate(v) => v.scalar_unit(),
-            Self::Chaos(v) | Self::Depth(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::System(v) => v.scalar_curve(),
-            Self::Rate(v) => v.scalar_curve(),
-            Self::Chaos(v) | Self::Depth(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::System(v) => v,
+        Self::Rate(v) => v,
+        Self::Chaos(v) | Self::Depth(v) => v,
     }
 }
 
@@ -312,35 +242,11 @@ impl ModuleParam for ConvolverParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Ir(v) => v.scalar_kind(),
-            Self::Mix(v) | Self::Brightness(v) | Self::DynamicMode(v) => v.scalar_kind(),
-            Self::PreDelay(v) => v.scalar_kind(),
-            Self::DecayTrim(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Ir(v) => v.scalar_unit(),
-            Self::Mix(v) | Self::Brightness(v) | Self::DynamicMode(v) => v.scalar_unit(),
-            Self::PreDelay(v) => v.scalar_unit(),
-            Self::DecayTrim(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Ir(v) => v.scalar_curve(),
-            Self::Mix(v) | Self::Brightness(v) | Self::DynamicMode(v) => v.scalar_curve(),
-            Self::PreDelay(v) => v.scalar_curve(),
-            Self::DecayTrim(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Ir(v) => v,
+        Self::Mix(v) | Self::Brightness(v) | Self::DynamicMode(v) => v,
+        Self::PreDelay(v) => v,
+        Self::DecayTrim(v) => v,
     }
 }
 
@@ -373,29 +279,9 @@ impl ModuleParam for DriftGeneratorParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Rate(v) => v.scalar_kind(),
-            Self::Depth(v) | Self::Smoothness(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Rate(v) => v.scalar_unit(),
-            Self::Depth(v) | Self::Smoothness(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Rate(v) => v.scalar_curve(),
-            Self::Depth(v) | Self::Smoothness(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Rate(v) => v,
+        Self::Depth(v) | Self::Smoothness(v) => v,
     }
 }
 
@@ -448,38 +334,12 @@ impl ModuleParam for DelayParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Mode(v) => v.scalar_kind(),
-            Self::Time(v) | Self::TimeLeft(v) | Self::TimeRight(v) => v.scalar_kind(),
-            Self::Feedback(v) | Self::Mix(v) | Self::Damping(v) => v.scalar_kind(),
-            Self::TempoSync(v) => v.scalar_kind(),
-            Self::SyncDivision(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Mode(v) => v.scalar_unit(),
-            Self::Time(v) | Self::TimeLeft(v) | Self::TimeRight(v) => v.scalar_unit(),
-            Self::Feedback(v) | Self::Mix(v) | Self::Damping(v) => v.scalar_unit(),
-            Self::TempoSync(v) => v.scalar_unit(),
-            Self::SyncDivision(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Mode(v) => v.scalar_curve(),
-            Self::Time(v) | Self::TimeLeft(v) | Self::TimeRight(v) => v.scalar_curve(),
-            Self::Feedback(v) | Self::Mix(v) | Self::Damping(v) => v.scalar_curve(),
-            Self::TempoSync(v) => v.scalar_curve(),
-            Self::SyncDivision(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Mode(v) => v,
+        Self::Time(v) | Self::TimeLeft(v) | Self::TimeRight(v) => v,
+        Self::Feedback(v) | Self::Mix(v) | Self::Damping(v) => v,
+        Self::TempoSync(v) => v,
+        Self::SyncDivision(v) => v,
     }
 }
 
@@ -527,47 +387,15 @@ impl ModuleParam for ReverbParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::RoomSize(v)
-            | Self::Damping(v)
-            | Self::Width(v)
-            | Self::Mix(v)
-            | Self::Decay(v)
-            | Self::Diffusion(v) => v.scalar_kind(),
-            Self::PreDelay(v) => v.scalar_kind(),
-            Self::LowCut(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::RoomSize(v)
-            | Self::Damping(v)
-            | Self::Width(v)
-            | Self::Mix(v)
-            | Self::Decay(v)
-            | Self::Diffusion(v) => v.scalar_unit(),
-            Self::PreDelay(v) => v.scalar_unit(),
-            Self::LowCut(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::RoomSize(v)
-            | Self::Damping(v)
-            | Self::Width(v)
-            | Self::Mix(v)
-            | Self::Decay(v)
-            | Self::Diffusion(v) => v.scalar_curve(),
-            Self::PreDelay(v) => v.scalar_curve(),
-            Self::LowCut(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::RoomSize(v)
+        | Self::Damping(v)
+        | Self::Width(v)
+        | Self::Mix(v)
+        | Self::Decay(v)
+        | Self::Diffusion(v) => v,
+        Self::PreDelay(v) => v,
+        Self::LowCut(v) => v,
     }
 }
 
@@ -606,32 +434,10 @@ impl ModuleParam for DistortionParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Mode(v) => v.scalar_kind(),
-            Self::Drive(v) | Self::Tone(v) | Self::Mix(v) => v.scalar_kind(),
-            Self::BitDepth(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Mode(v) => v.scalar_unit(),
-            Self::Drive(v) | Self::Tone(v) | Self::Mix(v) => v.scalar_unit(),
-            Self::BitDepth(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Mode(v) => v.scalar_curve(),
-            Self::Drive(v) | Self::Tone(v) | Self::Mix(v) => v.scalar_curve(),
-            Self::BitDepth(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Mode(v) => v,
+        Self::Drive(v) | Self::Tone(v) | Self::Mix(v) => v,
+        Self::BitDepth(v) => v,
     }
 }
 
@@ -671,35 +477,11 @@ impl ModuleParam for ChorusParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Rate(v) => v.scalar_kind(),
-            Self::Depth(v) | Self::Feedback(v) | Self::Mix(v) => v.scalar_kind(),
-            Self::Delay(v) => v.scalar_kind(),
-            Self::Voices(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Rate(v) => v.scalar_unit(),
-            Self::Depth(v) | Self::Feedback(v) | Self::Mix(v) => v.scalar_unit(),
-            Self::Delay(v) => v.scalar_unit(),
-            Self::Voices(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Rate(v) => v.scalar_curve(),
-            Self::Depth(v) | Self::Feedback(v) | Self::Mix(v) => v.scalar_curve(),
-            Self::Delay(v) => v.scalar_curve(),
-            Self::Voices(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Rate(v) => v,
+        Self::Depth(v) | Self::Feedback(v) | Self::Mix(v) => v,
+        Self::Delay(v) => v,
+        Self::Voices(v) => v,
     }
 }
 
@@ -739,35 +521,11 @@ impl ModuleParam for PhaserParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Rate(v) | Self::CenterFreq(v) => v.scalar_kind(),
-            Self::Depth(v) | Self::Mix(v) => v.scalar_kind(),
-            Self::Feedback(v) => v.scalar_kind(),
-            Self::Stages(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Rate(v) | Self::CenterFreq(v) => v.scalar_unit(),
-            Self::Depth(v) | Self::Mix(v) => v.scalar_unit(),
-            Self::Feedback(v) => v.scalar_unit(),
-            Self::Stages(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Rate(v) | Self::CenterFreq(v) => v.scalar_curve(),
-            Self::Depth(v) | Self::Mix(v) => v.scalar_curve(),
-            Self::Feedback(v) => v.scalar_curve(),
-            Self::Stages(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Rate(v) | Self::CenterFreq(v) => v,
+        Self::Depth(v) | Self::Mix(v) => v,
+        Self::Feedback(v) => v,
+        Self::Stages(v) => v,
     }
 }
 
@@ -805,35 +563,11 @@ impl ModuleParam for FlangerParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Rate(v) => v.scalar_kind(),
-            Self::Depth(v) | Self::Mix(v) => v.scalar_kind(),
-            Self::Feedback(v) => v.scalar_kind(),
-            Self::Delay(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Rate(v) => v.scalar_unit(),
-            Self::Depth(v) | Self::Mix(v) => v.scalar_unit(),
-            Self::Feedback(v) => v.scalar_unit(),
-            Self::Delay(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Rate(v) => v.scalar_curve(),
-            Self::Depth(v) | Self::Mix(v) => v.scalar_curve(),
-            Self::Feedback(v) => v.scalar_curve(),
-            Self::Delay(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Rate(v) => v,
+        Self::Depth(v) | Self::Mix(v) => v,
+        Self::Feedback(v) => v,
+        Self::Delay(v) => v,
     }
 }
 
@@ -885,41 +619,13 @@ impl ModuleParam for CompressorParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Threshold(v) | Self::Makeup(v) => v.scalar_kind(),
-            Self::Ratio(v) => v.scalar_kind(),
-            Self::Attack(v) | Self::Release(v) => v.scalar_kind(),
-            Self::Mix(v) => v.scalar_kind(),
-            Self::SidechainEnabled(v) => v.scalar_kind(),
-            Self::SidechainFilter(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Threshold(v) | Self::Makeup(v) => v.scalar_unit(),
-            Self::Ratio(v) => v.scalar_unit(),
-            Self::Attack(v) | Self::Release(v) => v.scalar_unit(),
-            Self::Mix(v) => v.scalar_unit(),
-            Self::SidechainEnabled(v) => v.scalar_unit(),
-            Self::SidechainFilter(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Threshold(v) | Self::Makeup(v) => v.scalar_curve(),
-            Self::Ratio(v) => v.scalar_curve(),
-            Self::Attack(v) | Self::Release(v) => v.scalar_curve(),
-            Self::Mix(v) => v.scalar_curve(),
-            Self::SidechainEnabled(v) => v.scalar_curve(),
-            Self::SidechainFilter(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Threshold(v) | Self::Makeup(v) => v,
+        Self::Ratio(v) => v,
+        Self::Attack(v) | Self::Release(v) => v,
+        Self::Mix(v) => v,
+        Self::SidechainEnabled(v) => v,
+        Self::SidechainFilter(v) => v,
     }
 }
 
@@ -956,32 +662,10 @@ impl ModuleParam for TransientShaperParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Attack(v) | Self::Sustain(v) => v.scalar_kind(),
-            Self::Sensitivity(v) | Self::Mix(v) => v.scalar_kind(),
-            Self::Window(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Attack(v) | Self::Sustain(v) => v.scalar_unit(),
-            Self::Sensitivity(v) | Self::Mix(v) => v.scalar_unit(),
-            Self::Window(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Attack(v) | Self::Sustain(v) => v.scalar_curve(),
-            Self::Sensitivity(v) | Self::Mix(v) => v.scalar_curve(),
-            Self::Window(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Attack(v) | Self::Sustain(v) => v,
+        Self::Sensitivity(v) | Self::Mix(v) => v,
+        Self::Window(v) => v,
     }
 }
 
@@ -1024,32 +708,10 @@ impl ModuleParam for EqParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::LowFreq(v) | Self::MidFreq(v) | Self::HighFreq(v) => v.scalar_kind(),
-            Self::LowGain(v) | Self::MidGain(v) | Self::HighGain(v) => v.scalar_kind(),
-            Self::MidQ(v) | Self::Mix(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::LowFreq(v) | Self::MidFreq(v) | Self::HighFreq(v) => v.scalar_unit(),
-            Self::LowGain(v) | Self::MidGain(v) | Self::HighGain(v) => v.scalar_unit(),
-            Self::MidQ(v) | Self::Mix(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::LowFreq(v) | Self::MidFreq(v) | Self::HighFreq(v) => v.scalar_curve(),
-            Self::LowGain(v) | Self::MidGain(v) | Self::HighGain(v) => v.scalar_curve(),
-            Self::MidQ(v) | Self::Mix(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::LowFreq(v) | Self::MidFreq(v) | Self::HighFreq(v) => v,
+        Self::LowGain(v) | Self::MidGain(v) | Self::HighGain(v) => v,
+        Self::MidQ(v) | Self::Mix(v) => v,
     }
 }
 
@@ -1091,41 +753,13 @@ impl ModuleParam for BbdDelayParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Time(v) => v.scalar_kind(),
-            Self::Feedback(v)
-            | Self::Tone(v)
-            | Self::WowFlutter(v)
-            | Self::ClockNoise(v)
-            | Self::Mix(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Time(v) => v.scalar_unit(),
-            Self::Feedback(v)
-            | Self::Tone(v)
-            | Self::WowFlutter(v)
-            | Self::ClockNoise(v)
-            | Self::Mix(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Time(v) => v.scalar_curve(),
-            Self::Feedback(v)
-            | Self::Tone(v)
-            | Self::WowFlutter(v)
-            | Self::ClockNoise(v)
-            | Self::Mix(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Time(v) => v,
+        Self::Feedback(v)
+        | Self::Tone(v)
+        | Self::WowFlutter(v)
+        | Self::ClockNoise(v)
+        | Self::Mix(v) => v,
     }
 }
 
@@ -1162,32 +796,10 @@ impl ModuleParam for MidSideParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Width(v) | Self::Mix(v) => v.scalar_kind(),
-            Self::MidGain(v) | Self::SideGain(v) => v.scalar_kind(),
-            Self::Rotation(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Width(v) | Self::Mix(v) => v.scalar_unit(),
-            Self::MidGain(v) | Self::SideGain(v) => v.scalar_unit(),
-            Self::Rotation(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Width(v) | Self::Mix(v) => v.scalar_curve(),
-            Self::MidGain(v) | Self::SideGain(v) => v.scalar_curve(),
-            Self::Rotation(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Width(v) | Self::Mix(v) => v,
+        Self::MidGain(v) | Self::SideGain(v) => v,
+        Self::Rotation(v) => v,
     }
 }
 
@@ -1222,32 +834,10 @@ impl ModuleParam for LimiterParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Ceiling(v) => v.scalar_kind(),
-            Self::LookAhead(v) | Self::Release(v) => v.scalar_kind(),
-            Self::Mix(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Ceiling(v) => v.scalar_unit(),
-            Self::LookAhead(v) | Self::Release(v) => v.scalar_unit(),
-            Self::Mix(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Ceiling(v) => v.scalar_curve(),
-            Self::LookAhead(v) | Self::Release(v) => v.scalar_curve(),
-            Self::Mix(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Ceiling(v) => v,
+        Self::LookAhead(v) | Self::Release(v) => v,
+        Self::Mix(v) => v,
     }
 }
 
@@ -1291,37 +881,11 @@ impl ModuleParam for EnsembleChorusParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Rate(v) => v.scalar_kind(),
-            Self::Depth(v) | Self::BaseDelay(v) => v.scalar_kind(),
-            Self::Mix(v) | Self::Tone(v) | Self::Noise(v) | Self::StereoWidth(v) => v.scalar_kind(),
-            Self::Voices(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Rate(v) => v.scalar_unit(),
-            Self::Depth(v) | Self::BaseDelay(v) => v.scalar_unit(),
-            Self::Mix(v) | Self::Tone(v) | Self::Noise(v) | Self::StereoWidth(v) => v.scalar_unit(),
-            Self::Voices(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Rate(v) => v.scalar_curve(),
-            Self::Depth(v) | Self::BaseDelay(v) => v.scalar_curve(),
-            Self::Mix(v) | Self::Tone(v) | Self::Noise(v) | Self::StereoWidth(v) => {
-                v.scalar_curve()
-            }
-            Self::Voices(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Rate(v) => v,
+        Self::Depth(v) | Self::BaseDelay(v) => v,
+        Self::Mix(v) | Self::Tone(v) | Self::Noise(v) | Self::StereoWidth(v) => v,
+        Self::Voices(v) => v,
     }
 }
 
@@ -1366,44 +930,14 @@ impl ModuleParam for ShimmerReverbParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::RoomSize(v)
-            | Self::Decay(v)
-            | Self::Damping(v)
-            | Self::ShimmerMix(v)
-            | Self::Mix(v) => v.scalar_kind(),
-            Self::PreDelay(v) => v.scalar_kind(),
-            Self::PitchSemitones(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::RoomSize(v)
-            | Self::Decay(v)
-            | Self::Damping(v)
-            | Self::ShimmerMix(v)
-            | Self::Mix(v) => v.scalar_unit(),
-            Self::PreDelay(v) => v.scalar_unit(),
-            Self::PitchSemitones(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::RoomSize(v)
-            | Self::Decay(v)
-            | Self::Damping(v)
-            | Self::ShimmerMix(v)
-            | Self::Mix(v) => v.scalar_curve(),
-            Self::PreDelay(v) => v.scalar_curve(),
-            Self::PitchSemitones(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::RoomSize(v)
+        | Self::Decay(v)
+        | Self::Damping(v)
+        | Self::ShimmerMix(v)
+        | Self::Mix(v) => v,
+        Self::PreDelay(v) => v,
+        Self::PitchSemitones(v) => v,
     }
 }
 
@@ -1460,50 +994,16 @@ impl ModuleParam for GranularFxParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::BufferTime(v) => v.scalar_kind(),
-            Self::GrainSize(v) => v.scalar_kind(),
-            Self::Density(v)
-            | Self::Position(v)
-            | Self::PositionSpread(v)
-            | Self::PitchSpread(v)
-            | Self::PanSpread(v)
-            | Self::Mix(v) => v.scalar_kind(),
-            Self::Freeze(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::BufferTime(v) => v.scalar_unit(),
-            Self::GrainSize(v) => v.scalar_unit(),
-            Self::Density(v)
-            | Self::Position(v)
-            | Self::PositionSpread(v)
-            | Self::PitchSpread(v)
-            | Self::PanSpread(v)
-            | Self::Mix(v) => v.scalar_unit(),
-            Self::Freeze(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::BufferTime(v) => v.scalar_curve(),
-            Self::GrainSize(v) => v.scalar_curve(),
-            Self::Density(v)
-            | Self::Position(v)
-            | Self::PositionSpread(v)
-            | Self::PitchSpread(v)
-            | Self::PanSpread(v)
-            | Self::Mix(v) => v.scalar_curve(),
-            Self::Freeze(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::BufferTime(v) => v,
+        Self::GrainSize(v) => v,
+        Self::Density(v)
+        | Self::Position(v)
+        | Self::PositionSpread(v)
+        | Self::PitchSpread(v)
+        | Self::PanSpread(v)
+        | Self::Mix(v) => v,
+        Self::Freeze(v) => v,
     }
 }
 
@@ -1546,32 +1046,10 @@ impl ModuleParam for SpectralBlurParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::FftSize(v) => v.scalar_kind(),
-            Self::BlurTime(v) | Self::BlurFreq(v) | Self::Mix(v) => v.scalar_kind(),
-            Self::Freeze(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::FftSize(v) => v.scalar_unit(),
-            Self::BlurTime(v) | Self::BlurFreq(v) | Self::Mix(v) => v.scalar_unit(),
-            Self::Freeze(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::FftSize(v) => v.scalar_curve(),
-            Self::BlurTime(v) | Self::BlurFreq(v) | Self::Mix(v) => v.scalar_curve(),
-            Self::Freeze(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::FftSize(v) => v,
+        Self::BlurTime(v) | Self::BlurFreq(v) | Self::Mix(v) => v,
+        Self::Freeze(v) => v,
     }
 }
 
@@ -1610,38 +1088,12 @@ impl ModuleParam for ModalResonatorParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::BaseNote(v) => v.scalar_kind(),
-            Self::Spread(v) | Self::Decay(v) | Self::Brightness(v) | Self::Mix(v) => {
-                v.scalar_kind()
-            }
-            Self::Modes(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::BaseNote(v) => v.scalar_unit(),
-            Self::Spread(v) | Self::Decay(v) | Self::Brightness(v) | Self::Mix(v) => {
-                v.scalar_unit()
-            }
-            Self::Modes(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::BaseNote(v) => v.scalar_curve(),
-            Self::Spread(v) | Self::Decay(v) | Self::Brightness(v) | Self::Mix(v) => {
-                v.scalar_curve()
-            }
-            Self::Modes(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::BaseNote(v) => v,
+        Self::Spread(v) | Self::Decay(v) | Self::Brightness(v) | Self::Mix(v) => {
+            v
+        },
+        Self::Modes(v) => v,
     }
 }
 
@@ -1686,38 +1138,12 @@ impl ModuleParam for ReverseGateReverbParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::WindowTime(v) | Self::GateTime(v) => v.scalar_kind(),
-            Self::Mode(v) => v.scalar_kind(),
-            Self::Trigger(v) => v.scalar_kind(),
-            Self::Threshold(v) => v.scalar_kind(),
-            Self::Mix(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::WindowTime(v) | Self::GateTime(v) => v.scalar_unit(),
-            Self::Mode(v) => v.scalar_unit(),
-            Self::Trigger(v) => v.scalar_unit(),
-            Self::Threshold(v) => v.scalar_unit(),
-            Self::Mix(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::WindowTime(v) | Self::GateTime(v) => v.scalar_curve(),
-            Self::Mode(v) => v.scalar_curve(),
-            Self::Trigger(v) => v.scalar_curve(),
-            Self::Threshold(v) => v.scalar_curve(),
-            Self::Mix(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::WindowTime(v) | Self::GateTime(v) => v,
+        Self::Mode(v) => v,
+        Self::Trigger(v) => v,
+        Self::Threshold(v) => v,
+        Self::Mix(v) => v,
     }
 }
 
@@ -1750,32 +1176,10 @@ impl ModuleParam for TiltEqParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Tilt(v) => v.scalar_kind(),
-            Self::CenterFreq(v) => v.scalar_kind(),
-            Self::Mix(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Tilt(v) => v.scalar_unit(),
-            Self::CenterFreq(v) => v.scalar_unit(),
-            Self::Mix(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Tilt(v) => v.scalar_curve(),
-            Self::CenterFreq(v) => v.scalar_curve(),
-            Self::Mix(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Tilt(v) => v,
+        Self::CenterFreq(v) => v,
+        Self::Mix(v) => v,
     }
 }
 
@@ -1809,29 +1213,9 @@ impl ModuleParam for UnivibeParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Rate(v) => v.scalar_kind(),
-            Self::Depth(v) | Self::Feedback(v) | Self::Mix(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Rate(v) => v.scalar_unit(),
-            Self::Depth(v) | Self::Feedback(v) | Self::Mix(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Rate(v) => v.scalar_curve(),
-            Self::Depth(v) | Self::Feedback(v) | Self::Mix(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Rate(v) => v,
+        Self::Depth(v) | Self::Feedback(v) | Self::Mix(v) => v,
     }
 }
 
@@ -1865,29 +1249,9 @@ impl ModuleParam for CrossoverParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Frequency(v) => v.scalar_kind(),
-            Self::LowGain(v) | Self::HighGain(v) | Self::Mix(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Frequency(v) => v.scalar_unit(),
-            Self::LowGain(v) | Self::HighGain(v) | Self::Mix(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Frequency(v) => v.scalar_curve(),
-            Self::LowGain(v) | Self::HighGain(v) | Self::Mix(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Frequency(v) => v,
+        Self::LowGain(v) | Self::HighGain(v) | Self::Mix(v) => v,
     }
 }
 
@@ -1919,29 +1283,9 @@ impl ModuleParam for VocoderParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Order(v) | Self::Mix(v) => v.scalar_kind(),
-            Self::WindowSize(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Order(v) | Self::Mix(v) => v.scalar_unit(),
-            Self::WindowSize(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Order(v) | Self::Mix(v) => v.scalar_curve(),
-            Self::WindowSize(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Order(v) | Self::Mix(v) => v,
+        Self::WindowSize(v) => v,
     }
 }
 
@@ -1974,29 +1318,9 @@ impl ModuleParam for EnvelopeFollowerParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Attack(v) | Self::Release(v) => v.scalar_kind(),
-            Self::Sensitivity(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Attack(v) | Self::Release(v) => v.scalar_unit(),
-            Self::Sensitivity(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Attack(v) | Self::Release(v) => v.scalar_curve(),
-            Self::Sensitivity(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Attack(v) | Self::Release(v) => v,
+        Self::Sensitivity(v) => v,
     }
 }
 
@@ -2047,35 +1371,11 @@ impl ModuleParam for EnvelopeParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Attack(v) | Self::Decay(v) | Self::Release(v) => v.scalar_kind(),
-            Self::TimeScale(v) => v.scalar_kind(),
-            Self::Sustain(v) | Self::VelocitySensitivity(v) => v.scalar_kind(),
-            Self::AttackCurve(v) | Self::DecayCurve(v) | Self::ReleaseCurve(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Attack(v) | Self::Decay(v) | Self::Release(v) => v.scalar_unit(),
-            Self::TimeScale(v) => v.scalar_unit(),
-            Self::Sustain(v) | Self::VelocitySensitivity(v) => v.scalar_unit(),
-            Self::AttackCurve(v) | Self::DecayCurve(v) | Self::ReleaseCurve(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Attack(v) | Self::Decay(v) | Self::Release(v) => v.scalar_curve(),
-            Self::TimeScale(v) => v.scalar_curve(),
-            Self::Sustain(v) | Self::VelocitySensitivity(v) => v.scalar_curve(),
-            Self::AttackCurve(v) | Self::DecayCurve(v) | Self::ReleaseCurve(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Attack(v) | Self::Decay(v) | Self::Release(v) => v,
+        Self::TimeScale(v) => v,
+        Self::Sustain(v) | Self::VelocitySensitivity(v) => v,
+        Self::AttackCurve(v) | Self::DecayCurve(v) | Self::ReleaseCurve(v) => v,
     }
 }
 
@@ -2128,41 +1428,13 @@ impl ModuleParam for FilterParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Mode(v) => v.scalar_kind(),
-            Self::Cutoff(v) => v.scalar_kind(),
-            Self::Resonance(v) | Self::KeyTracking(v) | Self::Morph(v) => v.scalar_kind(),
-            Self::Drive(v) => v.scalar_kind(),
-            Self::EnvAmount(v) | Self::CutoffMod(v) => v.scalar_kind(),
-            Self::Model(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Mode(v) => v.scalar_unit(),
-            Self::Cutoff(v) => v.scalar_unit(),
-            Self::Resonance(v) | Self::KeyTracking(v) | Self::Morph(v) => v.scalar_unit(),
-            Self::Drive(v) => v.scalar_unit(),
-            Self::EnvAmount(v) | Self::CutoffMod(v) => v.scalar_unit(),
-            Self::Model(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Mode(v) => v.scalar_curve(),
-            Self::Cutoff(v) => v.scalar_curve(),
-            Self::Resonance(v) | Self::KeyTracking(v) | Self::Morph(v) => v.scalar_curve(),
-            Self::Drive(v) => v.scalar_curve(),
-            Self::EnvAmount(v) | Self::CutoffMod(v) => v.scalar_curve(),
-            Self::Model(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Mode(v) => v,
+        Self::Cutoff(v) => v,
+        Self::Resonance(v) | Self::KeyTracking(v) | Self::Morph(v) => v,
+        Self::Drive(v) => v,
+        Self::EnvAmount(v) | Self::CutoffMod(v) => v,
+        Self::Model(v) => v,
     }
 }
 
@@ -2218,53 +1490,17 @@ impl ModuleParam for FofParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Vowel(v)
-            | Self::FormantShift(v)
-            | Self::Skirt(v)
-            | Self::Bandwidth(v)
-            | Self::Breathiness(v)
-            | Self::UnisonVoices(v)
-            | Self::UnisonSpread(v)
-            | Self::Level(v) => v.scalar_kind(),
-            Self::VibratoRate(v) => v.scalar_kind(),
-            Self::VibratoDepth(v) | Self::UnisonDetune(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Vowel(v)
-            | Self::FormantShift(v)
-            | Self::Skirt(v)
-            | Self::Bandwidth(v)
-            | Self::Breathiness(v)
-            | Self::UnisonVoices(v)
-            | Self::UnisonSpread(v)
-            | Self::Level(v) => v.scalar_unit(),
-            Self::VibratoRate(v) => v.scalar_unit(),
-            Self::VibratoDepth(v) | Self::UnisonDetune(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Vowel(v)
-            | Self::FormantShift(v)
-            | Self::Skirt(v)
-            | Self::Bandwidth(v)
-            | Self::Breathiness(v)
-            | Self::UnisonVoices(v)
-            | Self::UnisonSpread(v)
-            | Self::Level(v) => v.scalar_curve(),
-            Self::VibratoRate(v) => v.scalar_curve(),
-            Self::VibratoDepth(v) | Self::UnisonDetune(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Vowel(v)
+        | Self::FormantShift(v)
+        | Self::Skirt(v)
+        | Self::Bandwidth(v)
+        | Self::Breathiness(v)
+        | Self::UnisonVoices(v)
+        | Self::UnisonSpread(v)
+        | Self::Level(v) => v,
+        Self::VibratoRate(v) => v,
+        Self::VibratoDepth(v) | Self::UnisonDetune(v) => v,
     }
 }
 
@@ -2303,38 +1539,12 @@ impl ModuleParam for FooglersParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Tap1(v)
-            | Self::Tap2(v)
-            | Self::Feedback(v)
-            | Self::Damping(v)
-            | Self::Level(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Tap1(v)
-            | Self::Tap2(v)
-            | Self::Feedback(v)
-            | Self::Damping(v)
-            | Self::Level(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Tap1(v)
-            | Self::Tap2(v)
-            | Self::Feedback(v)
-            | Self::Damping(v)
-            | Self::Level(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Tap1(v)
+        | Self::Tap2(v)
+        | Self::Feedback(v)
+        | Self::Damping(v)
+        | Self::Level(v) => v,
     }
 }
 
@@ -2370,29 +1580,9 @@ impl ModuleParam for FormantFilterParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Vowel(v) | Self::Resonance(v) | Self::Mix(v) => v.scalar_kind(),
-            Self::Cutoff(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Vowel(v) | Self::Resonance(v) | Self::Mix(v) => v.scalar_unit(),
-            Self::Cutoff(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Vowel(v) | Self::Resonance(v) | Self::Mix(v) => v.scalar_curve(),
-            Self::Cutoff(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Vowel(v) | Self::Resonance(v) | Self::Mix(v) => v,
+        Self::Cutoff(v) => v,
     }
 }
 
@@ -2434,41 +1624,13 @@ impl ModuleParam for FractalOscParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Roughness(v)
-            | Self::FractalSpacing(v)
-            | Self::Dispersion(v)
-            | Self::Spread(v)
-            | Self::Level(v) => v.scalar_kind(),
-            Self::GlideTime(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Roughness(v)
-            | Self::FractalSpacing(v)
-            | Self::Dispersion(v)
-            | Self::Spread(v)
-            | Self::Level(v) => v.scalar_unit(),
-            Self::GlideTime(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Roughness(v)
-            | Self::FractalSpacing(v)
-            | Self::Dispersion(v)
-            | Self::Spread(v)
-            | Self::Level(v) => v.scalar_curve(),
-            Self::GlideTime(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Roughness(v)
+        | Self::FractalSpacing(v)
+        | Self::Dispersion(v)
+        | Self::Spread(v)
+        | Self::Level(v) => v,
+        Self::GlideTime(v) => v,
     }
 }
 
@@ -2501,29 +1663,9 @@ impl ModuleParam for FrequencyShifterParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Shift(v) => v.scalar_kind(),
-            Self::Mix(v) | Self::Mode(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Shift(v) => v.scalar_unit(),
-            Self::Mix(v) | Self::Mode(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Shift(v) => v.scalar_curve(),
-            Self::Mix(v) | Self::Mode(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Shift(v) => v,
+        Self::Mix(v) | Self::Mode(v) => v,
     }
 }
 
@@ -2557,29 +1699,9 @@ impl ModuleParam for EuclideanParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Steps(v) | Self::Pulses(v) | Self::Rotation(v) => v.scalar_kind(),
-            Self::Swing(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Steps(v) | Self::Pulses(v) | Self::Rotation(v) => v.scalar_unit(),
-            Self::Swing(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Steps(v) | Self::Pulses(v) | Self::Rotation(v) => v.scalar_curve(),
-            Self::Swing(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Steps(v) | Self::Pulses(v) | Self::Rotation(v) => v,
+        Self::Swing(v) => v,
     }
 }
 
@@ -2616,32 +1738,10 @@ impl ModuleParam for TuringMachineParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::MutationRate(v) | Self::Range(v) => v.scalar_kind(),
-            Self::Scale(v) => v.scalar_kind(),
-            Self::Length(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::MutationRate(v) | Self::Range(v) => v.scalar_unit(),
-            Self::Scale(v) => v.scalar_unit(),
-            Self::Length(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::MutationRate(v) | Self::Range(v) => v.scalar_curve(),
-            Self::Scale(v) => v.scalar_curve(),
-            Self::Length(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::MutationRate(v) | Self::Range(v) => v,
+        Self::Scale(v) => v,
+        Self::Length(v) => v,
     }
 }
 
@@ -2675,29 +1775,9 @@ impl ModuleParam for RandomGatesParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Density(v) | Self::BurstProbability(v) | Self::GateLength(v) => v.scalar_kind(),
-            Self::Seed(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Density(v) | Self::BurstProbability(v) | Self::GateLength(v) => v.scalar_unit(),
-            Self::Seed(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Density(v) | Self::BurstProbability(v) | Self::GateLength(v) => v.scalar_curve(),
-            Self::Seed(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Density(v) | Self::BurstProbability(v) | Self::GateLength(v) => v,
+        Self::Seed(v) => v,
     }
 }
 
@@ -2760,56 +1840,18 @@ impl ModuleParam for GranularParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::GrainSize(v) => v.scalar_kind(),
-            Self::Density(v)
-            | Self::Position(v)
-            | Self::PositionSpread(v)
-            | Self::PitchSpread(v)
-            | Self::PanSpread(v) => v.scalar_kind(),
-            Self::Freeze(v) => v.scalar_kind(),
-            Self::Window(v) => v.scalar_kind(),
-            Self::Source(v) => v.scalar_kind(),
-            Self::Level(v) => v.scalar_kind(),
-            Self::GlideTime(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::GrainSize(v) => v.scalar_unit(),
-            Self::Density(v)
-            | Self::Position(v)
-            | Self::PositionSpread(v)
-            | Self::PitchSpread(v)
-            | Self::PanSpread(v) => v.scalar_unit(),
-            Self::Freeze(v) => v.scalar_unit(),
-            Self::Window(v) => v.scalar_unit(),
-            Self::Source(v) => v.scalar_unit(),
-            Self::Level(v) => v.scalar_unit(),
-            Self::GlideTime(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::GrainSize(v) => v.scalar_curve(),
-            Self::Density(v)
-            | Self::Position(v)
-            | Self::PositionSpread(v)
-            | Self::PitchSpread(v)
-            | Self::PanSpread(v) => v.scalar_curve(),
-            Self::Freeze(v) => v.scalar_curve(),
-            Self::Window(v) => v.scalar_curve(),
-            Self::Source(v) => v.scalar_curve(),
-            Self::Level(v) => v.scalar_curve(),
-            Self::GlideTime(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::GrainSize(v) => v,
+        Self::Density(v)
+        | Self::Position(v)
+        | Self::PositionSpread(v)
+        | Self::PitchSpread(v)
+        | Self::PanSpread(v) => v,
+        Self::Freeze(v) => v,
+        Self::Window(v) => v,
+        Self::Source(v) => v,
+        Self::Level(v) => v,
+        Self::GlideTime(v) => v,
     }
 }
 
@@ -2868,41 +1910,13 @@ impl ModuleParam for KineticParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Duration(v) => v.scalar_kind(),
-            Self::CurveType(v) => v.scalar_kind(),
-            Self::Overshoot(v) => v.scalar_kind(),
-            Self::Bipolar(v) | Self::Retrigger(v) => v.scalar_kind(),
-            Self::LoopMode(v) => v.scalar_kind(),
-            Self::OutputVel(v) | Self::OutputAcc(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Duration(v) => v.scalar_unit(),
-            Self::CurveType(v) => v.scalar_unit(),
-            Self::Overshoot(v) => v.scalar_unit(),
-            Self::Bipolar(v) | Self::Retrigger(v) => v.scalar_unit(),
-            Self::LoopMode(v) => v.scalar_unit(),
-            Self::OutputVel(v) | Self::OutputAcc(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Duration(v) => v.scalar_curve(),
-            Self::CurveType(v) => v.scalar_curve(),
-            Self::Overshoot(v) => v.scalar_curve(),
-            Self::Bipolar(v) | Self::Retrigger(v) => v.scalar_curve(),
-            Self::LoopMode(v) => v.scalar_curve(),
-            Self::OutputVel(v) | Self::OutputAcc(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Duration(v) => v,
+        Self::CurveType(v) => v,
+        Self::Overshoot(v) => v,
+        Self::Bipolar(v) | Self::Retrigger(v) => v,
+        Self::LoopMode(v) => v,
+        Self::OutputVel(v) | Self::OutputAcc(v) => v,
     }
 }
 
@@ -2941,29 +1955,9 @@ impl ModuleParam for LaSynthParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::AttackType(v) | Self::AttackLevel(v) | Self::Brightness(v) => v.scalar_kind(),
-            Self::AttackTime(v) | Self::CrossfadeTime(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::AttackType(v) | Self::AttackLevel(v) | Self::Brightness(v) => v.scalar_unit(),
-            Self::AttackTime(v) | Self::CrossfadeTime(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::AttackType(v) | Self::AttackLevel(v) | Self::Brightness(v) => v.scalar_curve(),
-            Self::AttackTime(v) | Self::CrossfadeTime(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::AttackType(v) | Self::AttackLevel(v) | Self::Brightness(v) => v,
+        Self::AttackTime(v) | Self::CrossfadeTime(v) => v,
     }
 }
 
@@ -3022,41 +2016,13 @@ impl ModuleParam for LfoParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Waveform(v) => v.scalar_kind(),
-            Self::Rate(v) => v.scalar_kind(),
-            Self::Depth(v) => v.scalar_kind(),
-            Self::Phase(v) => v.scalar_kind(),
-            Self::TempoSync(v) | Self::Retrigger(v) => v.scalar_kind(),
-            Self::SyncDivision(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Waveform(v) => v.scalar_unit(),
-            Self::Rate(v) => v.scalar_unit(),
-            Self::Depth(v) => v.scalar_unit(),
-            Self::Phase(v) => v.scalar_unit(),
-            Self::TempoSync(v) | Self::Retrigger(v) => v.scalar_unit(),
-            Self::SyncDivision(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Waveform(v) => v.scalar_curve(),
-            Self::Rate(v) => v.scalar_curve(),
-            Self::Depth(v) => v.scalar_curve(),
-            Self::Phase(v) => v.scalar_curve(),
-            Self::TempoSync(v) | Self::Retrigger(v) => v.scalar_curve(),
-            Self::SyncDivision(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Waveform(v) => v,
+        Self::Rate(v) => v,
+        Self::Depth(v) => v,
+        Self::Phase(v) => v,
+        Self::TempoSync(v) | Self::Retrigger(v) => v,
+        Self::SyncDivision(v) => v,
     }
 }
 
@@ -3126,38 +2092,12 @@ impl ModuleParam for ModMatrixParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::GridSize(v) => v.scalar_kind(),
-            Self::SlotSource(_, v) => v.scalar_kind(),
-            Self::SlotDestination(_, v) => v.scalar_kind(),
-            Self::SlotAmount(_, v) => v.scalar_kind(),
-            Self::SlotEnabled(_, v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::GridSize(v) => v.scalar_unit(),
-            Self::SlotSource(_, v) => v.scalar_unit(),
-            Self::SlotDestination(_, v) => v.scalar_unit(),
-            Self::SlotAmount(_, v) => v.scalar_unit(),
-            Self::SlotEnabled(_, v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::GridSize(v) => v.scalar_curve(),
-            Self::SlotSource(_, v) => v.scalar_curve(),
-            Self::SlotDestination(_, v) => v.scalar_curve(),
-            Self::SlotAmount(_, v) => v.scalar_curve(),
-            Self::SlotEnabled(_, v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::GridSize(v) => v,
+        Self::SlotSource(_, v) => v,
+        Self::SlotDestination(_, v) => v,
+        Self::SlotAmount(_, v) => v,
+        Self::SlotEnabled(_, v) => v,
     }
 }
 
@@ -3196,32 +2136,10 @@ impl ModuleParam for AmplifierParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Level(v) => v.scalar_kind(),
-            Self::Pan(v) => v.scalar_kind(),
-            Self::CvBipolar(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Level(v) => v.scalar_unit(),
-            Self::Pan(v) => v.scalar_unit(),
-            Self::CvBipolar(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Level(v) => v.scalar_curve(),
-            Self::Pan(v) => v.scalar_curve(),
-            Self::CvBipolar(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Level(v) => v,
+        Self::Pan(v) => v,
+        Self::CvBipolar(v) => v,
     }
 }
 
@@ -3285,53 +2203,17 @@ impl ModuleParam for MixerParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Input1(v)
-            | Self::Input2(v)
-            | Self::Input3(v)
-            | Self::Input4(v)
-            | Self::Input5(v)
-            | Self::Input6(v)
-            | Self::Input7(v)
-            | Self::Input8(v)
-            | Self::Master(v) => v.scalar_kind(),
-            Self::Mute(v) | Self::Limit(v) | Self::Dither(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Input1(v)
-            | Self::Input2(v)
-            | Self::Input3(v)
-            | Self::Input4(v)
-            | Self::Input5(v)
-            | Self::Input6(v)
-            | Self::Input7(v)
-            | Self::Input8(v)
-            | Self::Master(v) => v.scalar_unit(),
-            Self::Mute(v) | Self::Limit(v) | Self::Dither(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Input1(v)
-            | Self::Input2(v)
-            | Self::Input3(v)
-            | Self::Input4(v)
-            | Self::Input5(v)
-            | Self::Input6(v)
-            | Self::Input7(v)
-            | Self::Input8(v)
-            | Self::Master(v) => v.scalar_curve(),
-            Self::Mute(v) | Self::Limit(v) | Self::Dither(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Input1(v)
+        | Self::Input2(v)
+        | Self::Input3(v)
+        | Self::Input4(v)
+        | Self::Input5(v)
+        | Self::Input6(v)
+        | Self::Input7(v)
+        | Self::Input8(v)
+        | Self::Master(v) => v,
+        Self::Mute(v) | Self::Limit(v) | Self::Dither(v) => v,
     }
 }
 
@@ -3373,35 +2255,11 @@ impl ModuleParam for OscilloscopeParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Time(v) => v.scalar_kind(),
-            Self::Gain(v) => v.scalar_kind(),
-            Self::Trigger(v) => v.scalar_kind(),
-            Self::Frozen(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Time(v) => v.scalar_unit(),
-            Self::Gain(v) => v.scalar_unit(),
-            Self::Trigger(v) => v.scalar_unit(),
-            Self::Frozen(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Time(v) => v.scalar_curve(),
-            Self::Gain(v) => v.scalar_curve(),
-            Self::Trigger(v) => v.scalar_curve(),
-            Self::Frozen(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Time(v) => v,
+        Self::Gain(v) => v,
+        Self::Trigger(v) => v,
+        Self::Frozen(v) => v,
     }
 }
 
@@ -3440,32 +2298,10 @@ impl ModuleParam for LevelMeterParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::PeakHold(v) => v.scalar_kind(),
-            Self::DecayRate(v) => v.scalar_kind(),
-            Self::ShowRms(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::PeakHold(v) => v.scalar_unit(),
-            Self::DecayRate(v) => v.scalar_unit(),
-            Self::ShowRms(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::PeakHold(v) => v.scalar_curve(),
-            Self::DecayRate(v) => v.scalar_curve(),
-            Self::ShowRms(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::PeakHold(v) => v,
+        Self::DecayRate(v) => v,
+        Self::ShowRms(v) => v,
     }
 }
 
@@ -3531,50 +2367,16 @@ impl ModuleParam for MsegParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::SegmentCount(v)
-            | Self::SustainSegment(v)
-            | Self::LoopStart(v)
-            | Self::LoopEnd(v) => v.scalar_kind(),
-            Self::LoopEnabled(v) => v.scalar_kind(),
-            Self::TimeScale(v) => v.scalar_kind(),
-            Self::SegmentTime(_, v) => v.scalar_kind(),
-            Self::SegmentLevel(_, v) => v.scalar_kind(),
-            Self::SegmentCurve(_, v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::SegmentCount(v)
-            | Self::SustainSegment(v)
-            | Self::LoopStart(v)
-            | Self::LoopEnd(v) => v.scalar_unit(),
-            Self::LoopEnabled(v) => v.scalar_unit(),
-            Self::TimeScale(v) => v.scalar_unit(),
-            Self::SegmentTime(_, v) => v.scalar_unit(),
-            Self::SegmentLevel(_, v) => v.scalar_unit(),
-            Self::SegmentCurve(_, v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::SegmentCount(v)
-            | Self::SustainSegment(v)
-            | Self::LoopStart(v)
-            | Self::LoopEnd(v) => v.scalar_curve(),
-            Self::LoopEnabled(v) => v.scalar_curve(),
-            Self::TimeScale(v) => v.scalar_curve(),
-            Self::SegmentTime(_, v) => v.scalar_curve(),
-            Self::SegmentLevel(_, v) => v.scalar_curve(),
-            Self::SegmentCurve(_, v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::SegmentCount(v)
+        | Self::SustainSegment(v)
+        | Self::LoopStart(v)
+        | Self::LoopEnd(v) => v,
+        Self::LoopEnabled(v) => v,
+        Self::TimeScale(v) => v,
+        Self::SegmentTime(_, v) => v,
+        Self::SegmentLevel(_, v) => v,
+        Self::SegmentCurve(_, v) => v,
     }
 }
 
@@ -3604,29 +2406,9 @@ impl ModuleParam for NoiseParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Type(v) => v.scalar_kind(),
-            Self::Level(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Type(v) => v.scalar_unit(),
-            Self::Level(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Type(v) => v.scalar_curve(),
-            Self::Level(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Type(v) => v,
+        Self::Level(v) => v,
     }
 }
 
@@ -3707,68 +2489,22 @@ impl ModuleParam for OscillatorParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Waveform(v) => v.scalar_kind(),
-            Self::Frequency(v) => v.scalar_kind(),
-            Self::Detune(v) | Self::UnisonDetune(v) => v.scalar_kind(),
-            Self::Octave(v) => v.scalar_kind(),
-            Self::PulseWidth(v) => v.scalar_kind(),
-            Self::Level(v) => v.scalar_kind(),
-            Self::Phase(v) => v.scalar_kind(),
-            Self::FmMode(v) => v.scalar_kind(),
-            Self::FmAmount(v) => v.scalar_kind(),
-            Self::UnisonVoices(v) => v.scalar_kind(),
-            Self::UnisonSpread(v) | Self::UnisonPhaseRandom(v) | Self::CrossModAmount(v) => {
-                v.scalar_kind()
-            }
-            Self::AntiAlias(v) => v.scalar_kind(),
-            Self::GlideTime(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Waveform(v) => v.scalar_unit(),
-            Self::Frequency(v) => v.scalar_unit(),
-            Self::Detune(v) | Self::UnisonDetune(v) => v.scalar_unit(),
-            Self::Octave(v) => v.scalar_unit(),
-            Self::PulseWidth(v) => v.scalar_unit(),
-            Self::Level(v) => v.scalar_unit(),
-            Self::Phase(v) => v.scalar_unit(),
-            Self::FmMode(v) => v.scalar_unit(),
-            Self::FmAmount(v) => v.scalar_unit(),
-            Self::UnisonVoices(v) => v.scalar_unit(),
-            Self::UnisonSpread(v) | Self::UnisonPhaseRandom(v) | Self::CrossModAmount(v) => {
-                v.scalar_unit()
-            }
-            Self::AntiAlias(v) => v.scalar_unit(),
-            Self::GlideTime(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Waveform(v) => v.scalar_curve(),
-            Self::Frequency(v) => v.scalar_curve(),
-            Self::Detune(v) | Self::UnisonDetune(v) => v.scalar_curve(),
-            Self::Octave(v) => v.scalar_curve(),
-            Self::PulseWidth(v) => v.scalar_curve(),
-            Self::Level(v) => v.scalar_curve(),
-            Self::Phase(v) => v.scalar_curve(),
-            Self::FmMode(v) => v.scalar_curve(),
-            Self::FmAmount(v) => v.scalar_curve(),
-            Self::UnisonVoices(v) => v.scalar_curve(),
-            Self::UnisonSpread(v) | Self::UnisonPhaseRandom(v) | Self::CrossModAmount(v) => {
-                v.scalar_curve()
-            }
-            Self::AntiAlias(v) => v.scalar_curve(),
-            Self::GlideTime(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Waveform(v) => v,
+        Self::Frequency(v) => v,
+        Self::Detune(v) | Self::UnisonDetune(v) => v,
+        Self::Octave(v) => v,
+        Self::PulseWidth(v) => v,
+        Self::Level(v) => v,
+        Self::Phase(v) => v,
+        Self::FmMode(v) => v,
+        Self::FmAmount(v) => v,
+        Self::UnisonVoices(v) => v,
+        Self::UnisonSpread(v) | Self::UnisonPhaseRandom(v) | Self::CrossModAmount(v) => {
+            v
+        },
+        Self::AntiAlias(v) => v,
+        Self::GlideTime(v) => v,
     }
 }
 
@@ -3815,38 +2551,12 @@ impl ModuleParam for MathOscillatorParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Algorithm(v) => v.scalar_kind(),
-            Self::Frequency(v) => v.scalar_kind(),
-            Self::ParamA(v) | Self::ParamB(v) | Self::ParamC(v) => v.scalar_kind(),
-            Self::Level(v) => v.scalar_kind(),
-            Self::GlideTime(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Algorithm(v) => v.scalar_unit(),
-            Self::Frequency(v) => v.scalar_unit(),
-            Self::ParamA(v) | Self::ParamB(v) | Self::ParamC(v) => v.scalar_unit(),
-            Self::Level(v) => v.scalar_unit(),
-            Self::GlideTime(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Algorithm(v) => v.scalar_curve(),
-            Self::Frequency(v) => v.scalar_curve(),
-            Self::ParamA(v) | Self::ParamB(v) | Self::ParamC(v) => v.scalar_curve(),
-            Self::Level(v) => v.scalar_curve(),
-            Self::GlideTime(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Algorithm(v) => v,
+        Self::Frequency(v) => v,
+        Self::ParamA(v) | Self::ParamB(v) | Self::ParamC(v) => v,
+        Self::Level(v) => v,
+        Self::GlideTime(v) => v,
     }
 }
 
@@ -3882,35 +2592,11 @@ impl ModuleParam for PadSynthParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Bandwidth(v) | Self::Tilt(v) | Self::Detune(v) | Self::Level(v) => {
-                v.scalar_kind()
-            }
-            Self::BaseFreq(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Bandwidth(v) | Self::Tilt(v) | Self::Detune(v) | Self::Level(v) => {
-                v.scalar_unit()
-            }
-            Self::BaseFreq(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Bandwidth(v) | Self::Tilt(v) | Self::Detune(v) | Self::Level(v) => {
-                v.scalar_curve()
-            }
-            Self::BaseFreq(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Bandwidth(v) | Self::Tilt(v) | Self::Detune(v) | Self::Level(v) => {
+            v
+        },
+        Self::BaseFreq(v) => v,
     }
 }
 
@@ -3952,35 +2638,11 @@ impl ModuleParam for PhaseVocoderParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::PitchShift(v) => v.scalar_kind(),
-            Self::Freeze(v) => v.scalar_kind(),
-            Self::FftSize(v) => v.scalar_kind(),
-            Self::Mix(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::PitchShift(v) => v.scalar_unit(),
-            Self::Freeze(v) => v.scalar_unit(),
-            Self::FftSize(v) => v.scalar_unit(),
-            Self::Mix(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::PitchShift(v) => v.scalar_curve(),
-            Self::Freeze(v) => v.scalar_curve(),
-            Self::FftSize(v) => v.scalar_curve(),
-            Self::Mix(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::PitchShift(v) => v,
+        Self::Freeze(v) => v,
+        Self::FftSize(v) => v,
+        Self::Mix(v) => v,
     }
 }
 
@@ -4024,35 +2686,11 @@ impl ModuleParam for KeyboardPannerParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Spread(v) => v.scalar_kind(),
-            Self::CenterNote(v) => v.scalar_kind(),
-            Self::Curve(v) => v.scalar_kind(),
-            Self::Invert(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Spread(v) => v.scalar_unit(),
-            Self::CenterNote(v) => v.scalar_unit(),
-            Self::Curve(v) => v.scalar_unit(),
-            Self::Invert(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Spread(v) => v.scalar_curve(),
-            Self::CenterNote(v) => v.scalar_curve(),
-            Self::Curve(v) => v.scalar_curve(),
-            Self::Invert(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Spread(v) => v,
+        Self::CenterNote(v) => v,
+        Self::Curve(v) => v,
+        Self::Invert(v) => v,
     }
 }
 
@@ -4101,43 +2739,14 @@ impl ModuleParam for SpatialPannerParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::X(v) | Self::Y(v) | Self::Z(v) => v.scalar_kind(),
-            Self::Diffusion(v)
-            | Self::ErLevel(v)
-            | Self::DirectLevel(v)
-            | Self::Absorption(v)
-            | Self::AirAbsorption(v)
-            | Self::Distance(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::X(v) | Self::Y(v) | Self::Z(v) => v.scalar_unit(),
-            Self::Diffusion(v)
-            | Self::ErLevel(v)
-            | Self::DirectLevel(v)
-            | Self::Absorption(v)
-            | Self::AirAbsorption(v)
-            | Self::Distance(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type.
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::X(v) | Self::Y(v) | Self::Z(v) => v.scalar_curve(),
-            Self::Diffusion(v)
-            | Self::ErLevel(v)
-            | Self::DirectLevel(v)
-            | Self::Absorption(v)
-            | Self::AirAbsorption(v)
-            | Self::Distance(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::X(v) | Self::Y(v) | Self::Z(v) => v,
+        Self::Diffusion(v)
+        | Self::ErLevel(v)
+        | Self::DirectLevel(v)
+        | Self::Absorption(v)
+        | Self::AirAbsorption(v)
+        | Self::Distance(v) => v,
     }
 }
 
@@ -4173,34 +2782,10 @@ impl ModuleParam for BodyResonanceParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Frequency(v) => v.scalar_kind(),
-            Self::Resonance(v) | Self::Size(v) | Self::Brightness(v) | Self::Mix(v) => {
-                v.scalar_kind()
-            }
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Frequency(v) => v.scalar_unit(),
-            Self::Resonance(v) | Self::Size(v) | Self::Brightness(v) | Self::Mix(v) => {
-                v.scalar_unit()
-            }
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Frequency(v) => v.scalar_curve(),
-            Self::Resonance(v) | Self::Size(v) | Self::Brightness(v) | Self::Mix(v) => {
-                v.scalar_curve()
-            }
+    scalar_metadata_methods! {
+        Self::Frequency(v) => v,
+        Self::Resonance(v) | Self::Size(v) | Self::Brightness(v) | Self::Mix(v) => {
+            v
         }
     }
 }
@@ -4242,38 +2827,12 @@ impl ModuleParam for MechanicalNoiseParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::NoiseType(v) => v.scalar_kind(),
-            Self::Duration(v) => v.scalar_kind(),
-            Self::Cutoff(v) => v.scalar_kind(),
-            Self::VelocitySens(v) => v.scalar_kind(),
-            Self::Level(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::NoiseType(v) => v.scalar_unit(),
-            Self::Duration(v) => v.scalar_unit(),
-            Self::Cutoff(v) => v.scalar_unit(),
-            Self::VelocitySens(v) => v.scalar_unit(),
-            Self::Level(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::NoiseType(v) => v.scalar_curve(),
-            Self::Duration(v) => v.scalar_curve(),
-            Self::Cutoff(v) => v.scalar_curve(),
-            Self::VelocitySens(v) => v.scalar_curve(),
-            Self::Level(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::NoiseType(v) => v,
+        Self::Duration(v) => v,
+        Self::Cutoff(v) => v,
+        Self::VelocitySens(v) => v,
+        Self::Level(v) => v,
     }
 }
 
@@ -4309,29 +2868,9 @@ impl ModuleParam for PitchTrackerParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Sensitivity(v) | Self::Smoothing(v) => v.scalar_kind(),
-            Self::MinFreq(v) | Self::MaxFreq(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Sensitivity(v) | Self::Smoothing(v) => v.scalar_unit(),
-            Self::MinFreq(v) | Self::MaxFreq(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Sensitivity(v) | Self::Smoothing(v) => v.scalar_curve(),
-            Self::MinFreq(v) | Self::MaxFreq(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Sensitivity(v) | Self::Smoothing(v) => v,
+        Self::MinFreq(v) | Self::MaxFreq(v) => v,
     }
 }
 
@@ -4372,32 +2911,10 @@ impl ModuleParam for RingModParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::CarrierFreq(v) => v.scalar_kind(),
-            Self::CarrierWaveform(v) => v.scalar_kind(),
-            Self::Mix(v) | Self::FreqRatio(v) | Self::TrackKeyboard(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::CarrierFreq(v) => v.scalar_unit(),
-            Self::CarrierWaveform(v) => v.scalar_unit(),
-            Self::Mix(v) | Self::FreqRatio(v) | Self::TrackKeyboard(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::CarrierFreq(v) => v.scalar_curve(),
-            Self::CarrierWaveform(v) => v.scalar_curve(),
-            Self::Mix(v) | Self::FreqRatio(v) | Self::TrackKeyboard(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::CarrierFreq(v) => v,
+        Self::CarrierWaveform(v) => v,
+        Self::Mix(v) | Self::FreqRatio(v) | Self::TrackKeyboard(v) => v,
     }
 }
 
@@ -4465,44 +2982,14 @@ impl ModuleParam for SamplerParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::SampleSelect(v) => v.scalar_kind(),
-            Self::PitchTracking(v) => v.scalar_kind(),
-            Self::Level(v) => v.scalar_kind(),
-            Self::PlayMode(v) => v.scalar_kind(),
-            Self::Direction(v) => v.scalar_kind(),
-            Self::VelocitySensitivity(v) | Self::StartOffset(v) => v.scalar_kind(),
-            Self::FineTune(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::SampleSelect(v) => v.scalar_unit(),
-            Self::PitchTracking(v) => v.scalar_unit(),
-            Self::Level(v) => v.scalar_unit(),
-            Self::PlayMode(v) => v.scalar_unit(),
-            Self::Direction(v) => v.scalar_unit(),
-            Self::VelocitySensitivity(v) | Self::StartOffset(v) => v.scalar_unit(),
-            Self::FineTune(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::SampleSelect(v) => v.scalar_curve(),
-            Self::PitchTracking(v) => v.scalar_curve(),
-            Self::Level(v) => v.scalar_curve(),
-            Self::PlayMode(v) => v.scalar_curve(),
-            Self::Direction(v) => v.scalar_curve(),
-            Self::VelocitySensitivity(v) | Self::StartOffset(v) => v.scalar_curve(),
-            Self::FineTune(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::SampleSelect(v) => v,
+        Self::PitchTracking(v) => v,
+        Self::Level(v) => v,
+        Self::PlayMode(v) => v,
+        Self::Direction(v) => v,
+        Self::VelocitySensitivity(v) | Self::StartOffset(v) => v,
+        Self::FineTune(v) => v,
     }
 }
 
@@ -4619,80 +3106,26 @@ impl ModuleParam for SidOscillatorParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Triangle(v)
-            | Self::Sawtooth(v)
-            | Self::Pulse(v)
-            | Self::Noise(v)
-            | Self::TrackVoicePitch(v)
-            | Self::Test(v)
-            | Self::RingMod(v)
-            | Self::HardSync(v)
-            | Self::DcBlock(v)
-            | Self::SeqLoop(v) => v.scalar_kind(),
-            Self::NoiseSeed(v) => v.scalar_kind(),
-            Self::FreqReg(v) | Self::PulseWidthReg(v) | Self::SeqStepFreq(_, v) => v.scalar_kind(),
-            Self::Model(v) => v.scalar_kind(),
-            Self::Clock(v) => v.scalar_kind(),
-            Self::Quality(v) => v.scalar_kind(),
-            Self::Level(v) => v.scalar_kind(),
-            Self::SeqLength(v) | Self::SeqRate(v) | Self::SeqStep(_, v) => v.scalar_kind(),
-            Self::SeqFreqMask(v) => v.scalar_kind(),
-            Self::GlideTime(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Triangle(v)
-            | Self::Sawtooth(v)
-            | Self::Pulse(v)
-            | Self::Noise(v)
-            | Self::TrackVoicePitch(v)
-            | Self::Test(v)
-            | Self::RingMod(v)
-            | Self::HardSync(v)
-            | Self::DcBlock(v)
-            | Self::SeqLoop(v) => v.scalar_unit(),
-            Self::NoiseSeed(v) => v.scalar_unit(),
-            Self::FreqReg(v) | Self::PulseWidthReg(v) | Self::SeqStepFreq(_, v) => v.scalar_unit(),
-            Self::Model(v) => v.scalar_unit(),
-            Self::Clock(v) => v.scalar_unit(),
-            Self::Quality(v) => v.scalar_unit(),
-            Self::Level(v) => v.scalar_unit(),
-            Self::SeqLength(v) | Self::SeqRate(v) | Self::SeqStep(_, v) => v.scalar_unit(),
-            Self::SeqFreqMask(v) => v.scalar_unit(),
-            Self::GlideTime(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Triangle(v)
-            | Self::Sawtooth(v)
-            | Self::Pulse(v)
-            | Self::Noise(v)
-            | Self::TrackVoicePitch(v)
-            | Self::Test(v)
-            | Self::RingMod(v)
-            | Self::HardSync(v)
-            | Self::DcBlock(v)
-            | Self::SeqLoop(v) => v.scalar_curve(),
-            Self::NoiseSeed(v) => v.scalar_curve(),
-            Self::FreqReg(v) | Self::PulseWidthReg(v) | Self::SeqStepFreq(_, v) => v.scalar_curve(),
-            Self::Model(v) => v.scalar_curve(),
-            Self::Clock(v) => v.scalar_curve(),
-            Self::Quality(v) => v.scalar_curve(),
-            Self::Level(v) => v.scalar_curve(),
-            Self::SeqLength(v) | Self::SeqRate(v) | Self::SeqStep(_, v) => v.scalar_curve(),
-            Self::SeqFreqMask(v) => v.scalar_curve(),
-            Self::GlideTime(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Triangle(v)
+        | Self::Sawtooth(v)
+        | Self::Pulse(v)
+        | Self::Noise(v)
+        | Self::TrackVoicePitch(v)
+        | Self::Test(v)
+        | Self::RingMod(v)
+        | Self::HardSync(v)
+        | Self::DcBlock(v)
+        | Self::SeqLoop(v) => v,
+        Self::NoiseSeed(v) => v,
+        Self::FreqReg(v) | Self::PulseWidthReg(v) | Self::SeqStepFreq(_, v) => v,
+        Self::Model(v) => v,
+        Self::Clock(v) => v,
+        Self::Quality(v) => v,
+        Self::Level(v) => v,
+        Self::SeqLength(v) | Self::SeqRate(v) | Self::SeqStep(_, v) => v,
+        Self::SeqFreqMask(v) => v,
+        Self::GlideTime(v) => v,
     }
 }
 
@@ -4734,35 +3167,11 @@ impl ModuleParam for SignalMonitorParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Time(v) => v.scalar_kind(),
-            Self::Gain(v) => v.scalar_kind(),
-            Self::Trigger(v) => v.scalar_kind(),
-            Self::Frozen(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Time(v) => v.scalar_unit(),
-            Self::Gain(v) => v.scalar_unit(),
-            Self::Trigger(v) => v.scalar_unit(),
-            Self::Frozen(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Time(v) => v.scalar_curve(),
-            Self::Gain(v) => v.scalar_curve(),
-            Self::Trigger(v) => v.scalar_curve(),
-            Self::Frozen(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Time(v) => v,
+        Self::Gain(v) => v,
+        Self::Trigger(v) => v,
+        Self::Frozen(v) => v,
     }
 }
 
@@ -4789,26 +3198,8 @@ impl ModuleParam for SpectrumAnalyzerParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Gain(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Gain(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Gain(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Gain(v) => v,
     }
 }
 
@@ -4848,35 +3239,11 @@ impl ModuleParam for SubOscParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Waveform(v) => v.scalar_kind(),
-            Self::Octave(v) => v.scalar_kind(),
-            Self::Level(v) => v.scalar_kind(),
-            Self::GlideTime(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Waveform(v) => v.scalar_unit(),
-            Self::Octave(v) => v.scalar_unit(),
-            Self::Level(v) => v.scalar_unit(),
-            Self::GlideTime(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Waveform(v) => v.scalar_curve(),
-            Self::Octave(v) => v.scalar_curve(),
-            Self::Level(v) => v.scalar_curve(),
-            Self::GlideTime(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Waveform(v) => v,
+        Self::Octave(v) => v,
+        Self::Level(v) => v,
+        Self::GlideTime(v) => v,
     }
 }
 
@@ -4906,26 +3273,8 @@ impl ModuleParam for VectorMixerParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::X(v) | Self::Y(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::X(v) | Self::Y(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::X(v) | Self::Y(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::X(v) | Self::Y(v) => v,
     }
 }
 
@@ -4970,44 +3319,14 @@ impl ModuleParam for VocalTractParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Tongue(v)
-            | Self::Constriction(v)
-            | Self::Lips(v)
-            | Self::Length(v)
-            | Self::Nasality(v)
-            | Self::Breathiness(v)
-            | Self::Level(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Tongue(v)
-            | Self::Constriction(v)
-            | Self::Lips(v)
-            | Self::Length(v)
-            | Self::Nasality(v)
-            | Self::Breathiness(v)
-            | Self::Level(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Tongue(v)
-            | Self::Constriction(v)
-            | Self::Lips(v)
-            | Self::Length(v)
-            | Self::Nasality(v)
-            | Self::Breathiness(v)
-            | Self::Level(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Tongue(v)
+        | Self::Constriction(v)
+        | Self::Lips(v)
+        | Self::Length(v)
+        | Self::Nasality(v)
+        | Self::Breathiness(v)
+        | Self::Level(v) => v,
     }
 }
 
@@ -5063,53 +3382,17 @@ impl ModuleParam for VoiceSynthParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Vowel(v)
-            | Self::FormantShift(v)
-            | Self::Breathiness(v)
-            | Self::OpenQuotient(v)
-            | Self::Tilt(v)
-            | Self::UnisonVoices(v)
-            | Self::UnisonSpread(v)
-            | Self::Level(v) => v.scalar_kind(),
-            Self::VibratoRate(v) => v.scalar_kind(),
-            Self::VibratoDepth(v) | Self::UnisonDetune(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Vowel(v)
-            | Self::FormantShift(v)
-            | Self::Breathiness(v)
-            | Self::OpenQuotient(v)
-            | Self::Tilt(v)
-            | Self::UnisonVoices(v)
-            | Self::UnisonSpread(v)
-            | Self::Level(v) => v.scalar_unit(),
-            Self::VibratoRate(v) => v.scalar_unit(),
-            Self::VibratoDepth(v) | Self::UnisonDetune(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Vowel(v)
-            | Self::FormantShift(v)
-            | Self::Breathiness(v)
-            | Self::OpenQuotient(v)
-            | Self::Tilt(v)
-            | Self::UnisonVoices(v)
-            | Self::UnisonSpread(v)
-            | Self::Level(v) => v.scalar_curve(),
-            Self::VibratoRate(v) => v.scalar_curve(),
-            Self::VibratoDepth(v) | Self::UnisonDetune(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Vowel(v)
+        | Self::FormantShift(v)
+        | Self::Breathiness(v)
+        | Self::OpenQuotient(v)
+        | Self::Tilt(v)
+        | Self::UnisonVoices(v)
+        | Self::UnisonSpread(v)
+        | Self::Level(v) => v,
+        Self::VibratoRate(v) => v,
+        Self::VibratoDepth(v) | Self::UnisonDetune(v) => v,
     }
 }
 
@@ -5148,32 +3431,10 @@ impl ModuleParam for WaveshaperParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Curve(v) => v.scalar_kind(),
-            Self::Drive(v) | Self::Mix(v) => v.scalar_kind(),
-            Self::Bias(v) | Self::Symmetry(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Curve(v) => v.scalar_unit(),
-            Self::Drive(v) | Self::Mix(v) => v.scalar_unit(),
-            Self::Bias(v) | Self::Symmetry(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Curve(v) => v.scalar_curve(),
-            Self::Drive(v) | Self::Mix(v) => v.scalar_curve(),
-            Self::Bias(v) | Self::Symmetry(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Curve(v) => v,
+        Self::Drive(v) | Self::Mix(v) => v,
+        Self::Bias(v) | Self::Symmetry(v) => v,
     }
 }
 
@@ -5217,41 +3478,13 @@ impl ModuleParam for WavetableParam {
         }
     }
 
-    /// Value-kind of this parameter, dispatched on the bound value.
-    fn kind(&self) -> ParamKind {
-        match self {
-            Self::Table(v) => v.scalar_kind(),
-            Self::Position(v) => v.scalar_kind(),
-            Self::Detune(v) => v.scalar_kind(),
-            Self::Octave(v) => v.scalar_kind(),
-            Self::Level(v) => v.scalar_kind(),
-            Self::GlideTime(v) => v.scalar_kind(),
-        }
-    }
-
-    /// Display unit of this parameter, dispatched on the bound value.
-    fn unit(&self) -> ParameterUnit {
-        match self {
-            Self::Table(v) => v.scalar_unit(),
-            Self::Position(v) => v.scalar_unit(),
-            Self::Detune(v) => v.scalar_unit(),
-            Self::Octave(v) => v.scalar_unit(),
-            Self::Level(v) => v.scalar_unit(),
-            Self::GlideTime(v) => v.scalar_unit(),
-        }
-    }
-
-    /// Suggested response curve for this parameter's value type
-    /// (advisory; not auto-applied — see plan Phase 2b / §14.6).
-    fn default_curve(&self) -> ResponseCurve {
-        match self {
-            Self::Table(v) => v.scalar_curve(),
-            Self::Position(v) => v.scalar_curve(),
-            Self::Detune(v) => v.scalar_curve(),
-            Self::Octave(v) => v.scalar_curve(),
-            Self::Level(v) => v.scalar_curve(),
-            Self::GlideTime(v) => v.scalar_curve(),
-        }
+    scalar_metadata_methods! {
+        Self::Table(v) => v,
+        Self::Position(v) => v,
+        Self::Detune(v) => v,
+        Self::Octave(v) => v,
+        Self::Level(v) => v,
+        Self::GlideTime(v) => v,
     }
 }
 

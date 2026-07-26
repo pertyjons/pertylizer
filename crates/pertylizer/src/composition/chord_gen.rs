@@ -9,15 +9,16 @@
 //! Pure symbolic — output is just MIDI numbers; placement into a pattern is
 //! left to the caller.
 
-use std::fmt;
+use std::str::FromStr;
 
 use crate::harmony::{CHORD_TEMPLATES, ChordTemplate};
 
 /// Voicing applied to the close-position chord.
 #[must_use]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ChordVoicing {
     /// Notes stacked above the root, all within one octave. Default.
+    #[default]
     Close,
     /// Take the 2nd-highest note of the close voicing and drop it an octave.
     /// Standard jazz/keyboard voicing for 4-note chords.
@@ -30,17 +31,27 @@ pub enum ChordVoicing {
     Open,
 }
 
-impl ChordVoicing {
-    pub fn from_str_opt(s: &str) -> Option<Self> {
+/// Error returned when parsing a chord voicing.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("unknown voicing {0:?}; expected one of close, drop2, drop3, open")]
+pub struct ParseChordVoicingError(String);
+
+impl FromStr for ChordVoicing {
+    type Err = ParseChordVoicingError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_ascii_lowercase().as_str() {
-            "close" | "" => Some(Self::Close),
-            "drop2" | "drop-2" => Some(Self::Drop2),
-            "drop3" | "drop-3" => Some(Self::Drop3),
-            "open" | "spread" => Some(Self::Open),
-            _ => None,
+            "close" | "" => Ok(Self::Close),
+            "drop2" | "drop-2" => Ok(Self::Drop2),
+            "drop3" | "drop-3" => Ok(Self::Drop3),
+            "open" | "spread" => Ok(Self::Open),
+            _ => Err(ParseChordVoicingError(s.to_string())),
         }
     }
+}
 
+impl ChordVoicing {
+    #[must_use]
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Close => "close",
@@ -71,31 +82,17 @@ pub struct GeneratedChord {
 }
 
 /// Error returned by [`generate_chord`] for malformed input.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum GenerateChordError {
+    #[error("chord symbol is empty")]
     EmptySymbol,
+    #[error("unknown chord root in {0:?}")]
     UnknownRoot(String),
+    #[error("unknown chord quality suffix {remainder:?} after root {root:?}")]
     UnknownQuality { root: String, remainder: String },
+    #[error("octave {0} is out of MIDI range (valid -1..=9)")]
     OctaveOutOfRange(i32),
 }
-
-impl fmt::Display for GenerateChordError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::EmptySymbol => f.write_str("chord symbol is empty"),
-            Self::UnknownRoot(s) => write!(f, "unknown chord root in {s:?}"),
-            Self::UnknownQuality { root, remainder } => write!(
-                f,
-                "unknown chord quality suffix {remainder:?} after root {root:?}"
-            ),
-            Self::OctaveOutOfRange(o) => {
-                write!(f, "octave {o} is out of MIDI range (valid -1..=9)")
-            }
-        }
-    }
-}
-
-impl std::error::Error for GenerateChordError {}
 
 /// Parse `symbol` (e.g. `"Cm7"`), build a close-position chord rooted at
 /// `octave` in scientific pitch notation (octave 4 = middle-C octave), then
@@ -325,6 +322,19 @@ mod tests {
         // F#4 = MIDI 66.
         assert_eq!(chord.root_pitch_class, 6);
         assert_eq!(chord.notes, vec![66, 69, 73, 76]);
+    }
+
+    #[test]
+    fn voicing_names_round_trip_through_from_str() {
+        for voicing in [
+            ChordVoicing::Close,
+            ChordVoicing::Drop2,
+            ChordVoicing::Drop3,
+            ChordVoicing::Open,
+        ] {
+            assert_eq!(voicing.as_str().parse(), Ok(voicing));
+        }
+        assert!("unknown".parse::<ChordVoicing>().is_err());
     }
 
     #[test]
