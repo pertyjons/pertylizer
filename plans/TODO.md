@@ -1,43 +1,11 @@
 # TODO - Pertylizer
 
-## 0. MCP reliability
-
-### 0.1 Isolate offline validation mixer state
-
-- [x] **Investigated — the validate path is already isolated; no leak reproduced.**
-  `validate_instrument_audio` → `analyze_note` → `OfflineNoteSession` builds a
-  *fresh* `SynthEngine` per call and only reads the live song snapshot; every
-  command targets the offline handle, so it cannot mutate a live track's
-  solo/mute even under concurrency. Added a concurrency regression test
-  (`tests/validate_instrument_audio_isolation.rs`) that snapshots all track mixer
-  flags, runs several validations concurrently (incl. the unknown-instrument
-  error path), and asserts byte-for-byte preservation — it passes. The observed
-  `solo: true` in that session most likely came from an explicit
-  `set_track_mixer`/`set_track_solo` call (the only MCP paths that write a live
-  track's solo). Reopen with the exact tool sequence if it recurs.
+> Completed entries are removed rather than kept as `[x]` — the commit and
+> `docs/history.md` carry that record. Section numbers are **not** renumbered when
+> entries go, so gaps are expected and existing references (commit messages,
+> notes) keep pointing at the right thing.
 
 ## 1. Sequencer & Arrangement
-
-### 1.1 Section markers
-
-- [x] **Verse, chorus, bridge labels in the arrangement.** A pinned form lane above the
-  ruler now renders persisted, colored section intervals. Double-click creates a section;
-  sections can be selected, moved, resized, renamed, retyped/recolored, duplicated, and
-  deleted with undo/redo support.
-
-### 1.2 Pattern-loop presentation and controls
-
-**Playback looping shipped:** placement positions now wrap through type-safe
-`PatternTick::looping_at`; crossing notes keep their absolute NoteOff and retrigger on the
-next pass, while automation restarts in pattern space each pass.
-
-- [x] **Mini-note visualization mirrors placement playback.** Repeat placements draw the source
-  miniature across every full or partial iteration, with bounded drawing work for very long/dense
-  placements; Clip placements draw it once and leave any longer tail blank.
-- [x] **Per-placement Clip/Repeat mode.** `PatternPlacement::loop_mode` defaults to `Repeat`
-  (including projects without the field), is applied by the real-time engine, round-trips through
-  MCP, and is selectable with undo from the placement context menu. The hover cursor and right-edge
-  resize tooltip expose the active mode.
 
 ### 1.3 Automation targets for send/return routing
 
@@ -73,27 +41,6 @@ next pass, while automation restarts in pattern space each pass.
   nothing: it creates lanes that silently do nothing. Land 1–4 together. **L,
   feature.**
 
-### 1.4 Independent pattern lengths on project load
-
-- [x] **Fixed — the truncation was a GUI clamp, not a deserialize leak.** A full
-  trace confirmed the load/serde/apply path is clean (pattern `length` is a
-  required, verbatim `Duration` field; no shared/default accumulator, no global
-  clamp). The real cause: the piano-roll header's pattern-length `DragValue` was
-  range-capped to `1..=64` bars, so egui clamped the *shown* value for any pattern
-  longer than 64 bars (a 161-bar / 619560-tick pattern → 64 bars) and reported
-  `changed()`, which wrote `64 * ticks_per_bar` (245760 ticks) straight back to the
-  song the instant the piano roll rendered — clobbering lengths set via MCP or
-  load, and re-clobbering an MCP `set_pattern_length` before the next `save_project`
-  (the "state divergence" / "forced back keyed by pattern id" symptom).
-  `piano_roll.rs`: the range now grows to fit the pattern's own length, and the
-  song is written only during an active user edit (never on a passive re-render).
-  Regression: `song::independently_sized_patterns_survive_serde_round_trip` guards
-  the reconstruction path.
-- [x] **Lint hidden events beyond effective pattern length.** `lint_project` now
-  returns `hidden_events`: per pattern, the note onsets and automation points at/
-  after the pattern length (never played), with counts + last-beat + the last note
-  end for context. New pure `Pattern::hidden_event_summary` (unit-tested) drives it.
-
 ## 2. Sound Design — Expanded Capabilities
 
 ### 2.1 Sample & wavetable import
@@ -125,14 +72,6 @@ next pass, while automation restarts in pattern space each pass.
   filter sweeps. **S** task — build only when a tune genuinely needs a shared (not
   per-instrument) automated sweep; per-instrument sweeps are already covered by A2.
 
-### 2.4 YAMS scripting follow-ups
-
-- [x] **Per-sample pitch binding for `note_hz` in AudioScript.** The voice now
-  supplies a type-safe start→end frequency range for each block, and
-  `AudioBindings` injects its linear interpolation into `note_hz` per sample.
-  Fresh notes and stepped glissando remain intentional pitch steps; continuous
-  glide, bend, vibrato, and track-pitch movement reach the exact block endpoint.
-
 ### 2.5 Script-exposed params follow-ups
 
 The shipped `Script` module is a one-program **4 CV-in (`in1..in4`) / 4 CV-out
@@ -156,17 +95,6 @@ knobs through the GUI, Mod Matrix, automation, persistence, and cross-script rea
   labels did not; ports show bare `in1..in4` / `out1..out4`. Needs a small header-declaration
   grammar addition (a bare `in1 "label"` statement) + carrying the label onto the port
   descriptor (it must NOT change the port id, so no cable churn). **S–M**, purely cosmetic.
-- [x] **Built-in knob smoothing for audio-rate params.** Added
-  `smooth(x, time)` as the readable alias of the existing RT-safe `lag` one-pole;
-  in AudioScript it evaluates per sample and works directly around an automated
-  or modulated `param`. `slew(x, up, down)` remains available for separate linear
-  rise/fall rates, with both forms documented in the editor and YAMS guide.
-- [x] **Unit keyword for `param` metadata.** Added the optional trailing
-  `param … unit <token>` clause: a recognized token (`hz`/`db`/`ms`/`s`/`percent`/
-  `st`/`cents`/`oct`/`beats`/`bpm`/`samples`/`ratio`) maps via
-  `ParameterUnit::from_token` to the enum (else `None`), threaded AST → compile →
-  `ScriptParamDecl` → `knob_descriptor`. Bipolar-vs-unipolar and response curve
-  remain deferred (still default linear/unipolar).
 
 ### 2.6 Per-oscillator glide (portamento)
 
@@ -202,11 +130,6 @@ offline rendering. Remaining refinements follow.
   no lane; a Track graph on two tracks; `LFO → Pitch` host-only; an Audio-tap duck;
   routing-removal returns to base; a seeded render matches live; `Macro → LFO.rate_cv`;
   a live `MidiCc`; sustain hold+release.
-- [x] **Cached the Module-target snapshot (7.1 refinement).** `egui_backend` now
-  rebuilds the per-instrument `module_target_groups` only when
-  `shared_graph.version()` changes (tracked in `mod_target_groups_version`), passing
-  `Option<_>` to `draw_mod_grid_view` so an unchanged frame keeps the view's existing
-  groups — no registry lock + descriptor clone per instrument every repaint.
 - [ ] **Per-graph CPU attribution (7.6 refinement).** The header CPU is total across
   all running instances (reuses the per-stage timing). Per-graph cost needs separate
   instrumentation (time each `ModGridInstance` and map to its `ModGraphId`, exposed to
@@ -215,13 +138,6 @@ offline rendering. Remaining refinements follow.
   use the measured instance cost to decide whether track-scoped graphs need a soft
   assignment limit. Warn in the GUI when the estimated aggregate cost exceeds the
   budget; do not impose a hard limit unless real projects demonstrate a need. **S–M.**
-- [x] **Per-voice decorrelation — decided per module.** **RandomGates**: now
-  overrides `set_voice_index`, folding the voice slot into the seed via a shared
-  `seeded_state()` (voice 0 keeps the bare seed) so a chord's voices get
-  independent gate/CV streams instead of firing in lockstep; matches
-  DriftGenerator (test `voices_decorrelate_from_the_seed`). **TuringMachine**:
-  deliberately **left in lockstep** — its identity is a single evolving
-  shift-register sequence, and per-voice variation would change its character.
 - [ ] **Sostenuto (CC66) is unmodelled — re-scoped from "S" to "M".** The pedal
   path only handles CC64 (defer NoteOffs while held). **CC67 (soft) is NOT a code
   gap**: all CC state already feeds Mod Grid `MidiCc` sources, so a soft pedal is a
@@ -241,71 +157,6 @@ offline rendering. Remaining refinements follow.
 ---
 
 ## 3. UI & Visual Polish
-
-### 3.1 MSEG UI overhaul
-
-- [x] **Give MSEG a purpose-built graphical editor.** Segment endpoints now edit time and level,
-  curve handles edit each segment's shape, sustain and loop regions are visible, and the structural
-  settings use compact discrete controls. The hidden segment parameters remain the shared
-  persistence/MCP backing, with `set_mseg_segments` available for complete single-call shape updates.
-
-### 3.2 `ModuleParam` single-definition cleanup
-
-- [x] **Collapse the inherent-vs-trait duplication for the param method set.** Every fixed
-  `*Param` enum, the aggregate `Param`, and `ScriptParam` now implement the complete
-  `ModuleParam` contract directly. The forwarding macro and duplicate inherent methods are
-  gone, and call sites import the trait explicitly where required.
-
-### 3.3 Unified list-panel follow-ups (deferred from code review)
-
-Surfaced during the shared left-list-panel work (`feat/uniform-list-panels`,
-2026-06-24, `gui/list_panel.rs` + Instruments/Patterns/Samples panels). None are
-correctness bugs (those were fixed in that branch); these are the cleanup/
-efficiency/altitude items deliberately left out of that change.
-
-- [x] **Cached sample-usage instead of recomputing every frame.** The Sample view
-  now recomputes the sampler→sample reference counts only when
-  `shared_graph.version()` changes (any module add/remove or parameter edit bumps
-  it), caching them on `SynthApp` (`sample_ref_counts_cache`/`_version`), instead
-  of cloning every module snapshot ~60×/sec while the tab is open.
-- [x] **Generalized the per-panel scaffolding.** `list_panel::browser_row` now
-  owns selection/usage styling, tooltips, and click outcomes, while
-  `list_panel::browser_rows` owns scrolling, case-insensitive filtering, and the
-  empty state. Instruments, Patterns, Samples, Mod Grid, and Note Grid now
-  provide only their domain-specific row data, decorations, and menu actions.
-- [x] **Dropped the redundant `select` flag in the sample row loop**
-  (`gui/sample_view.rs`) — inlined the click-vs-selected + rename test directly
-  into the selection assignment. Pure cleanup, no behavior change.
-
-### 3.4 Shared widget helpers follow-ups (evaluating Phase 2 residual)
-
-Residual after the shared-widget-helpers work landed — these are the remaining areas to polish the GUI helpers layer:
-
-- [x] **Global FileDialog memory across kinds.** One `FileDialog` instance now
-  serves every kind; only the filters, default file name, and fallback directory
-  are re-applied per open, from a per-mode table on `FileDialogMode`. The eight
-  `open_*_dialog` methods collapsed into `open_file_dialog(kind, default_name,
-  initial_dir)`, and `FileDialogMode::is_save` decides both `save_file()` vs
-  `pick_file()` and `Saved` vs `Picked` — which fixed the activity-log export,
-  where the two disagreed and the result was dropped. Verified live: after
-  picking in Open Patch, Save Project As opens in the same directory with the
-  entry still highlighted. *Trade-off:* `OpeningMode::LastPickedDir` now spans
-  kinds, so the shared "where you last were" wins over the per-kind directories
-  in `settings.directories` (those remain the fallback until the first pick, and
-  after a restart). Revisit if per-kind start directories turn out to matter more.
-- [x] **Address inline toggle button variations.** Added `selectable_toggle` (a
-  boolean panel switch that owns the flip; now used by the piano roll's Note FX +
-  Ghosts, the Pattern view's Note FX, and the script editor's Help) and
-  `icon_text_button`, with `monitor_toggle` / `record_toggle` built on it. The
-  Sample view and the Audio Input faceplate had drifting copies of the same
-  monitor/record controls — different wording, a hardcoded `11.0` text size, and a
-  Stop icon labelled "Rec" — now one definition parameterized only by the call
-  site's text size. The M/S badges named here were already on the shared
-  `mute_toggle`/`solo_toggle` icon buttons.
-- [x] **Visual eyeball check on normalized captions — no clipping.** Checked live
-  at `size_small` (10px): the tracker's `Row/V1/Orn/Acc/Gat/Gho/Prb` headers and
-  cell content render in full, and the arrangement's Vol/Pan rows in the track
-  properties popup stay aligned with their sliders and value boxes.
 
 ### 3.5 Drop the vendored egui-0.35 forks once upstream ships 0.35
 
@@ -328,6 +179,9 @@ Residual after the shared-widget-helpers work landed — these are the remaining
   strip proportions and spacing at the new widths, sends/pan/meter/fader arrangement inside a strip, the
   master strip, and how it all reads next to the patch editor. Vertical scrolling was just added
   (`ScrollArea::both`); confirm it behaves with tall strips and many channels.
+- [ ] **Track-properties popup is clipped by the pattern panel** (`gui/sequencer/arrangement.rs`,
+  seen 2026-07-26). The kebab popup on a track header opens downward and the lower half (Colour
+  row) disappears behind the docked pattern editor. Flip or clamp it to the visible area.
 
 ---
 
