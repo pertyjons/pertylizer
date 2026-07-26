@@ -4,10 +4,13 @@ use eframe::egui::{self, Color32, Rect, Sense, Shape, Stroke, Ui, Vec2};
 
 use crate::gui::theme::theme;
 
-/// Types of waveforms to display.
-/// Note: `Noise` is only used by waveform-bit toggles (the SID oscillator);
-/// the standard oscillator set (`all()`) excludes it — noise generation lives
-/// in the dedicated NoiseGenerator module.
+/// The *shapes* this widget can draw a preview of — a rendering concern only.
+/// A waveform's name is not here: it comes from the module descriptor's
+/// [`ChoiceOption`](synth_core::module_traits::ChoiceOption) (or the toggle
+/// parameter's own name) via [`from_id`](Self::from_id), so the button label, its
+/// tooltip, and the caption under the selector are all one string. `Noise` is
+/// reachable only through the waveform-bit toggles (the SID oscillator) —
+/// standalone noise generation lives in the NoiseGenerator module.
 #[derive(Clone, Copy, PartialEq)]
 pub enum WaveformType {
     Sine,
@@ -22,33 +25,6 @@ pub enum WaveformType {
 }
 
 impl WaveformType {
-    /// Get all standard oscillator waveforms
-    pub fn all() -> Vec<Self> {
-        vec![
-            Self::Sine,
-            Self::Triangle,
-            Self::Sawtooth,
-            Self::Square,
-            Self::Pulse,
-            Self::DsfSaw,
-        ]
-    }
-
-    /// Get the name of the waveform
-    pub fn name(&self) -> &'static str {
-        match self {
-            Self::Sine => "Sine",
-            Self::Triangle => "Triangle",
-            Self::Sawtooth => "Saw",
-            Self::Square => "Square",
-            Self::Pulse => "Pulse",
-            Self::DsfSaw => "DSF Saw",
-            Self::Noise => "Noise",
-            Self::SampleAndHold => "Sample & Hold",
-            Self::SmoothRandom => "Smooth Random",
-        }
-    }
-
     /// Map a `ChoiceOption.id` string to a waveform variant for visual
     /// rendering. `"pulse25"` shares the 25%-duty `Pulse` visualisation.
     pub fn from_id(id: &str) -> Option<Self> {
@@ -133,10 +109,12 @@ impl WaveformType {
 
 /// Paint one waveform-preview button (shared by the exclusive
 /// [`WaveformSelector`] and the multi-select waveform-bit toggles): a rounded
-/// box with the waveform drawn inside, accent-lit while `active`.
+/// box with the waveform drawn inside, accent-lit while `active`. `label` is the
+/// descriptor's name for this choice — the widget never names a waveform itself.
 pub(crate) fn waveform_button(
     ui: &mut Ui,
     waveform: WaveformType,
+    label: &str,
     active: bool,
     accent: Color32,
 ) -> egui::Response {
@@ -172,9 +150,9 @@ pub(crate) fn waveform_button(
 
     // Expose to AccessKit / the egui-inspection MCP so a driver can pick a
     // waveform by name instead of by pixel.
-    super::controls::expose(&response, egui::WidgetType::Button, waveform.name(), None);
+    super::controls::expose(&response, egui::WidgetType::Button, label, None);
 
-    response.on_hover_text(waveform.name())
+    response.on_hover_text(label.to_owned())
 }
 
 /// Draw a waveform's preview line inside `rect`.
@@ -199,26 +177,30 @@ fn draw_waveform_preview(
     }
 }
 
-/// Waveform selector widget with visual preview.
-/// Shows a row of waveform buttons with visual representation of each waveform.
+/// One choice offered by a [`WaveformSelector`]: the shape to preview and the
+/// descriptor's name for it (the button tooltip and AccessKit label).
+pub struct WaveformChoice {
+    pub shape: WaveformType,
+    pub label: String,
+}
+
+/// Exclusive waveform selector: a row of preview buttons, one per choice the
+/// module's descriptor advertises.
 pub struct WaveformSelector<'a> {
     selected: &'a mut usize,
-    waveforms: Vec<WaveformType>,
+    choices: Vec<WaveformChoice>,
     accent_color: Color32,
 }
 
 impl<'a> WaveformSelector<'a> {
-    pub fn new(selected: &'a mut usize) -> Self {
+    /// The choices are required rather than defaulted: only the descriptor knows
+    /// which waveforms a module actually supports, and what it calls them.
+    pub fn new(selected: &'a mut usize, choices: Vec<WaveformChoice>) -> Self {
         Self {
             selected,
-            waveforms: WaveformType::all(),
+            choices,
             accent_color: theme().colors.accent_orange,
         }
-    }
-
-    pub fn waveforms(mut self, waveforms: Vec<WaveformType>) -> Self {
-        self.waveforms = waveforms;
-        self
     }
 
     pub fn accent_color(mut self, color: Color32) -> Self {
@@ -233,9 +215,17 @@ impl<'a> WaveformSelector<'a> {
             // A small deliberate gap between the waveform icons, owned by the
             // widget so it doesn't depend on the surrounding layout's spacing.
             ui.spacing_mut().item_spacing.x = 6.0;
-            for (i, waveform) in self.waveforms.iter().enumerate() {
+            for (i, choice) in self.choices.iter().enumerate() {
                 let is_selected = i == *self.selected;
-                if waveform_button(ui, *waveform, is_selected, self.accent_color).clicked() {
+                if waveform_button(
+                    ui,
+                    choice.shape,
+                    &choice.label,
+                    is_selected,
+                    self.accent_color,
+                )
+                .clicked()
+                {
                     *self.selected = i;
                     changed = true;
                 }

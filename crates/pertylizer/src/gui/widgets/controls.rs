@@ -17,7 +17,7 @@ use egui_remixicon::icons as ri;
 use super::ModMarkers;
 use super::knob::Knob;
 use crate::gui::theme::theme;
-use synth_core::{BipolarValue, NormalizedValue};
+use synth_core::{BipolarValue, DisplayName, NormalizedValue};
 
 /// Paint each active modulation marker in its fixed corner of `rect`, each with its
 /// own hover tooltip. Painter-based so the glyphs never change the widget's
@@ -646,6 +646,28 @@ pub fn enum_combo<T: PartialEq + Copy>(
         .show_ui(ui, |ui| {
             for (v, l) in options {
                 ui.selectable_value(current, *v, *l);
+            }
+        })
+        .response
+}
+
+/// A `ComboBox` over *every* variant of a [`DisplayName`] enum, labelled and
+/// ordered by the enum itself.
+///
+/// Prefer this over [`enum_combo`] whenever the enum owns its labels: the view
+/// then holds no copy of them, so a picker can't drift from the tooltip or cell
+/// text that reads the same value back. Use [`enum_combo`] only for an ad-hoc
+/// subset or for labels that are genuinely view-specific.
+pub fn enum_combo_all<T: DisplayName>(
+    ui: &mut Ui,
+    id_salt: impl std::hash::Hash + std::fmt::Debug,
+    current: &mut T,
+) -> Response {
+    egui::ComboBox::from_id_salt(id_salt)
+        .selected_text(current.display_name())
+        .show_ui(ui, |ui| {
+            for variant in T::ALL {
+                ui.selectable_value(current, *variant, variant.display_name());
             }
         })
         .response

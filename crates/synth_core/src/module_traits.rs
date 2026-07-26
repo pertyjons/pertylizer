@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 use crate::ChannelCount;
+use crate::display::DisplayName;
 use crate::params::{ModuleType, Param};
 pub use crate::types::{
     BeatPosition, Bpm, Hertz, MidiNote, NormalizedValue, SampleCount, SamplePosition, SampleRate,
@@ -1205,6 +1206,50 @@ pub enum ModuleCategory {
     Output,
     Visualizer,
     PhysicalModeling,
+}
+
+impl DisplayName for ModuleCategory {
+    /// Signal-flow order (source → shaper → sink), not declaration order: this
+    /// is what the patch editor's "Add module" menu shows, so a reader scans the
+    /// categories the way a patch is built. Being the complete list is the point
+    /// — a new variant cannot be silently missing from the menu.
+    const ALL: &'static [Self] = &[
+        Self::Oscillator,
+        Self::Filter,
+        Self::Envelope,
+        Self::LFO,
+        Self::Amplifier,
+        Self::Mixer,
+        Self::Effect,
+        Self::Sampler,
+        Self::Utility,
+        Self::Sequencer,
+        Self::PhysicalModeling,
+        Self::Visualizer,
+        Self::Output,
+    ];
+
+    /// The label the GUI shows for this category. A few read better than the
+    /// variant name: `Utility` covers modulation utilities, `Sequencer` is the
+    /// generative/pattern group, and `PhysicalModeling` is abbreviated so the
+    /// menu row stays short.
+    fn display_name(self) -> &'static str {
+        match self {
+            Self::Oscillator => "Oscillator",
+            Self::Filter => "Filter",
+            Self::Envelope => "Envelope",
+            Self::LFO => "LFO",
+            Self::Amplifier => "Amplifier",
+            Self::Effect => "Effect",
+            Self::Utility => "Modulation / Utility",
+            Self::Sampler => "Sampler",
+            Self::Sequencer => "Generative",
+            Self::Mixer => "Mixer",
+            Self::Output => "Output",
+            Self::Visualizer => "Visualizer",
+            Self::PhysicalModeling => "Physical",
+        }
+    }
 }
 
 /// Fixed display-width bucket for a module's panel in the patch editor (and the

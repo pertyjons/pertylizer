@@ -25,10 +25,7 @@ use crate::gui::input::handle_keyboard_input;
 use crate::gui::instrument_rack::InstrumentUiState;
 use crate::gui::keyboard::PianoKeyboard;
 use crate::gui::patch_bridge;
-use crate::gui::patch_editor::{
-    EffectType, GroupTemplateAction, PaletteSelection, PaletteVisualizerType, PatchEditor,
-    QuickAddRequest,
-};
+use crate::gui::patch_editor::{GroupTemplateAction, PatchEditor, QuickAddRequest};
 use crate::gui::theme::theme;
 use crate::gui::widgets::{
     danger_button, dim_label, draw_oscilloscope, draw_stereo_meter, empty_state, expose_selected,
@@ -1228,48 +1225,6 @@ impl eframe::App for SynthApp {
     }
 }
 
-/// Map a palette module category to its default `TypedModuleType`.
-/// Shared by quick-add and context-add; `None` for categories without a default.
-fn category_to_module_type(category: ModuleCategory) -> Option<TypedModuleType> {
-    match category {
-        ModuleCategory::Oscillator => Some(TypedModuleType::Oscillator),
-        ModuleCategory::Filter => Some(TypedModuleType::Filter),
-        ModuleCategory::Envelope => Some(TypedModuleType::Envelope),
-        ModuleCategory::LFO => Some(TypedModuleType::Lfo),
-        ModuleCategory::Amplifier => Some(TypedModuleType::Amplifier),
-        ModuleCategory::Mixer => Some(TypedModuleType::Mixer),
-        _ => None,
-    }
-}
-
-/// Map a palette effect type to its `TypedModuleType`.
-/// Shared by quick-add and context-add.
-fn effect_to_module_type(effect: EffectType) -> TypedModuleType {
-    match effect {
-        EffectType::Delay => TypedModuleType::Delay,
-        EffectType::Reverb => TypedModuleType::Reverb,
-        EffectType::Distortion => TypedModuleType::Distortion,
-        EffectType::Chorus => TypedModuleType::Chorus,
-        EffectType::Phaser => TypedModuleType::Phaser,
-        EffectType::Flanger => TypedModuleType::Flanger,
-        EffectType::Compressor => TypedModuleType::Compressor,
-        EffectType::Eq => TypedModuleType::Eq,
-        EffectType::Waveshaper => TypedModuleType::Waveshaper,
-        EffectType::MidSide => TypedModuleType::MidSide,
-        EffectType::BbdDelay => TypedModuleType::BbdDelay,
-        EffectType::Limiter => TypedModuleType::Limiter,
-        EffectType::Convolver => TypedModuleType::Convolver,
-        EffectType::PhaseVocoder => TypedModuleType::PhaseVocoder,
-        EffectType::FrequencyShifter => TypedModuleType::FrequencyShifter,
-        EffectType::EnsembleChorus => TypedModuleType::EnsembleChorus,
-        EffectType::ShimmerReverb => TypedModuleType::ShimmerReverb,
-        EffectType::GranularFx => TypedModuleType::GranularFx,
-        EffectType::SpectralBlur => TypedModuleType::SpectralBlur,
-        EffectType::ModalResonator => TypedModuleType::ModalResonator,
-        EffectType::ReverseGateReverb => TypedModuleType::ReverseGateReverb,
-    }
-}
-
 impl SynthApp {
     /// Handle a quick-add request: create module via session, place it, and auto-connect.
     fn handle_quick_add(
@@ -1279,68 +1234,16 @@ impl SynthApp {
         editor: &mut PatchEditor,
         request: QuickAddRequest,
     ) {
-        // Determine module type from selection
-        let module_type: Option<TypedModuleType> = match request.selection {
-            PaletteSelection::Category(category) => category_to_module_type(category),
-            PaletteSelection::MathOscillator => Some(TypedModuleType::MathOscillator),
-            PaletteSelection::SubOscillator => Some(TypedModuleType::SubOscillator),
-            PaletteSelection::Noise => Some(TypedModuleType::Noise),
-            PaletteSelection::WavetableOsc => Some(TypedModuleType::WavetableOsc),
-            PaletteSelection::AdditiveOsc => Some(TypedModuleType::AdditiveOsc),
-            PaletteSelection::GranularOsc => Some(TypedModuleType::GranularOsc),
-            PaletteSelection::FractalOsc => Some(TypedModuleType::FractalOsc),
-            PaletteSelection::Sampler => Some(TypedModuleType::Sampler),
-            PaletteSelection::AudioInput => Some(TypedModuleType::AudioInput),
-            PaletteSelection::RingMod => Some(TypedModuleType::RingMod),
-            PaletteSelection::EnvelopeFollower => Some(TypedModuleType::EnvelopeFollower),
-            PaletteSelection::Mseg => Some(TypedModuleType::Mseg),
-            PaletteSelection::KineticModulator => Some(TypedModuleType::KineticModulator),
-            PaletteSelection::Euclidean => Some(TypedModuleType::Euclidean),
-            PaletteSelection::TuringMachine => Some(TypedModuleType::TuringMachine),
-            PaletteSelection::RandomGates => Some(TypedModuleType::RandomGates),
-            PaletteSelection::Script => Some(TypedModuleType::Script),
-            PaletteSelection::Effect(effect_type) => Some(effect_to_module_type(effect_type)),
-            PaletteSelection::SignalMonitor => {
-                // SignalMonitor needs GUI-specific VisualizationBuffer
-                let mut m = synth_modules::SignalMonitor::new();
-                let d = m.descriptor();
-                let id = {
-                    let mut counters = session.counters_lock();
-                    let counter = counters
-                        .entry((instrument_id, synth_core::ModuleType::SignalMonitor))
-                        .or_insert(0);
-                    *counter += 1;
-                    ModuleId::new(TypedModuleType::SignalMonitor, *counter)
-                };
-                let dc = d.clone();
-                session.register_descriptor(instrument_id, id, d.clone());
-                editor.add_module_at(id, d, request.position);
-
-                let buffer =
-                    std::sync::Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
-                handle.add_visualization_buffer(id, buffer.clone());
-                m.set_vis_sink(buffer);
-
-                handle.send(EngineCommand::AddModuleInstance {
-                    instrument_id: Some(instrument_id),
-                    id,
-                    module: Box::new(m),
-                });
-                // Continue to connection logic below
-                Self::quick_add_connect(session, handle, instrument_id, editor, &request, id, &dc);
-                return;
-            }
-            _ => None,
-        };
-
-        let Some(module_type) = module_type else {
+        let Some((next_id, descriptor)) = Self::create_palette_module(
+            session,
+            handle,
+            instrument_id,
+            editor,
+            request.module_type,
+            request.position,
+        ) else {
             return;
         };
-
-        let Ok((next_id, descriptor)) = session.add_module(instrument_id, module_type) else {
-            return;
-        };
-        editor.add_module_at(next_id, descriptor.clone(), request.position);
 
         Self::quick_add_connect(
             session,
@@ -1408,229 +1311,156 @@ impl SynthApp {
         }
     }
 
+    /// Create `module_type` for `instrument_id` and place it in the editor at
+    /// `position`, returning its id and descriptor.
+    ///
+    /// The single GUI-side add path, shared by quick-add (drag off a port) and
+    /// context-add (right-click menu). Most types just go through
+    /// [`SynthSession::add_module`], but two need GUI-owned setup that the
+    /// session can't do: a **visualizer** is built here and registered with an
+    /// `AddVisualizer` command (`add_module` rejects it with
+    /// `VisualizerRequiresGui`), and the **signal monitor** needs its
+    /// `VisualizationBuffer` installed as a sink before the instance is sent.
+    /// Keeping that in one place is why quick-add now handles them too.
+    fn create_palette_module(
+        session: &crate::session::SynthSession,
+        handle: &mut EngineHandle,
+        instrument_id: InstrumentId,
+        editor: &mut PatchEditor,
+        module_type: TypedModuleType,
+        position: Pos2,
+    ) -> Option<(ModuleId, synth_core::ModuleDescriptor)> {
+        // A fresh instance id from the shared per-(instrument, type) counters —
+        // what `session.add_module` does internally, needed here for the two
+        // GUI-built module kinds below.
+        let next_instance_id = |mt: TypedModuleType| {
+            let mut counters = session.counters_lock();
+            let counter = counters.entry((instrument_id, mt)).or_insert(0);
+            *counter += 1;
+            ModuleId::new(mt, *counter)
+        };
+
+        if module_type.is_visualizer() {
+            let (descriptor, visualizer_type) = match module_type {
+                TypedModuleType::Oscilloscope => (
+                    Oscilloscope::new().descriptor(),
+                    synth_engine::commands::VisualizerType::Oscilloscope,
+                ),
+                TypedModuleType::LevelMeter => (
+                    LevelMeter::new().descriptor(),
+                    synth_engine::commands::VisualizerType::LevelMeter,
+                ),
+                _ => (
+                    SpectrumAnalyzer::new().descriptor(),
+                    synth_engine::commands::VisualizerType::SpectrumAnalyzer,
+                ),
+            };
+            let id = next_instance_id(module_type);
+            editor.add_module_at(id, descriptor.clone(), position);
+
+            let buffer =
+                std::sync::Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
+            handle.add_visualization_buffer(id, buffer.clone());
+            handle.send(EngineCommand::AddVisualizer {
+                instrument_id: Some(instrument_id),
+                id,
+                visualizer_type,
+                buffer,
+            });
+            return Some((id, descriptor));
+        }
+
+        if module_type == TypedModuleType::SignalMonitor {
+            let mut m = synth_modules::SignalMonitor::new();
+            let descriptor = m.descriptor();
+            let id = next_instance_id(module_type);
+            session.register_descriptor(instrument_id, id, descriptor.clone());
+            editor.add_module_at(id, descriptor.clone(), position);
+
+            let buffer =
+                std::sync::Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
+            handle.add_visualization_buffer(id, buffer.clone());
+            m.set_vis_sink(buffer);
+            handle.send(EngineCommand::AddModuleInstance {
+                instrument_id: Some(instrument_id),
+                id,
+                module: Box::new(m),
+            });
+            return Some((id, descriptor));
+        }
+
+        let (id, descriptor) = session.add_module(instrument_id, module_type).ok()?;
+        editor.add_module_at(id, descriptor.clone(), position);
+        Some((id, descriptor))
+    }
+
     /// Handle a context menu add: create a module and place it at the given position.
     /// If `inline_cable` is `Some`, the old cable is removed and the new module is
     /// wired inline: `from → new_module(first_input) → new_module(first_output) → to`.
-    #[allow(clippy::too_many_lines)]
     fn handle_context_add(
         session: &crate::session::SynthSession,
         handle: &mut EngineHandle,
         instrument_id: InstrumentId,
         editor: &mut PatchEditor,
-        selection: PaletteSelection,
+        module_type: TypedModuleType,
         position: Pos2,
         inline_cable: Option<synth_engine::graph::Connection>,
     ) {
-        // Helper: wire a newly created module inline on an existing cable.
-        // Removes the old cable, then connects from→new(first_input), new(first_output)→to.
-        let wire_inline = |handle: &mut EngineHandle,
-                           editor: &mut PatchEditor,
-                           new_id: ModuleId,
-                           descriptor: &synth_core::ModuleDescriptor,
-                           cable: synth_engine::graph::Connection| {
-            // Find first audio input and output on the new module.
-            let first_input = descriptor.ports.iter().find(|p| {
-                p.direction == synth_core::PortDirection::Input
-                    && p.port_type == synth_core::PortType::Audio
-            });
-            let first_output = descriptor.ports.iter().find(|p| {
-                p.direction == synth_core::PortDirection::Output
-                    && p.port_type == synth_core::PortType::Audio
-            });
-
-            // Only splice the module in when it can actually sit on the cable
-            // (audio in AND out). A module without an audio input — e.g. the
-            // Script module or any generator — can't be inserted in-line, so
-            // leave the cable intact rather than silently deleting it.
-            let (Some(inp), Some(outp)) = (first_input, first_output) else {
-                return;
-            };
-
-            // Replace the cable: drop it from the engine and the editor, then
-            // wire from→new(in) and new(out)→to.
-            handle.send(EngineCommand::Disconnect {
-                instrument_id: Some(instrument_id),
-                from: PortId::new(cable.from_module, cable.from_port),
-                to: PortId::new(cable.to_module, cable.to_port),
-            });
-            editor.remove_connection(&cable);
-
-            let conn_in = synth_engine::graph::Connection::new(
-                cable.from_module,
-                cable.from_port,
-                new_id,
-                inp.name,
-            );
-            let conn_out = synth_engine::graph::Connection::new(
-                new_id,
-                outp.name,
-                cable.to_module,
-                cable.to_port,
-            );
-            for c in [conn_in, conn_out] {
-                editor.add_connection(c);
-                handle.send(EngineCommand::Connect {
-                    instrument_id: Some(instrument_id),
-                    from: PortId::new(c.from_module, c.from_port),
-                    to: PortId::new(c.to_module, c.to_port),
-                });
-            }
+        let Some((new_id, descriptor)) = Self::create_palette_module(
+            session,
+            handle,
+            instrument_id,
+            editor,
+            module_type,
+            position,
+        ) else {
+            return;
         };
 
-        match selection {
-            PaletteSelection::Module(mt) => {
-                // The data-driven "Add module" menu routes every type through
-                // here. Visualizers and the signal monitor need their
-                // buffer/command setup, so delegate those to the specialised
-                // arms below; all other types take the generic add path.
-                if mt.is_visualizer() {
-                    let viz = match mt {
-                        TypedModuleType::Oscilloscope => PaletteVisualizerType::Oscilloscope,
-                        TypedModuleType::LevelMeter => PaletteVisualizerType::LevelMeter,
-                        _ => PaletteVisualizerType::SpectrumAnalyzer,
-                    };
-                    Self::handle_context_add(
-                        session,
-                        handle,
-                        instrument_id,
-                        editor,
-                        PaletteSelection::Visualizer(viz),
-                        position,
-                        inline_cable,
-                    );
-                } else if mt == TypedModuleType::SignalMonitor {
-                    Self::handle_context_add(
-                        session,
-                        handle,
-                        instrument_id,
-                        editor,
-                        PaletteSelection::SignalMonitor,
-                        position,
-                        inline_cable,
-                    );
-                } else if let Ok((next_id, descriptor)) = session.add_module(instrument_id, mt) {
-                    editor.add_module_at(next_id, descriptor.clone(), position);
-                    if let Some(cable) = inline_cable {
-                        wire_inline(handle, editor, next_id, &descriptor, cable);
-                    }
-                }
-            }
-            PaletteSelection::Visualizer(viz_type) => {
-                let (descriptor, module_type) = match viz_type {
-                    PaletteVisualizerType::Oscilloscope => (
-                        Oscilloscope::new().descriptor(),
-                        TypedModuleType::Oscilloscope,
-                    ),
-                    PaletteVisualizerType::LevelMeter => {
-                        (LevelMeter::new().descriptor(), TypedModuleType::LevelMeter)
-                    }
-                    PaletteVisualizerType::SpectrumAnalyzer => (
-                        SpectrumAnalyzer::new().descriptor(),
-                        TypedModuleType::SpectrumAnalyzer,
-                    ),
-                };
-                let next_id = {
-                    use synth_core::ModuleType;
-                    let mt = match viz_type {
-                        PaletteVisualizerType::Oscilloscope => ModuleType::Oscilloscope,
-                        PaletteVisualizerType::LevelMeter => ModuleType::LevelMeter,
-                        PaletteVisualizerType::SpectrumAnalyzer => ModuleType::SpectrumAnalyzer,
-                    };
-                    let mut counters = session.counters_lock();
-                    let counter = counters.entry((instrument_id, mt)).or_insert(0);
-                    *counter += 1;
-                    ModuleId::new(module_type, *counter)
-                };
-                editor.add_module_at(next_id, descriptor, position);
+        let Some(cable) = inline_cable else {
+            return;
+        };
 
-                let buffer =
-                    std::sync::Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
-                handle.add_visualization_buffer(next_id, buffer.clone());
-                let engine_viz_type = match viz_type {
-                    PaletteVisualizerType::Oscilloscope => {
-                        synth_engine::commands::VisualizerType::Oscilloscope
-                    }
-                    PaletteVisualizerType::LevelMeter => {
-                        synth_engine::commands::VisualizerType::LevelMeter
-                    }
-                    PaletteVisualizerType::SpectrumAnalyzer => {
-                        synth_engine::commands::VisualizerType::SpectrumAnalyzer
-                    }
-                };
-                handle.send(EngineCommand::AddVisualizer {
-                    instrument_id: Some(instrument_id),
-                    id: next_id,
-                    visualizer_type: engine_viz_type,
-                    buffer,
-                });
-            }
-            PaletteSelection::SignalMonitor => {
-                let mut m = synth_modules::SignalMonitor::new();
-                let d = m.descriptor();
-                let id = {
-                    let mut counters = session.counters_lock();
-                    let counter = counters
-                        .entry((instrument_id, synth_core::ModuleType::SignalMonitor))
-                        .or_insert(0);
-                    *counter += 1;
-                    ModuleId::new(TypedModuleType::SignalMonitor, *counter)
-                };
-                session.register_descriptor(instrument_id, id, d.clone());
-                editor.add_module_at(id, d, position);
+        // Splice the new module into the cable. Only when it can actually sit
+        // there (audio in AND out): a module without an audio input — the Script
+        // module, any generator — can't be inserted in-line, so leave the cable
+        // intact rather than silently deleting it.
+        let first_input = descriptor.ports.iter().find(|p| {
+            p.direction == synth_core::PortDirection::Input
+                && p.port_type == synth_core::PortType::Audio
+        });
+        let first_output = descriptor.ports.iter().find(|p| {
+            p.direction == synth_core::PortDirection::Output
+                && p.port_type == synth_core::PortType::Audio
+        });
+        let (Some(inp), Some(outp)) = (first_input, first_output) else {
+            return;
+        };
 
-                let buffer =
-                    std::sync::Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
-                handle.add_visualization_buffer(id, buffer.clone());
-                m.set_vis_sink(buffer);
-                handle.send(EngineCommand::AddModuleInstance {
-                    instrument_id: Some(instrument_id),
-                    id,
-                    module: Box::new(m),
-                });
-            }
-            _ => {
-                let module_type = match selection {
-                    PaletteSelection::Category(category) => category_to_module_type(category),
-                    PaletteSelection::MathOscillator => Some(TypedModuleType::MathOscillator),
-                    PaletteSelection::SubOscillator => Some(TypedModuleType::SubOscillator),
-                    PaletteSelection::Noise => Some(TypedModuleType::Noise),
-                    PaletteSelection::WavetableOsc => Some(TypedModuleType::WavetableOsc),
-                    PaletteSelection::AdditiveOsc => Some(TypedModuleType::AdditiveOsc),
-                    PaletteSelection::GranularOsc => Some(TypedModuleType::GranularOsc),
-                    PaletteSelection::FractalOsc => Some(TypedModuleType::FractalOsc),
-                    PaletteSelection::Sampler => Some(TypedModuleType::Sampler),
-                    PaletteSelection::AudioInput => Some(TypedModuleType::AudioInput),
-                    PaletteSelection::RingMod => Some(TypedModuleType::RingMod),
-                    PaletteSelection::EnvelopeFollower => Some(TypedModuleType::EnvelopeFollower),
-                    PaletteSelection::Mseg => Some(TypedModuleType::Mseg),
-                    PaletteSelection::KineticModulator => Some(TypedModuleType::KineticModulator),
-                    PaletteSelection::Euclidean => Some(TypedModuleType::Euclidean),
-                    PaletteSelection::TuringMachine => Some(TypedModuleType::TuringMachine),
-                    PaletteSelection::RandomGates => Some(TypedModuleType::RandomGates),
-                    PaletteSelection::Script => Some(TypedModuleType::Script),
-                    PaletteSelection::ModMatrix => Some(TypedModuleType::ModMatrix),
-                    PaletteSelection::StereoOutput => Some(TypedModuleType::StereoOutput),
-                    PaletteSelection::KeyboardPanner => Some(TypedModuleType::KeyboardPanner),
-                    PaletteSelection::BodyResonance => Some(TypedModuleType::BodyResonance),
-                    PaletteSelection::MechanicalNoise => Some(TypedModuleType::MechanicalNoise),
-                    PaletteSelection::Effect(effect_type) => {
-                        Some(effect_to_module_type(effect_type))
-                    }
-                    _ => None,
-                };
+        // Replace the cable: drop it from the engine and the editor, then wire
+        // from→new(in) and new(out)→to.
+        handle.send(EngineCommand::Disconnect {
+            instrument_id: Some(instrument_id),
+            from: PortId::new(cable.from_module, cable.from_port),
+            to: PortId::new(cable.to_module, cable.to_port),
+        });
+        editor.remove_connection(&cable);
 
-                if let Some(mt) = module_type {
-                    let Ok((next_id, descriptor)) = session.add_module(instrument_id, mt) else {
-                        return;
-                    };
-                    editor.add_module_at(next_id, descriptor.clone(), position);
-
-                    // Wire inline if this was a cable context menu action
-                    if let Some(cable) = inline_cable {
-                        wire_inline(handle, editor, next_id, &descriptor, cable);
-                    }
-                }
-            }
+        let conn_in = synth_engine::graph::Connection::new(
+            cable.from_module,
+            cable.from_port,
+            new_id,
+            inp.name,
+        );
+        let conn_out =
+            synth_engine::graph::Connection::new(new_id, outp.name, cable.to_module, cable.to_port);
+        for c in [conn_in, conn_out] {
+            editor.add_connection(c);
+            handle.send(EngineCommand::Connect {
+                instrument_id: Some(instrument_id),
+                from: PortId::new(c.from_module, c.from_port),
+                to: PortId::new(c.to_module, c.to_port),
+            });
         }
     }
 

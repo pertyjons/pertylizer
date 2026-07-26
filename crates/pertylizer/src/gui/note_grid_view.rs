@@ -1113,7 +1113,7 @@ fn draw_node(
     expose(
         &response,
         egui::WidgetType::Button,
-        format!("{} node {}", node_name(config), node_id.0),
+        format!("{} node {}", config.display_name(), node_id.0),
         None,
     );
     // Position changes are written to the graph after the frame (`moved`), so
@@ -1148,7 +1148,7 @@ fn draw_node(
     );
     card.show(&mut child, |card| {
         let description = graph.node_descriptions.get(&node_id).cloned();
-        card.header(node_name(config), description, false, |ui| {
+        card.header(config.display_name(), description, false, |ui| {
             if icon_button(ui, ri::CLOSE_LINE, theme().colors.text_dim, "Remove node").clicked() {
                 propose_edit(edit, GraphEdit::RemoveNode(node_id));
             }
@@ -1285,7 +1285,7 @@ fn draw_note_port_column(
                 open_connection(graph, pending.from, (node_id, port)).is_some()
             });
             let accessible_label = module_port_accessible_label(
-                &format!("{} node {}", node_name(config), node_id.0),
+                &format!("{} node {}", config.display_name(), node_id.0),
                 &port.stable_id(),
                 &label,
                 port.widget_type(),
@@ -1483,53 +1483,27 @@ fn draw_cables(
 // Background context menu — cable actions + the add-node catalog
 // ============================================================================
 
-/// The add-node palette: label + a default-configured instance. The
-/// arpeggiator and strummed chord read the source notes through the spine's
-/// upstream processors (the held-pitch seam, plan §5.B), wired into the graph
-/// evaluator — so both process fully here, no longer pass-through.
-fn node_catalog() -> [(&'static str, NoteModuleConfig); 12] {
+/// The add-node palette: one default-configured instance per kind, in menu
+/// order. Each entry's menu label is its own
+/// [`display_name`](NoteModuleConfig::display_name) — the palette holds no
+/// second copy of the names. The arpeggiator and strummed chord read the source
+/// notes through the spine's upstream processors (the held-pitch seam, plan
+/// §5.B), wired into the graph evaluator — so both process fully here, no longer
+/// pass-through.
+fn node_catalog() -> [NoteModuleConfig; 12] {
     [
-        (
-            "Scale Quantize",
-            NoteModuleConfig::Processor(NoteProcessor::ScaleQuantize(ScaleQuantize::default())),
-        ),
-        (
-            "Chord",
-            NoteModuleConfig::Processor(NoteProcessor::Chord(Chord::default())),
-        ),
-        (
-            "Arpeggiator",
-            NoteModuleConfig::Processor(NoteProcessor::Arpeggiator(Arpeggiator::default())),
-        ),
-        (
-            "Humanize",
-            NoteModuleConfig::Processor(NoteProcessor::Humanize(Humanize::default())),
-        ),
-        (
-            "Euclidean Generator",
-            NoteModuleConfig::Euclidean(EuclideanGenerator::default()),
-        ),
-        (
-            "Probability Gate",
-            NoteModuleConfig::ProbabilityGate(ProbabilityGate::default()),
-        ),
-        ("Note LFO", NoteModuleConfig::NoteLfo(NoteLfo::default())),
-        ("Step LFO", NoteModuleConfig::StepLfo(StepLfo::default())),
-        (
-            "Note Envelope",
-            NoteModuleConfig::NoteEnvelope(NoteEnvelope::default()),
-        ),
-        (
-            "Script",
-            NoteModuleConfig::NoteScriptTransform(NoteScriptTransform::new(
-                "out.pitch = note_pitch",
-            )),
-        ),
-        (
-            "Delay / Echo",
-            NoteModuleConfig::NoteDelay(NoteDelay::default()),
-        ),
-        ("Ratchet", NoteModuleConfig::Ratchet(Ratchet::default())),
+        NoteModuleConfig::Processor(NoteProcessor::ScaleQuantize(ScaleQuantize::default())),
+        NoteModuleConfig::Processor(NoteProcessor::Chord(Chord::default())),
+        NoteModuleConfig::Processor(NoteProcessor::Arpeggiator(Arpeggiator::default())),
+        NoteModuleConfig::Processor(NoteProcessor::Humanize(Humanize::default())),
+        NoteModuleConfig::Euclidean(EuclideanGenerator::default()),
+        NoteModuleConfig::ProbabilityGate(ProbabilityGate::default()),
+        NoteModuleConfig::NoteLfo(NoteLfo::default()),
+        NoteModuleConfig::StepLfo(StepLfo::default()),
+        NoteModuleConfig::NoteEnvelope(NoteEnvelope::default()),
+        NoteModuleConfig::NoteScriptTransform(NoteScriptTransform::new("out.pitch = note_pitch")),
+        NoteModuleConfig::NoteDelay(NoteDelay::default()),
+        NoteModuleConfig::Ratchet(Ratchet::default()),
     ]
 }
 
@@ -1567,15 +1541,19 @@ fn draw_bg_context_menu(
         );
         ui.separator();
         let at_cap = graph.node_count() >= synth_sequencer::MAX_NOTE_GRID_NODES;
-        for (label, config) in node_catalog() {
+        for config in node_catalog() {
             // Colour each entry by its node accent (same rack-category colour
             // logic as the nodes) so the "Add node" menu reads with the same
             // palette as the rack's category-coloured add menu — a leading
             // filled-circle swatch plus the tinted label.
             let accent = node_accent(&config);
             let entry = egui::Button::new(
-                egui::RichText::new(format!("{}  {label}", ri::CHECKBOX_BLANK_CIRCLE_FILL))
-                    .color(accent),
+                egui::RichText::new(format!(
+                    "{}  {}",
+                    ri::CHECKBOX_BLANK_CIRCLE_FILL,
+                    config.display_name()
+                ))
+                .color(accent),
             );
             if ui.add_enabled(!at_cap, entry).clicked() {
                 propose_edit(edit, GraphEdit::AddNode(config, world_pos));
@@ -1761,20 +1739,6 @@ fn finalize_config_undo(
 // ============================================================================
 // Node metadata + per-kind config editors
 // ============================================================================
-
-fn node_name(config: &NoteModuleConfig) -> &'static str {
-    match config {
-        NoteModuleConfig::Processor(p) => note_fx::processor_name(p),
-        NoteModuleConfig::Euclidean(_) => "Euclidean",
-        NoteModuleConfig::ProbabilityGate(_) => "Probability Gate",
-        NoteModuleConfig::NoteLfo(_) => "Note LFO",
-        NoteModuleConfig::StepLfo(_) => "Step LFO",
-        NoteModuleConfig::NoteEnvelope(_) => "Note Envelope",
-        NoteModuleConfig::NoteScriptTransform(_) => "Script",
-        NoteModuleConfig::NoteDelay(_) => "Delay / Echo",
-        NoteModuleConfig::Ratchet(_) => "Ratchet",
-    }
-}
 
 /// The node's accent colour. Colours are **keyed to the rack module-category
 /// palette** ([`category_color`](crate::gui::module_panel::category_color)) so a

@@ -9,7 +9,7 @@
 use eframe::egui::{self, Pos2, Rect, Ui};
 use egui_remixicon::icons as ri;
 
-use synth_core::{ModuleCategory, ModuleType};
+use synth_core::{DisplayName, ModuleCategory, ModuleType};
 use synth_engine::graph::Connection;
 
 use crate::gui::module_panel::category_color;
@@ -17,9 +17,8 @@ use crate::gui::theme::theme;
 use crate::gui::widgets::submenu_button;
 
 use super::{
-    BgContextMenuState, CanvasInteraction, GroupTemplateAction, PaletteSelection, PatchAnalysis,
-    PatchEditor, PatchEditorResult, category_icon, draw_module_zone, module_catalog,
-    screen_to_world,
+    BgContextMenuState, CanvasInteraction, GroupTemplateAction, PatchAnalysis, PatchEditor,
+    PatchEditorResult, category_icon, draw_module_zone, module_catalog, screen_to_world,
 };
 
 impl PatchEditor {
@@ -257,7 +256,7 @@ impl PatchEditor {
         let menu_state = self.bg_context_menu;
         let world_pos = menu_state.map(|s| s.world_pos).unwrap_or_default();
         let menu_cable = menu_state.and_then(|s| s.cable);
-        let mut selected: Option<PaletteSelection> = None;
+        let mut selected: Option<ModuleType> = None;
         let mut cable_action_taken = false;
 
         response.context_menu(|ui| {
@@ -294,9 +293,9 @@ impl PatchEditor {
         result: &mut PatchEditorResult,
         world_pos: Pos2,
         menu_cable: Option<Connection>,
-    ) -> (Option<PaletteSelection>, bool) {
+    ) -> (Option<ModuleType>, bool) {
         use egui_remixicon::icons as ri;
-        let mut selected: Option<PaletteSelection> = None;
+        let mut selected: Option<ModuleType> = None;
         let mut cable_action_taken = false;
 
         {
@@ -389,24 +388,10 @@ impl PatchEditor {
             // from the module catalog (which is built from `ALL_MODULE_TYPES`).
             // Adding a `ModuleType` variant and listing it in `ALL_MODULE_TYPES`
             // makes it appear here automatically — there is no hand-maintained
-            // palette to drift out of sync with the enum. Every `ModuleCategory`
-            // is listed below, so no category can be silently dropped either.
-            const CATEGORY_ORDER: &[(ModuleCategory, &str)] = &[
-                (ModuleCategory::Oscillator, "Oscillator"),
-                (ModuleCategory::Filter, "Filter"),
-                (ModuleCategory::Envelope, "Envelope"),
-                (ModuleCategory::LFO, "LFO"),
-                (ModuleCategory::Amplifier, "Amplifier"),
-                (ModuleCategory::Mixer, "Mixer"),
-                (ModuleCategory::Effect, "Effect"),
-                (ModuleCategory::Sampler, "Sampler"),
-                (ModuleCategory::Utility, "Modulation / Utility"),
-                (ModuleCategory::Sequencer, "Generative"),
-                (ModuleCategory::PhysicalModeling, "Physical"),
-                (ModuleCategory::Visualizer, "Visualizer"),
-                (ModuleCategory::Output, "Output"),
-            ];
-            for &(category, title) in CATEGORY_ORDER {
+            // palette to drift out of sync with the enum. The categories come
+            // from `ModuleCategory::ALL` (which carries both the menu order and
+            // the titles), so no category can be silently dropped either.
+            for &category in ModuleCategory::ALL {
                 // Skip a category with no modules rather than show an empty
                 // submenu. (The closure below only runs when the submenu opens,
                 // so presence must be checked up front.)
@@ -415,12 +400,16 @@ impl PatchEditor {
                 }
                 submenu_button(
                     ui,
-                    egui::RichText::new(format!("{} {title}", category_icon(category)))
-                        .color(category_color(category)),
+                    egui::RichText::new(format!(
+                        "{} {}",
+                        category_icon(category),
+                        category.display_name()
+                    ))
+                    .color(category_color(category)),
                     |ui| {
                         for &(mt, cat, _) in module_catalog() {
                             if cat == category {
-                                Self::bg_menu_item(ui, PaletteSelection::Module(mt), &mut selected);
+                                Self::bg_menu_item(ui, mt, &mut selected);
                             }
                         }
                     },

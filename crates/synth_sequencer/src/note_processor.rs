@@ -1104,6 +1104,18 @@ impl NoteProcessor {
         }
     }
 
+    /// The user-facing name, for node titles and add-node menus. Lives next to
+    /// [`kind`](Self::kind) so the GUI never spells it out a second time.
+    #[must_use]
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::ScaleQuantize(_) => "Scale Quantize",
+            Self::Chord(_) => "Chord",
+            Self::Arpeggiator(_) => "Arpeggiator",
+            Self::Humanize(_) => "Humanize",
+        }
+    }
+
     /// Expand one source pitch as this processor contributes it to a downstream
     /// generator's held-notes view — the **1→N seam**. A pitch transform yields
     /// one pitch (scale-quantize snaps); a chord generator yields its tones; a

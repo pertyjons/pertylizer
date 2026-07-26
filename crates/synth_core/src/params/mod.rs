@@ -431,17 +431,24 @@ impl ModuleType {
     // DISPLAY AND CONVERSION METHODS
     // ========================================================================
 
-    /// Get the display name for this module type.
+    /// The module type's display name.
+    ///
+    /// This must match the name in the module's own `ModuleDescriptor` — the two
+    /// live in different crates (a descriptor is built in `synth_modules`, which
+    /// depends on this one), so equality is enforced by the
+    /// `module_type_names_match_their_descriptors` test rather than by
+    /// construction. Where they once disagreed, the descriptor's shorter
+    /// synth-idiomatic name won: an envelope is an "ADSR", an amplifier a "VCA".
     pub fn name(&self) -> &'static str {
         match self {
             Self::Oscillator => "Oscillator",
             Self::MathOscillator => "Math Oscillator",
-            Self::SubOscillator => "Sub Oscillator",
+            Self::SubOscillator => "Sub Osc",
             Self::Noise => "Noise",
             Self::Filter => "Filter",
-            Self::Envelope => "Envelope",
+            Self::Envelope => "ADSR",
             Self::Lfo => "LFO",
-            Self::Amplifier => "Amplifier",
+            Self::Amplifier => "VCA",
             Self::Mixer => "Mixer",
             Self::StereoOutput => "Stereo Output",
             Self::Delay => "Delay",
@@ -453,9 +460,9 @@ impl ModuleType {
             Self::Compressor => "Compressor",
             Self::Eq => "EQ",
             Self::Waveshaper => "Waveshaper",
-            Self::Oscilloscope => "Oscilloscope",
-            Self::LevelMeter => "Level Meter",
-            Self::SpectrumAnalyzer => "Spectrum Analyzer",
+            Self::Oscilloscope => "Scope",
+            Self::LevelMeter => "Meter",
+            Self::SpectrumAnalyzer => "Spectrum",
             Self::ModMatrix => "Mod Matrix",
             // Modulation / Utility
             Self::RingMod => "Ring Mod",
@@ -479,7 +486,7 @@ impl ModuleType {
             Self::Convolver => "Convolver",
             Self::PhaseVocoder => "Phase Vocoder",
             Self::KineticModulator => "Kinetic Mod",
-            Self::SignalMonitor => "Signal Monitor",
+            Self::SignalMonitor => "Sig Mon",
             Self::FrequencyShifter => "Freq Shifter",
             Self::VectorMixer => "Vector Mixer",
             Self::LaSynth => "LA Synth",

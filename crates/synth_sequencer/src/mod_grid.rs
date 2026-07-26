@@ -195,6 +195,35 @@ impl ModNodeConfig {
         }
     }
 
+    /// The node kind's user-facing name — the add-node menu label, and the base
+    /// of [`title`](Self::title). A `Module` node borrows its wrapped module
+    /// type's name, so the Mod Grid menu and the patch editor call a module the
+    /// same thing.
+    #[must_use]
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Module(m) => m.module_type.name(),
+            Self::Macro(_) => "Macro",
+            Self::Transport(_) => "Transport",
+            Self::MidiCc(_) => "MIDI CC",
+            Self::AudioTap(_) => "Audio Tap",
+            Self::Target(_) => "Target",
+        }
+    }
+
+    /// The node header title: the kind's [`display_name`](Self::display_name)
+    /// plus whatever tells two nodes of the *same* kind apart (a macro's name, a
+    /// CC number). Kept here rather than in the view so the header and the menu
+    /// can't name the same node differently.
+    #[must_use]
+    pub fn title(&self) -> String {
+        match self {
+            Self::Macro(m) => format!("Macro · {}", m.name),
+            Self::MidiCc(m) => format!("MIDI CC {}", m.cc),
+            other => other.display_name().to_string(),
+        }
+    }
+
     /// Whether this node writes into the automation space (i.e. is a sink).
     #[must_use]
     pub fn is_target(&self) -> bool {

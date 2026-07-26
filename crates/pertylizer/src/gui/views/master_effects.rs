@@ -3,8 +3,8 @@
 //! This module contains the UI state types for the master effects chain
 //! in the right sidebar panel.
 
-use crate::gui::patch_editor::EffectType;
 use synth_engine::ModuleId;
+use synth_engine::commands::EffectType;
 
 /// Stored parameter values for each effect type.
 #[derive(Clone)]
@@ -240,31 +240,10 @@ impl MasterEffectUiState {
         }
     }
 
-    /// Get a display name for this effect.
+    /// The effect's display name — the module type's, so a master-chain row and
+    /// the same effect in a patch or a return bus read identically.
     #[must_use]
     pub fn display_name(&self) -> &'static str {
-        match self.effect_type {
-            EffectType::Compressor => "Compressor",
-            EffectType::Eq => "EQ",
-            EffectType::Reverb => "Reverb",
-            EffectType::Delay => "Delay",
-            EffectType::Chorus => "Chorus",
-            EffectType::Phaser => "Phaser",
-            EffectType::Flanger => "Flanger",
-            EffectType::Distortion => "Distortion",
-            EffectType::Waveshaper => "Waveshaper",
-            EffectType::MidSide => "Mid/Side",
-            EffectType::BbdDelay => "BBD Delay",
-            EffectType::Limiter => "Limiter",
-            EffectType::Convolver => "Convolver",
-            EffectType::PhaseVocoder => "Phase Vocoder",
-            EffectType::FrequencyShifter => "Freq Shifter",
-            EffectType::EnsembleChorus => "Ensemble Chorus",
-            EffectType::ShimmerReverb => "Shimmer Reverb",
-            EffectType::GranularFx => "Granular FX",
-            EffectType::SpectralBlur => "Spectral Blur",
-            EffectType::ModalResonator => "Modal Resonator",
-            EffectType::ReverseGateReverb => "Reverse/Gate",
-        }
+        self.effect_type.to_module_type().name()
     }
 }

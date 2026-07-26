@@ -80,7 +80,7 @@ mod tests {
     fn modules() -> HashMap<ModuleId, ModuleDescriptor> {
         use synth_core::module_traits::Describable;
         let mut m = HashMap::new();
-        // Two filters (→ "Filter 1"/"Filter 2"), one envelope (→ "Envelope").
+        // Two filters (→ "Filter 1"/"Filter 2"), one envelope (→ "ADSR").
         m.insert(
             ModuleId::new(ModuleType::Filter, 1),
             Filter::new().descriptor(),
@@ -117,7 +117,7 @@ mod tests {
             .iter()
             .find(|g| g.module_id.module_type == ModuleType::Envelope)
             .expect("envelope group");
-        assert_eq!(env.label, "Envelope");
+        assert_eq!(env.label, "ADSR");
         // Filter cutoff is offered (continuous + modulatable).
         assert!(
             groups

@@ -14,7 +14,9 @@ use egui_remixicon::icons as ri;
 
 use synth_core::{ChoiceOption, ModuleDescriptor, ParamKind, ParameterDescriptor, WidgetHint};
 
-use super::{CaptionTone, Knob, WaveformSelector, WaveformType, caption, waveform_button};
+use super::{
+    CaptionTone, Knob, WaveformChoice, WaveformSelector, WaveformType, caption, waveform_button,
+};
 use crate::gui::theme::theme;
 
 /// A parameter the user changed this frame: its descriptor plus the new value.
@@ -348,7 +350,7 @@ pub fn draw_parameter_grid<'d>(
                     continue;
                 };
                 let on = get(param) > 0.5;
-                if waveform_button(ui, waveform, on, accent).clicked() {
+                if waveform_button(ui, waveform, &param.name, on, accent).clicked() {
                     changes.push((*param, if on { 0.0 } else { 1.0 }));
                 }
                 draw_mod_markers_inline(ui, markers(param));
@@ -361,18 +363,23 @@ pub fn draw_parameter_grid<'d>(
         let Some(choices) = &param.choices else {
             continue;
         };
-        // Only show buttons for the waveforms this module actually supports.
-        let waveforms: Vec<WaveformType> = choices
+        // Only show buttons for the waveforms this module actually supports, each
+        // labelled by the descriptor's own name for that choice.
+        let waveforms: Vec<WaveformChoice> = choices
             .iter()
-            .filter_map(|c| WaveformType::from_id(&c.id))
+            .filter_map(|c| {
+                WaveformType::from_id(&c.id).map(|shape| WaveformChoice {
+                    shape,
+                    label: c.name.clone(),
+                })
+            })
             .collect();
         if waveforms.is_empty() {
             continue;
         }
         let mut selected = (get(param).round() as usize).min(waveforms.len() - 1);
         labeled_param(ui, param, markers(param));
-        if WaveformSelector::new(&mut selected)
-            .waveforms(waveforms)
+        if WaveformSelector::new(&mut selected, waveforms)
             .accent_color(accent)
             .show(ui)
         {

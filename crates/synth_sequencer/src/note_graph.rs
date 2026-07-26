@@ -874,6 +874,24 @@ impl NoteModuleConfig {
         }
     }
 
+    /// The user-facing node name, shared by the node header and the add-node
+    /// menu. One definition per kind, so the palette entry and the node title
+    /// can't disagree (they once read "Euclidean Generator" and "Euclidean").
+    #[must_use]
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            Self::Processor(p) => p.display_name(),
+            Self::Euclidean(_) => "Euclidean",
+            Self::ProbabilityGate(_) => "Probability Gate",
+            Self::NoteLfo(_) => "Note LFO",
+            Self::StepLfo(_) => "Step LFO",
+            Self::NoteEnvelope(_) => "Note Envelope",
+            Self::NoteScriptTransform(_) => "Script",
+            Self::NoteDelay(_) => "Delay / Echo",
+            Self::Ratchet(_) => "Ratchet",
+        }
+    }
+
     /// Whether this node consumes an upstream `NoteStream`. Pure generators
     /// (Euclidean) and `Value` sources (LFOs, envelope) do not.
     #[must_use]

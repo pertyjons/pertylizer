@@ -18,6 +18,7 @@
 #![allow(clippy::float_cmp)]
 
 pub mod audio;
+pub mod display;
 pub mod hash;
 pub mod module_traits;
 pub mod params;
@@ -31,6 +32,7 @@ pub use audio::{
     AudioResult, AudioStream, BufferSize, ChannelCount, DeviceInfo, DeviceType, MAX_BLOCK_SIZE,
     StreamConfig, StreamInfo,
 };
+pub use display::DisplayName;
 pub use module_traits::*;
 pub use params::*;
 pub use types::*;

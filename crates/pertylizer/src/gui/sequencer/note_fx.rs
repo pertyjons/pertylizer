@@ -633,16 +633,6 @@ fn chord_preset_name(c: &Chord) -> &'static str {
 // Processor-kind helpers (shared with the Note Grid node bodies)
 // ============================================================================
 
-/// Human-facing card title for a processor kind.
-pub(crate) fn processor_name(proc: &NoteProcessor) -> &'static str {
-    match proc {
-        NoteProcessor::ScaleQuantize(_) => "Scale Quantize",
-        NoteProcessor::Chord(_) => "Chord",
-        NoteProcessor::Arpeggiator(_) => "Arpeggiator",
-        NoteProcessor::Humanize(_) => "Humanize",
-    }
-}
-
 /// Per-kind accent colour, keyed to the same rack module-category meanings as
 /// [`node_accent`](crate::gui::note_grid_view): `ScaleQuantize` shapes pitch like
 /// a **filter** (cyan); `Chord` is a note **generator/source** (orange);

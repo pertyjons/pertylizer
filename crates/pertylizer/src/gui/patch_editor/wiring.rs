@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use eframe::egui::{self, LayerId, Order, Pos2, Rect, Ui, Vec2};
 
-use synth_core::{ModuleCategory, PortName};
+use synth_core::{ModuleType, PortName};
 use synth_engine::ModuleId;
 use synth_engine::graph::Connection;
 
@@ -25,8 +25,8 @@ use crate::gui::widgets::{
 use crate::gui::node_canvas;
 
 use super::{
-    EFFECT_CHAIN_AMBER, EffectType, GroupPortKey, PaletteSelection, PatchEditor, PatchEditorResult,
-    PatchPort, PortContextMenuState, screen_to_world,
+    EFFECT_CHAIN_AMBER, GroupPortKey, PatchEditor, PatchEditorResult, PatchPort,
+    PortContextMenuState, screen_to_world,
 };
 
 impl PatchEditor {
@@ -441,17 +441,17 @@ impl PatchEditor {
                                 target_direction,
                                 new_module_pos,
                                 &[
-                                    PaletteSelection::Category(ModuleCategory::Oscillator),
-                                    PaletteSelection::SubOscillator,
-                                    PaletteSelection::WavetableOsc,
-                                    PaletteSelection::MathOscillator,
-                                    PaletteSelection::AdditiveOsc,
-                                    PaletteSelection::GranularOsc,
-                                    PaletteSelection::FractalOsc,
-                                    PaletteSelection::Sampler,
-                                    PaletteSelection::AudioInput,
-                                    PaletteSelection::Noise,
-                                    PaletteSelection::RingMod,
+                                    ModuleType::Oscillator,
+                                    ModuleType::SubOscillator,
+                                    ModuleType::WavetableOsc,
+                                    ModuleType::MathOscillator,
+                                    ModuleType::AdditiveOsc,
+                                    ModuleType::GranularOsc,
+                                    ModuleType::FractalOsc,
+                                    ModuleType::Sampler,
+                                    ModuleType::AudioInput,
+                                    ModuleType::Noise,
+                                    ModuleType::RingMod,
                                 ],
                             );
                         }
@@ -465,11 +465,11 @@ impl PatchEditor {
                                 target_direction,
                                 new_module_pos,
                                 &[
-                                    PaletteSelection::Category(ModuleCategory::LFO),
-                                    PaletteSelection::Category(ModuleCategory::Envelope),
-                                    PaletteSelection::Mseg,
-                                    PaletteSelection::KineticModulator,
-                                    PaletteSelection::EnvelopeFollower,
+                                    ModuleType::Lfo,
+                                    ModuleType::Envelope,
+                                    ModuleType::Mseg,
+                                    ModuleType::KineticModulator,
+                                    ModuleType::EnvelopeFollower,
                                 ],
                             );
                         }
@@ -483,9 +483,9 @@ impl PatchEditor {
                                 target_direction,
                                 new_module_pos,
                                 &[
-                                    PaletteSelection::Euclidean,
-                                    PaletteSelection::TuringMachine,
-                                    PaletteSelection::RandomGates,
+                                    ModuleType::Euclidean,
+                                    ModuleType::TuringMachine,
+                                    ModuleType::RandomGates,
                                 ],
                             );
                         }
@@ -507,10 +507,10 @@ impl PatchEditor {
                                 target_direction,
                                 new_module_pos,
                                 &[
-                                    PaletteSelection::Category(ModuleCategory::Filter),
-                                    PaletteSelection::Category(ModuleCategory::Amplifier),
-                                    PaletteSelection::Category(ModuleCategory::Mixer),
-                                    PaletteSelection::SignalMonitor,
+                                    ModuleType::Filter,
+                                    ModuleType::Amplifier,
+                                    ModuleType::Mixer,
+                                    ModuleType::SignalMonitor,
                                 ],
                             );
                             ui.separator();
@@ -523,15 +523,15 @@ impl PatchEditor {
                                 target_direction,
                                 new_module_pos,
                                 &[
-                                    PaletteSelection::Effect(EffectType::Delay),
-                                    PaletteSelection::Effect(EffectType::Reverb),
-                                    PaletteSelection::Effect(EffectType::Distortion),
-                                    PaletteSelection::Effect(EffectType::Chorus),
-                                    PaletteSelection::Effect(EffectType::Flanger),
-                                    PaletteSelection::Effect(EffectType::Phaser),
-                                    PaletteSelection::Effect(EffectType::Compressor),
-                                    PaletteSelection::Effect(EffectType::Eq),
-                                    PaletteSelection::Effect(EffectType::Waveshaper),
+                                    ModuleType::Delay,
+                                    ModuleType::Reverb,
+                                    ModuleType::Distortion,
+                                    ModuleType::Chorus,
+                                    ModuleType::Flanger,
+                                    ModuleType::Phaser,
+                                    ModuleType::Compressor,
+                                    ModuleType::Eq,
+                                    ModuleType::Waveshaper,
                                 ],
                             );
                         }
@@ -545,9 +545,9 @@ impl PatchEditor {
                                 target_direction,
                                 new_module_pos,
                                 &[
-                                    PaletteSelection::Category(ModuleCategory::Amplifier),
-                                    PaletteSelection::Category(ModuleCategory::Filter),
-                                    PaletteSelection::Category(ModuleCategory::Oscillator),
+                                    ModuleType::Amplifier,
+                                    ModuleType::Filter,
+                                    ModuleType::Oscillator,
                                 ],
                             );
                         }
@@ -560,10 +560,7 @@ impl PatchEditor {
                                 target_port,
                                 target_direction,
                                 new_module_pos,
-                                &[
-                                    PaletteSelection::Category(ModuleCategory::Envelope),
-                                    PaletteSelection::Category(ModuleCategory::Amplifier),
-                                ],
+                                &[ModuleType::Envelope, ModuleType::Amplifier],
                             );
                         }
                         WidgetPortType::Midi | WidgetPortType::NoteStream => {}

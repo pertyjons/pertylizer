@@ -12,8 +12,8 @@ use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 
 use synth_core::ModuleParam;
 use synth_core::{
-    DestAddr, MacroSource, ModuleCategory, ModuleDescriptor, PortDirection, PortName, PortType,
-    SrcAddr,
+    DestAddr, DisplayName, MacroSource, ModuleCategory, ModuleDescriptor, PortDirection, PortName,
+    PortType, SrcAddr,
 };
 use synth_core::{ModMatrixParam, ModuleType, Param};
 use synth_engine::graph::Connection;
@@ -1075,7 +1075,7 @@ struct GroupLayout {
 #[derive(Debug, Clone)]
 pub struct QuickAddRequest {
     /// What module to create.
-    pub selection: PaletteSelection,
+    pub module_type: ModuleType,
     /// The existing module/port to connect to.
     pub target_module: ModuleId,
     pub target_port: PortName,
@@ -2382,7 +2382,7 @@ impl PatchEditor {
                     t.push_str(&format!(
                         "\n{} · {}",
                         module_id,
-                        category_label(descriptor.category)
+                        descriptor.category.display_name()
                     ));
                     if !descriptor.description.is_empty() {
                         t.push_str("\n\n");
@@ -2729,17 +2729,18 @@ impl PatchEditor {
         }
     }
 
-    /// Helper for background context menu items — uses shared palette_label for icon + color.
-    fn bg_menu_item(ui: &mut Ui, selection: PaletteSelection, out: &mut Option<PaletteSelection>) {
-        let (label, color) = palette_label(selection);
+    /// Helper for background context menu items — uses shared `module_label` for
+    /// the icon, name, and colour.
+    fn bg_menu_item(ui: &mut Ui, module_type: ModuleType, out: &mut Option<ModuleType>) {
+        let (label, color) = module_label(module_type);
         if ui.button(egui::RichText::new(label).color(color)).clicked() {
-            *out = Some(selection);
+            *out = Some(module_type);
             ui.close();
         }
     }
 
     /// Helper: render a list of menu buttons that push `QuickAddRequest`s.
-    /// Uses shared `palette_label` for consistent icons and colors.
+    /// Uses shared `module_label` for consistent icons, names, and colours.
     #[allow(clippy::too_many_arguments)]
     fn port_menu_items(
         &self,
@@ -2750,13 +2751,13 @@ impl PatchEditor {
         target_port: PortName,
         target_direction: WidgetPortDirection,
         position: Pos2,
-        items: &[PaletteSelection],
+        items: &[ModuleType],
     ) {
-        for &selection in items {
-            let (label, color) = palette_label(selection);
+        for &module_type in items {
+            let (label, color) = module_label(module_type);
             if ui.button(egui::RichText::new(label).color(color)).clicked() {
                 result.quick_add_requests.push(QuickAddRequest {
-                    selection,
+                    module_type,
                     target_module,
                     target_port,
                     target_direction,
@@ -3315,7 +3316,7 @@ pub struct PatchEditorResult {
     pub quick_add_requests: Vec<QuickAddRequest>,
     /// Context menu request: add a module at a specific world position.
     /// Third value = cable to break and insert the module inline (if from cable context menu).
-    pub context_add: Option<(PaletteSelection, Pos2, Option<Connection>)>,
+    pub context_add: Option<(ModuleType, Pos2, Option<Connection>)>,
     /// Requests to open template browser or save group templates.
     pub group_template_action: Option<GroupTemplateAction>,
     /// Requests to reorder effects in the chain (module_id, direction).
@@ -4275,59 +4276,6 @@ fn draw_audio_script_module_grid(
     }
 }
 
-// Re-export EffectType from commands for GUI use
-pub use synth_engine::commands::EffectType;
-
-/// Visualizer type for the add module submenu (palette selection).
-///
-/// For engine command types, see `engine::commands::VisualizerType`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PaletteVisualizerType {
-    Oscilloscope,
-    LevelMeter,
-    SpectrumAnalyzer,
-}
-
-/// Result from ModulePalette - either a category or a specific effect type.
-#[derive(Debug, Clone, Copy)]
-pub enum PaletteSelection {
-    /// Any module type, selected directly. This is what the data-driven
-    /// "Add module" menu emits — every entry in `ALL_MODULE_TYPES` is reachable
-    /// through it, so a new `ModuleType` variant needs no new palette case.
-    Module(ModuleType),
-    Category(ModuleCategory),
-    MathOscillator,
-    SubOscillator,
-    Noise,
-    ModMatrix,
-    Effect(EffectType),
-    Visualizer(PaletteVisualizerType),
-    StereoOutput,
-    // Modulation / Utility
-    RingMod,
-    EnvelopeFollower,
-    WavetableOsc,
-    // Physical modeling
-    KeyboardPanner,
-    BodyResonance,
-    MechanicalNoise,
-    // New modules
-    Mseg,
-    AdditiveOsc,
-    Euclidean,
-    TuringMachine,
-    RandomGates,
-    GranularOsc,
-    KineticModulator,
-    SignalMonitor,
-    FractalOsc,
-    // Scripting
-    Script,
-    // Sampler
-    Sampler,
-    AudioInput,
-}
-
 /// Cached catalog of every addable module type with its display name and
 /// category, built once from [`ALL_MODULE_TYPES`](crate::module_factory::ALL_MODULE_TYPES).
 ///
@@ -4350,25 +4298,6 @@ fn module_catalog() -> &'static [(ModuleType, ModuleCategory, String)] {
 }
 
 /// Remix-icon glyph for a module category, used as the submenu header icon.
-/// Human-readable label for a module category (used in module hover tooltips).
-fn category_label(category: ModuleCategory) -> &'static str {
-    match category {
-        ModuleCategory::Oscillator => "Oscillator",
-        ModuleCategory::Filter => "Filter",
-        ModuleCategory::Envelope => "Envelope",
-        ModuleCategory::LFO => "LFO",
-        ModuleCategory::Amplifier => "Amplifier",
-        ModuleCategory::Effect => "Effect",
-        ModuleCategory::Utility => "Utility",
-        ModuleCategory::Sampler => "Sampler",
-        ModuleCategory::Sequencer => "Sequencer",
-        ModuleCategory::Mixer => "Mixer",
-        ModuleCategory::Output => "Output",
-        ModuleCategory::Visualizer => "Visualizer",
-        ModuleCategory::PhysicalModeling => "Physical Modeling",
-    }
-}
-
 fn category_icon(category: ModuleCategory) -> &'static str {
     use egui_remixicon::icons as ri;
     match category {
@@ -4383,308 +4312,85 @@ fn category_icon(category: ModuleCategory) -> &'static str {
     }
 }
 
-/// Get the display label (with Remix Icon) and category color for a palette selection.
-fn palette_label(selection: PaletteSelection) -> (String, Color32) {
+/// Remix-icon glyph for a specific module type, where one reads better than its
+/// category's generic glyph (a saw for the math oscillator, a mic for the audio
+/// input). Anything not listed falls back to [`category_icon`], so a new
+/// `ModuleType` needs no entry here to render.
+fn module_icon(module_type: ModuleType) -> Option<&'static str> {
     use egui_remixicon::icons as ri;
-
-    // Data-driven selections carry only the type; resolve name + colour from the
-    // catalog rather than maintaining a per-variant arm here.
-    if let PaletteSelection::Module(mt) = selection {
-        let (name, category) = module_catalog()
-            .iter()
-            .find(|(t, _, _)| *t == mt)
-            .map(|(_, c, n)| (n.clone(), *c))
-            .unwrap_or_else(|| (format!("{mt:?}"), ModuleCategory::Utility));
-        return (
-            format!("{} {name}", category_icon(category)),
-            category_color(category),
-        );
-    }
-
-    let (icon, text, color) = match selection {
+    Some(match module_type {
         // Oscillators
-        PaletteSelection::Category(ModuleCategory::Oscillator) => (
-            ri::MUSIC_2_FILL,
-            "Oscillator",
-            category_color(ModuleCategory::Oscillator),
-        ),
-        PaletteSelection::MathOscillator => (
-            ri::FUNCTION_FILL,
-            "Math Osc",
-            category_color(ModuleCategory::Oscillator),
-        ),
-        PaletteSelection::SubOscillator => (
-            ri::VOLUME_DOWN_FILL,
-            "Sub Osc",
-            category_color(ModuleCategory::Oscillator),
-        ),
-        PaletteSelection::Noise => (
-            ri::SIGNAL_WIFI_FILL,
-            "Noise",
-            category_color(ModuleCategory::Oscillator),
-        ),
-        PaletteSelection::WavetableOsc => (
-            ri::BAR_CHART_FILL,
-            "Wavetable",
-            category_color(ModuleCategory::Oscillator),
-        ),
-        PaletteSelection::AdditiveOsc => (
-            ri::MUSIC_FILL,
-            "Additive",
-            category_color(ModuleCategory::Oscillator),
-        ),
-        PaletteSelection::GranularOsc => (
-            ri::RHYTHM_FILL,
-            "Granular",
-            category_color(ModuleCategory::Oscillator),
-        ),
-        PaletteSelection::FractalOsc => (
-            ri::SEEDLING_FILL,
-            "Fractal Osc",
-            category_color(ModuleCategory::Oscillator),
-        ),
-        // Sampler
-        PaletteSelection::Sampler => (
-            ri::MUSIC_FILL,
-            "Sampler",
-            category_color(ModuleCategory::Sampler),
-        ),
-        PaletteSelection::AudioInput => (
-            ri::MIC_FILL,
-            "Audio Input",
-            category_color(ModuleCategory::Sampler),
-        ),
-        PaletteSelection::Script => (
-            ri::FUNCTION_FILL,
-            "Script",
-            category_color(ModuleCategory::Utility),
-        ),
-        // Simple categories
-        PaletteSelection::Category(ModuleCategory::Filter) => (
-            ri::FILTER_FILL,
-            "Filter",
-            category_color(ModuleCategory::Filter),
-        ),
-        PaletteSelection::Category(ModuleCategory::Envelope) => (
-            ri::LINE_CHART_FILL,
-            "Envelope",
-            category_color(ModuleCategory::Envelope),
-        ),
-        PaletteSelection::Category(ModuleCategory::LFO) => {
-            (ri::PULSE_FILL, "LFO", category_color(ModuleCategory::LFO))
-        }
-        PaletteSelection::Category(ModuleCategory::Amplifier) => (
-            ri::VOLUME_UP_FILL,
-            "VCA",
-            category_color(ModuleCategory::Amplifier),
-        ),
-        PaletteSelection::Category(ModuleCategory::Mixer) => (
-            ri::EQUALIZER_FILL,
-            "Mixer",
-            category_color(ModuleCategory::Mixer),
-        ),
+        ModuleType::Oscillator => ri::MUSIC_2_FILL,
+        ModuleType::MathOscillator | ModuleType::Script => ri::FUNCTION_FILL,
+        ModuleType::SubOscillator => ri::VOLUME_DOWN_FILL,
+        ModuleType::Noise => ri::SIGNAL_WIFI_FILL,
+        ModuleType::WavetableOsc => ri::BAR_CHART_FILL,
+        ModuleType::AdditiveOsc | ModuleType::Sampler => ri::MUSIC_FILL,
+        ModuleType::GranularOsc | ModuleType::GranularFx => ri::RHYTHM_FILL,
+        ModuleType::FractalOsc => ri::SEEDLING_FILL,
+        ModuleType::AudioInput => ri::MIC_FILL,
+        // Shapers
+        ModuleType::Filter => ri::FILTER_FILL,
+        ModuleType::Envelope | ModuleType::EnvelopeFollower => ri::LINE_CHART_FILL,
+        ModuleType::Lfo | ModuleType::Waveshaper => ri::PULSE_FILL,
+        ModuleType::Amplifier => ri::VOLUME_UP_FILL,
+        ModuleType::Mixer => ri::EQUALIZER_FILL,
         // Effects
-        PaletteSelection::Effect(EffectType::Delay) => (
-            ri::REPEAT_FILL,
-            "Delay",
-            category_color(ModuleCategory::Effect),
-        ),
-        PaletteSelection::Effect(EffectType::Reverb) => (
-            ri::SURROUND_SOUND_FILL,
-            "Reverb",
-            category_color(ModuleCategory::Effect),
-        ),
-        PaletteSelection::Effect(EffectType::Distortion) => (
-            ri::FIRE_FILL,
-            "Distortion",
-            category_color(ModuleCategory::Effect),
-        ),
-        PaletteSelection::Effect(EffectType::Chorus) => (
-            ri::SPEED_FILL,
-            "Chorus",
-            category_color(ModuleCategory::Effect),
-        ),
-        PaletteSelection::Effect(EffectType::Flanger) => (
-            ri::TORNADO_FILL,
-            "Flanger",
-            category_color(ModuleCategory::Effect),
-        ),
-        PaletteSelection::Effect(EffectType::Phaser) => (
-            ri::LOOP_LEFT_FILL,
-            "Phaser",
-            category_color(ModuleCategory::Effect),
-        ),
-        PaletteSelection::Effect(EffectType::Compressor) => (
-            ri::DASHBOARD_FILL,
-            "Compressor",
-            category_color(ModuleCategory::Effect),
-        ),
-        PaletteSelection::Effect(EffectType::Eq) => (
-            ri::EQUALIZER_2_FILL,
-            "EQ",
-            category_color(ModuleCategory::Effect),
-        ),
-        PaletteSelection::Effect(EffectType::Waveshaper) => (
-            ri::PULSE_FILL,
-            "Waveshaper",
-            category_color(ModuleCategory::Effect),
-        ),
-        PaletteSelection::Effect(EffectType::BbdDelay) => (
-            ri::DISC_FILL,
-            "BBD Delay",
-            category_color(ModuleCategory::Effect),
-        ),
-        PaletteSelection::Effect(EffectType::Limiter) => (
-            ri::STOP_FILL,
-            "Limiter",
-            category_color(ModuleCategory::Effect),
-        ),
-        PaletteSelection::Effect(EffectType::MidSide) => (
-            ri::ARROW_LEFT_RIGHT_FILL,
-            "Mid/Side",
-            category_color(ModuleCategory::Effect),
-        ),
-        PaletteSelection::Effect(EffectType::Convolver) => (
-            ri::SOUND_MODULE_FILL,
-            "Convolver",
-            category_color(ModuleCategory::Effect),
-        ),
-        PaletteSelection::Effect(EffectType::PhaseVocoder) => (
-            ri::MICROSCOPE_FILL,
-            "Phase Vocoder",
-            category_color(ModuleCategory::Effect),
-        ),
-        PaletteSelection::Effect(EffectType::FrequencyShifter) => (
-            ri::SHUFFLE_FILL,
-            "Freq Shifter",
-            category_color(ModuleCategory::Effect),
-        ),
-        PaletteSelection::Effect(EffectType::EnsembleChorus) => (
-            ri::SPEED_FILL,
-            "Ensemble Chorus",
-            category_color(ModuleCategory::Effect),
-        ),
-        PaletteSelection::Effect(EffectType::ShimmerReverb) => (
-            ri::SPARKLING_2_FILL,
-            "Shimmer Reverb",
-            category_color(ModuleCategory::Effect),
-        ),
-        PaletteSelection::Effect(EffectType::GranularFx) => (
-            ri::RHYTHM_FILL,
-            "Granular FX",
-            category_color(ModuleCategory::Effect),
-        ),
-        PaletteSelection::Effect(EffectType::SpectralBlur) => (
-            ri::BLUR_OFF_FILL,
-            "Spectral Blur",
-            category_color(ModuleCategory::Effect),
-        ),
-        PaletteSelection::Effect(EffectType::ModalResonator) => (
-            ri::SOUND_MODULE_FILL,
-            "Modal Resonator",
-            category_color(ModuleCategory::Effect),
-        ),
-        PaletteSelection::Effect(EffectType::ReverseGateReverb) => (
-            ri::REWIND_FILL,
-            "Reverse/Gate",
-            category_color(ModuleCategory::Effect),
-        ),
+        ModuleType::Delay => ri::REPEAT_FILL,
+        ModuleType::Reverb => ri::SURROUND_SOUND_FILL,
+        ModuleType::Distortion => ri::FIRE_FILL,
+        ModuleType::Chorus | ModuleType::EnsembleChorus => ri::SPEED_FILL,
+        ModuleType::Flanger => ri::TORNADO_FILL,
+        ModuleType::Phaser => ri::LOOP_LEFT_FILL,
+        ModuleType::Compressor => ri::DASHBOARD_FILL,
+        ModuleType::Eq => ri::EQUALIZER_2_FILL,
+        ModuleType::BbdDelay => ri::DISC_FILL,
+        ModuleType::Limiter => ri::STOP_FILL,
+        ModuleType::MidSide => ri::ARROW_LEFT_RIGHT_FILL,
+        ModuleType::Convolver | ModuleType::ModalResonator | ModuleType::BodyResonance => {
+            ri::SOUND_MODULE_FILL
+        }
+        ModuleType::PhaseVocoder => ri::MICROSCOPE_FILL,
+        ModuleType::FrequencyShifter | ModuleType::TuringMachine => ri::SHUFFLE_FILL,
+        ModuleType::ShimmerReverb => ri::SPARKLING_2_FILL,
+        ModuleType::SpectralBlur => ri::BLUR_OFF_FILL,
+        ModuleType::ReverseGateReverb => ri::REWIND_FILL,
         // Visualizers
-        PaletteSelection::Visualizer(PaletteVisualizerType::Oscilloscope) => (
-            ri::PULSE_LINE,
-            "Oscilloscope",
-            category_color(ModuleCategory::Visualizer),
-        ),
-        PaletteSelection::Visualizer(PaletteVisualizerType::LevelMeter) => (
-            ri::BAR_CHART_2_FILL,
-            "Level Meter",
-            category_color(ModuleCategory::Visualizer),
-        ),
-        PaletteSelection::Visualizer(PaletteVisualizerType::SpectrumAnalyzer) => (
-            ri::SPECTRUM_FILL,
-            "Spectrum",
-            category_color(ModuleCategory::Visualizer),
-        ),
-        PaletteSelection::SignalMonitor => (
-            ri::SEARCH_LINE,
-            "Signal Monitor",
-            category_color(ModuleCategory::Visualizer),
-        ),
-        // Modulation
-        PaletteSelection::RingMod => (
-            ri::SWAP_FILL,
-            "Ring Mod",
-            category_color(ModuleCategory::Utility),
-        ),
-        PaletteSelection::EnvelopeFollower => (
-            ri::LINE_CHART_FILL,
-            "Env Follower",
-            category_color(ModuleCategory::Utility),
-        ),
-        PaletteSelection::Mseg => (
-            ri::NODE_TREE,
-            "MSEG",
-            category_color(ModuleCategory::Utility),
-        ),
-        PaletteSelection::KineticModulator => (
-            ri::SPEED_UP_FILL,
-            "Kinetic Mod",
-            category_color(ModuleCategory::Utility),
-        ),
+        ModuleType::Oscilloscope => ri::PULSE_LINE,
+        ModuleType::LevelMeter => ri::BAR_CHART_2_FILL,
+        ModuleType::SpectrumAnalyzer => ri::SPECTRUM_FILL,
+        ModuleType::SignalMonitor => ri::SEARCH_LINE,
+        // Modulation / utility
+        ModuleType::RingMod => ri::SWAP_FILL,
+        ModuleType::Mseg | ModuleType::ModMatrix => ri::NODE_TREE,
+        ModuleType::KineticModulator => ri::SPEED_UP_FILL,
         // Generative
-        PaletteSelection::Euclidean => (
-            ri::RECORD_CIRCLE_FILL,
-            "Euclidean",
-            category_color(ModuleCategory::LFO),
-        ),
-        PaletteSelection::TuringMachine => (
-            ri::SHUFFLE_FILL,
-            "Turing Machine",
-            category_color(ModuleCategory::LFO),
-        ),
-        PaletteSelection::RandomGates => (
-            ri::MAGIC_FILL,
-            "Random Gates",
-            category_color(ModuleCategory::LFO),
-        ),
+        ModuleType::Euclidean => ri::RECORD_CIRCLE_FILL,
+        ModuleType::RandomGates => ri::MAGIC_FILL,
         // Physical modeling
-        PaletteSelection::KeyboardPanner => (
-            ri::PIANO_FILL,
-            "Keyboard Panner",
-            category_color(ModuleCategory::PhysicalModeling),
-        ),
-        PaletteSelection::BodyResonance => (
-            ri::SOUND_MODULE_FILL,
-            "Body Resonance",
-            category_color(ModuleCategory::PhysicalModeling),
-        ),
-        PaletteSelection::MechanicalNoise => (
-            ri::WRENCH_FILL,
-            "Mechanical Noise",
-            category_color(ModuleCategory::PhysicalModeling),
-        ),
-        // Output / Utility
-        PaletteSelection::StereoOutput => (
-            ri::SPEAKER_FILL,
-            "Output",
-            category_color(ModuleCategory::Output),
-        ),
-        PaletteSelection::ModMatrix => (
-            ri::NODE_TREE,
-            "Mod Matrix",
-            category_color(ModuleCategory::Utility),
-        ),
-        // Fallback for any other category
-        PaletteSelection::Category(cat) => (ri::SOUND_MODULE_FILL, "Module", category_color(cat)),
-        // Resolved by the early return above; this arm only satisfies the
-        // exhaustiveness check.
-        PaletteSelection::Module(_) => (
-            ri::SOUND_MODULE_FILL,
-            "Module",
-            category_color(ModuleCategory::Utility),
-        ),
-    };
-    (format!("{icon} {text}"), color)
+        ModuleType::KeyboardPanner => ri::PIANO_FILL,
+        ModuleType::MechanicalNoise => ri::WRENCH_FILL,
+        // Output
+        ModuleType::StereoOutput => ri::SPEAKER_FILL,
+        _ => return None,
+    })
+}
+
+/// The add-module menu label for a module type: its icon plus the descriptor's
+/// name, in its category's colour.
+///
+/// The name comes from the module catalog — i.e. from the module's own
+/// descriptor — so a menu row, the module panel's tooltip, and MCP all call a
+/// module the same thing, and a new `ModuleType` needs no entry anywhere to be
+/// offered.
+fn module_label(module_type: ModuleType) -> (String, Color32) {
+    let (name, category) = module_catalog()
+        .iter()
+        .find(|(t, _, _)| *t == module_type)
+        .map(|(_, c, n)| (n.clone(), *c))
+        .unwrap_or_else(|| (module_type.name().to_string(), ModuleCategory::Utility));
+    let icon = module_icon(module_type).unwrap_or_else(|| category_icon(category));
+    (format!("{icon} {name}"), category_color(category))
 }
 
 /// Convert from core PortType to widget PortType.

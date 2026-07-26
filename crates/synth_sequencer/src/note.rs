@@ -3,7 +3,7 @@
 //! Notes are stored with start time and duration, not as separate on/off events.
 
 use serde::{Deserialize, Serialize};
-use synth_core::{Hertz, Milliseconds, NormalizedValue, Semitones};
+use synth_core::{DisplayName, Hertz, Milliseconds, NormalizedValue, Semitones};
 
 use super::ids::{NoteGraphId, NoteId, NoteLane, TrackId};
 use super::pitch::{Pitch, Velocity};
@@ -177,6 +177,18 @@ pub enum OrnamentSpacing {
     Decelerate,
 }
 
+impl DisplayName for OrnamentSpacing {
+    const ALL: &'static [Self] = &[Self::Even, Self::Accelerate, Self::Decelerate];
+
+    fn display_name(self) -> &'static str {
+        match self {
+            Self::Even => "Even",
+            Self::Accelerate => "Accelerate",
+            Self::Decelerate => "Decelerate",
+        }
+    }
+}
+
 /// How hit velocity evolves across an ornament's figure.
 ///
 /// A lead-in crescendo is the canonical flam/ruff shape (quiet graces swelling
@@ -194,6 +206,18 @@ pub enum OrnamentDynamics {
     Decrescendo,
 }
 
+impl DisplayName for OrnamentDynamics {
+    const ALL: &'static [Self] = &[Self::Flat, Self::Crescendo, Self::Decrescendo];
+
+    fn display_name(self) -> &'static str {
+        match self {
+            Self::Flat => "Flat",
+            Self::Crescendo => "Crescendo",
+            Self::Decrescendo => "Decrescendo",
+        }
+    }
+}
+
 /// Where an ornament's figure sits relative to the note's start tick.
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
@@ -206,6 +230,17 @@ pub enum OrnamentPlacement {
     /// The main hit is on the beat; grace hits follow it (nachschlag / a roll
     /// that decays after the downbeat).
     OnBeat,
+}
+
+impl DisplayName for OrnamentPlacement {
+    const ALL: &'static [Self] = &[Self::LeadIn, Self::OnBeat];
+
+    fn display_name(self) -> &'static str {
+        match self {
+            Self::LeadIn => "Lead-in",
+            Self::OnBeat => "On beat",
+        }
+    }
 }
 
 /// Per-note timed-repeat ornament — taxonomy **primitive 4** (a generator).

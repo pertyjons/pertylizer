@@ -449,6 +449,36 @@ mod tests {
         );
     }
 
+    /// A module's display name is spelled out twice — once in
+    /// [`ModuleType::name`] and once in the module's own `ModuleDescriptor` — and
+    /// the two live in crates that can't see each other (`synth_core` knows the
+    /// enum, `synth_modules` builds the descriptors). This crate sees both, so it
+    /// is where the copies are held to being one name: MCP reads `name()` while
+    /// the GUI reads the descriptor, and a divergence means the same module is
+    /// called two different things depending on where you look. If this fails,
+    /// change one of the two strings — don't relax the assert.
+    #[test]
+    fn module_type_names_match_their_descriptors() {
+        let mismatched: Vec<String> = ALL_MODULE_TYPES
+            .iter()
+            .copied()
+            .filter_map(|mt| {
+                let descriptor = get_descriptor(mt)?;
+                (descriptor.name != mt.name()).then(|| {
+                    format!(
+                        "{mt:?}: ModuleType::name() = {:?}, descriptor.name = {:?}",
+                        mt.name(),
+                        descriptor.name
+                    )
+                })
+            })
+            .collect();
+        assert!(
+            mismatched.is_empty(),
+            "module display names disagree between the enum and the descriptor: {mismatched:#?}"
+        );
+    }
+
     /// Phase 1 acceptance: every parameter of every module descriptor must satisfy
     /// the `ParamKind` invariants — the classifier matches `id.kind()`, and the
     /// `kind`/`choices` relationship holds:

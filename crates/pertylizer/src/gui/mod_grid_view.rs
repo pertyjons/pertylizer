@@ -814,7 +814,7 @@ fn draw_node(
     expose(
         &response,
         egui::WidgetType::Button,
-        format!("{} node {}", node_name(config), node_id.0),
+        format!("{} node {}", config.title(), node_id.0),
         None,
     );
     if response.dragged() {
@@ -842,7 +842,7 @@ fn draw_node(
             ))
             .layout(egui::Layout::top_down(egui::Align::Min)),
     );
-    let title = node_name(config);
+    let title = config.title();
     card.show(&mut child, |card| {
         let description = graph.node_descriptions.get(&node_id).cloned();
         card.header(&title, description, false, |ui| {
@@ -915,7 +915,7 @@ fn draw_port_column(
     let owner = format!(
         "Mod Grid graph {}, {} node {}",
         column.graph.id.0,
-        node_name(column.config),
+        column.config.title(),
         column.node_id.0
     );
     let side: Vec<ModulePort<PortRef>> = column
@@ -1284,8 +1284,11 @@ fn draw_cables(ui: &egui::Ui, state: &ModGridViewState, graph: &ModGraph) -> Opt
 // Background context menu — cable actions + the add-node catalog
 // ============================================================================
 
-/// The add-node palette: label + a default-configured instance.
-fn node_catalog() -> Vec<(&'static str, ModNodeConfig)> {
+/// The add-node palette: one default-configured instance per kind, in menu
+/// order. Each entry is labelled by its own
+/// [`display_name`](ModNodeConfig::display_name), so the palette holds no second
+/// copy of the names.
+fn node_catalog() -> Vec<ModNodeConfig> {
     let module = |mt: ModuleType| {
         ModNodeConfig::Module(ModuleNode {
             module_type: mt,
@@ -1294,46 +1297,31 @@ fn node_catalog() -> Vec<(&'static str, ModNodeConfig)> {
         })
     };
     vec![
-        ("LFO", module(ModuleType::Lfo)),
-        ("MSEG", module(ModuleType::Mseg)),
-        ("Envelope Follower", module(ModuleType::EnvelopeFollower)),
-        ("Euclidean", module(ModuleType::Euclidean)),
-        ("Random Gates", module(ModuleType::RandomGates)),
-        (
-            "Transport",
-            ModNodeConfig::Transport(TransportNode::default()),
-        ),
-        (
-            "Macro",
-            ModNodeConfig::Macro(synth_sequencer::MacroNode {
-                name: "Macro".into(),
-                value: synth_core::NormalizedValue::MIN,
-            }),
-        ),
-        (
-            "Audio Tap",
-            ModNodeConfig::AudioTap(synth_sequencer::AudioTapNode {
-                source: synth_sequencer::AudioTapSource::Master,
-            }),
-        ),
-        (
-            "MIDI CC",
-            ModNodeConfig::MidiCc(synth_sequencer::MidiCcNode {
-                cc: synth_core::MidiCcNumber::MOD_WHEEL,
-                channel: None,
-            }),
-        ),
-        (
-            "Target →",
-            ModNodeConfig::Target(ModTarget {
-                target: AutomationTarget::Track {
-                    track: None,
-                    param: TrackParam::Volume,
-                },
-                amount: 0.25,
-                combine: Default::default(),
-            }),
-        ),
+        module(ModuleType::Lfo),
+        module(ModuleType::Mseg),
+        module(ModuleType::EnvelopeFollower),
+        module(ModuleType::Euclidean),
+        module(ModuleType::RandomGates),
+        ModNodeConfig::Transport(TransportNode::default()),
+        ModNodeConfig::Macro(synth_sequencer::MacroNode {
+            name: "Macro".into(),
+            value: synth_core::NormalizedValue::MIN,
+        }),
+        ModNodeConfig::AudioTap(synth_sequencer::AudioTapNode {
+            source: synth_sequencer::AudioTapSource::Master,
+        }),
+        ModNodeConfig::MidiCc(synth_sequencer::MidiCcNode {
+            cc: synth_core::MidiCcNumber::MOD_WHEEL,
+            channel: None,
+        }),
+        ModNodeConfig::Target(ModTarget {
+            target: AutomationTarget::Track {
+                track: None,
+                param: TrackParam::Volume,
+            },
+            amount: 0.25,
+            combine: Default::default(),
+        }),
     ]
 }
 
@@ -1369,10 +1357,15 @@ fn draw_bg_context_menu(
         );
         ui.separator();
         let at_cap = graph.node_count() >= MAX_MOD_GRID_NODES;
-        for (label, config) in node_catalog() {
+        for config in node_catalog() {
             let accent = node_accent(&config);
             let entry = egui::Button::new(
-                RichText::new(format!("{}  {label}", ri::CHECKBOX_BLANK_CIRCLE_FILL)).color(accent),
+                RichText::new(format!(
+                    "{}  {}",
+                    ri::CHECKBOX_BLANK_CIRCLE_FILL,
+                    config.display_name()
+                ))
+                .color(accent),
             );
             if ui.add_enabled(!at_cap, entry).clicked() {
                 propose_edit(edit, GraphEdit::AddNode(config, world_pos));
@@ -1519,17 +1512,6 @@ fn finalize_config_undo(
 // ============================================================================
 // Node styling
 // ============================================================================
-
-fn node_name(config: &ModNodeConfig) -> String {
-    match config {
-        ModNodeConfig::Module(m) => m.module_type.name().to_string(),
-        ModNodeConfig::Macro(m) => format!("Macro · {}", m.name),
-        ModNodeConfig::Transport(_) => "Transport".to_string(),
-        ModNodeConfig::MidiCc(m) => format!("MIDI CC {}", m.cc),
-        ModNodeConfig::AudioTap(_) => "Audio Tap".to_string(),
-        ModNodeConfig::Target(_) => "Target".to_string(),
-    }
-}
 
 fn node_accent(config: &ModNodeConfig) -> Color32 {
     let c = &theme().colors;
