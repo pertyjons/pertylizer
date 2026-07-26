@@ -24,8 +24,127 @@ use synth_core::{Describable, ModuleDescriptor};
 use synth_engine::commands::PortId;
 use synth_engine::graph::Connection;
 use synth_engine::instrument::InstrumentId;
-use synth_engine::visualizers::{LevelMeter, Oscilloscope, SpectrumAnalyzer};
 use synth_engine::{EngineCommand, EngineHandle, ModuleId};
+
+const VISUALIZATION_BUFFER_CAPACITY: usize = 4096;
+
+/// Allocate the next module ID for a GUI-owned installation.
+///
+/// Most modules normally let [`SynthSession::add_module`] do this internally.
+/// GUI-owned visualizers and signal monitors need their ID before construction,
+/// so every editor creation path uses this helper and then installs by ID.
+fn next_editor_module_id(
+    session: &SynthSession,
+    instrument_id: InstrumentId,
+    module_type: ModuleType,
+) -> ModuleId {
+    let mut counters = session.counters_lock();
+    let counter = counters.entry((instrument_id, module_type)).or_insert(0);
+    *counter += 1;
+    ModuleId::new(module_type, *counter)
+}
+
+/// Keep the session's per-type counter ahead of a module loaded with a fixed ID.
+fn register_editor_module_id(
+    session: &SynthSession,
+    instrument_id: InstrumentId,
+    module_id: ModuleId,
+) {
+    let mut counters = session.counters_lock();
+    let counter = counters
+        .entry((instrument_id, module_id.module_type))
+        .or_insert(0);
+    *counter = (*counter).max(module_id.instance);
+}
+
+fn visualizer_type(module_type: ModuleType) -> Option<synth_engine::commands::VisualizerType> {
+    match module_type {
+        ModuleType::Oscilloscope => Some(synth_engine::commands::VisualizerType::Oscilloscope),
+        ModuleType::LevelMeter => Some(synth_engine::commands::VisualizerType::LevelMeter),
+        ModuleType::SpectrumAnalyzer => {
+            Some(synth_engine::commands::VisualizerType::SpectrumAnalyzer)
+        }
+        _ => None,
+    }
+}
+
+/// Install one module in both the engine/session and a patch editor.
+///
+/// This is the single GUI-side installation path for palette creation, patch
+/// loading, group templates, and clipboard paste. Signal monitors and
+/// visualizers need a GUI-owned [`synth_engine::visualizers::VisualizationBuffer`];
+/// ordinary voice modules and effects delegate to [`SynthSession`].
+pub(crate) fn install_editor_module_with_id(
+    session: &SynthSession,
+    handle: &mut EngineHandle,
+    instrument_id: InstrumentId,
+    patch_editor: &mut PatchEditor,
+    module_id: ModuleId,
+    position: Pos2,
+) -> Result<ModuleDescriptor, String> {
+    register_editor_module_id(session, instrument_id, module_id);
+    let module_type = module_id.module_type;
+
+    let descriptor = if module_type == ModuleType::SignalMonitor {
+        let mut module = synth_modules::SignalMonitor::new();
+        let descriptor = module.descriptor();
+        let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(
+            VISUALIZATION_BUFFER_CAPACITY,
+        ));
+        handle.add_visualization_buffer(module_id, buffer.clone());
+        module.set_vis_sink(buffer);
+        session.register_descriptor(instrument_id, module_id, descriptor.clone());
+        handle.send(EngineCommand::AddModuleInstance {
+            instrument_id: Some(instrument_id),
+            id: module_id,
+            module: Box::new(module),
+        });
+        descriptor
+    } else if let Some(visualizer_type) = visualizer_type(module_type) {
+        let descriptor = crate::module_factory::get_descriptor(module_type)
+            .ok_or_else(|| format!("Missing descriptor for {module_type:?}"))?;
+        let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(
+            VISUALIZATION_BUFFER_CAPACITY,
+        ));
+        handle.add_visualization_buffer(module_id, buffer.clone());
+        session.register_descriptor(instrument_id, module_id, descriptor.clone());
+        handle.send(EngineCommand::AddVisualizer {
+            instrument_id: Some(instrument_id),
+            id: module_id,
+            visualizer_type,
+            buffer,
+        });
+        descriptor
+    } else {
+        session
+            .add_module_with_id(instrument_id, module_id, module_type)
+            .map_err(|error| format!("Failed to create module {module_type:?}: {error}"))?
+    };
+
+    patch_editor.add_module_at(module_id, descriptor.clone(), position);
+    Ok(descriptor)
+}
+
+/// Allocate and install one module in both the engine/session and patch editor.
+pub(crate) fn create_editor_module(
+    session: &SynthSession,
+    handle: &mut EngineHandle,
+    instrument_id: InstrumentId,
+    patch_editor: &mut PatchEditor,
+    module_type: ModuleType,
+    position: Pos2,
+) -> Result<(ModuleId, ModuleDescriptor), String> {
+    let module_id = next_editor_module_id(session, instrument_id, module_type);
+    let descriptor = install_editor_module_with_id(
+        session,
+        handle,
+        instrument_id,
+        patch_editor,
+        module_id,
+        position,
+    )?;
+    Ok((module_id, descriptor))
+}
 
 /// Load a patch into a specific instrument's rack view and send commands to the engine.
 ///
@@ -158,29 +277,23 @@ fn load_module(
 
     let position = Pos2::new(module_state.position.x, module_state.position.y);
 
-    if try_load_visualizer_module(
-        module_state,
-        module_id,
-        position,
-        patch_editor,
+    let descriptor = match install_editor_module_with_id(
         session,
         handle,
         instrument_id,
+        patch_editor,
+        module_id,
+        position,
     ) {
-        return;
-    }
-
-    // All other modules: delegate to session
-    let descriptor =
-        match session.add_module_with_id(instrument_id, module_id, module_id.module_type) {
-            Ok(d) => d,
-            Err(e) => {
-                eprintln!("Warning: failed to load module {}: {e}", module_state.id);
-                return;
-            }
-        };
-
-    patch_editor.add_module_at(module_id, descriptor.clone(), position);
+        Ok(descriptor) => descriptor,
+        Err(error) => {
+            eprintln!(
+                "Warning: failed to load module {}: {error}",
+                module_state.id
+            );
+            return;
+        }
+    };
 
     apply_module_parameters(
         module_id,
@@ -212,161 +325,6 @@ fn load_module(
             eprintln!("patch_bridge: {module_id} slot {slot_key} script: {e}");
         }
     }
-}
-
-/// Visualizer/SignalMonitor modules need a `VisualizationBuffer`
-/// allocated GUI-side and shared with the engine via `Arc`. Returns
-/// `true` if `module_state` was a visualizer and has been installed,
-/// `false` for any other module type (caller must continue with the
-/// normal session path).
-#[allow(clippy::too_many_arguments)]
-fn try_load_visualizer_module(
-    module_state: &ModuleState,
-    module_id: ModuleId,
-    position: Pos2,
-    patch_editor: &mut PatchEditor,
-    session: &SynthSession,
-    handle: &mut EngineHandle,
-    instrument_id: InstrumentId,
-) -> bool {
-    match module_state.module_type {
-        ModuleType::SignalMonitor => {
-            load_signal_monitor(
-                module_id,
-                module_state,
-                patch_editor,
-                session,
-                handle,
-                instrument_id,
-                position,
-            );
-            true
-        }
-        ModuleType::Oscilloscope => {
-            load_visualizer(
-                module_id,
-                patch_editor,
-                session,
-                handle,
-                instrument_id,
-                position,
-                synth_engine::commands::VisualizerType::Oscilloscope,
-                Oscilloscope::new().descriptor(),
-            );
-            true
-        }
-        ModuleType::LevelMeter => {
-            load_visualizer(
-                module_id,
-                patch_editor,
-                session,
-                handle,
-                instrument_id,
-                position,
-                synth_engine::commands::VisualizerType::LevelMeter,
-                LevelMeter::new().descriptor(),
-            );
-            true
-        }
-        ModuleType::SpectrumAnalyzer => {
-            load_visualizer(
-                module_id,
-                patch_editor,
-                session,
-                handle,
-                instrument_id,
-                position,
-                synth_engine::commands::VisualizerType::SpectrumAnalyzer,
-                SpectrumAnalyzer::new().descriptor(),
-            );
-            true
-        }
-        _ => false,
-    }
-}
-
-/// Load a SignalMonitor module (needs VisualizationBuffer injection).
-fn load_signal_monitor(
-    module_id: ModuleId,
-    module_state: &ModuleState,
-    patch_editor: &mut PatchEditor,
-    session: &SynthSession,
-    handle: &mut EngineHandle,
-    instrument_id: InstrumentId,
-    position: Pos2,
-) {
-    let mut m = synth_modules::SignalMonitor::new();
-    let descriptor = Describable::descriptor(&m);
-
-    // Update session counter so future IDs don't collide
-    {
-        let mut counters = session.counters_lock();
-        let counter = counters
-            .entry((instrument_id, module_id.module_type))
-            .or_insert(0);
-        if module_id.instance > *counter {
-            *counter = module_id.instance;
-        }
-    }
-
-    session.register_descriptor(instrument_id, module_id, descriptor.clone());
-    patch_editor.add_module_at(module_id, descriptor.clone(), position);
-
-    let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
-    handle.add_visualization_buffer(module_id, buffer.clone());
-    m.set_vis_sink(buffer);
-
-    handle.send(EngineCommand::AddModuleInstance {
-        instrument_id: Some(instrument_id),
-        id: module_id,
-        module: Box::new(m),
-    });
-
-    apply_module_parameters(
-        module_id,
-        &descriptor,
-        &module_state.parameters,
-        patch_editor,
-        handle,
-        instrument_id,
-    );
-}
-
-/// Load a visualizer module (Oscilloscope, LevelMeter, SpectrumAnalyzer).
-#[allow(clippy::too_many_arguments)]
-fn load_visualizer(
-    module_id: ModuleId,
-    patch_editor: &mut PatchEditor,
-    session: &SynthSession,
-    handle: &mut EngineHandle,
-    instrument_id: InstrumentId,
-    position: Pos2,
-    visualizer_type: synth_engine::commands::VisualizerType,
-    descriptor: ModuleDescriptor,
-) {
-    // Update session counter
-    {
-        let mut counters = session.counters_lock();
-        let counter = counters
-            .entry((instrument_id, module_id.module_type))
-            .or_insert(0);
-        if module_id.instance > *counter {
-            *counter = module_id.instance;
-        }
-    }
-
-    session.register_descriptor(instrument_id, module_id, descriptor.clone());
-    patch_editor.add_module_at(module_id, descriptor, position);
-
-    let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
-    handle.add_visualization_buffer(module_id, buffer.clone());
-
-    handle.send(EngineCommand::AddVisualizer {
-        instrument_id: Some(instrument_id),
-        id: module_id,
-        visualizer_type,
-        buffer,
-    });
 }
 
 /// Resolve a parameter name (descriptor `type_id`, falling back to
@@ -519,15 +477,25 @@ fn populate_editor_module(
 
     let position = Pos2::new(module_state.position.x, module_state.position.y);
 
-    if try_load_visualizer_module(
-        module_state,
-        module_id,
-        position,
-        patch_editor,
-        session,
-        handle,
-        instrument_id,
-    ) {
+    if module_id.module_type == ModuleType::SignalMonitor || module_id.module_type.is_visualizer() {
+        let Ok(descriptor) = install_editor_module_with_id(
+            session,
+            handle,
+            instrument_id,
+            patch_editor,
+            module_id,
+            position,
+        ) else {
+            return;
+        };
+        apply_module_parameters(
+            module_id,
+            &descriptor,
+            &module_state.parameters,
+            patch_editor,
+            handle,
+            instrument_id,
+        );
         return;
     }
 
@@ -754,86 +722,21 @@ pub fn insert_group_template(
     let mut id_map: HashMap<String, ModuleId> = HashMap::new();
     let mut new_members: Vec<ModuleId> = Vec::new();
 
-    // Helper to allocate a new module ID for this instrument/type.
-    let next_id = |module_type: ModuleType| {
-        let mut counters = session.counters_lock();
-        let counter = counters.entry((instrument_id, module_type)).or_insert(0);
-        *counter += 1;
-        ModuleId::new(module_type, *counter)
-    };
-
     for module_state in &template.modules {
         let module_type = module_state.module_type;
-        let module_id = next_id(module_type);
         let position = Pos2::new(
             module_state.position.x + drop_pos.x,
             module_state.position.y + drop_pos.y,
         );
 
-        let descriptor = match module_type {
-            ModuleType::SignalMonitor => {
-                let mut m = synth_modules::SignalMonitor::new();
-                let d = m.descriptor();
-                session.register_descriptor(instrument_id, module_id, d.clone());
-                patch_editor.add_module_at(module_id, d.clone(), position);
-
-                let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
-                handle.add_visualization_buffer(module_id, buffer.clone());
-                m.set_vis_sink(buffer);
-                handle.send(EngineCommand::AddModuleInstance {
-                    instrument_id: Some(instrument_id),
-                    id: module_id,
-                    module: Box::new(m),
-                });
-                d
-            }
-            ModuleType::Oscilloscope => {
-                let descriptor = Oscilloscope::new().descriptor();
-                patch_editor.add_module_at(module_id, descriptor.clone(), position);
-                let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
-                handle.add_visualization_buffer(module_id, buffer.clone());
-                handle.send(EngineCommand::AddVisualizer {
-                    instrument_id: Some(instrument_id),
-                    id: module_id,
-                    visualizer_type: synth_engine::commands::VisualizerType::Oscilloscope,
-                    buffer,
-                });
-                descriptor
-            }
-            ModuleType::LevelMeter => {
-                let descriptor = LevelMeter::new().descriptor();
-                patch_editor.add_module_at(module_id, descriptor.clone(), position);
-                let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
-                handle.add_visualization_buffer(module_id, buffer.clone());
-                handle.send(EngineCommand::AddVisualizer {
-                    instrument_id: Some(instrument_id),
-                    id: module_id,
-                    visualizer_type: synth_engine::commands::VisualizerType::LevelMeter,
-                    buffer,
-                });
-                descriptor
-            }
-            ModuleType::SpectrumAnalyzer => {
-                let descriptor = SpectrumAnalyzer::new().descriptor();
-                patch_editor.add_module_at(module_id, descriptor.clone(), position);
-                let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
-                handle.add_visualization_buffer(module_id, buffer.clone());
-                handle.send(EngineCommand::AddVisualizer {
-                    instrument_id: Some(instrument_id),
-                    id: module_id,
-                    visualizer_type: synth_engine::commands::VisualizerType::SpectrumAnalyzer,
-                    buffer,
-                });
-                descriptor
-            }
-            _ => {
-                let descriptor = session
-                    .add_module_with_id(instrument_id, module_id, module_type)
-                    .map_err(|e| format!("Failed to create module {module_type:?}: {e}"))?;
-                patch_editor.add_module_at(module_id, descriptor.clone(), position);
-                descriptor
-            }
-        };
+        let (module_id, descriptor) = create_editor_module(
+            session,
+            handle,
+            instrument_id,
+            patch_editor,
+            module_type,
+            position,
+        )?;
 
         apply_module_parameters(
             module_id,
@@ -938,83 +841,20 @@ pub fn paste_clipboard_modules(
     for module_state in clipboard_modules {
         let module_type = module_state.module_type;
 
-        // Allocate a fresh ID via session counters
-        let module_id = {
-            let mut counters = session.counters_lock();
-            let counter = counters.entry((instrument_id, module_type)).or_insert(0);
-            *counter += 1;
-            ModuleId::new(module_type, *counter)
-        };
-
         let position = Pos2::new(
             module_state.position.x + offset_x,
             module_state.position.y + offset_y,
         );
 
-        let descriptor = match module_type {
-            ModuleType::SignalMonitor => {
-                let mut m = synth_modules::SignalMonitor::new();
-                let d = synth_core::Describable::descriptor(&m);
-                session.register_descriptor(instrument_id, module_id, d.clone());
-                patch_editor.add_module_at(module_id, d.clone(), position);
-
-                let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
-                handle.add_visualization_buffer(module_id, buffer.clone());
-                m.set_vis_sink(buffer);
-                handle.send(EngineCommand::AddModuleInstance {
-                    instrument_id: Some(instrument_id),
-                    id: module_id,
-                    module: Box::new(m),
-                });
-                d
-            }
-            ModuleType::Oscilloscope => {
-                let descriptor = Oscilloscope::new().descriptor();
-                patch_editor.add_module_at(module_id, descriptor.clone(), position);
-                let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
-                handle.add_visualization_buffer(module_id, buffer.clone());
-                handle.send(EngineCommand::AddVisualizer {
-                    instrument_id: Some(instrument_id),
-                    id: module_id,
-                    visualizer_type: synth_engine::commands::VisualizerType::Oscilloscope,
-                    buffer,
-                });
-                descriptor
-            }
-            ModuleType::LevelMeter => {
-                let descriptor = LevelMeter::new().descriptor();
-                patch_editor.add_module_at(module_id, descriptor.clone(), position);
-                let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
-                handle.add_visualization_buffer(module_id, buffer.clone());
-                handle.send(EngineCommand::AddVisualizer {
-                    instrument_id: Some(instrument_id),
-                    id: module_id,
-                    visualizer_type: synth_engine::commands::VisualizerType::LevelMeter,
-                    buffer,
-                });
-                descriptor
-            }
-            ModuleType::SpectrumAnalyzer => {
-                let descriptor = SpectrumAnalyzer::new().descriptor();
-                patch_editor.add_module_at(module_id, descriptor.clone(), position);
-                let buffer = Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
-                handle.add_visualization_buffer(module_id, buffer.clone());
-                handle.send(EngineCommand::AddVisualizer {
-                    instrument_id: Some(instrument_id),
-                    id: module_id,
-                    visualizer_type: synth_engine::commands::VisualizerType::SpectrumAnalyzer,
-                    buffer,
-                });
-                descriptor
-            }
-            _ => {
-                let Ok(d) = session.add_module_with_id(instrument_id, module_id, module_type)
-                else {
-                    continue;
-                };
-                patch_editor.add_module_at(module_id, d.clone(), position);
-                d
-            }
+        let Ok((module_id, descriptor)) = create_editor_module(
+            session,
+            handle,
+            instrument_id,
+            patch_editor,
+            module_type,
+            position,
+        ) else {
+            continue;
         };
 
         apply_module_parameters(

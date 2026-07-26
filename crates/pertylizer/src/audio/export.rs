@@ -4,7 +4,6 @@
 //! faster than realtime. Progress is reported via atomic counters
 //! so the GUI can display a progress bar without blocking.
 
-use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
@@ -12,12 +11,9 @@ use std::sync::{Arc, Mutex};
 use synth_core::{
     AudioCallbackContext, AudioProcessor, DenormalGuard, audio::SampleRate as HwSampleRate,
 };
-use synth_engine::commands::PortId;
-use synth_engine::instrument::{InstrumentId, MidiChannel};
 use synth_engine::{EngineCommand, EngineHandle, SynthEngine};
 use synth_sampler::SampleLibrary;
 
-use crate::patch::ParamValue;
 use crate::project::ProjectFile;
 use crate::session::SynthSession;
 
@@ -466,16 +462,12 @@ fn render_to_wav(
     Ok(warnings)
 }
 
-/// Load a `ProjectFile` into a fresh engine via commands.
-///
-/// This is a simplified version of `egui_backend::load_project_data` that
-/// doesn't need any GUI types (no `PatchEditor`, `PianoKeyboard`, etc.).
+/// Load a `ProjectFile` into a fresh engine through the canonical project
+/// instrument installer.
 ///
 /// The command ring is drained (via `engine`/`drain_buf`/`drain_ctx`) after each
 /// instrument, so a project with many instruments cannot overflow the fixed-size
-/// (256-slot) ring — nothing else drains it during an offline load. A single
-/// instrument whose own load exceeds 256 commands is the remaining theoretical
-/// edge (an extreme patch), well beyond any realistic voice graph.
+/// ring while no audio callback is running.
 fn load_project_into_engine(
     project: &ProjectFile,
     session: &SynthSession,
@@ -485,229 +477,30 @@ fn load_project_into_engine(
     drain_ctx: &AudioCallbackContext,
 ) -> Result<Vec<String>, ExportError> {
     let mut warnings = Vec::new();
+    let sender = handle.command_sender();
 
     for inst_state in &project.instruments {
-        let inst_id = inst_state.id;
-
-        if let Err(e) = session.add_instrument_with_id(inst_id, &inst_state.name) {
+        if let Err(e) = crate::project_apply::install_instrument(session, &sender, inst_state) {
             let msg = format!("Failed to load instrument '{}': {e}", inst_state.name);
             eprintln!("Warning: {msg}");
             warnings.push(msg);
-            continue;
         }
-
-        // Reset counters before loading
-        session.reset_counters_for_instrument(inst_id);
-
-        // Set instrument properties
-        let channel = MidiChannel::from_one_indexed(inst_state.channel).unwrap_or(MidiChannel::CH1);
-        if let Err(e) = session.rename_instrument(inst_id, &inst_state.name) {
-            eprintln!(
-                "Warning: failed to rename instrument '{}': {e}",
-                inst_state.name
-            );
-        }
-        if let Err(e) = session.set_instrument_volume(inst_id, inst_state.volume) {
-            eprintln!(
-                "Warning: failed to set volume for '{}': {e}",
-                inst_state.name
-            );
-        }
-        if let Err(e) = session.set_instrument_pan(inst_id, inst_state.pan) {
-            eprintln!("Warning: failed to set pan for '{}': {e}", inst_state.name);
-        }
-        if let Err(e) = session.set_instrument_mute(inst_id, inst_state.muted) {
-            eprintln!("Warning: failed to set mute for '{}': {e}", inst_state.name);
-        }
-        if let Err(e) = session.set_instrument_solo(inst_id, inst_state.solo) {
-            eprintln!("Warning: failed to set solo for '{}': {e}", inst_state.name);
-        }
-        if let Err(e) = session.set_instrument_midi_channel(inst_id, channel) {
-            eprintln!(
-                "Warning: failed to set MIDI channel for '{}': {e}",
-                inst_state.name
-            );
-        }
-
-        // Send oversampling, key range, transpose
-        handle.send_blocking(EngineCommand::SetInstrumentParameter {
-            instrument_id: inst_id,
-            param: synth_engine::InstrumentParam::OversamplingFactor(
-                match inst_state.oversampling {
-                    2 => synth_dsp::OversamplingFactor::X2,
-                    4 => synth_dsp::OversamplingFactor::X4,
-                    _ => synth_dsp::OversamplingFactor::X1,
-                },
-            ),
-        });
-        handle.send_blocking(EngineCommand::SetInstrumentParameter {
-            instrument_id: inst_id,
-            param: synth_engine::InstrumentParam::KeyRange(
-                synth_engine::instrument::KeyRange::new(
-                    synth_core::MidiNote::new(inst_state.key_range.0),
-                    synth_core::MidiNote::new(inst_state.key_range.1),
-                ),
-            ),
-        });
-        handle.send_blocking(EngineCommand::SetInstrumentParameter {
-            instrument_id: inst_id,
-            param: synth_engine::InstrumentParam::Transpose(inst_state.transpose),
-        });
-
-        // Load modules (skip visualizers - they need GUI)
-        load_patch_modules(
-            &inst_state.patch,
-            inst_id,
-            session,
-            handle,
-            engine,
-            drain_buf,
-            drain_ctx,
-        );
-
-        // Enable the instrument
-        handle.send_blocking(EngineCommand::SetInstrumentEnabled {
-            instrument_id: inst_id,
-            enabled: true,
-        });
-
-        // Drain this instrument's commands before loading the next, so the ring
-        // never accumulates more than one instrument's worth (the sequencer is
-        // Stopped, so this advances no audio).
         crate::audio::drain_command_queue(engine, drain_buf, drain_ctx);
     }
 
     Ok(warnings)
 }
 
-/// Load modules and connections from a patch into the engine (no GUI state).
-fn load_patch_modules(
-    patch: &crate::patch::Patch,
-    instrument_id: InstrumentId,
-    session: &SynthSession,
-    handle: &mut synth_engine::EngineHandle,
-    engine: &mut SynthEngine,
-    drain_buf: &mut [f32],
-    drain_ctx: &AudioCallbackContext,
-) {
-    use synth_engine::ModuleId;
-
-    // Add modules
-    for module_state in &patch.modules {
-        let module_id: ModuleId = match module_state.id.parse() {
-            Ok(id) => id,
-            Err(_) => continue,
-        };
-
-        // Skip visualizer modules (they need VisualizationBuffer from GUI)
-        if module_state.module_type.is_visualizer() {
-            continue;
-        }
-
-        // Add the module via session
-        let descriptor =
-            match session.add_module_with_id(instrument_id, module_id, module_id.module_type) {
-                Ok(d) => d,
-                Err(e) => {
-                    eprintln!("Warning: failed to load module {}: {e}", module_state.id);
-                    continue;
-                }
-            };
-
-        // Apply parameters
-        apply_module_parameters(
-            module_id,
-            &descriptor,
-            &module_state.parameters,
-            handle,
-            instrument_id,
-        );
-
-        // Keep the command ring from overflowing on a very large voice graph:
-        // one module's add + params is a handful of commands, so an adaptive
-        // check per module bounds an arbitrarily large instrument.
-        crate::audio::drain_if_ring_filling(engine, handle, drain_buf, drain_ctx);
-    }
-
-    // Add connections
-    for conn in &patch.connections {
-        if let (Ok(from_id), Ok(to_id)) = (
-            conn.from.0.parse::<synth_engine::ModuleId>(),
-            conn.to.0.parse::<synth_engine::ModuleId>(),
-        ) {
-            // Skip connections involving visualizer modules
-            if from_id.module_type.is_visualizer() || to_id.module_type.is_visualizer() {
-                continue;
-            }
-
-            handle.send_blocking(EngineCommand::Connect {
-                instrument_id: Some(instrument_id),
-                // Migrate legacy stereo-out port names ("left"/"right") the same
-                // way apply_patch does, so pre-rename projects export correctly.
-                from: PortId::new(
-                    from_id,
-                    crate::session::migrate_stereo_out_port(from_id.module_type, &conn.from.1),
-                ),
-                to: PortId::new(to_id, &*conn.to.1),
-            });
-        }
-        // Same adaptive drain for the connection phase (a heavily-patched graph
-        // can have hundreds of cables).
-        crate::audio::drain_if_ring_filling(engine, handle, drain_buf, drain_ctx);
-    }
-
-    // NOTE: SetMasterVolume and SetGlideTime are global (not per-instrument) settings.
-    // They are applied once at the project level, so we skip them here to avoid
-    // the last instrument's patch overriding the project-level values.
-}
-
-/// Apply parameters to a module without GUI types.
-///
-/// Simplified version of `patch_bridge::apply_module_parameters`. Routes
-/// effect-chain modules through `SetEffectParameter` and voice-graph modules
-/// through `SetModuleParameter` based on the module type.
-fn apply_module_parameters(
-    module_id: synth_engine::ModuleId,
-    descriptor: &synth_core::ModuleDescriptor,
-    parameters: &BTreeMap<String, ParamValue>,
-    handle: &mut synth_engine::EngineHandle,
-    instrument_id: InstrumentId,
-) {
-    let is_effect = module_id.module_type.is_effect();
-    for (param_name, value) in parameters {
-        let param_desc = descriptor
-            .parameters
-            .iter()
-            .find(|p| p.type_id.to_lowercase() == param_name.to_lowercase());
-
-        if let Some(param_desc) = param_desc {
-            let param = value.to_param(param_desc);
-
-            if is_effect {
-                handle.send_blocking(EngineCommand::SetEffectParameter {
-                    instrument_id: Some(instrument_id),
-                    module_id,
-                    param,
-                });
-            } else {
-                handle.send_blocking(EngineCommand::SetModuleParameter {
-                    instrument_id: Some(instrument_id),
-                    module_id,
-                    param,
-                });
-            }
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    use std::collections::BTreeMap;
+
     use crate::patch::{ModuleState, Position};
     use crate::project::{GlobalProjectState, ReturnBusEffectsState};
     use synth_core::ModuleType;
-    use synth_engine::ModuleId;
+    use synth_engine::{InstrumentId, ModuleId};
     use synth_sequencer::Song;
 
     /// A minimal effect `ModuleState` with a parseable id and no parameters.
@@ -835,10 +628,82 @@ mod tests {
         );
     }
 
-    /// A *single* instrument whose load exceeds the 256-slot ring must also load
-    /// intact: the loader drains the ring adaptively per module, so an arbitrarily
-    /// large voice graph can't overflow it. 100 oscillators enqueue ~300 commands
-    /// in one instrument; every module must arrive.
+    #[test]
+    fn export_uses_the_canonical_instrument_state_hydration() {
+        use synth_core::{BipolarValue, Cents, Gain, NormalizedValue, VoiceCount};
+        use synth_engine::voice_allocator::{AllocationMode, StealingStrategy};
+
+        let mut inst = crate::project::default_instrument_state();
+        inst.name = "Hydrated".to_string();
+        inst.description = "Shared loader metadata".to_string();
+        inst.color = Some("#AABBCCFF".to_string());
+        inst.category = 3;
+        inst.volume = Gain::new(0.42);
+        inst.pan = BipolarValue::new(-0.25);
+        inst.allocation_mode = AllocationMode::Unison;
+        inst.stealing_strategy = StealingStrategy::Quietest;
+        inst.unison_detune = Cents::new(23.0);
+        inst.unison_spread = NormalizedValue::new(0.6);
+        inst.max_voices = VoiceCount::new(5);
+        inst.velocity_amp_sensitivity = NormalizedValue::new(0.7);
+        inst.velocity_filter_sensitivity = NormalizedValue::new(0.4);
+        inst.patch.description = Some("Patch intent".to_string());
+        inst.patch.color = Some("#112233FF".to_string());
+
+        let project = ProjectFile::new(
+            vec![inst],
+            1,
+            None,
+            Song::new("Hydration"),
+            GlobalProjectState::default(),
+        );
+        let sample_library: SharedSampleLibrary =
+            Arc::new(std::sync::RwLock::new(SampleLibrary::default()));
+        let (mut engine, handle, warnings) =
+            build_loaded_export_engine(&project, &sample_library, 44_100)
+                .expect("build export engine");
+        assert!(warnings.is_empty());
+
+        let ctx = AudioCallbackContext {
+            sample_rate: HwSampleRate::new(44_100),
+            frames: 256,
+            channels: 2,
+            stream_time: 0.0,
+            sample_position: 0,
+            output_latency: synth_core::Seconds::ZERO,
+        };
+        let mut buffer = vec![0.0f32; 256 * 2];
+        for _ in 0..4 {
+            engine.process(&mut buffer, &ctx);
+        }
+
+        let snapshots = handle.state.instrument_snapshots.read();
+        let snapshot = snapshots.first().expect("hydrated instrument snapshot");
+        assert_eq!(snapshot.name, "Hydrated");
+        assert_eq!(snapshot.description, "Shared loader metadata");
+        assert_eq!(snapshot.color.as_deref(), Some("#AABBCCFF"));
+        assert_eq!(snapshot.patch_description.as_deref(), Some("Patch intent"));
+        assert_eq!(snapshot.patch_color.as_deref(), Some("#112233FF"));
+        assert_eq!(
+            snapshot.category,
+            synth_engine::InstrumentCategory::from_u8(3)
+        );
+        assert_eq!(snapshot.volume, Gain::new(0.42));
+        assert_eq!(snapshot.pan, BipolarValue::new(-0.25));
+        assert_eq!(snapshot.allocation_mode, AllocationMode::Unison);
+        assert_eq!(snapshot.stealing_strategy, StealingStrategy::Quietest);
+        assert_eq!(snapshot.unison_detune, Cents::new(23.0));
+        assert_eq!(snapshot.unison_spread, NormalizedValue::new(0.6));
+        assert_eq!(snapshot.max_voices, VoiceCount::new(5));
+        assert_eq!(snapshot.velocity_amp_sensitivity, NormalizedValue::new(0.7));
+        assert_eq!(
+            snapshot.velocity_filter_sensitivity,
+            NormalizedValue::new(0.4)
+        );
+    }
+
+    /// A large single instrument must load intact through the same installer as
+    /// the live project path. This guards against future offline-only shortcuts.
     #[test]
     fn single_large_instrument_loads_all_modules() {
         use crate::patch::{ModuleBuilder, Patch};

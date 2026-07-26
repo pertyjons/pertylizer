@@ -158,10 +158,9 @@ impl SynthApp {
         // frame, nothing observable has changed — skip the clone-every-module
         // sync.
         let graph_version = self.session.state().shared_graph.version();
-        if graph_version == self.last_seen_graph_version {
+        if !self.mcp_sync.graph.observe(graph_version) {
             return;
         }
-        self.last_seen_graph_version = graph_version;
 
         let instrument_ids: Vec<InstrumentId> = self.instruments.iter().map(|i| i.id).collect();
 
@@ -733,7 +732,7 @@ impl SynthApp {
         // Force a Mod Grid runtime rebuild on the next frame: the loaded pool's
         // generation is unrelated to the previous song's, so don't trust the
         // cached value to differ.
-        self.last_mod_grid_generation = u64::MAX;
+        self.mod_grid_version.invalidate();
         if let Err(e) = crate::project_apply::apply_project(
             project,
             &self.session,
@@ -774,7 +773,7 @@ impl SynthApp {
         self.mod_grid_view_state = Default::default();
         // Force a Mod Grid runtime rebuild (empties the runtime for the new,
         // graph-less project).
-        self.last_mod_grid_generation = u64::MAX;
+        self.mod_grid_version.invalidate();
         self.refresh_ui_after_reset();
         self.current_project_path = None;
         self.current_patch_name = "Init".to_string();

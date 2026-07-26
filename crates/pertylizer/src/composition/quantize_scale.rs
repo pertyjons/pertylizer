@@ -2,49 +2,10 @@
 //!
 //! The scale table is shared with [`crate::harmony`] so chord identification
 //! and scale-snap stay in lock-step (the same `"dorian"` template name).
-//!
-//! NB: `synth_sequencer::note_processor::ScaleQuantize::snap` carries a second
-//! copy of this ±6-semitone prefer-up snap (the sequencer crate cannot depend
-//! on this app crate). A behavioral change here (search radius, tie-break)
-//! must be mirrored there — or, better, delegate this module to the
-//! sequencer-side `ScaleQuantize` once a name→`ScaleMask` bridge exists.
 
 use crate::harmony::{ScaleTemplate, scale_by_name};
-use std::str::FromStr;
-
-/// Tie-break direction used when two scale degrees are equidistant from the
-/// input pitch.
-#[must_use]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ScaleTieBreak {
-    /// Prefer the higher pitch on ties (default — biases towards the
-    /// melody side of dyads).
-    #[default]
-    NearestUp,
-    /// Prefer the lower pitch on ties.
-    NearestDown,
-    /// Same as [`ScaleTieBreak::NearestUp`] but the helper documents intent
-    /// when no tie is possible.
-    Nearest,
-}
-
-/// Error returned when parsing a scale tie-break policy.
-#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
-#[error("unknown tie-break {0:?}; expected one of up, down, nearest")]
-pub struct ParseScaleTieBreakError(String);
-
-impl FromStr for ScaleTieBreak {
-    type Err = ParseScaleTieBreakError;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        match s.to_ascii_lowercase().as_str() {
-            "up" | "nearest_up" | "" => Ok(Self::NearestUp),
-            "down" | "nearest_down" => Ok(Self::NearestDown),
-            "nearest" => Ok(Self::Nearest),
-            _ => Err(ParseScaleTieBreakError(s.to_string())),
-        }
-    }
-}
+pub use synth_sequencer::ScaleTieBreak;
+use synth_sequencer::{Pitch, PitchClass, ScaleMask, ScaleQuantize};
 
 /// Scale + tonic pair used by [`snap_pitch_to_scale`] and
 /// [`crate::composition::transpose`].
@@ -55,7 +16,7 @@ pub struct ScaleConstraint {
     /// may differ from what the caller passed in.
     pub scale_name: &'static str,
     template: &'static ScaleTemplate,
-    in_set: [bool; 12],
+    quantizer: ScaleQuantize,
 }
 
 impl ScaleConstraint {
@@ -64,12 +25,15 @@ impl ScaleConstraint {
     #[must_use]
     pub fn new(tonic: u8, scale_name: &str) -> Self {
         let template = scale_by_name(scale_name);
-        let in_set = template.pitch_classes(tonic % 12);
+        let tonic = tonic % 12;
         Self {
-            tonic: tonic % 12,
+            tonic,
             scale_name: template.name,
             template,
-            in_set,
+            quantizer: ScaleQuantize {
+                root: PitchClass::new(tonic),
+                mask: ScaleMask::from_intervals(template.intervals),
+            },
         }
     }
 
@@ -81,7 +45,7 @@ impl ScaleConstraint {
     }
 
     pub fn contains(&self, midi: u8) -> bool {
-        self.in_set[(midi % 12) as usize]
+        Pitch::new(midi).is_some_and(|pitch| self.quantizer.contains(pitch))
     }
 }
 
@@ -142,32 +106,12 @@ pub fn quantize_pitches_to_scale(
 /// (one tritone in each direction) — a 12-pitch-class scale guarantees at
 /// least one member within 6 semitones of any input.
 pub fn snap_pitch_to_scale(pitch: u8, scale: &ScaleConstraint, tie_break: ScaleTieBreak) -> u8 {
-    if scale.contains(pitch) {
-        return pitch;
-    }
-    let prefer_up = matches!(tie_break, ScaleTieBreak::NearestUp | ScaleTieBreak::Nearest);
-    let to_match = |v: i32| -> Option<u8> {
-        (0..=127)
-            .contains(&v)
-            .then_some({
-                #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
-                {
-                    v as u8
-                }
-            })
-            .filter(|&p| scale.contains(p))
-    };
-    for delta in 1..=6_i32 {
-        let up = to_match(i32::from(pitch) + delta);
-        let down = to_match(i32::from(pitch) - delta);
-        match (up, down) {
-            (Some(u), Some(d)) => return if prefer_up { u } else { d },
-            (Some(u), None) => return u,
-            (None, Some(d)) => return d,
-            (None, None) => continue,
-        }
-    }
-    pitch
+    Pitch::new(pitch).map_or(pitch, |pitch| {
+        scale
+            .quantizer
+            .snap_with_tie_break(pitch, tie_break)
+            .as_midi()
+    })
 }
 
 #[cfg(test)]
@@ -242,6 +186,36 @@ mod tests {
         assert_eq!(r.notes_moved, 7);
         for p in &pitches {
             assert!(scale.contains(*p));
+        }
+    }
+
+    #[test]
+    fn composition_wrapper_matches_sequencer_for_every_scale_and_pitch() {
+        let tie_breaks = [
+            ScaleTieBreak::Nearest,
+            ScaleTieBreak::NearestUp,
+            ScaleTieBreak::NearestDown,
+        ];
+
+        for template in crate::harmony::SCALES {
+            for tonic in 0..12 {
+                let scale = ScaleConstraint::new(tonic, template.name);
+                for tie_break in tie_breaks {
+                    for midi in 0..=127 {
+                        let pitch = Pitch::new(midi).expect("MIDI range is valid");
+                        let expected = scale
+                            .quantizer
+                            .snap_with_tie_break(pitch, tie_break)
+                            .as_midi();
+                        assert_eq!(
+                            snap_pitch_to_scale(midi, &scale, tie_break),
+                            expected,
+                            "{} tonic {tonic}, pitch {midi}, tie {tie_break:?}",
+                            template.name
+                        );
+                    }
+                }
+            }
         }
     }
 }

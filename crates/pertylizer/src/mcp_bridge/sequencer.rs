@@ -71,20 +71,21 @@ impl synth_mcp::bridge::SequencerBridge for AppSynthBridge {
         // The engine reads the tempo map live via `Song::tempo_at` each tick,
         // so mutating it under the shared-song lock is enough — no
         // `EngineCommand::SetTempo` (that is only for the global default).
-        let mut song = self.shared.song.write();
-        for &(tick, bpm, ramp) in points {
-            song.set_tempo_ramp_at(tick, synth_core::Bpm::new(bpm), ramp);
-        }
+        let edits: Vec<crate::app_services::TempoPointEdit> = points
+            .iter()
+            .map(|&(tick, bpm, ramp)| {
+                crate::app_services::TempoPointEdit::new(tick, synth_core::Bpm::new(bpm), ramp)
+            })
+            .collect();
+        crate::app_services::SongMutationService::new(&self.shared.song).set_tempo_points(&edits);
         Ok(())
     }
 
     fn remove_tempo_at(&self, ticks: &[Tick]) -> Result<usize, McpBridgeError> {
-        let mut song = self.shared.song.write();
-        let removed = ticks
-            .iter()
-            .filter(|&&tick| song.remove_tempo_change(tick))
-            .count();
-        Ok(removed)
+        Ok(
+            crate::app_services::SongMutationService::new(&self.shared.song)
+                .remove_tempo_points(ticks),
+        )
     }
 
     fn get_tempo_map(&self) -> Result<Vec<TempoPoint>, McpBridgeError> {

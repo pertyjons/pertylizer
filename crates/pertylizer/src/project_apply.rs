@@ -721,7 +721,7 @@ fn apply_patch_as_single_instrument(
     Ok(format!("Loaded patch '{}' as instrument 1", patch.name))
 }
 
-fn install_instrument(
+pub(crate) fn install_instrument(
     session: &SynthSession,
     sender: &CommandSender,
     inst_state: &InstrumentState,

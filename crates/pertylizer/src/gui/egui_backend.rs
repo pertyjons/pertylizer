@@ -36,12 +36,11 @@ use crate::io::settings::AppSettings;
 use crate::io::{GroupTemplateManager, MidiHandler, PatchManager};
 use crate::patch::{Author, GroupCategory, Patch, categorized_patches};
 use crate::project::{self, GlobalProjectState, LoadedFile, ProjectFile};
-use synth_core::{Describable, ModuleCategory};
+use synth_core::ModuleCategory;
 use synth_core::{Seconds, Velocity};
 use synth_engine::ModuleType as TypedModuleType;
 use synth_engine::commands::PortId;
 use synth_engine::instrument::{InstrumentId, MidiChannel};
-use synth_engine::visualizers::{LevelMeter, Oscilloscope, SpectrumAnalyzer};
 use synth_engine::{EngineCommand, EngineEvent, EngineHandle, ModuleId, SynthEngine};
 use synth_sampler::SampleLibrary;
 
@@ -52,6 +51,96 @@ mod project_flow;
 mod undo_flow;
 
 use dialog_state::{PendingAction, UnsavedChangesDialog};
+
+#[must_use]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct SourceVersion(u64);
+
+impl SourceVersion {
+    const fn new(value: u64) -> Self {
+        Self(value)
+    }
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+struct VersionTracker {
+    current: Option<SourceVersion>,
+}
+
+impl VersionTracker {
+    const fn at(version: u64) -> Self {
+        Self {
+            current: Some(SourceVersion::new(version)),
+        }
+    }
+
+    fn observe(&mut self, version: u64) -> bool {
+        let version = SourceVersion::new(version);
+        if self.current == Some(version) {
+            false
+        } else {
+            self.current = Some(version);
+            true
+        }
+    }
+
+    fn is_stale(&self, version: u64) -> bool {
+        self.current != Some(SourceVersion::new(version))
+    }
+
+    fn invalidate(&mut self) {
+        self.current = None;
+    }
+}
+
+#[derive(Debug)]
+struct VersionedCache<T> {
+    version: VersionTracker,
+    value: T,
+}
+
+impl<T: Default> Default for VersionedCache<T> {
+    fn default() -> Self {
+        Self {
+            version: VersionTracker::default(),
+            value: T::default(),
+        }
+    }
+}
+
+impl<T> VersionedCache<T> {
+    fn is_stale(&self, version: u64) -> bool {
+        self.version.is_stale(version)
+    }
+
+    fn replace(&mut self, version: u64, value: T) {
+        let _changed = self.version.observe(version);
+        self.value = value;
+    }
+
+    const fn value(&self) -> &T {
+        &self.value
+    }
+}
+
+#[cfg(feature = "mcp")]
+#[derive(Debug)]
+struct McpSyncState {
+    project: VersionTracker,
+    gui: VersionTracker,
+    graph: VersionTracker,
+}
+
+#[cfg(feature = "mcp")]
+impl Default for McpSyncState {
+    fn default() -> Self {
+        Self {
+            project: VersionTracker::at(0),
+            gui: VersionTracker::at(0),
+            graph: VersionTracker::at(0),
+        }
+    }
+}
 
 /// Egui-based GUI backend.
 pub struct EguiBackend;
@@ -302,32 +391,18 @@ struct SynthApp {
     /// Mod Grid view state (selected graph, canvas cameras, node positions).
     mod_grid_view_state: crate::gui::mod_grid_view::ModGridViewState,
 
-    /// Last `Song::mod_grid_generation` we shipped to the engine. When it
-    /// changes we rebuild the mod-grid runtime (off the audio thread) and send
-    /// it. `u64::MAX` forces a (re)build on the first frame and after a load.
-    last_mod_grid_generation: u64,
+    /// Tracks the `Song::mod_grid_generation` shipped to the engine. An
+    /// invalidated tracker forces a rebuild on the first frame and after load.
+    mod_grid_version: VersionTracker,
 
     // MCP shared state
     #[cfg(feature = "mcp")]
     mcp_shared: Option<std::sync::Arc<crate::mcp_shared::McpSharedState>>,
 
-    /// Last `McpSharedState::project_revision` value the GUI consumed.
-    /// Lets the per-frame poll skip locking when no I/O has happened.
+    /// Revision gates for MCP project, GUI mirror, and graph synchronization.
+    /// Keeping them together makes the ownership of MCP→GUI state explicit.
     #[cfg(feature = "mcp")]
-    last_seen_project_revision: u64,
-
-    /// Last `McpSharedState::gui_revision` value the GUI consumed. Same
-    /// fast-path idea as `last_seen_project_revision`, but for one-shot
-    /// MCP→GUI mirror payloads (`pending_patch`).
-    /// Idle frames skip both slot mutexes entirely.
-    #[cfg(feature = "mcp")]
-    last_seen_gui_revision: u64,
-
-    /// Last `SharedGraphState::version()` seen by `reconcile_with_session`.
-    /// Lets the per-frame reconcile skip cloning every module snapshot
-    /// when no engine-side mutation has happened since the previous frame.
-    #[cfg(feature = "mcp")]
-    last_seen_graph_version: u64,
+    mcp_sync: McpSyncState,
 
     // OSC shared state
     #[cfg(feature = "osc")]
@@ -364,14 +439,13 @@ struct SynthApp {
     /// `shared_graph` version they were computed at. Recomputed only when that
     /// version changes (any module add/remove or parameter edit bumps it) rather
     /// than cloning every module snapshot each repaint while the tab is open.
-    sample_ref_counts_cache: std::collections::HashMap<u64, usize>,
-    sample_ref_counts_version: u64,
+    sample_ref_counts: VersionedCache<std::collections::HashMap<u64, usize>>,
     /// `shared_graph` version the Mod Grid view's per-instrument module-target
     /// groups were last built at. The groups themselves live in
     /// `mod_grid_view_state.module_groups`; this only tracks when to rebuild them
     /// (they derive from module structure/types, so only a graph change matters),
     /// instead of re-deriving from live descriptors for every instrument each frame.
-    mod_target_groups_version: u64,
+    mod_target_groups_version: VersionTracker,
 
     /// Mixer view state (rename buffer + smoothed meter levels).
     mixer_view_state: crate::gui::mixer_view::MixerViewState,
@@ -471,7 +545,7 @@ impl SynthApp {
             active_instrument_id,
             active_view: AppView::default(),
             song,
-            last_mod_grid_generation: u64::MAX,
+            mod_grid_version: VersionTracker::default(),
             sequencer_view_state: crate::gui::sequencer::SequencerViewState::new(),
             pattern_view_state: crate::gui::pattern_view::PatternViewState::default(),
             note_grid_view_state: crate::gui::note_grid_view::NoteGridViewState::default(),
@@ -479,11 +553,7 @@ impl SynthApp {
             #[cfg(feature = "mcp")]
             mcp_shared: config.mcp_shared,
             #[cfg(feature = "mcp")]
-            last_seen_project_revision: 0,
-            #[cfg(feature = "mcp")]
-            last_seen_gui_revision: 0,
-            #[cfg(feature = "mcp")]
-            last_seen_graph_version: 0,
+            mcp_sync: McpSyncState::default(),
             #[cfg(feature = "osc")]
             osc_shared: config.osc_shared,
             settings,
@@ -496,12 +566,8 @@ impl SynthApp {
             last_title: String::new(),
             sample_library: config.sample_library,
             sample_view_state: crate::gui::sample_view::SampleViewState::new(),
-            sample_ref_counts_cache: std::collections::HashMap::new(),
-            // u64::MAX so the first Sample-view frame always recomputes (the live
-            // graph version starts well below it).
-            sample_ref_counts_version: u64::MAX,
-            // u64::MAX so the first Mod Grid frame always builds the target groups.
-            mod_target_groups_version: u64::MAX,
+            sample_ref_counts: VersionedCache::default(),
+            mod_target_groups_version: VersionTracker::default(),
             mixer_view_state: crate::gui::mixer_view::MixerViewState::default(),
             audio_input: crate::audio::input::AudioInputManager::new(),
             analyze_window: crate::gui::analyze::AnalyzeWindow::new(),
@@ -950,8 +1016,7 @@ impl eframe::App for SynthApp {
                             synth_sequencer::InstrumentId,
                             Vec<crate::module_targets::ModuleTargetGroup>,
                         >,
-                    > = if graph_version != self.mod_target_groups_version {
-                        self.mod_target_groups_version = graph_version;
+                    > = if self.mod_target_groups_version.observe(graph_version) {
                         Some(
                             instruments
                                 .iter()
@@ -1045,7 +1110,7 @@ impl eframe::App for SynthApp {
                     // graph changed since last frame; otherwise reuse the cache, so
                     // an open Sample tab doesn't clone every module snapshot ~60×/s.
                     let graph_version = self.session.state().shared_graph.version();
-                    if graph_version != self.sample_ref_counts_version {
+                    if self.sample_ref_counts.is_stale(graph_version) {
                         let mut counts: std::collections::HashMap<u64, usize> =
                             std::collections::HashMap::new();
                         for id in self
@@ -1064,15 +1129,14 @@ impl eframe::App for SynthApp {
                         {
                             *counts.entry(id).or_insert(0) += 1;
                         }
-                        self.sample_ref_counts_cache = counts;
-                        self.sample_ref_counts_version = graph_version;
+                        self.sample_ref_counts.replace(graph_version, counts);
                     }
                     let action = crate::gui::sample_view::draw_sample_view(
                         ui,
                         &self.sample_library,
                         &mut self.sample_view_state,
                         &mut self.audio_input,
-                        &self.sample_ref_counts_cache,
+                        self.sample_ref_counts.value(),
                     );
                     match action {
                         crate::gui::sample_view::SampleViewAction::None => {}
@@ -1317,68 +1381,15 @@ impl SynthApp {
         module_type: TypedModuleType,
         position: Pos2,
     ) -> Option<(ModuleId, synth_core::ModuleDescriptor)> {
-        // A fresh instance id from the shared per-(instrument, type) counters —
-        // what `session.add_module` does internally, needed here for the two
-        // GUI-built module kinds below.
-        let next_instance_id = |mt: TypedModuleType| {
-            let mut counters = session.counters_lock();
-            let counter = counters.entry((instrument_id, mt)).or_insert(0);
-            *counter += 1;
-            ModuleId::new(mt, *counter)
-        };
-
-        if module_type.is_visualizer() {
-            let (descriptor, visualizer_type) = match module_type {
-                TypedModuleType::Oscilloscope => (
-                    Oscilloscope::new().descriptor(),
-                    synth_engine::commands::VisualizerType::Oscilloscope,
-                ),
-                TypedModuleType::LevelMeter => (
-                    LevelMeter::new().descriptor(),
-                    synth_engine::commands::VisualizerType::LevelMeter,
-                ),
-                _ => (
-                    SpectrumAnalyzer::new().descriptor(),
-                    synth_engine::commands::VisualizerType::SpectrumAnalyzer,
-                ),
-            };
-            let id = next_instance_id(module_type);
-            editor.add_module_at(id, descriptor.clone(), position);
-
-            let buffer =
-                std::sync::Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
-            handle.add_visualization_buffer(id, buffer.clone());
-            handle.send(EngineCommand::AddVisualizer {
-                instrument_id: Some(instrument_id),
-                id,
-                visualizer_type,
-                buffer,
-            });
-            return Some((id, descriptor));
-        }
-
-        if module_type == TypedModuleType::SignalMonitor {
-            let mut m = synth_modules::SignalMonitor::new();
-            let descriptor = m.descriptor();
-            let id = next_instance_id(module_type);
-            session.register_descriptor(instrument_id, id, descriptor.clone());
-            editor.add_module_at(id, descriptor.clone(), position);
-
-            let buffer =
-                std::sync::Arc::new(synth_engine::visualizers::VisualizationBuffer::new(4096));
-            handle.add_visualization_buffer(id, buffer.clone());
-            m.set_vis_sink(buffer);
-            handle.send(EngineCommand::AddModuleInstance {
-                instrument_id: Some(instrument_id),
-                id,
-                module: Box::new(m),
-            });
-            return Some((id, descriptor));
-        }
-
-        let (id, descriptor) = session.add_module(instrument_id, module_type).ok()?;
-        editor.add_module_at(id, descriptor.clone(), position);
-        Some((id, descriptor))
+        patch_bridge::create_editor_module(
+            session,
+            handle,
+            instrument_id,
+            editor,
+            module_type,
+            position,
+        )
+        .ok()
     }
 
     /// Handle a context menu add: create a module and place it at the given position.
@@ -3949,5 +3960,33 @@ impl SynthApp {
         {
             self.mark_dirty();
         }
+    }
+}
+
+#[cfg(test)]
+mod version_tracking_tests {
+    use super::{VersionTracker, VersionedCache};
+
+    #[test]
+    fn tracker_observes_each_version_once_and_can_be_invalidated() {
+        let mut tracker = VersionTracker::default();
+
+        assert!(tracker.observe(7));
+        assert!(!tracker.observe(7));
+        assert!(tracker.observe(8));
+
+        tracker.invalidate();
+        assert!(tracker.observe(8));
+    }
+
+    #[test]
+    fn versioned_cache_keeps_value_until_source_changes() {
+        let mut cache = VersionedCache::<Vec<u8>>::default();
+
+        assert!(cache.is_stale(3));
+        cache.replace(3, vec![1, 2]);
+        assert!(!cache.is_stale(3));
+        assert_eq!(cache.value(), &[1, 2]);
+        assert!(cache.is_stale(4));
     }
 }

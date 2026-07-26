@@ -15,6 +15,7 @@
 #[cfg(feature = "gui-egui")]
 pub mod activity_log;
 pub mod analysis;
+pub(crate) mod app_services;
 pub mod audio;
 pub mod bundle;
 pub mod composition;

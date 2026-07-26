@@ -5,7 +5,10 @@
 use synth_core::MidiNote;
 use synth_engine::instrument::InstrumentId;
 
-use pertylizer::mcp_bridge::{analyze_instrument_range_impl, analyze_velocity_response_impl};
+use pertylizer::mcp_bridge::{
+    InstrumentRangeQuery, VelocityResponseQuery, analyze_instrument_range_impl,
+    analyze_velocity_response_impl,
+};
 
 mod common;
 use common::{setup_with_patch, sustain_patch};
@@ -16,13 +19,16 @@ fn analyze_instrument_range_returns_one_step_per_swept_note() {
     let result = analyze_instrument_range_impl(
         &rig.session,
         &rig.sample_library,
-        InstrumentId::FIRST,
-        48, // C3
-        72, // C5
-        Some(12),
-        Some(100),
-        Some(200),
-        Some(100),
+        InstrumentRangeQuery::from_wire(
+            InstrumentId::FIRST,
+            48, // C3
+            72, // C5
+            Some(12),
+            Some(100),
+            Some(200),
+            Some(100),
+        )
+        .expect("valid instrument range"),
     )
     .expect("instrument range sweep");
     assert_eq!(result.steps.len(), 3, "C3 / C4 / C5");
@@ -47,10 +53,7 @@ fn analyze_instrument_range_returns_one_step_per_swept_note() {
 
 #[test]
 fn analyze_instrument_range_rejects_inverted_range() {
-    let rig = setup_with_patch(&sustain_patch());
-    let err = analyze_instrument_range_impl(
-        &rig.session,
-        &rig.sample_library,
+    let err = InstrumentRangeQuery::from_wire(
         InstrumentId::FIRST,
         72,
         48,
@@ -73,13 +76,16 @@ fn analyze_velocity_response_curve_rises_with_velocity() {
     let result = analyze_velocity_response_impl(
         &rig.session,
         &rig.sample_library,
-        InstrumentId::FIRST,
-        MidiNote::new(60),
-        Some(32),
-        Some(127),
-        Some(32),
-        Some(200),
-        Some(100),
+        VelocityResponseQuery::from_wire(
+            InstrumentId::FIRST,
+            MidiNote::new(60),
+            Some(32),
+            Some(127),
+            Some(32),
+            Some(200),
+            Some(100),
+        )
+        .expect("valid velocity range"),
     )
     .expect("velocity sweep");
     // sweep_range clamps the final step to the upper bound, so 32, 64, 96, 127.
@@ -107,13 +113,16 @@ fn analyze_velocity_response_inclusive_upper_bound() {
     let result = analyze_velocity_response_impl(
         &rig.session,
         &rig.sample_library,
-        InstrumentId::FIRST,
-        MidiNote::new(60),
-        Some(100),
-        Some(127),
-        Some(27),
-        Some(200),
-        Some(100),
+        VelocityResponseQuery::from_wire(
+            InstrumentId::FIRST,
+            MidiNote::new(60),
+            Some(100),
+            Some(127),
+            Some(27),
+            Some(200),
+            Some(100),
+        )
+        .expect("valid velocity range"),
     )
     .expect("velocity sweep");
     let velocities: Vec<u8> = result.steps.iter().map(|s| s.velocity).collect();
@@ -122,10 +131,7 @@ fn analyze_velocity_response_inclusive_upper_bound() {
 
 #[test]
 fn analyze_velocity_response_rejects_inverted_range() {
-    let rig = setup_with_patch(&sustain_patch());
-    let err = analyze_velocity_response_impl(
-        &rig.session,
-        &rig.sample_library,
+    let err = VelocityResponseQuery::from_wire(
         InstrumentId::FIRST,
         MidiNote::new(60),
         Some(127),

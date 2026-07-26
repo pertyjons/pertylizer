@@ -16,7 +16,7 @@ impl SynthApp {
             let current_rev = shared
                 .project_revision
                 .load(std::sync::atomic::Ordering::Acquire);
-            if current_rev != self.last_seen_project_revision {
+            if self.mcp_sync.project.observe(current_rev) {
                 use crate::mcp_shared::ProjectRefresh;
 
                 // Load / new stash a refresh; save leaves it empty.
@@ -60,8 +60,6 @@ impl SynthApp {
                     };
                     self.dialog_state.set_status(msg);
                 }
-
-                self.last_seen_project_revision = current_rev;
             }
         }
 
@@ -72,7 +70,7 @@ impl SynthApp {
             let current_rev = shared
                 .gui_revision
                 .load(std::sync::atomic::Ordering::Acquire);
-            if current_rev != self.last_seen_gui_revision {
+            if self.mcp_sync.gui.observe(current_rev) {
                 let pending_patch = shared
                     .pending_patch
                     .lock()
@@ -83,8 +81,6 @@ impl SynthApp {
                     self.current_patch_path = None;
                     self.load_patch_data(&patch);
                 }
-
-                self.last_seen_gui_revision = current_rev;
             }
         }
     }
@@ -98,10 +94,9 @@ impl SynthApp {
         let runtime = {
             let song = self.song.read();
             let generation = song.mod_grid_generation();
-            if generation == self.last_mod_grid_generation {
+            if !self.mod_grid_version.observe(generation) {
                 return;
             }
-            self.last_mod_grid_generation = generation;
             crate::mod_grid_build::build_mod_grid_runtime(&song)
         };
         self.handle.send(synth_engine::EngineCommand::SetModGrid {

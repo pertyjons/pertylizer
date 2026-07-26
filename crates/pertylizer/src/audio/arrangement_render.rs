@@ -24,10 +24,9 @@
 
 use std::sync::Arc;
 
-use synth_core::ModuleParam;
 use synth_core::audio::SampleRate as HwSampleRate;
 use synth_core::{AudioCallbackContext, AudioProcessor, DenormalGuard};
-use synth_engine::commands::{InstrumentParam, PortId};
+use synth_engine::commands::InstrumentParam;
 use synth_engine::instrument::MidiChannel;
 use synth_engine::{EngineCommand, SynthEngine};
 use synth_sequencer::{Song, Tick};
@@ -731,213 +730,22 @@ fn load_instrument_into_offline(
     let effect_chain_order: Vec<synth_engine::commands::ModuleId> =
         inst_snap.effect_chain_order.clone();
 
-    let apply_module_state = |handle: &mut synth_engine::EngineHandle,
-                              module_snap: &synth_engine::ModuleStateSnapshot,
-                              descriptor: &synth_core::ModuleDescriptor,
-                              warnings: &mut Vec<String>,
-                              offline_engine: &mut SynthEngine,
-                              drain_buf: &mut [f32],
-                              drain_ctx: &AudioCallbackContext| {
-        let module_id = module_snap.id;
-        let is_effect = module_id.module_type.is_effect();
-        for desc_param in &descriptor.parameters {
-            if let Some(ep) = module_snap
-                .parameters
-                .iter()
-                .find(|p| p.same_kind(&desc_param.id))
-            {
-                // Send the snapshot's full typed param, NOT an f32 round-trip.
-                // `with_f32(as_f32())` collapses address-carrying params — the
-                // Mod Matrix `SlotSource`/`SlotDestination` hold a `SrcAddr` /
-                // `DestAddr` — down to a legacy enum index, silently dropping
-                // any address the legacy `ModSource`/`ModDestination` enum lacks
-                // (e.g. `spp-1.x`). The modulation would then route nowhere in
-                // the offline render (scripted spp motion rendered as mono). The
-                // live/GUI load path already sends the full param.
-                let param = *ep;
-                let sent = if is_effect {
-                    handle.send_blocking(EngineCommand::SetEffectParameter {
-                        instrument_id: Some(instrument_id),
-                        module_id,
-                        param,
-                    })
-                } else {
-                    handle.send_blocking(EngineCommand::SetModuleParameter {
-                        instrument_id: Some(instrument_id),
-                        module_id,
-                        param,
-                    })
-                };
-                if !sent {
-                    warnings.push(format!(
-                        "arrangement_render: failed to enqueue parameter for module {module_id}"
-                    ));
-                }
-            }
-        }
-        let is_bypassed = matches!(module_snap.bypass_state, synth_core::BypassState::Bypassed);
-        if is_bypassed {
-            if is_effect {
-                handle.send_blocking(EngineCommand::SetEffectEnabled {
-                    instrument_id: Some(instrument_id),
-                    module_id,
-                    enabled: false,
-                });
-            } else {
-                handle.send_blocking(EngineCommand::SetBypass {
-                    instrument_id: Some(instrument_id),
-                    module: module_id,
-                    bypass: true,
-                });
-            }
-        }
-
-        // Replay YAMS scripts (scr / mmx / asc) — the one step the offline loader
-        // previously skipped, which left every scripted modulation silent in
-        // renders/analyze (shared with the preview note renderer; see
-        // `audio::replay_module_scripts`).
-        crate::audio::replay_module_scripts(
-            handle,
-            instrument_id,
-            module_snap,
-            warnings,
-            "arrangement_render",
-        );
-
-        // Bound the command ring on a large voice graph: one module's params +
-        // scripts is a handful of commands, so an adaptive check per module keeps
-        // an arbitrarily large instrument from overflowing the 256-slot ring.
-        crate::audio::drain_if_ring_filling(offline_engine, handle, drain_buf, drain_ctx);
-    };
-
-    let mut voice_modules: Vec<&synth_engine::ModuleStateSnapshot> = Vec::new();
-    let mut effect_modules: std::collections::HashMap<
-        synth_engine::commands::ModuleId,
-        &synth_engine::ModuleStateSnapshot,
-    > = std::collections::HashMap::new();
-    for m in &modules {
-        if m.module_type.is_visualizer() {
-            continue;
-        }
-        if m.module_type.is_effect() {
-            effect_modules.insert(m.id, m);
-        } else {
-            voice_modules.push(m);
-        }
-    }
-
-    for module_snap in &voice_modules {
-        let module_id = module_snap.id;
-        let descriptor =
-            match tmp_session.add_module_with_id(instrument_id, module_id, module_id.module_type) {
-                Ok(d) => d,
-                Err(e) => {
-                    warnings.push(format!(
-                        "arrangement_render: failed to add module {module_id}: {e}"
-                    ));
-                    continue;
-                }
-            };
-        apply_module_state(
-            handle,
-            module_snap,
-            &descriptor,
-            warnings,
-            offline_engine,
-            drain_buf,
-            drain_ctx,
-        );
-    }
-
-    crate::audio::preview::load_sample_data_for_samplers(
+    crate::audio::instrument_hydration::hydrate_snapshot_instrument(
+        tmp_session,
         handle,
-        instrument_id,
-        &voice_modules,
-        sample_library,
-        warnings,
-    );
-
-    let mut handled: std::collections::HashSet<synth_engine::commands::ModuleId> =
-        std::collections::HashSet::new();
-    for module_id in &effect_chain_order {
-        if let Some(module_snap) = effect_modules.get(module_id) {
-            handled.insert(*module_id);
-            let descriptor = match tmp_session.add_module_with_id(
-                instrument_id,
-                *module_id,
-                module_id.module_type,
-            ) {
-                Ok(d) => d,
-                Err(e) => {
-                    warnings.push(format!(
-                        "arrangement_render: failed to add effect {module_id}: {e}"
-                    ));
-                    continue;
-                }
-            };
-            apply_module_state(
-                handle,
-                module_snap,
-                &descriptor,
-                warnings,
-                offline_engine,
-                drain_buf,
-                drain_ctx,
-            );
-        }
-    }
-    for (module_id, module_snap) in &effect_modules {
-        if handled.contains(module_id) {
-            continue;
-        }
-        warnings.push(format!(
-            "arrangement_render: effect {module_id} present but missing from chain order — appending"
-        ));
-        let descriptor = match tmp_session.add_module_with_id(
+        crate::audio::instrument_hydration::SnapshotHydration {
             instrument_id,
-            *module_id,
-            module_id.module_type,
-        ) {
-            Ok(d) => d,
-            Err(e) => {
-                warnings.push(format!(
-                    "arrangement_render: failed to add effect {module_id}: {e}"
-                ));
-                continue;
-            }
-        };
-        apply_module_state(
-            handle,
-            module_snap,
-            &descriptor,
-            warnings,
-            offline_engine,
-            drain_buf,
-            drain_ctx,
-        );
-    }
-
-    for conn in &connections {
-        if conn.from_module.module_type.is_visualizer()
-            || conn.to_module.module_type.is_visualizer()
-        {
-            continue;
-        }
-        let sent = handle.send_blocking(EngineCommand::Connect {
-            instrument_id: Some(instrument_id),
-            from: PortId::new(conn.from_module, conn.from_port),
-            to: PortId::new(conn.to_module, conn.to_port),
-        });
-        if !sent {
-            warnings.push(format!(
-                "arrangement_render: failed to enqueue connection {} → {}",
-                conn.from_module, conn.to_module
-            ));
-        }
-        // Same adaptive drain for the connection phase (a heavily-patched graph
-        // can have hundreds of cables).
-        crate::audio::drain_if_ring_filling(offline_engine, handle, drain_buf, drain_ctx);
-    }
+            modules: &modules,
+            connections: &connections,
+            effect_chain_order: &effect_chain_order,
+            sample_library,
+            context: "arrangement_render",
+        },
+        warnings,
+        |handle| {
+            crate::audio::drain_if_ring_filling(offline_engine, handle, drain_buf, drain_ctx);
+        },
+    );
 
     // Mirror live enable/mix state. `inst_snap.enabled` already encodes the
     // muted+enabled live behavior (an instrument muted live is reported as

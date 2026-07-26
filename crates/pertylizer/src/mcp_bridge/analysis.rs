@@ -34,13 +34,15 @@ impl synth_mcp::bridge::AnalysisBridge for AppSynthBridge {
         let mut result = analyze_rendered_note(
             &self.session,
             &self.sample_library,
-            instrument_id,
-            note,
-            velocity,
-            duration_ms,
-            tail_ms,
-            expected_note,
-            envelope_window_ms,
+            NoteAnalysisQuery::from_wire(
+                instrument_id,
+                note,
+                velocity,
+                duration_ms,
+                tail_ms,
+                expected_note,
+                envelope_window_ms,
+            ),
         )?;
         // Attach the patch's intent so the agent can correlate the measured
         // signal with why each module is there. Done here (not in the shared
@@ -634,13 +636,15 @@ impl synth_mcp::bridge::AnalysisBridge for AppSynthBridge {
         analyze_instrument_range_impl(
             &self.session,
             &self.sample_library,
-            instrument_id,
-            low_note,
-            high_note,
-            step_semitones,
-            velocity,
-            duration_ms,
-            tail_ms,
+            InstrumentRangeQuery::from_wire(
+                instrument_id,
+                low_note,
+                high_note,
+                step_semitones,
+                velocity,
+                duration_ms,
+                tail_ms,
+            )?,
         )
     }
 
@@ -657,13 +661,15 @@ impl synth_mcp::bridge::AnalysisBridge for AppSynthBridge {
         analyze_velocity_response_impl(
             &self.session,
             &self.sample_library,
-            instrument_id,
-            note,
-            velocity_low,
-            velocity_high,
-            velocity_step,
-            duration_ms,
-            tail_ms,
+            VelocityResponseQuery::from_wire(
+                instrument_id,
+                note,
+                velocity_low,
+                velocity_high,
+                velocity_step,
+                duration_ms,
+                tail_ms,
+            )?,
         )
     }
 

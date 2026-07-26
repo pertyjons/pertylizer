@@ -178,6 +178,37 @@ impl Default for ScaleMask {
     }
 }
 
+/// Direction used when two scale pitches are equally close to the input.
+#[must_use]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ScaleTieBreak {
+    /// Prefer the higher pitch on ties.
+    #[default]
+    NearestUp,
+    /// Prefer the lower pitch on ties.
+    NearestDown,
+    /// Nearest pitch with the default upward tie break.
+    Nearest,
+}
+
+/// Error returned when parsing a scale tie-break policy.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+#[error("unknown tie-break {0:?}; expected one of up, down, nearest")]
+pub struct ParseScaleTieBreakError(String);
+
+impl std::str::FromStr for ScaleTieBreak {
+    type Err = ParseScaleTieBreakError;
+
+    fn from_str(value: &str) -> Result<Self, Self::Err> {
+        match value.to_ascii_lowercase().as_str() {
+            "up" | "nearest_up" | "" => Ok(Self::NearestUp),
+            "down" | "nearest_down" => Ok(Self::NearestDown),
+            "nearest" => Ok(Self::Nearest),
+            _ => Err(ParseScaleTieBreakError(value.to_string())),
+        }
+    }
+}
+
 // ============================================================================
 // Processor configs
 // ============================================================================
@@ -212,18 +243,33 @@ impl ScaleQuantize {
     /// (a non-empty scale guarantees a member within a tritone). Ties prefer
     /// the upper pitch. Empty masks and unreachable edges return `pitch`.
     pub fn snap(&self, pitch: Pitch) -> Pitch {
+        self.snap_with_tie_break(pitch, ScaleTieBreak::NearestUp)
+    }
+
+    /// Snap `pitch` using an explicit equidistant-candidate policy.
+    pub fn snap_with_tie_break(&self, pitch: Pitch, tie_break: ScaleTieBreak) -> Pitch {
         if self.mask.is_empty() || self.contains(pitch) {
             return pitch;
         }
         let midi = i16::from(pitch.as_midi());
         for delta in 1..=6_i16 {
-            for candidate in [midi + delta, midi - delta] {
-                if let Ok(m) = u8::try_from(candidate)
-                    && let Some(p) = Pitch::new(m)
-                    && self.contains(p)
-                {
-                    return p;
+            let candidate = |midi: i16| {
+                u8::try_from(midi)
+                    .ok()
+                    .and_then(Pitch::new)
+                    .filter(|pitch| self.contains(*pitch))
+            };
+            match (candidate(midi + delta), candidate(midi - delta)) {
+                (Some(up), Some(down)) => {
+                    return if matches!(tie_break, ScaleTieBreak::NearestDown) {
+                        down
+                    } else {
+                        up
+                    };
                 }
+                (Some(up), None) => return up,
+                (None, Some(down)) => return down,
+                (None, None) => {}
             }
         }
         pitch
@@ -1986,6 +2032,24 @@ mod tests {
         assert_eq!(q.snap(Pitch::new(61).unwrap()).as_midi(), 62);
         // F# is equidistant from F and G → prefer up → G.
         assert_eq!(q.snap(Pitch::new(66).unwrap()).as_midi(), 67);
+    }
+
+    #[test]
+    fn scale_quantize_can_prefer_down_on_a_tie() {
+        let q = c_major();
+        assert_eq!(
+            q.snap_with_tie_break(Pitch::new(61).unwrap(), ScaleTieBreak::NearestDown)
+                .as_midi(),
+            60
+        );
+    }
+
+    #[test]
+    fn scale_tie_break_names_parse_consistently() {
+        assert_eq!("up".parse(), Ok(ScaleTieBreak::NearestUp));
+        assert_eq!("down".parse(), Ok(ScaleTieBreak::NearestDown));
+        assert_eq!("nearest".parse(), Ok(ScaleTieBreak::Nearest));
+        assert!("sideways".parse::<ScaleTieBreak>().is_err());
     }
 
     #[test]

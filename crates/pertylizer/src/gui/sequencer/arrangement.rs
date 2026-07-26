@@ -5,6 +5,7 @@
 //! both this view and `draw_sequencer_view` can read them.
 
 use super::*;
+use crate::app_services::{SongMutationService, TempoPointEdit};
 use crate::gui::widgets::{expose, expose_selected, mute_toggle, solo_toggle, submenu_button};
 
 const PLACEMENT_RESIZE_ZONE: f32 = 8.0;
@@ -1496,8 +1497,11 @@ fn draw_ruler_context_menu(
             ui.memory_mut(|m| m.data.insert_temp(undo_id, old));
         }
         if resp.changed() {
-            song.write()
-                .set_tempo_ramp_at(Tick(snapped), Bpm::new(bpm), ramp);
+            SongMutationService::new(song).set_tempo_point(TempoPointEdit::new(
+                Tick(snapped),
+                Bpm::new(bpm),
+                ramp,
+            ));
         }
         if resp.drag_stopped() || resp.lost_focus() {
             let old: Option<(Bpm, bool)> = ui
@@ -1522,7 +1526,11 @@ fn draw_ruler_context_menu(
             );
             if resp.changed() {
                 let bpm = Bpm::new(existing_bpm);
-                song.write().set_tempo_ramp_at(Tick(snapped), bpm, ramp);
+                SongMutationService::new(song).set_tempo_point(TempoPointEdit::new(
+                    Tick(snapped),
+                    bpm,
+                    ramp,
+                ));
                 undo_manager.push(crate::undo::UndoAction::SetTempo {
                     tick: Tick(snapped),
                     old: Some((bpm, existing_ramp)),
@@ -1531,7 +1539,7 @@ fn draw_ruler_context_menu(
             }
             ui.separator();
             if danger_button(ui, "Remove tempo change here").clicked() {
-                if song.write().remove_tempo_change(Tick(snapped)) {
+                if SongMutationService::new(song).remove_tempo_point(Tick(snapped)) {
                     undo_manager.push(crate::undo::UndoAction::SetTempo {
                         tick: Tick(snapped),
                         old: Some((Bpm::new(existing_bpm), existing_ramp)),
@@ -2295,7 +2303,11 @@ fn draw_arrangement_tempo_lane(
         let tick = snap_tick(x_to_tick(pos.x));
         if !data.tempo_changes.iter().any(|(t, _, _)| *t == tick) {
             let bpm = Bpm::new(y_to_bpm(pos.y).clamp(20.0, 300.0));
-            song.write().set_tempo_ramp_at(Tick(tick), bpm, false);
+            SongMutationService::new(song).set_tempo_point(TempoPointEdit::new(
+                Tick(tick),
+                bpm,
+                false,
+            ));
             undo_manager.push(crate::undo::UndoAction::SetTempo {
                 tick: Tick(tick),
                 old: None,
@@ -2331,8 +2343,11 @@ fn draw_arrangement_tempo_lane(
         if let Some((eb, er)) = existing {
             let mut r = er;
             if ui.checkbox(&mut r, "Ramp to next").changed() {
-                song.write()
-                    .set_tempo_ramp_at(Tick(snapped), Bpm::new(eb), r);
+                SongMutationService::new(song).set_tempo_point(TempoPointEdit::new(
+                    Tick(snapped),
+                    Bpm::new(eb),
+                    r,
+                ));
                 undo_manager.push(crate::undo::UndoAction::SetTempo {
                     tick: Tick(snapped),
                     old: Some((Bpm::new(eb), er)),
@@ -2341,7 +2356,7 @@ fn draw_arrangement_tempo_lane(
                 ui.close();
             }
             if danger_button(ui, "Remove tempo point").clicked() {
-                if song.write().remove_tempo_change(Tick(snapped)) {
+                if SongMutationService::new(song).remove_tempo_point(Tick(snapped)) {
                     undo_manager.push(crate::undo::UndoAction::SetTempo {
                         tick: Tick(snapped),
                         old: Some((Bpm::new(eb), er)),
@@ -2405,13 +2420,10 @@ fn draw_arrangement_tempo_lane(
                 tick
             };
             let new_bpm = Bpm::new(y_to_bpm(pos.y).clamp(20.0, 300.0));
-            {
-                let mut song_w = song.write();
-                if new_tick != tick {
-                    song_w.remove_tempo_change(Tick(tick));
-                }
-                song_w.set_tempo_ramp_at(Tick(new_tick), new_bpm, ramp);
-            }
+            SongMutationService::new(song).move_tempo_point(
+                Tick(tick),
+                TempoPointEdit::new(Tick(new_tick), new_bpm, ramp),
+            );
             ui.memory_mut(|m| {
                 m.data
                     .insert_temp(id.with("cur"), (new_tick, new_bpm.as_f32(), ramp));
@@ -2443,7 +2455,11 @@ fn draw_arrangement_tempo_lane(
                 .on_hover_text("Ramp linearly toward the next point instead of a step change.")
                 .changed()
             {
-                song.write().set_tempo_ramp_at(Tick(tick), Bpm::new(bpm), r);
+                SongMutationService::new(song).set_tempo_point(TempoPointEdit::new(
+                    Tick(tick),
+                    Bpm::new(bpm),
+                    r,
+                ));
                 undo_manager.push(crate::undo::UndoAction::SetTempo {
                     tick: Tick(tick),
                     old: Some((Bpm::new(bpm), ramp)),
@@ -2452,7 +2468,7 @@ fn draw_arrangement_tempo_lane(
                 ui.close();
             }
             if danger_button(ui, "Remove").clicked() {
-                if song.write().remove_tempo_change(Tick(tick)) {
+                if SongMutationService::new(song).remove_tempo_point(Tick(tick)) {
                     undo_manager.push(crate::undo::UndoAction::SetTempo {
                         tick: Tick(tick),
                         old: Some((Bpm::new(bpm), ramp)),

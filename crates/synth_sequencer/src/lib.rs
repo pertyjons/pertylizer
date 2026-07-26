@@ -75,8 +75,8 @@ pub use note_processor::{
     ArpMode, ArpOffsets, ArpRate, ArpVelocity, Arpeggiator, Chord, ExpandedNote, ExpansionBuffer,
     Humanize, MAX_ARP_HELD, MAX_ARP_OFFSETS, MAX_CHORD_INTERVALS, MAX_DELAY_REPEATS,
     MAX_EXPANSION_EVENTS_PER_TICK, MAX_LOOKBACK_DEPTH, MAX_NOTE_DELAY_TICKS, MAX_ORNAMENT_HITS,
-    MAX_RATCHET_SUBDIVISIONS, NoteProcessor, PitchClass, ScaleMask, ScaleQuantize, StrumDirection,
-    lookback_pool,
+    MAX_RATCHET_SUBDIVISIONS, NoteProcessor, PitchClass, ScaleMask, ScaleQuantize, ScaleTieBreak,
+    StrumDirection, lookback_pool,
 };
 pub use pattern::{HiddenEventSummary, Pattern, RowResolution};
 pub use pitch::{NoteName, Pitch, Velocity};

@@ -7,10 +7,9 @@
 
 use std::sync::Arc;
 
-use synth_core::ModuleParam;
 use synth_core::audio::SampleRate as HwSampleRate;
 use synth_core::{AudioCallbackContext, AudioProcessor, DenormalGuard, MidiNote, Velocity};
-use synth_engine::commands::{InstrumentParam, PortId};
+use synth_engine::commands::InstrumentParam;
 use synth_engine::instrument::{InstrumentId, MidiChannel};
 use synth_engine::{EngineCommand, SynthEngine};
 
@@ -228,187 +227,20 @@ impl OfflineNoteSession {
             })?;
         tmp_session.reset_counters_for_instrument(InstrumentId::FIRST);
 
-        // Helper to apply parameters + bypass for a given module snapshot.
-        let apply_module_state = |handle: &mut synth_engine::EngineHandle,
-                                  module_snap: &synth_engine::ModuleStateSnapshot,
-                                  descriptor: &synth_core::ModuleDescriptor,
-                                  warnings: &mut Vec<String>| {
-            let module_id = module_snap.id;
-            let is_effect = module_id.module_type.is_effect();
-            for desc_param in &descriptor.parameters {
-                if let Some(ep) = module_snap
-                    .parameters
-                    .iter()
-                    .find(|p| p.same_kind(&desc_param.id))
-                {
-                    // Full typed param, not an f32 round-trip: `with_f32(as_f32())`
-                    // collapses the Mod Matrix's address-carrying `SlotSource` /
-                    // `SlotDestination` (a `SrcAddr` / `DestAddr`) to a legacy enum
-                    // index, dropping any address the legacy enum lacks (e.g.
-                    // `spp-1.x`) — the routing would apply to nothing in preview /
-                    // analyze. Matches the arrangement loader + the live load path.
-                    let param = *ep;
-                    let sent = if is_effect {
-                        handle.send_blocking(EngineCommand::SetEffectParameter {
-                            instrument_id: Some(InstrumentId::FIRST),
-                            module_id,
-                            param,
-                        })
-                    } else {
-                        handle.send_blocking(EngineCommand::SetModuleParameter {
-                            instrument_id: Some(InstrumentId::FIRST),
-                            module_id,
-                            param,
-                        })
-                    };
-                    if !sent {
-                        warnings.push(format!(
-                            "preview: failed to enqueue parameter for module {module_id}"
-                        ));
-                    }
-                }
-            }
-
-            // Mirror bypass state from the live snapshot. Effects use
-            // SetEffectEnabled (which inverts: enabled = !bypassed); voice-graph
-            // modules use SetBypass directly.
-            let is_bypassed = matches!(module_snap.bypass_state, synth_core::BypassState::Bypassed);
-            if is_bypassed {
-                if is_effect {
-                    handle.send_blocking(EngineCommand::SetEffectEnabled {
-                        instrument_id: Some(InstrumentId::FIRST),
-                        module_id,
-                        enabled: false,
-                    });
-                } else {
-                    handle.send_blocking(EngineCommand::SetBypass {
-                        instrument_id: Some(InstrumentId::FIRST),
-                        module: module_id,
-                        bypass: true,
-                    });
-                }
-            }
-
-            // Replay YAMS scripts (scr / mmx / asc) — without this the offline
-            // note renderer leaves every scripted module silent (shared with the
-            // arrangement loader; see `audio::replay_module_scripts`).
-            crate::audio::replay_module_scripts(
-                handle,
-                InstrumentId::FIRST,
-                module_snap,
-                warnings,
-                "preview",
-            );
-        };
-
-        // Split modules into voice-graph and effect-chain buckets so we can
-        // process them in the right order. add_module_with_id dispatches on
-        // module_type.is_effect() under the hood, but we need effect-chain
-        // processing order (from the live chain) to be preserved.
-        let mut voice_modules: Vec<&synth_engine::ModuleStateSnapshot> = Vec::new();
-        let mut effect_modules: std::collections::HashMap<
-            synth_engine::commands::ModuleId,
-            &synth_engine::ModuleStateSnapshot,
-        > = std::collections::HashMap::new();
-        for m in &modules {
-            if m.module_type.is_visualizer() {
-                continue;
-            }
-            if m.module_type.is_effect() {
-                effect_modules.insert(m.id, m);
-            } else {
-                voice_modules.push(m);
-            }
-        }
-
-        // Load voice-graph modules first.
-        for module_snap in &voice_modules {
-            let module_id = module_snap.id;
-            let descriptor = match tmp_session.add_module_with_id(
-                InstrumentId::FIRST,
-                module_id,
-                module_id.module_type,
-            ) {
-                Ok(d) => d,
-                Err(e) => {
-                    warnings.push(format!("preview: failed to add module {module_id}: {e}"));
-                    continue;
-                }
-            };
-            apply_module_state(&mut handle, module_snap, &descriptor, &mut warnings);
-        }
-
-        load_sample_data_for_samplers(
+        crate::audio::instrument_hydration::hydrate_snapshot_instrument(
+            &tmp_session,
             &mut handle,
-            InstrumentId::FIRST,
-            &voice_modules,
-            sample_library,
+            crate::audio::instrument_hydration::SnapshotHydration {
+                instrument_id: InstrumentId::FIRST,
+                modules: &modules,
+                connections: &connections,
+                effect_chain_order: &effect_chain_order,
+                sample_library,
+                context: "preview",
+            },
             &mut warnings,
+            |_| {},
         );
-
-        // Load effects in chain order so the offline chain mirrors the live one.
-        // Any effects that are present in the snapshot but not in the chain order
-        // (shouldn't happen) are added afterwards in arbitrary order.
-        let mut handled: std::collections::HashSet<synth_engine::commands::ModuleId> =
-            std::collections::HashSet::new();
-        for module_id in &effect_chain_order {
-            if let Some(module_snap) = effect_modules.get(module_id) {
-                handled.insert(*module_id);
-                let descriptor = match tmp_session.add_module_with_id(
-                    InstrumentId::FIRST,
-                    *module_id,
-                    module_id.module_type,
-                ) {
-                    Ok(d) => d,
-                    Err(e) => {
-                        warnings.push(format!("preview: failed to add effect {module_id}: {e}"));
-                        continue;
-                    }
-                };
-                apply_module_state(&mut handle, module_snap, &descriptor, &mut warnings);
-            }
-        }
-        for (module_id, module_snap) in &effect_modules {
-            if handled.contains(module_id) {
-                continue;
-            }
-            warnings.push(format!(
-                "preview: effect {module_id} present but missing from chain order — appending"
-            ));
-            let descriptor = match tmp_session.add_module_with_id(
-                InstrumentId::FIRST,
-                *module_id,
-                module_id.module_type,
-            ) {
-                Ok(d) => d,
-                Err(e) => {
-                    warnings.push(format!("preview: failed to add effect {module_id}: {e}"));
-                    continue;
-                }
-            };
-            apply_module_state(&mut handle, module_snap, &descriptor, &mut warnings);
-        }
-
-        // Load connections (voice graph internal — effects are wired implicitly).
-        for conn in &connections {
-            // Skip connections involving visualizer modules
-            if conn.from_module.module_type.is_visualizer()
-                || conn.to_module.module_type.is_visualizer()
-            {
-                continue;
-            }
-            let sent = handle.send_blocking(EngineCommand::Connect {
-                instrument_id: Some(InstrumentId::FIRST),
-                from: PortId::new(conn.from_module, conn.from_port),
-                to: PortId::new(conn.to_module, conn.to_port),
-            });
-            if !sent {
-                warnings.push(format!(
-                    "preview: failed to enqueue connection {} → {}",
-                    conn.from_module, conn.to_module
-                ));
-            }
-        }
 
         // Enable the instrument
         handle.send_blocking(EngineCommand::SetInstrumentEnabled {

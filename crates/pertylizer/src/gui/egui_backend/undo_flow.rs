@@ -1,6 +1,7 @@
 //! undo flow responsibilities for the egui application.
 
 use super::*;
+use crate::app_services::{SongMutationService, TempoPointEdit};
 
 impl SynthApp {
     /// Handle Ctrl+Z (undo) and Ctrl+Shift+Z (redo) keyboard shortcuts.
@@ -461,17 +462,11 @@ impl SynthApp {
                 }
             }
             UndoAction::SetTempo { tick, new, .. } => {
-                let mut song_w = self.song.write();
-                if let Some((bpm, ramp)) = *new {
-                    song_w.set_tempo_ramp_at(*tick, bpm, ramp);
-                } else {
-                    song_w.remove_tempo_change(*tick);
-                }
+                SongMutationService::new(&self.song).apply_tempo_point(*tick, *new);
             }
             UndoAction::MoveTempo { old, new } => {
-                let mut song_w = self.song.write();
-                song_w.remove_tempo_change(old.0);
-                song_w.set_tempo_ramp_at(new.0, new.1, new.2);
+                SongMutationService::new(&self.song)
+                    .move_tempo_point(old.0, TempoPointEdit::new(new.0, new.1, new.2));
             }
             UndoAction::MovePlacement {
                 pattern_id,
