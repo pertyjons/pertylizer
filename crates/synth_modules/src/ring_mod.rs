@@ -16,8 +16,8 @@ use std::f32::consts::TAU;
 use synth_core::VoicePitch;
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
-    WidgetHint,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortValueDomain,
+    ProcessContext, ResponseCurve, WidgetHint,
 };
 use synth_core::{
     BipolarValue, Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate, Velocity, Waveform,
@@ -194,7 +194,11 @@ impl Describable for RingMod {
             )
             .port(
                 PortDescriptor::control_input("freq_cv", "Freq CV")
-                    .description("Modulates carrier frequency. Connect: LFO, Envelope"),
+                    .value_domain(PortValueDomain::Octaves)
+                    .description(
+                        "Modulates carrier frequency (1V/oct, clamped to ±1 octave). \
+                         Connect: LFO, Envelope",
+                    ),
             )
             .port(
                 PortDescriptor::audio_output("out", "Out")

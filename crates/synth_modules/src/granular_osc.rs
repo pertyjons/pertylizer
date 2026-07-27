@@ -18,7 +18,7 @@ use synth_core::{
     AudioBuffer, BipolarValue, Describable, Gain, GrainSource, GrainWindow, GranularParam, Hertz,
     InputPorts, Milliseconds, ModuleCategory, ModuleDescriptor, ModuleType, NormalizedValue, Param,
     ParamModOffsets, ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortName,
-    ProcessContext, SampleRate, WidgetHint,
+    PortValueDomain, ProcessContext, SampleRate, WidgetHint,
 };
 use synth_core::{MidiNote, Seconds, Velocity};
 
@@ -452,7 +452,11 @@ impl Describable for GranularOsc {
             )
             .port(
                 PortDescriptor::control_input("pitch_cv", "Pitch CV")
-                    .description("1V/oct pitch offset (octaves). Connect: LFO, Envelope, Pitch"),
+                    .value_domain(PortValueDomain::Octaves)
+                    .description(
+                        "1V/oct pitch offset, clamped to ±1 octave. \
+                         Connect: LFO, Envelope, Pitch",
+                    ),
             )
             .port(
                 PortDescriptor::control_input("pos_cv", "Pos CV").description(

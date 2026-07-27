@@ -261,11 +261,21 @@ pub(super) fn build_module_type_info(
 
     let category = module_category(mt);
 
-    let port_to_info = |p: &synth_core::PortDescriptor| synth_mcp::types::PortTypeInfo {
-        name: p.name.to_string(),
-        label: p.label.clone(),
-        description: p.description.clone(),
-        signal_type: port_type_str(p.port_type).to_owned(),
+    let port_to_info = |p: &synth_core::PortDescriptor| {
+        let nominal_range = p.value_domain.nominal_range();
+        synth_mcp::types::PortTypeInfo {
+            name: p.name.to_string(),
+            label: p.label.clone(),
+            description: p.description.clone(),
+            signal_type: port_type_str(p.port_type).to_owned(),
+            value_domain: synth_mcp::types::PortValueDomainInfo {
+                id: p.value_domain.id().to_owned(),
+                accepted_values: p.value_domain.accepted_values().to_owned(),
+                nominal_min: nominal_range.map(synth_core::PortValueRange::min),
+                nominal_max: nominal_range.map(synth_core::PortValueRange::max),
+                unit: p.value_domain.unit().map(str::to_owned),
+            },
+        }
     };
 
     let input_ports = desc

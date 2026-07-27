@@ -154,6 +154,27 @@ offline rendering. Remaining refinements follow.
   whole metering opt-in/off-by-default or sampling it sparsely — a cross-cutting change to
   the existing metering subsystem, not mod-grid-specific. **S–M.**
 
+### 2.8 Port value domains — open follow-ups
+
+`PortValueDomain` annotates every port with the value contract it accepts/produces
+(`feat/port-value-domains`). Two ports were deliberately left alone during the
+review of that branch because fixing them changes audible behaviour or needs a new
+domain.
+
+- [ ] **Turing Machine's pitch range is capped at 1 octave by its own storage type.**
+  `turing_machine.rs` quantizes to semitones/12 and stores the result in a
+  `NormalizedValue`, which clamps to `0..1` — so the `range` parameter's advertised
+  "up to 2 octaves" can never exceed one. The port now *documents* the real 0–1
+  octave range, but the parameter still lies. Fix by storing the pitch CV in a type
+  that carries the full range (or scaling `range` into 0..1 and multiplying at the
+  consumer). **Audible behaviour change** — patches relying on the current clamped
+  output will transpose differently. **S.**
+- [ ] **`math_oscillator`'s `fm` port has no matching domain.** It uses `apply_fm`
+  (2 octaves per unit), which neither `Octaves` (1 octave/unit) nor `Control`
+  describes, so it was left on the generic `control` domain while every other 1V/oct
+  FM port got annotated. Either add a domain variant for the 2-octave scaling or
+  change `math_oscillator` to the standard 1V/oct `apply_cv`. **S.**
+
 ---
 
 ## 3. UI & Visual Polish

@@ -14,7 +14,7 @@ use synth_core::VoicePitch;
 use synth_core::{AmFormantParam, ModuleType, Param};
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
+    ParameterDescriptor, PolyModule, PortDescriptor, PortValueDomain, ProcessContext, WidgetHint,
 };
 use synth_core::{
     BipolarValue, Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate, Velocity,
@@ -164,9 +164,12 @@ impl Describable for AmFormant {
                 .widget(WidgetHint::Knob),
             )
             .port(
-                PortDescriptor::control_input("pitch_cv", "Pitch CV").description(
-                    "1V/oct pitch offset (octaves) on the AM modulator. Connect: LFO, Pitch",
-                ),
+                PortDescriptor::control_input("pitch_cv", "Pitch CV")
+                    .value_domain(PortValueDomain::Octaves)
+                    .description(
+                        "1V/oct pitch offset on the AM modulator, clamped to ±1 octave. \
+                         Connect: LFO, Pitch",
+                    ),
             )
             .port(
                 PortDescriptor::control_input("vowel_cv", "Vowel CV").description(

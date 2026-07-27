@@ -10,7 +10,8 @@ use std::collections::HashMap;
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
+    ParameterDescriptor, PolyModule, PortDescriptor, PortValueDomain, ProcessContext,
+    ResponseCurve, WidgetHint,
 };
 use synth_core::{BipolarValue, Hertz, MidiNote, NormalizedValue, PortName, SampleRate, Velocity};
 use synth_core::{ChaoticOscParam, ChaoticSystem, ModuleType, Param};
@@ -171,12 +172,15 @@ impl Describable for ChaoticOsc {
                     .description("Modulate iteration speed (exp FM). Connect: LFO, Envelope"),
             )
             .port(
-                PortDescriptor::control_output("out", "Out").description(
-                    "X-axis output (±depth). Connect to: Filter Cutoff CV, Oscillator FM",
-                ),
+                PortDescriptor::control_output("out", "Out")
+                    .value_domain(PortValueDomain::Bipolar)
+                    .description(
+                        "X-axis output (±depth). Connect to: Filter Cutoff CV, Oscillator FM",
+                    ),
             )
             .port(
                 PortDescriptor::control_output("out_y", "Y Out")
+                    .value_domain(PortValueDomain::Bipolar)
                     .description("Y-axis output (±depth). Second chaotic dimension"),
             )
     }

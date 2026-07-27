@@ -176,6 +176,24 @@ fn descriptor_catalog_exposes_ports_and_canonical_compatibility() {
             assert_eq!(actual["description"], expected.description);
             assert_eq!(actual["direction"], expected.direction.id());
             assert_eq!(actual["signal_type"], expected.port_type.id());
+            let value_domain = &actual["value_domain"];
+            assert_eq!(value_domain["id"], expected.value_domain.id());
+            assert_eq!(
+                value_domain["accepted_values"],
+                expected.value_domain.accepted_values()
+            );
+            if let Some(range) = expected.value_domain.nominal_range() {
+                assert_eq!(value_domain["nominal_min"], range.min());
+                assert_eq!(value_domain["nominal_max"], range.max());
+            } else {
+                assert!(value_domain.get("nominal_min").is_none());
+                assert!(value_domain.get("nominal_max").is_none());
+            }
+            if let Some(unit) = expected.value_domain.unit() {
+                assert_eq!(value_domain["unit"], unit);
+            } else {
+                assert!(value_domain.get("unit").is_none());
+            }
         }
     }
 }

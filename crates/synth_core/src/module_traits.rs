@@ -1156,6 +1156,140 @@ impl PortDirection {
     }
 }
 
+/// Numeric value range advertised for a port's nominal signal domain.
+///
+/// This is descriptive metadata, not an engine clamp. Ports accept the values
+/// documented by [`PortValueDomain::accepted_values`]; the nominal range tells
+/// patch builders which values a well-behaved source normally produces.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+#[must_use]
+pub struct PortValueRange {
+    min: f32,
+    max: f32,
+}
+
+impl PortValueRange {
+    pub const UNIPOLAR: Self = Self::new(0.0, 1.0);
+    pub const BIPOLAR: Self = Self::new(-1.0, 1.0);
+
+    const fn new(min: f32, max: f32) -> Self {
+        Self { min, max }
+    }
+
+    #[must_use]
+    pub const fn min(self) -> f32 {
+        self.min
+    }
+
+    #[must_use]
+    pub const fn max(self) -> f32 {
+        self.max
+    }
+}
+
+/// Value semantics for a module port.
+///
+/// Signal type answers whether a port carries audio, control, gate, or MIDI.
+/// This domain separately documents which numeric values the port accepts and
+/// the nominal range/unit a source should use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum PortValueDomain {
+    /// Any finite audio sample; nominal linear amplitude is -1 to +1.
+    Audio,
+    /// Any finite control value with no narrower universal nominal range.
+    Control,
+    /// Any finite normalized control value; nominal range is 0 to 1.
+    Unipolar,
+    /// Any finite normalized control value; nominal range is -1 to +1.
+    Bipolar,
+    /// Any finite gate value, thresholded at 0.5; conventional values are 0/1.
+    Gate,
+    /// Pitch measured in octaves (+1 doubles frequency); per-module clamped.
+    Octaves,
+    /// Pitch measured in semitones (+12 doubles frequency); per-module clamped.
+    Semitones,
+    /// Any finite additive offset in SID frequency-register units.
+    SidFrequencyRegisterOffset,
+    /// Any finite additive offset in SID pulse-width-register units.
+    SidPulseWidthRegisterOffset,
+    /// MIDI channel/system messages rather than numeric sample values.
+    Midi,
+}
+
+impl PortValueDomain {
+    /// Stable lowercase identifier used by descriptor catalogs.
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Audio => "audio",
+            Self::Control => "control",
+            Self::Unipolar => "unipolar",
+            Self::Bipolar => "bipolar",
+            Self::Gate => "gate",
+            Self::Octaves => "octaves",
+            Self::Semitones => "semitones",
+            Self::SidFrequencyRegisterOffset => "sid_frequency_register_offset",
+            Self::SidPulseWidthRegisterOffset => "sid_pulse_width_register_offset",
+            Self::Midi => "midi",
+        }
+    }
+
+    /// Exact value contract for discovery clients: which values an input port
+    /// accepts, or equivalently which values an output port produces.
+    #[must_use]
+    pub const fn accepted_values(self) -> &'static str {
+        match self {
+            Self::Audio => {
+                "Any finite f32 sample; values outside the nominal range are allowed but may clip downstream."
+            }
+            Self::Control | Self::Unipolar | Self::Bipolar => "Any finite f32 control value.",
+            Self::Gate => "Any finite f32; values <= 0.5 are low and values > 0.5 are high.",
+            Self::Octaves => {
+                "Any finite f32 pitch value in octaves; +1.0 doubles and -1.0 halves frequency. Each module clamps the offset it applies (1V/oct oscillator inputs to ±1 octave); see the port description."
+            }
+            Self::Semitones => {
+                "Any finite f32 pitch value in semitones; +12.0 doubles and -12.0 halves frequency. Each module clamps the offset it applies; see the port description."
+            }
+            Self::SidFrequencyRegisterOffset => {
+                "Any finite f32 additive SID frequency-register offset; the effective register is clamped to its hardware range."
+            }
+            Self::SidPulseWidthRegisterOffset => {
+                "Any finite f32 additive SID pulse-width-register offset; the effective register is clamped to its hardware range."
+            }
+            Self::Midi => "Valid MIDI channel or system messages.",
+        }
+    }
+
+    /// Nominal range produced or expected by the port, when one is meaningful.
+    #[must_use]
+    pub const fn nominal_range(self) -> Option<PortValueRange> {
+        match self {
+            Self::Audio | Self::Bipolar => Some(PortValueRange::BIPOLAR),
+            Self::Unipolar | Self::Gate => Some(PortValueRange::UNIPOLAR),
+            Self::Control
+            | Self::Octaves
+            | Self::Semitones
+            | Self::SidFrequencyRegisterOffset
+            | Self::SidPulseWidthRegisterOffset
+            | Self::Midi => None,
+        }
+    }
+
+    /// Stable unit identifier for numeric discovery clients.
+    #[must_use]
+    pub const fn unit(self) -> Option<&'static str> {
+        match self {
+            Self::Audio => Some("linear_amplitude"),
+            Self::Unipolar | Self::Bipolar | Self::Gate => Some("normalized"),
+            Self::Octaves => Some("octaves"),
+            Self::Semitones => Some("semitones"),
+            Self::SidFrequencyRegisterOffset => Some("sid_frequency_register_units"),
+            Self::SidPulseWidthRegisterOffset => Some("sid_pulse_width_register_units"),
+            Self::Control | Self::Midi => None,
+        }
+    }
+}
+
 /// Description of a port.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PortDescriptor {
@@ -1169,6 +1303,8 @@ pub struct PortDescriptor {
     pub port_type: PortType,
     /// Direction.
     pub direction: PortDirection,
+    /// Accepted values, nominal range, and unit for the signal.
+    pub value_domain: PortValueDomain,
 }
 
 impl PortDescriptor {
@@ -1179,6 +1315,7 @@ impl PortDescriptor {
             description: String::new(),
             port_type: PortType::Audio,
             direction: PortDirection::Input,
+            value_domain: PortValueDomain::Audio,
         }
     }
 
@@ -1189,6 +1326,7 @@ impl PortDescriptor {
             description: String::new(),
             port_type: PortType::Audio,
             direction: PortDirection::Output,
+            value_domain: PortValueDomain::Audio,
         }
     }
 
@@ -1200,6 +1338,7 @@ impl PortDescriptor {
             description: String::new(),
             port_type: PortType::Control,
             direction: PortDirection::Output,
+            value_domain: PortValueDomain::Control,
         }
     }
 
@@ -1211,6 +1350,7 @@ impl PortDescriptor {
             description: String::new(),
             port_type: PortType::Gate,
             direction: PortDirection::Output,
+            value_domain: PortValueDomain::Gate,
         }
     }
 
@@ -1221,6 +1361,7 @@ impl PortDescriptor {
             description: String::new(),
             port_type: PortType::Control,
             direction: PortDirection::Input,
+            value_domain: PortValueDomain::Control,
         }
     }
 
@@ -1231,11 +1372,19 @@ impl PortDescriptor {
             description: String::new(),
             port_type: PortType::Gate,
             direction: PortDirection::Input,
+            value_domain: PortValueDomain::Gate,
         }
     }
 
     pub fn description(mut self, desc: impl Into<String>) -> Self {
         self.description = desc.into();
+        self
+    }
+
+    /// Declare accepted values and the port's nominal signal range/unit.
+    #[must_use]
+    pub fn value_domain(mut self, value_domain: PortValueDomain) -> Self {
+        self.value_domain = value_domain;
         self
     }
 }
@@ -2006,6 +2155,32 @@ mod tests {
         assert!(PortType::Gate.can_drive(PortType::Gate));
         assert!(PortType::Midi.can_drive(PortType::Midi));
         assert!(!PortType::Midi.can_drive(PortType::Audio));
+    }
+
+    #[test]
+    fn port_value_domains_distinguish_acceptance_from_nominal_range() {
+        assert_eq!(PortValueDomain::Audio.id(), "audio");
+        assert_eq!(
+            PortValueDomain::Audio.nominal_range(),
+            Some(PortValueRange::BIPOLAR)
+        );
+        assert!(
+            PortValueDomain::Audio
+                .accepted_values()
+                .contains("outside the nominal range are allowed")
+        );
+
+        assert_eq!(PortValueDomain::Control.nominal_range(), None);
+        assert_eq!(
+            PortValueDomain::Unipolar.nominal_range(),
+            Some(PortValueRange::UNIPOLAR)
+        );
+        assert_eq!(PortValueDomain::Octaves.unit(), Some("octaves"));
+        assert!(PortValueDomain::Gate.accepted_values().contains("> 0.5"));
+
+        let port =
+            PortDescriptor::control_output("out", "Out").value_domain(PortValueDomain::Bipolar);
+        assert_eq!(port.value_domain, PortValueDomain::Bipolar);
     }
 
     #[test]

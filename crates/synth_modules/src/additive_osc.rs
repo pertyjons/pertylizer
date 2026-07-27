@@ -12,7 +12,7 @@ use synth_core::VoicePitch;
 use synth_core::{
     AdditiveParam, AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor,
     ModuleType, Param, ParamModOffsets, ParameterDescriptor, ParameterUnit, PolyModule,
-    PortDescriptor, ProcessContext, WidgetHint,
+    PortDescriptor, PortValueDomain, ProcessContext, WidgetHint,
 };
 use synth_core::{
     BipolarValue, Hertz, MidiNote, NormalizedValue, PortName, SampleRate, Seconds, Velocity,
@@ -229,9 +229,12 @@ impl Describable for AdditiveOsc {
                 .widget(WidgetHint::Knob),
             )
             .port(
-                PortDescriptor::control_input("freq_cv", "Freq CV").description(
-                    "Modulates pitch (1V/oct). Connect: LFO, Envelope, Kinetic Modulator",
-                ),
+                PortDescriptor::control_input("freq_cv", "Freq CV")
+                    .value_domain(PortValueDomain::Octaves)
+                    .description(
+                        "Modulates pitch (1V/oct), clamped to ±1 octave. \
+                         Connect: LFO, Envelope, Kinetic Modulator",
+                    ),
             )
             .port(
                 PortDescriptor::audio_output("out", "Out")

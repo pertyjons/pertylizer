@@ -25,7 +25,7 @@ use std::collections::HashMap;
 use synth_core::VoicePitch;
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
+    ParameterDescriptor, PolyModule, PortDescriptor, PortValueDomain, ProcessContext, WidgetHint,
 };
 use synth_core::{Cents, Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate, Velocity};
 use synth_core::{ModuleType, Param, VoiceSynthParam};
@@ -37,6 +37,11 @@ use crate::voice_common::{self, MAX_UNISON, ONSET_MAX_SECS, RNG_SEED, VoiceSprea
 const GLOTTAL_TP: f32 = 0.6;
 /// Makeup gain applied to breath noise before it joins the glottal excitation.
 const NOISE_GAIN: f32 = 2.0;
+/// Clamp on `pitch_cv` (semitones) so the effective F0 — and with it the phase
+/// increment — stays finite. Without it a huge finite CV makes `2^(semis/12)`
+/// overflow to infinity, and `(phase + inf).fract()` latches the voice phases
+/// to NaN for good. Mirrors `fof::MAX_PITCH_CV_SEMITONES`.
+const MAX_PITCH_CV_SEMITONES: f32 = 60.0;
 
 /// 2nd-order bandpass filter state (per band).
 #[derive(Clone, Copy, Default)]
@@ -461,7 +466,11 @@ impl Describable for VoiceSynth {
             )
             .port(
                 PortDescriptor::control_input("pitch_cv", "Pitch CV")
-                    .description("Pitch offset in semitones. Connect: LFO, Envelope, Pitch bend"),
+                    .value_domain(PortValueDomain::Semitones)
+                    .description(
+                        "Pitch offset in semitones, clamped to ±60. \
+                         Connect: LFO, Envelope, Pitch bend",
+                    ),
             )
             .port(
                 PortDescriptor::control_input("vowel_cv", "Vowel CV")
@@ -573,7 +582,9 @@ impl PolyModule for VoiceSynth {
                 }
             }
 
-            let pcv = pitch_cv.get(i);
+            let pcv = pitch_cv
+                .get(i)
+                .clamp(-MAX_PITCH_CV_SEMITONES, MAX_PITCH_CV_SEMITONES);
             let breath = (breath_base + breath_cv.get(i)).clamp(0.0, 1.0);
 
             let mut raw = 0.0_f32;
@@ -846,6 +857,40 @@ mod tests {
         let out = &outputs[&PortName::OUT];
         let max = (0..512).map(|i| out[i].abs()).fold(0.0_f32, f32::max);
         assert!(max > 0.01, "Voice synth should produce sound, max={max}");
+    }
+
+    /// An absurdly large (or infinite) `pitch_cv` must not poison the output:
+    /// unclamped it overflows `2^(semis/12)` to infinity, and the phase advance
+    /// `(phase + inf).fract()` latches every voice phase to NaN permanently.
+    #[test]
+    fn test_voice_synth_extreme_pitch_cv_finite() {
+        let mut v = VoiceSynth::new();
+        v.note_on(MidiNote::new(60), Velocity::MAX);
+
+        let mut cv = AudioBuffer::new(256);
+        for i in 0..256 {
+            cv[i] = if i % 2 == 0 { f32::INFINITY } else { 1.0e30 };
+        }
+        let ports_data = [(PortName::PITCH_CV, &cv)];
+        let mut outputs = outputs_stereo(256);
+        v.process(InputPorts::new(&ports_data), &mut outputs, &ctx(256));
+
+        let out = &outputs[&PortName::OUT];
+        assert!(
+            (0..256).all(|i| out[i].is_finite()),
+            "Extreme pitch_cv must not yield non-finite output"
+        );
+
+        // …and the module must recover: a later block with no CV still sounds.
+        let mut clean = outputs_stereo(512);
+        v.process(InputPorts::empty(), &mut clean, &ctx(512));
+        let max = (0..512)
+            .map(|i| clean[&PortName::OUT][i].abs())
+            .fold(0.0_f32, f32::max);
+        assert!(
+            max > 0.001,
+            "voice should still sound afterwards, max={max}"
+        );
     }
 
     #[test]

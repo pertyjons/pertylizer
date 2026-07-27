@@ -10,7 +10,8 @@ use std::collections::HashMap;
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
+    ParameterDescriptor, PolyModule, PortDescriptor, PortValueDomain, ProcessContext,
+    ResponseCurve, WidgetHint,
 };
 use synth_core::{
     BipolarValue, Hertz, MidiNote, NormalizedValue, Phase, PortName, SampleRate, Velocity,
@@ -122,9 +123,11 @@ impl Describable for DriftGenerator {
                     .description("Modulate wander speed (exp FM). Connect: LFO, Envelope"),
             )
             .port(
-                PortDescriptor::control_output("out", "Out").description(
-                    "Drift signal (±depth). Connect to: Oscillator FM, Filter Cutoff CV",
-                ),
+                PortDescriptor::control_output("out", "Out")
+                    .value_domain(PortValueDomain::Bipolar)
+                    .description(
+                        "Drift signal (±depth). Connect to: Oscillator FM, Filter Cutoff CV",
+                    ),
             )
     }
 }

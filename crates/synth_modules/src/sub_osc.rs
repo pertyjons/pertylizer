@@ -15,8 +15,8 @@ use std::f32::consts::TAU;
 use synth_core::VoicePitch;
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortName, ProcessContext,
-    WidgetHint,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortName, PortValueDomain,
+    ProcessContext, WidgetHint,
 };
 use synth_core::{
     BipolarValue, Gain, Hertz, MidiNote, NormalizedValue, Phase, SampleRate, Seconds, Velocity,
@@ -170,7 +170,11 @@ impl Describable for SubOscillator {
             )
             .port(
                 PortDescriptor::control_input("pitch_cv", "Pitch CV")
-                    .description("1V/oct pitch offset (octaves). Connect: LFO, Envelope, Pitch"),
+                    .value_domain(PortValueDomain::Octaves)
+                    .description(
+                        "1V/oct pitch offset, clamped to ±1 octave. \
+                         Connect: LFO, Envelope, Pitch",
+                    ),
             )
             .port(
                 PortDescriptor::control_input("level_cv", "Level CV").description(

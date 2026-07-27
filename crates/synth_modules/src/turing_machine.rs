@@ -9,7 +9,7 @@ use std::collections::HashMap;
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ModuleType,
     NormalizedValue, Param, ParamModOffsets, ParameterDescriptor, PolyModule, PortDescriptor,
-    ProcessContext, StepCount, TuringMachineParam, TuringScale, WidgetHint,
+    PortValueDomain, ProcessContext, StepCount, TuringMachineParam, TuringScale, WidgetHint,
 };
 use synth_core::{MidiNote, PortName, SampleRate, Velocity};
 
@@ -196,7 +196,14 @@ impl Describable for TuringMachine {
                 .widget(WidgetHint::Knob),
             )
             .port(PortDescriptor::gate_input("clock", "Clock").description("External clock input"))
-            .port(PortDescriptor::control_output("pitch", "Pitch").description("Pitch CV output"))
+            .port(
+                PortDescriptor::control_output("pitch", "Pitch")
+                    .value_domain(PortValueDomain::Octaves)
+                    .description(
+                        "Quantized pitch CV output (1V/oct, 0–1 octave). \
+                         Connect to: Oscillator Freq CV",
+                    ),
+            )
             .port(PortDescriptor::gate_output("gate", "Gate").description("Gate output"))
     }
 }

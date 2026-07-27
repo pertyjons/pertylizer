@@ -11,7 +11,7 @@ use std::collections::HashMap;
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
+    ParameterDescriptor, PolyModule, PortDescriptor, PortValueDomain, ProcessContext, WidgetHint,
 };
 use synth_core::{Hertz, MidiNote, NormalizedValue, PortName, SampleRate, Velocity};
 use synth_core::{ModuleType, Param, PitchTrackerParam};
@@ -236,7 +236,13 @@ impl Describable for PitchTracker {
             )
             .port(
                 PortDescriptor::control_output("pitch_cv", "Pitch CV")
-                    .description("1V/oct pitch CV output. Connect to: Oscillator Freq CV"),
+                    .value_domain(PortValueDomain::Octaves)
+                    .description(
+                        "1V/oct pitch CV output — absolute pitch in octaves relative to \
+                         C4 (261.63 Hz), not an offset, so 1V/oct inputs that clamp to \
+                         ±1 octave only track one octave around C4. \
+                         Connect to: Oscillator Freq CV",
+                    ),
             )
             .port(
                 PortDescriptor::gate_output("gate", "Gate").description(

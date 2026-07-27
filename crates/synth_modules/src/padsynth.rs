@@ -16,8 +16,8 @@ use std::collections::HashMap;
 use synth_core::VoicePitch;
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
-    WidgetHint,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortValueDomain,
+    ProcessContext, ResponseCurve, WidgetHint,
 };
 use synth_core::{BipolarValue, Hertz, MidiNote, NormalizedValue, PortName, SampleRate, Velocity};
 use synth_core::{ModuleType, PadSynthParam, Param};
@@ -318,7 +318,11 @@ impl Describable for PadSynth {
             )
             .port(
                 PortDescriptor::control_input("pitch_cv", "Pitch CV")
-                    .description("1V/oct pitch offset (octaves). Connect: LFO, Envelope, Pitch"),
+                    .value_domain(PortValueDomain::Octaves)
+                    .description(
+                        "1V/oct pitch offset, clamped to ±1 octave. \
+                         Connect: LFO, Envelope, Pitch",
+                    ),
             )
             .port(
                 PortDescriptor::audio_output("out", "Out")

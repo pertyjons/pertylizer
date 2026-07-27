@@ -10,7 +10,8 @@ use std::collections::HashMap;
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
+    ParameterDescriptor, PolyModule, PortDescriptor, PortValueDomain, ProcessContext,
+    ResponseCurve, WidgetHint,
 };
 use synth_core::{BeatDetectorParam, ModuleType, Param};
 use synth_core::{Hertz, MidiNote, Milliseconds, NormalizedValue, PortName, SampleRate, Velocity};
@@ -109,6 +110,7 @@ impl Describable for BeatDetector {
             )
             .port(
                 PortDescriptor::control_output("out", "Env Out")
+                    .value_domain(PortValueDomain::Unipolar)
                     .description("Envelope follower output (0-1)"),
             )
             .port(

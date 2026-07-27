@@ -16,8 +16,8 @@ use synth_core::VoicePitch;
 use synth_core::{
     AudioBuffer, BipolarValue, Describable, FractalOscParam, Hertz, InputPorts, MidiNote,
     ModuleCategory, ModuleDescriptor, ModuleType, NormalizedValue, Param, ParamModOffsets,
-    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortName, ProcessContext,
-    SampleRate, Seconds, Velocity, WidgetHint,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortName, PortValueDomain,
+    ProcessContext, SampleRate, Seconds, Velocity, WidgetHint,
 };
 
 use crate::osc_glide::OscGlide;
@@ -251,7 +251,11 @@ impl Describable for FractalOscillator {
             )
             .port(
                 PortDescriptor::control_input("freq_cv", "Freq CV")
-                    .description("Pitch modulation (1V/oct). Connect: LFO, Envelope"),
+                    .value_domain(PortValueDomain::Octaves)
+                    .description(
+                        "Pitch modulation (1V/oct), clamped to ±1 octave. \
+                         Connect: LFO, Envelope",
+                    ),
             )
             .port(
                 PortDescriptor::audio_output("out_l", "Out L")

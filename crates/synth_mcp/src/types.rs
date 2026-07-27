@@ -521,6 +521,26 @@ pub struct PortTypeInfo {
     pub description: String,
     /// Signal type: "audio", "control", "gate", or "midi".
     pub signal_type: String,
+    /// Accepted values plus nominal range and unit for this port.
+    pub value_domain: PortValueDomainInfo,
+}
+
+/// Accepted values and nominal signal range for a module port.
+#[derive(Debug, Clone, Serialize)]
+pub struct PortValueDomainInfo {
+    /// Stable semantic identifier such as "unipolar", "bipolar", or "octaves".
+    pub id: String,
+    /// Values this domain accepts on an input port, or produces on an output.
+    pub accepted_values: String,
+    /// Lower bound of the nominal range, when the domain has one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nominal_min: Option<f32>,
+    /// Upper bound of the nominal range, when the domain has one.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub nominal_max: Option<f32>,
+    /// Stable unit identifier, when applicable.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub unit: Option<String>,
 }
 
 /// Information about an available module type.

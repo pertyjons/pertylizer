@@ -6,8 +6,8 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
-    WidgetHint,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortValueDomain,
+    ProcessContext, ResponseCurve, WidgetHint,
 };
 use synth_core::{
     BipolarValue, MidiNote, NormalizedValue, PortName, SampleRate, Seconds, TimeScale, Velocity,
@@ -499,11 +499,16 @@ impl Describable for Envelope {
             )
             .port(
                 PortDescriptor::control_input("velocity", "Vel")
+                    .value_domain(PortValueDomain::Unipolar)
                     .description("Velocity. Automatic from keyboard"),
             )
-            .port(PortDescriptor::control_output("out", "Out").description(
-                "Envelope signal (0–1). Connect to: Filter Cutoff CV, Amplifier CV, Oscillator FM",
-            ))
+            .port(
+                PortDescriptor::control_output("out", "Out")
+                    .value_domain(PortValueDomain::Unipolar)
+                    .description(
+                        "Envelope signal (0–1). Connect to: Filter Cutoff CV, Amplifier CV, Oscillator FM",
+                    ),
+            )
     }
 }
 

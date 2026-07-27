@@ -13,7 +13,7 @@
 use std::collections::HashMap;
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
+    ParameterDescriptor, PolyModule, PortDescriptor, PortValueDomain, ProcessContext, WidgetHint,
 };
 use synth_core::{
     BipolarValue, MidiNote, NormalizedValue, Phase, PortName, SampleRate, Seconds, TimeScale,
@@ -521,7 +521,11 @@ impl Describable for Mseg {
                 PortDescriptor::gate_input("trigger", "Trigger")
                     .description("Trigger input (retrigger on rising edge)"),
             )
-            .port(PortDescriptor::control_output("out", "Out").description("Envelope output (0-1)"))
+            .port(
+                PortDescriptor::control_output("out", "Out")
+                    .value_domain(PortValueDomain::Unipolar)
+                    .description("Envelope output (0-1)"),
+            )
     }
 }
 

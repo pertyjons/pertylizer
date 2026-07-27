@@ -15,7 +15,8 @@ use std::collections::HashMap;
 use synth_core::VoicePitch;
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortValueDomain,
+    ProcessContext, WidgetHint,
 };
 use synth_core::{
     BipolarValue, Cents, Gain, Hertz, MidiNote, NormalizedValue, Octaves, Phase, PortName,
@@ -178,9 +179,12 @@ impl Describable for WavetableOsc {
                 .widget(WidgetHint::Knob),
             )
             .port(
-                PortDescriptor::control_input("fm", "FM").description(
-                    "Modulates pitch. Connect: LFO for vibrato, Envelope for pitch sweep",
-                ),
+                PortDescriptor::control_input("fm", "FM")
+                    .value_domain(PortValueDomain::Octaves)
+                    .description(
+                        "Modulates pitch (1V/oct, clamped to ±1 octave). \
+                         Connect: LFO for vibrato, Envelope for pitch sweep",
+                    ),
             )
             .port(
                 PortDescriptor::control_input("pos_cv", "Pos CV").description(

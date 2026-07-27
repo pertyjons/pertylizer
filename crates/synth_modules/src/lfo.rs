@@ -5,7 +5,8 @@ use std::collections::HashMap;
 use synth_core::hash::RtRng;
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, ResponseCurve, WidgetHint,
+    ParameterDescriptor, PolyModule, PortDescriptor, PortValueDomain, ProcessContext,
+    ResponseCurve, WidgetHint,
 };
 use synth_core::{
     BeatDivision, BipolarValue, Hertz, MidiNote, NormalizedValue, Phase, PortName, RetriggerMode,
@@ -239,9 +240,13 @@ impl Describable for Lfo {
                     "Modulates LFO rate. Connect: another LFO, Envelope, Kinetic Modulator",
                 ),
             )
-            .port(PortDescriptor::control_output("out", "Out").description(
-                "LFO signal (±1). Connect to: Oscillator FM/PM/PWM, Filter Cutoff CV, Amplifier CV",
-            ))
+            .port(
+                PortDescriptor::control_output("out", "Out")
+                    .value_domain(PortValueDomain::Bipolar)
+                    .description(
+                        "LFO signal (±1). Connect to: Oscillator FM/PM/PWM, Filter Cutoff CV, Amplifier CV",
+                    ),
+            )
     }
 }
 

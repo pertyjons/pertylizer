@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ModuleType,
     NormalizedValue, Param, ParamModOffsets, ParameterDescriptor, PolyModule, PortDescriptor,
-    ProcessContext, RandomGatesParam, WidgetHint,
+    PortValueDomain, ProcessContext, RandomGatesParam, WidgetHint,
 };
 use synth_core::{MidiNote, PortName, SampleRate, Velocity};
 
@@ -153,7 +153,11 @@ impl Describable for RandomGates {
             )
             .port(PortDescriptor::gate_input("clock", "Clock").description("External clock input"))
             .port(PortDescriptor::gate_output("gate", "Gate").description("Gate output"))
-            .port(PortDescriptor::control_output("cv", "CV").description("Random CV output"))
+            .port(
+                PortDescriptor::control_output("cv", "CV")
+                    .value_domain(PortValueDomain::Unipolar)
+                    .description("Random CV output"),
+            )
     }
 }
 

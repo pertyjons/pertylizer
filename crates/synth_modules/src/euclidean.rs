@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use synth_core::{
     AudioBuffer, Describable, EuclideanParam, InputPorts, ModuleCategory, ModuleDescriptor,
     ModuleType, NormalizedValue, Param, ParamModOffsets, ParameterDescriptor, PolyModule,
-    PortDescriptor, ProcessContext, StepCount, WidgetHint,
+    PortDescriptor, PortValueDomain, ProcessContext, StepCount, WidgetHint,
 };
 use synth_core::{MidiNote, PortName, SampleRate, Velocity};
 
@@ -230,7 +230,9 @@ impl Describable for Euclidean {
             .port(PortDescriptor::gate_input("clock", "Clock").description("External clock input"))
             .port(PortDescriptor::gate_output("gate", "Gate").description("Gate output"))
             .port(
-                PortDescriptor::control_output("accent", "Accent").description("Accent CV output"),
+                PortDescriptor::control_output("accent", "Accent")
+                    .value_domain(PortValueDomain::Unipolar)
+                    .description("Accent CV output"),
             )
     }
 }

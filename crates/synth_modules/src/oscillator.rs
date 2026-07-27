@@ -14,8 +14,8 @@ use synth_core::VoicePitch;
 use synth_core::{AntiAliasMode, FmMode, ModuleType, OscillatorParam, Param};
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
-    WidgetHint,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortValueDomain,
+    ProcessContext, ResponseCurve, WidgetHint,
 };
 use synth_core::{
     BipolarValue, Cents, Gain, Hertz, MidiNote, NormalizedValue, Phase, PortName,
@@ -544,7 +544,11 @@ impl Describable for Oscillator {
             .port(PortDescriptor::audio_output("out", "Out").description("Audio output (mono sum)"))
             .port(PortDescriptor::audio_output("out_l", "Out L").description("Stereo left output"))
             .port(PortDescriptor::audio_output("out_r", "Out R").description("Stereo right output"))
-            .port(PortDescriptor::audio_output("phase", "Phase").description("Raw 0→1 phase ramp (level/PM-independent). Connect: → another Oscillator's Sync input to hard-sync it"))
+            .port(
+                PortDescriptor::audio_output("phase", "Phase")
+                    .value_domain(PortValueDomain::Unipolar)
+                    .description("Raw 0→1 phase ramp (level/PM-independent). Connect: → another Oscillator's Sync input to hard-sync it"),
+            )
     }
 }
 

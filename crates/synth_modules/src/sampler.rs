@@ -12,8 +12,8 @@ use synth_core::VoicePitch;
 use synth_core::{
     AudioBuffer, Cents, Describable, Gain, InputPorts, MidiNote, ModuleCategory, ModuleDescriptor,
     ModuleType, NormalizedValue, Param, ParamModOffsets, ParameterDescriptor, ParameterUnit,
-    PlayDirection, PolyModule, PortDescriptor, PortName, ProcessContext, SampleId, SampleRate,
-    SamplerParam, SamplerPlayMode, Velocity, WidgetHint,
+    PlayDirection, PolyModule, PortDescriptor, PortName, PortValueDomain, ProcessContext, SampleId,
+    SampleRate, SamplerParam, SamplerPlayMode, Velocity, WidgetHint,
 };
 use synth_sampler::{CropRegion, LoopRegion, PlaybackState, SamplePlayer};
 
@@ -258,10 +258,13 @@ impl Describable for Sampler {
                 .description("Playback direction"),
             )
             .port(
-                PortDescriptor::control_input("pitch_cv", "Pitch CV").description(
-                    "Modulates playback pitch (v/oct: +1.0 = +1 octave), on top of the note \
-                     pitch. Connect: LFO for vibrato, Envelope for pitch sweep, Mod Matrix.",
-                ),
+                PortDescriptor::control_input("pitch_cv", "Pitch CV")
+                    .value_domain(PortValueDomain::Octaves)
+                    .description(
+                        "Modulates playback pitch (v/oct: +1.0 = +1 octave, clamped to ±6 \
+                         octaves), on top of the note pitch, sampled once per block. \
+                         Connect: LFO for vibrato, Envelope for pitch sweep, Mod Matrix.",
+                    ),
             )
             .port(PortDescriptor::audio_output("out", "Out").description("Sample audio output"))
     }

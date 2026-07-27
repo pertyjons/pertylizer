@@ -7,8 +7,8 @@ use std::collections::HashMap;
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, PolyModule, PortDescriptor, PortName, ProcessContext, ResponseCurve,
-    WidgetHint,
+    ParameterDescriptor, PolyModule, PortDescriptor, PortName, PortValueDomain, ProcessContext,
+    ResponseCurve, WidgetHint,
 };
 use synth_core::{
     EasingCurve, KineticLoopMode, KineticParam, ModuleType, Param, easing_acceleration,
@@ -173,7 +173,11 @@ impl Describable for KineticModulator {
             )
             .port(
                 PortDescriptor::control_output("out", "Out")
-                    .description("Modulation signal. Connect to: Oscillator FM, Filter Cutoff CV"),
+                    .value_domain(PortValueDomain::Control)
+                    .description(
+                        "Modulation signal — 0..1, or -1..+1 with the Bipolar param on. \
+                         Connect to: Oscillator FM, Filter Cutoff CV",
+                    ),
             )
     }
 }

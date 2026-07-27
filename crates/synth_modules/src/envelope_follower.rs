@@ -11,8 +11,8 @@ use std::collections::HashMap;
 
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, ProcessContext, ResponseCurve,
-    WidgetHint,
+    ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortValueDomain,
+    ProcessContext, ResponseCurve, WidgetHint,
 };
 use synth_core::{EnvelopeFollowerParam, ModuleType, Param};
 use synth_core::{
@@ -110,6 +110,7 @@ impl Describable for EnvelopeFollower {
             .port(PortDescriptor::audio_input("in", "In").description("Audio input to follow"))
             .port(
                 PortDescriptor::control_output("out", "Out")
+                    .value_domain(PortValueDomain::Unipolar)
                     .description("Envelope output (0.0-1.0)"),
             )
     }

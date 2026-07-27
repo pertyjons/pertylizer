@@ -17,7 +17,7 @@ use synth_core::VoicePitch;
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ModuleParam,
     ParamModOffsets, ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor,
-    ProcessContext, Seconds, WidgetHint,
+    PortValueDomain, ProcessContext, Seconds, WidgetHint,
 };
 
 use crate::osc_glide::OscGlide;
@@ -1029,12 +1029,17 @@ impl Describable for SidOscillator {
             );
         }
 
-        desc.port(PortDescriptor::control_input("fm", "FM").description(
-            "Additive pitch modulation in Freq Reg units (offset-from-base; \
-                 the exporter/scripts emit target − base)",
-        ))
+        desc.port(
+            PortDescriptor::control_input("fm", "FM")
+                .value_domain(PortValueDomain::SidFrequencyRegisterOffset)
+                .description(
+                    "Additive pitch modulation in Freq Reg units (offset-from-base; \
+                     the exporter/scripts emit target − base)",
+                ),
+        )
         .port(
             PortDescriptor::control_input("pwm", "PWM")
+                .value_domain(PortValueDomain::SidPulseWidthRegisterOffset)
                 .description("Additive pulse-width modulation in PW Reg units (offset-from-base)"),
         )
         .port(PortDescriptor::audio_input("sync", "Sync").description(
@@ -1054,10 +1059,14 @@ impl Describable for SidOscillator {
         .port(
             PortDescriptor::audio_output("out", "Out").description("Audio output (DAC'd waveform)"),
         )
-        .port(PortDescriptor::audio_output("msb", "MSB").description(
-            "Accumulator MSB as a 0/1 gate — the exact signal SID ring/sync read. \
-             Connect: → another SID Oscillator's Sync or Ring input",
-        ))
+        .port(
+            PortDescriptor::audio_output("msb", "MSB")
+                .value_domain(PortValueDomain::Gate)
+                .description(
+                    "Accumulator MSB as a 0/1 gate — the exact signal SID ring/sync read. \
+                     Connect: → another SID Oscillator's Sync or Ring input",
+                ),
+        )
     }
 }
 

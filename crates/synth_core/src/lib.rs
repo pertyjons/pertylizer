@@ -36,8 +36,8 @@ pub use module_traits::{
     AudioBuffer, AudioEffect, ChoiceOption, Describable, InputPorts, InputReader, ModuleCategory,
     ModuleDescriptor, ModuleParam, ModuleTypeId, ModuleWidth, ParamKind, ParamModOffsets,
     ParamValueError, ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortDirection,
-    PortType, ProcessContext, ResponseCurve, ScalarParam, VisualizationSink, VoicePitch,
-    WidgetHint,
+    PortType, PortValueDomain, PortValueRange, ProcessContext, ResponseCurve, ScalarParam,
+    VisualizationSink, VoicePitch, WidgetHint,
 };
 pub use params::{
     AdditiveParam, AlgoParamInfo, AmFormantParam, AmplifierParam, AntiAliasMode, AudioPort,

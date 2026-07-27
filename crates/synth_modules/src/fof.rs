@@ -32,7 +32,7 @@ use std::collections::HashMap;
 use synth_core::VoicePitch;
 use synth_core::{
     AudioBuffer, Describable, InputPorts, ModuleCategory, ModuleDescriptor, ParamModOffsets,
-    ParameterDescriptor, PolyModule, PortDescriptor, ProcessContext, WidgetHint,
+    ParameterDescriptor, PolyModule, PortDescriptor, PortValueDomain, ProcessContext, WidgetHint,
 };
 use synth_core::{Cents, Hertz, MidiNote, NormalizedValue, PortName, SampleRate, Velocity};
 use synth_core::{FofParam, ModuleType, Param};
@@ -555,7 +555,11 @@ impl Describable for Fof {
             )
             .port(
                 PortDescriptor::control_input("pitch_cv", "Pitch CV")
-                    .description("Pitch offset in semitones. Connect: LFO, Envelope, Pitch bend"),
+                    .value_domain(PortValueDomain::Semitones)
+                    .description(
+                        "Pitch offset in semitones, clamped to ±60. \
+                         Connect: LFO, Envelope, Pitch bend",
+                    ),
             )
             .port(
                 PortDescriptor::control_input("vowel_cv", "Vowel CV")
