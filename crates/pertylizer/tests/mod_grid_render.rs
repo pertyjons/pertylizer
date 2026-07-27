@@ -86,7 +86,7 @@ fn add_track_volume_graph(
                 track: None,
                 param: TrackParam::Volume,
             },
-            amount: 0.5,
+            amount: synth_sequencer::ModulationAmount::new(0.5),
             combine: Default::default(),
         }),
     )
@@ -206,7 +206,7 @@ fn module_scope_cutoff_modulation_changes_the_render() {
                     instance: 1,
                     param_id: "cutoff".into(),
                 },
-                amount: 1.0,
+                amount: synth_sequencer::ModulationAmount::new(1.0),
                 combine: Default::default(),
             }),
         )
@@ -275,7 +275,7 @@ fn instrument_scope_volume_modulation_changes_the_render() {
                     instrument: InstrumentId::new(0),
                     param: synth_sequencer::AutoInstrumentParam::Volume,
                 },
-                amount: 0.5,
+                amount: synth_sequencer::ModulationAmount::new(0.5),
                 combine: Default::default(),
             }),
         )
@@ -331,7 +331,7 @@ fn cheap_to_module_injection_changes_the_render() {
             ModNodeId::new(1),
             ModNodeConfig::Target(ModTarget {
                 target: AutomationTarget::Global(GlobalParam::MasterVolume),
-                amount: 0.4,
+                amount: synth_sequencer::ModulationAmount::new(0.4),
                 combine: Default::default(),
             }),
         )

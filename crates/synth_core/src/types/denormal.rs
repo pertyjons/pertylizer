@@ -3,6 +3,10 @@
 //! Denormal floating-point numbers cause severe performance degradation in
 //! filter processing. Setting hardware flush-to-zero flags eliminates this
 //! at the CPU level, making per-sample `flush_denormals()` calls unnecessary.
+#![allow(
+    unsafe_code,
+    reason = "accessing architecture floating-point control registers requires inline assembly"
+)]
 
 /// RAII guard that sets flush-to-zero CPU flags on creation and restores on drop.
 ///

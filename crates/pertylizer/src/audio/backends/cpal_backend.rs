@@ -70,13 +70,13 @@ impl CpalBackend {
                 if configs.is_empty() {
                     (
                         ChannelCount::Stereo,
-                        vec![SampleRate::default()],
+                        vec![DeviceSampleRate::default()],
                         BufferSize::SMALL,
                         BufferSize::VERY_LARGE,
                     )
                 } else {
                     let channels = ChannelCount::from(configs[0].channels());
-                    let rates: Vec<SampleRate> = configs
+                    let rates: Vec<DeviceSampleRate> = configs
                         .iter()
                         .flat_map(|c| {
                             let min = c.min_sample_rate();
@@ -84,13 +84,13 @@ impl CpalBackend {
                             [44100, 48000, 96000]
                                 .into_iter()
                                 .filter(move |&r| r >= min && r <= max)
-                                .map(SampleRate::new)
+                                .map(DeviceSampleRate::new)
                         })
                         .collect();
                     (
                         channels,
                         if rates.is_empty() {
-                            vec![SampleRate::default()]
+                            vec![DeviceSampleRate::default()]
                         } else {
                             rates
                         },
@@ -101,7 +101,7 @@ impl CpalBackend {
             } else {
                 (
                     ChannelCount::Stereo,
-                    vec![SampleRate::default()],
+                    vec![DeviceSampleRate::default()],
                     BufferSize::SMALL,
                     BufferSize::VERY_LARGE,
                 )
@@ -236,8 +236,8 @@ impl AudioBackend for CpalBackend {
         &self,
         device_id: Option<&str>,
         config: &StreamConfig,
-        engine_producer: HeapProd<f32>,
-        gui_producer: HeapProd<f32>,
+        engine_producer: HeapProd<synth_core::StereoSample>,
+        gui_producer: HeapProd<synth_core::StereoSample>,
     ) -> AudioResult<Box<dyn AudioStream>> {
         let device = if let Some(id) = device_id {
             self.find_input_device(id)?
@@ -258,10 +258,6 @@ struct CpalStream {
     info: StreamInfo,
     running: Arc<AtomicBool>,
     position: Arc<AtomicU64>,
-    /// Counter for audio stream errors (incremented on each error callback).
-    /// Lock-free: safe to increment from the audio thread and read from the UI thread.
-    #[allow(dead_code)]
-    error_count: Arc<AtomicU64>,
 }
 
 impl CpalStream {
@@ -300,11 +296,9 @@ impl CpalStream {
 
         let running = Arc::new(AtomicBool::new(false));
         let position = Arc::new(AtomicU64::new(0));
-        let error_count = Arc::new(AtomicU64::new(0));
         // Clone for the callback
         let running_clone = Arc::clone(&running);
         let position_clone = Arc::clone(&position);
-        let error_count_clone = Arc::clone(&error_count);
         let sample_rate = config.sample_rate;
         let start_time = Instant::now();
 
@@ -356,8 +350,6 @@ impl CpalStream {
                 move |err| {
                     // Log to stderr (non-RT but acceptable for error paths)
                     eprintln!("Audio stream error: {err}");
-                    // Atomic increment — lock-free, RT-safe
-                    error_count_clone.fetch_add(1, Ordering::Relaxed);
                 },
                 None, // No timeout, blocking mode
             )
@@ -378,7 +370,6 @@ impl CpalStream {
             info,
             running,
             position,
-            error_count,
         })
     }
 }
@@ -443,8 +434,8 @@ impl CpalInputStream {
     fn new(
         device: Device,
         config: &StreamConfig,
-        mut engine_producer: HeapProd<f32>,
-        mut gui_producer: HeapProd<f32>,
+        mut engine_producer: HeapProd<synth_core::StereoSample>,
+        mut gui_producer: HeapProd<synth_core::StereoSample>,
     ) -> AudioResult<Self> {
         let channels = config.channels.count();
 
@@ -485,12 +476,17 @@ impl CpalInputStream {
                         return;
                     }
 
-                    // Write to both ring buffers (drop samples if full)
-                    engine_producer.push_slice(data);
-                    gui_producer.push_slice(data);
-
-                    let frames = data.len() / channels as usize;
-                    position_clone.fetch_add(frames as u64, Ordering::Relaxed);
+                    // Push complete stereo frames atomically. A full ring drops
+                    // whole frames, so left/right can never become skewed.
+                    let channel_count = usize::from(channels.max(1));
+                    let mut frames = 0_u64;
+                    for input_frame in data.chunks_exact(channel_count) {
+                        let frame = stereo_sample_from_input(input_frame);
+                        let _ = engine_producer.try_push(frame);
+                        let _ = gui_producer.try_push(frame);
+                        frames += 1;
+                    }
+                    position_clone.fetch_add(frames, Ordering::Relaxed);
                 },
                 move |err| {
                     eprintln!("Audio input stream error: {err}");
@@ -553,16 +549,25 @@ impl AudioStream for CpalInputStream {
     }
 }
 
-// SAFETY: CpalInputStream is safe to send between threads for the same reasons as CpalStream.
-unsafe impl Send for CpalInputStream {}
+fn stereo_sample_from_input(input_frame: &[f32]) -> synth_core::StereoSample {
+    let left = input_frame.first().copied().unwrap_or(0.0);
+    let right = input_frame.get(1).copied().unwrap_or(left);
+    synth_core::StereoSample::new(left, right)
+}
 
-// SAFETY: CpalStream is safe to send between threads because:
-// 1. The `stream` field (cpal::Stream) is managed by cpal and its audio callback
-//    runs on a separate audio thread - we only control start/pause from here.
-// 2. The `info` field (StreamInfo) contains only Copy/Send types.
-// 3. The `running`, `position`, and `error_count` fields are Arc<Atomic*> which are Send+Sync.
-// 4. All mutable operations on `stream` (play/pause) are &mut self, ensuring
-//    exclusive access. The audio callback closure captures its own Arc references.
-// 5. This is required because AudioStream trait requires Send for use in
-//    multi-threaded GUI applications.
-unsafe impl Send for CpalStream {}
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn input_frame_conversion_duplicates_mono_and_selects_first_stereo_pair() {
+        assert_eq!(
+            stereo_sample_from_input(&[0.25]),
+            synth_core::StereoSample::new(0.25, 0.25)
+        );
+        assert_eq!(
+            stereo_sample_from_input(&[0.25, -0.5, 0.75]),
+            synth_core::StereoSample::new(0.25, -0.5)
+        );
+    }
+}

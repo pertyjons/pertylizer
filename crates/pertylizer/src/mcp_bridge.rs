@@ -14,7 +14,7 @@ use synth_core::{
 };
 use synth_engine::EngineCommand;
 use synth_engine::commands::ModuleId;
-use synth_engine::instrument::{InstrumentId, MidiChannel as EngineMidiChannel};
+use synth_engine::instrument::{InstrumentId, MidiChannelSelection};
 use synth_mcp::bridge::{
     BridgeAutomationPointData, BridgeExpression, BridgeGlide, BridgeInstrumentDef, BridgeNoteData,
     BridgeNoteUpdate, BridgeParamSet, BridgeParamValue, BridgePatternData, BridgePlacementData,
@@ -508,7 +508,7 @@ impl AppSynthBridge {
             patch_color: snap.patch_color.clone().unwrap_or_default(),
             sidechain_source_id: snap.sidechain_source_id.map(|id| id.as_u64()),
             category: snap.category.name().to_owned(),
-            midi_channel: MidiChannel::new(snap.midi_channel.as_u8()),
+            midi_channel: snap.midi_channel,
             volume: snap.volume,
             pan: snap.pan,
             enabled: snap.enabled,
@@ -747,7 +747,7 @@ fn collect_module_descriptions(
 
 fn meta_to_sample_info(meta: &synth_sampler::SampleMeta) -> synth_mcp::types::SampleInfo {
     synth_mcp::types::SampleInfo {
-        id: meta.id.0,
+        id: meta.id.as_u64(),
         name: meta.name.clone(),
         description: meta.description.clone(),
         duration_seconds: meta.duration_seconds(),
@@ -1390,7 +1390,7 @@ fn note_graph_info(
         description: graph.description.clone(),
         color: graph.color.map(|c| c.to_hex()),
         node_count: graph.node_count(),
-        connection_count: graph.connections.len(),
+        connection_count: graph.connections().len(),
         used_by_patterns: song.note_graph_usage(graph.id),
     }
 }
@@ -1408,7 +1408,7 @@ fn mod_graph_info(graph: &synth_sequencer::ModGraph) -> ModGraphInfo {
         assigned_tracks: graph.assigned_tracks.clone(),
         color: graph.color.map(|c| c.to_hex()),
         node_count: graph.node_count(),
-        connection_count: graph.connections.len(),
+        connection_count: graph.connections().len(),
     }
 }
 
@@ -1478,19 +1478,15 @@ fn validate_mod_connection_ports(
     to_port: &str,
 ) -> Result<(), McpBridgeError> {
     let from_config = graph
-        .nodes
-        .get(&from)
+        .node(from)
         .ok_or(McpBridgeError::ModGraphNodeNotFound {
             graph_id: graph.id,
             node_id: from,
         })?;
-    let to_config = graph
-        .nodes
-        .get(&to)
-        .ok_or(McpBridgeError::ModGraphNodeNotFound {
-            graph_id: graph.id,
-            node_id: to,
-        })?;
+    let to_config = graph.node(to).ok_or(McpBridgeError::ModGraphNodeNotFound {
+        graph_id: graph.id,
+        node_id: to,
+    })?;
 
     let valid_module_port =
         |module: &synth_sequencer::ModuleNode, port: &str, direction: PortDirection| {

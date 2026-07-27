@@ -40,7 +40,7 @@ use synth_core::ModuleCategory;
 use synth_core::{Seconds, Velocity};
 use synth_engine::ModuleType as TypedModuleType;
 use synth_engine::commands::PortId;
-use synth_engine::instrument::{InstrumentId, MidiChannel};
+use synth_engine::instrument::{InstrumentId, MidiChannelSelection};
 use synth_engine::{EngineCommand, EngineEvent, EngineHandle, ModuleId, SynthEngine};
 use synth_sampler::SampleLibrary;
 
@@ -668,8 +668,8 @@ impl SynthApp {
     fn add_new_instrument(&mut self) -> Option<InstrumentId> {
         let instrument_num = self.instruments.len() + 1;
         let new_name = format!("Instrument {instrument_num}");
-        let new_channel =
-            MidiChannel::from_one_indexed(instrument_num as u8).unwrap_or(MidiChannel::CH1);
+        let new_channel = MidiChannelSelection::from_one_indexed(instrument_num as u8)
+            .unwrap_or(MidiChannelSelection::CH1);
 
         let new_id = self.session.add_instrument(&new_name).ok()?;
         tracing::info!(target: "pertylizer::instrument", "created instrument '{new_name}'");
@@ -1032,7 +1032,8 @@ impl eframe::App for SynthApp {
                     } else {
                         None
                     };
-                    let cpu_mod_grid = self.handle.cpu_breakdown().mod_grid;
+                    let cpu_profile = synth_engine::EngineHandle::cpu_profiling_enabled()
+                        .then(|| self.handle.cpu_breakdown());
                     crate::gui::mod_grid_view::draw_mod_grid_view(
                         ui,
                         &self.song,
@@ -1040,7 +1041,7 @@ impl eframe::App for SynthApp {
                         &mut self.undo_manager,
                         &instruments,
                         module_groups,
-                        cpu_mod_grid,
+                        cpu_profile,
                     );
                 }
                 AppView::Pattern => {
@@ -1160,7 +1161,9 @@ impl eframe::App for SynthApp {
                                 let device =
                                     self.sample_view_state.selected_input_device.as_deref();
                                 let config = synth_core::StreamConfig {
-                                    sample_rate: synth_core::audio::SampleRate::DVD_QUALITY,
+                                    sample_rate: synth_core::audio::DeviceSampleRate::new(
+                                        self.handle.state.sample_rate.load(),
+                                    ),
                                     buffer_size: synth_core::BufferSize::MEDIUM,
                                     channels: synth_core::ChannelCount::Stereo,
                                 };
@@ -1171,11 +1174,14 @@ impl eframe::App for SynthApp {
                                 ) {
                                     Ok(()) => {
                                         // Send engine consumer so ProcessContext::audio_input works
-                                        if let Some(consumer) =
+                                        if let Some((consumer, sample_rate)) =
                                             self.audio_input.take_engine_consumer()
                                         {
                                             self.handle.send(
-                                                EngineCommand::SetAudioInputConsumer { consumer },
+                                                EngineCommand::SetAudioInputConsumer {
+                                                    consumer,
+                                                    sample_rate,
+                                                },
                                             );
                                         }
                                     }
@@ -1522,7 +1528,7 @@ impl SynthApp {
 
     fn draw_keyboard(&mut self, ui: &mut egui::Ui) {
         // Always use CH1 for keyboard input - focused_instrument handles routing
-        let active_channel = MidiChannel::CH1;
+        let active_channel = MidiChannelSelection::CH1;
 
         // Layout: [Left Scope] [Piano Keys] [Right Scope] [Meter]
         // The horizontal row sets item_spacing to 0 so scopes sit flush
@@ -1631,7 +1637,7 @@ impl SynthApp {
 
     fn process_keyboard_input(&mut self, ctx: &egui::Context) {
         // Always use CH1 for keyboard input - focused_instrument handles routing
-        let active_channel = MidiChannel::CH1;
+        let active_channel = MidiChannelSelection::CH1;
 
         handle_keyboard_input(
             ctx,
@@ -1901,7 +1907,7 @@ impl SynthApp {
         };
 
         let mut send_category = false;
-        let mut send_midi: Option<MidiChannel> = None;
+        let mut send_midi: Option<MidiChannelSelection> = None;
         let mut send_volume = false;
         let mut send_pan = false;
         let mut send_transpose = false;
@@ -1989,11 +1995,11 @@ impl SynthApp {
                 .width(60.0)
                 .show_ui(ui, |ui| {
                     if ui.selectable_label(channel.is_omni(), "Omni").clicked() {
-                        inst.channel = MidiChannel::OMNI;
-                        send_midi = Some(MidiChannel::OMNI);
+                        inst.channel = MidiChannelSelection::OMNI;
+                        send_midi = Some(MidiChannelSelection::OMNI);
                     }
                     for ch in 1..=16u8 {
-                        let Some(midi_ch) = MidiChannel::from_one_indexed(ch) else {
+                        let Some(midi_ch) = MidiChannelSelection::from_one_indexed(ch) else {
                             continue;
                         };
                         let is_selected = !channel.is_omni() && channel.as_one_indexed() == ch;
@@ -2477,7 +2483,7 @@ impl SynthApp {
                 let list: Vec<(u64, String)> = lib
                     .list()
                     .iter()
-                    .map(|m| (m.id.0, m.name.clone()))
+                    .map(|m| (m.id.as_u64(), m.name.clone()))
                     .collect();
                 patch_editor.set_sample_list(list);
             }
@@ -2528,7 +2534,7 @@ impl SynthApp {
                     std::collections::HashSet<String>,
                 > = std::collections::HashMap::new();
                 for graph in song.mod_graphs() {
-                    for cfg in graph.nodes.values() {
+                    for cfg in graph.nodes().values() {
                         let ModNodeConfig::Target(t) = cfg else {
                             continue;
                         };
@@ -2602,7 +2608,7 @@ impl SynthApp {
                     )) = param
                         && let Ok(lib) = self.sample_library.read()
                         && let Some(sample) =
-                            lib.get(synth_sampler::SampleId::new(sample_id.as_u64()))
+                            lib.get(sample_id)
                     {
                         self.handle.send(EngineCommand::LoadSampleData {
                             instrument_id: active_id,
@@ -2744,7 +2750,9 @@ impl SynthApp {
                         if let Some(host) = &self.host {
                             let device = self.sample_view_state.selected_input_device.as_deref();
                             let config = synth_core::StreamConfig {
-                                sample_rate: synth_core::audio::SampleRate::DVD_QUALITY,
+                                sample_rate: synth_core::audio::DeviceSampleRate::new(
+                                    self.handle.state.sample_rate.load(),
+                                ),
                                 buffer_size: synth_core::BufferSize::MEDIUM,
                                 channels: synth_core::ChannelCount::Stereo,
                             };
@@ -2753,10 +2761,12 @@ impl SynthApp {
                                 .start_monitoring(host.as_ref(), device, &config)
                             {
                                 Ok(()) => {
-                                    if let Some(consumer) = self.audio_input.take_engine_consumer()
+                                    if let Some((consumer, sample_rate)) =
+                                        self.audio_input.take_engine_consumer()
                                     {
                                         self.handle.send(EngineCommand::SetAudioInputConsumer {
                                             consumer,
+                                            sample_rate,
                                         });
                                     }
                                 }
@@ -3439,53 +3449,64 @@ impl SynthApp {
 
                     // ── Right side: CPU / Voices / Latency ──
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        let cpu = self.handle.cpu_usage();
-                        // Copy snapshot so the hover closure captures no borrow of `self`.
-                        let bd = self.handle.cpu_breakdown();
-                        let cpu_color = if cpu > 0.8 {
-                            t.colors.meter_red
-                        } else if cpu > 0.5 {
-                            t.colors.meter_yellow
-                        } else {
-                            t.colors.meter_green
-                        };
-                        ui.label(
-                            RichText::new(format!("CPU: {:>3.0}%", cpu * 100.0)).color(cpu_color),
-                        )
-                        .on_hover_ui(|ui| {
-                            ui.strong("CPU breakdown (audio thread)");
-                            ui.add_space(2.0);
-                            egui::Grid::new("cpu_breakdown_grid")
-                                .num_columns(2)
-                                .spacing([14.0, 2.0])
-                                .show(ui, |ui| {
-                                    let pct = |v: f32| format!("{:>5.1} %", v * 100.0);
-                                    let other = (bd.total
-                                        - bd.voices
-                                        - bd.module_graph
-                                        - bd.master_fx
-                                        - bd.mod_grid)
-                                        .max(0.0);
-                                    for (label, value) in [
-                                        ("Voices", bd.voices),
-                                        ("Module graph", bd.module_graph),
-                                        ("Mod Grid", bd.mod_grid),
-                                        ("Master FX", bd.master_fx),
-                                        ("Other", other),
-                                    ] {
-                                        ui.label(label);
-                                        ui.monospace(pct(value));
+                        if synth_engine::EngineHandle::cpu_profiling_enabled() {
+                            let cpu = self.handle.cpu_usage().as_f32();
+                            // Copy snapshot so the hover closure captures no borrow of `self`.
+                            let bd = self.handle.cpu_breakdown();
+                            let cpu_color = if cpu > 0.8 {
+                                t.colors.meter_red
+                            } else if cpu > 0.5 {
+                                t.colors.meter_yellow
+                            } else {
+                                t.colors.meter_green
+                            };
+                            ui.label(
+                                RichText::new(format!("CPU: {:>3.0}%", cpu * 100.0))
+                                    .color(cpu_color),
+                            )
+                            .on_hover_ui(|ui| {
+                                ui.strong("CPU breakdown (audio thread)");
+                                ui.add_space(2.0);
+                                egui::Grid::new("cpu_breakdown_grid")
+                                    .num_columns(2)
+                                    .spacing([14.0, 2.0])
+                                    .show(ui, |ui| {
+                                        let pct = |v: f32| format!("{:>5.1} %", v * 100.0);
+                                        let total = bd.total.as_f32();
+                                        let voices = bd.voices.as_f32();
+                                        let module_graph = bd.module_graph.as_f32();
+                                        let master_fx = bd.master_fx.as_f32();
+                                        let mod_grid = bd.mod_grid.as_f32();
+                                        let other =
+                                            (total - voices - module_graph - master_fx - mod_grid)
+                                                .max(0.0);
+                                        for (label, value) in [
+                                            ("Voices", voices),
+                                            ("Module graph", module_graph),
+                                            ("Mod Grid", mod_grid),
+                                            ("Master FX", master_fx),
+                                            ("Other", other),
+                                        ] {
+                                            ui.label(label);
+                                            ui.monospace(pct(value));
+                                            ui.end_row();
+                                        }
+                                        ui.separator();
                                         ui.end_row();
-                                    }
-                                    ui.separator();
-                                    ui.end_row();
-                                    ui.strong("Total");
-                                    ui.monospace(pct(bd.total));
-                                    ui.end_row();
-                                });
-                            ui.add_space(2.0);
-                            ui.weak("Share of the per-buffer real-time budget.");
-                        });
+                                        ui.strong("Total");
+                                        ui.monospace(pct(total));
+                                        ui.end_row();
+                                    });
+                                ui.add_space(2.0);
+                                ui.weak("Share of the per-buffer real-time budget.");
+                            });
+                        } else {
+                            ui.label(RichText::new("CPU: OFF").color(t.colors.text_dim))
+                                .on_hover_text(
+                                    "Enable the rt-profiling feature for callback timing; \
+                                     normal builds avoid wall-clock reads on the audio thread.",
+                                );
+                        }
                         ui.separator();
                         ui.label(
                             RichText::new(format!("Voices: {:>3}", self.handle.voice_count()))

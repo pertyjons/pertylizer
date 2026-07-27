@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::time::Duration;
 use thiserror::Error;
 
-/// Sample rate in Hz for audio backend configuration.
+/// Device sample rate in Hz for audio backend configuration.
 ///
 /// This type uses `u32` to match hardware API conventions.
 /// For DSP calculations, use `crate::types::SampleRate` (f32) which
@@ -12,9 +12,9 @@ use thiserror::Error;
 ///
 /// Conversions between the two types are provided via `From` impls.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct SampleRate(u32);
+pub struct DeviceSampleRate(u32);
 
-impl SampleRate {
+impl DeviceSampleRate {
     pub const CD_QUALITY: Self = Self(44100);
     pub const DVD_QUALITY: Self = Self(48000);
     pub const STUDIO_QUALITY: Self = Self(96000);
@@ -55,26 +55,26 @@ impl SampleRate {
     }
 }
 
-impl Default for SampleRate {
+impl Default for DeviceSampleRate {
     fn default() -> Self {
         Self::DVD_QUALITY
     }
 }
 
-impl From<u32> for SampleRate {
+impl From<u32> for DeviceSampleRate {
     fn from(value: u32) -> Self {
         Self(value)
     }
 }
 
-impl From<crate::types::SampleRate> for SampleRate {
+impl From<crate::types::SampleRate> for DeviceSampleRate {
     fn from(rate: crate::types::SampleRate) -> Self {
         Self(rate.as_f32() as u32)
     }
 }
 
-impl From<SampleRate> for crate::types::SampleRate {
-    fn from(rate: SampleRate) -> Self {
+impl From<DeviceSampleRate> for crate::types::SampleRate {
+    fn from(rate: DeviceSampleRate) -> Self {
         Self::new(rate.0 as f32)
     }
 }
@@ -109,7 +109,7 @@ impl BufferSize {
 
     /// Calculate latency for this buffer size at given sample rate.
     #[inline]
-    pub fn latency_at(self, sample_rate: SampleRate) -> Duration {
+    pub fn latency_at(self, sample_rate: DeviceSampleRate) -> Duration {
         Duration::from_secs_f64(self.0 as f64 / sample_rate.as_f64())
     }
 }
@@ -174,7 +174,7 @@ pub struct DeviceInfo {
     /// Type of device.
     pub device_type: DeviceType,
     /// Supported sample rates.
-    pub supported_sample_rates: Vec<SampleRate>,
+    pub supported_sample_rates: Vec<DeviceSampleRate>,
     /// Minimum buffer size.
     pub min_buffer_size: BufferSize,
     /// Maximum buffer size.
@@ -188,7 +188,7 @@ pub struct DeviceInfo {
 /// Stream configuration.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct StreamConfig {
-    pub sample_rate: SampleRate,
+    pub sample_rate: DeviceSampleRate,
     pub buffer_size: BufferSize,
     pub channels: ChannelCount,
 }
@@ -197,7 +197,7 @@ pub struct StreamConfig {
 #[derive(Debug, Clone)]
 pub struct StreamInfo {
     /// Actual sample rate (may differ from requested).
-    pub sample_rate: SampleRate,
+    pub sample_rate: DeviceSampleRate,
     /// Actual buffer size.
     pub buffer_size: BufferSize,
     /// Number of channels.
@@ -212,7 +212,7 @@ pub struct StreamInfo {
 #[derive(Debug, Clone, Copy)]
 pub struct AudioCallbackContext {
     /// Sample rate of the stream.
-    pub sample_rate: SampleRate,
+    pub sample_rate: DeviceSampleRate,
     /// Number of frames in this callback.
     pub frames: usize,
     /// Number of channels.
@@ -276,11 +276,11 @@ mod tests {
         // so a change here is a deliberate, reviewed contract change — not a silent
         // desync against a hand-copied literal elsewhere.
         assert_eq!(MAX_BLOCK_SIZE, 4096);
-        assert_eq!(SampleRate::MAX_SUPPORTED.as_u32(), 192_000);
+        assert_eq!(DeviceSampleRate::MAX_SUPPORTED.as_u32(), 192_000);
         assert_eq!(
             crate::types::SampleRate::MAX_SUPPORTED.as_f32(),
             192_000.0,
-            "config and DSP SampleRate ceilings must agree"
+            "device and DSP SampleRate ceilings must agree"
         );
     }
 }

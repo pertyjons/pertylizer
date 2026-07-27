@@ -15,7 +15,7 @@ mod common;
 
 use std::sync::Arc;
 
-use synth_core::audio::SampleRate as HwSampleRate;
+use synth_core::audio::DeviceSampleRate as HwSampleRate;
 use synth_core::{AudioProcessor, MidiNote, ModuleType};
 use synth_engine::SynthEngine;
 use synth_sequencer::{InstrumentId, Song, TrackId};

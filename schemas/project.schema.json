@@ -969,9 +969,9 @@
           "type": "integer"
         },
         "channel": {
-          "description": "MIDI channel (1-indexed, 1–16, clamped on deserialization).",
+          "description": "MIDI channel (1-indexed, 1–16), or 0 for OMNI.",
           "format": "uint8",
-          "maximum": 255,
+          "maximum": 16,
           "minimum": 0,
           "type": "integer"
         },
@@ -1439,10 +1439,9 @@
       "description": "A routing sink: writes its input control signal into an automation target.",
       "properties": {
         "amount": {
+          "$ref": "#/$defs/ModulationAmount",
           "default": 0.0,
-          "description": "Depth in the target's own units (semitones for pitch, `0..1` for a\nnormalized param, etc.). The input signal is multiplied by this.",
-          "format": "float",
-          "type": "number"
+          "description": "Depth in the target's own units (semitones for pitch, `0..1` for a\nnormalized param, etc.). The input signal is multiplied by this."
         },
         "combine": {
           "$ref": "#/$defs/CombineMode",
@@ -1458,6 +1457,11 @@
         "target"
       ],
       "type": "object"
+    },
+    "ModulationAmount": {
+      "description": "Target-relative modulation depth.\n\nThe numeric unit is defined by the destination (normalized units for gain,\nbipolar units for pan, semitones for pitch). Keeping the value wrapped\nprevents it from being confused with an already-resolved control value.",
+      "format": "float",
+      "type": "number"
     },
     "ModuleGroupState": {
       "description": "Group of modules in the patch editor (UI-level metadata).",
@@ -10650,14 +10654,14 @@
     "Pitch": {
       "description": "MIDI-compatible pitch (0-127).",
       "format": "uint8",
-      "maximum": 255,
+      "maximum": 127,
       "minimum": 0,
       "type": "integer"
     },
     "PitchClass": {
       "description": "A pitch class (0–11, C = 0). Constructor wraps modulo 12.",
       "format": "uint8",
-      "maximum": 255,
+      "maximum": 11,
       "minimum": 0,
       "type": "integer"
     },
@@ -10876,7 +10880,7 @@
     "ScaleMask": {
       "description": "A 12-bit pitch-class set relative to a root (bit 0 = the root itself).\n\nThe persisted, RT-cheap scale representation: membership is one shift and\nmask, no name lookup. Name → mask mapping for GUI/MCP lives at those\nboundaries (the app crate's harmony tables cannot be a dependency here).",
       "format": "uint16",
-      "maximum": 65535,
+      "maximum": 4095,
       "minimum": 0,
       "type": "integer"
     },

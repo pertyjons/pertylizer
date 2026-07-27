@@ -285,10 +285,14 @@ impl SynthApp {
         // Instruments added by MCP (in engine but not in GUI)
         for snap in &snapshots {
             if !gui_ids.contains(&snap.id) {
-                let channel = synth_engine::MidiChannel::from_zero_indexed(
-                    snap.midi_channel.as_u8().saturating_sub(1),
-                )
-                .unwrap_or(synth_engine::MidiChannel::CH1);
+                let channel =
+                    snap.midi_channel
+                        .map_or(synth_engine::MidiChannelSelection::OMNI, |channel| {
+                            synth_engine::MidiChannelSelection::from_zero_indexed(
+                                channel.as_index(),
+                            )
+                            .unwrap_or(synth_engine::MidiChannelSelection::CH1)
+                        });
                 let mut ui_inst = InstrumentUiState::new(snap.id, &snap.name).with_channel(channel);
                 ui_inst.volume = snap.volume;
                 ui_inst.pan = snap.pan;
@@ -329,10 +333,14 @@ impl SynthApp {
                 ui_inst.pan = snap.pan;
                 ui_inst.muted = snap.muted;
                 ui_inst.solo = snap.solo;
-                ui_inst.channel = synth_engine::MidiChannel::from_zero_indexed(
-                    snap.midi_channel.as_u8().saturating_sub(1),
-                )
-                .unwrap_or(ui_inst.channel);
+                ui_inst.channel =
+                    snap.midi_channel
+                        .map_or(synth_engine::MidiChannelSelection::OMNI, |channel| {
+                            synth_engine::MidiChannelSelection::from_zero_indexed(
+                                channel.as_index(),
+                            )
+                            .unwrap_or(ui_inst.channel)
+                        });
                 ui_inst.description = snap.description.clone();
                 ui_inst.patch_description = snap.patch_description.clone().unwrap_or_default();
                 ui_inst.color = snap.color.clone();
@@ -419,7 +427,7 @@ impl SynthApp {
                     .module_descriptor(module_id)
                     .map(|d| d.category);
                 if matches!(category, Some(ModuleCategory::Visualizer)) {
-                    self.handle.send_blocking(EngineCommand::RemoveVisualizer {
+                    let _ = self.handle.send_blocking(EngineCommand::RemoveVisualizer {
                         instrument_id: Some(active_id),
                         id: module_id,
                     });
@@ -619,8 +627,12 @@ impl SynthApp {
         for inst_state in &project.instruments {
             let inst_id = inst_state.id;
 
-            let channel =
-                MidiChannel::from_one_indexed(inst_state.channel).unwrap_or(MidiChannel::CH1);
+            let channel = if inst_state.channel == 0 {
+                MidiChannelSelection::OMNI
+            } else {
+                MidiChannelSelection::from_one_indexed(inst_state.channel)
+                    .unwrap_or(MidiChannelSelection::CH1)
+            };
             let mut ui_inst =
                 InstrumentUiState::new(inst_id, &inst_state.name).with_channel(channel);
 
@@ -723,6 +735,7 @@ impl SynthApp {
     /// it (plain-JSON path), `load_bundle_file` leaves it populated
     /// from `bundle::load_bundle`.
     pub(super) fn apply_and_refresh_project(&mut self, project: &ProjectFile) {
+        self.undo_manager.clear();
         self.sample_view_state.invalidate_peaks();
         // Note-graph ids restart per project, so stale per-id canvas state
         // (positions, cameras, a mid-gesture undo baseline) must not leak
@@ -760,6 +773,7 @@ impl SynthApp {
 
     /// Reset to a new empty project, clearing all instruments and song data.
     pub(super) fn reset_to_new_project(&mut self) {
+        self.undo_manager.clear();
         if let Err(e) = crate::project_apply::reset_to_new_project(
             &self.session,
             &self.song,
@@ -950,7 +964,7 @@ impl SynthApp {
                 })
                 .collect();
             for module_id in vis_ids {
-                self.handle.send_blocking(EngineCommand::RemoveVisualizer {
+                let _ = self.handle.send_blocking(EngineCommand::RemoveVisualizer {
                     instrument_id: Some(inst_id),
                     id: module_id,
                 });

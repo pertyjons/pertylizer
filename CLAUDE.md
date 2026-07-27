@@ -214,9 +214,9 @@ fn set_frequency(freq: Hertz) { ... }
 
 | Crate             | Examples                                                                                                                                                                                                      | 
 |-------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `synth_core`      | `Hertz`, `SampleRate`, `Cents`, `Semitones`, `MidiNote`, `Velocity`, `Gain`, `Decibels`, `Seconds`, `Milliseconds`, `Bpm`, `NormalizedValue`, `BipolarValue`, `Phase`, `SampleCount`, `BlockSize`, `PortName`, `Meters`, `MetersPerSecond`, `SampleOffset`, `Position3`, `InstrumentId` |
+| `synth_core`      | `Hertz`, `SampleRate`, `DeviceSampleRate`, `Cents`, `Semitones`, `MidiNote`, `MidiChannel`, `Velocity`, `Gain`, `Decibels`, `Seconds`, `Milliseconds`, `Bpm`, `NormalizedValue`, `NormalizedDelta`, `BipolarValue`, `BipolarDelta`, `Phase`, `SampleCount`, `BlockSize`, `PortName`, `Meters`, `MetersPerSecond`, `SampleOffset`, `Position3`, `InstrumentId`, `SampleId` |
 | `synth_sequencer` | `PatternId`, `TrackId`, `NoteId`, `Tick`, `PatternTick`, `Duration`, `Pitch`, `TrackIndex`, `RowIndex`, `NoteGraphId`, `NoteModuleId`                                                          |
-| `synth_engine`    | `TransactionId`, `ClientId`, `MidiChannel`, `ConnectionCount`, `ModuleId` (instrument ids use `synth_core::InstrumentId`)                                                                                                                     |
+| `synth_engine`    | `TransactionId`, `ClientId`, `MidiChannelSelection`, `ConnectionCount`, `ModuleId` (instrument ids use `synth_core::InstrumentId`)                                                                                                            |
 
 ---
 

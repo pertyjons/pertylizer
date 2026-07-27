@@ -601,7 +601,7 @@ impl synth_mcp::bridge::InstrumentBridge for AppSynthBridge {
             color: String::new(),
             patch_color: String::new(),
             sidechain_source_id: None,
-            midi_channel: MidiChannel::CH1,
+            midi_channel: Some(MidiChannel::CH1),
             volume: Gain::UNITY,
             pan: BipolarValue::CENTER,
             enabled: true,
@@ -826,8 +826,8 @@ impl synth_mcp::bridge::InstrumentBridge for AppSynthBridge {
         channel: MidiChannel,
     ) -> Result<(), McpBridgeError> {
         self.validate_instrument(instrument_id)?;
-        let midi_channel =
-            EngineMidiChannel::from_one_indexed(channel.as_u8()).unwrap_or(EngineMidiChannel::CH1);
+        let midi_channel = MidiChannelSelection::from_one_indexed(channel.as_u8())
+            .unwrap_or(MidiChannelSelection::CH1);
         self.session
             .set_instrument_midi_channel(instrument_id, midi_channel)
             .map_err(|_| McpBridgeError::CommandSendFailed {
@@ -1089,8 +1089,8 @@ impl synth_mcp::bridge::InstrumentBridge for AppSynthBridge {
         if let Some(id) = instrument_id {
             self.validate_instrument(id)?;
         }
-        let midi_channel =
-            EngineMidiChannel::from_one_indexed(channel.as_u8()).unwrap_or(EngineMidiChannel::CH1);
+        let midi_channel = MidiChannelSelection::from_one_indexed(channel.as_u8())
+            .unwrap_or(MidiChannelSelection::CH1);
         if self.session.command_sender().send(EngineCommand::NoteOn {
             note,
             velocity: Velocity::from_midi(velocity),
@@ -1112,8 +1112,8 @@ impl synth_mcp::bridge::InstrumentBridge for AppSynthBridge {
         if let Some(id) = instrument_id {
             self.validate_instrument(id)?;
         }
-        let midi_channel =
-            EngineMidiChannel::from_one_indexed(channel.as_u8()).unwrap_or(EngineMidiChannel::CH1);
+        let midi_channel = MidiChannelSelection::from_one_indexed(channel.as_u8())
+            .unwrap_or(MidiChannelSelection::CH1);
         if self.session.command_sender().send(EngineCommand::NoteOff {
             note,
             channel: midi_channel,

@@ -5,15 +5,12 @@
 //! actually applying the inverse action via the existing session/song APIs.
 
 use synth_core::Bpm;
-use synth_engine::ModuleId;
 use synth_engine::graph::Connection;
 use synth_engine::instrument::InstrumentId;
 use synth_sequencer::{
     Duration as SeqDuration, Glide, NoteExpression, NoteId, NoteLane, Ornament, PatternId,
     PatternTick, Pitch, Tick, TrackId, Velocity,
 };
-
-use crate::patch::{ConnectionState, ModuleState, ParamValue};
 
 /// Maximum number of undo actions to keep in history.
 const MAX_UNDO_HISTORY: usize = 100;
@@ -23,7 +20,6 @@ const MAX_UNDO_HISTORY: usize = 100;
 /// Each variant captures enough state to reverse the operation.
 /// `Composite` groups multiple actions into a single undo step.
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub(crate) enum UndoAction {
     // ── Sequencer note operations ──
     /// A note was added to a pattern.
@@ -283,34 +279,6 @@ pub(crate) enum UndoAction {
         lane: synth_sequencer::AutomationLane,
     },
 
-    // ── Module operations ──
-    /// A module was added to an instrument (connections captured for undo round-trip).
-    AddModule {
-        instrument_id: InstrumentId,
-        module_state: ModuleState,
-        connections: Vec<ConnectionState>,
-    },
-    /// A module was removed from an instrument (captures state + connections for undo).
-    RemoveModule {
-        instrument_id: InstrumentId,
-        module_state: ModuleState,
-        connections: Vec<ConnectionState>,
-    },
-    /// A module was moved to a new position.
-    MoveModule {
-        module_id: ModuleId,
-        old_pos: (f32, f32),
-        new_pos: (f32, f32),
-    },
-    /// A module parameter was changed.
-    SetParameter {
-        instrument_id: InstrumentId,
-        module_id: ModuleId,
-        param_name: String,
-        old_value: ParamValue,
-        new_value: ParamValue,
-    },
-
     // ── Connection operations ──
     /// A connection was added.
     AddConnection {
@@ -442,7 +410,6 @@ impl UndoManager {
     }
 
     /// Clear all undo and redo history.
-    #[allow(dead_code)]
     pub(crate) fn clear(&mut self) {
         self.undo_stack.clear();
         self.redo_stack.clear();
@@ -772,46 +739,6 @@ impl UndoManager {
                     lane: lane.clone(),
                 }
             }
-            UndoAction::AddModule {
-                instrument_id,
-                module_state,
-                connections,
-            } => UndoAction::RemoveModule {
-                instrument_id: *instrument_id,
-                module_state: module_state.clone(),
-                connections: connections.clone(),
-            },
-            UndoAction::RemoveModule {
-                instrument_id,
-                module_state,
-                connections,
-            } => UndoAction::AddModule {
-                instrument_id: *instrument_id,
-                module_state: module_state.clone(),
-                connections: connections.clone(),
-            },
-            UndoAction::MoveModule {
-                module_id,
-                old_pos,
-                new_pos,
-            } => UndoAction::MoveModule {
-                module_id: *module_id,
-                old_pos: *new_pos,
-                new_pos: *old_pos,
-            },
-            UndoAction::SetParameter {
-                instrument_id,
-                module_id,
-                param_name,
-                old_value,
-                new_value,
-            } => UndoAction::SetParameter {
-                instrument_id: *instrument_id,
-                module_id: *module_id,
-                param_name: param_name.clone(),
-                old_value: new_value.clone(),
-                new_value: old_value.clone(),
-            },
             UndoAction::AddConnection {
                 instrument_id,
                 connection,

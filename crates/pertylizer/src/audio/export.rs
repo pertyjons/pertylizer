@@ -8,10 +8,9 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex};
 
-use synth_core::{
-    AudioCallbackContext, AudioProcessor, DenormalGuard, audio::SampleRate as HwSampleRate,
-};
-use synth_engine::{EngineCommand, EngineHandle, SynthEngine};
+use synth_core::audio::DeviceSampleRate;
+use synth_core::{AudioCallbackContext, AudioProcessor, DenormalGuard};
+use synth_engine::{CommandCapacity, EngineCommand, EngineHandle, SynthEngine};
 use synth_sampler::SampleLibrary;
 
 use crate::project::ProjectFile;
@@ -243,22 +242,35 @@ pub fn start_export(
 /// The load runs in two phases separated by a silent `process` call: the
 /// per-instrument commands are enqueued and drained first, then the mix chain +
 /// sample data are enqueued into the now-empty queue. That ordering matters —
-/// the engine's command ring holds only 256 entries and nothing drains it until
-/// `process` runs, so batching a whole project at once could overflow the ring
-/// and silently drop commands (the same constraint the MCP offline renderer
-/// works under).
+/// nothing drains the engine's command ring until `process` runs, so batching a
+/// whole project at once could fill the configured ring (the same constraint
+/// the MCP offline renderer works under).
 fn build_loaded_export_engine(
     project: &ProjectFile,
     sample_library: &SharedSampleLibrary,
     sample_rate: u32,
 ) -> Result<(SynthEngine, EngineHandle, Vec<String>), ExportError> {
+    build_loaded_export_engine_with_capacity(
+        project,
+        sample_library,
+        sample_rate,
+        CommandCapacity::DEFAULT,
+    )
+}
+
+fn build_loaded_export_engine_with_capacity(
+    project: &ProjectFile,
+    sample_library: &SharedSampleLibrary,
+    sample_rate: u32,
+    command_capacity: CommandCapacity,
+) -> Result<(SynthEngine, EngineHandle, Vec<String>), ExportError> {
     // 1. Fresh engine + a session for loading.
-    let (mut engine, mut handle) = SynthEngine::new();
+    let (mut engine, mut handle) = SynthEngine::with_command_capacity(command_capacity);
     let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
 
     // 2. Attach the song.
     let song = synth_engine::shared_song(project.song.clone());
-    handle.send_blocking(EngineCommand::SetSong {
+    let _ = handle.send_blocking(EngineCommand::SetSong {
         song: Arc::clone(&song),
     });
 
@@ -267,9 +279,9 @@ fn build_loaded_export_engine(
     // processing silent blocks *during* the load. `on_stream_start` before the
     // instrument load also matches the live app, where instruments are always
     // added after the audio stream starts.
-    let hw_sample_rate = HwSampleRate::new(sample_rate);
+    let device_sample_rate = DeviceSampleRate::new(sample_rate);
     let stream_info = synth_core::StreamInfo {
-        sample_rate: hw_sample_rate,
+        sample_rate: device_sample_rate,
         buffer_size: synth_core::BufferSize::new(256),
         channels: synth_core::ChannelCount::Stereo,
         output_latency: std::time::Duration::ZERO,
@@ -278,7 +290,7 @@ fn build_loaded_export_engine(
     engine.on_stream_start(&stream_info);
     let mut buffer = vec![0.0f32; 256 * 2];
     let drain_ctx = AudioCallbackContext {
-        sample_rate: hw_sample_rate,
+        sample_rate: device_sample_rate,
         frames: 256,
         channels: 2,
         stream_time: 0.0,
@@ -306,13 +318,13 @@ fn build_loaded_export_engine(
     // and the channel modulation silently drops (the track-scope path needs no
     // mapping, so it was unaffected).
     let mod_grid = crate::mod_grid_build::build_mod_grid_runtime(&song.read());
-    handle.send_blocking(EngineCommand::SetModGrid {
+    let _ = handle.send_blocking(EngineCommand::SetModGrid {
         runtime: Box::new(mod_grid),
     });
 
     // 6. Global settings, then drain the mod-grid + global-settings commands.
-    handle.send_blocking(EngineCommand::SetMasterVolume(project.global.master_volume));
-    handle.send_blocking(EngineCommand::SetGlideTime(project.global.glide_time));
+    let _ = handle.send_blocking(EngineCommand::SetMasterVolume(project.global.master_volume));
+    let _ = handle.send_blocking(EngineCommand::SetGlideTime(project.global.glide_time));
     crate::audio::drain_command_queue(&mut engine, &mut buffer, &drain_ctx);
 
     // 7. Reconstruct the global mix chain (send/return busses + return effects +
@@ -321,7 +333,7 @@ fn build_loaded_export_engine(
     // own between commands — without a running audio thread, non-blocking sends
     // would drop under backpressure.
     let sender = handle.command_sender();
-    crate::project_apply::apply_global_mix_chain(project, |c| sender.send_blocking(c));
+    crate::project_apply::apply_global_mix_chain(project, |c| sender.send_blocking(c).is_ok());
 
     // 8. Sampler audio buffers — referenced by id in the patch, but the data
     // lives in the shared library, not the `ProjectFile`. Without this, samplers
@@ -353,19 +365,19 @@ fn render_to_wav(
     let (mut engine, mut handle, warnings) =
         build_loaded_export_engine(project, sample_library, config.sample_rate)?;
 
-    let hw_sample_rate = HwSampleRate::new(config.sample_rate);
+    let device_sample_rate = DeviceSampleRate::new(config.sample_rate);
     let channels: usize = 2;
     let buffer_size: usize = 256;
     let mut buffer = vec![0.0f32; buffer_size * channels];
 
     // Start playback via the handle (sends Play command through ring buffer).
-    handle.send_blocking(EngineCommand::Rewind);
-    handle.send_blocking(EngineCommand::Play);
+    let _ = handle.send_blocking(EngineCommand::Rewind);
+    let _ = handle.send_blocking(EngineCommand::Play);
 
     // Process one buffer to let the Play command take effect.
     buffer.fill(0.0);
     let warmup_context = AudioCallbackContext {
-        sample_rate: hw_sample_rate,
+        sample_rate: device_sample_rate,
         frames: buffer_size,
         channels: channels as u16,
         stream_time: 0.0,
@@ -417,7 +429,7 @@ fn render_to_wav(
         buffer.fill(0.0);
 
         let context = AudioCallbackContext {
-            sample_rate: hw_sample_rate,
+            sample_rate: device_sample_rate,
             frames: this_buffer,
             channels: channels as u16,
             stream_time: frames_written as f64 / f64::from(config.sample_rate),
@@ -549,7 +561,7 @@ mod tests {
         // Drive a few silent blocks so any residual queued commands drain and the
         // shared snapshots the assertions read are up to date.
         let ctx = AudioCallbackContext {
-            sample_rate: HwSampleRate::new(44_100),
+            sample_rate: DeviceSampleRate::new(44_100),
             frames: 256,
             channels: 2,
             stream_time: 0.0,
@@ -573,11 +585,8 @@ mod tests {
         );
     }
 
-    /// Regression for the 256-slot command-ring overflow: loading a project whose
-    /// commands far exceed the ring must not silently drop any. The offline loader
-    /// drains the ring per instrument; 40 empty instruments enqueue ~440 commands
-    /// (well past 256), yet all must arrive. Before the per-instrument drain, the
-    /// commands past 256 were dropped and the later instruments never loaded.
+    /// Loading a project whose command count far exceeds a deliberately small
+    /// ring must not silently drop any commands.
     #[test]
     fn many_instrument_project_loads_without_dropping_commands() {
         let instruments: Vec<_> = (1..=40u64)
@@ -598,9 +607,16 @@ mod tests {
         let sample_library: SharedSampleLibrary =
             Arc::new(std::sync::RwLock::new(SampleLibrary::default()));
 
-        let (mut engine, handle, warnings) =
-            build_loaded_export_engine(&project, &sample_library, 44_100)
-                .expect("build export engine");
+        let Some(command_capacity) = CommandCapacity::new(64) else {
+            panic!("test command capacity must be non-zero");
+        };
+        let (mut engine, handle, warnings) = build_loaded_export_engine_with_capacity(
+            &project,
+            &sample_library,
+            44_100,
+            command_capacity,
+        )
+        .expect("build export engine");
         assert!(
             warnings.is_empty(),
             "no instrument should fail to load: {warnings:?}"
@@ -608,7 +624,7 @@ mod tests {
 
         // Drive a few silent blocks so instrument-snapshot mirroring settles.
         let ctx = AudioCallbackContext {
-            sample_rate: HwSampleRate::new(44_100),
+            sample_rate: DeviceSampleRate::new(44_100),
             frames: 256,
             channels: 2,
             stream_time: 0.0,
@@ -665,7 +681,7 @@ mod tests {
         assert!(warnings.is_empty());
 
         let ctx = AudioCallbackContext {
-            sample_rate: HwSampleRate::new(44_100),
+            sample_rate: DeviceSampleRate::new(44_100),
             frames: 256,
             channels: 2,
             stream_time: 0.0,
@@ -742,7 +758,7 @@ mod tests {
         );
 
         let ctx = AudioCallbackContext {
-            sample_rate: HwSampleRate::new(44_100),
+            sample_rate: DeviceSampleRate::new(44_100),
             frames: 256,
             channels: 2,
             stream_time: 0.0,

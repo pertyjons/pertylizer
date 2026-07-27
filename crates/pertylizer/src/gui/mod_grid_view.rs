@@ -147,9 +147,8 @@ pub(crate) struct ModGridViewState {
     /// matches MCP + the pattern-view lane picker). Refreshed only when the caller
     /// rebuilds it (the module graph changed), not every frame.
     module_groups: HashMap<InstrumentId, Vec<crate::module_targets::ModuleTargetGroup>>,
-    /// The Mod Grid pre-pass CPU load (fraction of the buffer budget), shown in
-    /// the canvas header. Snapshotted from the engine each frame.
-    cpu_mod_grid: f32,
+    /// Audio-thread CPU diagnostics, or `None` when RT profiling is disabled.
+    cpu_profile: Option<synth_engine::CpuStageBreakdown>,
 }
 
 /// A deferred edit to the selected graph, applied after the snapshot is drawn.
@@ -170,7 +169,7 @@ pub(crate) fn draw_mod_grid_view(
     undo_manager: &mut UndoManager,
     instruments: &[(InstrumentId, String)],
     module_groups: Option<HashMap<InstrumentId, Vec<crate::module_targets::ModuleTargetGroup>>>,
-    cpu_mod_grid: f32,
+    cpu_profile: Option<synth_engine::CpuStageBreakdown>,
 ) {
     // Snapshot the instrument list for the Module-target picker. The per-instrument
     // module targets are refreshed only when the caller rebuilds them (the module
@@ -180,7 +179,7 @@ pub(crate) fn draw_mod_grid_view(
     if let Some(groups) = module_groups {
         state.module_groups = groups;
     }
-    state.cpu_mod_grid = cpu_mod_grid;
+    state.cpu_profile = cpu_profile;
 
     let selected_at_entry = state.selected;
     let pool = draw_pool_panel(ui, song, state, undo_manager);
@@ -449,22 +448,31 @@ fn draw_graph_canvas(
                 .color(t.colors.text_primary),
         );
 
-        // Mod Grid pre-pass CPU load (all running instances), as a share of the
-        // per-buffer budget. Amber past 25%, red past 50%.
-        let cpu = state.cpu_mod_grid;
-        let cpu_color = if cpu > 0.5 {
-            t.colors.accent_red
-        } else if cpu > 0.25 {
-            t.colors.accent_yellow
+        if let Some(profile) = state.cpu_profile {
+            // Mod Grid pre-pass CPU load (all running instances), as a share of
+            // the per-buffer budget. Amber past 25%, red past 50%.
+            let cpu = profile.mod_grid.as_f32();
+            let cpu_color = if cpu > 0.5 {
+                t.colors.accent_red
+            } else if cpu > 0.25 {
+                t.colors.accent_yellow
+            } else {
+                t.colors.text_dim
+            };
+            ui.label(
+                RichText::new(format!("{} {:.1}%", ri::CPU_LINE, cpu * 100.0))
+                    .size(t.fonts.size_small)
+                    .color(cpu_color),
+            )
+            .on_hover_text("Mod Grid CPU — the control-rate pre-pass for every running instance");
         } else {
-            t.colors.text_dim
-        };
-        ui.label(
-            RichText::new(format!("{} {:.1}%", ri::CPU_LINE, cpu * 100.0))
-                .size(t.fonts.size_small)
-                .color(cpu_color),
-        )
-        .on_hover_text("Mod Grid CPU — the control-rate pre-pass for every running instance");
+            ui.label(
+                RichText::new(format!("{} OFF", ri::CPU_LINE))
+                    .size(t.fonts.size_small)
+                    .color(t.colors.text_dim),
+            )
+            .on_hover_text("Enable rt-profiling to measure Mod Grid CPU usage");
+        }
 
         // Scope segmented toggle.
         let mut is_track = graph.scope == ModGraphScope::Track;
@@ -602,7 +610,7 @@ fn draw_graph_canvas(
         expose(&canvas_bg, egui::WidgetType::Panel, "mod grid canvas", None);
         scene_canvas::draw_grid(ui, world_rect);
 
-        if graph.nodes.is_empty() {
+        if graph.nodes().is_empty() {
             ui.painter().text(
                 world_rect.center(),
                 egui::Align2::CENTER_CENTER,
@@ -615,7 +623,7 @@ fn draw_graph_canvas(
         let hovered_cable = draw_cables(ui, state, &graph);
 
         state.port_positions.clear();
-        for (&node_id, config) in &graph.nodes {
+        for (&node_id, config) in graph.nodes() {
             draw_node(
                 ui,
                 state,
@@ -694,9 +702,9 @@ fn node_rects<'a>(
     positions: &'a HashMap<ModNodeId, Pos2>,
     graph: &'a ModGraph,
 ) -> impl Iterator<Item = Rect> + 'a {
-    graph.nodes.keys().filter_map(move |id| {
+    graph.nodes().keys().filter_map(move |id| {
         let pos = positions.get(id)?;
-        let config = graph.nodes.get(id)?;
+        let config = graph.nodes().get(id)?;
         let size = state
             .sizes
             .get(&(graph.id, *id))
@@ -709,10 +717,10 @@ fn node_rects<'a>(
 /// Effective positions from the shared Sugiyama flow layout, overridden by any
 /// manually persisted positions. Unlike Rack, no category zones are imposed.
 fn layout_positions(state: &ModGridViewState, graph: &ModGraph) -> HashMap<ModNodeId, Pos2> {
-    let mut domain_to_layout = HashMap::with_capacity(graph.nodes.len());
-    let mut layout_to_domain = HashMap::with_capacity(graph.nodes.len());
+    let mut domain_to_layout = HashMap::with_capacity(graph.nodes().len());
+    let mut layout_to_domain = HashMap::with_capacity(graph.nodes().len());
     let modules: Vec<ModuleInfo> = graph
-        .nodes
+        .nodes()
         .iter()
         .enumerate()
         .filter_map(|(index, (&id, config))| {
@@ -734,7 +742,7 @@ fn layout_positions(state: &ModGridViewState, graph: &ModGraph) -> HashMap<ModNo
         })
         .collect();
     let connections: Vec<LayoutConnection> = graph
-        .connections
+        .connections()
         .iter()
         .filter_map(|connection| {
             Some(LayoutConnection {
@@ -925,7 +933,7 @@ fn draw_port_column(
         .map(|(port, is_output, label)| {
             let display_label = sentence_case(label);
             let endpoint = (column.node_id, *port, *is_output);
-            let connected = column.graph.connections.iter().any(|c| {
+            let connected = column.graph.connections().iter().any(|c| {
                 if *is_output {
                     c.from == column.node_id
                         && synth_core::PortName::from(c.from_port.as_str()) == *port
@@ -1196,7 +1204,11 @@ fn edit_target_body(
 
     ui.horizontal(|ui| {
         ui.label("Amount");
-        let r = ui.add(egui::DragValue::new(&mut target.amount).speed(0.01));
+        let mut amount = target.amount.as_f32();
+        let r = ui.add(egui::DragValue::new(&mut amount).speed(0.01));
+        if r.changed() {
+            target.amount = synth_sequencer::ModulationAmount::new(amount);
+        }
         *any_dragged |= r.dragged();
     });
 }
@@ -1235,10 +1247,10 @@ fn open_connection(graph: &ModGraph, a: PortRef, b: PortRef) -> Option<ModConnec
     let conn = ModConnection::new(out.0, String::from(out.1), inp.0, String::from(inp.1));
     // Reject a second cable into an already-driven input port.
     let occupied = graph
-        .connections
+        .connections()
         .iter()
         .any(|c| c.to == inp.0 && synth_core::PortName::from(c.to_port.as_str()) == inp.1);
-    (!occupied && !graph.connections.contains(&conn)).then_some(conn)
+    (!occupied && !graph.connections().contains(&conn)).then_some(conn)
 }
 
 // ============================================================================
@@ -1256,7 +1268,7 @@ fn draw_cables(ui: &egui::Ui, state: &ModGridViewState, graph: &ModGraph) -> Opt
     let color = crate::gui::widgets::cable_color(WidgetPortType::Control, 255);
 
     let mut hovered_cable = None;
-    for (index, connection) in graph.connections.iter().enumerate() {
+    for (index, connection) in graph.connections().iter().enumerate() {
         let from_port = synth_core::PortName::from(connection.from_port.as_str());
         let to_port = synth_core::PortName::from(connection.to_port.as_str());
         let (Some(&from), Some(&to)) = (
@@ -1319,7 +1331,7 @@ fn node_catalog() -> Vec<ModNodeConfig> {
                 track: None,
                 param: TrackParam::Volume,
             },
-            amount: 0.25,
+            amount: synth_sequencer::ModulationAmount::new(0.25),
             combine: Default::default(),
         }),
     ]

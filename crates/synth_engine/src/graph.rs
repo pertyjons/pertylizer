@@ -848,7 +848,7 @@ impl ModuleGraph {
 
     /// Build topology caches and seed the reusable input-buffer pool before a
     /// graph reaches the audio thread.
-    fn prepare_realtime(&mut self) {
+    pub(crate) fn prepare_realtime(&mut self) {
         self.calculate_processing_order();
 
         let required_buffers = self

@@ -12,14 +12,14 @@ use ringbuf::traits::{Consumer, Observer, Split};
 use crate::audio::traits::{AudioHostTrait, AudioStream};
 use crate::audio::types::*;
 
-/// Ring buffer size for GUI consumer (large, ~262144 samples for ~5.5s at 48 kHz stereo).
+/// Ring buffer size for GUI consumer (~131072 stereo frames, 2.7 s at 48 kHz).
 /// Extra large to tolerate GUI lag spikes without dropping recorded audio.
-const GUI_RING_SIZE: usize = 262_144;
+const GUI_RING_FRAMES: usize = 131_072;
 
-/// Ring buffer size for engine consumer (~16384 samples).
+/// Ring buffer size for engine consumer (8192 stereo frames).
 /// Must be large enough that even at buffer sizes of 2048+ frames the cpal callback
 /// never overflows before the engine drains.
-const ENGINE_RING_SIZE: usize = 16_384;
+const ENGINE_RING_FRAMES: usize = 8_192;
 
 /// Recording state machine.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -35,9 +35,9 @@ pub enum InputState {
 /// Manages audio input: monitoring, metering, and recording.
 pub struct AudioInputManager {
     /// GUI-side ring buffer consumer (large buffer).
-    gui_consumer: Option<ringbuf::HeapCons<f32>>,
+    gui_consumer: Option<ringbuf::HeapCons<synth_core::StereoSample>>,
     /// Engine-side consumer (sent to SynthEngine for live passthrough).
-    engine_consumer: Option<ringbuf::HeapCons<f32>>,
+    engine_consumer: Option<ringbuf::HeapCons<synth_core::StereoSample>>,
     /// Current input stream.
     stream: Option<Box<dyn AudioStream>>,
     /// Current state.
@@ -49,9 +49,9 @@ pub struct AudioInputManager {
     /// Number of channels in the input stream.
     channels: u16,
     /// Sample rate of the input stream.
-    sample_rate: SampleRate,
+    sample_rate: DeviceSampleRate,
     /// Temporary read buffer to avoid per-frame allocation.
-    read_buf: Vec<f32>,
+    read_buf: Vec<synth_core::StereoSample>,
 }
 
 impl AudioInputManager {
@@ -65,8 +65,8 @@ impl AudioInputManager {
             record_buffer: Vec::new(),
             peak_level: Arc::new(AtomicU32::new(0)),
             channels: 2,
-            sample_rate: SampleRate::DVD_QUALITY,
-            read_buf: Vec::with_capacity(GUI_RING_SIZE),
+            sample_rate: DeviceSampleRate::DVD_QUALITY,
+            read_buf: Vec::with_capacity(GUI_RING_FRAMES),
         }
     }
 
@@ -83,10 +83,10 @@ impl AudioInputManager {
         self.stop_monitoring();
 
         // Create dual ring buffers
-        let engine_rb = HeapRb::<f32>::new(ENGINE_RING_SIZE);
+        let engine_rb = HeapRb::<synth_core::StereoSample>::new(ENGINE_RING_FRAMES);
         let (engine_prod, engine_cons) = engine_rb.split();
 
-        let gui_rb = HeapRb::<f32>::new(GUI_RING_SIZE);
+        let gui_rb = HeapRb::<synth_core::StereoSample>::new(GUI_RING_FRAMES);
         let (gui_prod, gui_cons) = gui_rb.split();
 
         // Create and start input stream
@@ -97,7 +97,7 @@ impl AudioInputManager {
         self.engine_consumer = Some(engine_cons);
         self.stream = Some(stream);
         self.state = InputState::Monitoring;
-        self.channels = config.channels.count();
+        self.channels = config.channels.count().clamp(1, 2);
         self.sample_rate = config.sample_rate;
 
         Ok(())
@@ -105,8 +105,15 @@ impl AudioInputManager {
 
     /// Take the engine-side ring buffer consumer (to send to SynthEngine).
     /// Returns `None` if already taken or not monitoring.
-    pub fn take_engine_consumer(&mut self) -> Option<ringbuf::HeapCons<f32>> {
-        self.engine_consumer.take()
+    pub fn take_engine_consumer(
+        &mut self,
+    ) -> Option<(
+        ringbuf::HeapCons<synth_core::StereoSample>,
+        DeviceSampleRate,
+    )> {
+        self.engine_consumer
+            .take()
+            .map(|consumer| (consumer, self.sample_rate))
     }
 
     /// Stop monitoring and release the input stream.
@@ -151,7 +158,7 @@ impl AudioInputManager {
         };
 
         let avail = consumer.occupied_len();
-        self.read_buf.resize(avail, 0.0);
+        self.read_buf.resize(avail, synth_core::StereoSample::ZERO);
         let popped = consumer.pop_slice(&mut self.read_buf);
         self.read_buf.truncate(popped);
 
@@ -160,15 +167,19 @@ impl AudioInputManager {
         }
 
         // Compute peak level
-        let peak = self
-            .read_buf
-            .iter()
-            .fold(0.0_f32, |acc, &s| acc.max(s.abs()));
+        let peak = self.read_buf.iter().fold(0.0_f32, |acc, frame| {
+            acc.max(frame.left.abs()).max(frame.right.abs())
+        });
         self.peak_level.store(peak.to_bits(), Ordering::Relaxed);
 
         // Append to record buffer if recording
         if self.state == InputState::Recording {
-            self.record_buffer.extend_from_slice(&self.read_buf);
+            for frame in &self.read_buf {
+                self.record_buffer.push(frame.left);
+                if self.channels == 2 {
+                    self.record_buffer.push(frame.right);
+                }
+            }
         }
     }
 
@@ -204,7 +215,7 @@ impl AudioInputManager {
     }
 
     /// Get the sample rate.
-    pub fn sample_rate(&self) -> SampleRate {
+    pub fn sample_rate(&self) -> DeviceSampleRate {
         self.sample_rate
     }
 

@@ -5,41 +5,77 @@
 //! - ModuleGraph for signal routing within each voice
 //! - Effect chain for post-voice processing
 
+use arrayvec::ArrayVec;
 use parking_lot::Mutex;
 use ringbuf::HeapRb;
-use ringbuf::traits::{Consumer, Producer, Split};
+use ringbuf::traits::{Consumer, Observer, Producer, Split};
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
+use std::sync::atomic::{AtomicUsize, Ordering};
+use std::time::{Duration, Instant};
 
+use crate::audio_input::AudioInputStream;
 use crate::commands::{EngineCommand, EngineEvent, ModuleId, NoteEvent, PortId, ReorderDirection};
 use crate::effect_chain::{EffectChain, EffectSlot};
 use crate::graph::ModuleGraph;
-use crate::instrument::{Instrument, InstrumentId, MidiChannel, mix_stereo_faded, stereo_peak};
+use crate::instrument::{
+    Instrument, InstrumentId, MidiChannelSelection, mix_stereo_faded, stereo_peak,
+};
 use crate::metering::MeteringSystem;
 use crate::recording::RecordingState;
 use crate::return_bus::ReturnBusChannel;
 use crate::sequencer_engine::{PlayState, SequencerEngine};
-use crate::shared_state::{
-    ConnectionSnapshot, ModuleStateSnapshot, ReturnBusSnapshot, ReturnEffectSnapshot,
-};
 use crate::state::{CommandSync, EngineState};
 use crate::visualizers::{LevelMeter, Oscilloscope, SpectrumAnalyzer, VisualizationBuffer};
 use synth_core::params::LfoWaveform;
 use synth_core::{
     AudioBuffer, AudioCallbackContext, AudioProcessor, BeatPosition, BipolarValue, CcNumber,
-    EnvelopeParam, FilterParam, Gain, Hertz, MidiNote, ModuleType, NormalizedValue, Param,
-    PolyModule as PolyModuleTrait, ProcessContext, SampleCount, SampleRate, Seconds, Semitones,
-    StreamInfo, Velocity,
+    CpuUsage, EnvelopeParam, FilterParam, Gain, Hertz, MidiNote, ModuleType, NormalizedValue,
+    Param, PolyModule as PolyModuleTrait, ProcessContext, SampleCount, SampleRate, Seconds,
+    Semitones, StreamInfo, Velocity,
 };
 use synth_sequencer::{
     AutoInstrumentParam, AutomationTarget, Glide, GlideFrom, GlideInterp, GlobalParam,
     NoteExpression, ReturnBusId, SequencerEvent, TrackParam, VibratoShape,
 };
 
-/// Size of the command ring buffer.
-/// Large enough to handle patch loading (100+ modules with params/connections).
-const COMMAND_BUFFER_SIZE: usize = 16384;
+/// Capacity of the engine's command ring.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub struct CommandCapacity(usize);
+
+impl CommandCapacity {
+    /// Default capacity, large enough for substantial patch-loading bursts.
+    pub const DEFAULT: Self = Self(16_384);
+
+    /// Create a non-zero command capacity.
+    pub const fn new(capacity: usize) -> Option<Self> {
+        if capacity == 0 {
+            None
+        } else {
+            Some(Self(capacity))
+        }
+    }
+
+    /// Return the number of commands the ring can hold.
+    pub const fn as_usize(self) -> usize {
+        self.0
+    }
+}
+
+impl Default for CommandCapacity {
+    fn default() -> Self {
+        Self::DEFAULT
+    }
+}
+
+/// Failure returned when a command cannot be enqueued before its deadline.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, thiserror::Error)]
+pub enum CommandSendError {
+    /// The audio thread did not free a command slot in time.
+    #[error("command queue remained full until the send deadline")]
+    Timeout,
+}
 
 /// Size of the event ring buffer.
 const EVENT_BUFFER_SIZE: usize = 256;
@@ -70,6 +106,40 @@ pub enum DroppedItem {
 /// deallocations on the real-time audio thread.
 pub struct DroppedModule(pub Box<dyn PolyModuleTrait>);
 
+/// Ownership retired by a real-time pointer swap and destroyed by the control
+/// thread when [`EngineHandle::cleanup_dropped_modules`] runs.
+enum DeferredControlDrop {
+    Song(Arc<synth_sequencer::SharedSong>),
+    AudioInput(AudioInputStream),
+}
+
+/// Capacity permits shared by control-command producers and the deferred-drop
+/// consumer. Reserving before enqueue guarantees that every pointer-swap
+/// command has a free return-ring slot when the audio thread processes it.
+struct DeferredDropSlots {
+    available: AtomicUsize,
+}
+
+impl DeferredDropSlots {
+    const fn new(capacity: CommandCapacity) -> Self {
+        Self {
+            available: AtomicUsize::new(capacity.as_usize()),
+        }
+    }
+
+    fn try_reserve(&self) -> bool {
+        self.available
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |available| {
+                available.checked_sub(1)
+            })
+            .is_ok()
+    }
+
+    fn release(&self) {
+        self.available.fetch_add(1, Ordering::Release);
+    }
+}
+
 /// A clonable sender for engine commands.
 ///
 /// This wrapper allows multiple sources (GUI, MIDI, automation) to send
@@ -79,21 +149,35 @@ pub struct DroppedModule(pub Box<dyn PolyModuleTrait>);
 #[derive(Clone)]
 pub struct CommandSender {
     producer: Arc<Mutex<ringbuf::HeapProd<EngineCommand>>>,
+    state: Arc<EngineState>,
     /// Shared enqueue/drain counters. Bumped on every successful push so a
-    /// reader (e.g. a save) can wait for the audio thread to catch up before
-    /// reading the async-mirrored `shared_graph`. See [`CommandSync`].
+    /// reader can wait for corresponding DSP mutations to reach the audio
+    /// thread. See [`CommandSync`].
     command_sync: Arc<CommandSync>,
+    capacity: CommandCapacity,
+    deferred_drop_slots: Arc<DeferredDropSlots>,
 }
 
 impl CommandSender {
-    /// Create a new CommandSender from a ring buffer producer and the engine's
-    /// shared [`CommandSync`] counters (same `Arc` the audio thread bumps on
-    /// drain).
-    pub fn new(producer: ringbuf::HeapProd<EngineCommand>, command_sync: Arc<CommandSync>) -> Self {
+    /// Create a command sender with synchronous control-snapshot publication.
+    fn new(
+        producer: ringbuf::HeapProd<EngineCommand>,
+        state: Arc<EngineState>,
+        capacity: CommandCapacity,
+        deferred_drop_slots: Arc<DeferredDropSlots>,
+    ) -> Self {
         Self {
             producer: Arc::new(Mutex::new(producer)),
-            command_sync,
+            command_sync: Arc::clone(&state.command_sync),
+            state,
+            capacity,
+            deferred_drop_slots,
         }
+    }
+
+    /// Capacity of the shared command ring.
+    pub const fn capacity(&self) -> CommandCapacity {
+        self.capacity
     }
 
     /// Send a command to the engine (non-blocking, may fail if queue full).
@@ -105,9 +189,20 @@ impl CommandSender {
         // lock would let a concurrent sender's still-uncounted push drain first
         // and satisfy the wait prematurely (stale-graph read). See `CommandSync`.
         let mut producer = self.producer.lock();
-        if producer.try_push(command).is_ok() {
-            self.command_sync.note_enqueued();
-            true
+        if !producer.is_full() {
+            let reserved_drop = command_retires_control_ownership(&command);
+            if reserved_drop && !self.deferred_drop_slots.try_reserve() {
+                return false;
+            }
+            crate::control_snapshot::publish(&command, &self.state);
+            let pushed = producer.try_push(command).is_ok();
+            debug_assert!(pushed, "a sole producer lost a reserved command slot");
+            if pushed {
+                self.command_sync.note_enqueued();
+            } else if reserved_drop {
+                self.deferred_drop_slots.release();
+            }
+            pushed
         } else {
             false
         }
@@ -116,51 +211,77 @@ impl CommandSender {
     /// Send a command to the engine, blocking until there's space.
     /// Use this when loading patches or doing bulk operations.
     ///
-    /// Uses exponential backoff to avoid busy-waiting while still responding
-    /// quickly when the queue has space. Max wait time is ~500ms before timeout.
-    pub fn send_blocking(&self, command: EngineCommand) -> bool {
-        // Exponential backoff: 0, 0, 1, 2, 4, 8, 16, 32, 64, 100ms (capped)
-        // Total worst-case wait: ~500ms instead of 10s
-        const BACKOFF_MILLIS: [u64; 10] = [0, 0, 1, 2, 4, 8, 16, 32, 64, 100];
-        const MAX_ATTEMPTS: u32 = 50; // 50 attempts * avg ~10ms = ~500ms max
+    /// Uses bounded exponential backoff to avoid busy-waiting while still
+    /// responding quickly when the queue has space. Returns after at most
+    /// approximately 500 ms if the audio thread is not draining.
+    pub fn send_blocking(&self, command: EngineCommand) -> Result<(), CommandSendError> {
+        self.send_with_timeout(command, Duration::from_millis(500))
+    }
 
-        let mut attempts = 0;
+    fn send_with_timeout(
+        &self,
+        command: EngineCommand,
+        timeout: Duration,
+    ) -> Result<(), CommandSendError> {
+        const MAX_BACKOFF: Duration = Duration::from_millis(10);
+
+        let deadline = Instant::now() + timeout;
+        let mut backoff = Duration::ZERO;
         let mut cmd = command;
 
         loop {
             // Lock, push, and bump `enqueued` on success in one critical section
             // (see `send`); release the guard before any backoff sleep.
-            let returned_cmd = {
+            {
                 let mut producer = self.producer.lock();
-                match producer.try_push(cmd) {
-                    Ok(()) => {
-                        self.command_sync.note_enqueued();
-                        return true;
+                if !producer.is_full() {
+                    let reserved_drop = command_retires_control_ownership(&cmd);
+                    let has_drop_slot = !reserved_drop || self.deferred_drop_slots.try_reserve();
+                    if has_drop_slot {
+                        crate::control_snapshot::publish(&cmd, &self.state);
+                        match producer.try_push(cmd) {
+                            Ok(()) => {
+                                self.command_sync.note_enqueued();
+                                return Ok(());
+                            }
+                            Err(returned_command) => {
+                                debug_assert!(
+                                    false,
+                                    "a sole producer lost a reserved command slot"
+                                );
+                                if reserved_drop {
+                                    self.deferred_drop_slots.release();
+                                }
+                                cmd = returned_command;
+                            }
+                        }
                     }
-                    Err(returned_cmd) => returned_cmd,
                 }
-            };
-            cmd = returned_cmd;
-            attempts += 1;
-            if attempts >= MAX_ATTEMPTS {
-                eprintln!("Command queue timeout after {attempts} attempts!");
-                let mut producer = self.producer.lock();
-                if producer.try_push(cmd).is_ok() {
-                    self.command_sync.note_enqueued();
-                    return true;
-                }
-                return false;
             }
-            // Exponential backoff with cap at last value
-            let sleep_idx = (attempts as usize).min(BACKOFF_MILLIS.len() - 1);
-            let sleep_ms = BACKOFF_MILLIS[sleep_idx];
-            if sleep_ms > 0 {
-                std::thread::sleep(std::time::Duration::from_millis(sleep_ms));
-            } else {
+
+            let now = Instant::now();
+            if now >= deadline {
+                return Err(CommandSendError::Timeout);
+            }
+
+            if backoff.is_zero() {
                 std::thread::yield_now();
+                backoff = Duration::from_millis(1);
+            } else {
+                std::thread::sleep(backoff.min(deadline.saturating_duration_since(now)));
+                backoff = (backoff * 2).min(MAX_BACKOFF);
             }
         }
     }
+}
+
+const fn command_retires_control_ownership(command: &EngineCommand) -> bool {
+    matches!(
+        command,
+        EngineCommand::SetSong { .. }
+            | EngineCommand::SetAudioInputConsumer { .. }
+            | EngineCommand::ClearAudioInputConsumer
+    )
 }
 
 /// Per-stage CPU usage snapshot for the status-bar breakdown tooltip. Each
@@ -170,15 +291,15 @@ impl CommandSender {
 #[must_use]
 pub struct CpuStageBreakdown {
     /// All instrument/voice processing, including the channel- and return-bus stages.
-    pub voices: f32,
+    pub voices: CpuUsage,
     /// The user-added modular graph.
-    pub module_graph: f32,
+    pub module_graph: CpuUsage,
     /// The master effect chain.
-    pub master_fx: f32,
+    pub master_fx: CpuUsage,
     /// The Mod Grid control-rate pre-pass (all running instances).
-    pub mod_grid: f32,
+    pub mod_grid: CpuUsage,
     /// Overall audio-callback load (the status-bar number).
-    pub total: f32,
+    pub total: CpuUsage,
 }
 
 /// Handle for the UI to communicate with the engine.
@@ -197,9 +318,6 @@ pub struct EngineHandle {
     automation_trash_consumer: ringbuf::HeapCons<AutomationTarget>,
     /// Receive replaced metadata strings for destruction off the audio thread.
     metadata_trash_consumer: ringbuf::HeapCons<String>,
-    /// Receive superseded instrument metadata snapshots for off-thread drop.
-    instrument_snapshot_trash_consumer:
-        ringbuf::HeapCons<Vec<crate::shared_state::InstrumentSnapshot>>,
     /// Receive replaced mod-matrix scripts from the audio thread so the old
     /// `Arc<BoundScript>` (bytecode + source text) frees here, on the main
     /// thread, never on the audio thread (see `handle_set_mod_script`).
@@ -211,6 +329,9 @@ pub struct EngineHandle {
     /// runtime's modules free here, on the main thread, never on the audio
     /// thread (see the `SetModGrid` handler).
     mod_grid_trash_consumer: ringbuf::HeapCons<Box<crate::mod_grid::ModGridRuntime>>,
+    /// Receive song and live-input objects retired by pointer swaps.
+    deferred_control_drop_consumer: ringbuf::HeapCons<DeferredControlDrop>,
+    deferred_drop_slots: Arc<DeferredDropSlots>,
     /// Shared state for reading meters, etc.
     pub state: Arc<EngineState>,
     /// Visualization buffers keyed by module ID (shared with engine via Arc).
@@ -227,8 +348,9 @@ impl EngineHandle {
 
     /// Send a command to the engine, blocking until there's space in the queue.
     /// Use this when loading patches or doing bulk operations.
-    /// Returns false only if there's a timeout (deadlock protection).
-    pub fn send_blocking(&mut self, command: EngineCommand) -> bool {
+    /// Returns an error if the audio thread does not free a slot before the
+    /// bounded deadline.
+    pub fn send_blocking(&mut self, command: EngineCommand) -> Result<(), CommandSendError> {
         self.command_sender.send_blocking(command)
     }
 
@@ -237,6 +359,11 @@ impl EngineHandle {
     /// This allows multiple threads/sources to send commands to the engine.
     pub fn command_sender(&self) -> CommandSender {
         self.command_sender.clone()
+    }
+
+    /// Capacity of the command ring shared with this handle.
+    pub const fn command_capacity(&self) -> CommandCapacity {
+        self.command_sender.capacity()
     }
 
     /// Take the note event consumer for OSC telemetry.
@@ -261,7 +388,6 @@ impl EngineHandle {
         while self.automation_trash_consumer.try_pop().is_some() {}
         // Free replaced names, descriptions, and colors on the control thread.
         while self.metadata_trash_consumer.try_pop().is_some() {}
-        while self.instrument_snapshot_trash_consumer.try_pop().is_some() {}
         // Clean up replaced mod-matrix scripts — their Arc<BoundScript> frees here
         // on the main thread, never on the audio thread.
         while self.script_trash_consumer.try_pop().is_some() {}
@@ -271,6 +397,13 @@ impl EngineHandle {
         // Clean up replaced Mod Grid runtimes — their `Box<dyn PolyModule>` DSP
         // frees here on the main thread, never on the audio thread.
         while self.mod_grid_trash_consumer.try_pop().is_some() {}
+        while let Some(retired) = self.deferred_control_drop_consumer.try_pop() {
+            match retired {
+                DeferredControlDrop::Song(song) => drop(song),
+                DeferredControlDrop::AudioInput(stream) => drop(stream),
+            }
+            self.deferred_drop_slots.release();
+        }
     }
 
     /// Send a note on event to the default channel.
@@ -278,7 +411,7 @@ impl EngineHandle {
         self.send(EngineCommand::NoteOn {
             note,
             velocity,
-            channel: super::instrument::MidiChannel::CH1,
+            channel: super::instrument::MidiChannelSelection::CH1,
             instrument_id: None,
         })
     }
@@ -287,7 +420,7 @@ impl EngineHandle {
     pub fn note_off(&mut self, note: MidiNote) -> bool {
         self.send(EngineCommand::NoteOff {
             note,
-            channel: super::instrument::MidiChannel::CH1,
+            channel: super::instrument::MidiChannelSelection::CH1,
             instrument_id: None,
         })
     }
@@ -297,7 +430,7 @@ impl EngineHandle {
         &mut self,
         note: MidiNote,
         velocity: Velocity,
-        channel: super::instrument::MidiChannel,
+        channel: super::instrument::MidiChannelSelection,
     ) -> bool {
         self.send(EngineCommand::NoteOn {
             note,
@@ -311,7 +444,7 @@ impl EngineHandle {
     pub fn note_off_channel(
         &mut self,
         note: MidiNote,
-        channel: super::instrument::MidiChannel,
+        channel: super::instrument::MidiChannelSelection,
     ) -> bool {
         self.send(EngineCommand::NoteOff {
             note,
@@ -394,19 +527,25 @@ impl EngineHandle {
     }
 
     /// Get the current CPU usage.
-    pub fn cpu_usage(&self) -> f32 {
-        self.state.cpu_usage.load()
+    pub fn cpu_usage(&self) -> CpuUsage {
+        CpuUsage::new(self.state.cpu_usage.load())
+    }
+
+    /// Whether this build reads the wall clock inside the audio callback to
+    /// publish CPU diagnostics.
+    pub const fn cpu_profiling_enabled() -> bool {
+        cfg!(feature = "rt-profiling")
     }
 
     /// Get the per-stage CPU breakdown (each a fraction of the buffer budget,
     /// same units as [`Self::cpu_usage`]) for the status-bar tooltip.
     pub fn cpu_breakdown(&self) -> CpuStageBreakdown {
         CpuStageBreakdown {
-            voices: self.state.cpu_voices.load(),
-            module_graph: self.state.cpu_module_graph.load(),
-            master_fx: self.state.cpu_master_fx.load(),
-            mod_grid: self.state.cpu_mod_grid.load(),
-            total: self.state.cpu_usage.load(),
+            voices: CpuUsage::new(self.state.cpu_voices.load()),
+            module_graph: CpuUsage::new(self.state.cpu_module_graph.load()),
+            master_fx: CpuUsage::new(self.state.cpu_master_fx.load()),
+            mod_grid: CpuUsage::new(self.state.cpu_mod_grid.load()),
+            total: CpuUsage::new(self.state.cpu_usage.load()),
         }
     }
 
@@ -477,9 +616,6 @@ pub struct SynthEngine {
     instrument_return_producer: ringbuf::HeapProd<Box<Instrument>>,
     /// Send replaced instrument/module metadata to the main thread for drop.
     metadata_trash_producer: ringbuf::HeapProd<String>,
-    /// Send superseded instrument metadata snapshots to the main thread.
-    instrument_snapshot_trash_producer:
-        ringbuf::HeapProd<Vec<crate::shared_state::InstrumentSnapshot>>,
     /// Send replaced mod-matrix scripts back to UI for dropping on the main
     /// thread. `set_mod_script` runs during the command drain (audio thread), so
     /// the old `Arc<BoundScript>`'s final `free()` must not happen here.
@@ -543,7 +679,8 @@ pub struct SynthEngine {
     /// Per-instrument resolved send taps, refreshed each block alongside
     /// `track_controls`. Pre-allocated with `MAX_CHANNEL_SENDS` capacity per
     /// instrument so the audio thread never grows a vec. Keyed by engine id.
-    channel_sends: std::collections::HashMap<InstrumentId, Vec<ChannelSend>>,
+    channel_sends:
+        std::collections::HashMap<InstrumentId, ArrayVec<ChannelSend, MAX_CHANNEL_SENDS>>,
     /// Resolved bus-to-bus send taps, one inner vec per return-bus index
     /// (parallel to `return_busses`). Refreshed each block in
     /// `update_track_controls`; inner vecs are cleared and refilled (no realloc
@@ -582,8 +719,8 @@ pub struct SynthEngine {
     )>,
 
     // === Audio input ===
-    /// Consumer for live audio input (from AudioInputManager's engine ring buffer).
-    audio_input_consumer: Option<ringbuf::HeapCons<f32>>,
+    /// Live audio input and its lock-free asynchronous resampler.
+    audio_input_stream: Option<AudioInputStream>,
     /// Pre-allocated buffer for audio input (stereo interleaved, block_size * 2).
     audio_input_buffer: Vec<f32>,
 
@@ -616,16 +753,21 @@ pub struct SynthEngine {
     /// of being dropped on the audio thread, and flushed into the channel on the
     /// next swap. Guarantees no DSP is destructed on the audio thread.
     mod_grid_pending_drop: Option<Box<crate::mod_grid::ModGridRuntime>>,
-
-    // === Performance monitoring ===
+    /// Producer for objects whose destructor must run on the control thread.
+    deferred_control_drop_producer: ringbuf::HeapProd<DeferredControlDrop>,
+    deferred_drop_slots: Arc<DeferredDropSlots>,
+    // Wall-clock reads are deliberately absent from normal audio builds.
+    #[cfg(feature = "rt-profiling")]
     callback_duration_sum: f32,
+    #[cfg(feature = "rt-profiling")]
     callback_count: u32,
-    /// Per-stage processing-time accumulators (seconds), summed over the current
-    /// measurement window and flushed alongside `callback_duration_sum` into the
-    /// per-stage CPU atoms for the status-bar breakdown tooltip.
+    #[cfg(feature = "rt-profiling")]
     stage_voices_sum: f32,
+    #[cfg(feature = "rt-profiling")]
     stage_module_graph_sum: f32,
+    #[cfg(feature = "rt-profiling")]
     stage_master_fx_sum: f32,
+    #[cfg(feature = "rt-profiling")]
     stage_mod_grid_sum: f32,
 }
 
@@ -636,10 +778,18 @@ impl SynthEngine {
     /// The engine starts with no instruments — create them explicitly
     /// via [`EngineCommand::AddInstrument`].
     pub fn new() -> (Self, EngineHandle) {
+        Self::with_command_capacity(CommandCapacity::DEFAULT)
+    }
+
+    /// Create an engine with an explicit command-ring capacity.
+    ///
+    /// Small capacities are useful for deterministic backpressure tests;
+    /// production callers normally use [`Self::new`].
+    pub fn with_command_capacity(command_capacity: CommandCapacity) -> (Self, EngineHandle) {
         let state = EngineState::new();
 
         // Create command ring buffer
-        let command_rb = HeapRb::<EngineCommand>::new(COMMAND_BUFFER_SIZE);
+        let command_rb = HeapRb::<EngineCommand>::new(command_capacity.as_usize());
         let (command_producer, command_consumer) = command_rb.split();
 
         // Create event ring buffer
@@ -668,12 +818,8 @@ impl SynthEngine {
         // whose total is bounded by the modules previously accepted through the
         // command queue. Match that queue so a full drain cannot overflow into
         // an audio-thread String drop.
-        let metadata_trash_rb = HeapRb::<String>::new(COMMAND_BUFFER_SIZE);
+        let metadata_trash_rb = HeapRb::<String>::new(command_capacity.as_usize());
         let (metadata_trash_producer, metadata_trash_consumer) = metadata_trash_rb.split();
-        let instrument_snapshot_trash_rb =
-            HeapRb::<Vec<crate::shared_state::InstrumentSnapshot>>::new(COMMAND_BUFFER_SIZE);
-        let (instrument_snapshot_trash_producer, instrument_snapshot_trash_consumer) =
-            instrument_snapshot_trash_rb.split();
 
         // Create return buffer for replaced mod-matrix scripts, whose
         // `Arc<BoundScript>` must not run its (possibly final) drop on the audio
@@ -694,6 +840,11 @@ impl SynthEngine {
         let mod_grid_trash_rb =
             HeapRb::<Box<crate::mod_grid::ModGridRuntime>>::new(RETURN_BUFFER_SIZE);
         let (mod_grid_trash_producer, mod_grid_trash_consumer) = mod_grid_trash_rb.split();
+        let deferred_control_drop_rb =
+            HeapRb::<DeferredControlDrop>::new(command_capacity.as_usize());
+        let (deferred_control_drop_producer, deferred_control_drop_consumer) =
+            deferred_control_drop_rb.split();
+        let deferred_drop_slots = Arc::new(DeferredDropSlots::new(command_capacity));
 
         let mut engine = Self {
             command_consumer,
@@ -702,11 +853,10 @@ impl SynthEngine {
             return_producer,
             instrument_return_producer,
             metadata_trash_producer,
-            instrument_snapshot_trash_producer,
             script_trash_producer,
             descriptor_trash_producer,
             state: Arc::clone(&state),
-            instruments: vec![],
+            instruments: Vec::with_capacity(128),
             master_effects: EffectChain::new(),
             module_graph: ModuleGraph::new(),
             use_modular_routing: false,
@@ -714,7 +864,7 @@ impl SynthEngine {
             master_volume: 1.0,
             mix_buffer: AudioBuffer::new(512),
             graph_output: AudioBuffer::new(1024),
-            prev_instrument_outputs: std::collections::HashMap::new(),
+            prev_instrument_outputs: std::collections::HashMap::with_capacity(128),
             track_controls: vec![TrackControlSlot::default(); usize::from(u16::MAX) + 1]
                 .into_boxed_slice(),
             track_control_generation: 0,
@@ -724,7 +874,7 @@ impl SynthEngine {
             return_order: Vec::new(),
             return_indegree: Vec::new(),
             return_scratch: AudioBuffer::new(512),
-            channel_sends: std::collections::HashMap::new(),
+            channel_sends: std::collections::HashMap::with_capacity(128),
             metering: MeteringSystem::new(synth_core::SampleRate::DVD_QUALITY),
             sequencer: SequencerEngine::new(synth_core::SampleRate::DVD_QUALITY),
             sequencer_event_buffer: Vec::with_capacity(128),
@@ -734,11 +884,9 @@ impl SynthEngine {
             ),
             pre_record_loop: None,
             pending_recorded_notes: None,
-            audio_input_consumer: None,
+            audio_input_stream: None,
             // Pre-allocate for up to MAX_BLOCK_SIZE stereo (interleaved) frames.
             audio_input_buffer: vec![0.0; synth_core::MAX_BLOCK_SIZE * 2],
-            callback_duration_sum: 0.0,
-            callback_count: 0,
             mod_grid: Box::default(),
             mod_grid_scratch: AudioBuffer::new(512),
             grid_master_volume_offset: 0.0,
@@ -747,9 +895,19 @@ impl SynthEngine {
             sustained_notes: Box::new([[false; 128]; 16]),
             mod_grid_trash_producer,
             mod_grid_pending_drop: None,
+            deferred_control_drop_producer,
+            deferred_drop_slots: Arc::clone(&deferred_drop_slots),
+            #[cfg(feature = "rt-profiling")]
+            callback_duration_sum: 0.0,
+            #[cfg(feature = "rt-profiling")]
+            callback_count: 0,
+            #[cfg(feature = "rt-profiling")]
             stage_voices_sum: 0.0,
+            #[cfg(feature = "rt-profiling")]
             stage_module_graph_sum: 0.0,
+            #[cfg(feature = "rt-profiling")]
             stage_master_fx_sum: 0.0,
+            #[cfg(feature = "rt-profiling")]
             stage_mod_grid_sum: 0.0,
         };
 
@@ -759,37 +917,29 @@ impl SynthEngine {
             .sequencer
             .set_automation_trash(automation_trash_producer);
 
-        // Initialize shared state (empty — no instruments yet)
-        engine.update_shared_instruments();
-
         let handle = EngineHandle {
-            command_sender: CommandSender::new(command_producer, Arc::clone(&state.command_sync)),
+            command_sender: CommandSender::new(
+                command_producer,
+                Arc::clone(&state),
+                command_capacity,
+                Arc::clone(&deferred_drop_slots),
+            ),
             event_consumer,
             return_consumer,
             instrument_return_consumer,
             automation_trash_consumer,
             metadata_trash_consumer,
-            instrument_snapshot_trash_consumer,
             script_trash_consumer,
             descriptor_trash_consumer,
             mod_grid_trash_consumer,
+            deferred_control_drop_consumer,
+            deferred_drop_slots,
             state,
             visualization_buffers: HashMap::new(),
             note_event_consumer: Some(note_event_consumer),
         };
 
         (engine, handle)
-    }
-
-    /// Rebuild all voices for all instruments.
-    ///
-    /// Each instrument uses its own voice_graph as the template.
-    /// Call this after bulk operations that affect all instruments.
-    #[allow(dead_code)] // Useful for future bulk operations
-    fn rebuild_all_instrument_voices(&mut self) {
-        self.instruments
-            .iter_mut()
-            .for_each(|inst| inst.rebuild_voices());
     }
 
     /// Find an effect slot by its module ID in a specific instrument's effect chain.
@@ -946,7 +1096,6 @@ impl SynthEngine {
                     name
                 };
                 Self::trash_metadata(&mut self.metadata_trash_producer, Some(discarded));
-                self.update_shared_instruments();
             }
             EngineCommand::SetInstrumentDescription {
                 instrument_id,
@@ -962,7 +1111,6 @@ impl SynthEngine {
                     description
                 };
                 Self::trash_metadata(&mut self.metadata_trash_producer, Some(discarded));
-                self.update_shared_instruments();
             }
             EngineCommand::SetPatchDescription {
                 instrument_id,
@@ -978,7 +1126,6 @@ impl SynthEngine {
                     description
                 };
                 Self::trash_metadata(&mut self.metadata_trash_producer, discarded);
-                self.update_shared_instruments();
             }
             EngineCommand::SetInstrumentColor {
                 instrument_id,
@@ -994,7 +1141,6 @@ impl SynthEngine {
                     color
                 };
                 Self::trash_metadata(&mut self.metadata_trash_producer, discarded);
-                self.update_shared_instruments();
             }
             EngineCommand::SetPatchColor {
                 instrument_id,
@@ -1010,7 +1156,6 @@ impl SynthEngine {
                     color
                 };
                 Self::trash_metadata(&mut self.metadata_trash_producer, discarded);
-                self.update_shared_instruments();
             }
             EngineCommand::SetModuleDescription {
                 instrument_id,
@@ -1047,7 +1192,6 @@ impl SynthEngine {
                 {
                     inst.set_sidechain_source_id(source);
                 }
-                self.update_shared_instruments();
             }
             EngineCommand::SetInstrumentParameter {
                 instrument_id,
@@ -1077,7 +1221,6 @@ impl SynthEngine {
                     .find(|i| i.id() == instrument_id)
                 {
                     inst.set_category(category);
-                    self.update_shared_instruments();
                 }
             }
             EngineCommand::SetInstrumentSolo {
@@ -1097,11 +1240,9 @@ impl SynthEngine {
             EngineCommand::ClearReturnBusses => {
                 self.return_busses.clear();
                 self.return_index.clear();
-                self.update_shared_return_effects();
             }
             EngineCommand::ClearMasterEffects => {
                 self.master_effects.clear();
-                self.update_shared_master_effects();
             }
             EngineCommand::AddReturnEffect {
                 return_id,
@@ -1114,7 +1255,6 @@ impl SynthEngine {
                 if let Some(bus) = self.return_busses.iter_mut().find(|b| b.id() == return_id) {
                     bus.effect_chain_mut().remove_effect(id);
                 }
-                self.update_shared_return_effects();
             }
             EngineCommand::SetReturnEffectParameter {
                 return_id,
@@ -1127,7 +1267,6 @@ impl SynthEngine {
                     slot.effect.set_param(param);
                     slot.state = crate::effect_chain::EnabledState::Active;
                 }
-                self.update_shared_return_effects();
             }
             EngineCommand::SetReturnEffectEnabled {
                 return_id,
@@ -1139,7 +1278,6 @@ impl SynthEngine {
                 {
                     slot.state = crate::effect_chain::EnabledState::from(enabled);
                 }
-                self.update_shared_return_effects();
             }
             EngineCommand::ReorderReturnEffect {
                 return_id,
@@ -1156,7 +1294,6 @@ impl SynthEngine {
                         }
                     }
                 }
-                self.update_shared_return_effects();
             }
 
             // Note control
@@ -1256,7 +1393,6 @@ impl SynthEngine {
                 param,
             } => {
                 self.handle_set_voice_param(instrument_id, target, param);
-                self.update_shared_graph(Some(instrument_id));
             }
             EngineCommand::SetModuleParameter {
                 instrument_id,
@@ -1264,7 +1400,6 @@ impl SynthEngine {
                 param,
             } => {
                 self.handle_set_module_param(instrument_id, module_id, param);
-                self.update_shared_graph(instrument_id);
             }
             EngineCommand::SetModScript {
                 instrument_id,
@@ -1282,7 +1417,6 @@ impl SynthEngine {
                 );
                 // Refresh the shared snapshot so the new script is visible to the
                 // save path (`ModuleStateSnapshot.scripts`).
-                self.update_shared_graph(instrument_id);
             }
 
             // Reset/clear
@@ -1291,13 +1425,6 @@ impl SynthEngine {
             }
             EngineCommand::ClearAllModules => {
                 self.handle_clear_all_modules();
-                // Clear shared graph state too
-                self.state.shared_graph.set_connections(Vec::new());
-                self.state.shared_graph.set_processing_order(Vec::new());
-                for m in self.state.shared_graph.get_all_modules() {
-                    self.state.shared_graph.remove_module(m.instrument_id, m.id);
-                }
-                self.update_shared_instruments();
             }
 
             // Effects
@@ -1364,15 +1491,9 @@ impl SynthEngine {
                 module,
             } => {
                 self.handle_add_module_instance(instrument_id, id, module);
-                self.update_shared_graph(instrument_id);
-                // Keep the instrument snapshot's module_count in sync; the graph
-                // snapshot alone (above) doesn't carry it.
-                self.update_shared_instruments();
             }
             EngineCommand::RemoveModule { instrument_id, id } => {
                 self.handle_remove_module(instrument_id, id);
-                self.update_shared_graph(instrument_id);
-                self.update_shared_instruments();
             }
             EngineCommand::Connect {
                 instrument_id,
@@ -1380,7 +1501,6 @@ impl SynthEngine {
                 to,
             } => {
                 self.handle_connect(instrument_id, from, to);
-                self.update_shared_graph(instrument_id);
             }
             EngineCommand::Disconnect {
                 instrument_id,
@@ -1388,14 +1508,12 @@ impl SynthEngine {
                 to,
             } => {
                 self.handle_disconnect(instrument_id, from, to);
-                self.update_shared_graph(instrument_id);
             }
             EngineCommand::DisconnectAll {
                 instrument_id,
                 module,
             } => {
                 self.handle_disconnect_all(instrument_id, module);
-                self.update_shared_graph(instrument_id);
             }
 
             // Transport control
@@ -1421,7 +1539,7 @@ impl SynthEngine {
                         // Enable metronome during count-in
                         self.click_generator.set_enabled(true);
                         self.sequencer.play();
-                        let _ = self.sequencer.seek(seek_to);
+                        self.sequencer.seek_without_events(seek_to);
                         self.state.transport.set_playing(true);
                         self.state.transport.set_ticks(seek_to.0);
                         self.state
@@ -1465,7 +1583,7 @@ impl SynthEngine {
 
                 self.sequencer.set_solo_pattern(None);
                 self.clear_preview();
-                let _ = self.sequencer.stop();
+                self.sequencer.stop_without_events();
                 self.state.transport.set_playing(false);
                 // Stop returns the playhead to the cursor (or to 0 on a second
                 // press); mirror whatever position the sequencer settled on.
@@ -1485,7 +1603,8 @@ impl SynthEngine {
                 self.state.transport.set_playing(false);
             }
             EngineCommand::Rewind => {
-                let _ = self.sequencer.seek(synth_sequencer::Tick::ZERO);
+                self.sequencer
+                    .seek_without_events(synth_sequencer::Tick::ZERO);
                 self.sequencer.set_cursor(synth_sequencer::Tick::ZERO);
                 self.state.transport.set_ticks(0);
             }
@@ -1493,7 +1612,7 @@ impl SynthEngine {
                 // A seek marks the cursor too: this is the position Play starts
                 // from and Stop returns to. Clicking the ruler is how the user
                 // places the cursor.
-                let _ = self.sequencer.seek(tick);
+                self.sequencer.seek_without_events(tick);
                 self.sequencer.set_cursor(tick);
                 self.state.transport.set_ticks(tick.0);
             }
@@ -1521,7 +1640,7 @@ impl SynthEngine {
                     // Placed pattern — play through the arrangement at this region.
                     self.clear_preview();
                     self.sequencer.play();
-                    let _ = self.sequencer.seek(start);
+                    self.sequencer.seek_without_events(start);
                     self.sequencer.set_loop(start, end, true);
                     self.sync_loop_to_transport();
                     self.state.transport.set_playing(true);
@@ -1542,7 +1661,8 @@ impl SynthEngine {
                             .set_preview_pattern(Some((pattern_id, instrument)));
                         self.state.transport.set_preview_pattern(Some(pattern_id));
                         self.sequencer.play();
-                        let _ = self.sequencer.seek(synth_sequencer::Tick::ZERO);
+                        self.sequencer
+                            .seek_without_events(synth_sequencer::Tick::ZERO);
                         self.sequencer
                             .set_loop(synth_sequencer::Tick::ZERO, loop_end, true);
                         self.sync_loop_to_transport();
@@ -1557,7 +1677,8 @@ impl SynthEngine {
                         self.sequencer.play();
                         // play() now starts at the cursor; the pre-orphan
                         // fallback played from the start, so seek to 0.
-                        let _ = self.sequencer.seek(synth_sequencer::Tick::ZERO);
+                        self.sequencer
+                            .seek_without_events(synth_sequencer::Tick::ZERO);
                         self.state.transport.set_playing(true);
                         self.state.transport.set_ticks(0);
                     }
@@ -1571,7 +1692,7 @@ impl SynthEngine {
                 if let Some((start, _end)) = bounds {
                     // Important: play() first to avoid it resetting current_tick to 0
                     self.sequencer.play();
-                    let _ = self.sequencer.seek(start);
+                    self.sequencer.seek_without_events(start);
                     self.sequencer.set_loop(
                         synth_sequencer::Tick::ZERO,
                         synth_sequencer::Tick::ZERO,
@@ -1585,7 +1706,8 @@ impl SynthEngine {
                     // play() now begins at the cursor, so seek to 0 explicitly to
                     // honor the "from beginning" intent.
                     self.sequencer.play();
-                    let _ = self.sequencer.seek(synth_sequencer::Tick::ZERO);
+                    self.sequencer
+                        .seek_without_events(synth_sequencer::Tick::ZERO);
                     self.state.transport.set_playing(true);
                     self.state.transport.set_ticks(0);
                 }
@@ -1611,7 +1733,8 @@ impl SynthEngine {
                     .set_preview_pattern(preview.map(|(pattern_id, _)| pattern_id));
             }
             EngineCommand::SetSong { song } => {
-                self.sequencer.set_song(song);
+                let previous = self.sequencer.set_song(song);
+                self.defer_control_drop(DeferredControlDrop::Song(previous));
                 // The new song's pattern ids are unrelated to the old one's;
                 // a stale orphan-preview target must not survive the swap.
                 self.clear_preview();
@@ -1705,11 +1828,23 @@ impl SynthEngine {
                 self.state.transport.set_tempo(bpm);
             }
 
-            EngineCommand::SetAudioInputConsumer { consumer } => {
-                self.audio_input_consumer = Some(consumer);
+            EngineCommand::SetAudioInputConsumer {
+                consumer,
+                sample_rate,
+            } => {
+                let replacement = AudioInputStream::new(consumer, sample_rate);
+                if let Some(previous) = self.audio_input_stream.replace(replacement) {
+                    self.defer_control_drop(DeferredControlDrop::AudioInput(previous));
+                } else {
+                    self.deferred_drop_slots.release();
+                }
             }
             EngineCommand::ClearAudioInputConsumer => {
-                self.audio_input_consumer = None;
+                if let Some(previous) = self.audio_input_stream.take() {
+                    self.defer_control_drop(DeferredControlDrop::AudioInput(previous));
+                } else {
+                    self.deferred_drop_slots.release();
+                }
             }
             EngineCommand::LoadSampleData {
                 instrument_id,
@@ -1791,23 +1926,11 @@ impl SynthEngine {
     // Instrument management handlers
     // ========================================================================
 
-    fn handle_add_instrument(&mut self, instrument: Box<Instrument>) {
-        // Pre-allocate this instrument's sidechain output buffer so the
-        // audio thread never grows the map. MAX_BLOCK_SIZE × 2 = max interleaved frame.
-        self.prev_instrument_outputs.insert(
-            instrument.id(),
-            AudioBuffer::new(synth_core::MAX_BLOCK_SIZE * 2),
-        );
-        // Pre-allocate the per-channel send list at full capacity so the audio
-        // thread refreshes it (clear + push) without ever growing the vec.
-        self.channel_sends
-            .insert(instrument.id(), Vec::with_capacity(MAX_CHANNEL_SENDS));
-        // Mirror the freshly-added instrument's graph into shared_graph so
-        // offline/GUI readers (e.g. sample-usage detection, analyze_*) see it
-        // immediately on project load — not only after the first edit.
-        self.update_shared_graph_for_instrument(&instrument);
+    fn handle_add_instrument(&mut self, mut instrument: Box<Instrument>) {
+        self.prev_instrument_outputs
+            .insert(instrument.id(), instrument.take_sidechain_output());
+        self.channel_sends.insert(instrument.id(), ArrayVec::new());
         self.instruments.push(instrument);
-        self.update_shared_instruments();
     }
 
     fn handle_remove_instrument(&mut self, instrument_id: InstrumentId) {
@@ -1816,17 +1939,11 @@ impl SynthEngine {
             .iter()
             .position(|p| p.id() == instrument_id)
         {
-            // Clean up shared graph data for this instrument
-            self.state
-                .shared_graph
-                .remove_modules_for_instrument(instrument_id);
-            self.state
-                .shared_graph
-                .set_connections_for_instrument(instrument_id, Vec::new());
-
-            let instrument = self.instruments.swap_remove(idx);
+            let mut instrument = self.instruments.swap_remove(idx);
             // Drop this instrument's sidechain cache.
-            self.prev_instrument_outputs.remove(&instrument_id);
+            if let Some(output) = self.prev_instrument_outputs.remove(&instrument_id) {
+                instrument.restore_sidechain_output(output);
+            }
             self.channel_sends.remove(&instrument_id);
             // Clear any sidechain references that pointed at this id.
             for inst in &mut self.instruments {
@@ -1835,7 +1952,6 @@ impl SynthEngine {
                 }
             }
             let _ = self.instrument_return_producer.try_push(instrument);
-            self.update_shared_instruments();
         }
     }
 
@@ -1859,7 +1975,6 @@ impl SynthEngine {
         }
         self.return_busses.push(ReturnBusChannel::new(id));
         self.rebuild_return_index();
-        self.update_shared_return_effects();
     }
 
     fn handle_remove_return_bus(&mut self, id: ReturnBusId) {
@@ -1869,7 +1984,6 @@ impl SynthEngine {
         // Stale send taps resolve to no destination on the next
         // `update_track_controls` and are simply dropped.
         self.rebuild_return_index();
-        self.update_shared_return_effects();
     }
 
     fn handle_add_return_effect(
@@ -1882,61 +1996,6 @@ impl SynthEngine {
             bus.effect_chain_mut()
                 .add_effect(id, effect, SampleRate::new(self.sample_rate));
         }
-        self.update_shared_return_effects();
-    }
-
-    /// Publish each return bus's effect chain (type + params + order) into the
-    /// shared snapshot for the save path. Off the steady-state hot loop (called
-    /// only on return-effect mutations); `get_params()` allocation is fine here.
-    fn update_shared_return_effects(&self) {
-        use crate::effect_chain::ChainSlot;
-        let snapshots: Vec<ReturnBusSnapshot> = self
-            .return_busses
-            .iter()
-            .map(|bus| {
-                let effects = bus
-                    .effect_chain()
-                    .slots()
-                    .iter()
-                    .filter_map(|slot| match slot {
-                        ChainSlot::Effect(es) => Some(ReturnEffectSnapshot {
-                            module_id: es.module_id,
-                            module_type: es.module_type,
-                            parameters: es.effect.get_params(),
-                            bypassed: es.state.is_bypassed(),
-                        }),
-                        ChainSlot::Visualizer(_) => None,
-                    })
-                    .collect();
-                ReturnBusSnapshot {
-                    id: bus.id(),
-                    effects,
-                }
-            })
-            .collect();
-        *self.state.return_bus_effects.write() = snapshots;
-    }
-
-    /// Publish the master-bus effect chain to shared state (mirrors
-    /// [`Self::update_shared_return_effects`] for the single master chain) so the
-    /// GUI mixer, MCP, and the save path can read it off the audio thread.
-    fn update_shared_master_effects(&self) {
-        use crate::effect_chain::ChainSlot;
-        let effects: Vec<ReturnEffectSnapshot> = self
-            .master_effects
-            .slots()
-            .iter()
-            .filter_map(|slot| match slot {
-                ChainSlot::Effect(es) => Some(ReturnEffectSnapshot {
-                    module_id: es.module_id,
-                    module_type: es.module_type,
-                    parameters: es.effect.get_params(),
-                    bypassed: es.state.is_bypassed(),
-                }),
-                ChainSlot::Visualizer(_) => None,
-            })
-            .collect();
-        *self.state.master_effects.write() = effects;
     }
 
     fn handle_set_instrument_param(
@@ -1986,10 +2045,13 @@ impl SynthEngine {
             InstrumentParam::LearnState(state) => instrument.set_learn_state(state),
             InstrumentParam::OversamplingFactor(factor) => instrument.set_oversampling(factor),
         }
-        self.update_shared_instruments();
     }
 
-    fn handle_set_instrument_channel(&mut self, instrument_id: InstrumentId, channel: MidiChannel) {
+    fn handle_set_instrument_channel(
+        &mut self,
+        instrument_id: InstrumentId,
+        channel: MidiChannelSelection,
+    ) {
         if let Some(instrument) = self
             .instruments
             .iter_mut()
@@ -1997,7 +2059,6 @@ impl SynthEngine {
         {
             instrument.set_midi_channel(channel);
         }
-        self.update_shared_instruments();
     }
 
     fn handle_set_instrument_enabled(&mut self, instrument_id: InstrumentId, enabled: bool) {
@@ -2008,7 +2069,6 @@ impl SynthEngine {
         {
             instrument.set_enabled(enabled);
         }
-        self.update_shared_instruments();
     }
 
     fn handle_set_instrument_solo(&mut self, instrument_id: InstrumentId, solo: bool) {
@@ -2019,7 +2079,6 @@ impl SynthEngine {
         {
             instrument.set_solo(solo);
         }
-        self.update_shared_instruments();
     }
 
     // ========================================================================
@@ -2030,7 +2089,7 @@ impl SynthEngine {
         &mut self,
         note: MidiNote,
         velocity: Velocity,
-        channel: MidiChannel,
+        channel: MidiChannelSelection,
         explicit_instrument: Option<InstrumentId>,
     ) {
         let channel_raw = channel.as_zero_indexed();
@@ -2121,7 +2180,7 @@ impl SynthEngine {
     fn handle_note_off(
         &mut self,
         note: MidiNote,
-        channel: MidiChannel,
+        channel: MidiChannelSelection,
         explicit_instrument: Option<InstrumentId>,
     ) {
         let channel_raw = channel.as_zero_indexed();
@@ -2216,13 +2275,27 @@ impl SynthEngine {
     /// pedal's down→up edge). Clears each held bit *before* the real release — the
     /// pedal is already up, so `handle_note_off` won't re-defer. RT-safe: a fixed
     /// 128-entry scan, no allocation.
-    fn release_sustained_notes(&mut self, channel: MidiChannel) {
+    fn release_sustained_notes(&mut self, channel: MidiChannelSelection) {
         let ch = usize::from(channel.as_zero_indexed());
         for note in 0u8..128 {
             if self.sustained_notes[ch][usize::from(note)] {
                 self.sustained_notes[ch][usize::from(note)] = false;
                 self.handle_note_off(MidiNote::new(note), channel, None);
             }
+        }
+    }
+
+    /// Hand retired pointer-owned state to the control thread. A permit was
+    /// reserved before the command entered the command ring, so this push cannot
+    /// fail unless the reservation invariant is broken.
+    fn defer_control_drop(&mut self, retired: DeferredControlDrop) {
+        if let Err(retired) = self.deferred_control_drop_producer.try_push(retired) {
+            debug_assert!(false, "reserved deferred-drop slot was unavailable");
+            // Preserve RT safety even if a future change breaks the reservation
+            // invariant: leaking is preferable to deallocating on the audio
+            // thread. The debug assertion makes the defect loud in tests.
+            std::mem::forget(retired);
+            self.deferred_drop_slots.release();
         }
     }
 
@@ -2539,7 +2612,11 @@ impl SynthEngine {
         }
     }
 
-    fn handle_pitch_bend(&mut self, value: synth_core::BipolarValue, channel: MidiChannel) {
+    fn handle_pitch_bend(
+        &mut self,
+        value: synth_core::BipolarValue,
+        channel: MidiChannelSelection,
+    ) {
         let channel_raw = channel.as_zero_indexed();
         self.instruments
             .iter_mut()
@@ -2552,7 +2629,7 @@ impl SynthEngine {
             });
     }
 
-    fn handle_mod_wheel(&mut self, value: NormalizedValue, channel: MidiChannel) {
+    fn handle_mod_wheel(&mut self, value: NormalizedValue, channel: MidiChannelSelection) {
         let channel_raw = channel.as_zero_indexed();
         self.instruments
             .iter_mut()
@@ -2565,7 +2642,7 @@ impl SynthEngine {
             });
     }
 
-    fn handle_aftertouch(&mut self, value: NormalizedValue, channel: MidiChannel) {
+    fn handle_aftertouch(&mut self, value: NormalizedValue, channel: MidiChannelSelection) {
         let channel_raw = channel.as_zero_indexed();
         self.instruments
             .iter_mut()
@@ -2582,7 +2659,7 @@ impl SynthEngine {
         &mut self,
         note: MidiNote,
         value: NormalizedValue,
-        channel: MidiChannel,
+        channel: MidiChannelSelection,
     ) {
         let channel_raw = channel.as_zero_indexed();
         self.instruments
@@ -2795,7 +2872,6 @@ impl SynthEngine {
             instrument.rebuild_voices();
         }
         self.master_effects.clear();
-        self.update_shared_master_effects();
         self.module_graph.clear();
         self.use_modular_routing = false;
     }
@@ -2810,36 +2886,29 @@ impl SynthEngine {
         module: ModuleId,
         bypass: bool,
     ) {
-        let target_instruments: Box<dyn Iterator<Item = &mut Box<Instrument>> + '_> =
-            if let Some(id) = instrument_id {
-                Box::new(self.instruments.iter_mut().filter(move |i| i.id() == id))
-            } else {
-                Box::new(self.instruments.iter_mut())
-            };
-
-        // Capture the iterator's instrument_ids so we can also refresh the
-        // shared_graph snapshot after mutating bypass state. Without this,
-        // offline tooling (e.g. analyze_note) would still see the old bypass
-        // state and render with the wrong topology.
-        let mut touched: Vec<InstrumentId> = Vec::new();
-        for instrument in target_instruments {
-            touched.push(instrument.id());
-
-            // Try effect chain first — match by ModuleId so duplicate effects
-            // of the same type can be bypassed independently.
-            if let Some(slot) = instrument.effect_chain_mut().find_effect_by_id(module) {
-                slot.state = crate::effect_chain::EnabledState::from(!bypass);
-                continue;
+        if let Some(instrument_id) = instrument_id {
+            if let Some(instrument) = self
+                .instruments
+                .iter_mut()
+                .find(|instrument| instrument.id() == instrument_id)
+            {
+                Self::set_instrument_bypass(instrument, module, bypass);
             }
-
-            // Also set bypass on voice graph modules (osc, filter, env, LFO)
-            instrument.voice_graph_mut().set_bypass(module, bypass);
-            for voice in instrument.allocator_mut().voices_mut() {
-                voice.graph.set_bypass(module, bypass);
+        } else {
+            for instrument in &mut self.instruments {
+                Self::set_instrument_bypass(instrument, module, bypass);
             }
         }
-        for inst_id in touched {
-            self.update_shared_graph(Some(inst_id));
+    }
+
+    fn set_instrument_bypass(instrument: &mut Instrument, module: ModuleId, bypass: bool) {
+        if let Some(slot) = instrument.effect_chain_mut().find_effect_by_id(module) {
+            slot.state = crate::effect_chain::EnabledState::from(!bypass);
+            return;
+        }
+        instrument.voice_graph_mut().set_bypass(module, bypass);
+        for voice in instrument.allocator_mut().voices_mut() {
+            voice.graph.set_bypass(module, bypass);
         }
     }
 
@@ -2863,12 +2932,6 @@ impl SynthEngine {
                 }
             }
         }
-        // Mirror the change into shared_graph so offline tooling
-        // (e.g. analyze_note) sees the new parameter and bypass state.
-        self.update_shared_graph(instrument_id);
-        if instrument_id.is_none() {
-            self.update_shared_master_effects();
-        }
     }
 
     fn handle_set_effect_enabled(
@@ -2889,12 +2952,6 @@ impl SynthEngine {
                     slot.state = state;
                 }
             }
-        }
-        // Mirror the change into shared_graph so offline tooling
-        // (e.g. analyze_note) sees the new bypass state.
-        self.update_shared_graph(instrument_id);
-        if instrument_id.is_none() {
-            self.update_shared_master_effects();
         }
     }
 
@@ -2941,13 +2998,6 @@ impl SynthEngine {
                 self.master_effects.remove_visualizer(id);
             }
         }
-        self.update_shared_instruments();
-        // Drop the removed visualizer slot from shared_graph so offline tooling
-        // does not keep rendering with a stale snapshot.
-        self.update_shared_graph(instrument_id);
-        if instrument_id.is_none() {
-            self.update_shared_master_effects();
-        }
     }
 
     fn handle_add_effect_instance(
@@ -2973,13 +3023,6 @@ impl SynthEngine {
                     .add_effect(id, effect, SampleRate::new(self.sample_rate));
             }
         }
-        self.update_shared_instruments();
-        // Mirror the new effect slot into shared_graph so offline tooling
-        // sees the latest chain composition and per-effect parameters.
-        self.update_shared_graph(instrument_id);
-        if instrument_id.is_none() {
-            self.update_shared_master_effects();
-        }
     }
 
     fn handle_remove_effect(&mut self, instrument_id: Option<InstrumentId>, id: ModuleId) {
@@ -2996,13 +3039,6 @@ impl SynthEngine {
             None => {
                 self.master_effects.remove_effect(id);
             }
-        }
-        self.update_shared_instruments();
-        // Drop the removed effect slot from shared_graph so offline tooling
-        // does not keep rendering with a stale snapshot.
-        self.update_shared_graph(instrument_id);
-        if instrument_id.is_none() {
-            self.update_shared_master_effects();
         }
     }
 
@@ -3037,11 +3073,6 @@ impl SynthEngine {
                 chain.move_slot_down(module_id);
             }
         }
-        self.update_shared_instruments();
-        self.update_shared_graph(instrument_id);
-        if instrument_id.is_none() {
-            self.update_shared_master_effects();
-        }
     }
 
     fn handle_set_effect_chain_order(
@@ -3053,11 +3084,6 @@ impl SynthEngine {
             return;
         };
         chain.set_slot_order(order);
-        self.update_shared_instruments();
-        self.update_shared_graph(instrument_id);
-        if instrument_id.is_none() {
-            self.update_shared_master_effects();
-        }
     }
 
     // ========================================================================
@@ -3168,175 +3194,6 @@ impl SynthEngine {
         }
     }
 
-    // ========================================================================
-    // Shared graph state update
-    // ========================================================================
-
-    /// Update shared graph state after a graph-changing command.
-    ///
-    /// Dispatches to the appropriate instrument or ignores global graph (not exposed via MCP yet).
-    fn update_shared_graph(&self, instrument_id: Option<InstrumentId>) {
-        if let Some(inst_id) = instrument_id
-            && let Some(instrument) = self.instruments.iter().find(|i| i.id() == inst_id)
-        {
-            self.update_shared_graph_for_instrument(instrument);
-        }
-        // Global module graph (instrument_id == None) is not exposed yet
-    }
-
-    /// Update the shared graph state from an instrument's voice graph.
-    ///
-    /// Called after topology-changing commands (add/remove module, connect/disconnect)
-    /// and parameter changes. Allocates (Vec, String) but only at user-interaction
-    /// rate, not per-sample.
-    fn update_shared_graph_for_instrument(&self, instrument: &Instrument) {
-        let instrument_id = instrument.id();
-        let graph = instrument.voice_graph();
-        let shared = &self.state.shared_graph;
-
-        // Build module snapshots from the voice graph
-        let mut module_ids: Vec<ModuleId> = graph.module_ids().collect();
-        // Sort by (type prefix, instance) for stable ordering without allocating Strings.
-        module_ids.sort_by(|a, b| {
-            a.module_type
-                .prefix()
-                .cmp(b.module_type.prefix())
-                .then(a.instance.cmp(&b.instance))
-        });
-
-        // Clear and rebuild only modules for THIS instrument
-        shared.remove_modules_for_instrument(instrument_id);
-
-        for &id in &module_ids {
-            if let Some(module) = graph.get_module(id) {
-                let descriptor = module.descriptor();
-                let mut snapshot = ModuleStateSnapshot::new(
-                    id,
-                    instrument_id,
-                    module.module_type(),
-                    descriptor.name.to_string(),
-                );
-                snapshot.parameters = module.get_params();
-                // Publish the per-instance description (read side of the
-                // description channel) for MCP/GUI reads and the save path.
-                if let Some(desc) = instrument.module_description(id) {
-                    snapshot.description = desc.to_string();
-                }
-                // Publish per-slot control scripts (Step 2) for the save path.
-                // Allocation is fine here — this is the UI/save snapshot, never
-                // the audio thread. 1-based slot key matches the persisted form.
-                if let Some(scripts) = module.scripts() {
-                    for (slot, entry) in scripts.iter().enumerate() {
-                        if let Some(bound) = entry {
-                            snapshot
-                                .scripts
-                                .insert((slot + 1).to_string(), bound.source.clone());
-                        }
-                    }
-                }
-                snapshot.bypass_state = if graph.is_bypassed(id) {
-                    synth_core::BypassState::Bypassed
-                } else {
-                    synth_core::BypassState::Active
-                };
-                shared.set_module(snapshot);
-            }
-        }
-
-        // Also export effect chain slots so offline tooling (e.g. analyze_note)
-        // can reproduce the full per-instrument signal flow, not just the voice
-        // graph. Visualizers are skipped — they don't modify audio. Slot
-        // ordering in the chain is preserved by passing it explicitly through
-        // ConnectionSnapshot below.
-        let chain = instrument.effect_chain();
-        for slot in chain.slots() {
-            if let crate::effect_chain::ChainSlot::Effect(effect_slot) = slot {
-                let descriptor = effect_slot.effect.descriptor();
-                let mut snapshot = ModuleStateSnapshot::new(
-                    effect_slot.module_id,
-                    instrument_id,
-                    effect_slot.module_type,
-                    descriptor.name.to_string(),
-                );
-                snapshot.parameters = effect_slot.effect.get_params();
-                if let Some(desc) = instrument.module_description(effect_slot.module_id) {
-                    snapshot.description = desc.to_string();
-                }
-                snapshot.bypass_state = if effect_slot.state.is_bypassed() {
-                    synth_core::BypassState::Bypassed
-                } else {
-                    synth_core::BypassState::Active
-                };
-                shared.set_module(snapshot);
-            }
-        }
-
-        // Build connection snapshots for this instrument
-        let connections: Vec<ConnectionSnapshot> = graph
-            .connections()
-            .map(|c| {
-                ConnectionSnapshot::new(
-                    instrument_id,
-                    c.from_module,
-                    c.from_port,
-                    c.to_module,
-                    c.to_port,
-                )
-            })
-            .collect();
-        shared.set_connections_for_instrument(instrument_id, connections);
-
-        // Update processing order
-        shared.set_processing_order(graph.processing_order().to_vec());
-    }
-
-    /// Build and write instrument metadata snapshots to shared state.
-    fn update_shared_instruments(&mut self) {
-        let snapshots: Vec<crate::shared_state::InstrumentSnapshot> = self
-            .instruments
-            .iter()
-            .map(|inst| {
-                let allocator_cfg = inst.allocator().config();
-                crate::shared_state::InstrumentSnapshot {
-                    id: inst.id(),
-                    name: inst.name().to_string(),
-                    description: inst.description().to_string(),
-                    patch_description: inst.patch_description().map(str::to_owned),
-                    color: inst.color().map(str::to_owned),
-                    patch_color: inst.patch_color().map(str::to_owned),
-                    sidechain_source_id: inst.sidechain_source_id(),
-                    category: inst.category(),
-                    midi_channel: synth_core::MidiChannel::new(
-                        inst.midi_channel().as_zero_indexed() + 1,
-                    ),
-                    volume: inst.volume(),
-                    pan: inst.pan(),
-                    enabled: inst.is_enabled(),
-                    muted: !inst.is_enabled(),
-                    solo: inst.is_solo(),
-                    module_count: inst.voice_graph().len(),
-                    // Effects only — visualizers are not part of the effect chain's
-                    // ordering (see EffectChain::slot_order), so they must not inflate
-                    // the effect count either.
-                    effect_count: inst.effect_chain().slot_order().len(),
-                    effect_chain_order: inst.effect_chain().slot_order(),
-                    key_range: inst.key_range(),
-                    transpose: inst.transpose(),
-                    oversampling: inst.oversampling(),
-                    allocation_mode: allocator_cfg.mode,
-                    stealing_strategy: allocator_cfg.stealing,
-                    unison_detune: allocator_cfg.unison_detune,
-                    unison_spread: allocator_cfg.unison_spread,
-                    max_voices: allocator_cfg.max_voices,
-                    velocity_amp_sensitivity: inst.velocity_amp_sensitivity(),
-                    velocity_filter_sensitivity: inst.velocity_filter_sensitivity(),
-                }
-            })
-            .collect();
-        let retired = std::mem::replace(&mut *self.state.instrument_snapshots.write(), snapshots);
-        let _ = self.instrument_snapshot_trash_producer.try_push(retired);
-    }
-
     /// Process all active voices across all instruments and mix.
     ///
     /// Delegates to `Instrument::process` for each instrument, which handles:
@@ -3377,8 +3234,10 @@ impl SynthEngine {
                 let base_volume = auto.volume.unwrap_or(track.volume).as_f32();
                 let base_pan = auto.pan.unwrap_or(track.pan).as_f32();
                 slot.control = TrackControl {
-                    volume: NormalizedValue::new((base_volume + grid.volume).clamp(0.0, 1.0)),
-                    pan: BipolarValue::new((base_pan + grid.pan).clamp(-1.0, 1.0)),
+                    volume: NormalizedValue::new(
+                        (base_volume + grid.volume.as_f32()).clamp(0.0, 1.0),
+                    ),
+                    pan: BipolarValue::new((base_pan + grid.pan.as_f32()).clamp(-1.0, 1.0)),
                     audible: track.is_audible(any_solo) && !auto.muted.unwrap_or(false),
                 };
                 slot.generation = self.track_control_generation;
@@ -3811,7 +3670,7 @@ struct ChannelControls<'a> {
     /// (pre-keyed off the audio thread).
     grid_offsets:
         &'a std::collections::HashMap<InstrumentId, crate::mod_grid::GridInstrumentOffset>,
-    sends: &'a std::collections::HashMap<InstrumentId, Vec<ChannelSend>>,
+    sends: &'a std::collections::HashMap<InstrumentId, ArrayVec<ChannelSend, MAX_CHANNEL_SENDS>>,
 }
 
 /// Channel-bus stage: mix every instrument's channel into the master buffer.
@@ -3852,9 +3711,9 @@ fn mix_channel_busses(
                 .get(&instrument.id())
                 .copied()
                 .unwrap_or_default();
-            let pan = BipolarValue::new(instrument.pan().as_f32() + grid.pan);
+            let pan = BipolarValue::new(instrument.pan().as_f32() + grid.pan.as_f32());
             let (pan_left, pan_right) = Gain::from_pan(pan);
-            let volume = (instrument.volume().as_f32() + grid.volume).clamp(0.0, 2.0);
+            let volume = (instrument.volume().as_f32() + grid.volume.as_f32()).clamp(0.0, 2.0);
             let left_gain = pan_left.as_f32() * volume;
             let right_gain = pan_right.as_f32() * volume;
 
@@ -4136,28 +3995,55 @@ fn route_sequencer_events(
     }
 }
 
-/// Drain a sample source into a fixed buffer, retaining the newest samples in
-/// chronological order. The buffer is cleared when the source yields fewer
-/// samples and no work is performed per overflow beyond one final rotation.
-fn collect_latest_samples(output: &mut [f32], mut next: impl FnMut() -> Option<f32>) {
-    output.fill(0.0);
+#[cfg(feature = "rt-profiling")]
+fn publish_cpu_profile(
+    engine: &mut SynthEngine,
+    elapsed: Duration,
+    context: &AudioCallbackContext,
+) {
+    const PROFILE_WINDOW_CALLBACKS: u32 = 100;
 
-    let mut received = 0;
-    while let Some(sample) = next() {
-        if !output.is_empty() {
-            output[received % output.len()] = sample;
-        }
-        received += 1;
+    engine.callback_duration_sum += elapsed.as_secs_f32();
+    engine.callback_count += 1;
+    if engine.callback_count < PROFILE_WINDOW_CALLBACKS {
+        return;
     }
 
-    if received > output.len() && !output.is_empty() {
-        output.rotate_left(received % output.len());
-    }
+    let callback_count = engine.callback_count as f32;
+    let buffer_duration = context.frames as f32 / context.sample_rate.as_f32();
+    engine
+        .state
+        .cpu_usage
+        .store((engine.callback_duration_sum / callback_count) / buffer_duration);
+    engine
+        .state
+        .cpu_voices
+        .store((engine.stage_voices_sum / callback_count) / buffer_duration);
+    engine
+        .state
+        .cpu_module_graph
+        .store((engine.stage_module_graph_sum / callback_count) / buffer_duration);
+    engine
+        .state
+        .cpu_master_fx
+        .store((engine.stage_master_fx_sum / callback_count) / buffer_duration);
+    engine
+        .state
+        .cpu_mod_grid
+        .store((engine.stage_mod_grid_sum / callback_count) / buffer_duration);
+
+    engine.callback_duration_sum = 0.0;
+    engine.callback_count = 0;
+    engine.stage_voices_sum = 0.0;
+    engine.stage_module_graph_sum = 0.0;
+    engine.stage_master_fx_sum = 0.0;
+    engine.stage_mod_grid_sum = 0.0;
 }
 
 impl AudioProcessor for SynthEngine {
     fn process(&mut self, output: &mut [f32], context: &AudioCallbackContext) {
-        let start_time = Instant::now();
+        #[cfg(feature = "rt-profiling")]
+        let callback_started = Instant::now();
 
         // Retry sending pending recorded notes from previous cycle
         if let Some((pattern_id, notes, overdub)) = self.pending_recorded_notes.take() {
@@ -4169,22 +4055,25 @@ impl AudioProcessor for SynthEngine {
 
         let sample_count = SampleCount::new(context.frames);
 
-        // Drain ALL available audio input samples into pre-allocated buffer.
-        // We drain everything (not just stereo_samples) to handle clock drift:
-        // if the input device is slightly faster than the output device, excess
-        // samples accumulate. We keep only the most recent block worth of data.
+        // Resample complete stereo input frames into the engine's hardware rate.
+        // The stream keeps bounded latency while tracking independent device
+        // clocks; no allocation or lock is taken here.
         let stereo_samples = context.frames * 2;
         // No resize — buffer is pre-allocated to 8192. If block > 4096 frames,
         // we silently cap to buffer size (avoids RT allocation).
         let mut audio_input_buffer = std::mem::take(&mut self.audio_input_buffer);
         let buf_cap = audio_input_buffer.len();
         let usable = stereo_samples.min(buf_cap);
-        if let Some(ref mut consumer) = self.audio_input_consumer {
-            collect_latest_samples(&mut audio_input_buffer[..usable], || consumer.try_pop());
+        if let Some(ref mut stream) = self.audio_input_stream {
+            stream.render(
+                &mut audio_input_buffer[..usable],
+                usable / 2,
+                context.sample_rate,
+            );
         } else {
             audio_input_buffer[..usable].fill(0.0);
         }
-        let has_input = self.audio_input_consumer.is_some();
+        let has_input = self.audio_input_stream.is_some();
 
         let audio_input_ref: Option<&[f32]> = if has_input {
             Some(&audio_input_buffer[..usable])
@@ -4289,9 +4178,13 @@ impl AudioProcessor for SynthEngine {
         // Mod Grid pre-pass: run the always-on control-rate modulator graphs
         // once and accumulate their additive offsets, before instruments read
         // them and before track-control composition folds the track offsets in.
-        let t_stage = Instant::now();
+        #[cfg(feature = "rt-profiling")]
+        let stage_started = Instant::now();
         self.process_mod_grid(&process_context);
-        self.stage_mod_grid_sum += t_stage.elapsed().as_secs_f32();
+        #[cfg(feature = "rt-profiling")]
+        {
+            self.stage_mod_grid_sum += stage_started.elapsed().as_secs_f32();
+        }
 
         // Refresh per-instrument track controls from the Song before the
         // channel-bus stage (inside process_voices) reads them. Track-fader
@@ -4304,22 +4197,31 @@ impl AudioProcessor for SynthEngine {
         // stage (inside process_voices) consumes it.
         self.resolve_return_routing();
 
-        // Per-stage CPU timing for the status-bar breakdown tooltip. Each
-        // `Instant::now()` is a cheap vDSO clock read (no alloc, no lock); the
-        // sums are flushed into the per-stage atoms in the window below.
-        let t_stage = Instant::now();
+        #[cfg(feature = "rt-profiling")]
+        let stage_started = Instant::now();
         self.process_voices(&process_context);
-        self.stage_voices_sum += t_stage.elapsed().as_secs_f32();
+        #[cfg(feature = "rt-profiling")]
+        {
+            self.stage_voices_sum += stage_started.elapsed().as_secs_f32();
+        }
 
         // Process modular graph (user-added modules)
-        let t_stage = Instant::now();
+        #[cfg(feature = "rt-profiling")]
+        let stage_started = Instant::now();
         self.process_module_graph(&process_context);
-        self.stage_module_graph_sum += t_stage.elapsed().as_secs_f32();
+        #[cfg(feature = "rt-profiling")]
+        {
+            self.stage_module_graph_sum += stage_started.elapsed().as_secs_f32();
+        }
 
         // Process master effects (master bus: reverb, limiter, EQ, etc.)
-        let t_stage = Instant::now();
+        #[cfg(feature = "rt-profiling")]
+        let stage_started = Instant::now();
         self.process_master_effects(&process_context);
-        self.stage_master_fx_sum += t_stage.elapsed().as_secs_f32();
+        #[cfg(feature = "rt-profiling")]
+        {
+            self.stage_master_fx_sum += stage_started.elapsed().as_secs_f32();
+        }
         self.audio_input_buffer = audio_input_buffer;
 
         // Mix metronome click into output
@@ -4368,38 +4270,8 @@ impl AudioProcessor for SynthEngine {
             synth_core::SampleRate::new(self.sample_rate),
         );
 
-        // Calculate CPU usage
-        let elapsed = start_time.elapsed().as_secs_f32();
-        let buffer_duration = context.frames as f32 / self.sample_rate;
-        self.callback_duration_sum += elapsed;
-        self.callback_count += 1;
-
-        if self.callback_count >= 100 {
-            let n = self.callback_count as f32;
-            let cpu_usage = (self.callback_duration_sum / n) / buffer_duration;
-            self.state.cpu_usage.store(cpu_usage);
-            // Per-stage fractions, same units as `cpu_usage` (avg stage time per
-            // callback / buffer budget). They sum to roughly `cpu_usage` minus the
-            // un-timed remainder (sequencer routing, metering, click, output mix).
-            self.state
-                .cpu_voices
-                .store((self.stage_voices_sum / n) / buffer_duration);
-            self.state
-                .cpu_module_graph
-                .store((self.stage_module_graph_sum / n) / buffer_duration);
-            self.state
-                .cpu_master_fx
-                .store((self.stage_master_fx_sum / n) / buffer_duration);
-            self.state
-                .cpu_mod_grid
-                .store((self.stage_mod_grid_sum / n) / buffer_duration);
-            self.callback_duration_sum = 0.0;
-            self.callback_count = 0;
-            self.stage_voices_sum = 0.0;
-            self.stage_module_graph_sum = 0.0;
-            self.stage_master_fx_sum = 0.0;
-            self.stage_mod_grid_sum = 0.0;
-        }
+        #[cfg(feature = "rt-profiling")]
+        publish_cpu_profile(self, callback_started.elapsed(), context);
     }
 
     fn on_stream_start(&mut self, info: &StreamInfo) {

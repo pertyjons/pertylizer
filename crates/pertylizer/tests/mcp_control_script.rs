@@ -125,7 +125,7 @@ fn script_module_readback_via_get_module_info() {
     // get_module_info reads; the server-dispatch rig drops the engine.
     use pertylizer::mcp_bridge::AppSynthBridge;
     use pertylizer::patch::{ModuleBuilder, Patch};
-    use synth_core::audio::SampleRate as HwSampleRate;
+    use synth_core::audio::DeviceSampleRate as HwSampleRate;
     use synth_core::{AudioCallbackContext, AudioProcessor, ModuleType};
     use synth_engine::instrument::InstrumentId;
     use synth_mcp::bridge::*;
@@ -248,7 +248,7 @@ fn set_parameters_sets_address_based_mod_matrix_destination() {
     // address `spp-1.x` instead of collapsing to a legacy slot.
     use pertylizer::mcp_bridge::AppSynthBridge;
     use pertylizer::patch::{ModuleBuilder, Patch};
-    use synth_core::audio::SampleRate as HwSampleRate;
+    use synth_core::audio::DeviceSampleRate as HwSampleRate;
     use synth_core::{AudioCallbackContext, AudioProcessor, ModuleType};
     use synth_engine::instrument::InstrumentId;
     use synth_mcp::bridge::*;

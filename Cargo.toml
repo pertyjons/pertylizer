@@ -156,6 +156,7 @@ needless_range_loop = "allow"
 vec_box = "allow"
 
 [workspace.lints.rust]
+unsafe_code = "deny"
 unsafe_op_in_unsafe_fn = "deny"
 
 [profile.release]

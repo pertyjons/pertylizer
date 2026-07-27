@@ -104,10 +104,9 @@ const ORNAMENT_VEL_FLOOR: f32 = 0.35;
 
 /// A pitch class (0–11, C = 0). Constructor wraps modulo 12.
 #[must_use]
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, schemars::JsonSchema,
-)]
-pub struct PitchClass(u8);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, schemars::JsonSchema)]
+#[serde(transparent)]
+pub struct PitchClass(#[schemars(range(min = 0, max = 11))] u8);
 
 impl PitchClass {
     /// Create a pitch class; values ≥ 12 wrap modulo 12.
@@ -115,12 +114,24 @@ impl PitchClass {
         Self(class % 12)
     }
 
-    /// The class as 0–11. Serde can construct the inner value directly from
-    /// hand-crafted JSON, so this is the single defensive normalization point —
-    /// callers never re-apply `% 12`.
+    /// The class as 0–11.
     #[must_use]
-    pub fn as_u8(self) -> u8 {
-        self.0 % 12
+    pub const fn as_u8(self) -> u8 {
+        self.0
+    }
+}
+
+impl<'de> Deserialize<'de> for PitchClass {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let class = u8::deserialize(deserializer)?;
+        if class <= 11 {
+            Ok(Self(class))
+        } else {
+            Err(serde::de::Error::custom("pitch class must be in 0..=11"))
+        }
     }
 }
 
@@ -130,8 +141,9 @@ impl PitchClass {
 /// mask, no name lookup. Name → mask mapping for GUI/MCP lives at those
 /// boundaries (the app crate's harmony tables cannot be a dependency here).
 #[must_use]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
-pub struct ScaleMask(u16);
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, schemars::JsonSchema)]
+#[serde(transparent)]
+pub struct ScaleMask(#[schemars(range(min = 0, max = 4095))] u16);
 
 impl ScaleMask {
     /// All 12 pitch classes (quantize becomes a no-op).
@@ -172,6 +184,22 @@ impl ScaleMask {
     }
 }
 
+impl<'de> Deserialize<'de> for ScaleMask {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let mask = u16::deserialize(deserializer)?;
+        if mask <= 0x0FFF {
+            Ok(Self(mask))
+        } else {
+            Err(serde::de::Error::custom(
+                "scale mask must contain at most 12 bits",
+            ))
+        }
+    }
+}
+
 impl Default for ScaleMask {
     fn default() -> Self {
         Self::MAJOR
@@ -187,8 +215,6 @@ pub enum ScaleTieBreak {
     NearestUp,
     /// Prefer the lower pitch on ties.
     NearestDown,
-    /// Nearest pitch with the default upward tie break.
-    Nearest,
 }
 
 /// Error returned when parsing a scale tie-break policy.
@@ -203,7 +229,7 @@ impl std::str::FromStr for ScaleTieBreak {
         match value.to_ascii_lowercase().as_str() {
             "up" | "nearest_up" | "" => Ok(Self::NearestUp),
             "down" | "nearest_down" => Ok(Self::NearestDown),
-            "nearest" => Ok(Self::Nearest),
+            "nearest" => Ok(Self::NearestUp),
             _ => Err(ParseScaleTieBreakError(value.to_string())),
         }
     }
@@ -2048,7 +2074,7 @@ mod tests {
     fn scale_tie_break_names_parse_consistently() {
         assert_eq!("up".parse(), Ok(ScaleTieBreak::NearestUp));
         assert_eq!("down".parse(), Ok(ScaleTieBreak::NearestDown));
-        assert_eq!("nearest".parse(), Ok(ScaleTieBreak::Nearest));
+        assert_eq!("nearest".parse(), Ok(ScaleTieBreak::NearestUp));
         assert!("sideways".parse::<ScaleTieBreak>().is_err());
     }
 
@@ -2240,11 +2266,11 @@ mod tests {
     }
 
     #[test]
-    fn pitch_class_normalizes_raw_overflow_via_as_u8() {
-        // Serde can construct the inner value directly; as_u8 is the single
-        // defensive normalization point.
-        let raw: PitchClass = serde_json::from_str("13").unwrap();
-        assert_eq!(raw.as_u8(), 1);
+    fn scale_primitives_reject_out_of_range_json() {
+        assert!(serde_json::from_str::<PitchClass>("11").is_ok());
+        assert!(serde_json::from_str::<PitchClass>("12").is_err());
+        assert!(serde_json::from_str::<ScaleMask>("4095").is_ok());
+        assert!(serde_json::from_str::<ScaleMask>("4096").is_err());
     }
 
     // --- Arpeggiator (NP2) --------------------------------------------------

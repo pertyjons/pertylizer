@@ -132,6 +132,22 @@ fn dual_osc_patch() -> Patch {
     patch
 }
 
+/// A long feedback tail proves that session isolation resets effect state
+/// directly instead of relying on a short silence drain.
+fn delay_tail_patch() -> Patch {
+    let mut patch = sustain_patch();
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Delay)
+            .delay_mode("stereo")
+            .param_f("time", 1.0)
+            .param_f("feedback", 0.95)
+            .param_f("mix", 0.8)
+            .build(),
+    );
+    patch.settings.effect_chain_order = vec!["dly-1".to_string()];
+    patch
+}
+
 #[test]
 fn offline_render_is_bit_exact_for_dual_oscillator_patch() {
     let rig = setup_with_patch(&dual_osc_patch());
@@ -242,6 +258,43 @@ fn session_render_range_is_bit_exact_for_noise_patch() {
         "session noise render-1 vs render-2",
         &first.samples,
         &second.samples,
+        first.sample_rate,
+    );
+}
+
+#[test]
+fn session_render_range_resets_long_effect_tails() {
+    let rig = setup_with_patch(&delay_tail_patch());
+    let song = build_arpeggio_song();
+    let shared = McpSharedState::with_song(song);
+
+    let (mut sess, setup_warnings) = OfflineEngineSession::new(&rig.session, &rig.sample_library)
+        .expect("session::new should succeed");
+    assert!(
+        setup_warnings.is_empty(),
+        "delay patch should hydrate without warnings: {setup_warnings:?}"
+    );
+
+    let first = sess
+        .render_range(&shared.song, 0, 3840)
+        .expect("delay render-1 should succeed");
+    let second = sess
+        .render_range(&shared.song, 0, 3840)
+        .expect("delay render-2 should succeed");
+    let third = sess
+        .render_range(&shared.song, 0, 3840)
+        .expect("delay render-3 should succeed");
+
+    assert_bit_exact(
+        "delay render-1 vs render-2",
+        &first.samples,
+        &second.samples,
+        first.sample_rate,
+    );
+    assert_bit_exact(
+        "delay render-1 vs render-3",
+        &first.samples,
+        &third.samples,
         first.sample_rate,
     );
 }

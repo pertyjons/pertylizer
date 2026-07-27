@@ -758,7 +758,8 @@ pub struct InstrumentState {
     pub id: InstrumentId,
     /// Display name.
     pub name: String,
-    /// MIDI channel (1-indexed, 1–16, clamped on deserialization).
+    /// MIDI channel (1-indexed, 1–16), or 0 for OMNI.
+    #[schemars(range(min = 0, max = 16))]
     pub channel: u8,
     /// Volume (0.0 = silent, 1.0 = unity).
     #[schemars(with = "f32")]
@@ -876,7 +877,7 @@ impl<'de> Deserialize<'de> for InstrumentState {
         Ok(Self {
             id: raw.id,
             name: raw.name,
-            channel: raw.channel.clamp(1, 16),
+            channel: raw.channel.min(16),
             volume: raw.volume,
             pan: raw.pan,
             muted: raw.muted,
@@ -1405,6 +1406,20 @@ mod tests {
         let json = serde_json::to_string(&inst).expect("serialize");
         let parsed: InstrumentState = serde_json::from_str(&json).expect("deserialize");
         assert!((parsed.unison_detune.as_f32() - 25.0).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn instrument_state_preserves_omni_and_clamps_invalid_channels() {
+        let mut instrument = crate::project::default_instrument_state();
+        instrument.channel = 0;
+        let json = serde_json::to_string(&instrument).expect("serialize");
+        let omni: InstrumentState = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(omni.channel, 0);
+
+        let mut value: serde_json::Value = serde_json::from_str(&json).expect("parse");
+        value["channel"] = serde_json::json!(200);
+        let invalid: InstrumentState = serde_json::from_value(value).expect("deserialize");
+        assert_eq!(invalid.channel, 16);
     }
 
     #[test]

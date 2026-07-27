@@ -16,7 +16,12 @@ pub struct SharedSong {
 }
 
 impl SharedSong {
-    pub fn new(song: Song) -> Self {
+    pub fn new(mut song: Song) -> Self {
+        // Derived processing orders are skipped by serialization. Build them
+        // while the song is still owned by the control thread so swapping this
+        // object into the audio engine is a pointer-only operation.
+        song.rebuild_note_graphs();
+        song.rebuild_mod_graphs();
         Self {
             snapshot: ArcSwap::from_pointee(song.clone()),
             editable: RwLock::new(song),

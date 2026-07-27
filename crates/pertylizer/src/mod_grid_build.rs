@@ -73,13 +73,13 @@ pub fn build_mod_grid_runtime(song: &Song) -> ModGridRuntime {
         }
     }
 
-    // Pre-key the per-block offset accumulators here, off the audio thread, so the
-    // engine's SetModGrid handler never inserts (allocates) on the audio thread.
+    // Build topology caches and pre-key offset accumulators here, off the audio
+    // thread, so the SetModGrid handler and first processed block never allocate.
     let mut runtime = ModGridRuntime {
         instances,
         ..Default::default()
     };
-    runtime.prekey_offsets();
+    runtime.prepare_realtime();
     runtime
 }
 
@@ -94,7 +94,7 @@ fn build_instance(
     let mut node_module_ids: HashMap<ModNodeId, ModuleId> = HashMap::new();
 
     // 1. Build the hosted control-rate modules and apply their persisted params.
-    for (&node_id, config) in &graph.nodes {
+    for (&node_id, config) in graph.nodes() {
         if let ModNodeConfig::Module(m) = config {
             let Some((mut module, descriptor)) = create_voice_module(m.module_type) else {
                 tracing::warn!(
@@ -135,7 +135,7 @@ fn build_instance(
 
     // 2. Wire cables between two hosted module nodes (cables into a Target node
     //    are routing edges, resolved in step 3, not DSP connections).
-    for cable in &graph.connections {
+    for cable in graph.connections() {
         let (Some(&from_id), Some(&to_id)) = (
             node_module_ids.get(&cable.from),
             node_module_ids.get(&cable.to),
@@ -162,7 +162,7 @@ fn build_instance(
     //     hosted module's control input is injected as a block-constant value —
     //     the source is not a DSP module, so it can't be a real graph connection.
     let mut injections = Vec::new();
-    for cable in &graph.connections {
+    for cable in graph.connections() {
         // `to` must be a hosted module; `from` must NOT be (else step 2 wired it).
         let Some(&to_id) = node_module_ids.get(&cable.to) else {
             continue;
@@ -184,7 +184,7 @@ fn build_instance(
 
     // 3. Resolve the routing sinks (Target nodes).
     let mut targets = Vec::new();
-    for (&node_id, config) in &graph.nodes {
+    for (&node_id, config) in graph.nodes() {
         let ModNodeConfig::Target(t) = config else {
             continue;
         };
@@ -196,7 +196,7 @@ fn build_instance(
         // Find the single incoming cable feeding this target's input port and
         // resolve its source node (hosted module output or a cheap source).
         let source = graph
-            .connections
+            .connections()
             .iter()
             .find(|c| c.to == node_id && c.to_port == TARGET_INPUT_PORT)
             .and_then(|c| resolve_source(graph, c, &node_module_ids, song));
@@ -216,7 +216,7 @@ fn build_instance(
         targets.push(ResolvedTarget {
             source,
             target: resolved,
-            amount: t.amount,
+            amount: t.amount.as_f32(),
             combine: t.combine,
             smooth: 0.0,
             dest_addr,
@@ -247,7 +247,7 @@ fn resolve_source(
     node_module_ids: &HashMap<ModNodeId, ModuleId>,
     song: &Song,
 ) -> Option<ModSource> {
-    match graph.nodes.get(&cable.from)? {
+    match graph.node(cable.from)? {
         ModNodeConfig::Module(_) => node_module_ids
             .get(&cable.from)
             .map(|&mid| ModSource::Dsp(mid, PortName::from(cable.from_port.as_str()))),
@@ -299,7 +299,7 @@ mod tests {
                         instrument: synth_sequencer::InstrumentId::new(0),
                         param: AutoInstrumentParam::FilterCutoff,
                     },
-                    amount: 1.0,
+                    amount: synth_sequencer::ModulationAmount::new(1.0),
                     combine: Default::default(),
                 }),
             )
@@ -319,7 +319,7 @@ mod tests {
                         instrument: synth_sequencer::InstrumentId::new(0),
                         param: AutoInstrumentParam::Volume,
                     },
-                    amount: 0.5,
+                    amount: synth_sequencer::ModulationAmount::new(0.5),
                     combine: Default::default(),
                 }),
             )
@@ -402,7 +402,7 @@ mod tests {
                         target: AutomationTarget::Global(
                             synth_sequencer::GlobalParam::MasterVolume,
                         ),
-                        amount: 1.0,
+                        amount: synth_sequencer::ModulationAmount::new(1.0),
                         combine: Default::default(),
                     }),
                 )
@@ -470,7 +470,7 @@ mod tests {
                         track: None,
                         param: TrackParam::Volume,
                     },
-                    amount: 0.25,
+                    amount: synth_sequencer::ModulationAmount::new(0.25),
                     combine: Default::default(),
                 }),
             )
@@ -528,7 +528,7 @@ mod tests {
                         track: None,
                         param: TrackParam::Volume,
                     },
-                    amount: 1.0,
+                    amount: synth_sequencer::ModulationAmount::new(1.0),
                     combine: Default::default(),
                 }),
             )
@@ -566,7 +566,7 @@ mod tests {
                 ModNodeId::new(1),
                 ModNodeConfig::Target(ModTarget {
                     target: AutomationTarget::Global(synth_sequencer::GlobalParam::MasterVolume),
-                    amount: 0.5,
+                    amount: synth_sequencer::ModulationAmount::new(0.5),
                     combine: Default::default(),
                 }),
             )
@@ -590,7 +590,7 @@ mod tests {
                 ModNodeId::new(3),
                 ModNodeConfig::Target(ModTarget {
                     target: AutomationTarget::Global(synth_sequencer::GlobalParam::MasterVolume),
-                    amount: 1.0,
+                    amount: synth_sequencer::ModulationAmount::new(1.0),
                     combine: Default::default(),
                 }),
             )
@@ -652,7 +652,7 @@ mod tests {
                         track: None,
                         param: TrackParam::Volume,
                     },
-                    amount: 0.8,
+                    amount: synth_sequencer::ModulationAmount::new(0.8),
                     combine: Default::default(),
                 }),
             )

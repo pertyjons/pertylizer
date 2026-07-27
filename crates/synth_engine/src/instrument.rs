@@ -8,7 +8,7 @@
 //!
 //! This module uses domain-specific types throughout:
 //! - [`InstrumentId`] instead of `u64` for instrument identifiers
-//! - [`MidiChannel`] instead of `u8` for MIDI channel numbers
+//! - [`MidiChannelSelection`] instead of `u8` for MIDI channel routing
 //!
 //! This prevents common errors like mixing up instrument IDs with other identifiers.
 
@@ -136,15 +136,15 @@ pub use synth_core::InstrumentId;
 /// Re-exported from `synth_osc_protocol` — shared across workspace and visualizer.
 pub use synth_osc_protocol::InstrumentCategory;
 
-/// MIDI channel number (1-16).
+/// MIDI input-channel selection: one concrete channel or omni.
 ///
-/// MIDI channels are one-indexed for human display (1-16),
-/// but stored as zero-indexed internally (0-15) per MIDI spec.
+/// Concrete channels are stored zero-indexed (0-15) per the MIDI wire format.
+/// Use [`synth_core::MidiChannel`] for a channel value that cannot be omni.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[repr(transparent)]
-pub struct MidiChannel(u8);
+pub struct MidiChannelSelection(u8);
 
-impl MidiChannel {
+impl MidiChannelSelection {
     /// Channel 1 (omni/default).
     pub const CH1: Self = Self(0);
     /// Channel 10 (drums in General MIDI).
@@ -191,6 +191,16 @@ impl MidiChannel {
             0 // OMNI
         } else {
             self.0 + 1
+        }
+    }
+
+    /// Convert a concrete selection to its channel value, or `None` for OMNI.
+    #[inline]
+    pub const fn as_channel(self) -> Option<synth_core::MidiChannel> {
+        if self.0 == 255 {
+            None
+        } else {
+            Some(synth_core::MidiChannel::new(self.0 + 1))
         }
     }
 
@@ -269,7 +279,7 @@ impl MidiChannel {
     }
 }
 
-impl fmt::Display for MidiChannel {
+impl fmt::Display for MidiChannelSelection {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         if self.is_omni() {
             write!(f, "OMNI")
@@ -279,7 +289,7 @@ impl fmt::Display for MidiChannel {
     }
 }
 
-impl Default for MidiChannel {
+impl Default for MidiChannelSelection {
     fn default() -> Self {
         Self::CH1
     }
@@ -391,7 +401,7 @@ pub struct Instrument {
     /// Instrument category (drums, bass, pad, lead, etc.).
     category: InstrumentCategory,
     /// MIDI channel this instrument responds to.
-    midi_channel: MidiChannel,
+    midi_channel: MidiChannelSelection,
     /// Key range this instrument responds to.
     /// Notes outside this range are ignored.
     key_range: KeyRange,
@@ -440,6 +450,9 @@ pub struct Instrument {
     os_voice_left: AudioBuffer,
     /// Oversampled right channel buffer (pre-allocated for up to 4x).
     os_voice_right: AudioBuffer,
+    /// Previous-block sidechain output storage transferred to the engine when
+    /// this instrument is installed.
+    sidechain_output: AudioBuffer,
 }
 
 /// Apply a per-voice unison stereo-spread gain pair `(left, right)` to a stereo
@@ -496,10 +509,10 @@ impl Instrument {
             patch_description: None,
             patch_color: None,
             color: None,
-            module_descriptions: HashMap::new(),
+            module_descriptions: HashMap::with_capacity(256),
             sidechain_source_id: None,
             category: InstrumentCategory::default(),
-            midi_channel: MidiChannel::default(),
+            midi_channel: MidiChannelSelection::default(),
             key_range: KeyRange::default(),
             transpose: Semitones::ZERO,
             learn_state: LearnState::default(),
@@ -522,6 +535,7 @@ impl Instrument {
             downsampler_r: Downsampler::new(),
             os_voice_left: AudioBuffer::new(MAX_BUFFER_SIZE * 4),
             os_voice_right: AudioBuffer::new(MAX_BUFFER_SIZE * 4),
+            sidechain_output: AudioBuffer::new(MAX_BUFFER_SIZE * 2),
         }
     }
 
@@ -537,10 +551,10 @@ impl Instrument {
             patch_description: None,
             patch_color: None,
             color: None,
-            module_descriptions: HashMap::new(),
+            module_descriptions: HashMap::with_capacity(256),
             sidechain_source_id: None,
             category: InstrumentCategory::default(),
-            midi_channel: MidiChannel::default(),
+            midi_channel: MidiChannelSelection::default(),
             key_range: KeyRange::default(),
             transpose: Semitones::ZERO,
             learn_state: LearnState::default(),
@@ -563,7 +577,18 @@ impl Instrument {
             downsampler_r: Downsampler::new(),
             os_voice_left: AudioBuffer::new(MAX_BUFFER_SIZE * 4),
             os_voice_right: AudioBuffer::new(MAX_BUFFER_SIZE * 4),
+            sidechain_output: AudioBuffer::new(MAX_BUFFER_SIZE * 2),
         }
+    }
+
+    /// Transfer pre-allocated sidechain storage to the engine.
+    pub(crate) fn take_sidechain_output(&mut self) -> AudioBuffer {
+        std::mem::replace(&mut self.sidechain_output, AudioBuffer::new(0))
+    }
+
+    /// Reattach sidechain storage before the instrument is retired off-thread.
+    pub(crate) fn restore_sidechain_output(&mut self, output: AudioBuffer) {
+        self.sidechain_output = output;
     }
 
     /// Get the instrument ID.
@@ -716,13 +741,13 @@ impl Instrument {
 
     /// Get the MIDI channel.
     #[inline]
-    pub fn midi_channel(&self) -> MidiChannel {
+    pub fn midi_channel(&self) -> MidiChannelSelection {
         self.midi_channel
     }
 
     /// Set the MIDI channel.
     #[inline]
-    pub fn set_midi_channel(&mut self, channel: MidiChannel) {
+    pub fn set_midi_channel(&mut self, channel: MidiChannelSelection) {
         self.midi_channel = channel;
     }
 
@@ -1568,35 +1593,37 @@ mod tests {
     #[test]
     fn test_midi_channel_creation() {
         // One-indexed
-        let ch1 = MidiChannel::from_one_indexed(1).unwrap();
+        let ch1 = MidiChannelSelection::from_one_indexed(1).unwrap();
         assert_eq!(ch1.as_zero_indexed(), 0);
         assert_eq!(ch1.as_one_indexed(), 1);
 
-        let ch16 = MidiChannel::from_one_indexed(16).unwrap();
+        let ch16 = MidiChannelSelection::from_one_indexed(16).unwrap();
         assert_eq!(ch16.as_zero_indexed(), 15);
         assert_eq!(ch16.as_one_indexed(), 16);
 
         // Invalid
-        assert!(MidiChannel::from_one_indexed(0).is_none());
-        assert!(MidiChannel::from_one_indexed(17).is_none());
+        assert!(MidiChannelSelection::from_one_indexed(0).is_none());
+        assert!(MidiChannelSelection::from_one_indexed(17).is_none());
 
         // Zero-indexed
-        let ch0 = MidiChannel::from_zero_indexed(0).unwrap();
+        let ch0 = MidiChannelSelection::from_zero_indexed(0).unwrap();
         assert_eq!(ch0.as_one_indexed(), 1);
 
-        assert!(MidiChannel::from_zero_indexed(16).is_none());
+        assert!(MidiChannelSelection::from_zero_indexed(16).is_none());
     }
 
     #[test]
     fn test_midi_channel_matching() {
-        let ch5 = MidiChannel::from_one_indexed(5).unwrap();
+        let ch5 = MidiChannelSelection::from_one_indexed(5).unwrap();
         assert!(ch5.matches(4)); // zero-indexed
         assert!(!ch5.matches(3));
 
-        let omni = MidiChannel::OMNI;
+        let omni = MidiChannelSelection::OMNI;
         assert!(omni.matches(0));
         assert!(omni.matches(15));
         assert!(omni.is_omni());
+        assert_eq!(omni.as_channel(), None);
+        assert_eq!(ch5.as_channel(), Some(synth_core::MidiChannel::new(5)));
     }
 
     #[test]
@@ -1604,7 +1631,7 @@ mod tests {
         let instrument = Instrument::new(InstrumentId::FIRST, "Lead");
         assert_eq!(instrument.id(), InstrumentId::FIRST);
         assert_eq!(instrument.name(), "Lead");
-        assert_eq!(instrument.midi_channel(), MidiChannel::CH1);
+        assert_eq!(instrument.midi_channel(), MidiChannelSelection::CH1);
         assert!(instrument.is_enabled());
         assert_eq!(instrument.volume(), Gain::UNITY);
         assert_eq!(instrument.pan(), BipolarValue::CENTER);
@@ -1613,7 +1640,7 @@ mod tests {
     #[test]
     fn test_instrument_responds_to_channel() {
         let mut instrument = Instrument::new(InstrumentId::new(1), "Bass");
-        instrument.set_midi_channel(MidiChannel::from_one_indexed(2).unwrap());
+        instrument.set_midi_channel(MidiChannelSelection::from_one_indexed(2).unwrap());
 
         // Should respond to channel 2 (zero-indexed: 1)
         assert!(instrument.responds_to_channel(1));

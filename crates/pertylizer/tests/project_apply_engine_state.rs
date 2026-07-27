@@ -28,7 +28,7 @@
 
 use std::sync::Arc;
 
-use synth_core::audio::SampleRate as HwSampleRate;
+use synth_core::audio::DeviceSampleRate as HwSampleRate;
 use synth_core::{AudioCallbackContext, AudioProcessor};
 use synth_engine::SynthEngine;
 use synth_sampler::SampleLibrary;
@@ -240,7 +240,7 @@ fn assert_snapshot_matches(project: &ProjectFile, rig: &Rig) {
             inst.id.as_u64()
         );
         assert_eq!(
-            snap.midi_channel.as_u8(),
+            snap.midi_channel.map_or(0, |channel| channel.as_u8()),
             inst.channel,
             "midi_channel mismatch for {}",
             inst.id.as_u64()

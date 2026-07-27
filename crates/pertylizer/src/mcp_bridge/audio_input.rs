@@ -76,7 +76,9 @@ impl synth_mcp::bridge::AudioInputBridge for AppSynthBridge {
         })?;
         let selected = self.selected_input_device.lock().clone();
         let config = synth_core::audio::StreamConfig {
-            sample_rate: synth_core::audio::SampleRate::DVD_QUALITY,
+            sample_rate: synth_core::audio::DeviceSampleRate::new(
+                self.session.state().sample_rate.load(),
+            ),
             buffer_size: synth_core::audio::BufferSize::MEDIUM,
             channels: synth_core::audio::ChannelCount::Stereo,
         };
@@ -84,7 +86,7 @@ impl synth_mcp::bridge::AudioInputBridge for AppSynthBridge {
         input
             .start_monitoring(host.as_ref(), selected.as_deref(), &config)
             .map_err(|error| McpBridgeError::Other(error.to_string()))?;
-        let Some(consumer) = input.take_engine_consumer() else {
+        let Some((consumer, sample_rate)) = input.take_engine_consumer() else {
             input.stop_monitoring();
             return Err(McpBridgeError::Other(
                 "audio input started without an engine consumer".to_string(),
@@ -93,7 +95,10 @@ impl synth_mcp::bridge::AudioInputBridge for AppSynthBridge {
         if !self
             .session
             .command_sender()
-            .send(EngineCommand::SetAudioInputConsumer { consumer })
+            .send(EngineCommand::SetAudioInputConsumer {
+                consumer,
+                sample_rate,
+            })
         {
             input.stop_monitoring();
             return Err(McpBridgeError::CommandSendFailed {

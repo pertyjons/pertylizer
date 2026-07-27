@@ -36,8 +36,8 @@ impl SampleLibrary {
         sample.meta.id = id;
         self.samples.insert(id, sample);
         // Ensure next_id is always above the highest inserted ID
-        if id.0 >= self.next_id {
-            self.next_id = id.0 + 1;
+        if id.as_u64() >= self.next_id {
+            self.next_id = id.as_u64() + 1;
         }
         id
     }
@@ -125,7 +125,7 @@ impl Default for SampleLibrary {
 mod tests {
     use super::*;
     use crate::types::{FrameIndex, SampleSource};
-    use synth_core::audio::SampleRate;
+    use synth_core::audio::DeviceSampleRate;
     use synth_core::{ChannelCount, SampleCount};
 
     fn make_sample(name: &str) -> Sample {
@@ -134,7 +134,7 @@ mod tests {
                 id: SampleId::new(0),
                 name: name.to_string(),
                 description: String::new(),
-                sample_rate: SampleRate::new(44100),
+                sample_rate: DeviceSampleRate::new(44100),
                 channels: ChannelCount::Mono,
                 frame_count: SampleCount::new(100),
                 root_note: None,

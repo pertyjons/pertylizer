@@ -53,7 +53,7 @@ fn instrument_snapshot(seq: u16, name: &str, category: InstrumentCategory) -> In
         patch_color: None,
         sidechain_source_id: None,
         category,
-        midi_channel: MidiChannel::CH1,
+        midi_channel: Some(MidiChannel::CH1),
         volume: Gain::UNITY,
         pan: BipolarValue::CENTER,
         enabled: true,

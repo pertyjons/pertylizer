@@ -304,14 +304,14 @@ impl synth_mcp::bridge::SequencerBridge for AppSynthBridge {
             .ok_or(McpBridgeError::NoteGraphNotFound(graph_id))?;
         // Modules in processing (topological) order, falling back to id order if
         // the derived order is empty (e.g. a freshly loaded, un-rebuilt graph).
-        let ordered: Vec<synth_sequencer::NoteModuleId> = if graph.processing_order.is_empty() {
-            graph.nodes.keys().copied().collect()
+        let ordered: Vec<synth_sequencer::NoteModuleId> = if graph.processing_order().is_empty() {
+            graph.nodes().keys().copied().collect()
         } else {
-            graph.processing_order.clone()
+            graph.processing_order().to_vec()
         };
         let modules = ordered
             .iter()
-            .filter_map(|id| graph.nodes.get(id).map(|cfg| (id, cfg)))
+            .filter_map(|id| graph.nodes().get(id).map(|cfg| (id, cfg)))
             .map(|(id, cfg)| {
                 Ok(NoteGraphModuleInfo {
                     id: *id,
@@ -323,7 +323,7 @@ impl synth_mcp::bridge::SequencerBridge for AppSynthBridge {
             })
             .collect::<Result<Vec<_>, McpBridgeError>>()?;
         let connections = graph
-            .connections
+            .connections()
             .iter()
             .map(|c| NoteGraphConnectionInfo {
                 from: c.from,
@@ -432,7 +432,7 @@ impl synth_mcp::bridge::SequencerBridge for AppSynthBridge {
             .note_graph_mut(gid)
             .ok_or(McpBridgeError::NoteGraphNotFound(graph_id))?;
         let mid = module_id;
-        if !graph.nodes.contains_key(&mid) {
+        if graph.node(mid).is_none() {
             return Err(McpBridgeError::NoteGraphModuleNotFound {
                 graph_id,
                 module_id,
@@ -511,14 +511,14 @@ impl synth_mcp::bridge::SequencerBridge for AppSynthBridge {
             .note_graph_mut(gid)
             .ok_or(McpBridgeError::NoteGraphNotFound(graph_id))?;
         let mid = module_id;
-        let node = graph
-            .nodes
-            .get_mut(&mid)
+        let mut node = graph
+            .node(mid)
+            .cloned()
             .ok_or(McpBridgeError::NoteGraphModuleNotFound {
                 graph_id,
                 module_id,
             })?;
-        let synth_sequencer::NoteModuleConfig::NoteScriptTransform(transform) = node else {
+        let synth_sequencer::NoteModuleConfig::NoteScriptTransform(transform) = &mut node else {
             return Err(McpBridgeError::Other(format!(
                 "module {module_id} on graph {graph_id} is not a NoteScriptTransform"
             )));
@@ -526,27 +526,32 @@ impl synth_mcp::bridge::SequencerBridge for AppSynthBridge {
         // The source is always persisted; the compile result only decides whether
         // a program is installed (empty / failing sources are valid pass-through).
         transform.source = source;
-        if transform.source().trim().is_empty() {
+        let message = if transform.source().trim().is_empty() {
             transform.set_compiled(None);
-            return Ok(format!(
+            format!(
                 "Script cleared on module {module_id} (graph {graph_id}) — passes notes through"
-            ));
-        }
-        match crate::session::compile_note_event_script(transform.source()) {
-            Ok(program) => {
-                transform.set_compiled(Some(program));
-                Ok(format!(
-                    "Script compiled and installed on module {module_id} (graph {graph_id})"
-                ))
-            }
-            Err(e) => {
-                transform.set_compiled(None);
-                Ok(format!(
-                    "Script saved on module {module_id} (graph {graph_id}) but did not compile \
+            )
+        } else {
+            match crate::session::compile_note_event_script(transform.source()) {
+                Ok(program) => {
+                    transform.set_compiled(Some(program));
+                    format!(
+                        "Script compiled and installed on module {module_id} (graph {graph_id})"
+                    )
+                }
+                Err(e) => {
+                    transform.set_compiled(None);
+                    format!(
+                        "Script saved on module {module_id} (graph {graph_id}) but did not compile \
                      (passes notes through): {e}"
-                ))
+                    )
+                }
             }
-        }
+        };
+        graph
+            .try_insert_node(mid, node)
+            .map_err(|error| McpBridgeError::Other(error.to_string()))?;
+        Ok(message)
     }
 
     fn remove_note_graph_module(
@@ -653,7 +658,7 @@ impl synth_mcp::bridge::SequencerBridge for AppSynthBridge {
             .mod_graph(gid)
             .ok_or(McpBridgeError::ModGraphNotFound(graph_id))?;
         let nodes = graph
-            .nodes
+            .nodes()
             .iter()
             .map(|(id, cfg)| {
                 Ok(ModGraphNodeInfo {
@@ -666,7 +671,7 @@ impl synth_mcp::bridge::SequencerBridge for AppSynthBridge {
             })
             .collect::<Result<Vec<_>, McpBridgeError>>()?;
         let connections = graph
-            .connections
+            .connections()
             .iter()
             .map(|c| ModGraphConnectionInfo {
                 from: c.from,
@@ -914,7 +919,7 @@ impl synth_mcp::bridge::SequencerBridge for AppSynthBridge {
             .ok_or(McpBridgeError::ModGraphNotFound(graph_id))?;
         let nid = node_id;
         // Edit-in-place, not create: the node must already exist.
-        if !graph.nodes.contains_key(&nid) {
+        if graph.node(nid).is_none() {
             return Err(McpBridgeError::ModGraphNodeNotFound { graph_id, node_id });
         }
         // `try_insert_node` replaces the config, keeps the id and its cables, and
@@ -923,7 +928,7 @@ impl synth_mcp::bridge::SequencerBridge for AppSynthBridge {
         candidate
             .try_insert_node(nid, config)
             .map_err(|e| McpBridgeError::Other(e.to_string()))?;
-        for cable in &candidate.connections {
+        for cable in candidate.connections() {
             validate_mod_connection_ports(
                 &candidate,
                 cable.from,
@@ -955,14 +960,14 @@ impl synth_mcp::bridge::SequencerBridge for AppSynthBridge {
             {
                 continue;
             }
-            for (node_id, cfg) in &graph.nodes {
+            for (node_id, cfg) in graph.nodes() {
                 if let synth_sequencer::ModNodeConfig::Target(t) = cfg {
                     out.push(ModTargetInfo {
                         graph_id: graph.id,
                         graph_name: graph.name.clone(),
                         node_id: *node_id,
                         target: t.target.display_name(),
-                        amount: t.amount,
+                        amount: t.amount.as_f32(),
                     });
                 }
             }

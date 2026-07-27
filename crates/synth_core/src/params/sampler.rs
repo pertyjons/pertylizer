@@ -4,6 +4,7 @@
 //! since `Param` lives in `synth_core`.
 
 use serde::{Deserialize, Serialize};
+use std::fmt;
 
 use crate::{Cents, Gain, NormalizedValue};
 
@@ -23,6 +24,12 @@ impl SampleId {
     #[must_use]
     pub const fn as_u64(self) -> u64 {
         self.0
+    }
+}
+
+impl fmt::Display for SampleId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "sample:{}", self.0)
     }
 }
 

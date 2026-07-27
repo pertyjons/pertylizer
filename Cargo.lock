@@ -4725,6 +4725,7 @@ dependencies = [
 name = "synth_engine"
 version = "0.1.0"
 dependencies = [
+ "arrayvec",
  "parking_lot",
  "ringbuf",
  "schemars",

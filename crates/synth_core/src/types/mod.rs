@@ -55,7 +55,7 @@ pub use geometry::{Meters, MetersPerSecond, Position3, SampleOffset};
 pub use identifiers::InstrumentId;
 pub use interned::PortName;
 pub use module_params::{BitDepth, DecayTrim, PulseWidth, TimeScale};
-pub use normalized::{BipolarValue, NormalizedValue, Phase};
+pub use normalized::{BipolarDelta, BipolarValue, NormalizedDelta, NormalizedValue, Phase};
 pub use pitch::{
     CcNumber, Cents, MidiCcNumber, MidiChannel, MidiNote, Octaves, Semitones, Velocity,
 };

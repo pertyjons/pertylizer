@@ -7,7 +7,7 @@ use super::patch_editor::PatchEditor;
 use crate::patch::HexColor;
 use synth_core::{BipolarValue, Gain, Semitones};
 use synth_engine::InstrumentCategory;
-use synth_engine::instrument::{InstrumentId, KeyRange, LearnState, MidiChannel};
+use synth_engine::instrument::{InstrumentId, KeyRange, LearnState, MidiChannelSelection};
 
 /// GUI state for a single instrument.
 ///
@@ -21,7 +21,7 @@ pub struct InstrumentUiState {
     /// Display name for this instrument.
     pub name: String,
     /// MIDI channel this instrument responds to.
-    pub channel: MidiChannel,
+    pub channel: MidiChannelSelection,
     /// Output volume (0.0 = mute, 1.0 = unity).
     pub volume: Gain,
     /// Stereo pan position (-1.0 = left, 0.0 = center, +1.0 = right).
@@ -75,7 +75,7 @@ impl Default for InstrumentUiState {
         Self {
             id: InstrumentId::FIRST,
             name: "Instrument 1".to_string(),
-            channel: MidiChannel::CH1,
+            channel: MidiChannelSelection::CH1,
             volume: Gain::UNITY,
             pan: BipolarValue::CENTER,
             muted: false,
@@ -108,7 +108,7 @@ impl InstrumentUiState {
         Self {
             id,
             name: name.into(),
-            channel: MidiChannel::CH1,
+            channel: MidiChannelSelection::CH1,
             volume: Gain::UNITY,
             pan: BipolarValue::CENTER,
             muted: false,
@@ -135,7 +135,7 @@ impl InstrumentUiState {
     }
 
     /// Create a new instrument with a specific MIDI channel.
-    pub fn with_channel(mut self, channel: MidiChannel) -> Self {
+    pub fn with_channel(mut self, channel: MidiChannelSelection) -> Self {
         self.channel = channel;
         self
     }

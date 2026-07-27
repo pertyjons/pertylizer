@@ -66,7 +66,7 @@ mod tests {
     #[test]
     fn unconstrained_transpose_shifts_every_note() {
         let mut pitches = [60_u8, 62, 64, 67];
-        let r = transpose_pitches(&mut pitches, 5, None, ScaleTieBreak::Nearest);
+        let r = transpose_pitches(&mut pitches, 5, None, ScaleTieBreak::NearestUp);
         assert_eq!(pitches, [65, 67, 69, 72]);
         assert_eq!(r.notes_transposed, 4);
         assert_eq!(r.notes_out_of_range, 0);
@@ -76,7 +76,7 @@ mod tests {
     #[test]
     fn out_of_range_notes_are_skipped() {
         let mut pitches = [120_u8, 60];
-        let r = transpose_pitches(&mut pitches, 12, None, ScaleTieBreak::Nearest);
+        let r = transpose_pitches(&mut pitches, 12, None, ScaleTieBreak::NearestUp);
         // 120 + 12 = 132 > 127 → skipped, original kept.
         assert_eq!(pitches, [120, 72]);
         assert_eq!(r.notes_out_of_range, 1);

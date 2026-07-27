@@ -11,7 +11,7 @@
 
 use std::sync::Arc;
 
-use synth_core::audio::SampleRate as HwSampleRate;
+use synth_core::audio::DeviceSampleRate as HwSampleRate;
 use synth_core::{AudioCallbackContext, AudioProcessor, MidiNote, Velocity};
 use synth_engine::SynthEngine;
 use synth_engine::instrument::InstrumentId;

@@ -51,8 +51,8 @@ pub use patch::Patch;
 // Re-export from synth_engine
 pub use synth_engine::{
     CommandSender, EffectChain, EngineCommand, EngineEvent, EngineHandle, EngineHub, Instrument,
-    InstrumentId, MidiChannel, ModuleGraph, ModuleId, PlayState, SequencerEngine, SynthEngine,
-    VoiceAllocator,
+    InstrumentId, MidiChannelSelection, ModuleGraph, ModuleId, PlayState, SequencerEngine,
+    SynthEngine, VoiceAllocator,
 };
 
 // Re-export from synth_core

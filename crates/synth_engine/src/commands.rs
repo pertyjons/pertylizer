@@ -11,7 +11,7 @@ use std::fmt;
 use std::str::FromStr;
 
 use super::instrument::{
-    Instrument, InstrumentCategory, InstrumentId, KeyRange, LearnState, MidiChannel,
+    Instrument, InstrumentCategory, InstrumentId, KeyRange, LearnState, MidiChannelSelection,
 };
 use synth_core::{
     Amplitude, BipolarValue, Bpm, CcNumber, Cents, CpuUsage, Gain, MidiNote, NormalizedValue,
@@ -307,7 +307,7 @@ pub enum EngineCommand {
     /// Set the MIDI channel for an instrument.
     SetInstrumentMidiChannel {
         instrument_id: InstrumentId,
-        channel: MidiChannel,
+        channel: MidiChannelSelection,
     },
 
     /// Enable or disable an instrument (mute).
@@ -391,7 +391,7 @@ pub enum EngineCommand {
         note: MidiNote,
         /// Note velocity.
         velocity: Velocity,
-        channel: MidiChannel,
+        channel: MidiChannelSelection,
         /// Explicit destination, or `None` for normal focus/channel routing.
         instrument_id: Option<InstrumentId>,
     },
@@ -399,7 +399,7 @@ pub enum EngineCommand {
     /// Stop a note.
     NoteOff {
         note: MidiNote,
-        channel: MidiChannel,
+        channel: MidiChannelSelection,
         /// Explicit destination, or `None` for normal focus/channel routing.
         instrument_id: Option<InstrumentId>,
     },
@@ -425,14 +425,14 @@ pub enum EngineCommand {
     /// GUI/MIDI handler converts raw MIDI (0-16383) to BipolarValue (-1.0 to 1.0).
     PitchBend {
         value: BipolarValue,
-        channel: MidiChannel,
+        channel: MidiChannelSelection,
     },
 
     /// Mod wheel (CC1) - type-safe normalized value.
     /// GUI/MIDI handler converts raw MIDI (0-127) to NormalizedValue (0.0 to 1.0).
     ModWheel {
         value: NormalizedValue,
-        channel: MidiChannel,
+        channel: MidiChannelSelection,
     },
 
     /// A generic MIDI Control Change. Feeds the engine's live CC state that Mod
@@ -440,7 +440,7 @@ pub enum EngineCommand {
     /// is the normalized 0..1 amount. (CC1 also arrives as [`Self::ModWheel`] for
     /// the per-voice mod-wheel path; both update the CC state.)
     ControlChange {
-        channel: MidiChannel,
+        channel: MidiChannelSelection,
         cc: u8,
         value: NormalizedValue,
     },
@@ -448,14 +448,14 @@ pub enum EngineCommand {
     /// Aftertouch (channel pressure) - type-safe normalized value.
     Aftertouch {
         value: NormalizedValue,
-        channel: MidiChannel,
+        channel: MidiChannelSelection,
     },
 
     /// Per-note aftertouch (polyphonic aftertouch) - type-safe normalized value.
     PolyAftertouch {
         note: MidiNote,
         value: NormalizedValue,
-        channel: MidiChannel,
+        channel: MidiChannelSelection,
     },
 
     // === Parameter control ===
@@ -751,7 +751,10 @@ pub enum EngineCommand {
     // === Audio Input ===
     /// Set the audio input consumer (from AudioInputManager's engine ring buffer).
     /// Sent once when input monitoring starts.
-    SetAudioInputConsumer { consumer: ringbuf::HeapCons<f32> },
+    SetAudioInputConsumer {
+        consumer: ringbuf::HeapCons<synth_core::StereoSample>,
+        sample_rate: synth_core::audio::DeviceSampleRate,
+    },
 
     /// Clear the audio input consumer (when monitoring stops).
     ClearAudioInputConsumer,
@@ -955,7 +958,7 @@ pub enum EngineEvent {
         /// Note velocity.
         velocity: Velocity,
         /// MIDI channel the note was triggered on.
-        channel: MidiChannel,
+        channel: MidiChannelSelection,
     },
 
     /// A note was released by the engine.
@@ -967,7 +970,7 @@ pub enum EngineEvent {
         /// MIDI note number.
         note: MidiNote,
         /// MIDI channel the note was released on.
-        channel: MidiChannel,
+        channel: MidiChannelSelection,
     },
 
     /// All notes were released (panic/all-notes-off).
@@ -1041,7 +1044,7 @@ pub enum NoteEvent {
         cc: CcNumber,
         /// Normalized value (0.0–1.0).
         value: NormalizedValue,
-        channel: MidiChannel,
+        channel: MidiChannelSelection,
     },
 }
 

@@ -58,12 +58,6 @@ impl Amplifier {
     }
 
     #[inline]
-    #[allow(dead_code)] // Useful helper for future stereo panning
-    fn pan_coefficients(&self) -> (Gain, Gain) {
-        Gain::from_pan(self.pan)
-    }
-
-    #[inline]
     fn apply_clip(x: f32, mode: ClipMode) -> f32 {
         match mode {
             ClipMode::Off => x,
@@ -655,7 +649,7 @@ mod tests {
     fn test_constant_power_pan() {
         let mut amp = Amplifier::new();
         amp.pan = BipolarValue::CENTER;
-        let (l, r) = amp.pan_coefficients();
+        let (l, r) = Gain::from_pan(amp.pan);
         assert!((l.as_f32() - r.as_f32()).abs() < 0.01);
     }
 

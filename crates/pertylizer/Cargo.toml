@@ -24,6 +24,8 @@ gui-egui = [
 ]
 mcp = ["dep:tokio"]
 osc = ["dep:synth_osc"]
+# Opt-in audio-callback timing. Keep disabled for normal low-jitter operation.
+rt-profiling = ["synth_engine/rt-profiling"]
 # Opt-in (NOT in default): pulls eframe's `inspection` feature, which links
 # `egui_inspection` + `accesskit` so an external `egui-mcp` server can drive the
 # live UI over AccessKit. Dormant unless `EGUI_INSPECTION=1` is set at runtime.

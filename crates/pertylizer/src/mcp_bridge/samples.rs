@@ -32,7 +32,7 @@ impl synth_mcp::bridge::SampleBridge for AppSynthBridge {
         if !file_path.exists() {
             return Err(McpBridgeError::Other(format!("File not found: {path}")));
         }
-        let target_rate = synth_core::audio::SampleRate::DVD_QUALITY;
+        let target_rate = synth_core::audio::DeviceSampleRate::DVD_QUALITY;
         let mut sample = synth_sampler::load_wav(file_path, target_rate)
             .map_err(|e| McpBridgeError::Other(format!("WAV load error: {e}")))?;
         if let Some(n) = name {
@@ -509,7 +509,7 @@ impl synth_mcp::bridge::SampleBridge for AppSynthBridge {
             if let Param::Sampler(sp) = param {
                 match sp {
                     SamplerParam::SampleSelect(sid) if sid.as_u64() != 0 => {
-                        sample_id = Some(synth_sampler::SampleId::new(sid.as_u64()));
+                        sample_id = Some(*sid);
                     }
                     SamplerParam::SampleSelect(_) => {}
                     SamplerParam::PitchTracking(b) => pitch_tracking = *b,
@@ -548,7 +548,7 @@ impl synth_mcp::bridge::SampleBridge for AppSynthBridge {
         };
 
         Ok(synth_mcp::types::SamplerStateInfo {
-            sample_id: sample_id.map_or(0, |id| id.0),
+            sample_id: sample_id.map_or(0, synth_core::SampleId::as_u64),
             sample_name,
             pitch_tracking,
             level: NormalizedValue::new(level),

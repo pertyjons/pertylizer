@@ -287,13 +287,8 @@ pub fn analyze_tension_curve(inputs: &TensionCurveInputs) -> TensionCurveAnalysi
     detect_monotone(&bars, &mut warnings);
     detect_chorus_doesnt_lift(&bars, inputs.sections, &mut warnings);
     detect_build_peaks_early(&bars, inputs.sections, &mut warnings);
-    if has_audio {
-        detect_drop_loses_low_end(
-            &bars,
-            audio_aligned.unwrap(),
-            inputs.sections,
-            &mut warnings,
-        );
+    if let Some(audio_aligned) = audio_aligned {
+        detect_drop_loses_low_end(&bars, audio_aligned, inputs.sections, &mut warnings);
     }
 
     TensionCurveAnalysis {

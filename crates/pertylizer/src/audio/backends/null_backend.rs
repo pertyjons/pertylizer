@@ -47,9 +47,9 @@ impl AudioBackend for NullBackend {
             name: "Null Device".to_string(),
             device_type: DeviceType::Output,
             supported_sample_rates: vec![
-                SampleRate::CD_QUALITY,
-                SampleRate::DVD_QUALITY,
-                SampleRate::STUDIO_QUALITY,
+                DeviceSampleRate::CD_QUALITY,
+                DeviceSampleRate::DVD_QUALITY,
+                DeviceSampleRate::STUDIO_QUALITY,
             ],
             min_buffer_size: BufferSize::TINY,
             max_buffer_size: BufferSize::VERY_LARGE,

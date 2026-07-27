@@ -22,7 +22,7 @@
 
 use std::sync::Arc;
 
-use synth_core::audio::SampleRate as HwSampleRate;
+use synth_core::audio::DeviceSampleRate as HwSampleRate;
 use synth_core::{
     AudioCallbackContext, AudioProcessor, MidiNote, ModuleType, NormalizedValue, Param,
     ReverbParam, Velocity,
@@ -538,7 +538,7 @@ fn effect_bypass_after_patch_load_removes_tail() {
             module_id: reverb_id,
             enabled: false,
         });
-    assert!(sent, "SetEffectEnabled command did not enqueue");
+    assert!(sent.is_ok(), "SetEffectEnabled command did not enqueue");
     rig.drain(8);
 
     // The next offline render should reflect the bypassed reverb: the tail
@@ -581,7 +581,7 @@ fn effect_param_change_after_patch_load_reflected_in_render() {
             module_id: reverb_id,
             param: Param::Reverb(ReverbParam::Mix(NormalizedValue::new(0.0))),
         });
-    assert!(sent, "SetEffectParameter command did not enqueue");
+    assert!(sent.is_ok(), "SetEffectParameter command did not enqueue");
     rig.drain(8);
 
     let after = render_left_for(&rig);
@@ -637,7 +637,7 @@ fn effect_remove_after_patch_load_drops_effect() {
             instrument_id: Some(rig.instrument_id),
             id: reverb_id,
         });
-    assert!(sent, "RemoveEffect command did not enqueue");
+    assert!(sent.is_ok(), "RemoveEffect command did not enqueue");
     rig.drain(8);
 
     // Post-remove render must not include the reverb in shared_graph (so the
@@ -725,7 +725,7 @@ fn duplicate_effect_type_targets_correct_instance_by_id() {
             module_id: rev2,
             param: Param::Reverb(ReverbParam::Mix(NormalizedValue::new(new_mix))),
         });
-    assert!(sent, "SetEffectParameter on rev-2 did not enqueue");
+    assert!(sent.is_ok(), "SetEffectParameter on rev-2 did not enqueue");
     rig.drain(8);
 
     // Inspect shared_graph: rev-2's Mix should equal new_mix; rev-1's must
@@ -829,7 +829,7 @@ fn voice_module_bypass_replicated_in_offline_render() {
             module: filter_id,
             bypass: true,
         });
-    assert!(sent, "SetBypass command did not enqueue");
+    assert!(sent.is_ok(), "SetBypass command did not enqueue");
     rig.drain(8);
 
     // shared_graph should reflect the bypass for the filter module.

@@ -285,7 +285,7 @@ fn compute_np_stages(
     // allocated locally and reused across rows.
     let mut lookback = synth_sequencer::lookback_pool();
     let host = synth_sequencer::HostKey::from(pattern_id);
-    if graph.stream_spine.is_empty() {
+    if graph.stream_spine().is_empty() {
         let mut rows = Vec::with_capacity(n_rows);
         for r in 0..n_rows {
             let tick = PatternTick((r as u32) * tpr);
@@ -307,11 +307,10 @@ fn compute_np_stages(
             rows,
         }];
     }
-    let mut stages = Vec::with_capacity(graph.stream_spine.len());
-    for &node_id in &graph.stream_spine {
+    let mut stages = Vec::with_capacity(graph.stream_spine().len());
+    for &node_id in graph.stream_spine() {
         let label = graph
-            .nodes
-            .get(&node_id)
+            .node(node_id)
             .map_or_else(String::new, |c| c.kind().to_string());
         let mut rows = Vec::with_capacity(n_rows);
         for r in 0..n_rows {

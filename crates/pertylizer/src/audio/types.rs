@@ -7,7 +7,7 @@ pub use synth_core::{
     DeviceType, StreamConfig, StreamInfo,
 };
 
-// Note: This module also re-exports SampleRate from synth_core::audio,
+// Note: This module also re-exports DeviceSampleRate from synth_core::audio,
 // which is the u32-based version for hardware API compatibility.
 // For DSP calculations, use synth_core::SampleRate (f32-based).
-pub use synth_core::audio::SampleRate;
+pub use synth_core::audio::DeviceSampleRate;

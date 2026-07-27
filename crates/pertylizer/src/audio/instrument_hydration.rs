@@ -84,7 +84,7 @@ pub(crate) fn hydrate_snapshot_instrument(
                         param,
                     })
                 };
-                if !sent {
+                if sent.is_err() {
                     warnings.push(format!(
                         "{}: failed to enqueue parameter for module {module_id}",
                         request.context
@@ -94,13 +94,13 @@ pub(crate) fn hydrate_snapshot_instrument(
 
             if matches!(module.bypass_state, synth_core::BypassState::Bypassed) {
                 if is_effect {
-                    handle.send_blocking(EngineCommand::SetEffectEnabled {
+                    let _ = handle.send_blocking(EngineCommand::SetEffectEnabled {
                         instrument_id: Some(request.instrument_id),
                         module_id,
                         enabled: false,
                     });
                 } else {
-                    handle.send_blocking(EngineCommand::SetBypass {
+                    let _ = handle.send_blocking(EngineCommand::SetBypass {
                         instrument_id: Some(request.instrument_id),
                         module: module_id,
                         bypass: true,
@@ -166,7 +166,7 @@ pub(crate) fn hydrate_snapshot_instrument(
             from: PortId::new(connection.from_module, connection.from_port),
             to: PortId::new(connection.to_module, connection.to_port),
         });
-        if !sent {
+        if sent.is_err() {
             warnings.push(format!(
                 "{}: failed to enqueue connection {} → {}",
                 request.context, connection.from_module, connection.to_module

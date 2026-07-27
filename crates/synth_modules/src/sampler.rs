@@ -297,7 +297,9 @@ impl PolyModule for Sampler {
 
         if let Some(ref mut player) = self.player {
             // Drive continuous pitch: note pitch × pitch-CV, applied each block.
-            player.set_speed(synth_sampler::PlaybackSpeed::new(target_speed));
+            if let Some(speed) = synth_sampler::PlaybackSpeed::new(target_speed) {
+                player.set_speed(speed);
+            }
 
             // Clear render buffer
             self.render_buffer[..render_len].fill(0.0);
@@ -464,7 +466,9 @@ impl PolyModule for Sampler {
             // Fixed-rate playback: fine-tune only (the played note is ignored).
             self.base_speed = 2.0_f64.powf(self.active_fine_tune_cents / 1200.0);
         }
-        player.set_speed(synth_sampler::PlaybackSpeed::new(self.base_speed));
+        if let Some(speed) = synth_sampler::PlaybackSpeed::new(self.base_speed) {
+            player.set_speed(speed);
+        }
 
         // Set velocity
         let vel_gain = 1.0 - vel_amount + vel_amount * velocity.as_f32();

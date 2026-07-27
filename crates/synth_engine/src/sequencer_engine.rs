@@ -480,6 +480,16 @@ impl SequencerEngine {
     /// second time once the playhead already rests on the cursor rewinds both
     /// the cursor and the playhead to the song start.
     pub fn stop(&mut self) -> Vec<SequencerEvent> {
+        let events = self.release_all_notes();
+        self.stop_without_events();
+        events
+    }
+
+    /// Stop playback without materializing note-off events.
+    ///
+    /// Use when the caller releases its DSP voices directly, as the synth
+    /// engine does. This keeps transport commands allocation-free.
+    pub fn stop_without_events(&mut self) {
         let was_stopped = self.play_state == PlayState::Stopped;
         let at_cursor = self.current_tick == self.cursor_tick;
         self.play_state = PlayState::Stopped;
@@ -495,18 +505,22 @@ impl SequencerEngine {
         self.roll_nonce = 0;
         self.expansion_drops = 0;
 
-        // Generate NoteOff events for all active notes
-        let events = self.release_all_notes();
         self.active_notes.clear();
         self.clear_automation_dedup();
         self.track_auto.clear();
-
-        events
     }
 
     /// Seek to a specific tick position.
     pub fn seek(&mut self, tick: Tick) -> Vec<SequencerEvent> {
         let events = self.release_all_notes();
+        self.seek_without_events(tick);
+        events
+    }
+
+    /// Seek without materializing note-off events.
+    ///
+    /// Use when the owner releases its DSP voices directly.
+    pub fn seek_without_events(&mut self, tick: Tick) {
         self.active_notes.clear();
         self.clear_automation_dedup();
         self.track_auto.clear();
@@ -516,7 +530,6 @@ impl SequencerEngine {
         self.roll_nonce = 0;
         self.expansion_drops = 0;
         self.update_cached_state();
-        events
     }
 
     /// Set loop points.
@@ -1094,22 +1107,20 @@ impl SequencerEngine {
     }
 
     /// Set a new song.
-    pub fn set_song(&mut self, song: Arc<SharedSong>) {
-        let _ = self.stop();
+    pub fn set_song(&mut self, song: Arc<SharedSong>) -> Arc<SharedSong> {
+        self.stop_without_events();
         // A new song is unrelated to the old one's timeline: reset both the
         // playhead and the cursor (play-start / return position) to the start so
         // Play does not resume at a stale position carried over from the
         // previous song (e.g. when the swap happens mid-playback).
         self.current_tick = Tick::ZERO;
         self.cursor_tick = Tick::ZERO;
-        self.song = song;
-        // A freshly loaded song has empty (skipped-in-serde) Note Grid derived
-        // orders; rebuild them before the audio thread expands through a graph.
-        self.song.write().rebuild_note_graphs();
+        let previous = std::mem::replace(&mut self.song, song);
         // A swapped-in song carries its own generation counter unrelated to the
         // previous song's, so the generation gate could miss a recompute when
         // the two counters happen to coincide. Force the cache to match.
         self.force_refresh_cached_state();
+        previous
     }
 }
 

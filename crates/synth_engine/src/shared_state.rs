@@ -16,7 +16,7 @@ use super::recording::RecordingState;
 use synth_core::{
     Amplitude, BipolarValue, BypassState, CpuUsage, Gain, MuteState, PortName, SoloState,
 };
-use synth_core::{ModuleType, Param};
+use synth_core::{ModuleParam, ModuleType, Param};
 use synth_sequencer::ReturnBusId;
 
 /// Atomic f32 wrapper for lock-free meter access.
@@ -364,8 +364,8 @@ pub struct InstrumentSnapshot {
     pub sidechain_source_id: Option<InstrumentId>,
     /// Instrument category (drums, bass, pad, etc.).
     pub category: crate::InstrumentCategory,
-    /// MIDI channel (1-indexed).
-    pub midi_channel: synth_core::MidiChannel,
+    /// MIDI channel (1-indexed), or `None` for OMNI.
+    pub midi_channel: Option<synth_core::MidiChannel>,
     /// Volume.
     pub volume: Gain,
     /// Pan (-1.0 to 1.0).
@@ -599,6 +599,84 @@ impl SharedGraphState {
         drop(modules);
     }
 
+    /// Update one parameter in a module snapshot.
+    pub fn set_module_parameter(&self, instrument_id: InstrumentId, id: ModuleId, param: Param) {
+        if let Some(module) = self.modules.write().get_mut(&(instrument_id, id))
+            && let Some(current) = module
+                .parameters
+                .iter_mut()
+                .find(|current| current.same_kind(&param))
+        {
+            *current = param;
+            self.bump_version();
+        }
+    }
+
+    /// Update one script slot in a module snapshot.
+    pub fn set_module_script(
+        &self,
+        instrument_id: InstrumentId,
+        id: ModuleId,
+        slot: usize,
+        source: Option<String>,
+        declarations: Option<&[synth_core::script::ScriptParamDecl]>,
+    ) {
+        if let Some(module) = self.modules.write().get_mut(&(instrument_id, id)) {
+            let key = slot.to_string();
+            if let Some(source) = source {
+                module.scripts.insert(key, source);
+            } else {
+                module.scripts.remove(&key);
+            }
+            if matches!(
+                module.module_type,
+                ModuleType::Script | ModuleType::AudioScript
+            ) {
+                let previous = module.parameters.clone();
+                module.parameters.clear();
+                if let Some(declarations) = declarations {
+                    module
+                        .parameters
+                        .extend(declarations.iter().map(|declaration| {
+                            let value = previous
+                                .iter()
+                                .find_map(|parameter| match parameter {
+                                    Param::Script(synth_core::ScriptParam::Knob(name, value))
+                                        if *name == declaration.name =>
+                                    {
+                                        Some(*value)
+                                    }
+                                    _ => None,
+                                })
+                                .unwrap_or(declaration.default);
+                            Param::Script(synth_core::ScriptParam::Knob(declaration.name, value))
+                        }));
+                }
+            }
+            self.bump_version();
+        }
+    }
+
+    /// Update bypass state for one instrument, or every matching instrument.
+    pub fn set_module_bypass(
+        &self,
+        instrument_id: Option<InstrumentId>,
+        id: ModuleId,
+        bypassed: bool,
+    ) {
+        let mut modules = self.modules.write();
+        for ((owner, module_id), module) in modules.iter_mut() {
+            if *module_id == id && instrument_id.is_none_or(|target| target == *owner) {
+                module.bypass_state = if bypassed {
+                    BypassState::Bypassed
+                } else {
+                    BypassState::Active
+                };
+            }
+        }
+        self.bump_version();
+    }
+
     /// Set all connections.
     pub fn set_connections(&self, connections: Vec<ConnectionSnapshot>) {
         let mut conns = self.connections.write();
@@ -632,6 +710,43 @@ impl SharedGraphState {
         });
         self.bump_version();
         drop(conns);
+    }
+
+    /// Remove one exact connection owned by an instrument.
+    pub fn remove_connection_for_instrument(
+        &self,
+        instrument_id: InstrumentId,
+        from_module: ModuleId,
+        from_port: PortName,
+        to_module: ModuleId,
+        to_port: PortName,
+    ) {
+        self.connections.write().retain(|connection| {
+            !(connection.instrument_id == instrument_id
+                && connection.from_module == from_module
+                && connection.from_port == from_port
+                && connection.to_module == to_module
+                && connection.to_port == to_port)
+        });
+        self.bump_version();
+    }
+
+    /// Remove every connection touching one module in an instrument.
+    pub fn disconnect_all_for_instrument(&self, instrument_id: InstrumentId, module: ModuleId) {
+        self.connections.write().retain(|connection| {
+            connection.instrument_id != instrument_id
+                || (connection.from_module != module && connection.to_module != module)
+        });
+        self.bump_version();
+    }
+
+    /// Clear all topology snapshots.
+    pub fn clear(&self) {
+        self.modules.write().clear();
+        self.connections.write().clear();
+        self.processing_order.write().clear();
+        self.live_modules.write().clear();
+        self.bump_version();
     }
 
     /// Set the processing order.

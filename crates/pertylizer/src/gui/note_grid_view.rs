@@ -632,7 +632,7 @@ fn draw_note_script_editor(
         .try_read()
         .map(|s| {
             s.note_graph(graph_id)
-                .and_then(|g| g.nodes.get(&node_id))
+                .and_then(|g| g.node(node_id))
                 .is_some_and(|n| matches!(n, NoteModuleConfig::NoteScriptTransform(_)))
         })
         .unwrap_or(true);
@@ -746,9 +746,13 @@ fn set_note_script(
     source: String,
 ) {
     with_graph_undo(song, undo_manager, graph_id, |g| {
-        if let Some(NoteModuleConfig::NoteScriptTransform(t)) = g.nodes.get_mut(&node_id) {
+        let Some(mut config) = g.node(node_id).cloned() else {
+            return;
+        };
+        if let NoteModuleConfig::NoteScriptTransform(t) = &mut config {
             t.source = source;
         }
+        let _ = g.try_insert_node(node_id, config);
         // The compiled program is `#[serde(skip)]`, so rebuild it from the new
         // source (the source is the single source of truth).
         crate::project_apply::recompile_graph_scripts(g);
@@ -894,7 +898,7 @@ fn draw_graph_canvas(
         scene_canvas::draw_grid(ui, world_rect);
 
         // First-use affordance: an empty graph is just a grid otherwise.
-        if graph.nodes.is_empty() {
+        if graph.nodes().is_empty() {
             ui.painter().text(
                 world_rect.center(),
                 egui::Align2::CENTER_CENTER,
@@ -909,7 +913,7 @@ fn draw_graph_canvas(
 
         // Nodes repopulate the port anchors for the next frame.
         state.port_positions.clear();
-        for (&node_id, config) in &graph.nodes {
+        for (&node_id, config) in graph.nodes() {
             draw_node(
                 ui,
                 state,
@@ -997,7 +1001,7 @@ fn node_rects<'a>(
     positions: &'a HashMap<NoteModuleId, Pos2>,
     graph: &'a NoteGraph,
 ) -> impl Iterator<Item = Rect> + 'a {
-    graph.nodes.iter().filter_map(move |(id, config)| {
+    graph.nodes().iter().filter_map(move |(id, config)| {
         let pos = positions.get(id)?;
         let size = state
             .sizes
@@ -1016,9 +1020,9 @@ fn node_rects<'a>(
 /// header warning so a silent node is explained.
 fn off_spine_stream_nodes(graph: &NoteGraph) -> usize {
     graph
-        .nodes
+        .nodes()
         .iter()
-        .filter(|(id, config)| !config.is_value_source() && !graph.stream_spine.contains(id))
+        .filter(|(id, config)| !config.is_value_source() && !graph.stream_spine().contains(id))
         .count()
 }
 
@@ -1026,10 +1030,10 @@ fn off_spine_stream_nodes(graph: &NoteGraph) -> usize {
 /// manually persisted positions. The free graph layout uses the measured outer
 /// card dimensions, including both port columns.
 fn layout_positions(state: &NoteGridViewState, graph: &NoteGraph) -> HashMap<NoteModuleId, Pos2> {
-    let mut domain_to_layout = HashMap::with_capacity(graph.nodes.len());
-    let mut layout_to_domain = HashMap::with_capacity(graph.nodes.len());
+    let mut domain_to_layout = HashMap::with_capacity(graph.nodes().len());
+    let mut layout_to_domain = HashMap::with_capacity(graph.nodes().len());
     let modules: Vec<ModuleInfo> = graph
-        .nodes
+        .nodes()
         .iter()
         .enumerate()
         .filter_map(|(index, (&id, config))| {
@@ -1052,7 +1056,7 @@ fn layout_positions(state: &NoteGridViewState, graph: &NoteGraph) -> HashMap<Not
         })
         .collect();
     let connections: Vec<LayoutConnection> = graph
-        .connections
+        .connections()
         .iter()
         .filter_map(|connection| {
             Some(LayoutConnection {
@@ -1227,7 +1231,7 @@ fn draw_note_port_column(
     if is_input {
         if config.has_stream_input() {
             let connected = graph
-                .connections
+                .connections()
                 .iter()
                 .any(|c| c.port.is_stream() && c.to == node_id);
             ports.push((
@@ -1239,7 +1243,7 @@ fn draw_note_port_column(
         }
         for input in 0..config.value_input_count() {
             let connected = graph
-                .connections
+                .connections()
                 .iter()
                 .any(|c| !c.port.is_stream() && c.to == node_id && c.to_input == input);
             ports.push((
@@ -1251,7 +1255,7 @@ fn draw_note_port_column(
         }
     } else if config.has_stream_output() {
         let connected = graph
-            .connections
+            .connections()
             .iter()
             .any(|c| c.port.is_stream() && c.from == node_id);
         ports.push((
@@ -1262,7 +1266,7 @@ fn draw_note_port_column(
         ));
     } else if config.is_value_source() {
         let connected = graph
-            .connections
+            .connections()
             .iter()
             .any(|c| !c.port.is_stream() && c.from == node_id);
         ports.push((
@@ -1379,16 +1383,16 @@ fn open_connection(
     let conn = make_connection(a, b)?;
     let occupied = if conn.port.is_stream() {
         graph
-            .connections
+            .connections()
             .iter()
             .any(|c| c.port.is_stream() && (c.to == conn.to || c.from == conn.from))
     } else {
         graph
-            .connections
+            .connections()
             .iter()
             .any(|c| !c.port.is_stream() && c.to == conn.to && c.to_input == conn.to_input)
     };
-    (!occupied && !graph.connections.contains(&conn)).then_some(conn)
+    (!occupied && !graph.connections().contains(&conn)).then_some(conn)
 }
 
 /// Orient two port endpoints into a typed connection, if they are compatible:
@@ -1453,7 +1457,7 @@ fn draw_cables(
         .map(|p| scene_canvas::screen_to_world(ui, p));
 
     let mut hovered_cable = None;
-    for (index, connection) in graph.connections.iter().enumerate() {
+    for (index, connection) in graph.connections().iter().enumerate() {
         let (out_port, in_port) = connection_ports(connection);
         let (Some(&from), Some(&to)) = (
             state.port_positions.get(&(connection.from, out_port)),
@@ -1685,9 +1689,7 @@ fn apply_graph_edit(
                 return;
             };
             let before = graph.clone();
-            graph.connections.retain(|c| *c != connection);
-            // Dropping an edge only relaxes constraints — rebuild can't fail.
-            let _ = graph.rebuild_derived();
+            graph.disconnect(&connection);
             push_snapshot = Some((before, graph.clone()));
             state.last_error = None;
         }

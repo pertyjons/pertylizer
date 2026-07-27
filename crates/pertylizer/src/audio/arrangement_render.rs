@@ -24,10 +24,10 @@
 
 use std::sync::Arc;
 
-use synth_core::audio::SampleRate as HwSampleRate;
+use synth_core::audio::DeviceSampleRate;
 use synth_core::{AudioCallbackContext, AudioProcessor, DenormalGuard};
 use synth_engine::commands::InstrumentParam;
-use synth_engine::instrument::MidiChannel;
+use synth_engine::instrument::MidiChannelSelection;
 use synth_engine::{EngineCommand, SynthEngine};
 use synth_sequencer::{Song, Tick};
 
@@ -56,20 +56,6 @@ const MAX_RENDER_SECONDS: f32 = 300.0;
 /// output — same as the pre-pre-roll behaviour, but with a warning.
 const MAX_PREROLL_SECONDS: f32 = 30.0;
 
-/// Upper bound on how long the voice-bleed drain in `render_range` may run
-/// between two consecutive renders, in milliseconds. The drain exits early as
-/// soon as a fully-silent block is produced (see `DRAIN_SILENCE_EPSILON`).
-/// 400 ms covers the 50 ms envelope release used by the determinism test
-/// suite with margin while still capping the per-iteration cost in the per-
-/// track `analyze_section` loop.
-const VOICE_DRAIN_MAX_MS: f32 = 400.0;
-
-/// Per-sample amplitude under which the drain block is considered silent for
-/// the purpose of the early-exit. Tight enough that residual filter / delay
-/// energy does not contaminate the next render's first sample at the precision
-/// the determinism tests assert (f32 bit-exact).
-const DRAIN_SILENCE_EPSILON: f32 = 1e-7;
-
 /// Build an [`AudioCallbackContext`] for a full-buffer offline `engine.process`
 /// call. Used for the drain, warm-up, and main-render contexts; the latter
 /// passes a real `sample_position` / `stream_time` to advance audio time, the
@@ -81,7 +67,7 @@ fn offline_callback_ctx(
     sample_rate: u32,
 ) -> AudioCallbackContext {
     AudioCallbackContext {
-        sample_rate: HwSampleRate::new(sample_rate),
+        sample_rate: DeviceSampleRate::new(sample_rate),
         frames,
         channels: CHANNELS as u16,
         stream_time,
@@ -290,7 +276,7 @@ impl OfflineEngineSession {
         // always added after the stream has started.
         let sample_rate = scope.render_sample_rate;
         let stream_info = synth_core::StreamInfo {
-            sample_rate: HwSampleRate::new(sample_rate),
+            sample_rate: DeviceSampleRate::new(sample_rate),
             buffer_size: synth_core::BufferSize::new(BUFFER_SIZE as u32),
             channels: synth_core::ChannelCount::Stereo,
             output_latency: std::time::Duration::ZERO,
@@ -306,8 +292,7 @@ impl OfflineEngineSession {
         // Use each instrument's live ID so the sequencer's InstrumentId →
         // InstrumentId mapping survives into the offline engine. Drain the
         // command ring after each instrument so a many-instrument project cannot
-        // overflow the fixed 256-slot ring — nothing else drains it during setup,
-        // and `send_blocking` drops (rather than blocks) once the ring is full.
+        // fill the configured ring — nothing else drains it during setup.
         for inst_snap in &live_instruments {
             if let Err(e) = tmp_session.add_instrument_with_id(inst_snap.id, &inst_snap.name) {
                 setup_warnings.push(format!(
@@ -356,7 +341,7 @@ impl OfflineEngineSession {
         // effect on `analyze_mix_bus` / `analyze_section` metrics. Sent once;
         // it persists across `render_range` calls (no Clear command resets it).
         // Drains at the first `render_range` warm-up (one command — no overflow).
-        handle.send_blocking(EngineCommand::SetMasterVolume(synth_core::Gain::new(
+        let _ = handle.send_blocking(EngineCommand::SetMasterVolume(synth_core::Gain::new(
             engine_state.master_volume.load(),
         )));
 
@@ -484,37 +469,16 @@ impl OfflineEngineSession {
             ));
         }
 
-        // Drop any voices still active from a previous render. No-op on a
-        // freshly-built session. The PREVIOUS `render_range` does not send
-        // its own trailing Stop — letting this Stop do double duty (flushing
-        // both the previous render's voices and any state from this one if it
-        // bails early) saves one queue push per call.
-        self.handle.send_blocking(EngineCommand::Stop);
-
+        // Drop transport and DSP state left by a previous render. `Stop`
+        // releases voices and clears transient automation overrides;
+        // `ResetDsp` then clears every voice, delay/reverb line, effect chain,
+        // modular-graph node, and oversampling filter before the next render
+        // produces a sample. A bounded silence drain cannot provide that
+        // contract for effects with multi-second or infinite feedback tails.
+        let _ = self.handle.send_blocking(EngineCommand::Stop);
         let mut block = vec![0.0f32; BUFFER_SIZE * CHANNELS];
-
-        // Voice-bleed drain: `Stop` flips active envelopes into release but
-        // does not advance them — without this, the next render's first
-        // sample inherits whatever amplitude the released voice still holds.
-        // Process silent blocks (sequencer Stopped → song does not advance)
-        // until the output goes fully silent, capped at `VOICE_DRAIN_MAX_MS`.
-        // Long reverb / delay tails on real-world patches may not fully
-        // converge inside the cap — bit-exactness across renders is best-
-        // effort for those, but RMS / LUFS metrics on the per-track soloed
-        // renders that `analyze_section` returns are unaffected by sub-ms
-        // residual filter state.
         if self.first_call_done {
-            let drain_ctx = offline_callback_ctx(BUFFER_SIZE, u64::MAX, 0.0, self.sample_rate);
-            let max_blocks = ((VOICE_DRAIN_MAX_MS / 1000.0) * self.sample_rate as f32
-                / BUFFER_SIZE as f32)
-                .ceil() as usize;
-            for _ in 0..max_blocks {
-                block.fill(0.0);
-                self.engine.process(&mut block, &drain_ctx);
-                if block.iter().all(|s| s.abs() < DRAIN_SILENCE_EPSILON) {
-                    break;
-                }
-            }
+            let _ = self.handle.send_blocking(EngineCommand::ResetDsp);
         }
 
         // The supplied Song is read-only from the sequencer's perspective
@@ -522,13 +486,13 @@ impl OfflineEngineSession {
         // offline engine is safe even when it points at the live shared
         // instance. Re-sent every call so callers may render against different
         // songs (or the same song with mutated solo flags) without restart.
-        self.handle.send_blocking(EngineCommand::SetSong {
+        let _ = self.handle.send_blocking(EngineCommand::SetSong {
             song: Arc::clone(song),
         });
         // Ship the Mod Grid runtime for this song so control-rate modulation is
         // present in the offline render (matches the live engine's pre-pass).
         let mod_grid = crate::mod_grid_build::build_mod_grid_runtime(&song.read());
-        self.handle.send_blocking(EngineCommand::SetModGrid {
+        let _ = self.handle.send_blocking(EngineCommand::SetModGrid {
             runtime: Box::new(mod_grid),
         });
 
@@ -539,9 +503,10 @@ impl OfflineEngineSession {
         // reconstructed only when `scope.return_effects` is set (replayed every
         // render because `ClearReturnBusses` wipes them); otherwise offline
         // renders hear the dry-summed returns.
-        self.handle.send_blocking(EngineCommand::ClearReturnBusses);
+        let _ = self.handle.send_blocking(EngineCommand::ClearReturnBusses);
         for bus in song.read().return_busses() {
-            self.handle
+            let _ = self
+                .handle
                 .send_blocking(EngineCommand::CreateReturnBus { id: bus.id });
         }
         if self.scope.return_effects {
@@ -582,8 +547,8 @@ impl OfflineEngineSession {
         // overrides that reset so the real render starts at `effective_start_tick`.
         // Both commands drain together at the top of the first real process
         // call below, so the sequencer hasn't advanced yet when Seek lands.
-        self.handle.send_blocking(EngineCommand::Play);
-        self.handle.send_blocking(EngineCommand::Seek {
+        let _ = self.handle.send_blocking(EngineCommand::Play);
+        let _ = self.handle.send_blocking(EngineCommand::Seek {
             tick: effective_start_tick,
         });
 
@@ -614,7 +579,7 @@ impl OfflineEngineSession {
             samples.extend_from_slice(&block[..sample_count]);
             frames_written += this_buffer as u64;
             if tail_frames > 0 && !tail_started && frames_written >= stop_frame {
-                self.handle.send_blocking(EngineCommand::Stop);
+                let _ = self.handle.send_blocking(EngineCommand::Stop);
                 tail_started = true;
             }
         }
@@ -697,7 +662,7 @@ fn earliest_active_note_start(song: &Song, start_tick: Tick) -> Tick {
 /// `offline_engine` is the engine being built (distinct from `engine_state`, the
 /// live source read from); it plus `drain_buf`/`drain_ctx` let the load
 /// adaptively drain the command ring per module/connection, so a single large
-/// voice graph can't overflow the fixed 256-slot ring.
+/// voice graph cannot fill the configured ring.
 #[allow(clippy::too_many_arguments)]
 fn load_instrument_into_offline(
     inst_snap: &synth_engine::shared_state::InstrumentSnapshot,
@@ -751,25 +716,25 @@ fn load_instrument_into_offline(
     // muted+enabled live behavior (an instrument muted live is reported as
     // disabled), so we forward it directly. Track-level mutes inside the
     // arrangement are honored by the shared sequencer automatically.
-    handle.send_blocking(EngineCommand::SetInstrumentEnabled {
+    let _ = handle.send_blocking(EngineCommand::SetInstrumentEnabled {
         instrument_id,
         enabled: inst_snap.enabled && !inst_snap.muted,
     });
     // MIDI channel only affects external MIDI input, which an offline render
     // doesn't have — default to channel 1 for all instruments.
-    handle.send_blocking(EngineCommand::SetInstrumentMidiChannel {
+    let _ = handle.send_blocking(EngineCommand::SetInstrumentMidiChannel {
         instrument_id,
-        channel: MidiChannel::CH1,
+        channel: MidiChannelSelection::CH1,
     });
-    handle.send_blocking(EngineCommand::SetInstrumentParameter {
+    let _ = handle.send_blocking(EngineCommand::SetInstrumentParameter {
         instrument_id,
         param: InstrumentParam::Volume(inst_snap.volume),
     });
-    handle.send_blocking(EngineCommand::SetInstrumentParameter {
+    let _ = handle.send_blocking(EngineCommand::SetInstrumentParameter {
         instrument_id,
         param: InstrumentParam::Pan(inst_snap.pan),
     });
-    handle.send_blocking(EngineCommand::SetInstrumentParameter {
+    let _ = handle.send_blocking(EngineCommand::SetInstrumentParameter {
         instrument_id,
         param: InstrumentParam::Solo(inst_snap.solo),
     });
@@ -785,7 +750,7 @@ fn load_master_effects_into_offline(
     snapshot: &[synth_engine::shared_state::ReturnEffectSnapshot],
     warnings: &mut Vec<String>,
 ) {
-    handle.send_blocking(EngineCommand::ClearMasterEffects);
+    let _ = handle.send_blocking(EngineCommand::ClearMasterEffects);
     for eff in snapshot {
         let Some((effect, _descriptor)) = crate::module_factory::create_effect(eff.module_type)
         else {
@@ -795,11 +760,14 @@ fn load_master_effects_into_offline(
             ));
             continue;
         };
-        if !handle.send_blocking(EngineCommand::AddEffectInstance {
-            instrument_id: None,
-            id: eff.module_id,
-            effect,
-        }) {
+        if handle
+            .send_blocking(EngineCommand::AddEffectInstance {
+                instrument_id: None,
+                id: eff.module_id,
+                effect,
+            })
+            .is_err()
+        {
             warnings.push(format!(
                 "arrangement_render: failed to add master effect {}",
                 eff.module_id
@@ -807,14 +775,14 @@ fn load_master_effects_into_offline(
             continue;
         }
         for param in &eff.parameters {
-            handle.send_blocking(EngineCommand::SetEffectParameter {
+            let _ = handle.send_blocking(EngineCommand::SetEffectParameter {
                 instrument_id: None,
                 module_id: eff.module_id,
                 param: *param,
             });
         }
         if eff.bypassed {
-            handle.send_blocking(EngineCommand::SetEffectEnabled {
+            let _ = handle.send_blocking(EngineCommand::SetEffectEnabled {
                 instrument_id: None,
                 module_id: eff.module_id,
                 enabled: false,
@@ -840,11 +808,14 @@ fn load_return_effects_into_offline(
                 ));
                 continue;
             };
-            if !handle.send_blocking(EngineCommand::AddReturnEffect {
-                return_id: bus.id,
-                id: eff.module_id,
-                effect,
-            }) {
+            if handle
+                .send_blocking(EngineCommand::AddReturnEffect {
+                    return_id: bus.id,
+                    id: eff.module_id,
+                    effect,
+                })
+                .is_err()
+            {
                 warnings.push(format!(
                     "arrangement_render: failed to add return effect {} on bus {}",
                     eff.module_id, bus.id.0
@@ -852,14 +823,14 @@ fn load_return_effects_into_offline(
                 continue;
             }
             for param in &eff.parameters {
-                handle.send_blocking(EngineCommand::SetReturnEffectParameter {
+                let _ = handle.send_blocking(EngineCommand::SetReturnEffectParameter {
                     return_id: bus.id,
                     module_id: eff.module_id,
                     param: *param,
                 });
             }
             if eff.bypassed {
-                handle.send_blocking(EngineCommand::SetReturnEffectEnabled {
+                let _ = handle.send_blocking(EngineCommand::SetReturnEffectEnabled {
                     return_id: bus.id,
                     module_id: eff.module_id,
                     enabled: false,

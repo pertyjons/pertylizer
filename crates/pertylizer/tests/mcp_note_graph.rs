@@ -57,7 +57,7 @@ fn note_script_compiled(
         .note_graph(synth_sequencer::NoteGraphId::new(graph_id))
         .expect("graph present");
     match graph
-        .nodes
+        .nodes()
         .get(&synth_sequencer::NoteModuleId::new(module_id))
     {
         Some(synth_sequencer::NoteModuleConfig::NoteScriptTransform(t)) => t.is_compiled(),
@@ -231,8 +231,8 @@ async fn note_graph_round_trip_through_mcp() {
         let copy = song_r
             .note_graph(synth_sequencer::NoteGraphId::new(dup_id))
             .unwrap();
-        assert_eq!(copy.nodes, src.nodes);
-        assert_eq!(copy.connections, src.connections);
+        assert_eq!(copy.nodes(), src.nodes());
+        assert_eq!(copy.connections(), src.connections());
         assert_eq!(copy.name, format!("{} copy", src.name));
     }
 

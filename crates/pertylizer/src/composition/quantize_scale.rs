@@ -122,14 +122,17 @@ mod tests {
     fn in_scale_pitch_is_unchanged() {
         let scale = ScaleConstraint::new(0, "major");
         assert!(scale.contains(60)); // C
-        assert_eq!(snap_pitch_to_scale(60, &scale, ScaleTieBreak::Nearest), 60);
+        assert_eq!(
+            snap_pitch_to_scale(60, &scale, ScaleTieBreak::NearestUp),
+            60
+        );
     }
 
     #[test]
     fn tie_break_names_parse_consistently() {
         assert_eq!("up".parse(), Ok(ScaleTieBreak::NearestUp));
         assert_eq!("down".parse(), Ok(ScaleTieBreak::NearestDown));
-        assert_eq!("nearest".parse(), Ok(ScaleTieBreak::Nearest));
+        assert_eq!("nearest".parse(), Ok(ScaleTieBreak::NearestUp));
         assert!("sideways".parse::<ScaleTieBreak>().is_err());
     }
 
@@ -191,11 +194,7 @@ mod tests {
 
     #[test]
     fn composition_wrapper_matches_sequencer_for_every_scale_and_pitch() {
-        let tie_breaks = [
-            ScaleTieBreak::Nearest,
-            ScaleTieBreak::NearestUp,
-            ScaleTieBreak::NearestDown,
-        ];
+        let tie_breaks = [ScaleTieBreak::NearestUp, ScaleTieBreak::NearestDown];
 
         for template in crate::harmony::SCALES {
             for tonic in 0..12 {

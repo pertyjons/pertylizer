@@ -7,19 +7,10 @@ use synth_core::{Hertz, Semitones};
 /// MIDI-compatible pitch (0-127).
 #[must_use]
 #[derive(
-    Debug,
-    Clone,
-    Copy,
-    PartialEq,
-    Eq,
-    PartialOrd,
-    Ord,
-    Hash,
-    Serialize,
-    Deserialize,
-    schemars::JsonSchema,
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, schemars::JsonSchema,
 )]
-pub struct Pitch(u8);
+#[serde(transparent)]
+pub struct Pitch(#[schemars(range(min = 0, max = 127))] u8);
 
 impl Pitch {
     pub const MIN: Self = Self(0);
@@ -96,6 +87,16 @@ impl std::fmt::Display for Pitch {
 impl Default for Pitch {
     fn default() -> Self {
         Self::MIDDLE_C
+    }
+}
+
+impl<'de> Deserialize<'de> for Pitch {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: serde::Deserializer<'de>,
+    {
+        let midi_note = u8::deserialize(deserializer)?;
+        Self::new(midi_note).ok_or_else(|| serde::de::Error::custom("pitch must be in 0..=127"))
     }
 }
 
@@ -176,6 +177,13 @@ mod tests {
     fn test_pitch_creation() {
         assert!(Pitch::new(60).is_some());
         assert!(Pitch::new(128).is_none());
+    }
+
+    #[test]
+    fn pitch_serde_rejects_values_above_midi_range() {
+        let pitch: Pitch = serde_json::from_str("127").unwrap();
+        assert_eq!(pitch, Pitch::MAX);
+        assert!(serde_json::from_str::<Pitch>("128").is_err());
     }
 
     #[test]

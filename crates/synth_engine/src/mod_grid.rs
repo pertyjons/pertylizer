@@ -18,7 +18,8 @@
 use std::collections::HashMap;
 
 use synth_core::{
-    AudioBuffer, DestAddr, PortName, ProcessContext, SampleCount, SampleRate, Semitones,
+    AudioBuffer, BipolarDelta, DestAddr, NormalizedDelta, PortName, ProcessContext, SampleCount,
+    SampleRate, Semitones,
 };
 use synth_sequencer::{
     AutoInstrumentParam, AutomationTarget, CombineMode, ModGraphId, TrackId, TransportSource,
@@ -241,6 +242,16 @@ impl ModGridRuntime {
             }
         }
     }
+
+    /// Finalize every hosted DSP graph before the runtime is sent to the audio
+    /// thread. Topology caches allocate while they are built, so this must run
+    /// on the control thread after all instances and cables are in place.
+    pub fn prepare_realtime(&mut self) {
+        for instance in &mut self.instances {
+            instance.dsp.prepare_realtime();
+        }
+        self.prekey_offsets();
+    }
 }
 
 /// Per-track additive offsets accumulated by the mod-grid pre-pass for one
@@ -249,8 +260,8 @@ impl ModGridRuntime {
 /// `pitch` is a semitone delta.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GridTrackOffset {
-    pub volume: f32,
-    pub pan: f32,
+    pub volume: NormalizedDelta,
+    pub pan: BipolarDelta,
     pub pitch: Semitones,
 }
 
@@ -260,8 +271,8 @@ pub struct GridTrackOffset {
 /// Pan }`). `volume` is a normalized gain delta, `pan` a bipolar delta.
 #[derive(Debug, Clone, Copy, Default)]
 pub struct GridInstrumentOffset {
-    pub volume: f32,
-    pub pan: f32,
+    pub volume: NormalizedDelta,
+    pub pan: BipolarDelta,
 }
 
 /// Read a control module's block-representative output value: the last sample of

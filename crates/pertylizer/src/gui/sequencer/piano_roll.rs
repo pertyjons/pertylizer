@@ -1446,7 +1446,7 @@ fn draw_mod_grid_lane_tools(
         };
         s.mod_graphs()
             .filter(|g| {
-                g.nodes.values().any(|n| match n {
+                g.nodes().values().any(|n| match n {
                     synth_sequencer::ModNodeConfig::Target(t) => {
                         mod_target_matches(&t.target, &sel)
                     }
@@ -1575,7 +1575,7 @@ fn quick_assign_mod_grid(
                 tgt,
                 ModNodeConfig::Target(ModTarget {
                     target: sel.clone(),
-                    amount: 0.25,
+                    amount: synth_sequencer::ModulationAmount::new(0.25),
                     combine: synth_sequencer::CombineMode::default(),
                 }),
             );

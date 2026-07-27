@@ -58,8 +58,8 @@ pub use ids::{
 pub use input::{InputCommand, InputMultiplexer, InputSource, KeyboardInputSource};
 pub use mod_grid::{
     AudioTapNode, AudioTapSource, CombineMode, MAX_MOD_GRID_NODES, MacroNode, MidiCcNode,
-    ModConnection, ModGraph, ModGraphError, ModGraphScope, ModNodeConfig, ModTarget, ModuleNode,
-    TARGET_INPUT_PORT, TransportNode, TransportSource,
+    ModConnection, ModGraph, ModGraphError, ModGraphScope, ModNodeConfig, ModTarget,
+    ModulationAmount, ModuleNode, TARGET_INPUT_PORT, TransportNode, TransportSource,
 };
 pub use note::{
     Glide, GlideFrom, GlideInterp, Note, NoteExpression, Ornament, OrnamentDynamics,

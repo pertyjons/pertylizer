@@ -1129,7 +1129,7 @@ pub struct NoteGraph {
     pub color: Option<TrackColor>,
     /// Nodes keyed by graph-local id.
     #[serde(default)]
-    pub nodes: BTreeMap<NoteModuleId, NoteModuleConfig>,
+    nodes: BTreeMap<NoteModuleId, NoteModuleConfig>,
     /// Pedagogical/user intent per node, kept separate from DSP configs.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub node_descriptions: BTreeMap<NoteModuleId, String>,
@@ -1137,7 +1137,7 @@ pub struct NoteGraph {
     /// iteration. v1: `NoteStream` axis validated linear; `Value`/`Gate` edges
     /// permitted once modulators exist.
     #[serde(default)]
-    pub connections: Vec<NoteConnection>,
+    connections: Vec<NoteConnection>,
     /// Editor canvas positions per node (layout metadata; nodes without one
     /// are auto-laid-out). Persisted so an arranged canvas survives reload.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -1146,12 +1146,12 @@ pub struct NoteGraph {
     /// [`NoteGraph::rebuild_derived`] on every non-RT load/mutation path; never
     /// recomputed on the audio thread.
     #[serde(skip)]
-    pub processing_order: Vec<NoteModuleId>,
+    processing_order: Vec<NoteModuleId>,
     /// Derived active `NoteStream` chain, head → terminal — NOT serialized.
     /// Stream nodes outside it are inert at evaluation; see
     /// `NoteGraph::rebuild_stream_spine`. Rebuilt with `processing_order`.
     #[serde(skip)]
-    pub stream_spine: Vec<NoteModuleId>,
+    stream_spine: Vec<NoteModuleId>,
 }
 
 impl NoteGraph {
@@ -1176,6 +1176,34 @@ impl NoteGraph {
     #[must_use]
     pub fn node_count(&self) -> usize {
         self.nodes.len()
+    }
+
+    /// Nodes keyed by graph-local id.
+    #[must_use]
+    pub fn nodes(&self) -> &BTreeMap<NoteModuleId, NoteModuleConfig> {
+        &self.nodes
+    }
+
+    /// A node config by graph-local id.
+    #[must_use]
+    pub fn node(&self, id: NoteModuleId) -> Option<&NoteModuleConfig> {
+        self.nodes.get(&id)
+    }
+
+    /// Validated connections in deterministic serialization order.
+    #[must_use]
+    pub fn connections(&self) -> &[NoteConnection] {
+        &self.connections
+    }
+
+    /// Derived evaluation order.
+    pub fn processing_order(&self) -> &[NoteModuleId] {
+        &self.processing_order
+    }
+
+    /// Derived active `NoteStream` chain, head to terminal.
+    pub fn stream_spine(&self) -> &[NoteModuleId] {
+        &self.stream_spine
     }
 
     /// The smallest unused [`NoteModuleId`] — used by non-RT editors (GUI / MCP)
@@ -1322,6 +1350,19 @@ impl NoteGraph {
             return Err(e);
         }
         Ok(())
+    }
+
+    /// Remove a specific connection and rebuild the derived order. Returns
+    /// `true` if one was removed. Dropping an edge only relaxes constraints, so
+    /// rebuilding cannot invalidate an otherwise valid graph.
+    pub fn disconnect(&mut self, connection: &NoteConnection) -> bool {
+        let before = self.connections.len();
+        self.connections.retain(|candidate| candidate != connection);
+        if self.connections.len() == before {
+            return false;
+        }
+        let _ = self.rebuild_derived();
+        true
     }
 
     /// Repair connection-set shapes that were legal before a validation rule

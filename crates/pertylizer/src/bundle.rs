@@ -21,7 +21,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::patch::PatchError;
 use crate::project::ProjectFile;
-use synth_core::audio::SampleRate;
+use synth_core::audio::DeviceSampleRate;
 use synth_core::{ChannelCount, SampleCount};
 use synth_sampler::{Sample, SampleLibrary, SampleMeta, SampleSource};
 
@@ -109,7 +109,7 @@ pub fn save_bundle(
     };
 
     for sample_meta in library.list() {
-        let id = sample_meta.id.0;
+        let id = sample_meta.id.as_u64();
         let filename = format!("samples/{id}.wav");
 
         // Write WAV data into the ZIP (skip metadata if data missing)
@@ -242,7 +242,7 @@ pub fn load_bundle(path: &Path, library: &mut SampleLibrary) -> Result<ProjectFi
             .map_err(|e| PatchError::Io(format!("Read {name}: {e}")))?;
 
         // Parse WAV
-        let target_rate = SampleRate::DVD_QUALITY;
+        let target_rate = DeviceSampleRate::DVD_QUALITY;
         match load_wav_from_bytes(&wav_data, target_rate) {
             Ok(mut sample) => {
                 // Apply metadata if available
@@ -292,7 +292,7 @@ fn sample_to_wav_bytes(sample: &Sample) -> Result<Vec<u8>, synth_sampler::Sample
 /// Load a WAV from in-memory bytes.
 fn load_wav_from_bytes(
     data: &[u8],
-    _target_rate: SampleRate,
+    _target_rate: DeviceSampleRate,
 ) -> Result<Sample, synth_sampler::SampleError> {
     let cursor = Cursor::new(data);
     let mut reader = hound::WavReader::new(cursor)?;
@@ -334,7 +334,7 @@ fn load_wav_from_bytes(
         id: synth_sampler::SampleId::new(0),
         name: "imported".to_string(),
         description: String::new(),
-        sample_rate: SampleRate::new(spec.sample_rate),
+        sample_rate: DeviceSampleRate::new(spec.sample_rate),
         channels,
         frame_count: SampleCount::new(frame_count),
         root_note: None,

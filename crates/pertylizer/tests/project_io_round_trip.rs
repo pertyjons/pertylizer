@@ -72,8 +72,8 @@ fn round_trip_bundle(path: &Path) {
         path.display()
     );
 
-    let mut original_ids: Vec<u64> = original_lib.list().iter().map(|m| m.id.0).collect();
-    let mut reloaded_ids: Vec<u64> = reloaded_lib.list().iter().map(|m| m.id.0).collect();
+    let mut original_ids: Vec<u64> = original_lib.list().iter().map(|m| m.id.as_u64()).collect();
+    let mut reloaded_ids: Vec<u64> = reloaded_lib.list().iter().map(|m| m.id.as_u64()).collect();
     original_ids.sort_unstable();
     reloaded_ids.sort_unstable();
     assert_eq!(
@@ -91,21 +91,21 @@ fn round_trip_bundle(path: &Path) {
             original_sample.meta.frame_count,
             reloaded_sample.meta.frame_count,
             "sample {} frame count changed in {}",
-            id.0,
+            id.as_u64(),
             path.display()
         );
         assert_eq!(
             original_sample.meta.channels,
             reloaded_sample.meta.channels,
             "sample {} channel count changed in {}",
-            id.0,
+            id.as_u64(),
             path.display()
         );
         assert_eq!(
             original_sample.data.len(),
             reloaded_sample.data.len(),
             "sample {} data length changed in {}",
-            id.0,
+            id.as_u64(),
             path.display()
         );
     }

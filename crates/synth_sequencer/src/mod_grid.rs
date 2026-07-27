@@ -28,6 +28,31 @@ use crate::ids::{ModGraphId, ModNodeId, TrackId};
 use crate::note_graph::NodePosition;
 use crate::track::TrackColor;
 
+/// Target-relative modulation depth.
+///
+/// The numeric unit is defined by the destination (normalized units for gain,
+/// bipolar units for pan, semitones for pitch). Keeping the value wrapped
+/// prevents it from being confused with an already-resolved control value.
+#[derive(
+    Debug, Clone, Copy, PartialEq, PartialOrd, Default, Serialize, Deserialize, schemars::JsonSchema,
+)]
+#[serde(transparent)]
+#[repr(transparent)]
+#[must_use]
+pub struct ModulationAmount(f32);
+
+impl ModulationAmount {
+    /// Create a target-relative modulation depth.
+    pub const fn new(value: f32) -> Self {
+        Self(value)
+    }
+
+    /// Return the target-relative numeric depth.
+    pub const fn as_f32(self) -> f32 {
+        self.0
+    }
+}
+
 /// Hard cap on nodes in one graph. Adding past it is a non-RT-side error, never
 /// an audio-thread concern.
 pub const MAX_MOD_GRID_NODES: usize = 32;
@@ -158,7 +183,7 @@ pub struct ModTarget {
     /// Depth in the target's own units (semitones for pitch, `0..1` for a
     /// normalized param, etc.). The input signal is multiplied by this.
     #[serde(default)]
-    pub amount: f32,
+    pub amount: ModulationAmount,
     /// How the contribution composes with the target's current value.
     #[serde(default)]
     pub combine: CombineMode,
@@ -317,13 +342,13 @@ pub struct ModGraph {
     pub color: Option<TrackColor>,
     /// Nodes keyed by graph-local id.
     #[serde(default)]
-    pub nodes: BTreeMap<ModNodeId, ModNodeConfig>,
+    nodes: BTreeMap<ModNodeId, ModNodeConfig>,
     /// Pedagogical/user intent per node, kept separate from DSP configs.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub node_descriptions: BTreeMap<ModNodeId, String>,
     /// Cables, kept as a sorted `Vec` for deterministic serialization.
     #[serde(default)]
-    pub connections: Vec<ModConnection>,
+    connections: Vec<ModConnection>,
     /// Editor canvas positions per node (layout metadata; nodes without one are
     /// auto-laid-out). Persisted so an arranged canvas survives reload.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -352,6 +377,24 @@ impl ModGraph {
     #[must_use]
     pub fn node_count(&self) -> usize {
         self.nodes.len()
+    }
+
+    /// Nodes keyed by graph-local id.
+    #[must_use]
+    pub fn nodes(&self) -> &BTreeMap<ModNodeId, ModNodeConfig> {
+        &self.nodes
+    }
+
+    /// A node config by graph-local id.
+    #[must_use]
+    pub fn node(&self, id: ModNodeId) -> Option<&ModNodeConfig> {
+        self.nodes.get(&id)
+    }
+
+    /// Validated cables in deterministic serialization order.
+    #[must_use]
+    pub fn connections(&self) -> &[ModConnection] {
+        &self.connections
     }
 
     /// The smallest unused [`ModNodeId`] — used by non-RT editors (GUI / MCP) to
@@ -426,6 +469,22 @@ impl ModGraph {
         let before = self.connections.len();
         self.connections.retain(|c| c != connection);
         self.connections.len() != before
+    }
+
+    /// Repair a connection set loaded from storage by replaying each cable
+    /// through [`Self::try_connect`] and dropping candidates that violate the
+    /// current graph invariants.
+    pub fn sanitize_connections(&mut self) {
+        let candidates = std::mem::take(&mut self.connections);
+        for connection in candidates {
+            let _ = self.try_connect(connection);
+        }
+    }
+
+    /// Install deliberately invalid serialized state for load-repair tests.
+    #[cfg(test)]
+    pub(crate) fn set_connections_unchecked_for_test(&mut self, connections: Vec<ModConnection>) {
+        self.connections = connections;
     }
 
     /// Validate the whole graph: every cable references present nodes, sources
@@ -524,7 +583,7 @@ mod tests {
     fn target_node() -> ModNodeConfig {
         ModNodeConfig::Target(ModTarget {
             target: AutomationTarget::Global(crate::automation::GlobalParam::MasterVolume),
-            amount: 1.0,
+            amount: ModulationAmount::new(1.0),
             combine: CombineMode::Add,
         })
     }

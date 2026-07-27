@@ -40,7 +40,8 @@ pub struct InstrumentInfo {
     /// Instrument category (e.g. "Drums", "Bass", "Pad", "Lead").
     pub category: String,
     /// MIDI channel (1-16).
-    pub midi_channel: MidiChannel,
+    /// Concrete MIDI channel, or `None` when the instrument listens in OMNI mode.
+    pub midi_channel: Option<MidiChannel>,
     /// Volume (0.0-2.0).
     pub volume: Gain,
     /// Pan (-1.0 = left, 0.0 = center, 1.0 = right).

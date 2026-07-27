@@ -1,10 +1,64 @@
 //! Normalized value types for type-safe audio processing.
 
-use std::ops::{Add, Mul, Neg, Sub};
+use std::fmt;
+use std::ops::{Add, AddAssign, Mul, Neg, Sub};
 
 use serde::{Deserialize, Serialize};
 
 use super::Clampable;
+
+macro_rules! control_delta {
+    ($name:ident, $description:literal) => {
+        #[doc = $description]
+        ///
+        /// Unlike the corresponding absolute control value, a delta is not
+        /// clamped: multiple modulation sources may legitimately accumulate
+        /// outside the target's final range before composition clamps it.
+        #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Default)]
+        #[repr(transparent)]
+        #[must_use]
+        pub struct $name(f32);
+
+        impl $name {
+            /// No modulation contribution.
+            pub const ZERO: Self = Self(0.0);
+
+            /// Create an additive control delta.
+            #[inline]
+            pub const fn new(value: f32) -> Self {
+                Self(value)
+            }
+
+            /// Return the raw additive contribution.
+            #[inline]
+            pub const fn as_f32(self) -> f32 {
+                self.0
+            }
+        }
+
+        impl AddAssign<f32> for $name {
+            #[inline]
+            fn add_assign(&mut self, rhs: f32) {
+                self.0 += rhs;
+            }
+        }
+
+        impl fmt::Display for $name {
+            fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                self.0.fmt(f)
+            }
+        }
+    };
+}
+
+control_delta!(
+    NormalizedDelta,
+    "An additive delta expressed in normalized full-scale units."
+);
+control_delta!(
+    BipolarDelta,
+    "An additive delta expressed in bipolar full-scale units."
+);
 
 /// A value normalized to the range [0.0, 1.0].
 ///

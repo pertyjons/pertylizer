@@ -4,32 +4,11 @@ use super::*;
 use crate::voice_allocator::{AllocationMode, AllocatorConfig, VoiceAllocator};
 use synth_core::{ModuleType, VoiceCount};
 
-#[test]
-fn latest_audio_samples_are_retained_in_order() {
-    let samples = [1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
-    let mut input = samples.into_iter();
-    let mut output = [0.0; 4];
-
-    collect_latest_samples(&mut output, || input.next());
-
-    assert_eq!(output, [3.0, 4.0, 5.0, 6.0]);
-}
-
-#[test]
-fn short_audio_input_is_zero_padded() {
-    let mut input = [1.0, 2.0].into_iter();
-    let mut output = [9.0; 4];
-
-    collect_latest_samples(&mut output, || input.next());
-
-    assert_eq!(output, [1.0, 2.0, 0.0, 0.0]);
-}
-
 /// Create a default instrument and add it to the engine via command.
 fn add_default_instrument(engine: &mut SynthEngine, handle: &mut EngineHandle) {
     let mut instrument =
         Instrument::with_config(InstrumentId::FIRST, "Default", AllocatorConfig::default());
-    instrument.set_midi_channel(MidiChannel::CH1);
+    instrument.set_midi_channel(MidiChannelSelection::CH1);
     SynthEngine::populate_default_voice_graph(instrument.voice_graph_mut());
     *instrument.allocator_mut() = VoiceAllocator::with_graph_template(
         instrument.allocator().config().clone(),
@@ -47,7 +26,7 @@ fn add_instrument_with_config(
     config: AllocatorConfig,
 ) {
     let mut instrument = Instrument::with_config(InstrumentId::FIRST, "Default", config.clone());
-    instrument.set_midi_channel(MidiChannel::CH1);
+    instrument.set_midi_channel(MidiChannelSelection::CH1);
     SynthEngine::populate_default_voice_graph(instrument.voice_graph_mut());
     *instrument.allocator_mut() = VoiceAllocator::with_graph_template(
         instrument.allocator().config().clone(),
@@ -65,7 +44,60 @@ fn test_engine_creation() {
     assert_eq!(engine.instruments.len(), 0);
     assert_eq!(handle.voice_count(), 0);
     assert!((handle.master_volume() - 1.0).abs() < 0.001);
+    assert_eq!(handle.command_capacity(), CommandCapacity::DEFAULT);
     drop(engine);
+}
+
+#[test]
+fn blocking_send_reports_timeout_when_configured_ring_stays_full() {
+    let Some(capacity) = CommandCapacity::new(1) else {
+        panic!("test command capacity must be non-zero");
+    };
+    let (_engine, mut handle) = SynthEngine::with_command_capacity(capacity);
+    assert_eq!(handle.command_capacity(), capacity);
+    assert!(handle.send(EngineCommand::ResetDsp));
+
+    let sender = handle.command_sender();
+    let result = sender.send_with_timeout(EngineCommand::ResetDsp, Duration::from_millis(5));
+
+    assert_eq!(result, Err(CommandSendError::Timeout));
+}
+
+#[test]
+fn command_capacity_rejects_an_empty_ring() {
+    assert_eq!(CommandCapacity::new(0), None);
+}
+
+#[test]
+fn pointer_swap_commands_wait_for_deferred_drop_capacity() {
+    let Some(capacity) = CommandCapacity::new(1) else {
+        panic!("test command capacity must be non-zero");
+    };
+    let (mut engine, mut handle) = SynthEngine::with_command_capacity(capacity);
+    let replacement = || {
+        Arc::new(synth_sequencer::SharedSong::new(
+            synth_sequencer::Song::new("replacement"),
+        ))
+    };
+
+    assert!(handle.send(EngineCommand::SetSong {
+        song: replacement(),
+    }));
+    engine.process_commands();
+
+    assert!(
+        !handle.send(EngineCommand::SetSong {
+            song: replacement(),
+        }),
+        "a pointer swap must not enter the audio queue without a return slot"
+    );
+
+    handle.cleanup_dropped_modules();
+    assert!(handle.send(EngineCommand::SetSong {
+        song: replacement(),
+    }));
+    engine.process_commands();
+    handle.cleanup_dropped_modules();
 }
 
 #[test]
@@ -109,7 +141,10 @@ fn test_add_instrument_via_command() {
     assert_eq!(engine.instruments.len(), 1);
     assert_eq!(engine.instruments[0].id(), InstrumentId::FIRST);
     assert_eq!(engine.instruments[0].name(), "Default");
-    assert_eq!(engine.instruments[0].midi_channel(), MidiChannel::CH1);
+    assert_eq!(
+        engine.instruments[0].midi_channel(),
+        MidiChannelSelection::CH1
+    );
 }
 
 #[test]
@@ -121,13 +156,13 @@ fn test_part_channel_routing() {
     handle.note_on_channel(
         MidiNote::C4,
         Velocity::new(0.8),
-        crate::instrument::MidiChannel::CH1,
+        crate::instrument::MidiChannelSelection::CH1,
     );
     engine.process_commands();
     assert_eq!(engine.instruments[0].active_voice_count(), 1);
 
     // Send note on channel 2 - should NOT be received
-    let ch2 = crate::instrument::MidiChannel::from_one_indexed(2).unwrap();
+    let ch2 = crate::instrument::MidiChannelSelection::from_one_indexed(2).unwrap();
     handle.note_on_channel(MidiNote::new(64), Velocity::new(0.8), ch2);
     engine.process_commands();
     assert_eq!(engine.instruments[0].active_voice_count(), 1); // Still 1
@@ -139,7 +174,7 @@ fn explicit_instrument_note_target_bypasses_channel_routing() {
     add_default_instrument(&mut engine, &mut handle);
     let second_id = InstrumentId::new(2);
     let mut second = Instrument::with_config(second_id, "Second", AllocatorConfig::default());
-    second.set_midi_channel(MidiChannel::from_one_indexed(2).unwrap());
+    second.set_midi_channel(MidiChannelSelection::from_one_indexed(2).unwrap());
     SynthEngine::populate_default_voice_graph(second.voice_graph_mut());
     *second.allocator_mut() = VoiceAllocator::with_graph_template(
         second.allocator().config().clone(),
@@ -153,7 +188,7 @@ fn explicit_instrument_note_target_bypasses_channel_routing() {
     handle.send(EngineCommand::NoteOn {
         note: MidiNote::C4,
         velocity: Velocity::MF,
-        channel: MidiChannel::CH1,
+        channel: MidiChannelSelection::CH1,
         instrument_id: Some(second_id),
     });
     engine.process_commands();
@@ -162,7 +197,7 @@ fn explicit_instrument_note_target_bypasses_channel_routing() {
 
     handle.send(EngineCommand::NoteOff {
         note: MidiNote::C4,
-        channel: MidiChannel::CH1,
+        channel: MidiChannelSelection::CH1,
         instrument_id: Some(second_id),
     });
     engine.process_commands();
@@ -583,7 +618,7 @@ fn mod_grid_track_volume_offset_accumulates() {
         .copied()
         .unwrap_or_default();
     assert!(
-        (off.volume - 0.5).abs() < 1e-6,
+        (off.volume.as_f32() - 0.5).abs() < 1e-6,
         "expected track-0 volume offset 0.5, got {}",
         off.volume
     );
@@ -604,7 +639,7 @@ fn mod_grid_track_volume_offset_accumulates() {
     // Full-flow path: drive the real process() and re-check the fader. This
     // is what the live engine / offline render actually run.
     let context = AudioCallbackContext {
-        sample_rate: synth_core::audio::SampleRate::new(48000),
+        sample_rate: synth_core::audio::DeviceSampleRate::new(48000),
         frames: 256,
         channels: 2,
         stream_time: 0.0,
@@ -675,6 +710,7 @@ fn mod_grid_instrument_volume_offset_is_order_independent() {
             .copied()
             .unwrap_or_default()
             .volume
+            .as_f32()
     };
 
     // SetModGrid *before* the instrument (the former trap) — still writes 0.5.
@@ -712,7 +748,7 @@ fn mod_grid_instrument_volume_offset_is_order_independent() {
 
 #[test]
 fn mod_grid_midi_cc_source_reads_live_cc_state() {
-    use crate::instrument::MidiChannel;
+    use crate::instrument::MidiChannelSelection;
     use crate::mod_grid::{ModGridInstance, ModGridRuntime, ModSource, ResolvedTarget};
     use synth_core::{NormalizedValue, SampleCount, SampleRate};
     use synth_sequencer::{AutomationTarget, CombineMode, GlobalParam, ModGraphId};
@@ -744,7 +780,7 @@ fn mod_grid_midi_cc_source_reads_live_cc_state() {
     });
     // A live CC message on channel 1 (zero-indexed 0), full value.
     handle.send(EngineCommand::ControlChange {
-        channel: MidiChannel::from_zero_indexed(0).expect("valid channel"),
+        channel: MidiChannelSelection::from_zero_indexed(0).expect("valid channel"),
         cc: 74,
         value: NormalizedValue::new(1.0),
     });
@@ -766,11 +802,11 @@ fn mod_grid_midi_cc_source_reads_live_cc_state() {
 
 #[test]
 fn sustain_pedal_holds_note_off_and_releases_on_lift() {
-    use crate::instrument::MidiChannel;
+    use crate::instrument::MidiChannelSelection;
     use synth_core::{MidiNote, NormalizedValue, Velocity};
 
     let (mut engine, mut handle) = SynthEngine::new();
-    let ch = MidiChannel::from_zero_indexed(0).expect("valid channel");
+    let ch = MidiChannelSelection::from_zero_indexed(0).expect("valid channel");
     let note = MidiNote::new(60);
     let cc64 = |v: f32| EngineCommand::ControlChange {
         channel: ch,
@@ -810,11 +846,11 @@ fn sustain_pedal_holds_note_off_and_releases_on_lift() {
 
 #[test]
 fn sustain_pedal_repress_reclaims_the_held_note() {
-    use crate::instrument::MidiChannel;
+    use crate::instrument::MidiChannelSelection;
     use synth_core::{MidiNote, NormalizedValue, Velocity};
 
     let (mut engine, mut handle) = SynthEngine::new();
-    let ch = MidiChannel::from_zero_indexed(0).expect("valid channel");
+    let ch = MidiChannelSelection::from_zero_indexed(0).expect("valid channel");
     let note = MidiNote::new(60);
 
     handle.send(EngineCommand::ControlChange {
@@ -1243,7 +1279,7 @@ fn render_send_energy(with_send: bool) -> f32 {
     engine.process_commands();
 
     let context = AudioCallbackContext {
-        sample_rate: synth_core::audio::SampleRate::new(48000),
+        sample_rate: synth_core::audio::DeviceSampleRate::new(48000),
         frames: 256,
         channels: 2,
         stream_time: 0.0,

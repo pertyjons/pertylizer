@@ -34,7 +34,8 @@ impl synth_mcp::bridge::InstrumentBuildBridge for AppSynthBridge {
         if let Some(ch) = spec.midi_channel
             && let Err(e) = self.session.set_instrument_midi_channel(
                 inst_id,
-                EngineMidiChannel::from_one_indexed(ch.as_u8()).unwrap_or(EngineMidiChannel::CH1),
+                MidiChannelSelection::from_one_indexed(ch.as_u8())
+                    .unwrap_or(MidiChannelSelection::CH1),
             )
         {
             errors.push(format!("midi_channel: {e}"));

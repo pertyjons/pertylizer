@@ -17,7 +17,9 @@
 use std::env;
 
 #[cfg(any(feature = "gui-egui", feature = "mcp"))]
-use pertylizer::audio::{self, AudioHostTrait, BufferSize, ChannelCount, SampleRate, StreamConfig};
+use pertylizer::audio::{
+    self, AudioHostTrait, BufferSize, ChannelCount, DeviceSampleRate, StreamConfig,
+};
 #[cfg(feature = "gui-egui")]
 use pertylizer::gui::{SynthGuiConfig, create_backend};
 #[cfg(any(feature = "gui-egui", feature = "mcp"))]
@@ -208,7 +210,7 @@ fn run_gui(
 
     // Configure stream
     let stream_config = StreamConfig {
-        sample_rate: SampleRate::DVD_QUALITY,
+        sample_rate: DeviceSampleRate::DVD_QUALITY,
         buffer_size: BufferSize::MEDIUM,
         channels: ChannelCount::Stereo,
     };
@@ -252,7 +254,7 @@ fn run_headless_mcp() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!("✓ Audio backend: {} (headless)", host.backend_name());
 
     let stream_config = StreamConfig {
-        sample_rate: SampleRate::DVD_QUALITY,
+        sample_rate: DeviceSampleRate::DVD_QUALITY,
         buffer_size: BufferSize::MEDIUM,
         channels: ChannelCount::Stereo,
     };

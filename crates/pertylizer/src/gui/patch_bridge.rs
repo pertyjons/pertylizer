@@ -176,7 +176,7 @@ pub fn load_patch(
             .module_descriptor(module_id)
             .map(|d| d.category);
         if matches!(category, Some(synth_core::ModuleCategory::Visualizer)) {
-            handle.send_blocking(EngineCommand::RemoveVisualizer {
+            let _ = handle.send_blocking(EngineCommand::RemoveVisualizer {
                 instrument_id: Some(instrument_id),
                 id: module_id,
             });
@@ -216,7 +216,7 @@ pub fn load_patch(
 
             // Send connection to engine - blocking to ensure all connections are established
             // Use the target instrument_id for instrument-level connections
-            handle.send_blocking(EngineCommand::Connect {
+            let _ = handle.send_blocking(EngineCommand::Connect {
                 instrument_id: Some(instrument_id),
                 from: PortId::new(from_id, &*conn.from.1),
                 to: PortId::new(to_id, &*conn.to.1),
@@ -231,7 +231,7 @@ pub fn load_patch(
         .filter_map(|s| s.parse::<ModuleId>().ok())
         .collect();
     if !saved_order.is_empty() {
-        handle.send_blocking(EngineCommand::SetEffectChainOrder {
+        let _ = handle.send_blocking(EngineCommand::SetEffectChainOrder {
             instrument_id: Some(instrument_id),
             order: saved_order.clone(),
         });
@@ -244,12 +244,12 @@ pub fn load_patch(
     // Apply global settings only during full project load, not per-instrument patch load
     if apply_global {
         *glide_time = patch.settings.glide_time;
-        handle.send_blocking(EngineCommand::SetMasterVolume(patch.settings.master_volume));
-        handle.send_blocking(EngineCommand::SetGlideTime(patch.settings.glide_time));
+        let _ = handle.send_blocking(EngineCommand::SetMasterVolume(patch.settings.master_volume));
+        let _ = handle.send_blocking(EngineCommand::SetGlideTime(patch.settings.glide_time));
     }
 
     // Ensure the target instrument is enabled after loading
-    handle.send_blocking(EngineCommand::SetInstrumentEnabled {
+    let _ = handle.send_blocking(EngineCommand::SetInstrumentEnabled {
         instrument_id,
         enabled: true,
     });

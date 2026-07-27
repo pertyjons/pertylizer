@@ -10,7 +10,7 @@ use eframe::egui;
 use crate::gui::keyboard::PianoKeyboard;
 use synth_core::MidiNote;
 use synth_engine::EngineHandle;
-use synth_engine::instrument::MidiChannel;
+use synth_engine::instrument::MidiChannelSelection;
 
 /// Computer keyboard to MIDI note mapping.
 ///
@@ -112,7 +112,7 @@ pub fn handle_keyboard_input(
     handle: &mut EngineHandle,
     keyboard: &mut PianoKeyboard,
     pressed_keys: &mut HashMap<u8, bool>,
-    active_channel: MidiChannel,
+    active_channel: MidiChannelSelection,
 ) {
     let octave_offset = keyboard.octave_offset();
 

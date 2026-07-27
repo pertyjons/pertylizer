@@ -626,52 +626,6 @@ impl SynthApp {
                     pattern.remove_automation_lane(&lane.target);
                 }
             }
-            UndoAction::AddModule {
-                instrument_id,
-                module_state,
-                connections,
-            } => {
-                // TODO: Full undo requires recreating the module from ModuleState
-                // via the session, rebuilding connections, and updating the patch
-                // editor. This needs significant refactoring of the session API
-                // to support module reconstruction from serialized state.
-                let _ = (instrument_id, module_state, connections);
-                eprintln!("Undo: AddModule not yet implemented — requires session refactoring");
-            }
-            UndoAction::RemoveModule {
-                instrument_id,
-                module_state,
-                connections: _,
-            } => {
-                // TODO: Full undo requires re-adding the removed module from its
-                // saved ModuleState and restoring all connections. Same session
-                // refactoring needed as AddModule above.
-                let _ = (instrument_id, module_state);
-                eprintln!("Undo: RemoveModule not yet implemented — requires session refactoring");
-            }
-            UndoAction::MoveModule {
-                module_id, new_pos, ..
-            } => {
-                if let Some(editor) = self.active_patch_editor() {
-                    editor.set_module_position(*module_id, egui::Pos2::new(new_pos.0, new_pos.1));
-                }
-            }
-            UndoAction::SetParameter {
-                module_id,
-                param_name,
-                new_value,
-                ..
-            } => {
-                // Apply the parameter value to the patch editor UI state.
-                // Note: full engine-side undo for parameters is not yet implemented
-                // because reconstructing the Param enum variant from a name string
-                // requires module-specific knowledge.
-                if let crate::patch::ParamValue::Float(val) = new_value
-                    && let Some(editor) = self.active_patch_editor()
-                {
-                    editor.set_parameter_by_name(*module_id, param_name, *val);
-                }
-            }
             UndoAction::AddConnection {
                 instrument_id,
                 connection,

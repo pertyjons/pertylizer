@@ -5,12 +5,12 @@
 //! In headless mode (`--mcp`) there is no GUI, so `SynthSession` is the
 //! sole owner of module state.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use synth_core::{BipolarValue, Gain, ModuleCategory, ModuleDescriptor, ModuleType, PortName};
 use synth_engine::commands::PortId;
-use synth_engine::instrument::{Instrument, InstrumentId, MidiChannel};
+use synth_engine::instrument::{Instrument, InstrumentId, MidiChannelSelection};
 use synth_engine::shared_state::InstrumentSnapshot;
 use synth_engine::state::EngineState;
 use synth_engine::{CommandSender, EngineCommand, ModuleId};
@@ -161,13 +161,6 @@ pub struct SynthSession {
     registry: Mutex<HashMap<(InstrumentId, ModuleId), ModuleDescriptor>>,
     /// Next instrument ID (starts at 1 since 0 is the default).
     instrument_counter: Mutex<u64>,
-    /// Synchronous mirror of instrument IDs currently owned by this session.
-    /// Why: `EngineState::instrument_snapshots` is only rebuilt on the audio
-    /// thread after it pops an `EngineCommand`, so a write-then-validate inside
-    /// one `batch_execute` would race the audio tick. This set is updated
-    /// inline at allocation and removal so `instrument_exists` answers
-    /// correctly during that window.
-    alive_instruments: Mutex<HashSet<InstrumentId>>,
 }
 
 impl SynthSession {
@@ -179,7 +172,6 @@ impl SynthSession {
             counters: Mutex::new(HashMap::new()),
             registry: Mutex::new(HashMap::new()),
             instrument_counter: Mutex::new(1), // 0 is reserved for default
-            alive_instruments: Mutex::new(HashSet::new()),
         }
     }
 
@@ -200,21 +192,12 @@ impl SynthSession {
             id
         };
 
-        self.alive_instruments
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(id);
-
         let instrument = Box::new(Instrument::new(id, name));
 
         if !self
             .command_sender
             .send(EngineCommand::AddInstrument { instrument })
         {
-            self.alive_instruments
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(&id);
             return Err(SessionError::SendFailed);
         }
 
@@ -253,11 +236,6 @@ impl SynthSession {
             }
         }
 
-        self.alive_instruments
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .insert(id);
-
         let instrument = Box::new(match config {
             Some(cfg) => Instrument::with_config(id, name, cfg),
             None => Instrument::new(id, name),
@@ -267,10 +245,6 @@ impl SynthSession {
             .command_sender
             .send(EngineCommand::AddInstrument { instrument })
         {
-            self.alive_instruments
-                .lock()
-                .unwrap_or_else(|e| e.into_inner())
-                .remove(&id);
             return Err(SessionError::SendFailed);
         }
 
@@ -313,10 +287,6 @@ impl SynthSession {
             let mut counters = self.counters.lock().unwrap_or_else(|e| e.into_inner());
             counters.retain(|&(inst_id, _), _| inst_id != instrument_id);
         }
-        self.alive_instruments
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .remove(&instrument_id);
         // Drop any per-instrument metadata held in shared engine state.
         self.state().clear_octave_offset(instrument_id);
 
@@ -345,27 +315,6 @@ impl SynthSession {
         Ok(())
     }
 
-    /// Write-through a field on the cached instrument snapshot so a read-back
-    /// (`list_instruments` / `get_instrument_info`) inside the same
-    /// `batch_execute` sees the change before the audio thread rebuilds the
-    /// snapshot (~one buffer later). The queued `EngineCommand` stays the source
-    /// of truth for the audio itself; this only keeps the read-side metadata from
-    /// lagging during that window. Same race rationale as
-    /// [`Self::alive_instruments`].
-    ///
-    /// No-op when the instrument is not in the snapshot yet — it will pick up the
-    /// value on the next audio-thread rebuild.
-    fn patch_instrument_snapshot(
-        &self,
-        instrument_id: InstrumentId,
-        patch: impl FnOnce(&mut InstrumentSnapshot),
-    ) {
-        let mut snapshots = self.state.instrument_snapshots.write();
-        if let Some(snapshot) = snapshots.iter_mut().find(|s| s.id == instrument_id) {
-            patch(snapshot);
-        }
-    }
-
     /// Set an instrument's free-text description / intent.
     pub fn set_instrument_description(
         &self,
@@ -381,9 +330,6 @@ impl SynthSession {
         {
             return Err(SessionError::SendFailed);
         }
-        self.patch_instrument_snapshot(instrument_id, |s| {
-            s.description = description.to_string();
-        });
         Ok(())
     }
 
@@ -399,9 +345,6 @@ impl SynthSession {
         }) {
             return Err(SessionError::SendFailed);
         }
-        self.patch_instrument_snapshot(instrument_id, |s| {
-            s.color = color.map(str::to_string);
-        });
         Ok(())
     }
 
@@ -420,9 +363,6 @@ impl SynthSession {
         {
             return Err(SessionError::SendFailed);
         }
-        self.patch_instrument_snapshot(instrument_id, |s| {
-            s.patch_description = description.map(str::to_owned);
-        });
         Ok(())
     }
 
@@ -439,9 +379,6 @@ impl SynthSession {
         }) {
             return Err(SessionError::SendFailed);
         }
-        self.patch_instrument_snapshot(instrument_id, |s| {
-            s.patch_color = color.map(str::to_owned);
-        });
         Ok(())
     }
 
@@ -453,9 +390,6 @@ impl SynthSession {
         module_id: ModuleId,
         description: Option<&str>,
     ) -> Result<(), SessionError> {
-        let normalized = description
-            .filter(|value| !value.is_empty())
-            .unwrap_or_default();
         if !self
             .command_sender
             .send(EngineCommand::SetModuleDescription {
@@ -466,11 +400,6 @@ impl SynthSession {
         {
             return Err(SessionError::SendFailed);
         }
-        self.state.shared_graph.set_module_description(
-            instrument_id,
-            module_id,
-            normalized.to_owned(),
-        );
         Ok(())
     }
 
@@ -513,9 +442,6 @@ impl SynthSession {
         }) {
             return Err(SessionError::SendFailed);
         }
-        self.patch_instrument_snapshot(instrument_id, |s| {
-            s.sidechain_source_id = source;
-        });
         Ok(())
     }
 
@@ -534,7 +460,6 @@ impl SynthSession {
         {
             return Err(SessionError::SendFailed);
         }
-        self.patch_instrument_snapshot(instrument_id, |s| s.volume = volume);
         Ok(())
     }
 
@@ -553,7 +478,6 @@ impl SynthSession {
         {
             return Err(SessionError::SendFailed);
         }
-        self.patch_instrument_snapshot(instrument_id, |s| s.pan = pan);
         Ok(())
     }
 
@@ -572,7 +496,6 @@ impl SynthSession {
         {
             return Err(SessionError::SendFailed);
         }
-        self.patch_instrument_snapshot(instrument_id, |s| s.allocation_mode = mode);
         Ok(())
     }
 
@@ -591,7 +514,6 @@ impl SynthSession {
         {
             return Err(SessionError::SendFailed);
         }
-        self.patch_instrument_snapshot(instrument_id, |s| s.stealing_strategy = strategy);
         Ok(())
     }
 
@@ -610,7 +532,6 @@ impl SynthSession {
         {
             return Err(SessionError::SendFailed);
         }
-        self.patch_instrument_snapshot(instrument_id, |s| s.unison_detune = detune);
         Ok(())
     }
 
@@ -629,7 +550,6 @@ impl SynthSession {
         {
             return Err(SessionError::SendFailed);
         }
-        self.patch_instrument_snapshot(instrument_id, |s| s.unison_spread = spread);
         Ok(())
     }
 
@@ -653,7 +573,6 @@ impl SynthSession {
         {
             return Err(SessionError::SendFailed);
         }
-        self.patch_instrument_snapshot(instrument_id, |s| s.max_voices = max_voices);
         Ok(())
     }
 
@@ -672,10 +591,6 @@ impl SynthSession {
         {
             return Err(SessionError::SendFailed);
         }
-        self.patch_instrument_snapshot(instrument_id, |s| {
-            s.enabled = !muted;
-            s.muted = muted;
-        });
         Ok(())
     }
 
@@ -694,10 +609,6 @@ impl SynthSession {
         {
             return Err(SessionError::SendFailed);
         }
-        self.patch_instrument_snapshot(instrument_id, |s| {
-            s.enabled = enabled;
-            s.muted = !enabled;
-        });
         Ok(())
     }
 
@@ -716,7 +627,6 @@ impl SynthSession {
         {
             return Err(SessionError::SendFailed);
         }
-        self.patch_instrument_snapshot(instrument_id, |s| s.category = category);
         Ok(())
     }
 
@@ -732,7 +642,6 @@ impl SynthSession {
         }) {
             return Err(SessionError::SendFailed);
         }
-        self.patch_instrument_snapshot(instrument_id, |s| s.solo = solo);
         Ok(())
     }
 
@@ -740,7 +649,7 @@ impl SynthSession {
     pub fn set_instrument_midi_channel(
         &self,
         instrument_id: InstrumentId,
-        channel: MidiChannel,
+        channel: MidiChannelSelection,
     ) -> Result<(), SessionError> {
         if !self
             .command_sender
@@ -751,10 +660,6 @@ impl SynthSession {
         {
             return Err(SessionError::SendFailed);
         }
-        // Mirror the engine's snapshot conversion exactly (1-indexed display).
-        self.patch_instrument_snapshot(instrument_id, |s| {
-            s.midi_channel = synth_core::MidiChannel::new(channel.as_zero_indexed() + 1);
-        });
         Ok(())
     }
 
@@ -1003,12 +908,10 @@ impl SynthSession {
     /// or `timeout_ms` elapses. Returns `true` if the queue caught up, `false` on
     /// timeout.
     ///
-    /// Use this before reading the async-mirrored `shared_graph` (e.g. a save)
-    /// right after queuing graph mutations: `add_module`/`connect` only reach the
-    /// snapshot once the audio thread pops and applies them, so a save issued in
-    /// the same `batch_execute` would otherwise read a stale/truncated graph. The
-    /// command ring is FIFO, so once `processed` reaches the `enqueued` snapshot
-    /// taken here, all earlier mutations are applied *and* mirrored.
+    /// Control snapshots publish synchronously when a command is accepted, so
+    /// snapshot-only readers do not need this barrier. Use it when subsequent
+    /// work depends on the corresponding DSP mutation having reached the audio
+    /// engine. The command ring is FIFO.
     ///
     /// If the audio thread is not running (e.g. an undriven test engine) this
     /// waits out the full timeout — same bounded-wait behaviour as the
@@ -1029,14 +932,13 @@ impl SynthSession {
         self.state.command_sync.processed() >= target
     }
 
-    /// Check if an instrument is known to this session. See
-    /// `Self::alive_instruments` for why this reads the synchronous mirror
-    /// rather than `EngineState::instrument_snapshots`.
+    /// Check the synchronously published control snapshot.
     pub fn instrument_exists(&self, instrument_id: InstrumentId) -> bool {
-        self.alive_instruments
-            .lock()
-            .unwrap_or_else(|e| e.into_inner())
-            .contains(&instrument_id)
+        self.state
+            .instrument_snapshots
+            .read()
+            .iter()
+            .any(|snapshot| snapshot.id == instrument_id)
     }
 
     // ------------------------------------------------------------------

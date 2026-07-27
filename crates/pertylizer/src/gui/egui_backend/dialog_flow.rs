@@ -319,7 +319,7 @@ impl SynthApp {
                     }
                 }
                 FileDialogResult::Picked(path, Some(FileDialogMode::ImportSample)) => {
-                    let target_rate = synth_core::audio::SampleRate::DVD_QUALITY;
+                    let target_rate = synth_core::audio::DeviceSampleRate::DVD_QUALITY;
                     match synth_sampler::load_wav(&path, target_rate) {
                         Ok(sample) => {
                             let name = sample.meta.name.clone();

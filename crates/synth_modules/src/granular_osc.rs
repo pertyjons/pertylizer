@@ -40,7 +40,6 @@ const SOURCE_BASE_FREQ: f32 = 110.0;
 
 /// A single grain instance.
 #[derive(Clone, Copy)]
-#[allow(dead_code)]
 struct Grain {
     active: bool,
     /// Current read position in the source buffer (samples, fractional). Seeded
@@ -58,6 +57,10 @@ struct Grain {
     /// the (modulated) note pitch each block.
     pitch_ratio: f32,
     /// Stereo pan (-1 left, +1 right).
+    #[expect(
+        dead_code,
+        reason = "stored now so the pending stereo-output path preserves per-grain pan state"
+    )]
     pan: BipolarValue,
 }
 

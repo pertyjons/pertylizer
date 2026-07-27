@@ -13,9 +13,11 @@
 #![allow(clippy::cast_possible_truncation)]
 #![allow(clippy::similar_names)]
 
+mod audio_input;
 pub mod click_generator;
 pub mod commands;
 pub mod connectivity;
+mod control_snapshot;
 pub mod cpu_tracker;
 pub mod effect_chain;
 pub mod event_priority;
@@ -58,7 +60,7 @@ pub use event_priority::{
 };
 pub use graph::{Connection, GraphError, ModuleGraph};
 pub use hub::{ClientHandle, ClientId, ClientPermissions, ClientType, EngineHub, HubError};
-pub use instrument::{Instrument, InstrumentCategory, InstrumentId, MidiChannel};
+pub use instrument::{Instrument, InstrumentCategory, InstrumentId, MidiChannelSelection};
 pub use metering::MeteringSystem;
 pub use recording::RecordingState;
 pub use return_bus::ReturnBusChannel;
@@ -72,7 +74,9 @@ pub use state::{
     AtomicF64, AtomicU32, ChannelMeterBank, CommandSync, EngineState, MAX_METER_SLOTS, MeterState,
     NO_FOCUSED_INSTRUMENT, TransportState,
 };
-pub use synth_engine::{CommandSender, CpuStageBreakdown, EngineHandle, SynthEngine};
+pub use synth_engine::{
+    CommandCapacity, CommandSendError, CommandSender, CpuStageBreakdown, EngineHandle, SynthEngine,
+};
 pub use transactions::{
     BatchBuilder, BatchResult, CommandBatch, TransactionId, TransactionalCommand,
 };

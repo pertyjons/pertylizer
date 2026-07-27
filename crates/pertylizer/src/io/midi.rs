@@ -16,7 +16,7 @@
 //! Raw MIDI bytes (u8) are converted to domain types at the parsing layer:
 //! - Velocity (0-127) -> Velocity
 //! - Pitch bend (0-16383) -> BipolarValue (-1.0 to 1.0)
-//! - Channel (0-15) -> MidiChannel
+//! - Channel (0-15) -> MidiChannelSelection
 
 use midir::{Ignore, MidiInput, MidiInputConnection};
 use thiserror::Error;
@@ -24,7 +24,7 @@ use thiserror::Error;
 use synth_core::{BipolarValue, MidiNote, NormalizedValue, Velocity};
 use synth_engine::CommandSender;
 use synth_engine::commands::EngineCommand;
-use synth_engine::instrument::MidiChannel;
+use synth_engine::instrument::MidiChannelSelection;
 
 /// MIDI message status bytes (high nibble).
 mod status {
@@ -57,8 +57,8 @@ pub fn parse_midi(bytes: &[u8]) -> Option<EngineCommand> {
     let message_type = status & 0xF0;
     let channel_raw = status & 0x0F;
 
-    // Create MidiChannel from raw byte (0-indexed)
-    let channel = MidiChannel::from_zero_indexed(channel_raw)?;
+    // Create the channel selection from the raw zero-indexed wire value.
+    let channel = MidiChannelSelection::from_zero_indexed(channel_raw)?;
 
     match message_type {
         status::NOTE_ON if bytes.len() >= 3 => {

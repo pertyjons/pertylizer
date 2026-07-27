@@ -78,7 +78,7 @@ pub use backends::{CpalBackend, NullBackend};
 pub use traits::{AudioBackend, AudioHost, AudioHostTrait, AudioProcessor, AudioStream};
 pub use types::{
     AudioCallbackContext, AudioError, AudioResult, BufferSize, ChannelCount, DeviceInfo,
-    DeviceType, SampleRate, StreamConfig, StreamInfo,
+    DeviceSampleRate, DeviceType, StreamConfig, StreamInfo,
 };
 
 /// Create a default audio host using the CPAL backend.
@@ -134,13 +134,16 @@ pub(crate) fn replay_module_scripts(
         // Rebuild the script module's descriptor so the render's voice nodes see
         // its knobs (cross-script reads); `None` for the Mod Matrix.
         let descriptor = crate::session::build_script_descriptor(mt, &script.params);
-        if !handle.send_blocking(synth_engine::EngineCommand::SetModScript {
-            instrument_id: Some(instrument_id),
-            module_id,
-            slot,
-            script: Some(script),
-            descriptor,
-        }) {
+        if handle
+            .send_blocking(synth_engine::EngineCommand::SetModScript {
+                instrument_id: Some(instrument_id),
+                module_id,
+                slot,
+                script: Some(script),
+                descriptor,
+            })
+            .is_err()
+        {
             warnings.push(format!(
                 "{ctx}: failed to enqueue script for module {module_id} slot {slot_key}"
             ));
@@ -148,10 +151,19 @@ pub(crate) fn replay_module_scripts(
     }
 }
 
-/// Pending-command count below the ring's 256-slot capacity at which an offline
-/// load drains. Leaves headroom so a batch enqueued between two drain checks
-/// can't push past capacity (and get silently dropped by `send_blocking`).
-const OFFLINE_LOAD_DRAIN_THRESHOLD: u64 = 192;
+/// High-water mark for offline command loading.
+///
+/// Draining at three quarters of the configured ring capacity leaves room for
+/// the remainder of the current module batch without baking the production
+/// capacity into the loader.
+fn offline_load_drain_threshold(handle: &synth_engine::EngineHandle) -> u64 {
+    let capacity = u64::try_from(handle.command_capacity().as_usize()).unwrap_or(u64::MAX);
+    capacity
+        .saturating_mul(3)
+        .checked_div(4)
+        .unwrap_or(1)
+        .max(1)
+}
 
 /// Process one silent block so the engine drains its **entire** queued command
 /// ring (`process_commands` pops until empty). During an offline load the
@@ -168,14 +180,11 @@ pub(crate) fn drain_command_queue(
     engine.process(buffer, ctx);
 }
 
-/// Drain the command ring only when it nears the fixed 256-slot capacity, so a
-/// bulk offline load can't overflow it however many commands one instrument (or
-/// one huge voice graph) enqueues. Cheap when the ring has room — two atomic
-/// loads and no processing. `send_blocking` silently *drops* once the ring is
-/// full, so this must run often enough during a large load (per module /
-/// connection) to keep the pending count below capacity. `enqueued` is bumped by
-/// the sender per push and `processed` by the audio-thread drain, on the same
-/// shared `CommandSync`, so their difference is the exact ring occupancy.
+/// Drain the command ring when it reaches its capacity-derived high-water mark,
+/// so bulk offline loads cannot overflow it. Cheap when the ring has room — two
+/// atomic loads and no processing. `enqueued` is bumped by the sender per push
+/// and `processed` by the audio-thread drain, on the same shared `CommandSync`,
+/// so their difference is the exact ring occupancy.
 pub(crate) fn drain_if_ring_filling(
     engine: &mut synth_engine::SynthEngine,
     handle: &synth_engine::EngineHandle,
@@ -184,7 +193,7 @@ pub(crate) fn drain_if_ring_filling(
 ) {
     let sync = &handle.state.command_sync;
     let pending = sync.enqueued().saturating_sub(sync.processed());
-    if pending >= OFFLINE_LOAD_DRAIN_THRESHOLD {
+    if pending >= offline_load_drain_threshold(handle) {
         drain_command_queue(engine, buffer, ctx);
     }
 }

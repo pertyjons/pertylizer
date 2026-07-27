@@ -9,5 +9,5 @@ mod types;
 pub use traits::{AudioBackend, AudioHost, AudioHostTrait, AudioProcessor, AudioStream};
 pub use types::{
     AudioCallbackContext, AudioError, AudioResult, BufferSize, ChannelCount, DeviceInfo,
-    DeviceType, MAX_BLOCK_SIZE, SampleRate, StreamConfig, StreamInfo,
+    DeviceSampleRate, DeviceType, MAX_BLOCK_SIZE, StreamConfig, StreamInfo,
 };

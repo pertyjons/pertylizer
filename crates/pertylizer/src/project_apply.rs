@@ -12,7 +12,7 @@ use synth_engine::commands::InstrumentParam;
 use synth_engine::shared_state::{
     ConnectionSnapshot, InstrumentSnapshot, ModuleStateSnapshot, ReturnBusSnapshot,
 };
-use synth_engine::{CommandSender, EngineCommand, InstrumentId, MidiChannel, ModuleId};
+use synth_engine::{CommandSender, EngineCommand, InstrumentId, MidiChannelSelection, ModuleId};
 use synth_sampler::SampleLibrary;
 use synth_sequencer::Song;
 
@@ -545,7 +545,7 @@ fn snapshot_to_instrument_state(snap: &InstrumentSnapshot, mut patch: Patch) -> 
     InstrumentState {
         id: snap.id,
         name: snap.name.clone(),
-        channel: snap.midi_channel.as_u8(),
+        channel: snap.midi_channel.map_or(0, synth_core::MidiChannel::as_u8),
         volume: snap.volume,
         pan: snap.pan,
         muted: snap.muted,
@@ -761,7 +761,7 @@ pub(crate) fn install_instrument(
         .filter_map(|s| s.parse::<ModuleId>().ok())
         .collect();
     if !order.is_empty() {
-        sender.send_blocking(EngineCommand::SetEffectChainOrder {
+        let _ = sender.send_blocking(EngineCommand::SetEffectChainOrder {
             instrument_id: Some(inst_id),
             order,
         });
@@ -789,7 +789,12 @@ fn apply_instrument_metadata(
     inst_state: &InstrumentState,
     inst_id: InstrumentId,
 ) {
-    let channel = MidiChannel::from_one_indexed(inst_state.channel).unwrap_or(MidiChannel::CH1);
+    let channel = if inst_state.channel == 0 {
+        MidiChannelSelection::OMNI
+    } else {
+        MidiChannelSelection::from_one_indexed(inst_state.channel)
+            .unwrap_or(MidiChannelSelection::CH1)
+    };
     log_err(
         "rename_instrument",
         session.rename_instrument(inst_id, &inst_state.name),
@@ -986,7 +991,7 @@ pub(crate) fn prune_unused_samples(
         .filter(|m| !used.contains(&m.id))
         .map(|m| (m.id, m.name.clone()))
         .collect();
-    to_remove.sort_by_key(|(id, _)| id.0);
+    to_remove.sort_by_key(|(id, _)| id.as_u64());
     for (id, _) in &to_remove {
         lib.remove(*id);
     }
@@ -1032,7 +1037,7 @@ fn log_err<T>(op: &str, result: Result<T, SessionError>) {
 mod tests {
     use super::*;
 
-    use synth_core::audio::SampleRate as HwSampleRate;
+    use synth_core::audio::DeviceSampleRate as HwSampleRate;
     use synth_core::{
         AudioCallbackContext, AudioProcessor, BipolarValue, MidiNote, NormalizedValue,
     };
@@ -1161,7 +1166,7 @@ mod tests {
     fn script_node_compiled(song: &Song, gid: synth_sequencer::NoteGraphId) -> bool {
         song.note_graph(gid)
             .expect("graph present")
-            .nodes
+            .nodes()
             .values()
             .any(|c| match c {
                 synth_sequencer::NoteModuleConfig::NoteScriptTransform(t) => t.is_compiled(),
@@ -1527,10 +1532,9 @@ mod tests {
 
     /// The command-drain barrier (`SynthSession::wait_for_pending_commands`)
     /// tracks the exact staleness the save path must avoid: a graph mutation
-    /// queued on an already-mirrored instrument is invisible in `shared_graph`
-    /// until the audio thread drains it, and the barrier reports "not caught up"
-    /// (`false`) until then. Once drained, the barrier reports `true` and the
-    /// mirror reflects the mutation.
+    /// queued on an already-published instrument is visible in `shared_graph`
+    /// immediately, while the barrier still reports "not caught up" (`false`)
+    /// until the DSP mutation reaches the audio thread.
     #[test]
     fn pending_command_wait_tracks_graph_mutation_drain() {
         let (mut engine, handle) = SynthEngine::new();
@@ -1563,8 +1567,8 @@ mod tests {
             .get_modules_for_instrument(id)
             .len();
 
-        // Queue a mutation on the EXISTING (already-mirrored) instrument, then do
-        // NOT drive: the mirror is stale and the barrier must report it.
+        // Queue a mutation on the existing instrument, then do not drive. The
+        // control snapshot is synchronous while the DSP barrier remains open.
         session
             .add_module(id, ModuleType::Lfo)
             .expect("queue add_module");
@@ -1578,11 +1582,12 @@ mod tests {
                 .shared_graph
                 .get_modules_for_instrument(id)
                 .len(),
-            before,
-            "shared_graph stays stale until the audio thread drains the command"
+            before + 1,
+            "shared_graph publishes on the control thread before audio drain"
         );
 
-        // Drive: the command drains, the barrier catches up, the mirror updates.
+        // Drive: the DSP mutation drains and the barrier catches up. The
+        // already-published snapshot remains stable.
         drive(&mut engine, 4);
         assert!(
             session.wait_for_pending_commands(0),
@@ -1595,7 +1600,7 @@ mod tests {
                 .get_modules_for_instrument(id)
                 .len(),
             before + 1,
-            "the drained mutation is now visible in shared_graph"
+            "audio drain must not duplicate the control snapshot"
         );
     }
 
@@ -1873,7 +1878,7 @@ mod tests {
             .send(EngineCommand::SetModuleParameter {
                 instrument_id: Some(inst_id),
                 module_id: mod_id,
-                param: synth_core::Param::sample_select(kept_id.0),
+                param: synth_core::Param::sample_select(kept_id.as_u64()),
             });
 
         let stream_info = synth_core::StreamInfo {

@@ -78,15 +78,15 @@ pub trait AudioBackend: Send + Sync {
     ///
     /// Two producers are needed because ringbuf is SPSC: one for the engine
     /// (low-latency passthrough) and one for the GUI (metering + recording).
-    /// The cpal callback pushes each sample to both.
+    /// The backend callback pushes each complete stereo frame to both.
     ///
     /// Default implementation returns an error (not all backends support input).
     fn create_input_stream(
         &self,
         _device_id: Option<&str>,
         _config: &StreamConfig,
-        _engine_producer: HeapProd<f32>,
-        _gui_producer: HeapProd<f32>,
+        _engine_producer: HeapProd<crate::StereoSample>,
+        _gui_producer: HeapProd<crate::StereoSample>,
     ) -> AudioResult<Box<dyn AudioStream>> {
         Err(AudioError::BackendError(
             "Input streams not supported by this backend".to_string(),
@@ -155,8 +155,8 @@ pub trait AudioHostTrait: Send {
         &self,
         device_id: Option<&str>,
         config: &StreamConfig,
-        engine_producer: HeapProd<f32>,
-        gui_producer: HeapProd<f32>,
+        engine_producer: HeapProd<crate::StereoSample>,
+        gui_producer: HeapProd<crate::StereoSample>,
     ) -> AudioResult<Box<dyn AudioStream>>;
 
     /// Get the default input device.
@@ -212,10 +212,8 @@ impl AudioHost {
                 .create_output_stream(device_id, config, Box::new(processor))?;
         stream.start()?;
 
-        self.active_stream = Some(stream);
-        // Safe: we just set active_stream to Some above
-        #[allow(clippy::unwrap_used)]
-        Ok(self.active_stream.as_ref().unwrap().info())
+        let stream = self.active_stream.insert(stream);
+        Ok(stream.info())
     }
 
     /// Stop the current stream.
@@ -297,8 +295,8 @@ impl AudioHostTrait for AudioHost {
         &self,
         device_id: Option<&str>,
         config: &StreamConfig,
-        engine_producer: HeapProd<f32>,
-        gui_producer: HeapProd<f32>,
+        engine_producer: HeapProd<crate::StereoSample>,
+        gui_producer: HeapProd<crate::StereoSample>,
     ) -> AudioResult<Box<dyn AudioStream>> {
         self.backend
             .create_input_stream(device_id, config, engine_producer, gui_producer)

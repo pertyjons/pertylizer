@@ -3,28 +3,10 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use synth_core::audio::SampleRate;
+use synth_core::audio::DeviceSampleRate;
 use synth_core::{ChannelCount, MidiNote, SampleCount};
 
-/// Unique identifier for a sample in the library.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
-#[serde(transparent)]
-#[repr(transparent)]
-pub struct SampleId(pub u64);
-
-impl SampleId {
-    /// Create a new sample ID.
-    #[inline]
-    pub const fn new(id: u64) -> Self {
-        Self(id)
-    }
-}
-
-impl std::fmt::Display for SampleId {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "sample:{}", self.0)
-    }
-}
+pub use synth_core::SampleId;
 
 /// Frame index within a sample buffer (absolute position).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -100,15 +82,8 @@ impl PlaybackSpeed {
     pub const ORIGINAL: Self = Self(1.0);
 
     /// Create a finite, non-negative playback speed.
-    ///
-    /// Non-finite values become zero so invalid control data cannot propagate
-    /// into the audio path.
-    pub fn new(ratio: f64) -> Self {
-        Self(if ratio.is_finite() {
-            ratio.max(0.0)
-        } else {
-            0.0
-        })
+    pub fn new(ratio: f64) -> Option<Self> {
+        (ratio.is_finite() && ratio >= 0.0).then_some(Self(ratio))
     }
 
     /// Return the speed ratio.
@@ -144,8 +119,6 @@ pub struct LoopRegion {
     /// Loop end frame (exclusive).
     pub end: FrameIndex,
     /// Crossfade length in samples to avoid clicks.
-    // Reserved for future crossfade implementation
-    #[allow(dead_code)]
     pub crossfade: SampleCount,
 }
 
@@ -204,7 +177,7 @@ pub struct SampleMeta {
     /// by default; readable/writable via MCP and GUI.
     #[serde(default)]
     pub description: String,
-    pub sample_rate: SampleRate,
+    pub sample_rate: DeviceSampleRate,
     pub channels: ChannelCount,
     pub frame_count: SampleCount,
     pub root_note: Option<MidiNote>,
@@ -230,20 +203,20 @@ mod tests {
 
     #[test]
     fn playback_speed_always_preserves_its_invariant() {
-        for ratio in [
-            f64::NEG_INFINITY,
-            -1.0,
-            -0.0,
-            0.0,
-            0.5,
-            1.0,
-            2.0,
-            f64::INFINITY,
-            f64::NAN,
-        ] {
-            let speed = PlaybackSpeed::new(ratio).as_f64();
+        for ratio in [-0.0, 0.0, 0.5, 1.0, 2.0] {
+            let Some(speed) = PlaybackSpeed::new(ratio) else {
+                panic!("finite non-negative ratio must be accepted");
+            };
+            let speed = speed.as_f64();
             assert!(speed.is_finite());
             assert!(speed >= 0.0);
+        }
+    }
+
+    #[test]
+    fn playback_speed_rejects_invalid_ratios() {
+        for ratio in [f64::NEG_INFINITY, -1.0, f64::INFINITY, f64::NAN] {
+            assert_eq!(PlaybackSpeed::new(ratio), None);
         }
     }
 

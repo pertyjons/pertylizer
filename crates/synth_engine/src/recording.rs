@@ -32,7 +32,10 @@ pub struct RecordedNote {
 #[derive(Debug, Clone, Copy)]
 struct RecordTarget {
     pattern_id: PatternId,
-    #[allow(dead_code)] // Will be used for track-specific recording
+    #[expect(
+        dead_code,
+        reason = "recording retains its selected track for the pending track-aware commit path"
+    )]
     track_id: TrackId,
     region_start: Tick,
     pattern_length: Duration,
@@ -98,7 +101,6 @@ pub(crate) struct RecordingBuffer {
     /// After the first flush, overdub is always true to preserve earlier passes.
     loop_flushed: bool,
     /// Number of held notes dropped because all slots were full.
-    /// Readable by the UI via `dropped_note_count()` for user feedback.
     dropped_notes: u32,
     /// Set when a note is added or released; cleared after preview_snapshot sends.
     /// Avoids cloning recorded_notes every buffer when nothing changed.
@@ -133,8 +135,7 @@ impl RecordingBuffer {
     }
 
     /// Number of notes dropped because held-note slots were full.
-    /// The UI can poll this to show a warning to the user.
-    #[allow(dead_code)] // Will be wired to UI warning display
+    #[cfg(test)]
     pub(crate) fn dropped_note_count(&self) -> u32 {
         self.dropped_notes
     }

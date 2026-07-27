@@ -10,6 +10,12 @@ license.workspace = true
 [lints]
 workspace = true
 
+[features]
+default = []
+# Opt-in wall-clock instrumentation for diagnostics. Disabled by default because
+# reading the system clock inside the audio callback adds avoidable RT jitter.
+rt-profiling = []
+
 [dependencies]
 synth_core = { path = "../synth_core" }
 synth_dsp = { path = "../synth_dsp" }
@@ -22,6 +28,7 @@ parking_lot = { workspace = true }
 ringbuf = { workspace = true }
 schemars = { workspace = true }
 static_assertions = { workspace = true }
+arrayvec = { workspace = true }
 
 [[bench]]
 name = "audio_profile"

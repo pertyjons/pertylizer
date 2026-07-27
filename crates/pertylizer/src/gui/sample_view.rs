@@ -227,7 +227,10 @@ pub fn draw_sample_view(
                 |row| row.name.as_str(),
                 |ui, row| {
                     let is_selected = state.selected_sample == Some(row.id);
-                    let ref_count = sample_ref_counts.get(&row.id.0).copied().unwrap_or(0);
+                    let ref_count = sample_ref_counts
+                        .get(&row.id.as_u64())
+                        .copied()
+                        .unwrap_or(0);
                     let used = ref_count > 0;
 
                     let mut rename = false;
@@ -555,7 +558,7 @@ fn draw_sample_edit_window(
     let mut name_done = false;
 
     egui::Window::new(format!("{} Edit sample", ri::EDIT_LINE))
-        .id(egui::Id::new(("sample_edit_window", id.0)))
+        .id(egui::Id::new(("sample_edit_window", id.as_u64())))
         .open(&mut open)
         .resizable(true)
         .default_size([360.0, 240.0])

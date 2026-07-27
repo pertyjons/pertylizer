@@ -7,10 +7,10 @@
 
 use std::sync::Arc;
 
-use synth_core::audio::SampleRate as HwSampleRate;
+use synth_core::audio::DeviceSampleRate;
 use synth_core::{AudioCallbackContext, AudioProcessor, DenormalGuard, MidiNote, Velocity};
 use synth_engine::commands::InstrumentParam;
-use synth_engine::instrument::{InstrumentId, MidiChannel};
+use synth_engine::instrument::{InstrumentId, MidiChannelSelection};
 use synth_engine::{EngineCommand, SynthEngine};
 
 use synth_mcp::error::McpBridgeError;
@@ -83,7 +83,7 @@ pub(crate) fn sampler_sample_id(
         synth_core::Param::Sampler(synth_core::SamplerParam::SampleSelect(sid))
             if sid.as_u64() != 0 =>
         {
-            Some(synth_sampler::SampleId::new(sid.as_u64()))
+            Some(*sid)
         }
         _ => None,
     })
@@ -122,7 +122,7 @@ pub(crate) fn load_sample_data_for_samplers(
             module_snap.id,
             sample,
         ));
-        if !sent {
+        if sent.is_err() {
             warnings.push(format!(
                 "offline render: failed to enqueue LoadSampleData for module {}",
                 module_snap.id
@@ -243,13 +243,13 @@ impl OfflineNoteSession {
         );
 
         // Enable the instrument
-        handle.send_blocking(EngineCommand::SetInstrumentEnabled {
+        let _ = handle.send_blocking(EngineCommand::SetInstrumentEnabled {
             instrument_id: InstrumentId::FIRST,
             enabled: true,
         });
-        handle.send_blocking(EngineCommand::SetInstrumentMidiChannel {
+        let _ = handle.send_blocking(EngineCommand::SetInstrumentMidiChannel {
             instrument_id: InstrumentId::FIRST,
-            channel: MidiChannel::CH1,
+            channel: MidiChannelSelection::CH1,
         });
 
         // Mirror live instrument volume/pan/solo. Mute is intentionally NOT
@@ -259,26 +259,26 @@ impl OfflineNoteSession {
         // mix; analysis tools that need the muted state can read it from the
         // RenderedNote metadata if we add it later.
         if let Some(snap) = inst_snapshot.as_ref() {
-            handle.send_blocking(EngineCommand::SetInstrumentParameter {
+            let _ = handle.send_blocking(EngineCommand::SetInstrumentParameter {
                 instrument_id: InstrumentId::FIRST,
                 param: InstrumentParam::Volume(snap.volume),
             });
-            handle.send_blocking(EngineCommand::SetInstrumentParameter {
+            let _ = handle.send_blocking(EngineCommand::SetInstrumentParameter {
                 instrument_id: InstrumentId::FIRST,
                 param: InstrumentParam::Pan(snap.pan),
             });
             // Solo from a single instrument is meaningless in an offline render
             // (only one instrument exists), but mirror it for completeness.
-            handle.send_blocking(EngineCommand::SetInstrumentParameter {
+            let _ = handle.send_blocking(EngineCommand::SetInstrumentParameter {
                 instrument_id: InstrumentId::FIRST,
                 param: InstrumentParam::Solo(snap.solo),
             });
         }
 
         // Set up stream
-        let hw_sample_rate = HwSampleRate::new(PREVIEW_SAMPLE_RATE);
+        let device_sample_rate = DeviceSampleRate::new(PREVIEW_SAMPLE_RATE);
         let stream_info = synth_core::StreamInfo {
-            sample_rate: hw_sample_rate,
+            sample_rate: device_sample_rate,
             buffer_size: synth_core::BufferSize::new(BUFFER_SIZE as u32),
             channels: synth_core::ChannelCount::Stereo,
             output_latency: std::time::Duration::ZERO,
@@ -322,7 +322,7 @@ impl OfflineNoteSession {
             MidiNote::new(shifted.clamp(0, 127) as u8)
         };
 
-        let hw_sample_rate = HwSampleRate::new(PREVIEW_SAMPLE_RATE);
+        let device_sample_rate = DeviceSampleRate::new(PREVIEW_SAMPLE_RATE);
         let mut block = vec![0.0f32; BUFFER_SIZE * CHANNELS];
 
         // On a reused engine, hard-reset all DSP state before this note so the
@@ -332,7 +332,7 @@ impl OfflineNoteSession {
         // same clean-slate footing as a freshly-built one (tail-proof isolation,
         // and bit-exact with the one-shot fresh-engine path).
         if self.first_call_done {
-            self.handle.send_blocking(EngineCommand::ResetDsp);
+            let _ = self.handle.send_blocking(EngineCommand::ResetDsp);
         }
         // Warm-up / reset-apply block: process one buffer so queued commands take
         // effect before the note plays — the patch-load commands on the first
@@ -340,7 +340,7 @@ impl OfflineNoteSession {
         // keeps the engine from seeing a duplicate position 0 when real rendering
         // starts.
         let init_context = AudioCallbackContext {
-            sample_rate: hw_sample_rate,
+            sample_rate: device_sample_rate,
             frames: BUFFER_SIZE,
             channels: CHANNELS as u16,
             stream_time: 0.0,
@@ -368,10 +368,10 @@ impl OfflineNoteSession {
         let mut samples: Vec<f32> = Vec::with_capacity(total_frames as usize * CHANNELS);
 
         // Send note on
-        self.handle.send_blocking(EngineCommand::NoteOn {
+        let _ = self.handle.send_blocking(EngineCommand::NoteOn {
             note: effective_note,
             velocity,
-            channel: MidiChannel::CH1,
+            channel: MidiChannelSelection::CH1,
             instrument_id: None,
         });
 
@@ -400,7 +400,7 @@ impl OfflineNoteSession {
             block.fill(0.0);
 
             let context = AudioCallbackContext {
-                sample_rate: hw_sample_rate,
+                sample_rate: device_sample_rate,
                 frames: this_buffer,
                 channels: CHANNELS as u16,
                 stream_time: frames_written as f64 / f64::from(PREVIEW_SAMPLE_RATE),
@@ -422,10 +422,10 @@ impl OfflineNoteSession {
             if !note_off_sent && frames_written >= note_frames {
                 let sent = self.handle.send_blocking(EngineCommand::NoteOff {
                     note: effective_note,
-                    channel: MidiChannel::CH1,
+                    channel: MidiChannelSelection::CH1,
                     instrument_id: None,
                 });
-                if !sent {
+                if sent.is_err() {
                     warnings.push("preview: failed to enqueue NoteOff".to_string());
                 }
                 note_off_sent = true;

@@ -435,12 +435,12 @@ pub const NO_FOCUSED_INSTRUMENT: u64 = u64::MAX;
 
 /// Monotonic enqueue/drain counters bridging command *submission* (any thread
 /// using the `CommandSender`) and command *draining* (the audio thread's
-/// `process_commands`). A reader that needs the async-mirrored `shared_graph` to
-/// reflect commands it just queued snapshots [`enqueued`](Self::enqueued) and
-/// waits until [`processed`](Self::processed) catches up — at which point the
-/// audio thread has applied *and* mirrored every command submitted before the
-/// snapshot (the ring is FIFO). RT-safe: the audio thread does one relaxed load
-/// + release store per drained command; no allocation, no locking.
+/// `process_commands`). Control snapshots are published synchronously by the
+/// sender; a reader that also needs the corresponding DSP mutations to have
+/// landed snapshots [`enqueued`](Self::enqueued) and waits until
+/// [`processed`](Self::processed) catches up. The ring is FIFO. RT-safe: the
+/// audio thread does one relaxed load + release store per drained command; no
+/// allocation or locking.
 ///
 /// Invariant: **every** producer feeding the engine's command ring must call
 /// [`note_enqueued`](Self::note_enqueued) once per successful push, from inside
@@ -471,9 +471,7 @@ impl CommandSync {
         self.enqueued.load(Ordering::Acquire)
     }
 
-    /// Record that the audio thread finished draining one command. Release
-    /// ordering so a reader that sees this count (via [`processed`](Self::processed))
-    /// also sees the `shared_graph` writes the command performed.
+    /// Record that the audio thread finished draining one command.
     pub fn note_processed(&self) {
         self.processed.fetch_add(1, Ordering::Release);
     }
@@ -488,8 +486,8 @@ impl CommandSync {
 /// Complete engine state shared between threads.
 #[derive(Debug)]
 pub struct EngineState {
-    /// Enqueue/drain counters so a read of the async-mirrored `shared_graph` can
-    /// wait for commands it just queued to be applied (see [`CommandSync`]).
+    /// Enqueue/drain counters for callers that need queued DSP mutations applied
+    /// before continuing (see [`CommandSync`]).
     pub command_sync: Arc<CommandSync>,
     /// Metering.
     pub meters: MeterState,
@@ -504,13 +502,13 @@ pub struct EngineState {
     pub master_volume: AtomicF32,
     /// Active voice count.
     pub voice_count: AtomicU32,
-    /// CPU usage (0.0 - 1.0).
+    /// CPU usage (0.0 - 1.0), or zero when `rt-profiling` is disabled.
     pub cpu_usage: AtomicF32,
     /// Per-stage CPU usage breakdown (each a fraction of the buffer budget, same
-    /// units as `cpu_usage`), published every ~100 callbacks for the status-bar
-    /// tooltip. `cpu_voices` covers all instrument/voice processing including the
-    /// channel- and return-bus stages; `cpu_module_graph` the user-added modular
-    /// graph; `cpu_master_fx` the master effect chain.
+    /// units as `cpu_usage`), published every 100 callbacks when `rt-profiling`
+    /// is enabled. `cpu_voices` covers all instrument/voice processing including
+    /// the channel- and return-bus stages; `cpu_module_graph` the user-added
+    /// modular graph; `cpu_master_fx` the master effect chain.
     pub cpu_voices: AtomicF32,
     pub cpu_module_graph: AtomicF32,
     pub cpu_master_fx: AtomicF32,

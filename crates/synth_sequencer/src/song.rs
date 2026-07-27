@@ -831,12 +831,7 @@ impl Song {
     pub fn rebuild_mod_graphs(&mut self) {
         for graph in &mut self.mod_graphs {
             if graph.validate().is_err() {
-                // Rebuild the connection set incrementally, dropping edges the
-                // validator rejects — mirrors `rebuild_note_graphs`' tolerance.
-                let candidates = std::mem::take(&mut graph.connections);
-                for c in candidates {
-                    let _ = graph.try_connect(c);
-                }
+                graph.sanitize_connections();
             }
         }
         self.bump_mod_grid();
@@ -926,19 +921,13 @@ impl Song {
     /// new graph's snapshot (callers use it for undo), or `None` if `src`
     /// does not exist.
     pub fn duplicate_note_graph(&mut self, src: NoteGraphId) -> Option<NoteGraph> {
-        let src = self.note_graph(src)?.clone();
-        let id = self.create_note_graph(format!("{} copy", src.name));
-        if let Some(dst) = self.note_graph_mut(id) {
-            dst.description = src.description;
-            dst.color = src.color;
-            dst.nodes = src.nodes;
-            dst.node_descriptions = src.node_descriptions;
-            dst.connections = src.connections;
-            dst.node_positions = src.node_positions;
-            // A copy of a valid graph revalidates identically.
-            let _ = dst.rebuild_derived();
-        }
-        self.note_graph(id).cloned()
+        let mut graph = self.note_graph(src)?.clone();
+        let id = NoteGraphId(self.next_note_graph_id);
+        self.next_note_graph_id = self.next_note_graph_id.saturating_add(1);
+        graph.id = id;
+        graph.name = format!("{} copy", graph.name);
+        self.note_graphs.push(graph.clone());
+        Some(graph)
     }
 
     /// Freeze a pattern's note processing into plain notes, honoring playback
@@ -2490,10 +2479,10 @@ mod tests {
         let mut back: Song = serde_json::from_str(&json).unwrap();
 
         // processing_order is not serialized → empty until rebuilt.
-        assert!(back.note_graph(gid).unwrap().processing_order.is_empty());
+        assert!(back.note_graph(gid).unwrap().processing_order().is_empty());
         back.rebuild_note_graphs();
         assert_eq!(
-            back.note_graph(gid).unwrap().processing_order,
+            back.note_graph(gid).unwrap().processing_order(),
             vec![NoteModuleId::new(1), NoteModuleId::new(2)]
         );
         assert_eq!(
@@ -2586,7 +2575,7 @@ mod tests {
                         track: None,
                         param: TrackParam::Volume,
                     },
-                    amount: 0.34,
+                    amount: crate::ModulationAmount::new(0.34),
                     combine: CombineMode::Add,
                 }),
             )
@@ -2600,7 +2589,7 @@ mod tests {
                         instance: 1,
                         param_id: "cutoff".into(),
                     },
-                    amount: 1.0,
+                    amount: crate::ModulationAmount::new(1.0),
                     combine: CombineMode::Add,
                 }),
             )
@@ -3191,11 +3180,11 @@ mod tests {
         assert_eq!(clone.name, "src copy");
         assert_eq!(clone.description, src.description);
         assert_eq!(clone.color, src.color);
-        assert_eq!(clone.nodes, src.nodes);
-        assert_eq!(clone.connections, src.connections);
+        assert_eq!(clone.nodes(), src.nodes());
+        assert_eq!(clone.connections(), src.connections());
         assert_eq!(clone.node_positions, src.node_positions);
         assert_eq!(clone.node_descriptions, src.node_descriptions);
-        assert_eq!(clone.processing_order, src.processing_order);
+        assert_eq!(clone.processing_order(), src.processing_order());
         assert!(song.duplicate_note_graph(NoteGraphId::new(999)).is_none());
     }
 
@@ -3246,7 +3235,7 @@ mod tests {
                         track: None,
                         param: crate::automation::TrackParam::Volume,
                     },
-                    amount: 0.5,
+                    amount: crate::ModulationAmount::new(0.5),
                     combine: crate::mod_grid::CombineMode::Add,
                 }),
             )
@@ -3259,7 +3248,7 @@ mod tests {
         let mut restored: Song = serde_json::from_str(&json).unwrap();
         assert_eq!(restored.mod_grid_generation(), 0);
         assert_eq!(restored.mod_graph_pool().len(), 1);
-        assert_eq!(restored.mod_graph(gid).unwrap().nodes.len(), 2);
+        assert_eq!(restored.mod_graph(gid).unwrap().nodes().len(), 2);
         // next_mod_graph_id survives, so a fresh create doesn't collide with gid.
         let fresh = restored.create_mod_graph("second");
         assert_ne!(fresh, gid);
@@ -3290,16 +3279,16 @@ mod tests {
             }
             // Inject a cyclic cable set directly (bypassing try_connect), as a
             // corrupt save would carry. validate() would reject it.
-            g.connections = vec![
+            g.set_connections_unchecked_for_test(vec![
                 ModConnection::new(ModNodeId::new(0), "out", ModNodeId::new(1), "rate_cv"),
                 ModConnection::new(ModNodeId::new(1), "out", ModNodeId::new(0), "rate_cv"),
-            ];
+            ]);
             assert!(g.validate().is_err());
         }
         song.rebuild_mod_graphs();
         // One edge of the cycle is dropped so the graph validates again.
         let g = song.mod_graph(gid).unwrap();
         assert!(g.validate().is_ok());
-        assert_eq!(g.connections.len(), 1);
+        assert_eq!(g.connections().len(), 1);
     }
 }
