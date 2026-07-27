@@ -429,7 +429,7 @@ pub static ALL_MODULE_TYPES: std::sync::LazyLock<Vec<ModuleType>> =
 #[cfg(test)]
 mod tests {
     use super::*;
-    use synth_core::ModuleParam;
+    use synth_core::{ModuleParam, PortDirection, PortType};
 
     /// Every `ModuleType` must resolve a descriptor. Since `ALL_MODULE_TYPES`
     /// is now derived from `ModuleType::iter()` (every enum variant), this also
@@ -476,6 +476,227 @@ mod tests {
         assert!(
             mismatched.is_empty(),
             "module display names disagree between the enum and the descriptor: {mismatched:#?}"
+        );
+    }
+
+    #[test]
+    fn descriptor_port_names_are_unique_and_labels_are_present() {
+        let mut violations = Vec::new();
+        for mt in ALL_MODULE_TYPES.iter().copied() {
+            let Some(desc) = get_descriptor(mt) else {
+                continue;
+            };
+            let mut names = std::collections::HashSet::new();
+            for port in &desc.ports {
+                if !names.insert(port.name) {
+                    violations.push(format!("{mt:?}: duplicate port name '{}'", port.name));
+                }
+                if port.label.trim().is_empty() {
+                    violations.push(format!("{mt:?}/{}: empty port label", port.name));
+                }
+            }
+        }
+        assert!(
+            violations.is_empty(),
+            "port descriptor invariant violations:\n{}",
+            violations.join("\n")
+        );
+    }
+
+    const SEMANTIC_PORT_TYPES: &[(ModuleType, &str, PortDirection, PortType)] = &[
+        (
+            ModuleType::DriftGenerator,
+            "out",
+            PortDirection::Output,
+            PortType::Control,
+        ),
+        (
+            ModuleType::Envelope,
+            "out",
+            PortDirection::Output,
+            PortType::Control,
+        ),
+        (
+            ModuleType::ChaoticOsc,
+            "out",
+            PortDirection::Output,
+            PortType::Control,
+        ),
+        (
+            ModuleType::ChaoticOsc,
+            "out_y",
+            PortDirection::Output,
+            PortType::Control,
+        ),
+        (
+            ModuleType::BeatDetector,
+            "out",
+            PortDirection::Output,
+            PortType::Control,
+        ),
+        (
+            ModuleType::BeatDetector,
+            "gate",
+            PortDirection::Output,
+            PortType::Gate,
+        ),
+        (
+            ModuleType::TuringMachine,
+            "clock",
+            PortDirection::Input,
+            PortType::Gate,
+        ),
+        (
+            ModuleType::TuringMachine,
+            "pitch",
+            PortDirection::Output,
+            PortType::Control,
+        ),
+        (
+            ModuleType::TuringMachine,
+            "gate",
+            PortDirection::Output,
+            PortType::Gate,
+        ),
+        (
+            ModuleType::Euclidean,
+            "clock",
+            PortDirection::Input,
+            PortType::Gate,
+        ),
+        (
+            ModuleType::Euclidean,
+            "gate",
+            PortDirection::Output,
+            PortType::Gate,
+        ),
+        (
+            ModuleType::Euclidean,
+            "accent",
+            PortDirection::Output,
+            PortType::Control,
+        ),
+        (
+            ModuleType::RandomGates,
+            "clock",
+            PortDirection::Input,
+            PortType::Gate,
+        ),
+        (
+            ModuleType::RandomGates,
+            "gate",
+            PortDirection::Output,
+            PortType::Gate,
+        ),
+        (
+            ModuleType::RandomGates,
+            "cv",
+            PortDirection::Output,
+            PortType::Control,
+        ),
+        (
+            ModuleType::EnvelopeFollower,
+            "out",
+            PortDirection::Output,
+            PortType::Control,
+        ),
+        (
+            ModuleType::PitchTracker,
+            "pitch_cv",
+            PortDirection::Output,
+            PortType::Control,
+        ),
+        (
+            ModuleType::PitchTracker,
+            "gate",
+            PortDirection::Output,
+            PortType::Gate,
+        ),
+        (
+            ModuleType::Mseg,
+            "out",
+            PortDirection::Output,
+            PortType::Control,
+        ),
+        (
+            ModuleType::KineticModulator,
+            "out",
+            PortDirection::Output,
+            PortType::Control,
+        ),
+        (
+            ModuleType::Lfo,
+            "out",
+            PortDirection::Output,
+            PortType::Control,
+        ),
+        (
+            ModuleType::Script,
+            "out1",
+            PortDirection::Output,
+            PortType::Control,
+        ),
+        (
+            ModuleType::Script,
+            "out2",
+            PortDirection::Output,
+            PortType::Control,
+        ),
+        (
+            ModuleType::Script,
+            "out3",
+            PortDirection::Output,
+            PortType::Control,
+        ),
+        (
+            ModuleType::Script,
+            "out4",
+            PortDirection::Output,
+            PortType::Control,
+        ),
+        (
+            ModuleType::SidOscillator,
+            "test",
+            PortDirection::Input,
+            PortType::Gate,
+        ),
+        // These are logic-shaped but intentionally audio-rate sync signals.
+        (
+            ModuleType::Oscillator,
+            "phase",
+            PortDirection::Output,
+            PortType::Audio,
+        ),
+        (
+            ModuleType::SidOscillator,
+            "msb",
+            PortDirection::Output,
+            PortType::Audio,
+        ),
+    ];
+
+    #[test]
+    fn modulation_and_gate_ports_use_semantic_signal_types() {
+        let mut violations = Vec::new();
+        for &(module_type, name, direction, port_type) in SEMANTIC_PORT_TYPES {
+            let Some(desc) = get_descriptor(module_type) else {
+                violations.push(format!("{module_type:?}: missing descriptor"));
+                continue;
+            };
+            let actual = desc.ports.iter().find(|port| port.name == name);
+            match actual {
+                Some(port) if port.direction == direction && port.port_type == port_type => {}
+                Some(port) => violations.push(format!(
+                    "{module_type:?}/{name}: expected {direction:?} {port_type:?}, got {:?} {:?}",
+                    port.direction, port.port_type
+                )),
+                None => violations.push(format!("{module_type:?}/{name}: missing port")),
+            }
+        }
+        assert!(
+            violations.is_empty(),
+            "semantic port type violations:\n{}",
+            violations.join("\n")
         );
     }
 

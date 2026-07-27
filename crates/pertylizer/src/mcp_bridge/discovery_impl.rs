@@ -263,6 +263,8 @@ pub(super) fn build_module_type_info(
 
     let port_to_info = |p: &synth_core::PortDescriptor| synth_mcp::types::PortTypeInfo {
         name: p.name.to_string(),
+        label: p.label.clone(),
+        description: p.description.clone(),
         signal_type: port_type_str(p.port_type).to_owned(),
     };
 
@@ -343,22 +345,17 @@ fn algorithm_parameters_json(mt: synth_core::ModuleType) -> Option<serde_json::V
 
 /// Convert a `PortType` to its string name.
 pub(super) fn port_type_str(pt: synth_core::PortType) -> &'static str {
-    match pt {
-        synth_core::PortType::Audio => "audio",
-        synth_core::PortType::Control => "control",
-        synth_core::PortType::Gate => "gate",
-        synth_core::PortType::Midi => "midi",
-    }
+    pt.id()
 }
 
-/// Return a hint about which types a given port type can connect to.
-pub(super) fn compatible_types_hint(pt: synth_core::PortType) -> &'static str {
-    match pt {
-        synth_core::PortType::Audio => "audio, control",
-        synth_core::PortType::Control => "audio, control",
-        synth_core::PortType::Gate => "gate, control",
-        synth_core::PortType::Midi => "midi",
-    }
+/// Return a hint about which input types a given output type can drive.
+pub(super) fn compatible_types_hint(pt: synth_core::PortType) -> String {
+    synth_core::PortType::ALL
+        .into_iter()
+        .filter(|destination| pt.can_drive(*destination))
+        .map(synth_core::PortType::id)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// Return a signal flow hint based on module category.

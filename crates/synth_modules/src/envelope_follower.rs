@@ -109,7 +109,8 @@ impl Describable for EnvelopeFollower {
             )
             .port(PortDescriptor::audio_input("in", "In").description("Audio input to follow"))
             .port(
-                PortDescriptor::audio_output("out", "Out").description("Envelope output (0.0-1.0)"),
+                PortDescriptor::control_output("out", "Out")
+                    .description("Envelope output (0.0-1.0)"),
             )
     }
 }

@@ -42,6 +42,15 @@ pub enum McpBridgeError {
         available: String,
     },
 
+    /// The source port's signal type cannot drive the destination port's type.
+    #[error("invalid connection: {from_type} output cannot drive {to_type} input")]
+    InvalidConnection {
+        /// Source port signal type.
+        from_type: synth_core::PortType,
+        /// Destination port signal type.
+        to_type: synth_core::PortType,
+    },
+
     /// Pattern not found.
     #[error("pattern not found: {0}")]
     PatternNotFound(PatternId),

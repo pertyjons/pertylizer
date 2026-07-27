@@ -20,6 +20,7 @@ use std::process::Command;
 
 use jsonschema::Validator;
 use serde_json::Value;
+use synth_core::PortType;
 
 fn workspace_root() -> PathBuf {
     // tests/ live two levels under workspace root
@@ -114,6 +115,68 @@ fn example_files_validate_against_schemas() {
             assert_example_validates(&path, &validator, label);
         }
         assert!(checked > 0, "no example {label} files found in {dir:?}");
+    }
+}
+
+#[test]
+fn descriptor_catalog_exposes_ports_and_canonical_compatibility() {
+    use pertylizer::module_factory::{ALL_MODULE_TYPES, get_descriptor};
+
+    let path = workspace_root().join("schemas").join("descriptors.json");
+    let catalog: Value = serde_json::from_slice(
+        &std::fs::read(&path).unwrap_or_else(|e| panic!("read {path:?}: {e}")),
+    )
+    .unwrap_or_else(|e| panic!("parse {path:?}: {e}"));
+
+    for source in PortType::ALL {
+        let actual = catalog["connection_compatibility"][source.id()]
+            .as_array()
+            .unwrap_or_else(|| panic!("missing compatibility list for {}", source.id()));
+        let expected: Vec<Value> = PortType::ALL
+            .into_iter()
+            .filter(|destination| source.can_drive(*destination))
+            .map(|destination| Value::String(destination.id().to_owned()))
+            .collect();
+        assert_eq!(
+            actual,
+            &expected,
+            "catalog compatibility differs for {}",
+            source.id()
+        );
+    }
+
+    for &module_type in ALL_MODULE_TYPES.iter() {
+        let descriptor = get_descriptor(module_type)
+            .unwrap_or_else(|| panic!("missing descriptor for {module_type:?}"));
+        let type_key = serde_json::to_value(module_type)
+            .expect("serialize module type")
+            .as_str()
+            .expect("module type serializes as a string")
+            .to_owned();
+        let module = &catalog["modules"][&type_key];
+        assert!(
+            module.is_object(),
+            "catalog is missing module type {type_key}"
+        );
+        assert_eq!(module["category"], descriptor.category.id());
+        assert_eq!(module["tags"], serde_json::json!(descriptor.tags));
+        assert_eq!(module["gui_only"], module_type.is_visualizer());
+
+        let ports = module["ports"]
+            .as_array()
+            .unwrap_or_else(|| panic!("{type_key} is missing its ports array"));
+        assert_eq!(
+            ports.len(),
+            descriptor.ports.len(),
+            "{type_key} port count differs"
+        );
+        for (actual, expected) in ports.iter().zip(&descriptor.ports) {
+            assert_eq!(actual["name"], expected.name.as_str());
+            assert_eq!(actual["label"], expected.label);
+            assert_eq!(actual["description"], expected.description);
+            assert_eq!(actual["direction"], expected.direction.id());
+            assert_eq!(actual["signal_type"], expected.port_type.id());
+        }
     }
 }
 

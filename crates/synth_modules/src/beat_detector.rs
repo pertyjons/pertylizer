@@ -108,11 +108,11 @@ impl Describable for BeatDetector {
                     .description("Audio to analyze. Connect: any audio source"),
             )
             .port(
-                PortDescriptor::audio_output("out", "Env Out")
+                PortDescriptor::control_output("out", "Env Out")
                     .description("Envelope follower output (0-1)"),
             )
             .port(
-                PortDescriptor::audio_output("gate", "Gate")
+                PortDescriptor::gate_output("gate", "Gate")
                     .description("Beat gate output (0 or 1)"),
             )
     }

@@ -501,7 +501,7 @@ impl Describable for Envelope {
                 PortDescriptor::control_input("velocity", "Vel")
                     .description("Velocity. Automatic from keyboard"),
             )
-            .port(PortDescriptor::audio_output("out", "Out").description(
+            .port(PortDescriptor::control_output("out", "Out").description(
                 "Envelope signal (0–1). Connect to: Filter Cutoff CV, Amplifier CV, Oscillator FM",
             ))
     }

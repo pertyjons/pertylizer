@@ -514,6 +514,11 @@ pub struct ChoiceInfo {
 pub struct PortTypeInfo {
     /// Port name (use with connect/disconnect).
     pub name: String,
+    /// Human-readable display label.
+    pub label: String,
+    /// What the port carries and its intended connections.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub description: String,
     /// Signal type: "audio", "control", "gate", or "midi".
     pub signal_type: String,
 }

@@ -195,11 +195,9 @@ impl Describable for TuringMachine {
                 .modulatable(false)
                 .widget(WidgetHint::Knob),
             )
-            .port(
-                PortDescriptor::control_input("clock", "Clock").description("External clock input"),
-            )
-            .port(PortDescriptor::audio_output("pitch", "Pitch").description("Pitch CV output"))
-            .port(PortDescriptor::audio_output("gate", "Gate").description("Gate output"))
+            .port(PortDescriptor::gate_input("clock", "Clock").description("External clock input"))
+            .port(PortDescriptor::control_output("pitch", "Pitch").description("Pitch CV output"))
+            .port(PortDescriptor::gate_output("gate", "Gate").description("Gate output"))
     }
 }
 

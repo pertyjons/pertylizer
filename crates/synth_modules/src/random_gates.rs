@@ -151,11 +151,9 @@ impl Describable for RandomGates {
                 .default(0.5)
                 .widget(WidgetHint::Knob),
             )
-            .port(
-                PortDescriptor::control_input("clock", "Clock").description("External clock input"),
-            )
-            .port(PortDescriptor::audio_output("gate", "Gate").description("Gate output"))
-            .port(PortDescriptor::audio_output("cv", "CV").description("Random CV output"))
+            .port(PortDescriptor::gate_input("clock", "Clock").description("External clock input"))
+            .port(PortDescriptor::gate_output("gate", "Gate").description("Gate output"))
+            .port(PortDescriptor::control_output("cv", "CV").description("Random CV output"))
     }
 }
 

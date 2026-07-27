@@ -1379,8 +1379,13 @@ impl synth_mcp::bridge::InstrumentBridge for AppSynthBridge {
         self.validate_instrument(instrument_id)?;
         let inst_id = instrument_id;
 
-        let from_pn = self.validate_port(inst_id, from_module, from_port, PortDirection::Output)?;
-        let to_pn = self.validate_port(inst_id, to_module, to_port, PortDirection::Input)?;
+        let (from_pn, from_type) =
+            self.validate_port(inst_id, from_module, from_port, PortDirection::Output)?;
+        let (to_pn, to_type) =
+            self.validate_port(inst_id, to_module, to_port, PortDirection::Input)?;
+        if !from_type.can_drive(to_type) {
+            return Err(McpBridgeError::InvalidConnection { from_type, to_type });
+        }
 
         let from_id: ModuleId = from_module
             .parse()
@@ -1405,8 +1410,9 @@ impl synth_mcp::bridge::InstrumentBridge for AppSynthBridge {
         self.validate_instrument(instrument_id)?;
         let inst_id = instrument_id;
 
-        let from_pn = self.validate_port(inst_id, from_module, from_port, PortDirection::Output)?;
-        let to_pn = self.validate_port(inst_id, to_module, to_port, PortDirection::Input)?;
+        let (from_pn, _) =
+            self.validate_port(inst_id, from_module, from_port, PortDirection::Output)?;
+        let (to_pn, _) = self.validate_port(inst_id, to_module, to_port, PortDirection::Input)?;
 
         let from_id: ModuleId = from_module
             .parse()

@@ -721,6 +721,14 @@ impl ModuleGraph {
             ));
         }
 
+        if !from_port_desc.port_type.can_drive(to_port_desc.port_type) {
+            return Err(GraphError::InvalidConnection(format!(
+                "{} output cannot drive {} input",
+                from_port_desc.port_type.id(),
+                to_port_desc.port_type.id()
+            )));
+        }
+
         // Check for cycles (would cause infinite loop)
         if self.would_create_cycle(from_module, to_module) {
             return Err(GraphError::CycleDetected);
@@ -1061,7 +1069,7 @@ pub enum GraphError {
 mod tests {
     use super::*;
     use synth_core::{AmplifierParam, Gain, SampleCount, SampleRate};
-    use synth_modules::{Amplifier, Oscillator};
+    use synth_modules::{Amplifier, Envelope, Lfo, Oscillator};
 
     /// F2 verification: the positional `ModuleId { module_type, instance }` is
     /// stable across removal of a same-type sibling — removing one module never
@@ -1123,6 +1131,32 @@ mod tests {
             graph
                 .incoming_connections(ModuleId::new(ModuleType::Filter, 99))
                 .is_empty()
+        );
+    }
+
+    #[test]
+    fn graph_enforces_the_canonical_port_type_contract() {
+        let mut graph = ModuleGraph::new();
+        let lfo = graph.add_module(Box::new(Lfo::new()));
+        let oscillator = graph.add_module(Box::new(Oscillator::new()));
+        let envelope = graph.add_module(Box::new(Envelope::new()));
+
+        // Control sources may drive thresholded gate inputs.
+        graph
+            .connect(lfo, "out", envelope, "gate")
+            .expect("control output should drive a gate input");
+
+        // An arbitrary audio waveform is not a gate source.
+        let error = graph
+            .connect(oscillator, "out", envelope, "gate")
+            .expect_err("audio output must not drive a gate input");
+        assert!(
+            matches!(
+                &error,
+                GraphError::InvalidConnection(message)
+                    if message == "audio output cannot drive gate input"
+            ),
+            "unexpected connection error: {error}"
         );
     }
 

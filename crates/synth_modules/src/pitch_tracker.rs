@@ -235,11 +235,11 @@ impl Describable for PitchTracker {
                     .description("Audio input to track. Connect: Oscillator Out, Mic input"),
             )
             .port(
-                PortDescriptor::audio_output("pitch_cv", "Pitch CV")
+                PortDescriptor::control_output("pitch_cv", "Pitch CV")
                     .description("1V/oct pitch CV output. Connect to: Oscillator Freq CV"),
             )
             .port(
-                PortDescriptor::audio_output("gate", "Gate").description(
+                PortDescriptor::gate_output("gate", "Gate").description(
                     "Gate output (1.0 when pitch detected). Connect to: Envelope Gate",
                 ),
             )

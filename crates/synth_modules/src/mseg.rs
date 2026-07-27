@@ -521,7 +521,7 @@ impl Describable for Mseg {
                 PortDescriptor::gate_input("trigger", "Trigger")
                     .description("Trigger input (retrigger on rising edge)"),
             )
-            .port(PortDescriptor::audio_output("out", "Out").description("Envelope output (0-1)"))
+            .port(PortDescriptor::control_output("out", "Out").description("Envelope output (0-1)"))
     }
 }
 

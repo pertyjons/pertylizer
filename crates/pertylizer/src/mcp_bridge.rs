@@ -9,8 +9,8 @@ use std::sync::Arc;
 use synth_core::ModuleParam;
 use synth_core::{
     BipolarValue, Bpm, DestAddr, Gain, MidiChannel, MidiNote, ModMatrixParam, ModuleType,
-    NormalizedValue, Param, ParameterUnit, PortDescriptor, PortDirection, PortName, SampleCount,
-    Semitones, SrcAddr, Velocity,
+    NormalizedValue, Param, ParameterUnit, PortDescriptor, PortDirection, PortName, PortType,
+    SampleCount, Semitones, SrcAddr, Velocity,
 };
 use synth_engine::EngineCommand;
 use synth_engine::commands::ModuleId;
@@ -328,14 +328,14 @@ impl AppSynthBridge {
 
     /// Validate that a module exists and has the given port in the expected
     /// direction, returning the canonical port name (resolving `output`/`input`
-    /// aliases) to hand to the engine.
+    /// aliases) and its signal type.
     fn validate_port(
         &self,
         instrument_id: InstrumentId,
         module_str: &str,
         port: &str,
         direction: PortDirection,
-    ) -> Result<PortName, McpBridgeError> {
+    ) -> Result<(PortName, PortType), McpBridgeError> {
         let mid: ModuleId = module_str
             .parse()
             .map_err(|_| McpBridgeError::ModuleNotFound(module_str.to_string()))?;
@@ -345,13 +345,30 @@ impl AppSynthBridge {
             .module_descriptor(instrument_id, mid)
             .ok_or_else(|| McpBridgeError::ModuleNotFound(module_str.to_string()))?;
 
-        resolve_port_name(&descriptor.ports, port, direction).map_err(|available| {
-            McpBridgeError::PortNotFound {
+        let canonical =
+            resolve_port_name(&descriptor.ports, port, direction).map_err(|available| {
+                McpBridgeError::PortNotFound {
+                    module: module_str.to_string(),
+                    port: port.to_string(),
+                    available,
+                }
+            })?;
+        descriptor
+            .ports
+            .iter()
+            .find(|candidate| candidate.name == canonical)
+            .map(|candidate| (canonical, candidate.port_type))
+            .ok_or_else(|| McpBridgeError::PortNotFound {
                 module: module_str.to_string(),
                 port: port.to_string(),
-                available,
-            }
-        })
+                available: descriptor
+                    .ports
+                    .iter()
+                    .filter(|candidate| candidate.direction == direction)
+                    .map(|candidate| candidate.name.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+            })
     }
 
     /// Validate that an instrument exists in the shared snapshots.

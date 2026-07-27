@@ -42,6 +42,64 @@ async fn call(server: &SynthMcpServer, tool: &str, params: serde_json::Value) ->
 }
 
 #[tokio::test]
+async fn connect_enforces_the_same_port_type_contract_as_discovery() {
+    let server = build_server();
+    let created = call(
+        &server,
+        "create_instrument",
+        serde_json::json!({ "names": ["Port Contract"] }),
+    )
+    .await;
+    let value: serde_json::Value = serde_json::from_str(&created).expect("create_instrument JSON");
+    let instrument_id = value["created"][0]["id"].as_u64().expect("instrument id");
+
+    let added = call(
+        &server,
+        "add_module",
+        serde_json::json!({
+            "instrument_id": instrument_id,
+            "module_types": ["lfo", "osc", "env"]
+        }),
+    )
+    .await;
+    assert!(
+        added.contains("3 modules added"),
+        "add test modules: {added}"
+    );
+
+    let result = call(
+        &server,
+        "connect",
+        serde_json::json!({
+            "instrument_id": instrument_id,
+            "connections": [
+                {
+                    "from_module": "lfo-1",
+                    "from_port": "out",
+                    "to_module": "env-1",
+                    "to_port": "gate"
+                },
+                {
+                    "from_module": "osc-1",
+                    "from_port": "out",
+                    "to_module": "env-1",
+                    "to_port": "gate"
+                }
+            ]
+        }),
+    )
+    .await;
+    assert!(
+        result.contains("1 connections made, 1 errors"),
+        "one compatible and one incompatible connection expected: {result}"
+    );
+    assert!(
+        result.contains("audio output cannot drive gate input"),
+        "incompatible connection should explain the signal types: {result}"
+    );
+}
+
+#[tokio::test]
 async fn set_mod_matrix_script_compiles_clears_and_validates() {
     let server = build_server();
 

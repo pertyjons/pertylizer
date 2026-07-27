@@ -227,11 +227,11 @@ impl Describable for Euclidean {
                 .default(0.0)
                 .widget(WidgetHint::Knob),
             )
+            .port(PortDescriptor::gate_input("clock", "Clock").description("External clock input"))
+            .port(PortDescriptor::gate_output("gate", "Gate").description("Gate output"))
             .port(
-                PortDescriptor::control_input("clock", "Clock").description("External clock input"),
+                PortDescriptor::control_output("accent", "Accent").description("Accent CV output"),
             )
-            .port(PortDescriptor::audio_output("gate", "Gate").description("Gate output"))
-            .port(PortDescriptor::audio_output("accent", "Accent").description("Accent CV output"))
     }
 }
 

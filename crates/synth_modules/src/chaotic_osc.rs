@@ -171,12 +171,12 @@ impl Describable for ChaoticOsc {
                     .description("Modulate iteration speed (exp FM). Connect: LFO, Envelope"),
             )
             .port(
-                PortDescriptor::audio_output("out", "Out").description(
+                PortDescriptor::control_output("out", "Out").description(
                     "X-axis output (±depth). Connect to: Filter Cutoff CV, Oscillator FM",
                 ),
             )
             .port(
-                PortDescriptor::audio_output("out_y", "Y Out")
+                PortDescriptor::control_output("out_y", "Y Out")
                     .description("Y-axis output (±depth). Second chaotic dimension"),
             )
     }

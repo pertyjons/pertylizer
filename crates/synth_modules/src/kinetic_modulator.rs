@@ -172,7 +172,7 @@ impl Describable for KineticModulator {
                     .description("Modulate sweep duration (exp). Connect: LFO, Envelope"),
             )
             .port(
-                PortDescriptor::audio_output("out", "Out")
+                PortDescriptor::control_output("out", "Out")
                     .description("Modulation signal. Connect to: Oscillator FM, Filter Cutoff CV"),
             )
     }

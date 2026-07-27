@@ -289,11 +289,11 @@ mod tests {
     }
 
     #[test]
-    fn gate_is_directional_with_control() {
+    fn gate_and_control_can_drive_each_other() {
         assert!(Gate.can_drive(Control));
         assert!(Gate.can_drive(Gate));
-        // A control signal may not drive a gate input.
-        assert!(!Control.can_drive(Gate));
+        // Thresholded gate inputs accept control sources such as Script and LFO.
+        assert!(Control.can_drive(Gate));
         assert!(!Audio.can_drive(Gate));
     }
 

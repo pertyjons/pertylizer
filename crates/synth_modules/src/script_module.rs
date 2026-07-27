@@ -140,7 +140,7 @@ impl Describable for ScriptModule {
         for i in 0..SCRIPT_MODULE_PORTS {
             let name = output_port_name(i).unwrap_or_default();
             desc = desc.port(
-                PortDescriptor::audio_output(name, format!("Out {}", i + 1))
+                PortDescriptor::control_output(name, format!("Out {}", i + 1))
                     .description(format!("CV output written as `out{}` in the script", i + 1)),
             );
         }

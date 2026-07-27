@@ -122,7 +122,7 @@ impl Describable for DriftGenerator {
                     .description("Modulate wander speed (exp FM). Connect: LFO, Envelope"),
             )
             .port(
-                PortDescriptor::audio_output("out", "Out").description(
+                PortDescriptor::control_output("out", "Out").description(
                     "Drift signal (±depth). Connect to: Oscillator FM, Filter Cutoff CV",
                 ),
             )

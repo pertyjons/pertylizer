@@ -1094,14 +1094,28 @@ pub enum PortType {
 }
 
 impl PortType {
+    /// Every signal type in stable catalog order.
+    pub const ALL: [Self; 4] = [Self::Audio, Self::Control, Self::Gate, Self::Midi];
+
+    /// Stable lowercase identifier used by schemas and MCP discovery.
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Audio => "audio",
+            Self::Control => "control",
+            Self::Gate => "gate",
+            Self::Midi => "midi",
+        }
+    }
+
     /// Canonical port-compatibility contract: whether a signal leaving an
     /// output port of `self` may drive an input port of type `dest`.
     ///
     /// This is the single source of truth for connection compatibility, shared
-    /// by the MCP `check_connection` validator and the GUI patch editor's
-    /// cable-drag highlighting. Audio and control are interchangeable, a gate
-    /// may feed a control input, and MIDI is MIDI-only. Directional: `Gate →
-    /// Control` is allowed but `Control → Gate` is not.
+    /// by graph validation, the MCP `check_connection` validator, and the GUI
+    /// patch editor's cable-drag highlighting. Audio and control are
+    /// interchangeable, control may drive thresholded gate inputs, a gate may
+    /// feed a control input, and MIDI is MIDI-only.
     #[must_use]
     pub fn can_drive(self, dest: Self) -> bool {
         matches!(
@@ -1110,10 +1124,17 @@ impl PortType {
                 | (Self::Audio, Self::Control)
                 | (Self::Control, Self::Audio)
                 | (Self::Control, Self::Control)
+                | (Self::Control, Self::Gate)
                 | (Self::Gate, Self::Gate)
                 | (Self::Gate, Self::Control)
                 | (Self::Midi, Self::Midi)
         )
+    }
+}
+
+impl std::fmt::Display for PortType {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(self.id())
     }
 }
 
@@ -1122,6 +1143,17 @@ impl PortType {
 pub enum PortDirection {
     Input,
     Output,
+}
+
+impl PortDirection {
+    /// Stable lowercase identifier used by descriptor catalogs.
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Input => "input",
+            Self::Output => "output",
+        }
+    }
 }
 
 /// Description of a port.
@@ -1156,6 +1188,28 @@ impl PortDescriptor {
             label: label.into(),
             description: String::new(),
             port_type: PortType::Audio,
+            direction: PortDirection::Output,
+        }
+    }
+
+    #[must_use]
+    pub fn control_output(name: impl Into<PortName>, label: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            label: label.into(),
+            description: String::new(),
+            port_type: PortType::Control,
+            direction: PortDirection::Output,
+        }
+    }
+
+    #[must_use]
+    pub fn gate_output(name: impl Into<PortName>, label: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            label: label.into(),
+            description: String::new(),
+            port_type: PortType::Gate,
             direction: PortDirection::Output,
         }
     }
@@ -1248,6 +1302,28 @@ impl DisplayName for ModuleCategory {
             Self::Output => "Output",
             Self::Visualizer => "Visualizer",
             Self::PhysicalModeling => "Physical",
+        }
+    }
+}
+
+impl ModuleCategory {
+    /// Stable lowercase identifier used by descriptor catalogs.
+    #[must_use]
+    pub const fn id(self) -> &'static str {
+        match self {
+            Self::Oscillator => "oscillator",
+            Self::Filter => "filter",
+            Self::Envelope => "envelope",
+            Self::LFO => "lfo",
+            Self::Amplifier => "amplifier",
+            Self::Effect => "effect",
+            Self::Utility => "utility",
+            Self::Sampler => "sampler",
+            Self::Sequencer => "sequencer",
+            Self::Mixer => "mixer",
+            Self::Output => "output",
+            Self::Visualizer => "visualizer",
+            Self::PhysicalModeling => "physical_modeling",
         }
     }
 }
@@ -1912,6 +1988,25 @@ pub trait VisualizationSink: Send + Sync {
 mod tests {
     use super::*;
     use std::assert_matches;
+
+    #[test]
+    fn port_type_ids_and_compatibility_are_stable() {
+        assert_eq!(
+            PortType::ALL.map(PortType::id),
+            ["audio", "control", "gate", "midi"]
+        );
+
+        assert!(PortType::Audio.can_drive(PortType::Audio));
+        assert!(PortType::Audio.can_drive(PortType::Control));
+        assert!(!PortType::Audio.can_drive(PortType::Gate));
+        assert!(PortType::Control.can_drive(PortType::Audio));
+        assert!(PortType::Control.can_drive(PortType::Control));
+        assert!(PortType::Control.can_drive(PortType::Gate));
+        assert!(PortType::Gate.can_drive(PortType::Control));
+        assert!(PortType::Gate.can_drive(PortType::Gate));
+        assert!(PortType::Midi.can_drive(PortType::Midi));
+        assert!(!PortType::Midi.can_drive(PortType::Audio));
+    }
 
     #[test]
     fn test_input_reader_connected() {

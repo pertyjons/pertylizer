@@ -297,30 +297,39 @@ impl SynthMcpServer {
     )]
     pub(crate) async fn list_port_types(&self, _params: Parameters<NoParams>) -> String {
         use crate::types::PortSignalTypeInfo;
+        use synth_core::PortType;
+
+        let compatible_with = |source: PortType| {
+            PortType::ALL
+                .into_iter()
+                .filter(|destination| source.can_drive(*destination))
+                .map(|destination| destination.id().to_owned())
+                .collect()
+        };
         let types = vec![
             PortSignalTypeInfo {
-                signal_type: "audio".to_string(),
+                signal_type: PortType::Audio.id().to_owned(),
                 description: "Audio-rate signal, processed sample-by-sample at the engine sample rate.".to_string(),
                 value_range: "Typically -1.0 to +1.0 (can exceed for hot signals)".to_string(),
-                compatible_with: vec!["audio".to_string(), "control".to_string()],
+                compatible_with: compatible_with(PortType::Audio),
             },
             PortSignalTypeInfo {
-                signal_type: "control".to_string(),
-                description: "Control-rate signal for parameter modulation (pitch CV, filter cutoff CV, etc.).".to_string(),
+                signal_type: PortType::Control.id().to_owned(),
+                description: "Control signal for parameter modulation (pitch CV, filter cutoff CV, etc.); carried sample-by-sample like audio.".to_string(),
                 value_range: "0.0 to 1.0 (unipolar) or -1.0 to +1.0 (bipolar), depends on source".to_string(),
-                compatible_with: vec!["audio".to_string(), "control".to_string()],
+                compatible_with: compatible_with(PortType::Control),
             },
             PortSignalTypeInfo {
-                signal_type: "gate".to_string(),
-                description: "Binary trigger signal for note on/off. High (1.0) = note held, low (0.0) = released.".to_string(),
-                value_range: "0.0 or 1.0".to_string(),
-                compatible_with: vec!["gate".to_string(), "control".to_string()],
+                signal_type: PortType::Gate.id().to_owned(),
+                description: "Gate or trigger signal for note state, clocks, resets, and retriggering; inputs treat values above 0.5 as high.".to_string(),
+                value_range: "Typically 0.0 or 1.0".to_string(),
+                compatible_with: compatible_with(PortType::Gate),
             },
             PortSignalTypeInfo {
-                signal_type: "midi".to_string(),
+                signal_type: PortType::Midi.id().to_owned(),
                 description: "MIDI event data (note on/off, CC, pitch bend). Only connects to MIDI ports.".to_string(),
                 value_range: "Structured MIDI events".to_string(),
-                compatible_with: vec!["midi".to_string()],
+                compatible_with: compatible_with(PortType::Midi),
             },
         ];
         to_json(&types)

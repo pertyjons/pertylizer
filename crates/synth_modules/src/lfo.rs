@@ -239,7 +239,7 @@ impl Describable for Lfo {
                     "Modulates LFO rate. Connect: another LFO, Envelope, Kinetic Modulator",
                 ),
             )
-            .port(PortDescriptor::audio_output("out", "Out").description(
+            .port(PortDescriptor::control_output("out", "Out").description(
                 "LFO signal (±1). Connect to: Oscillator FM/PM/PWM, Filter Cutoff CV, Amplifier CV",
             ))
     }

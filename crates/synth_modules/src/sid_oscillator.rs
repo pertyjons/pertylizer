@@ -1046,11 +1046,7 @@ impl Describable for SidOscillator {
              set it XORs the triangle folding direction (triangle only, like \
              the chip). Connect: another SID Oscillator's MSB output",
         ))
-        // A control input, not a gate input: gate inputs only accept gate-typed
-        // sources (PortType::can_drive) and no module emits one — the intended
-        // drivers (Script outputs, gates from generative modules) are all
-        // audio/control-typed. Gate semantics (>0.5 = on) live in the module.
-        .port(PortDescriptor::control_input("test", "Test").description(
+        .port(PortDescriptor::gate_input("test", "Test").description(
             "TEST / hard-restart gate (>0.5 = on): while high the accumulator \
              is zeroed and held and the noise LFSR is reloaded. Drive per-frame \
              from a Script module for hard-restart effects",
