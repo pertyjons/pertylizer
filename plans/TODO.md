@@ -5,6 +5,84 @@
 > entries go, so gaps are expected and existing references (commit messages,
 > notes) keep pointing at the right thing.
 
+## 0. Project Safety & Core Workflow
+
+These are high-priority correctness and trust items. A creative application must
+not lose work, make destructive edits impossible to reverse, or let view-specific
+input handling interfere with standard application shortcuts.
+
+### 0.1 Reliable dirty-state propagation
+
+- [ ] **Mark the project dirty after every successful project mutation.** Dirty
+  tracking is currently driven by scattered `SynthApp::mark_dirty()` calls, while
+  several editors mutate shared song/sample state without reporting the change to
+  the application shell. Establish one reliable mutation signal or revision-based
+  mechanism covering at least notes, patterns, placements, tempo/time signatures,
+  automation, Note/Mod Grid graphs, mixer controls and routing, return/master FX,
+  sample edits, rack/module edits, and instrument/project metadata.
+
+  Loading a project and completing a successful save must establish the clean
+  baseline; undo/redo must update dirty state relative to that baseline rather
+  than blindly clearing it. Closing, opening, or creating a project after any
+  mutation must consistently show the unsaved-changes prompt. Add focused tests
+  for mutations originating in each major view so future editors cannot silently
+  bypass the mechanism. **P0, M, correctness/data safety.**
+
+### 0.2 Atomic save, autosave, and recovery
+
+- [ ] **Make manual saves atomic for both plain projects and sample bundles.** Write
+  the complete project to a uniquely named temporary file beside the destination,
+  flush/sync it, and only then replace the destination. Preserve or restore the
+  previous valid file if serialization, sample encoding, disk I/O, or the final
+  replacement fails; never truncate the user's last good save before the new one
+  is complete. Cover new files, overwrite saves, `.ptz` projects, bundled projects,
+  and platform-specific replacement behaviour with failure-path tests.
+
+- [ ] **Add debounced autosave and startup recovery without overwriting the manual
+  project file.** Store recovery snapshots in a separate per-project location,
+  write them atomically, and retain enough identity/timestamp information to offer
+  recovery only when the snapshot is newer than the last manual save or follows an
+  unclean shutdown. A recovered document must open as unsaved, successful manual
+  saves should retire obsolete recovery data, and failed autosaves must be reported
+  non-disruptively without clearing dirty state. Define retention/cleanup for
+  abandoned and untitled projects so recovery storage remains bounded. **P0, L,
+  data safety.**
+
+### 0.3 Complete and consistent undo/redo
+
+- [ ] **Extend undo/redo to mixer, sample, and instrument/rack mutations.** Include
+  track volume/pan/mute/solo, sends and routing, return/master controls and effects,
+  sample import/delete/rename/metadata plus destructive DSP edits, instrument
+  properties/performance settings, module parameters, and rack structure changes.
+  Every user-visible project mutation should either create an undo transaction or
+  be explicitly documented as non-undoable with confirmation before destructive
+  execution.
+
+  Coalesce continuous knob/fader drags into one transaction, keep engine state and
+  shared song/sample state synchronized on undo and redo, and integrate the result
+  with the clean-save baseline from §0.1. Sample-data history needs a bounded-memory
+  strategy (for example shared immutable buffers plus a configurable history cap)
+  rather than cloning unlimited audio buffers. Add cross-view tests that perform a
+  change, undo it, redo it, and verify persistence-visible state. **P0, L,
+  correctness/UX.**
+
+### 0.4 Focus-safe shortcuts and global transport
+
+- [ ] **Centralize shortcut routing and prevent the computer-keyboard piano from
+  consuming text or command input.** Do not trigger piano notes, octave changes,
+  editor actions, undo, or transport from ordinary typing in a focused text field;
+  modifier chords such as Ctrl/Cmd+C, V, X, Z, S, O, and N must never also play
+  notes. Handle focus loss and view changes without leaving stuck notes, and let
+  modal dialogs take input priority.
+
+  Provide consistent application-wide shortcuts for Save, Save As, New, Open,
+  Undo/Redo, and play/stop, using the platform command modifier. Spacebar transport
+  must work from every main view when no text field or modal owns it, rather than
+  only from individual sequencer editors. Route commands through one dispatcher so
+  menus can show the same bindings and views do not implement conflicting copies;
+  add input tests for text focus, modifiers, modal focus, view switching, and global
+  transport. **P0, M, correctness/UX.**
+
 ## 1. Sequencer & Arrangement
 
 ### 1.3 Automation targets for send/return routing
