@@ -19,6 +19,10 @@ pub(crate) mod app_services;
 pub mod audio;
 pub mod bundle;
 pub mod composition;
+// Only the egui shell derives unsaved-changes state, and `ProjectRevision` is
+// `pub(crate)` — without the gate a headless build reports it as dead code.
+#[cfg(feature = "gui-egui")]
+pub(crate) mod dirty;
 pub mod group_templates;
 #[cfg(feature = "gui-egui")]
 pub mod gui;
@@ -34,6 +38,7 @@ pub mod patch;
 pub mod patches;
 pub mod project;
 pub mod project_apply;
+pub mod recovery;
 pub mod session;
 #[cfg(feature = "gui-egui")]
 pub(crate) mod undo;

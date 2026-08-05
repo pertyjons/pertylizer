@@ -349,6 +349,7 @@ impl EngineHub {
             | EngineCommand::RemoveEffect { .. }
             | EngineCommand::ReorderEffect { .. }
             | EngineCommand::SetEffectChainOrder { .. }
+            | EngineCommand::SetReturnEffectChainOrder { .. }
             | EngineCommand::AddVisualizer { .. }
             | EngineCommand::RemoveVisualizer { .. }
             | EngineCommand::CreateReturnBus { .. }

@@ -83,13 +83,28 @@ pub fn is_zip_file(path: &Path) -> bool {
 }
 
 /// Save a project as a ZIP bundle with embedded samples.
+///
+/// The archive is built in a temporary file beside `path` and moved into place
+/// only once it is complete and synced. A bundle is written incrementally over
+/// however many samples the library holds, so a failure partway through — a
+/// sample that will not encode, a full disk — used to leave a truncated ZIP
+/// where the user's project had been. Now the previous bundle survives intact.
 pub fn save_bundle(
     project: &ProjectFile,
     library: &SampleLibrary,
     path: &Path,
 ) -> Result<(), PatchError> {
-    let file =
-        std::fs::File::create(path).map_err(|e| PatchError::Io(format!("Create bundle: {e}")))?;
+    crate::io::atomic::write_with(path, |file| write_bundle_contents(project, library, file))
+}
+
+/// Serialize `project` plus every sample in `library` into `file` as a ZIP
+/// archive. Split out from [`save_bundle`] so the atomic-replacement wrapper
+/// stays readable; `file` is the temporary file, never the destination.
+fn write_bundle_contents(
+    project: &ProjectFile,
+    library: &SampleLibrary,
+    file: &mut std::fs::File,
+) -> Result<(), PatchError> {
     let mut zip = zip::ZipWriter::new(file);
 
     let options = zip::write::SimpleFileOptions::default()
@@ -347,4 +362,117 @@ fn load_wav_from_bytes(
 
     let data: Arc<[f32]> = float_samples.into();
     Ok(Sample::new(meta, data))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::project::GlobalProjectState;
+
+    /// A minimal project plus one tiny sample, so the bundle exercises both the
+    /// `project.json` entry and the `samples/` WAV path.
+    fn seeded_library() -> SampleLibrary {
+        let mut library = SampleLibrary::new();
+        let meta = SampleMeta {
+            id: synth_sampler::SampleId::new(0),
+            name: "blip".to_string(),
+            description: String::new(),
+            sample_rate: DeviceSampleRate::new(44_100),
+            channels: ChannelCount::Mono,
+            frame_count: SampleCount::new(4),
+            root_note: None,
+            loop_region: None,
+            crop: None,
+            source: SampleSource::Imported {
+                original_path: None,
+            },
+        };
+        let data: Arc<[f32]> = vec![0.0, 0.5, -0.5, 0.0].into();
+        library.add(Sample::new(meta, data));
+        library
+    }
+
+    fn sample_project(name: &str) -> ProjectFile {
+        ProjectFile::new(
+            Vec::new(),
+            0,
+            None,
+            synth_sequencer::Song::new(name),
+            GlobalProjectState::default(),
+        )
+    }
+
+    /// A bundle written for the first time is a loadable ZIP with its samples.
+    #[test]
+    fn saves_a_new_bundle() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("fresh.zip");
+        let library = seeded_library();
+
+        save_bundle(&sample_project("fresh"), &library, &path).expect("save");
+
+        assert!(is_zip_file(&path), "bundle must be a ZIP");
+        let mut loaded_library = SampleLibrary::new();
+        let project = load_bundle(&path, &mut loaded_library).expect("load");
+        assert_eq!(project.song.name, "fresh");
+        assert_eq!(loaded_library.len(), 1);
+    }
+
+    /// Overwriting an existing bundle leaves a complete archive, not a mix of
+    /// the old and new ZIP central directories.
+    #[test]
+    fn overwriting_a_bundle_leaves_a_loadable_archive() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("song.zip");
+        let library = seeded_library();
+        save_bundle(&sample_project("first"), &library, &path).expect("first save");
+
+        save_bundle(&sample_project("second"), &library, &path).expect("second save");
+
+        let mut loaded_library = SampleLibrary::new();
+        let project = load_bundle(&path, &mut loaded_library).expect("load");
+        assert_eq!(project.song.name, "second");
+        assert_eq!(loaded_library.len(), 1);
+    }
+
+    /// The data-safety guarantee for bundles: a failed save must leave the
+    /// previous bundle loadable rather than truncating it to a partial ZIP.
+    #[test]
+    fn a_failed_bundle_save_preserves_the_previous_bundle() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("song.zip");
+        let library = seeded_library();
+        save_bundle(&sample_project("last good save"), &library, &path).expect("seed");
+        let before = std::fs::read(&path).expect("read seed");
+
+        let mut perms = std::fs::metadata(dir.path())
+            .expect("metadata")
+            .permissions();
+        perms.set_readonly(true);
+        std::fs::set_permissions(dir.path(), perms).expect("set dir read-only");
+
+        let result = save_bundle(&sample_project("would-be corruption"), &library, &path);
+
+        let mut perms = std::fs::metadata(dir.path())
+            .expect("metadata")
+            .permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        std::fs::set_permissions(dir.path(), perms).expect("restore dir perms");
+
+        assert!(result.is_err(), "save into a read-only directory must fail");
+        assert_eq!(
+            std::fs::read(&path).expect("read after failed save"),
+            before,
+            "the previous bundle must survive a failed save",
+        );
+        let mut loaded_library = SampleLibrary::new();
+        assert_eq!(
+            load_bundle(&path, &mut loaded_library)
+                .expect("previous bundle must still load")
+                .song
+                .name,
+            "last good save",
+        );
+    }
 }

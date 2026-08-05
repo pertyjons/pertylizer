@@ -79,6 +79,10 @@ schemars = { workspace = true }
 # ZIP archive (bundle project format)
 zip = { workspace = true }
 
+# Atomic file replacement (write to a temp file beside the destination, then
+# rename over it) so a failed save never truncates the user's last good file.
+tempfile = { workspace = true }
+
 # File system paths
 dirs = { workspace = true }
 
@@ -118,7 +122,6 @@ winit = { workspace = true, features = ["wayland-csd-adwaita"], optional = true 
 chrono = { workspace = true }
 
 [dev-dependencies]
-tempfile = { workspace = true }
 jsonschema = { workspace = true }
 hound = { workspace = true }
 

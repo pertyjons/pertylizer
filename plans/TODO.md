@@ -50,21 +50,46 @@ input handling interfere with standard application shortcuts.
 
 ### 0.3 Complete and consistent undo/redo
 
-- [ ] **Extend undo/redo to mixer, sample, and instrument/rack mutations.** Include
-  track volume/pan/mute/solo, sends and routing, return/master controls and effects,
-  sample import/delete/rename/metadata plus destructive DSP edits, instrument
-  properties/performance settings, module parameters, and rack structure changes.
-  Every user-visible project mutation should either create an undo transaction or
-  be explicitly documented as non-undoable with confirmation before destructive
-  execution.
+**Done.** Undo/redo now covers every editor:
 
-  Coalesce continuous knob/fader drags into one transaction, keep engine state and
-  shared song/sample state synchronized on undo and redo, and integrate the result
-  with the clean-save baseline from §0.1. Sample-data history needs a bounded-memory
-  strategy (for example shared immutable buffers plus a configurable history cap)
-  rather than cloning unlimited audio buffers. Add cross-view tests that perform a
-  change, undo it, redo it, and verify persistence-visible state. **P0, L,
-  correctness/UX.**
+- **Mixer** — track volume/pan/mute/solo, track sends (level, pre/post tap,
+  enable), bus-to-bus sends, return-bus controls, return-bus create/delete
+  (including its engine-side insert chain), and return/master effect add,
+  remove, bypass and parameter edits.
+- **Samples** — import, recording, delete, rename, description, root note, loop
+  and crop regions, and the destructive normalize/reverse edits.
+- **Instruments and rack** — instrument properties and performance settings
+  (captured as a whole snapshot per editor), module parameters, and module
+  add/remove with the cables attached to them.
+- **Sequencer** — pattern create/duplicate, default time signature, and
+  committing a recording take, which were the gaps the audit found.
+
+Continuous gestures collapse into one entry two ways: `DragCoalescer` for
+controls that expose a `Response` (faders, sliders, sample handles), and
+time-windowed merging for module and effect parameters, which arrive as a plain
+list with no gesture signal. Sample history shares `Arc` buffers and is bounded
+by a 256 MiB ceiling on retained audio, evicting oldest-first but never the
+newest entry. Undoing back to the save point reads clean again, via undo-stack
+depth — a shortcut that disables itself for the session if any mutation is seen
+that did not pass through the undo manager, so it can never produce a false
+*clean*.
+
+Remaining:
+
+- [ ] **Effect-chain reordering is not undoable.** Add/remove/bypass/parameters
+  are, and a restored effect returns to its original slot, but dragging an
+  effect to a new slot records nothing. The engine command it needs now exists
+  (`SetReturnEffectChainOrder`, added alongside the master one), so this is just
+  capturing the order around the drag. **S.**
+- [ ] **An undone effect addition loses parameter edits made after it.** The
+  entry records a freshly-created effect with default parameters, so redoing an
+  add restores defaults rather than the state the effect had when it was
+  removed. Only affects add-then-edit-then-undo-then-redo. **S.**
+- [ ] **In-app verification.** None of this has been clicked through in the
+  running app — only tested headlessly. Worth a pass over each editor: change,
+  undo, redo, and confirm both the display and the sound follow. This is the
+  biggest remaining risk: the undo paths that write both a GUI mirror and the
+  engine are exactly where a wrong ordering shows up only live.
 
 ### 0.4 Focus-safe shortcuts and global transport
 

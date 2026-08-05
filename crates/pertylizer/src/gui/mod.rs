@@ -59,6 +59,9 @@ pub mod instrument_rack;
 #[cfg(feature = "gui-egui")]
 pub mod input;
 
+/// Application-wide keyboard shortcuts and the focus gate that guards them.
+pub mod shortcuts;
+
 #[cfg(feature = "gui-egui")]
 pub mod views;
 

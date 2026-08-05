@@ -1831,7 +1831,7 @@ pub(crate) fn draw_piano_roll(
 
     {
         let mut ctx = PianoRollCtx::new(data, song, view_state, handle, undo_manager, instruments);
-        handle_piano_roll_shortcuts(&mut ctx, ui, is_playing, playhead_tick);
+        handle_piano_roll_shortcuts(&mut ctx, ui, playhead_tick);
     }
 
     keep_open
@@ -2785,7 +2785,6 @@ fn draw_piano_roll_grid(
 fn handle_piano_roll_shortcuts(
     ctx: &mut PianoRollCtx<'_>,
     ui: &mut egui::Ui,
-    is_playing: bool,
     playhead_tick: Option<PatternTick>,
 ) {
     let data = ctx.data;
@@ -2916,15 +2915,9 @@ fn handle_piano_roll_shortcuts(
         }
     }
 
-    // ── Space — toggle play/pause ──
-    if egui_ctx.input(|i| i.key_pressed(egui::Key::Space)) {
-        if is_playing {
-            handle.send(EngineCommand::Pause);
-        } else {
-            handle.send(EngineCommand::Play);
-            view_state.auto_follow_playhead = true;
-        }
-    }
+    // Space is handled by the application-wide shortcut dispatcher
+    // (`gui::shortcuts`), which consumes the key before this view runs so
+    // transport works identically from every view.
 
     // ── Step entry mode — keyboard piano inserts notes at cursor ──
     if view_state.step_entry_mode {

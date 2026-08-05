@@ -380,6 +380,18 @@ pub enum EngineCommand {
         direction: ReorderDirection,
     },
 
+    /// Reorder a return bus's whole effect chain to match a module-ID sequence.
+    ///
+    /// The return-bus twin of [`Self::SetEffectChainOrder`], with the same
+    /// semantics: listed IDs move to the front in the given order, unlisted
+    /// slots keep their relative order behind them, unknown IDs are ignored.
+    /// Undo uses it to put a restored effect back in the slot it occupied
+    /// rather than at the end of the chain.
+    SetReturnEffectChainOrder {
+        return_id: ReturnBusId,
+        order: Vec<ModuleId>,
+    },
+
     /// Remove every master-bus effect. Used before (re)loading a project so the
     /// master chain starts empty rather than stacking onto the previous project's
     /// effects (mirrors `ClearReturnBusses`).
@@ -1462,6 +1474,11 @@ impl std::fmt::Debug for EngineCommand {
                 .field("return_id", return_id)
                 .field("module_id", module_id)
                 .field("enabled", enabled)
+                .finish(),
+            Self::SetReturnEffectChainOrder { return_id, order } => f
+                .debug_struct("SetReturnEffectChainOrder")
+                .field("return_id", return_id)
+                .field("slots", &order.len())
                 .finish(),
             Self::ReorderReturnEffect {
                 return_id,

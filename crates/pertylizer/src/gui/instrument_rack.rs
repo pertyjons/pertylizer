@@ -161,3 +161,92 @@ impl InstrumentUiState {
         self.volume
     }
 }
+
+/// Every persisted property of an instrument, captured at one instant.
+///
+/// A snapshot rather than one undo variant per property: the patch bar edits
+/// around fifteen of them, they share an inverse (swap the two sides) and an
+/// apply path (write the fields back, then push them to the engine), and a
+/// property added later is covered without anyone remembering to extend the
+/// undo layer.
+///
+/// Excludes `patch_editor` (the module graph, which the engine owns and which
+/// has its own undo entries) and `learn_state` (transient MIDI-learn UI).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct InstrumentSettings {
+    pub name: String,
+    pub channel: MidiChannelSelection,
+    pub volume: Gain,
+    pub pan: BipolarValue,
+    pub muted: bool,
+    pub solo: bool,
+    pub key_range: KeyRange,
+    pub transpose: Semitones,
+    pub oversampling: synth_dsp::OversamplingFactor,
+    pub category: InstrumentCategory,
+    pub description: String,
+    pub color: Option<HexColor>,
+    pub allocation_mode: synth_engine::voice_allocator::AllocationMode,
+    pub stealing_strategy: synth_engine::voice_allocator::StealingStrategy,
+    pub unison_detune: synth_core::Cents,
+    pub unison_spread: synth_core::NormalizedValue,
+    pub max_voices: synth_core::VoiceCount,
+    pub velocity_amp_sensitivity: synth_core::NormalizedValue,
+    pub velocity_filter_sensitivity: synth_core::NormalizedValue,
+    pub sidechain_source_id: Option<InstrumentId>,
+    pub patch_description: String,
+}
+
+impl InstrumentUiState {
+    /// Capture this instrument's persisted properties.
+    pub(crate) fn settings(&self) -> InstrumentSettings {
+        InstrumentSettings {
+            name: self.name.clone(),
+            channel: self.channel,
+            volume: self.volume,
+            pan: self.pan,
+            muted: self.muted,
+            solo: self.solo,
+            key_range: self.key_range,
+            transpose: self.transpose,
+            oversampling: self.oversampling,
+            category: self.category,
+            description: self.description.clone(),
+            color: self.color.clone(),
+            allocation_mode: self.allocation_mode,
+            stealing_strategy: self.stealing_strategy,
+            unison_detune: self.unison_detune,
+            unison_spread: self.unison_spread,
+            max_voices: self.max_voices,
+            velocity_amp_sensitivity: self.velocity_amp_sensitivity,
+            velocity_filter_sensitivity: self.velocity_filter_sensitivity,
+            sidechain_source_id: self.sidechain_source_id,
+            patch_description: self.patch_description.clone(),
+        }
+    }
+
+    /// Write captured properties back, leaving the module graph untouched.
+    pub(crate) fn apply_settings(&mut self, settings: &InstrumentSettings) {
+        self.name = settings.name.clone();
+        self.channel = settings.channel;
+        self.volume = settings.volume;
+        self.pan = settings.pan;
+        self.muted = settings.muted;
+        self.solo = settings.solo;
+        self.key_range = settings.key_range;
+        self.transpose = settings.transpose;
+        self.oversampling = settings.oversampling;
+        self.category = settings.category;
+        self.description = settings.description.clone();
+        self.color = settings.color.clone();
+        self.allocation_mode = settings.allocation_mode;
+        self.stealing_strategy = settings.stealing_strategy;
+        self.unison_detune = settings.unison_detune;
+        self.unison_spread = settings.unison_spread;
+        self.max_voices = settings.max_voices;
+        self.velocity_amp_sensitivity = settings.velocity_amp_sensitivity;
+        self.velocity_filter_sensitivity = settings.velocity_filter_sensitivity;
+        self.sidechain_source_id = settings.sidechain_source_id;
+        self.patch_description = settings.patch_description.clone();
+    }
+}

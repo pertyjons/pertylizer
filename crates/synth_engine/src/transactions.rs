@@ -729,6 +729,12 @@ impl EngineCommand {
                 module_id: *module_id,
                 enabled: *enabled,
             },
+            Self::SetReturnEffectChainOrder { return_id, order } => {
+                Self::SetReturnEffectChainOrder {
+                    return_id: *return_id,
+                    order: order.clone(),
+                }
+            }
             Self::ReorderReturnEffect {
                 return_id,
                 module_id,

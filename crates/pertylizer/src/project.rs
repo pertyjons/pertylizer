@@ -117,11 +117,15 @@ impl ProjectFile {
         serde_json::from_str(&content).map_err(|e| PatchError::Parse(e.to_string()))
     }
 
-    /// Save the project to a JSON file.
+    /// Save the project to a JSON file, replacing any existing file atomically.
+    ///
+    /// Serialization runs first so a project that cannot be encoded fails
+    /// before the destination is touched, and the write goes through a
+    /// temp-then-rename so a disk error cannot truncate the last good save.
     pub fn save(&self, path: impl AsRef<Path>) -> Result<(), PatchError> {
         let content =
             serde_json::to_string_pretty(self).map_err(|e| PatchError::Serialize(e.to_string()))?;
-        fs::write(path.as_ref(), content).map_err(|e| PatchError::Io(e.to_string()))
+        crate::io::atomic::write(path.as_ref(), content.as_bytes()).map_err(PatchError::from)
     }
 }
 
@@ -300,6 +304,81 @@ mod tests {
     fn project_extension_picks_zip_for_samples_ptz_otherwise() {
         assert_eq!(project_extension(true), "zip");
         assert_eq!(project_extension(false), "ptz");
+    }
+
+    /// A minimal but real project for the save-path tests below.
+    fn sample_project(name: &str) -> ProjectFile {
+        ProjectFile::new(
+            Vec::new(),
+            0,
+            None,
+            Song::new(name),
+            GlobalProjectState::default(),
+        )
+    }
+
+    /// First save of a `.ptz` project: the file appears and reloads.
+    #[test]
+    fn saves_a_new_ptz_project() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("fresh.ptz");
+
+        sample_project("fresh").save(&path).expect("save");
+
+        let loaded = ProjectFile::load(&path).expect("load");
+        assert_eq!(loaded.song.name, "fresh");
+    }
+
+    /// Overwriting must fully replace the previous project, not leave a tail of
+    /// the older, longer file behind (the classic truncating-write corruption).
+    #[test]
+    fn overwriting_a_ptz_project_replaces_it_completely() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("song.ptz");
+        sample_project("a project with a considerably longer name")
+            .save(&path)
+            .expect("first save");
+
+        sample_project("short").save(&path).expect("second save");
+
+        let loaded = ProjectFile::load(&path).expect("load");
+        assert_eq!(loaded.song.name, "short");
+    }
+
+    /// The data-safety guarantee: a save that fails must leave the user's last
+    /// good project exactly as it was, rather than truncating it first.
+    #[test]
+    fn a_failed_save_preserves_the_previous_project() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("song.ptz");
+        sample_project("last good save").save(&path).expect("seed");
+        let before = fs::read(&path).expect("read seed");
+
+        // Make the directory read-only so creating the temp file fails — the
+        // same class of failure as a full disk or a revoked permission.
+        let mut perms = fs::metadata(dir.path()).expect("metadata").permissions();
+        perms.set_readonly(true);
+        fs::set_permissions(dir.path(), perms).expect("set dir read-only");
+
+        let result = sample_project("would-be corruption").save(&path);
+
+        // Restore write access before any assertion so the tempdir can clean up
+        // even when an assertion below fails.
+        let mut perms = fs::metadata(dir.path()).expect("metadata").permissions();
+        #[allow(clippy::permissions_set_readonly_false)]
+        perms.set_readonly(false);
+        fs::set_permissions(dir.path(), perms).expect("restore dir perms");
+
+        assert!(result.is_err(), "save into a read-only directory must fail");
+        assert_eq!(
+            fs::read(&path).expect("read after failed save"),
+            before,
+            "the previous project must survive a failed save",
+        );
+        assert_eq!(
+            ProjectFile::load(&path).expect("reload").song.name,
+            "last good save",
+        );
     }
 
     #[test]

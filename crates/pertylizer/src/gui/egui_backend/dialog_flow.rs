@@ -4,6 +4,10 @@ use super::*;
 
 impl SynthApp {
     pub(super) fn show_dialogs(&mut self, ctx: &egui::Context) {
+        // Recovery offer first: it decides which document the user is in, so it
+        // must be answered before anything that acts on the current one.
+        self.show_recovery_prompt(ctx);
+
         // Unsaved changes confirmation dialog
         self.show_unsaved_changes_dialog(ctx);
 
@@ -231,7 +235,7 @@ impl SynthApp {
                         Ok(LoadedFile::Project(proj)) => {
                             self.load_project_data(*proj);
                             self.current_project_path = Some(path.clone());
-                            self.dirty = false;
+                            self.mark_saved();
                             self.settings.add_recent_project(path.clone());
                             self.settings.save();
                             self.dialog_state
@@ -241,7 +245,7 @@ impl SynthApp {
                             self.load_patch_data(&patch);
                             self.current_patch_name = patch.name.clone();
                             self.current_patch_path = Some(path.clone());
-                            self.dirty = false;
+                            self.mark_saved();
                             self.settings.add_recent_project(path.clone());
                             self.settings.save();
                             self.dialog_state
@@ -251,7 +255,7 @@ impl SynthApp {
                             match self.load_bundle_file(&bundle_path) {
                                 Ok(msg) => {
                                     self.current_project_path = Some(path.clone());
-                                    self.dirty = false;
+                                    self.mark_saved();
                                     self.settings.add_recent_project(path.clone());
                                     self.settings.save();
                                     self.dialog_state.set_status(msg);
@@ -288,7 +292,7 @@ impl SynthApp {
                     match save_result {
                         Ok(()) => {
                             self.current_project_path = Some(path.clone());
-                            self.dirty = false;
+                            self.mark_saved();
                             self.settings.add_recent_project(path.clone());
                             self.settings.save();
                             self.dialog_state
@@ -323,10 +327,19 @@ impl SynthApp {
                     match synth_sampler::load_wav(&path, target_rate) {
                         Ok(sample) => {
                             let name = sample.meta.name.clone();
-                            if let Ok(mut lib) = self.sample_library.write() {
-                                let id = lib.add(sample);
+                            let imported = self
+                                .sample_library
+                                .write()
+                                .ok()
+                                .map(|mut lib| lib.add(sample));
+                            if let Some(id) = imported {
                                 self.sample_view_state.selected_sample = Some(id);
                                 self.sample_view_state.invalidate_peaks();
+                                crate::undo::SampleUndo {
+                                    undo: &mut self.undo_manager,
+                                    coalescer: &mut self.drag_coalescer,
+                                }
+                                .record_import(&self.sample_library, id);
                             }
                             self.dialog_state
                                 .set_status(format!("Imported sample: {name}"));

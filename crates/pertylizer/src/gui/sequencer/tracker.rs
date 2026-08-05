@@ -1249,13 +1249,15 @@ fn edit_expression_cell(
     let note_id = data.notes[idx].note_id;
     let old_expr = data.notes[idx].expression;
 
-    let (enter, esc, delete, backspace, space) = ui.input_mut(|i| {
+    // Space is deliberately absent: it belongs to global transport now (see
+    // `gui::shortcuts`), which consumes it before this runs. Enter toggles the
+    // Ghost flag, which is what Space aliased anyway.
+    let (enter, esc, delete, backspace) = ui.input_mut(|i| {
         (
             i.consume_key(egui::Modifiers::NONE, egui::Key::Enter),
             i.consume_key(egui::Modifiers::NONE, egui::Key::Escape),
             i.consume_key(egui::Modifiers::NONE, egui::Key::Delete),
             i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace),
-            i.consume_key(egui::Modifiers::NONE, egui::Key::Space),
         )
     });
 
@@ -1282,7 +1284,7 @@ fn edit_expression_cell(
     // Ghost: a boolean flag — Enter/Space toggles, Delete clears. No value buffer.
     if field == ExprField::Ghost {
         view_state.tracker.value_buffer = None;
-        if enter || space {
+        if enter {
             let mut e = old_expr.unwrap_or_default();
             e.ghost = !e.ghost;
             commit(e);

@@ -1,6 +1,7 @@
 //! Transport control bar and the shared timeline-ruler strip.
 
 use super::*;
+use crate::undo::{UndoAction, UndoManager};
 
 // ============================================================================
 // SHARED TIMELINE RULER
@@ -44,6 +45,7 @@ pub(super) fn draw_transport_bar(
     handle: &mut EngineHandle,
     song: &Arc<synth_sequencer::SharedSong>,
     view_state: &mut SequencerViewState,
+    undo_manager: &mut UndoManager,
 ) -> bool {
     use egui_remixicon::icons as ri;
     let t = theme();
@@ -395,7 +397,14 @@ pub(super) fn draw_transport_bar(
                 && let Ok(den_u8) = u8::try_from(den.clamp(1, 32))
             {
                 let new_sig = TimeSignature::new(num_u8, den_u8);
-                song.write().default_time_signature = new_sig;
+                let old_sig = song.read().default_time_signature;
+                if old_sig != new_sig {
+                    song.write().default_time_signature = new_sig;
+                    undo_manager.push(UndoAction::SetTimeSignature {
+                        old: old_sig,
+                        new: new_sig,
+                    });
+                }
             }
         });
 

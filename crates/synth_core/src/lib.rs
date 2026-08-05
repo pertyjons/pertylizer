@@ -65,15 +65,15 @@ pub use params::{
 };
 pub use types::{
     AllpassState, Amplitude, BeatDivision, BeatPosition, BipolarDelta, BipolarValue, BitDepth,
-    BlockSize, Bpm, BufferIndex, BypassState, CcNumber, Cents, Clampable, ClipMode, CpuUsage,
-    DecayTrim, Decibels, DenormalGuard, EnableState, FilterState, FrameCount, FreezeState,
-    FrequencyBand, Gain, Hertz, InstrumentId, Interpolate, LimitMode, Meters, MetersPerSecond,
-    MidiCcNumber, MidiChannel, MidiNote, Milliseconds, MuteState, NoiseState, NormalizedDelta,
-    NormalizedValue, NoteReleaseState, Octaves, OnePoleSmooth, PatternIndex, Phase, Polarity,
-    PortName, Position3, PulseWidth, Ratio, RetriggerMode, SampleCount, SampleOffset,
-    SamplePosition, SampleRate, Seconds, Semitones, SoloState, StepCount, StereoBalance,
-    StereoFrameIter, StereoLevels, StereoSample, SyncMode, TempoSyncState, TimeScale, ValueRange,
-    Velocity, VoiceCount, magnitude_to_normalized_db,
+    BlockSize, Bpm, BufferIndex, BypassState, CcNumber, Cents, Clampable, ClipMode,
+    ContentRevision, CpuUsage, DecayTrim, Decibels, DenormalGuard, EnableState, FilterState,
+    FrameCount, FreezeState, FrequencyBand, Gain, Hertz, InstrumentId, Interpolate, LimitMode,
+    Meters, MetersPerSecond, MidiCcNumber, MidiChannel, MidiNote, Milliseconds, MuteState,
+    NoiseState, NormalizedDelta, NormalizedValue, NoteReleaseState, Octaves, OnePoleSmooth,
+    PatternIndex, Phase, Polarity, PortName, Position3, PulseWidth, Ratio, RetriggerMode,
+    SampleCount, SampleOffset, SamplePosition, SampleRate, Seconds, Semitones, SoloState,
+    StepCount, StereoBalance, StereoFrameIter, StereoLevels, StereoSample, SyncMode,
+    TempoSyncState, TimeScale, ValueRange, Velocity, VoiceCount, magnitude_to_normalized_db,
 };
 
 /// Convenience re-exports for code that works with parameters generically.

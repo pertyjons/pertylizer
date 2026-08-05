@@ -30,6 +30,10 @@ impl<'a> SongMutationService<'a> {
         Self { song }
     }
 
+    /// GUI-only: the headless (MCP) surface edits tempo in batches
+    /// (`set_tempo_points` / `remove_tempo_points`), so without the gate a
+    /// `--no-default-features` build reports this as dead code.
+    #[cfg(feature = "gui-egui")]
     pub(crate) fn set_tempo_point(&self, edit: TempoPointEdit) {
         self.song
             .write()
@@ -43,6 +47,10 @@ impl<'a> SongMutationService<'a> {
         }
     }
 
+    /// GUI-only: the headless (MCP) surface edits tempo in batches
+    /// (`set_tempo_points` / `remove_tempo_points`), so without the gate a
+    /// `--no-default-features` build reports this as dead code.
+    #[cfg(feature = "gui-egui")]
     pub(crate) fn remove_tempo_point(&self, tick: Tick) -> bool {
         self.song.write().remove_tempo_change(tick)
     }
@@ -55,6 +63,10 @@ impl<'a> SongMutationService<'a> {
             .count()
     }
 
+    /// GUI-only: the headless (MCP) surface edits tempo in batches
+    /// (`set_tempo_points` / `remove_tempo_points`), so without the gate a
+    /// `--no-default-features` build reports this as dead code.
+    #[cfg(feature = "gui-egui")]
     pub(crate) fn apply_tempo_point(&self, tick: Tick, value: Option<(Bpm, bool)>) {
         if let Some((bpm, ramp)) = value {
             self.set_tempo_point(TempoPointEdit::new(tick, bpm, ramp));
@@ -63,6 +75,10 @@ impl<'a> SongMutationService<'a> {
         }
     }
 
+    /// GUI-only: the headless (MCP) surface edits tempo in batches
+    /// (`set_tempo_points` / `remove_tempo_points`), so without the gate a
+    /// `--no-default-features` build reports this as dead code.
+    #[cfg(feature = "gui-egui")]
     pub(crate) fn move_tempo_point(&self, old_tick: Tick, new: TempoPointEdit) {
         let mut song = self.song.write();
         if old_tick != new.tick {
@@ -72,7 +88,9 @@ impl<'a> SongMutationService<'a> {
     }
 }
 
-#[cfg(test)]
+// The tests below exercise the single-point editors, which only the GUI
+// calls; without the gate they would not compile in a headless build.
+#[cfg(all(test, feature = "gui-egui"))]
 mod tests {
     use super::{SongMutationService, TempoPointEdit};
     use synth_core::Bpm;

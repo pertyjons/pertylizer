@@ -506,6 +506,15 @@ impl SequencerViewState {
         self.recording_pattern = None;
     }
 
+    /// Re-arm playhead following, as starting playback does.
+    ///
+    /// Public to the crate because the spacebar now lives in the application
+    /// shortcut dispatcher rather than in this view, and it must leave the
+    /// sequencer in the same state the view's own Play button would.
+    pub(crate) fn follow_playhead_on_play(&mut self) {
+        self.auto_follow_playhead = true;
+    }
+
     /// Re-enable playhead follow and open the settle window so an off-screen
     /// marker is scrolled into view even while the transport is stopped.
     /// Every transport action that moves the playhead should call this.
@@ -1321,7 +1330,7 @@ pub(crate) fn draw_sequencer_view(
 
     // Transport bar at the top
     let is_playing = super::toolbar::top(ui, "sequencer_transport", |ui| {
-        draw_transport_bar(ui, handle, song, view_state)
+        draw_transport_bar(ui, handle, song, view_state, undo_manager)
     });
 
     // Request repaint during playback for smooth position updates. While

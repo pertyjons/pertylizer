@@ -169,7 +169,11 @@ impl AppSettings {
             std::fs::create_dir_all(parent).map_err(|e| format!("mkdir: {e}"))?;
         }
         let json = serde_json::to_string_pretty(self).map_err(|e| format!("serialize: {e}"))?;
-        std::fs::write(&path, json).map_err(|e| format!("write: {e}"))
+        // Settings are rewritten on nearly every user action (recent projects,
+        // last-used directories). A truncating write that dies midway would
+        // leave unparseable JSON and silently reset the user's preferences on
+        // the next launch.
+        crate::io::atomic::write(&path, json.as_bytes()).map_err(|e| format!("write: {e}"))
     }
 }
 

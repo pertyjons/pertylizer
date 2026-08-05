@@ -4,30 +4,23 @@ use super::*;
 use crate::app_services::{SongMutationService, TempoPointEdit};
 
 impl SynthApp {
-    /// Handle Ctrl+Z (undo) and Ctrl+Shift+Z (redo) keyboard shortcuts.
-    pub(super) fn handle_undo_redo_shortcuts(&mut self, ctx: &egui::Context) {
-        let (ctrl_z, ctrl_shift_z) = ctx.input(|i| {
-            (
-                i.modifiers.command && !i.modifiers.shift && i.key_pressed(egui::Key::Z),
-                i.modifiers.command && i.modifiers.shift && i.key_pressed(egui::Key::Z),
-            )
-        });
-        if ctrl_shift_z {
-            self.execute_redo();
-        } else if ctrl_z {
-            self.execute_undo();
-        }
-    }
-
     /// Handle Ctrl+C (copy), Ctrl+V (paste), Ctrl+X (cut) keyboard shortcuts.
-    pub(super) fn handle_clipboard_shortcuts(&mut self, ctx: &egui::Context) {
+    ///
+    /// These stay view-local — they act on the patch canvas selection, which
+    /// only the Rack view has — but they take the same input gate as the
+    /// application shortcuts so a modal or a focused text field silences them
+    /// too.
+    pub(super) fn handle_clipboard_shortcuts(
+        &mut self,
+        ctx: &egui::Context,
+        gate: crate::gui::shortcuts::InputGate,
+    ) {
         // Only handle clipboard shortcuts in Rack view
         if self.active_view != AppView::Rack {
             return;
         }
 
-        // Skip if any text edit is focused (avoids intercepting text input)
-        if ctx.text_edit_focused() {
+        if !gate.allows_app_shortcuts() {
             return;
         }
 
@@ -223,6 +216,26 @@ impl SynthApp {
         if let Some(action) = self.undo_manager.redo() {
             self.apply_undo_action(&action);
         }
+    }
+
+    /// Drop one cable from both the patch editor and the engine.
+    ///
+    /// `index` is the instrument's position in `self.instruments`, already
+    /// resolved by the caller.
+    fn disconnect_rack_cable(
+        &mut self,
+        instrument_id: InstrumentId,
+        index: usize,
+        connection: synth_engine::graph::Connection,
+    ) {
+        self.instruments[index]
+            .patch_editor
+            .remove_connection(&connection);
+        self.handle.send(EngineCommand::Disconnect {
+            instrument_id: Some(instrument_id),
+            from: PortId::new(connection.from_module, connection.from_port),
+            to: PortId::new(connection.to_module, connection.to_port),
+        });
     }
 
     /// Apply an undo/redo action to the current state.
@@ -664,11 +677,361 @@ impl SynthApp {
                     ),
                 });
             }
+            // ── Mixer ──
+            //
+            // Faders, pans, mutes, solos and sends all live in the `Song`, which
+            // the engine reads through its lock-free snapshot, so those need no
+            // separate engine command — the write guard republishes on drop.
+            // The *existence* of a return bus is the exception: the engine keeps
+            // its own registry (its effect chain and mix buffer), so
+            // creating/removing one has to be mirrored with a command, exactly
+            // as `mixer_view::apply_mutation` does on the forward path.
+            UndoAction::SetTrackMixer {
+                track_id,
+                param,
+                new,
+                ..
+            } => {
+                if let Some(track) = self.song.write().track_mut(*track_id) {
+                    apply_mixer_value(
+                        *param,
+                        *new,
+                        &mut track.volume,
+                        &mut track.pan,
+                        &mut track.mute,
+                        &mut track.solo,
+                    );
+                }
+            }
+            UndoAction::SetTrackSend {
+                track_id,
+                return_bus,
+                new,
+                ..
+            } => {
+                let mut song_w = self.song.write();
+                if let Some(track) = song_w.track_mut(*track_id) {
+                    track.sends.retain(|send| send.target != *return_bus);
+                    if let Some(send) = new {
+                        track.sends.push(*send);
+                    }
+                }
+            }
+            UndoAction::SetReturnBusMixer {
+                bus_id, param, new, ..
+            } => {
+                if let Some(bus) = self.song.write().return_bus_mut(*bus_id) {
+                    apply_mixer_value(
+                        *param,
+                        *new,
+                        &mut bus.volume,
+                        &mut bus.pan,
+                        &mut bus.mute,
+                        &mut bus.solo,
+                    );
+                }
+            }
+            UndoAction::SetReturnSend {
+                from, target, new, ..
+            } => {
+                let mut song_w = self.song.write();
+                if let Some(bus) = song_w.return_bus_mut(*from) {
+                    bus.sends.retain(|send| send.target != *target);
+                    if let Some(send) = new {
+                        bus.sends.push(*send);
+                    }
+                }
+            }
+            UndoAction::SetReturnBus {
+                effects,
+                bus_id,
+                index,
+                new,
+                ..
+            } => {
+                {
+                    let mut song_w = self.song.write();
+                    match new {
+                        // Restoring a deleted bus puts back the whole thing —
+                        // name, colour, fader, sends — at the position it held,
+                        // not a blank bus appended to the end.
+                        Some(bus) => song_w.restore_return_bus(*index, (**bus).clone()),
+                        None => {
+                            song_w.delete_return_bus(*bus_id);
+                        }
+                    }
+                }
+                // The engine owns the bus itself (its effect chain and mix
+                // buffer), so without this the restored bus exists only in the
+                // song: every send routed to it would produce silence, and an
+                // undone *creation* would leave a phantom bus in the engine.
+                if new.is_some() {
+                    self.handle
+                        .send(EngineCommand::CreateReturnBus { id: *bus_id });
+                    // The insert chain is engine-side too, and went down with
+                    // the bus. Rebuild it after the bus exists to route to.
+                    for effect in effects {
+                        for command in
+                            effect.restore_commands(crate::undo::EffectChain::Return(*bus_id))
+                        {
+                            self.handle.send(command);
+                        }
+                    }
+                } else {
+                    // Removing the bus takes its chain with it, so the effects
+                    // need no separate teardown.
+                    self.handle
+                        .send(EngineCommand::RemoveReturnBus { id: *bus_id });
+                }
+            }
+
+            UndoAction::SwapPattern {
+                pattern_id, new, ..
+            } => {
+                let mut song_w = self.song.write();
+                if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
+                    *pattern = (**new).clone();
+                }
+            }
+            UndoAction::SetTimeSignature { new, .. } => {
+                self.song.write().default_time_signature = *new;
+            }
+
+            // ── Instrument ──
+            //
+            // Two writes, because the state is mirrored: the GUI's
+            // `InstrumentUiState` (which the save path reads) and the engine's
+            // own instrument. Writing only the first would restore what the
+            // user sees while leaving the sound unchanged.
+            UndoAction::SetInstrumentSettings {
+                instrument_id, new, ..
+            } => {
+                if let Some(inst) = self.instruments.iter_mut().find(|i| i.id == *instrument_id) {
+                    inst.apply_settings(new);
+                }
+                self.sync_instrument_settings_to_engine(*instrument_id);
+            }
+
+            // ── Return / master effect chains ──
+            //
+            // Entirely engine-owned: there is no GUI mirror to write, because
+            // the mixer reads these chains out of shared state each frame.
+            UndoAction::SetChainEffect { chain, old, new } => match new {
+                Some(snapshot) => {
+                    for command in snapshot.restore_commands(*chain) {
+                        self.handle.send(command);
+                    }
+                }
+                None => {
+                    // Undoing an addition, or redoing a removal: either way the
+                    // effect to take off the chain is the one `old` describes.
+                    if let Some(snapshot) = old {
+                        self.handle.send(chain.remove(snapshot.module_id));
+                    }
+                }
+            },
+            UndoAction::SetChainEffectParameter {
+                chain,
+                module_id,
+                new,
+                ..
+            } => {
+                self.handle.send(chain.set_param(*module_id, *new));
+            }
+            UndoAction::SetChainEffectBypass {
+                chain,
+                module_id,
+                new,
+                ..
+            } => {
+                // The command takes *enabled*, the inverse of bypassed.
+                self.handle.send(chain.set_enabled(*module_id, !*new));
+            }
+
+            // Rack structure. Restoring goes through the same id-preserving
+            // primitive project loading uses, so a brought-back module answers
+            // to the id its cables and automation lanes still reference.
+            UndoAction::SetRackModules {
+                instrument_id,
+                modules,
+                connections,
+                severed,
+                restore,
+            } => {
+                let Some(index) = self.instruments.iter().position(|i| i.id == *instrument_id)
+                else {
+                    return;
+                };
+                if *restore {
+                    for module_state in modules {
+                        patch_bridge::populate_editor_module(
+                            module_state,
+                            &mut self.instruments[index].patch_editor,
+                            &self.session,
+                            &mut self.handle,
+                            *instrument_id,
+                        );
+                    }
+                    // Whatever the addition displaced goes first: an inline
+                    // insert sits on a cable, and leaving the old cable in place
+                    // would route the source to both the new module and the old
+                    // destination.
+                    for connection in severed {
+                        self.disconnect_rack_cable(*instrument_id, index, *connection);
+                    }
+                    // Cables come back after the modules they attach to, or the
+                    // engine would reject an edge to a port that does not exist
+                    // yet.
+                    for connection in connections {
+                        self.instruments[index]
+                            .patch_editor
+                            .add_connection(*connection);
+                        self.handle.send(EngineCommand::Connect {
+                            instrument_id: Some(*instrument_id),
+                            from: PortId::new(connection.from_module, connection.from_port),
+                            to: PortId::new(connection.to_module, connection.to_port),
+                        });
+                    }
+                } else {
+                    for module_state in modules {
+                        let Ok(module_id) = module_state.id.parse::<ModuleId>() else {
+                            continue;
+                        };
+                        if let Err(e) = self.session.remove_module(*instrument_id, module_id) {
+                            tracing::warn!(
+                                target: "pertylizer::undo",
+                                module = %module_id,
+                                error = %e,
+                                "could not remove a module while redoing",
+                            );
+                            continue;
+                        }
+                        self.instruments[index]
+                            .patch_editor
+                            .remove_module(module_id);
+                        self.handle.remove_visualization_buffer(module_id);
+                    }
+                    // Removing the modules took their cables with them; the
+                    // cable the addition had cut goes back down, or undoing an
+                    // inline insert would leave the chain it sat in broken.
+                    for connection in severed {
+                        self.instruments[index]
+                            .patch_editor
+                            .add_connection(*connection);
+                        self.handle.send(EngineCommand::Connect {
+                            instrument_id: Some(*instrument_id),
+                            from: PortId::new(connection.from_module, connection.from_port),
+                            to: PortId::new(connection.to_module, connection.to_port),
+                        });
+                    }
+                }
+            }
+
+            // Module parameters live in the engine, so the GUI's cached
+            // value has to be written too — otherwise the knob would snap back
+            // on the next frame's sync and undo the undo.
+            UndoAction::SetModuleParameter {
+                instrument_id,
+                module_id,
+                new,
+                ..
+            } => {
+                if module_id.module_type.is_effect() {
+                    self.handle.send(EngineCommand::SetEffectParameter {
+                        instrument_id: Some(*instrument_id),
+                        module_id: *module_id,
+                        param: *new,
+                    });
+                } else {
+                    self.handle.send(EngineCommand::SetModuleParameter {
+                        instrument_id: Some(*instrument_id),
+                        module_id: *module_id,
+                        param: *new,
+                    });
+                }
+                if let Some(editor) = self
+                    .instruments
+                    .iter_mut()
+                    .find(|i| i.id == *instrument_id)
+                    .map(|i| &mut i.patch_editor)
+                {
+                    editor.sync_module_params(*module_id, std::slice::from_ref(new));
+                }
+            }
+
+            // ── Sample library ──
+            //
+            // The engine reads sample audio through `Arc` handles it was given
+            // when the sampler module was built, so writing the library is not
+            // enough on its own — a sampler already holding the old buffer
+            // keeps playing it. `invalidate_peaks` refreshes the waveform view;
+            // re-arming the engine's handles is the sampler's own reload path,
+            // which runs when the graph next syncs.
+            UndoAction::SetSample { id, new, .. } => {
+                if let Ok(mut lib) = self.sample_library.write() {
+                    match new {
+                        Some(sample) => {
+                            lib.add_with_id((**sample).clone(), *id);
+                        }
+                        None => {
+                            lib.remove(*id);
+                        }
+                    }
+                }
+                self.sample_view_state.invalidate_peaks();
+            }
+            UndoAction::SetSampleMeta { id, new, .. } => {
+                if let Ok(mut lib) = self.sample_library.write() {
+                    lib.update_meta(*id, (**new).clone());
+                }
+                self.sample_view_state.invalidate_peaks();
+            }
+            UndoAction::SetSampleData { id, new, .. } => {
+                if let Ok(mut lib) = self.sample_library.write() {
+                    lib.replace_data(*id, std::sync::Arc::clone(new));
+                }
+                self.sample_view_state.invalidate_peaks();
+            }
+
             UndoAction::Composite(actions) => {
                 for sub_action in actions {
                     self.apply_undo_action(sub_action);
                 }
             }
+        }
+    }
+}
+
+/// Write one channel-strip value into whichever field it belongs to.
+///
+/// Tracks and return buses have the same four controls with the same types but
+/// no shared trait, so the fields come in as separate `&mut`s rather than the
+/// owning struct.
+fn apply_mixer_value(
+    param: crate::undo::TrackMixerParam,
+    value: crate::undo::MixerValue,
+    volume: &mut synth_core::NormalizedValue,
+    pan: &mut synth_core::BipolarValue,
+    muted: &mut bool,
+    solo: &mut bool,
+) {
+    use crate::undo::{MixerValue, TrackMixerParam};
+
+    // A mismatched pair (Volume with a Flag, say) can only come from a bug in
+    // whoever built the action; ignoring it keeps undo from writing nonsense
+    // into the mixer.
+    match (param, value) {
+        (TrackMixerParam::Volume, MixerValue::Level(v)) => *volume = v,
+        (TrackMixerParam::Pan, MixerValue::Balance(v)) => *pan = v,
+        (TrackMixerParam::Mute, MixerValue::Flag(v)) => *muted = v,
+        (TrackMixerParam::Solo, MixerValue::Flag(v)) => *solo = v,
+        (param, value) => {
+            tracing::warn!(
+                target: "pertylizer::undo",
+                param = param.as_str(),
+                ?value,
+                "mixer undo entry has a value that does not match its parameter",
+            );
         }
     }
 }

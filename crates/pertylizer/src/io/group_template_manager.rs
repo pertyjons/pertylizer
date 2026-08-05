@@ -167,7 +167,7 @@ impl GroupTemplateManager {
 
         let content = serde_json::to_string_pretty(template)
             .map_err(|e| PatchError::Serialize(e.to_string()))?;
-        fs::write(&path, content)
+        crate::io::atomic::write(&path, content.as_bytes())
             .map_err(|e| PatchError::Io(format!("Failed to write template: {e}")))?;
 
         Ok(path)

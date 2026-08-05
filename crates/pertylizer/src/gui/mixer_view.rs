@@ -28,6 +28,9 @@ use synth_sequencer::{ReturnBusId, TrackId, TrackSend};
 
 use crate::gui::module_panel::category_color;
 use crate::gui::theme::theme;
+use crate::undo::{
+    EffectChain, EffectSnapshot, GestureStart, MixerValue, TrackMixerParam, UndoAction,
+};
 
 // --- Mixer view palette ---
 /// Clip-warning header tint (used by the layout-measurement tests).
@@ -141,92 +144,15 @@ enum MixerMutation {
     DeleteReturn(ReturnBusId),
 }
 
-/// Where an inline insert-effect editor writes: a specific return bus, or the
-/// master bus. Lets [`draw_effect_module`] / [`add_effect`] build the right
-/// engine command (the `*ReturnEffect*` commands vs the master `*Effect*`
-/// commands, which use `instrument_id: None`).
-#[derive(Clone, Copy)]
-enum EffectTarget {
-    Return(ReturnBusId),
-    Master,
-}
-
-impl EffectTarget {
-    /// A widget-id seed unique per target (master is distinct from any return id).
-    fn id_seed(self) -> u32 {
-        match self {
-            Self::Return(id) => u32::from(id.0),
-            Self::Master => u32::from(u16::MAX) + 1,
-        }
-    }
-
-    fn set_enabled(self, module_id: ModuleId, enabled: bool) -> EngineCommand {
-        match self {
-            Self::Return(return_id) => EngineCommand::SetReturnEffectEnabled {
-                return_id,
-                module_id,
-                enabled,
-            },
-            Self::Master => EngineCommand::SetEffectEnabled {
-                instrument_id: None,
-                module_id,
-                enabled,
-            },
-        }
-    }
-
-    fn remove(self, module_id: ModuleId) -> EngineCommand {
-        match self {
-            Self::Return(return_id) => EngineCommand::RemoveReturnEffect {
-                return_id,
-                id: module_id,
-            },
-            Self::Master => EngineCommand::RemoveEffect {
-                instrument_id: None,
-                id: module_id,
-            },
-        }
-    }
-
-    fn set_param(self, module_id: ModuleId, param: Param) -> EngineCommand {
-        match self {
-            Self::Return(return_id) => EngineCommand::SetReturnEffectParameter {
-                return_id,
-                module_id,
-                param,
-            },
-            Self::Master => EngineCommand::SetEffectParameter {
-                instrument_id: None,
-                module_id,
-                param,
-            },
-        }
-    }
-
-    fn add(self, id: ModuleId, effect: Box<dyn synth_core::AudioEffect>) -> EngineCommand {
-        match self {
-            Self::Return(return_id) => EngineCommand::AddReturnEffect {
-                return_id,
-                id,
-                effect,
-            },
-            Self::Master => EngineCommand::AddEffectInstance {
-                instrument_id: None,
-                id,
-                effect,
-            },
-        }
-    }
-}
-
 /// Draw the mixer view. Returns an action for the host to handle (e.g. jumping
 /// to the Rack to edit a channel's inserts).
-pub fn draw_mixer_view(
+pub(crate) fn draw_mixer_view(
     ui: &mut egui::Ui,
     handle: &mut EngineHandle,
     song: &Arc<synth_sequencer::SharedSong>,
     instruments: &[crate::gui::instrument_rack::InstrumentUiState],
     state: &mut MixerViewState,
+    undo: &mut crate::undo::MixerUndo<'_>,
 ) -> Option<MixerViewAction> {
     let t = theme();
 
@@ -314,6 +240,7 @@ pub fn draw_mixer_view(
                                 handle,
                                 eng_id,
                                 state,
+                                undo,
                             ) {
                                 action = Some(MixerViewAction::EditChannelFx(ch.instrument));
                             }
@@ -333,6 +260,7 @@ pub fn draw_mixer_view(
                                 &fx,
                                 &snapshot.return_ids,
                                 state,
+                                undo,
                             ) {
                                 mutation = Some(MixerMutation::DeleteReturn(rb.id));
                             }
@@ -340,13 +268,13 @@ pub fn draw_mixer_view(
 
                         ui.separator();
 
-                        draw_master_strip(ui, handle, &master_effects);
+                        draw_master_strip(ui, handle, &master_effects, undo);
                     });
                 });
         });
 
     if let Some(mutation) = mutation {
-        apply_mutation(mutation, handle, song);
+        apply_mutation(mutation, handle, song, undo);
     }
     action
 }
@@ -518,6 +446,7 @@ fn draw_channel_strip(
     handle: &EngineHandle,
     eng_id: Option<InstrumentId>,
     state: &mut MixerViewState,
+    undo: &mut crate::undo::MixerUndo<'_>,
 ) -> bool {
     use egui_remixicon::icons as ri;
 
@@ -549,15 +478,31 @@ fn draw_channel_strip(
                     {
                         edit_fx = true;
                     }
+                    // Solo and mute clear each other, so the resulting state
+                    // is read back from the track rather than assumed — undoing
+                    // a solo that silently un-muted has to restore both, in one
+                    // step.
                     if solo_toggle(ui, ch.solo).clicked()
                         && let Some(tr) = song.write().track_mut(ch.id)
                     {
+                        let (was_solo, was_mute) = (tr.solo, tr.mute);
                         tr.toggle_solo();
+                        undo.record_click(track_toggle_changes(
+                            ch.id,
+                            (was_solo, was_mute),
+                            (tr.solo, tr.mute),
+                        ));
                     }
                     if mute_toggle(ui, ch.mute).clicked()
                         && let Some(tr) = song.write().track_mut(ch.id)
                     {
+                        let (was_solo, was_mute) = (tr.solo, tr.mute);
                         tr.toggle_mute();
+                        undo.record_click(track_toggle_changes(
+                            ch.id,
+                            (was_solo, was_mute),
+                            (tr.solo, tr.mute),
+                        ));
                     }
                 });
                 let ui = card.body();
@@ -572,25 +517,35 @@ fn draw_channel_strip(
                             .find(|(id, _, _, _)| id == rid)
                             .copied()
                             .unwrap_or((*rid, 0.0, false, true));
-                        draw_send_row(ui, song, ch.id, *rid, rname, level, pre, enabled);
+                        draw_send_row(ui, song, ch.id, *rid, rname, level, pre, enabled, undo);
                     }
                     ui.add_space(t.spacing.xs);
                 }
 
                 // Pan.
                 let mut pan = ch.pan;
-                if ui
-                    .add(
-                        egui::Slider::new(&mut pan, -1.0..=1.0)
-                            .show_value(true)
-                            .fixed_decimals(2)
-                            .text("Pan"),
-                    )
-                    .changed()
+                let pan_response = ui.add(
+                    egui::Slider::new(&mut pan, -1.0..=1.0)
+                        .show_value(true)
+                        .fixed_decimals(2)
+                        .text("Pan"),
+                );
+                if pan_response.changed()
                     && let Some(tr) = song.write().track_mut(ch.id)
                 {
                     tr.pan = BipolarValue::new(pan);
                 }
+                undo.record_drag(
+                    &pan_response,
+                    MixerValue::Balance(BipolarValue::new(ch.pan)),
+                    MixerValue::Balance(BipolarValue::new(pan)),
+                    |old, new| UndoAction::SetTrackMixer {
+                        track_id: ch.id,
+                        param: TrackMixerParam::Pan,
+                        old,
+                        new,
+                    },
+                );
 
                 // Level meter + volume fader, side by side.
                 let peak = eng_id.map_or(0.0, |id| handle.channel_peak(id));
@@ -601,11 +556,23 @@ fn draw_channel_strip(
                     ui.add_space(center_pad(METER_WIDTH + 24.0));
                     draw_meter_bar(ui, level);
                     let mut vol = ch.volume;
-                    if vertical_fader(ui, &mut vol).changed()
+                    let fader = vertical_fader(ui, &mut vol);
+                    if fader.changed()
                         && let Some(tr) = song.write().track_mut(ch.id)
                     {
                         tr.volume = NormalizedValue::new(vol);
                     }
+                    undo.record_drag(
+                        &fader,
+                        MixerValue::Level(NormalizedValue::new(ch.volume)),
+                        MixerValue::Level(NormalizedValue::new(vol)),
+                        |old, new| UndoAction::SetTrackMixer {
+                            track_id: ch.id,
+                            param: TrackMixerParam::Volume,
+                            old,
+                            new,
+                        },
+                    );
                 });
                 caption(ui, format!("{:.2}", ch.volume), CaptionTone::Secondary);
             });
@@ -626,6 +593,7 @@ fn draw_send_row(
     level: f32,
     pre_fader: bool,
     enabled: bool,
+    undo: &mut crate::undo::MixerUndo<'_>,
 ) {
     let t = theme();
     let active = level > 0.0;
@@ -638,7 +606,9 @@ fn draw_send_row(
             .on_hover_text("Enable / bypass this send")
             .changed()
         {
+            let before = current_send(song, track, target);
             set_send_enabled(song, track, target, on);
+            push_send_change(undo, song, track, target, before);
         }
         let short: String = name.chars().take(4).collect();
         // Bypassed (active level but disabled) reads in the muted accent so it's
@@ -650,16 +620,25 @@ fn draw_send_row(
         };
         caption(ui, short, CaptionTone::Color(label_color)).on_hover_text(name);
         let mut lvl = level;
-        if ui
+        let slider = ui
             .add(
                 egui::Slider::new(&mut lvl, 0.0..=1.0)
                     .show_value(false)
                     .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.5 }),
             )
-            .on_hover_text(format!("Send to {name}"))
-            .changed()
-        {
+            .on_hover_text(format!("Send to {name}"));
+        if slider.changed() {
+            // The gesture's starting state is captured before the first write,
+            // so undoing a drag that crossed zero (which deletes the send)
+            // still restores it.
+            undo.coalescer.begin(
+                slider.id,
+                GestureStart::TrackSend(current_send(song, track, target)),
+            );
             apply_send(song, track, target, lvl, pre_fader);
+        }
+        if let Some(GestureStart::TrackSend(before)) = undo.coalescer.end_if_finished(&slider) {
+            push_send_change(undo, song, track, target, before);
         }
         // Pre/post toggle (only meaningful when the send is active).
         let pp = if pre_fader { "Pre" } else { "Post" };
@@ -675,9 +654,48 @@ fn draw_send_row(
             .on_hover_text("Toggle pre/post-fader send")
             .clicked()
         {
+            let before = current_send(song, track, target);
             apply_send(song, track, target, level, !pre_fader);
+            push_send_change(undo, song, track, target, before);
         }
     });
+}
+
+/// The track's send to `target` as it stands, or `None` if there is no send.
+fn current_send(
+    song: &Arc<synth_sequencer::SharedSong>,
+    track: TrackId,
+    target: ReturnBusId,
+) -> Option<TrackSend> {
+    song.read()
+        .track(track)?
+        .sends
+        .iter()
+        .find(|s| s.target == target)
+        .cloned()
+}
+
+/// Push one undo entry for a send edit, reading the post-edit state back from
+/// the song.
+///
+/// `None` on either side means "no send": the mixer deletes a send when its
+/// level reaches zero, so create, adjust and remove all arrive here.
+fn push_send_change(
+    undo: &mut crate::undo::MixerUndo<'_>,
+    song: &Arc<synth_sequencer::SharedSong>,
+    track: TrackId,
+    target: ReturnBusId,
+    before: Option<TrackSend>,
+) {
+    let after = current_send(song, track, target);
+    if before != after {
+        undo.undo.push(UndoAction::SetTrackSend {
+            track_id: track,
+            return_bus: target,
+            old: before,
+            new: after,
+        });
+    }
 }
 
 /// Toggle a send's non-destructive enable flag. No-op if the send doesn't exist.
@@ -703,6 +721,7 @@ fn draw_return_sends(
     song: &Arc<synth_sequencer::SharedSong>,
     rb: &ReturnSnapshot,
     return_ids: &[(ReturnBusId, String)],
+    undo: &mut crate::undo::MixerUndo<'_>,
 ) {
     let t = theme();
     let candidates: Vec<(ReturnBusId, String)> = {
@@ -731,7 +750,9 @@ fn draw_return_sends(
                 .on_hover_text("Enable / bypass this bus send")
                 .changed()
             {
+                let before = current_return_send(song, rb.id, *target);
                 set_return_send_enabled(song, rb.id, *target, on);
+                push_return_send_change(undo, song, rb.id, *target, before);
             }
             let short: String = tname.chars().take(4).collect();
             let color = if active && !enabled {
@@ -741,17 +762,62 @@ fn draw_return_sends(
             };
             caption(ui, short, CaptionTone::Color(color)).on_hover_text(tname);
             let mut lvl = level;
-            if ui
+            let slider = ui
                 .add(
                     egui::Slider::new(&mut lvl, 0.0..=1.0)
                         .show_value(false)
                         .handle_shape(egui::style::HandleShape::Rect { aspect_ratio: 0.5 }),
                 )
-                .on_hover_text(format!("Send to {tname}"))
-                .changed()
-            {
+                .on_hover_text(format!("Send to {tname}"));
+            if slider.changed() {
+                // Capture before the first write of the gesture, so undoing a
+                // drag that crossed zero (which deletes the send) restores it.
+                undo.coalescer.begin(
+                    slider.id,
+                    GestureStart::ReturnSend(current_return_send(song, rb.id, *target)),
+                );
                 apply_return_send(song, rb.id, *target, lvl);
             }
+            if let Some(GestureStart::ReturnSend(before)) = undo.coalescer.end_if_finished(&slider)
+            {
+                push_return_send_change(undo, song, rb.id, *target, before);
+            }
+        });
+    }
+}
+
+/// The bus-to-bus send from `from` to `target` as it stands, or `None`.
+fn current_return_send(
+    song: &Arc<synth_sequencer::SharedSong>,
+    from: ReturnBusId,
+    target: ReturnBusId,
+) -> Option<synth_sequencer::ReturnSend> {
+    song.read()
+        .return_busses()
+        .iter()
+        .find(|b| b.id == from)?
+        .sends
+        .iter()
+        .find(|s| s.target == target)
+        .copied()
+}
+
+/// Push one undo entry for a bus-to-bus send edit, reading the post-edit state
+/// back from the song. Mirrors [`push_send_change`] for the track-send path.
+fn push_return_send_change(
+    undo: &mut crate::undo::MixerUndo<'_>,
+    song: &Arc<synth_sequencer::SharedSong>,
+    from: ReturnBusId,
+    target: ReturnBusId,
+    before: Option<synth_sequencer::ReturnSend>,
+) {
+    let after = current_return_send(song, from, target);
+    if before != after {
+        undo.undo.push(UndoAction::SetReturnSend {
+            from,
+            target,
+            old: before,
+            new: after,
         });
     }
 }
@@ -829,6 +895,54 @@ fn apply_send(
     }
 }
 
+/// The undo entries for one click on a track's mute or solo button.
+///
+/// Both are reported because the two clear each other: soloing a track also
+/// un-mutes it, and undoing has to put both back. `before`/`after` are
+/// `(solo, mute)` read either side of the toggle.
+fn track_toggle_changes(
+    track_id: TrackId,
+    before: (bool, bool),
+    after: (bool, bool),
+) -> Vec<UndoAction> {
+    [
+        (TrackMixerParam::Solo, before.0, after.0),
+        (TrackMixerParam::Mute, before.1, after.1),
+    ]
+    .into_iter()
+    .filter_map(|(param, was, now)| {
+        crate::undo::toggle_change(was, now, |old, new| UndoAction::SetTrackMixer {
+            track_id,
+            param,
+            old,
+            new,
+        })
+    })
+    .collect()
+}
+
+/// The return-bus twin of [`track_toggle_changes`].
+fn return_toggle_changes(
+    bus_id: ReturnBusId,
+    before: (bool, bool),
+    after: (bool, bool),
+) -> Vec<UndoAction> {
+    [
+        (TrackMixerParam::Solo, before.0, after.0),
+        (TrackMixerParam::Mute, before.1, after.1),
+    ]
+    .into_iter()
+    .filter_map(|(param, was, now)| {
+        crate::undo::toggle_change(was, now, |old, new| UndoAction::SetReturnBusMixer {
+            bus_id,
+            param,
+            old,
+            new,
+        })
+    })
+    .collect()
+}
+
 /// Draw a return-bus strip. Returns true if the user asked to delete it.
 #[allow(clippy::too_many_arguments)]
 fn draw_return_strip(
@@ -839,6 +953,7 @@ fn draw_return_strip(
     effects: &[EffectInfo],
     return_ids: &[(ReturnBusId, String)],
     state: &mut MixerViewState,
+    undo: &mut crate::undo::MixerUndo<'_>,
 ) -> bool {
     use egui_remixicon::icons as ri;
 
@@ -910,15 +1025,30 @@ fn draw_return_strip(
                                     {
                                         delete = true;
                                     }
+                                    // `set_solo`/`set_mute` clear each other, so
+                                    // both are read back and recorded as one
+                                    // undo step.
                                     if solo_toggle(ui, rb.solo).clicked()
                                         && let Some(bus) = song.write().return_bus_mut(rb.id)
                                     {
+                                        let before = (bus.solo, bus.mute);
                                         bus.set_solo(!bus.solo);
+                                        undo.record_click(return_toggle_changes(
+                                            rb.id,
+                                            before,
+                                            (bus.solo, bus.mute),
+                                        ));
                                     }
                                     if mute_toggle(ui, rb.mute).clicked()
                                         && let Some(bus) = song.write().return_bus_mut(rb.id)
                                     {
+                                        let before = (bus.solo, bus.mute);
                                         bus.set_mute(!bus.mute);
+                                        undo.record_click(return_toggle_changes(
+                                            rb.id,
+                                            before,
+                                            (bus.solo, bus.mute),
+                                        ));
                                     }
                                 },
                             );
@@ -932,23 +1062,33 @@ fn draw_return_strip(
 
                         // Pan.
                         let mut pan = rb.pan;
-                        if ui
-                            .add(
-                                egui::Slider::new(&mut pan, -1.0..=1.0)
-                                    .show_value(true)
-                                    .fixed_decimals(2)
-                                    .text("Pan"),
-                            )
-                            .changed()
+                        let pan_response = ui.add(
+                            egui::Slider::new(&mut pan, -1.0..=1.0)
+                                .show_value(true)
+                                .fixed_decimals(2)
+                                .text("Pan"),
+                        );
+                        if pan_response.changed()
                             && let Some(bus) = song.write().return_bus_mut(rb.id)
                         {
                             bus.pan = BipolarValue::new(pan);
                         }
+                        undo.record_drag(
+                            &pan_response,
+                            MixerValue::Balance(BipolarValue::new(rb.pan)),
+                            MixerValue::Balance(BipolarValue::new(pan)),
+                            |old, new| UndoAction::SetReturnBusMixer {
+                                bus_id: rb.id,
+                                param: TrackMixerParam::Pan,
+                                old,
+                                new,
+                            },
+                        );
 
                         // Bus-to-bus sends: route this return into other returns
                         // (acyclic only). Each candidate target gets a level slider
                         // + enable toggle; cyclic targets are hidden.
-                        draw_return_sends(ui, song, rb, return_ids);
+                        draw_return_sends(ui, song, rb, return_ids, undo);
 
                         // Level meter + volume fader.
                         let level = smoothed(
@@ -960,11 +1100,23 @@ fn draw_return_strip(
                             ui.add_space(center_pad(METER_WIDTH + 24.0));
                             draw_meter_bar(ui, level);
                             let mut vol = rb.volume;
-                            if vertical_fader(ui, &mut vol).changed()
+                            let fader = vertical_fader(ui, &mut vol);
+                            if fader.changed()
                                 && let Some(bus) = song.write().return_bus_mut(rb.id)
                             {
                                 bus.volume = NormalizedValue::new(vol);
                             }
+                            undo.record_drag(
+                                &fader,
+                                MixerValue::Level(NormalizedValue::new(rb.volume)),
+                                MixerValue::Level(NormalizedValue::new(vol)),
+                                |old, new| UndoAction::SetReturnBusMixer {
+                                    bus_id: rb.id,
+                                    param: TrackMixerParam::Volume,
+                                    old,
+                                    new,
+                                },
+                            );
                         });
                         caption(ui, format!("{:.2}", rb.volume), CaptionTone::Secondary);
                     });
@@ -976,7 +1128,7 @@ fn draw_return_strip(
             // appends a new effect.
             for fx in effects {
                 ui.add_space(t.spacing.xs);
-                draw_effect_module(ui, EffectTarget::Return(rb.id), fx, handle);
+                draw_effect_module(ui, EffectChain::Return(rb.id), fx, effects, handle, undo);
             }
             ui.add_space(t.spacing.xs);
             ui.menu_button(
@@ -986,7 +1138,7 @@ fn draw_return_strip(
                 |ui| {
                     for &mt in RETURN_FX {
                         if ui.button(mt.name()).clicked() {
-                            add_effect(handle, EffectTarget::Return(rb.id), mt, effects);
+                            add_effect(handle, EffectChain::Return(rb.id), mt, effects, undo);
                             ui.close();
                         }
                     }
@@ -1005,9 +1157,11 @@ fn draw_return_strip(
 /// return strip by the caller so the inserts read like a patch-module chain.
 fn draw_effect_module(
     ui: &mut egui::Ui,
-    target: EffectTarget,
+    target: EffectChain,
     fx: &EffectInfo,
+    chain: &[EffectInfo],
     handle: &mut EngineHandle,
+    undo: &mut crate::undo::MixerUndo<'_>,
 ) {
     use egui_remixicon::icons as ri;
     let t = theme();
@@ -1030,12 +1184,31 @@ fn draw_effect_module(
                     // the patch module header (same power/bypass button, no checkbox).
                     if icon_button(ui, ri::CLOSE_LINE, t.colors.text_dim, "Remove effect").clicked()
                     {
-                        handle.send(target.remove(fx.module_id));
+                        // Captured before removing (the instance cannot be
+                        // stored, so undo rebuilds from type and settings), but
+                        // only recorded once the engine has accepted the
+                        // removal — a rejected command means nothing happened,
+                        // and an undo entry for it would re-add a second copy.
+                        let snapshot = snapshot_of(fx, chain);
+                        if handle.send(target.remove(fx.module_id)) {
+                            undo.undo.push(UndoAction::SetChainEffect {
+                                chain: target,
+                                old: Some(Box::new(snapshot)),
+                                new: None,
+                            });
+                        }
                     }
                     if bypass_toggle(ui, fx.bypassed).clicked() {
                         // Toggle: the new enabled state is the opposite of the
                         // current (active) one, i.e. the current bypassed flag.
-                        handle.send(target.set_enabled(fx.module_id, fx.bypassed));
+                        if handle.send(target.set_enabled(fx.module_id, fx.bypassed)) {
+                            undo.undo.push(UndoAction::SetChainEffectBypass {
+                                chain: target,
+                                module_id: fx.module_id,
+                                old: fx.bypassed,
+                                new: !fx.bypassed,
+                            });
+                        }
                     }
                 });
 
@@ -1059,7 +1232,22 @@ fn draw_effect_module(
                         |_| crate::gui::widgets::ModMarkers::default(),
                     );
                     for (param, value) in changes {
-                        handle.send(target.set_param(fx.module_id, param.id.with_f32(value)));
+                        let new = param.id.with_f32(value);
+                        let old = fx
+                            .params
+                            .iter()
+                            .find(|p| p.same_kind(&new))
+                            .copied()
+                            .unwrap_or(param.id);
+                        if old != new {
+                            undo.undo.push(UndoAction::SetChainEffectParameter {
+                                chain: target,
+                                module_id: fx.module_id,
+                                old,
+                                new,
+                            });
+                        }
+                        handle.send(target.set_param(fx.module_id, new));
                     }
                 }
             });
@@ -1067,13 +1255,28 @@ fn draw_effect_module(
     });
 }
 
+/// Capture an effect's persisted state so undo can rebuild it.
+///
+/// `chain` is the whole chain it belongs to, in processing order, so restoring
+/// can put it back in the slot it held instead of appending it at the end.
+fn snapshot_of(fx: &EffectInfo, chain: &[EffectInfo]) -> EffectSnapshot {
+    EffectSnapshot {
+        chain_order: chain.iter().map(|e| e.module_id).collect(),
+        module_id: fx.module_id,
+        module_type: fx.module_type,
+        params: fx.params.clone(),
+        bypassed: fx.bypassed,
+    }
+}
+
 /// Create and append a new effect to a return-bus or master chain. The fresh
 /// `ModuleId` instance is one past the highest existing instance of that type.
 fn add_effect(
     handle: &mut EngineHandle,
-    target: EffectTarget,
+    target: EffectChain,
     module_type: ModuleType,
     effects: &[EffectInfo],
+    undo: &mut crate::undo::MixerUndo<'_>,
 ) {
     let Some((effect, _descriptor)) = crate::module_factory::create_effect(module_type) else {
         return;
@@ -1084,13 +1287,39 @@ fn add_effect(
         .map(|fx| fx.module_id.instance)
         .max()
         .map_or(1, |m| m.saturating_add(1));
-    handle.send(target.add(ModuleId::new(module_type, instance), effect));
+    let module_id = ModuleId::new(module_type, instance);
+    if !handle.send(target.add(module_id, effect)) {
+        // The engine never got the effect, so there is nothing to undo — an
+        // entry here would let Ctrl+Z remove an effect the user still sees.
+        return;
+    }
+    // A fresh effect carries the descriptor's defaults, which the engine
+    // applies on construction; recording an empty parameter list is enough for
+    // undo, because undoing an addition only has to remove it again.
+    undo.undo.push(UndoAction::SetChainEffect {
+        chain: target,
+        old: None,
+        new: Some(Box::new(EffectSnapshot {
+            // A new effect is appended, so its position needs no restoring;
+            // undoing an addition only has to remove it again.
+            chain_order: Vec::new(),
+            module_id,
+            module_type,
+            params: Vec::new(),
+            bypassed: false,
+        })),
+    });
 }
 
 /// Draw the master strip with its insert-effect chain. Master volume is
 /// engine-owned (atomic + command); the master effects are an engine-side chain
 /// (`instrument_id: None`), edited inline here like the return inserts.
-fn draw_master_strip(ui: &mut egui::Ui, handle: &mut EngineHandle, effects: &[EffectInfo]) {
+fn draw_master_strip(
+    ui: &mut egui::Ui,
+    handle: &mut EngineHandle,
+    effects: &[EffectInfo],
+    undo: &mut crate::undo::MixerUndo<'_>,
+) {
     let t = theme();
     let master = handle.state.master_volume.load();
     let (peak_l, peak_r) = handle.peak_meters();
@@ -1121,7 +1350,7 @@ fn draw_master_strip(ui: &mut egui::Ui, handle: &mut EngineHandle, effects: &[Ef
         // beneath the fader like the return inserts.
         for fx in effects {
             ui.add_space(t.spacing.xs);
-            draw_effect_module(ui, EffectTarget::Master, fx, handle);
+            draw_effect_module(ui, EffectChain::Master, fx, effects, handle, undo);
         }
         ui.add_space(t.spacing.xs);
         ui.menu_button(
@@ -1131,7 +1360,7 @@ fn draw_master_strip(ui: &mut egui::Ui, handle: &mut EngineHandle, effects: &[Ef
             |ui| {
                 for &mt in RETURN_FX {
                     if ui.button(mt.name()).clicked() {
-                        add_effect(handle, EffectTarget::Master, mt, effects);
+                        add_effect(handle, EffectChain::Master, mt, effects, undo);
                         ui.close();
                     }
                 }
@@ -1145,6 +1374,7 @@ fn apply_mutation(
     mutation: MixerMutation,
     handle: &mut EngineHandle,
     song: &Arc<synth_sequencer::SharedSong>,
+    undo: &mut crate::undo::MixerUndo<'_>,
 ) {
     match mutation {
         MixerMutation::CreateReturn => {
@@ -1153,14 +1383,71 @@ fn apply_mutation(
                 format!("Return {n}")
             };
             let id = song.write().create_return_bus(name);
-            if !handle.send(EngineCommand::CreateReturnBus { id }) {
+            if handle.send(EngineCommand::CreateReturnBus { id }) {
+                let created = {
+                    let sr = song.read();
+                    sr.return_bus_index(id)
+                        .and_then(|index| sr.return_busses().get(index).map(|b| (index, b.clone())))
+                };
+                if let Some((index, bus)) = created {
+                    undo.undo.push(UndoAction::SetReturnBus {
+                        // A brand-new bus has no inserts yet.
+                        effects: Vec::new(),
+                        bus_id: id,
+                        index,
+                        old: None,
+                        new: Some(Box::new(bus)),
+                    });
+                }
+            } else {
                 // Roll back so song and engine agree on the return-bus set.
+                // Nothing happened from the user's point of view, so nothing
+                // goes on the undo stack either.
                 song.write().delete_return_bus(id);
             }
         }
         MixerMutation::DeleteReturn(id) => {
-            if song.write().delete_return_bus(id).is_some() {
+            // Capture the bus *and its position* before deleting: undo has to
+            // restore its name, colour, fader and bus-to-bus sends, in the strip
+            // slot it occupied — not an empty bus appended to the end.
+            // The insert chain lives in the engine, not the song, and goes
+            // down with the bus — capture it too or undo brings the bus back
+            // bare.
+            let effects: Vec<EffectSnapshot> = handle
+                .state
+                .return_bus_effects
+                .read()
+                .iter()
+                .find(|bus| bus.id == id)
+                .map(|bus| {
+                    // Rebuilt in chain order, so each `add` appends into the
+                    // right slot and no explicit reorder is needed.
+                    bus.effects
+                        .iter()
+                        .map(|e| EffectSnapshot {
+                            chain_order: Vec::new(),
+                            module_id: e.module_id,
+                            module_type: e.module_type,
+                            params: e.parameters.clone(),
+                            bypassed: e.bypassed,
+                        })
+                        .collect()
+                })
+                .unwrap_or_default();
+            let removed = {
+                let mut sw = song.write();
+                let index = sw.return_bus_index(id);
+                index.zip(sw.delete_return_bus(id))
+            };
+            if let Some((index, bus)) = removed {
                 handle.send(EngineCommand::RemoveReturnBus { id });
+                undo.undo.push(UndoAction::SetReturnBus {
+                    effects,
+                    bus_id: id,
+                    index,
+                    old: Some(Box::new(bus)),
+                    new: None,
+                });
             }
         }
     }

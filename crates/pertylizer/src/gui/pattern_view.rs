@@ -26,7 +26,7 @@ use crate::gui::sequencer::{
 };
 use crate::gui::theme::theme;
 use crate::gui::widgets::{danger_button, empty_state, selectable_toggle};
-use crate::undo::UndoManager;
+use crate::undo::{UndoAction, UndoManager};
 
 // ============================================================================
 // VIEW STATE
@@ -275,11 +275,21 @@ fn draw_pattern_browser(
                 list_panel::search_box(ui, &mut pattern_view_state.search_query);
             });
             if add_clicked {
-                let new_id = {
+                let (new_id, created) = {
                     let mut song_w = song.write();
-                    song_w.create_pattern(default_new_pattern_length())
+                    let id = song_w.create_pattern(default_new_pattern_length());
+                    let created = song_w.pattern(id).cloned();
+                    (id, created)
                 };
                 seq_view_state.opened_pattern = Some(new_id);
+                if let Some(pattern) = created {
+                    // `AddPattern`'s inverse deletes it again, which is what
+                    // undoing a creation means.
+                    undo_manager.push(UndoAction::AddPattern {
+                        pattern,
+                        placements: Vec::new(),
+                    });
+                }
             }
 
             let Some(rows) = collect_pattern_browser_data(song) else {
@@ -359,12 +369,18 @@ fn draw_browser_row(
             description,
         });
     } else if duplicate {
-        let new_id = {
+        let created = {
             let mut song_w = song.write();
-            song_w.duplicate_pattern(row.id)
+            song_w
+                .duplicate_pattern(row.id)
+                .and_then(|id| song_w.pattern(id).cloned().map(|p| (id, p)))
         };
-        if let Some(new_id) = new_id {
+        if let Some((new_id, pattern)) = created {
             seq_view_state.opened_pattern = Some(new_id);
+            undo_manager.push(UndoAction::AddPattern {
+                pattern,
+                placements: Vec::new(),
+            });
         }
     } else if delete {
         let captured = {

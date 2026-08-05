@@ -878,6 +878,21 @@ pub fn stepper(ui: &mut Ui, leading: RichText) -> i32 {
     delta
 }
 
+/// A menu entry that shows its keyboard binding, right-aligned, the way every
+/// desktop menu does.
+///
+/// Takes the [`AppShortcut`](crate::gui::shortcuts::AppShortcut) rather than a
+/// label and a hand-written string so the menu and the dispatcher read the same
+/// table: a rebinding shows up here without anyone remembering to update it,
+/// and the menu cannot advertise a shortcut that does something else.
+///
+/// Returns whether the entry was clicked.
+pub fn menu_entry(ui: &mut Ui, icon: &str, shortcut: crate::gui::shortcuts::AppShortcut) -> bool {
+    let binding = ui.ctx().format_shortcut(&shortcut.binding());
+    ui.add(Button::new((icon, shortcut.label())).shortcut_text(binding))
+        .clicked()
+}
+
 #[cfg(test)]
 mod tests {
     use super::{

@@ -170,12 +170,13 @@ pub enum SampleViewAction {
 
 /// Draw the complete sample view.
 #[allow(clippy::too_many_lines)]
-pub fn draw_sample_view(
+pub(crate) fn draw_sample_view(
     ui: &mut egui::Ui,
     library: &Arc<RwLock<SampleLibrary>>,
     state: &mut SampleViewState,
     audio_input: &mut AudioInputManager,
     sample_ref_counts: &std::collections::HashMap<u64, usize>,
+    undo: &mut crate::undo::SampleUndo<'_>,
 ) -> SampleViewAction {
     let ctx = ui.ctx().clone();
     let mut action = SampleViewAction::None;
@@ -300,9 +301,7 @@ pub fn draw_sample_view(
                         };
                     }
                     if delete {
-                        if let Ok(mut lib) = library.write() {
-                            lib.remove(row.id);
-                        }
+                        undo.record_delete(library, row.id);
                         if state.selected_sample == Some(row.id) {
                             state.selected_sample = None;
                             state.peak_cache = None;
@@ -366,7 +365,7 @@ pub fn draw_sample_view(
                 .clicked()
                 && let Some(id) = state.selected_sample
             {
-                normalize_sample(library, id);
+                normalize_sample(library, id, undo);
                 state.peaks_dirty = true;
             }
 
@@ -381,7 +380,7 @@ pub fn draw_sample_view(
                 .clicked()
                 && let Some(id) = state.selected_sample
             {
-                reverse_sample(library, id);
+                reverse_sample(library, id, undo);
                 state.peaks_dirty = true;
             }
 
@@ -396,7 +395,7 @@ pub fn draw_sample_view(
                 .clicked()
                 && let Some(id) = state.selected_sample
             {
-                auto_trim_sample(library, id);
+                auto_trim_sample(library, id, undo);
                 state.peaks_dirty = true;
             }
 
@@ -516,7 +515,7 @@ pub fn draw_sample_view(
                     // Properties panel
                     let meta = sample.meta.clone();
                     drop(lib); // Release read lock before writing
-                    draw_properties(ui, state, library, id, &meta);
+                    draw_properties(ui, state, library, id, &meta, undo);
                 } else {
                     state.selected_sample = None;
                 }
@@ -526,7 +525,7 @@ pub fn draw_sample_view(
         }
     });
 
-    draw_sample_edit_window(&ctx, library, state);
+    draw_sample_edit_window(&ctx, library, state, undo);
 
     action
 }
@@ -537,6 +536,7 @@ fn draw_sample_edit_window(
     ctx: &egui::Context,
     library: &Arc<RwLock<SampleLibrary>>,
     state: &mut SampleViewState,
+    undo: &mut crate::undo::SampleUndo<'_>,
 ) {
     // Drop the popup if the target sample is gone (e.g. deleted while open).
     let Some(id) = state.editing.as_ref().map(|e| e.id) else {
@@ -579,25 +579,28 @@ fn draw_sample_edit_window(
                         .desired_width(f32::INFINITY),
                 )
                 .changed()
-                && let Ok(mut lib) = library.write()
-                && let Some(m) = lib.get_meta(id)
             {
-                let mut updated = m.clone();
-                updated.description = edit.description.clone();
-                lib.update_meta(id, updated);
+                let description = edit.description.clone();
+                undo.record_meta(library, id, |lib| {
+                    if let Some(m) = lib.get_meta(id) {
+                        let mut updated = m.clone();
+                        updated.description = description;
+                        lib.update_meta(id, updated);
+                    }
+                });
             }
         });
 
     // Commit the buffered name once, on defocus or window close. Skip empties.
     let new_name = edit.name.clone();
-    if (name_done || !open)
-        && !new_name.is_empty()
-        && let Ok(mut lib) = library.write()
-        && let Some(m) = lib.get_meta(id)
-    {
-        let mut updated = m.clone();
-        updated.name = new_name;
-        lib.update_meta(id, updated);
+    if (name_done || !open) && !new_name.is_empty() {
+        undo.record_meta(library, id, |lib| {
+            if let Some(m) = lib.get_meta(id) {
+                let mut updated = m.clone();
+                updated.name = new_name;
+                lib.update_meta(id, updated);
+            }
+        });
     }
     if !open {
         state.editing = None;
@@ -814,6 +817,7 @@ fn draw_properties(
     library: &Arc<RwLock<SampleLibrary>>,
     id: SampleId,
     meta: &synth_sampler::SampleMeta,
+    undo: &mut crate::undo::SampleUndo<'_>,
 ) {
     let t = theme();
 
@@ -906,13 +910,14 @@ fn draw_properties(
                     }
                 });
 
-                if new_val != current
-                    && let Ok(mut lib) = library.write()
-                    && let Some(m) = lib.get_meta(id)
-                {
-                    let mut updated = m.clone();
-                    updated.root_note = Some(synth_core::MidiNote::new(new_val));
-                    lib.update_meta(id, updated);
+                if new_val != current {
+                    undo.record_meta(library, id, |lib| {
+                        if let Some(m) = lib.get_meta(id) {
+                            let mut updated = m.clone();
+                            updated.root_note = Some(synth_core::MidiNote::new(new_val));
+                            lib.update_meta(id, updated);
+                        }
+                    });
                 }
             }
             ui.end_row();
@@ -923,19 +928,21 @@ fn draw_properties(
                 let has_loop = meta.loop_region.is_some();
                 let mut loop_enabled = has_loop;
                 if ui.checkbox(&mut loop_enabled, "").changed() {
-                    if let Ok(mut lib) = library.write() {
+                    let frame_count = meta.frame_count.as_usize();
+                    undo.record_meta(library, id, |lib| {
                         if loop_enabled {
-                            let frame_count = meta.frame_count.as_usize();
-                            let region = LoopRegion {
-                                start: FrameIndex::new(0),
-                                end: FrameIndex::new(frame_count),
-                                crossfade: SampleCount::new(64),
-                            };
-                            lib.update_loop(id, Some(region));
+                            lib.update_loop(
+                                id,
+                                Some(LoopRegion {
+                                    start: FrameIndex::new(0),
+                                    end: FrameIndex::new(frame_count),
+                                    crossfade: SampleCount::new(64),
+                                }),
+                            );
                         } else {
                             lib.update_loop(id, None);
                         }
-                    }
+                    });
                     state.peaks_dirty = true;
                 }
             }
@@ -947,13 +954,16 @@ fn draw_properties(
                 {
                     let mut val = loop_region.start.0 as f32;
                     let max = loop_region.end.0.saturating_sub(1) as f32;
-                    if unit_drag_value(ui, &mut val, 0.0..=max, 100.0, " frames").changed() {
-                        if let Ok(mut lib) = library.write() {
+                    let handle = unit_drag_value(ui, &mut val, 0.0..=max, 100.0, " frames");
+                    if handle.changed() {
+                        undo.record_meta_drag(&handle, library, id, |lib| {
                             let mut region = loop_region;
                             region.start = FrameIndex::new(val as usize);
                             lib.update_loop(id, Some(region));
-                        }
+                        });
                         state.peaks_dirty = true;
+                    } else {
+                        undo.finish_meta_drag(&handle, library, id);
                     }
                 }
                 ui.end_row();
@@ -962,21 +972,22 @@ fn draw_properties(
                 {
                     let mut val = loop_region.end.0 as f32;
                     let max = meta.frame_count.as_usize() as f32;
-                    if unit_drag_value(
+                    let handle = unit_drag_value(
                         ui,
                         &mut val,
                         (loop_region.start.0 + 1) as f32..=max,
                         100.0,
                         " frames",
-                    )
-                    .changed()
-                    {
-                        if let Ok(mut lib) = library.write() {
+                    );
+                    if handle.changed() {
+                        undo.record_meta_drag(&handle, library, id, |lib| {
                             let mut region = loop_region;
                             region.end = FrameIndex::new(val as usize);
                             lib.update_loop(id, Some(region));
-                        }
+                        });
                         state.peaks_dirty = true;
+                    } else {
+                        undo.finish_meta_drag(&handle, library, id);
                     }
                 }
                 ui.end_row();
@@ -984,12 +995,15 @@ fn draw_properties(
                 ui.label(egui::RichText::new("Crossfade:").color(t.colors.text_secondary));
                 {
                     let mut val = loop_region.crossfade.as_usize() as f32;
-                    if unit_drag_value(ui, &mut val, 0.0..=4096.0, 10.0, " frames").changed()
-                        && let Ok(mut lib) = library.write()
-                    {
-                        let mut region = loop_region;
-                        region.crossfade = SampleCount::new(val as usize);
-                        lib.update_loop(id, Some(region));
+                    let handle = unit_drag_value(ui, &mut val, 0.0..=4096.0, 10.0, " frames");
+                    if handle.changed() {
+                        undo.record_meta_drag(&handle, library, id, |lib| {
+                            let mut region = loop_region;
+                            region.crossfade = SampleCount::new(val as usize);
+                            lib.update_loop(id, Some(region));
+                        });
+                    } else {
+                        undo.finish_meta_drag(&handle, library, id);
                     }
                 }
                 ui.end_row();
@@ -1001,18 +1015,20 @@ fn draw_properties(
                 let has_crop = meta.crop.is_some();
                 let mut crop_enabled = has_crop;
                 if ui.checkbox(&mut crop_enabled, "").changed() {
-                    if let Ok(mut lib) = library.write() {
+                    let frame_count = meta.frame_count.as_usize();
+                    undo.record_meta(library, id, |lib| {
                         if crop_enabled {
-                            let frame_count = meta.frame_count.as_usize();
-                            let region = CropRegion {
-                                start: FrameIndex::new(0),
-                                end: FrameIndex::new(frame_count),
-                            };
-                            lib.update_crop(id, Some(region));
+                            lib.update_crop(
+                                id,
+                                Some(CropRegion {
+                                    start: FrameIndex::new(0),
+                                    end: FrameIndex::new(frame_count),
+                                }),
+                            );
                         } else {
                             lib.update_crop(id, None);
                         }
-                    }
+                    });
                     state.peaks_dirty = true;
                 }
             }
@@ -1023,8 +1039,9 @@ fn draw_properties(
                 {
                     let mut val = crop.start.0 as f32;
                     let max = crop.end.0.saturating_sub(1) as f32;
-                    if unit_drag_value(ui, &mut val, 0.0..=max, 100.0, " frames").changed() {
-                        if let Ok(mut lib) = library.write() {
+                    let handle = unit_drag_value(ui, &mut val, 0.0..=max, 100.0, " frames");
+                    if handle.changed() {
+                        undo.record_meta_drag(&handle, library, id, |lib| {
                             lib.update_crop(
                                 id,
                                 Some(CropRegion {
@@ -1032,8 +1049,10 @@ fn draw_properties(
                                     end: crop.end,
                                 }),
                             );
-                        }
+                        });
                         state.peaks_dirty = true;
+                    } else {
+                        undo.finish_meta_drag(&handle, library, id);
                     }
                 }
                 ui.end_row();
@@ -1042,16 +1061,15 @@ fn draw_properties(
                 {
                     let mut val = crop.end.0 as f32;
                     let max = meta.frame_count.as_usize() as f32;
-                    if unit_drag_value(
+                    let handle = unit_drag_value(
                         ui,
                         &mut val,
                         (crop.start.0 + 1) as f32..=max,
                         100.0,
                         " frames",
-                    )
-                    .changed()
-                    {
-                        if let Ok(mut lib) = library.write() {
+                    );
+                    if handle.changed() {
+                        undo.record_meta_drag(&handle, library, id, |lib| {
                             lib.update_crop(
                                 id,
                                 Some(CropRegion {
@@ -1059,8 +1077,10 @@ fn draw_properties(
                                     end: FrameIndex::new(val as usize),
                                 }),
                             );
-                        }
+                        });
                         state.peaks_dirty = true;
+                    } else {
+                        undo.finish_meta_drag(&handle, library, id);
                     }
                 }
                 ui.end_row();
@@ -1073,7 +1093,11 @@ fn draw_properties(
 // ============================================================================
 
 /// Normalize sample peak level to 0 dB.
-fn normalize_sample(library: &Arc<RwLock<SampleLibrary>>, id: SampleId) {
+fn normalize_sample(
+    library: &Arc<RwLock<SampleLibrary>>,
+    id: SampleId,
+    undo: &mut crate::undo::SampleUndo<'_>,
+) {
     if let Ok(lib) = library.read()
         && let Some(sample) = lib.get(id)
     {
@@ -1087,15 +1111,19 @@ fn normalize_sample(library: &Arc<RwLock<SampleLibrary>>, id: SampleId) {
                 .collect::<Vec<_>>()
                 .into();
             drop(lib);
-            if let Ok(mut lib) = library.write() {
+            undo.record_data(library, id, |lib| {
                 lib.replace_data(id, normalized);
-            }
+            });
         }
     }
 }
 
 /// Reverse the sample data.
-fn reverse_sample(library: &Arc<RwLock<SampleLibrary>>, id: SampleId) {
+fn reverse_sample(
+    library: &Arc<RwLock<SampleLibrary>>,
+    id: SampleId,
+    undo: &mut crate::undo::SampleUndo<'_>,
+) {
     if let Ok(lib) = library.read()
         && let Some(sample) = lib.get(id)
     {
@@ -1112,14 +1140,18 @@ fn reverse_sample(library: &Arc<RwLock<SampleLibrary>>, id: SampleId) {
 
         let data: Arc<[f32]> = reversed.into();
         drop(lib);
-        if let Ok(mut lib) = library.write() {
+        undo.record_data(library, id, |lib| {
             lib.replace_data(id, data);
-        }
+        });
     }
 }
 
 /// Auto-trim: set crop to first/last audible frame (threshold: -40 dB).
-fn auto_trim_sample(library: &Arc<RwLock<SampleLibrary>>, id: SampleId) {
+fn auto_trim_sample(
+    library: &Arc<RwLock<SampleLibrary>>,
+    id: SampleId,
+    undo: &mut crate::undo::SampleUndo<'_>,
+) {
     let threshold = 0.01_f32; // ~ -40 dB
 
     if let Ok(lib) = library.read()
@@ -1160,9 +1192,9 @@ fn auto_trim_sample(library: &Arc<RwLock<SampleLibrary>>, id: SampleId) {
                 end: FrameIndex::new(end),
             };
             drop(lib);
-            if let Ok(mut lib) = library.write() {
+            undo.record_meta(library, id, |lib| {
                 lib.update_crop(id, Some(crop));
-            }
+            });
         }
     }
 }

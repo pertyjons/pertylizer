@@ -690,12 +690,15 @@ impl Patch {
         serde_json::from_str(&content).map_err(|e| PatchError::Parse(e.to_string()))
     }
 
-    /// Save the patch to a JSON file.
+    /// Save the patch to a JSON file, replacing any existing file atomically.
+    ///
+    /// Serializing first means a broken patch fails before the destination is
+    /// touched; the write itself cannot truncate the previous file either.
     pub fn save(&self, path: impl AsRef<Path>) -> Result<(), PatchError> {
         let content =
             serde_json::to_string_pretty(self).map_err(|e| PatchError::Serialize(e.to_string()))?;
 
-        fs::write(path.as_ref(), content).map_err(|e| PatchError::Io(e.to_string()))
+        crate::io::atomic::write(path.as_ref(), content.as_bytes()).map_err(PatchError::from)
     }
 
     /// Add a module to the patch.
@@ -930,6 +933,15 @@ pub enum PatchError {
     Parse(String),
     #[error("Serialize error: {0}")]
     Serialize(String),
+}
+
+impl From<crate::io::AtomicWriteError> for PatchError {
+    /// Every atomic-write failure is an I/O failure from a caller's point of
+    /// view — the message already says which step broke and that the previous
+    /// file survived.
+    fn from(e: crate::io::AtomicWriteError) -> Self {
+        Self::Io(e.to_string())
+    }
 }
 
 // ============================================================================

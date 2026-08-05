@@ -67,6 +67,15 @@ impl KeyboardInputState {
         let mut octave_up = false;
 
         ctx.input(|input| {
+            // A held command/ctrl modifier means the keystroke is a shortcut,
+            // not a note. Without this check every `Cmd+S` also played a C♯,
+            // `Cmd+Z` a C, `Cmd+V` an F — the letters the piano layout happens
+            // to use are exactly the ones the standard editing chords use.
+            //
+            // Note-*offs* are still collected: a note that started before the
+            // modifier went down has to be able to stop.
+            let modified = input.modifiers.command || input.modifiers.ctrl || input.modifiers.alt;
+
             for (key, base_note) in KEY_MAP {
                 let note_i32 = *base_note as i32 + octave_offset * 12;
                 if !(0..=127).contains(&note_i32) {
@@ -74,7 +83,7 @@ impl KeyboardInputState {
                 }
                 let note = note_i32 as u8;
 
-                if input.key_pressed(*key) {
+                if !modified && input.key_pressed(*key) {
                     pressed.push(note);
                 }
                 if input.key_released(*key) {
@@ -82,8 +91,8 @@ impl KeyboardInputState {
                 }
             }
 
-            octave_down = input.key_pressed(egui::Key::Minus);
-            octave_up = input.key_pressed(egui::Key::Plus);
+            octave_down = !modified && input.key_pressed(egui::Key::Minus);
+            octave_up = !modified && input.key_pressed(egui::Key::Plus);
         });
 
         Self {
@@ -91,6 +100,25 @@ impl KeyboardInputState {
             released,
             octave_down,
             octave_up,
+        }
+    }
+}
+
+/// Send note-offs for every note the computer keyboard is still holding.
+///
+/// Called when input stops reaching the piano — a text field takes focus, a
+/// modal opens, the window loses focus, the view changes. Without it the key
+/// release lands somewhere else and the note sustains forever, which is the
+/// most audible bug in the whole input path.
+pub fn release_all_keyboard_notes(
+    handle: &mut EngineHandle,
+    pressed_keys: &mut HashMap<u8, bool>,
+    active_channel: MidiChannelSelection,
+) {
+    for (note, held) in pressed_keys.iter_mut() {
+        if *held {
+            handle.note_off_channel(MidiNote::new(*note), active_channel);
+            *held = false;
         }
     }
 }

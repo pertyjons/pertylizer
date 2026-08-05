@@ -441,7 +441,10 @@ pub enum ModuleConnectivity {
 }
 
 /// A port exposed on a group boundary (UI-level).
-#[derive(Debug, Clone)]
+///
+/// `Hash` feeds [`PatchEditor::layout_fingerprint`] — every field here is
+/// persisted, so a change to any of them is an unsaved change.
+#[derive(Debug, Clone, Hash)]
 pub(crate) struct ExposedPort {
     pub label: String,
     pub module_id: ModuleId,
@@ -1568,6 +1571,61 @@ impl PatchEditor {
     /// Check if a module is a "sink" (no outgoing audio connections).
     pub fn is_sink(&self, module_id: ModuleId) -> bool {
         !self.connections.iter().any(|c| c.from_module == module_id)
+    }
+
+    /// A fingerprint of exactly the canvas state that gets written to a project
+    /// file — module positions and every persisted field of each group.
+    ///
+    /// This is how the unsaved-changes check notices layout edits. The
+    /// alternative, bumping a counter from each of the ~30 places that move a
+    /// card or edit a group, is the pattern that let dragging a module go
+    /// unrecorded in the first place: it relies on every future editor
+    /// remembering. Deriving the value from the same data
+    /// [`Self::group_states`] and the save path read means a new mutation
+    /// cannot escape it.
+    ///
+    /// Order-independent — each entry is hashed on its own and the results are
+    /// summed, not concatenated — so `HashMap` iteration order does not make an
+    /// unchanged canvas look edited. Within one entry the fields go into a
+    /// single hasher *in order*: folding them together with XOR instead would
+    /// let two fields carrying the same value cancel out, so moving a port from
+    /// a group's exposed inputs to its exposed outputs would fingerprint the
+    /// same as never having exposed it.
+    ///
+    /// Floats are hashed by bit pattern, which is what "unchanged" means here —
+    /// a card that lands back on the exact same pixel is not an edit.
+    #[must_use]
+    pub fn layout_fingerprint(&self) -> u64 {
+        use std::hash::{Hash, Hasher};
+        use synth_core::hash::splitmix64;
+
+        /// Positions are `f32`; hash the bit pattern, because "the card is on
+        /// the same pixel" is exactly the equality this needs.
+        fn hash_pos(hasher: &mut impl Hasher, pos: Pos2) {
+            hasher.write_u32(pos.x.to_bits());
+            hasher.write_u32(pos.y.to_bits());
+        }
+
+        let mut acc: u64 = 0;
+        for (id, panel) in &self.panels {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            id.hash(&mut hasher);
+            hash_pos(&mut hasher, panel.position);
+            acc = acc.wrapping_add(splitmix64(hasher.finish()));
+        }
+        for (id, group) in &self.groups {
+            let mut hasher = std::collections::hash_map::DefaultHasher::new();
+            id.hash(&mut hasher);
+            group.name.hash(&mut hasher);
+            group.color.hash(&mut hasher);
+            group.members.hash(&mut hasher);
+            group.collapsed.hash(&mut hasher);
+            group.exposed_inputs.hash(&mut hasher);
+            group.exposed_outputs.hash(&mut hasher);
+            hash_pos(&mut hasher, group.position);
+            acc = acc.wrapping_add(splitmix64(hasher.finish()));
+        }
+        acc
     }
 
     /// Calculate the bounding box of all module positions + estimated size.

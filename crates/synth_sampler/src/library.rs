@@ -5,11 +5,22 @@ use std::collections::HashMap;
 use crate::sample::Sample;
 use crate::types::{CropRegion, LoopRegion, SampleId, SampleMeta};
 use std::sync::Arc;
+use synth_core::ContentRevision;
 
 /// Central registry of all loaded samples.
+///
+/// `Clone` is cheap — samples share their audio through `Arc`, so a clone
+/// copies metadata and bumps refcounts. Autosave uses it to take an owned
+/// snapshot under the read lock and write it off the UI thread.
+#[derive(Clone)]
 pub struct SampleLibrary {
     samples: HashMap<SampleId, Sample>,
     next_id: u64,
+    /// Bumped by every mutating method below, so the application shell can tell
+    /// that samples were imported, deleted, or edited without deep-comparing
+    /// the audio buffers. Mirrors `SharedSong::revision`; the two together plus
+    /// the engine graph version make up the project's dirty state.
+    revision: ContentRevision,
 }
 
 impl SampleLibrary {
@@ -18,7 +29,19 @@ impl SampleLibrary {
         Self {
             samples: HashMap::new(),
             next_id: 1,
+            revision: ContentRevision::INITIAL,
         }
+    }
+
+    /// The current edit revision, advanced by every mutation of the library.
+    pub fn revision(&self) -> ContentRevision {
+        self.revision
+    }
+
+    /// Record that the library changed. Every mutating method funnels through
+    /// here rather than touching the field, so a new one cannot forget.
+    fn mark_mutated(&mut self) {
+        self.revision = self.revision.next();
     }
 
     /// Add a sample, assigning and returning its ID.
@@ -27,6 +50,7 @@ impl SampleLibrary {
         self.next_id += 1;
         sample.meta.id = id;
         self.samples.insert(id, sample);
+        self.mark_mutated();
         id
     }
 
@@ -39,6 +63,7 @@ impl SampleLibrary {
         if id.as_u64() >= self.next_id {
             self.next_id = id.as_u64() + 1;
         }
+        self.mark_mutated();
         id
     }
 
@@ -47,6 +72,7 @@ impl SampleLibrary {
     pub fn replace_data(&mut self, id: SampleId, data: Arc<[f32]>) -> bool {
         if let Some(sample) = self.samples.get_mut(&id) {
             sample.data = data;
+            self.mark_mutated();
             true
         } else {
             false
@@ -55,12 +81,20 @@ impl SampleLibrary {
 
     /// Remove a sample by ID.
     pub fn remove(&mut self, id: SampleId) -> Option<Sample> {
-        self.samples.remove(&id)
+        let removed = self.samples.remove(&id);
+        if removed.is_some() {
+            self.mark_mutated();
+        }
+        removed
     }
 
     /// Remove all samples from the library.
     pub fn clear(&mut self) {
+        if self.samples.is_empty() {
+            return;
+        }
         self.samples.clear();
+        self.mark_mutated();
     }
 
     /// Get a sample reference by ID.
@@ -97,6 +131,7 @@ impl SampleLibrary {
     pub fn update_meta(&mut self, id: SampleId, meta: SampleMeta) {
         if let Some(sample) = self.samples.get_mut(&id) {
             sample.meta = meta;
+            self.mark_mutated();
         }
     }
 
@@ -104,6 +139,7 @@ impl SampleLibrary {
     pub fn update_crop(&mut self, id: SampleId, crop: Option<CropRegion>) {
         if let Some(sample) = self.samples.get_mut(&id) {
             sample.meta.crop = crop;
+            self.mark_mutated();
         }
     }
 
@@ -111,6 +147,7 @@ impl SampleLibrary {
     pub fn update_loop(&mut self, id: SampleId, region: Option<LoopRegion>) {
         if let Some(sample) = self.samples.get_mut(&id) {
             sample.meta.loop_region = region;
+            self.mark_mutated();
         }
     }
 }
@@ -126,7 +163,7 @@ mod tests {
     use super::*;
     use crate::types::{FrameIndex, SampleSource};
     use synth_core::audio::DeviceSampleRate;
-    use synth_core::{ChannelCount, SampleCount};
+    use synth_core::{ChannelCount, ContentRevision, SampleCount};
 
     fn make_sample(name: &str) -> Sample {
         Sample::new(
@@ -238,5 +275,79 @@ mod tests {
     fn remove_nonexistent_returns_none() {
         let mut lib = SampleLibrary::new();
         assert!(lib.remove(SampleId::new(999)).is_none());
+    }
+
+    #[test]
+    fn a_fresh_library_starts_at_the_initial_revision() {
+        assert_eq!(SampleLibrary::new().revision(), ContentRevision::INITIAL);
+    }
+
+    /// Every mutating entry point must advance the revision, or an edit made
+    /// through it would leave the project looking saved.
+    #[test]
+    fn every_mutation_advances_the_revision() {
+        let mut lib = SampleLibrary::new();
+        let mut previous = lib.revision();
+        let mut assert_advanced = |lib: &SampleLibrary, what: &str| {
+            assert_ne!(lib.revision(), previous, "{what} must advance the revision");
+            previous = lib.revision();
+        };
+
+        let id = lib.add(make_sample("kick"));
+        assert_advanced(&lib, "add");
+
+        lib.add_with_id(make_sample("snare"), SampleId::new(42));
+        assert_advanced(&lib, "add_with_id");
+
+        lib.replace_data(id, vec![1.0_f32; 10].into());
+        assert_advanced(&lib, "replace_data");
+
+        let mut meta = lib.get_meta(id).expect("meta").clone();
+        meta.name = "renamed".to_string();
+        lib.update_meta(id, meta);
+        assert_advanced(&lib, "update_meta");
+
+        lib.update_crop(
+            id,
+            Some(CropRegion {
+                start: FrameIndex::new(1),
+                end: FrameIndex::new(9),
+            }),
+        );
+        assert_advanced(&lib, "update_crop");
+
+        lib.update_loop(
+            id,
+            Some(LoopRegion {
+                start: FrameIndex::new(2),
+                end: FrameIndex::new(8),
+                crossfade: SampleCount::new(0),
+            }),
+        );
+        assert_advanced(&lib, "update_loop");
+
+        lib.remove(id);
+        assert_advanced(&lib, "remove");
+
+        lib.clear();
+        assert_advanced(&lib, "clear");
+    }
+
+    /// A no-op must not look like an edit: removing a missing sample or
+    /// clearing an already-empty library changes nothing the user would call
+    /// unsaved work.
+    #[test]
+    fn no_op_mutations_leave_the_revision_alone() {
+        let mut lib = SampleLibrary::new();
+        let before = lib.revision();
+
+        assert!(lib.remove(SampleId::new(999)).is_none());
+        lib.clear();
+        lib.update_meta(SampleId::new(999), make_sample("ghost").meta);
+        lib.update_crop(SampleId::new(999), None);
+        lib.update_loop(SampleId::new(999), None);
+        assert!(!lib.replace_data(SampleId::new(999), vec![0.0_f32; 1].into()));
+
+        assert_eq!(lib.revision(), before);
     }
 }

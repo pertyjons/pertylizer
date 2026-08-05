@@ -451,13 +451,24 @@ pub fn populate_editor_from_patch(
     patch_editor.mark_effect_chain_aligned(baseline_order);
 }
 
-/// Add a single module to `patch_editor` after `apply_project` has run.
+/// Recreate one module in both the engine and the patch editor, keeping the
+/// id it had.
 ///
-/// Visualizers and SignalMonitor are still created here (with their
-/// `VisualizationBuffer`s) because `apply_project` skips them. All other
-/// modules read their descriptor from `session` and only update the
-/// editor's local cache — no engine commands are sent.
-fn populate_editor_module(
+/// Id-preserving is what makes this usable for undo: a restored module has to
+/// answer to the same id its cables and automation lanes still reference.
+///
+/// Two paths, decided by whether the session already knows the module:
+///
+/// - **Project loading** — `apply_project` has already registered the
+///   descriptor and built the module in the engine, so only the editor's local
+///   cache needs filling. (Visualizers and SignalMonitor are the exception:
+///   `apply_project` skips them because they need a GUI-owned
+///   `VisualizationBuffer`, so they are always built here.)
+/// - **Undo** — the module was removed, which took its session registration
+///   and its engine instance with it. Nothing is left to mirror, so it is
+///   installed from scratch and its saved parameters are pushed to the engine
+///   as well as to the editor.
+pub(crate) fn populate_editor_module(
     module_state: &ModuleState,
     patch_editor: &mut PatchEditor,
     session: &SynthSession,
@@ -499,20 +510,43 @@ fn populate_editor_module(
         return;
     }
 
-    // Non-visualizer modules: `apply_project` already registered the
-    // descriptor and sent the engine commands; only the editor cache
-    // needs filling.
-    let descriptor = match session.module_descriptor(instrument_id, module_id) {
-        Some(d) => d,
-        None => {
-            eprintln!(
-                "populate_editor_from_patch: missing descriptor for {module_id} in instrument {instrument_id:?} \
-                 (apply_project failed earlier?); skipping module"
-            );
-            return;
+    // No session registration means the module does not exist anywhere — the
+    // undo path, where it was removed. Build it (keeping its id) instead of
+    // mirroring state that is not there, or the module would come back as a
+    // card on the canvas with no sound behind it and its restored cables would
+    // reference a port the engine does not have.
+    let Some(descriptor) = session.module_descriptor(instrument_id, module_id) else {
+        match install_editor_module_with_id(
+            session,
+            handle,
+            instrument_id,
+            patch_editor,
+            module_id,
+            position,
+        ) {
+            Ok(descriptor) => apply_module_parameters(
+                module_id,
+                &descriptor,
+                &module_state.parameters,
+                patch_editor,
+                handle,
+                instrument_id,
+            ),
+            Err(error) => {
+                tracing::warn!(
+                    target: "pertylizer::patch",
+                    module = %module_id,
+                    instrument = ?instrument_id,
+                    %error,
+                    "could not rebuild a module",
+                );
+            }
         }
+        return;
     };
 
+    // Already in the session: `apply_project` registered the descriptor and
+    // sent the engine commands, so only the editor cache needs filling.
     patch_editor.add_module_at(module_id, descriptor.clone(), position);
     apply_module_parameters_ui(
         module_id,

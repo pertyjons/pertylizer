@@ -1279,6 +1279,11 @@ impl SynthEngine {
                     slot.state = crate::effect_chain::EnabledState::from(enabled);
                 }
             }
+            EngineCommand::SetReturnEffectChainOrder { return_id, order } => {
+                if let Some(bus) = self.return_busses.iter_mut().find(|b| b.id() == return_id) {
+                    bus.effect_chain_mut().set_slot_order(&order);
+                }
+            }
             EngineCommand::ReorderReturnEffect {
                 return_id,
                 module_id,

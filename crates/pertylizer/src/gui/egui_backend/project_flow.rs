@@ -792,7 +792,7 @@ impl SynthApp {
         self.current_project_path = None;
         self.current_patch_name = "Init".to_string();
         self.current_patch_path = None;
-        self.dirty = false;
+        self.mark_saved();
         // A fresh, empty project lands on the Home welcome screen.
         self.active_view = AppView::Home;
     }
@@ -803,7 +803,7 @@ impl SynthApp {
             Ok(LoadedFile::Project(proj)) => {
                 self.load_project_data(*proj);
                 self.current_project_path = Some(path.clone());
-                self.dirty = false;
+                self.mark_saved();
                 self.settings.add_recent_project(path.clone());
                 self.settings.save();
                 self.dialog_state
@@ -813,7 +813,7 @@ impl SynthApp {
                 self.load_patch_data(&patch);
                 self.current_patch_name = patch.name.clone();
                 self.current_patch_path = Some(path.clone());
-                self.dirty = false;
+                self.mark_saved();
                 self.settings.add_recent_project(path.clone());
                 self.settings.save();
                 self.dialog_state
@@ -822,7 +822,7 @@ impl SynthApp {
             Ok(LoadedFile::Bundle(bundle_path)) => match self.load_bundle_file(&bundle_path) {
                 Ok(msg) => {
                     self.current_project_path = Some(path.clone());
-                    self.dirty = false;
+                    self.mark_saved();
                     self.settings.add_recent_project(path.clone());
                     self.settings.save();
                     self.dialog_state.set_status(msg);
@@ -858,7 +858,7 @@ impl SynthApp {
             match save_result {
                 Ok(()) => {
                     self.current_project_path = Some(path.clone());
-                    self.dirty = false;
+                    self.mark_saved();
                     self.settings.add_recent_project(path.clone());
                     self.settings.save();
                     self.dialog_state
@@ -907,7 +907,7 @@ impl SynthApp {
                         close = true;
                     }
                     if ui.button("Don't Save").clicked() {
-                        self.dirty = false;
+                        self.mark_saved();
                         self.execute_pending_action(ctx);
                         close = true;
                     }

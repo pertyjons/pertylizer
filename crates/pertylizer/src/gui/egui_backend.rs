@@ -26,10 +26,11 @@ use crate::gui::instrument_rack::InstrumentUiState;
 use crate::gui::keyboard::PianoKeyboard;
 use crate::gui::patch_bridge;
 use crate::gui::patch_editor::{GroupTemplateAction, PatchEditor, QuickAddRequest};
+use crate::gui::shortcuts;
 use crate::gui::theme::theme;
 use crate::gui::widgets::{
     danger_button, dim_label, draw_oscilloscope, draw_stereo_meter, empty_state, expose_selected,
-    stepper, submenu_button,
+    menu_entry, stepper, submenu_button,
 };
 use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
 use crate::io::settings::AppSettings;
@@ -44,6 +45,7 @@ use synth_engine::instrument::{InstrumentId, MidiChannelSelection};
 use synth_engine::{EngineCommand, EngineEvent, EngineHandle, ModuleId, SynthEngine};
 use synth_sampler::SampleLibrary;
 
+mod autosave_flow;
 mod dialog_flow;
 mod dialog_state;
 mod engine_events;
@@ -442,11 +444,43 @@ struct SynthApp {
     // Undo/redo manager
     undo_manager: crate::undo::UndoManager,
 
-    /// Whether the current project has unsaved changes.
-    dirty: bool,
+    /// Gesture tracking for continuous controls, so one fader drag becomes one
+    /// undo entry instead of one per frame.
+    drag_coalescer: crate::undo::DragCoalescer,
+
+    /// Edit counters as of the last load or successful save — the "clean"
+    /// baseline that [`Self::is_dirty`] compares the live counters against.
+    saved_revision: crate::dirty::ProjectRevision,
+
+    /// Counter for patch-canvas state that no shared subsystem owns (module
+    /// positions, group boxes, canvas size, instrument colour). Bumped by
+    /// [`Self::mark_dirty`]; everything else is observed rather than reported.
+    ui_revision: synth_core::ContentRevision,
+
+    /// Undo-history position as of the last load or save.
+    ///
+    /// Undoing back to this position means the project is back at the state
+    /// that was saved, so it should read clean again — see [`Self::is_dirty`].
+    saved_undo_position: crate::undo::HistoryPosition,
+
+    /// The revision and undo-mutation count seen on the previous frame, for
+    /// spotting a project change that bypassed the undo manager.
+    last_observed: (crate::dirty::ProjectRevision, u64),
+
+    /// Set when a mutation since the last save did *not* go through the undo
+    /// manager, which makes the undo-depth shortcut in [`Self::is_dirty`]
+    /// unsafe: undoing everything undoable would still leave that change in
+    /// place, and calling the project clean would invite discarding it.
+    untracked_mutation_since_save: bool,
 
     /// Unsaved changes confirmation dialog state.
     unsaved_dialog: UnsavedChangesDialog,
+
+    /// Debounced recovery-snapshot scheduling.
+    autosave: autosave_flow::AutosaveState,
+
+    /// Work found from a previous session, awaiting the user's decision.
+    recovery_prompt: Option<crate::recovery::RecoveryEntry>,
 
     /// Module clipboard for copy/paste.
     clipboard: crate::gui::clipboard::ModuleClipboard,
@@ -555,7 +589,7 @@ impl SynthApp {
             dialog_state.set_status(warning.clone());
         }
 
-        Self {
+        let mut app = Self {
             handle,
             host: Some(host),
             latency,
@@ -586,8 +620,18 @@ impl SynthApp {
             osc_shared: config.osc_shared,
             settings,
             undo_manager: crate::undo::UndoManager::new(),
-            dirty: false,
+            drag_coalescer: crate::undo::DragCoalescer::default(),
+            // Provisional; replaced by the `mark_saved()` below once the struct
+            // exists, so the baseline reflects whatever startup already put into
+            // the session, song and sample library.
+            saved_revision: crate::dirty::ProjectRevision::default(),
+            ui_revision: synth_core::ContentRevision::INITIAL,
+            saved_undo_position: (0, 0),
+            last_observed: (crate::dirty::ProjectRevision::default(), 0),
+            untracked_mutation_since_save: false,
             unsaved_dialog: UnsavedChangesDialog::default(),
+            autosave: autosave_flow::AutosaveState::new(),
+            recovery_prompt: None,
             clipboard: crate::gui::clipboard::ModuleClipboard::new(),
             scope_buf_l: Vec::new(),
             scope_buf_r: Vec::new(),
@@ -605,12 +649,124 @@ impl SynthApp {
             current_project_author: project_author,
             activity_log: config.activity_log,
             activity_log_view: crate::gui::activity_log_view::ActivityLogViewState::default(),
+        };
+
+        // Whatever engine and song state startup produced is the clean baseline
+        // — a freshly launched app has no unsaved changes. Reading the counters
+        // here rather than assuming they are zero keeps that true when the app
+        // is launched with a project on the command line, or when engine setup
+        // has already published commands to the shared graph.
+        app.capture_clean_baseline();
+        // Ask about work from a previous session before the user starts editing
+        // this one — the answer decides which document they are working in.
+        app.check_for_recoverable_work();
+        app
+    }
+
+    /// Record a change to patch-canvas state that no shared subsystem owns.
+    ///
+    /// Only needed for GUI-only data — module positions, group boxes, canvas
+    /// size, instrument colour. Edits to the song, the engine graph or the
+    /// sample library are picked up by [`Self::current_revision`] without the
+    /// editor doing anything.
+    fn mark_dirty(&mut self) {
+        self.ui_revision = self.ui_revision.next();
+    }
+
+    /// The live edit counters of every subsystem holding part of the project.
+    fn current_revision(&self) -> crate::dirty::ProjectRevision {
+        crate::dirty::ProjectRevision {
+            song: self.song.revision(),
+            graph: synth_core::ContentRevision::new(self.session.state().shared_graph.version()),
+            samples: self
+                .sample_library
+                .read()
+                .map_or(synth_core::ContentRevision::INITIAL, |lib| lib.revision()),
+            ui: self.ui_revision,
+            // Summed rather than concatenated so instrument order does not
+            // matter. Each term only ever changes when that instrument's
+            // canvas changes, so a sum cannot silently cancel out.
+            layout: self.instruments.iter().fold(0u64, |acc, inst| {
+                acc.wrapping_add(inst.patch_editor.layout_fingerprint())
+            }),
         }
     }
 
-    /// Mark the project as having unsaved changes.
-    fn mark_dirty(&mut self) {
-        self.dirty = true;
+    /// Whether the project has changes that are not in the file on disk.
+    ///
+    /// Two ways to be clean. The obvious one is that nothing has happened since
+    /// the baseline. The second is that the user undid their way back to it:
+    /// the counters are monotonic and cannot recognise a return to a previous
+    /// point, so the undo stack answers that instead — standing at the same
+    /// history position it did when the project was saved means the same edits
+    /// have been undone as were made.
+    ///
+    /// The position must identify the *route*, not just the depth: undoing one
+    /// edit and then making a different one comes back to the saved depth while
+    /// leaving the project two edits away from the file, and calling that clean
+    /// would drop the `*`, skip the quit prompt and stop autosave. See
+    /// [`UndoManager::position`](crate::undo::UndoManager::position).
+    ///
+    /// The shortcut is only sound while *every* mutation is undoable. If
+    /// something changed the project without going through the undo manager,
+    /// undoing everything undoable would not restore the saved state, so
+    /// `untracked_mutation_since_save` disables the shortcut and the project
+    /// stays dirty. Erring toward dirty costs a redundant save prompt; erring
+    /// the other way would discard work.
+    fn is_dirty(&self) -> bool {
+        if !self.current_revision().differs_from(self.saved_revision) {
+            return false;
+        }
+        if self.untracked_mutation_since_save {
+            return true;
+        }
+        self.undo_manager.position() != self.saved_undo_position
+    }
+
+    /// Notice a project change that did not pass through the undo manager.
+    ///
+    /// Called once per frame. A mutation the manager saw bumps its counter — a
+    /// push (including one merged into the previous entry, which moves the
+    /// project without changing the stack depth) or an undo/redo. So a revision
+    /// that moved while that counter stood still is a mutation nothing recorded.
+    fn observe_untracked_mutation(&mut self) {
+        let observed = (self.current_revision(), self.undo_manager.mutation_count());
+        let (previous_revision, previous_mutations) = self.last_observed;
+        if observed.0 != previous_revision && observed.1 == previous_mutations {
+            self.untracked_mutation_since_save = true;
+        }
+        self.last_observed = observed;
+    }
+
+    /// Take the current state as the clean baseline.
+    ///
+    /// Called after a successful save, after loading or resetting a project,
+    /// and when the user discards changes — every point at which the current
+    /// state becomes the reference. Note this reads the counters *now*, so an
+    /// edit made while the save was in flight correctly stays part of the next
+    /// dirty comparison.
+    ///
+    /// Retiring the recovery snapshot belongs here rather than at each call
+    /// site: "this state is the baseline" and "there is no unsaved work to
+    /// protect" are the same statement, and separating them is how a stale
+    /// snapshot ends up being offered for work the user already saved.
+    fn mark_saved(&mut self) {
+        self.capture_clean_baseline();
+        self.retire_recovery_snapshot();
+    }
+
+    /// Take the current state as the clean baseline *without* retiring the
+    /// recovery snapshot.
+    ///
+    /// Only startup wants this. At launch there is nothing of this session's to
+    /// protect, but there may well be a snapshot from the *previous* session
+    /// waiting to be offered — and retiring it here would delete the crashed
+    /// session's work before anyone was asked about it.
+    fn capture_clean_baseline(&mut self) {
+        self.saved_revision = self.current_revision();
+        self.saved_undo_position = self.undo_manager.position();
+        self.untracked_mutation_since_save = false;
+        self.last_observed = (self.saved_revision, self.undo_manager.mutation_count());
     }
 
     /// Dispatch a welcome-screen action to the appropriate existing flow.
@@ -623,7 +779,7 @@ impl SynthApp {
                 self.active_view = AppView::Rack;
             }
             WelcomeAction::OpenProject => {
-                if self.dirty {
+                if self.is_dirty() {
                     self.unsaved_dialog.pending_action = Some(PendingAction::OpenProject);
                     self.unsaved_dialog.open = true;
                 } else {
@@ -652,7 +808,7 @@ impl SynthApp {
                 self.active_view = AppView::Sample;
             }
             WelcomeAction::OpenRecent(path) => {
-                if self.dirty {
+                if self.is_dirty() {
                     self.unsaved_dialog.pending_action = Some(PendingAction::LoadProject(path));
                     self.unsaved_dialog.open = true;
                 } else {
@@ -801,17 +957,33 @@ impl eframe::App for SynthApp {
             self.reconcile_with_session();
         }
 
-        // Handle keyboard input
-        self.process_keyboard_input(ctx);
+        // Compare against last frame before anything this frame mutates, so a
+        // change is attributed to the frame that made it.
+        self.observe_untracked_mutation();
 
-        // ── Undo/Redo keyboard shortcuts ──
-        self.handle_undo_redo_shortcuts(ctx);
+        // Commit a background snapshot that finished since last frame, then
+        // consider starting another. Debounced internally, so this is a cheap
+        // comparison on all but one frame in ~1800.
+        self.poll_autosave();
+        self.tick_autosave();
+
+        // ── Input routing ──
+        //
+        // The gate is read once and shared, so every consumer agrees on whether
+        // a text field or a modal owns the keyboard this frame. Application
+        // shortcuts are dispatched first and *consume* their keys, so a view
+        // binding the same combination never sees it.
+        let input_gate = shortcuts::InputGate::new(ctx, self.modal_is_open());
+        self.handle_app_shortcuts(ctx, input_gate);
+
+        // Handle keyboard input
+        self.process_keyboard_input(ctx, input_gate);
 
         // ── Copy/Paste/Duplicate keyboard shortcuts ──
-        self.handle_clipboard_shortcuts(ctx);
+        self.handle_clipboard_shortcuts(ctx, input_gate);
 
         // ── Analyze window shortcut (Ctrl/Cmd + Shift + A) ──
-        self.handle_analyze_shortcut(ctx);
+        self.handle_analyze_shortcut(ctx, input_gate);
 
         // ── Analyze window — runs every frame so the worker-thread poll can
         //    drain even when the window itself is closed. ──
@@ -919,7 +1091,7 @@ impl eframe::App for SynthApp {
                             song.name.clone()
                         }
                     };
-                    let dirty_marker = if self.dirty { " *" } else { "" };
+                    let dirty_marker = if self.is_dirty() { " *" } else { "" };
                     let title_resp = ui
                         .add(
                             egui::Label::new(
@@ -1094,12 +1266,17 @@ impl eframe::App for SynthApp {
                     );
                 }
                 AppView::Mixer => {
+                    let mut mixer_undo = crate::undo::MixerUndo {
+                        undo: &mut self.undo_manager,
+                        coalescer: &mut self.drag_coalescer,
+                    };
                     let action = crate::gui::mixer_view::draw_mixer_view(
                         ui,
                         &mut self.handle,
                         &self.song,
                         &self.instruments,
                         &mut self.mixer_view_state,
+                        &mut mixer_undo,
                     );
                     if let Some(crate::gui::mixer_view::MixerViewAction::EditChannelFx(seq_id)) =
                         action
@@ -1160,12 +1337,17 @@ impl eframe::App for SynthApp {
                         }
                         self.sample_ref_counts.replace(graph_version, counts);
                     }
+                    let mut sample_undo = crate::undo::SampleUndo {
+                        undo: &mut self.undo_manager,
+                        coalescer: &mut self.drag_coalescer,
+                    };
                     let action = crate::gui::sample_view::draw_sample_view(
                         ui,
                         &self.sample_library,
                         &mut self.sample_view_state,
                         &mut self.audio_input,
                         self.sample_ref_counts.value(),
+                        &mut sample_undo,
                     );
                     match action {
                         crate::gui::sample_view::SampleViewAction::None => {}
@@ -1232,6 +1414,8 @@ impl eframe::App for SynthApp {
                                 &self.sample_library,
                                 &mut self.sample_view_state,
                                 &mut self.dialog_state,
+                                &mut self.undo_manager,
+                                &mut self.drag_coalescer,
                             );
                         }
                     }
@@ -1271,7 +1455,7 @@ impl eframe::App for SynthApp {
                 "Pertylizer v{} ({}) - {project_name}{}",
                 env!("CARGO_PKG_VERSION"),
                 env!("BUILD_DATE"),
-                if self.dirty { " *" } else { "" },
+                if self.is_dirty() { " *" } else { "" },
             );
             if title != self.last_title {
                 self.last_title = title.clone();
@@ -1280,7 +1464,7 @@ impl eframe::App for SynthApp {
         }
 
         // Intercept close request when there are unsaved changes
-        if ctx.input(|i| i.viewport().close_requested()) && self.dirty {
+        if ctx.input(|i| i.viewport().close_requested()) && self.is_dirty() {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             self.unsaved_dialog.pending_action = Some(PendingAction::Quit);
             self.unsaved_dialog.open = true;
@@ -1507,6 +1691,8 @@ impl SynthApp {
         sample_library: &std::sync::RwLock<SampleLibrary>,
         sample_view_state: &mut crate::gui::sample_view::SampleViewState,
         dialog_state: &mut DialogState,
+        undo_manager: &mut crate::undo::UndoManager,
+        drag_coalescer: &mut crate::undo::DragCoalescer,
     ) {
         if let Some(data) = audio_input.stop_recording() {
             let channels = audio_input.channels();
@@ -1534,10 +1720,15 @@ impl SynthApp {
                 },
                 data.into(),
             );
-            if let Ok(mut lib) = sample_library.write() {
-                let id = lib.add(sample);
+            let recorded = sample_library.write().ok().map(|mut lib| lib.add(sample));
+            if let Some(id) = recorded {
                 sample_view_state.selected_sample = Some(id);
                 sample_view_state.invalidate_peaks();
+                crate::undo::SampleUndo {
+                    undo: undo_manager,
+                    coalescer: drag_coalescer,
+                }
+                .record_import(sample_library, id);
             }
             dialog_state.set_status("Recording saved");
         }
@@ -1663,9 +1854,23 @@ impl SynthApp {
         self.scope_buf_r = samples_r;
     }
 
-    fn process_keyboard_input(&mut self, ctx: &egui::Context) {
+    fn process_keyboard_input(&mut self, ctx: &egui::Context, gate: shortcuts::InputGate) {
         // Always use CH1 for keyboard input - focused_instrument handles routing
         let active_channel = MidiChannelSelection::CH1;
+
+        // Anything that stops keystrokes reaching the piano — a focused text
+        // field, an open modal, the window losing focus — has to release what
+        // is already held, or the matching key-up never arrives and the note
+        // sustains forever.
+        let has_window_focus = ctx.input(|i| i.focused);
+        if !gate.allows_piano_keys() || !has_window_focus {
+            crate::gui::input::release_all_keyboard_notes(
+                &mut self.handle,
+                &mut self.pressed_keys,
+                active_channel,
+            );
+            return;
+        }
 
         handle_keyboard_input(
             ctx,
@@ -1676,9 +1881,149 @@ impl SynthApp {
         );
     }
 
+    /// Push every instrument property to the engine, unconditionally.
+    ///
+    /// The normal editing path sends one command per property the user actually
+    /// touched. Undo has no such flags — it restores a whole snapshot — so this
+    /// sends the lot. Redundant commands are harmless and this runs once per
+    /// undo, not per frame.
+    fn sync_instrument_settings_to_engine(&mut self, instrument_id: InstrumentId) {
+        let Some(inst) = self.instruments.iter().find(|i| i.id == instrument_id) else {
+            return;
+        };
+        // The whole snapshot, so this cannot drift from what
+        // `InstrumentUiState::apply_settings` writes: every field restored on
+        // the GUI side is pushed to the engine here. Leaving one out is how the
+        // display and the sound end up disagreeing after an undo.
+        let settings = inst.settings();
+
+        use synth_engine::InstrumentParam;
+        for param in [
+            InstrumentParam::Volume(settings.volume),
+            InstrumentParam::Pan(settings.pan),
+            InstrumentParam::Solo(settings.solo),
+            InstrumentParam::KeyRange(settings.key_range),
+            InstrumentParam::Transpose(settings.transpose),
+            InstrumentParam::OversamplingFactor(settings.oversampling),
+            InstrumentParam::AllocationMode(settings.allocation_mode),
+            InstrumentParam::StealingStrategy(settings.stealing_strategy),
+            InstrumentParam::UnisonDetune(settings.unison_detune),
+            InstrumentParam::UnisonSpread(settings.unison_spread),
+            InstrumentParam::MaxVoices(settings.max_voices),
+            InstrumentParam::VelocityAmpSensitivity(settings.velocity_amp_sensitivity),
+            InstrumentParam::VelocityFilterSensitivity(settings.velocity_filter_sensitivity),
+        ] {
+            self.handle.send(EngineCommand::SetInstrumentParameter {
+                instrument_id,
+                param,
+            });
+        }
+        self.handle.send(EngineCommand::SetInstrumentMidiChannel {
+            instrument_id,
+            channel: settings.channel,
+        });
+        self.handle.send(EngineCommand::RenameInstrument {
+            instrument_id,
+            name: settings.name.clone(),
+        });
+        // These go through the session rather than a raw command because they
+        // also update its control-side mirror. Mute comes after the volume
+        // above, matching the order project loading uses — the UI's soft mute
+        // and the engine's enable flag are separate switches.
+        for result in [
+            self.session
+                .set_instrument_category(instrument_id, settings.category),
+            self.session
+                .set_instrument_color(instrument_id, settings.color.as_deref()),
+            self.session
+                .set_sidechain_source(instrument_id, settings.sidechain_source_id),
+            self.session
+                .set_instrument_mute(instrument_id, settings.muted),
+            self.session
+                .set_instrument_description(instrument_id, &settings.description),
+            self.session.set_patch_description(
+                instrument_id,
+                // Empty means "no patch description", as the editor's own
+                // send path treats it.
+                Some(settings.patch_description.as_str()).filter(|d| !d.is_empty()),
+            ),
+        ] {
+            if let Err(e) = result {
+                tracing::warn!(
+                    target: "pertylizer::undo",
+                    instrument = ?instrument_id,
+                    error = %e,
+                    "could not restore an instrument property",
+                );
+            }
+        }
+    }
+
+    /// Whether a dialog currently owns keyboard input.
+    ///
+    /// These are ordinary egui windows rather than true modals, so egui cannot
+    /// answer this for us — but while one is up, keystrokes must not reach the
+    /// document behind it.
+    fn modal_is_open(&self) -> bool {
+        self.recovery_prompt.is_some()
+            // The file picker is the one dialog the user routinely leaves
+            // without a focused text field, so without this a bare space would
+            // start playback and the letter keys would play the piano while
+            // they browse for a project.
+            || self.dialog_state.is_file_dialog_open()
+            || self.unsaved_dialog.open
+            || self.dialog_state.show_settings
+            || self.dialog_state.show_about
+            || self.dialog_state.show_load_patch
+            || self.dialog_state.show_group_templates
+            || self.dialog_state.show_save_group_template
+            || self.dialog_state.show_export_wav
+    }
+
+    /// Run the application-wide shortcuts.
+    ///
+    /// Dispatched before any view input so a consumed key cannot also reach a
+    /// view that binds it.
+    fn handle_app_shortcuts(&mut self, ctx: &egui::Context, gate: shortcuts::InputGate) {
+        use shortcuts::AppShortcut;
+
+        for shortcut in shortcuts::pressed(ctx, gate) {
+            match shortcut {
+                AppShortcut::Save => {
+                    self.save_current_project();
+                }
+                AppShortcut::SaveAs => self.open_save_project_as_dialog(),
+                AppShortcut::New => self.request_new_project(),
+                AppShortcut::Open => self.request_open_project(),
+                AppShortcut::Undo => self.execute_undo(),
+                AppShortcut::Redo => self.execute_redo(),
+                AppShortcut::TogglePlayback => self.toggle_playback(),
+            }
+        }
+    }
+
+    /// Start playback, or pause it if already running.
+    ///
+    /// Lives here rather than in the transport widget so the spacebar works
+    /// from every view, not just the sequencer editors that draw a transport.
+    fn toggle_playback(&mut self) {
+        if self.handle.state.transport.is_playing() {
+            self.handle.send(EngineCommand::Pause);
+        } else {
+            self.handle.send(EngineCommand::Play);
+            // Starting playback re-arms playhead following, matching what the
+            // sequencer's own Play button does — the spacebar should not
+            // behave differently just because it now lives here.
+            self.sequencer_view_state.follow_playhead_on_play();
+        }
+    }
+
     /// Handle Ctrl/Cmd+Shift+A — toggle the analyze window.
-    fn handle_analyze_shortcut(&mut self, ctx: &egui::Context) {
-        if ctx.text_edit_focused() {
+    ///
+    /// Not in the [`shortcuts`] table because it toggles a tool window rather
+    /// than acting on the document, but it takes the same gate.
+    fn handle_analyze_shortcut(&mut self, ctx: &egui::Context, gate: shortcuts::InputGate) {
+        if !gate.allows_app_shortcuts() {
             return;
         }
         let toggle =
@@ -1691,60 +2036,79 @@ impl SynthApp {
     /// Re-target the analyze window to the active instrument, then render it.
     /// Always runs (even when closed) so the worker-thread poll can drain a
     /// finished render if the user closed the window mid-flight.
+    /// Start a new project, asking about unsaved changes first.
+    ///
+    /// Shared by the File menu and the `Cmd+N` shortcut so the two cannot drift
+    /// apart — in particular so the shortcut can never skip the unsaved-changes
+    /// prompt the menu shows.
+    fn request_new_project(&mut self) {
+        if self.is_dirty() {
+            self.unsaved_dialog.pending_action = Some(PendingAction::NewProject);
+            self.unsaved_dialog.open = true;
+        } else {
+            self.reset_to_new_project();
+            self.dialog_state
+                .set_status("New project created".to_string());
+        }
+    }
+
+    /// Open a project, asking about unsaved changes first. See
+    /// [`Self::request_new_project`] for why this is shared.
+    fn request_open_project(&mut self) {
+        if self.is_dirty() {
+            self.unsaved_dialog.pending_action = Some(PendingAction::OpenProject);
+            self.unsaved_dialog.open = true;
+        } else {
+            let initial_dir = self.resolve_project_dir();
+            self.dialog_state.open_file_dialog(
+                FileDialogMode::OpenProject,
+                None,
+                initial_dir.as_deref(),
+            );
+        }
+    }
+
+    /// Open the Save As file dialog, pre-filled with the current filename.
+    fn open_save_project_as_dialog(&mut self) {
+        let has_samples = self.sample_library.read().is_ok_and(|lib| !lib.is_empty());
+        let fallback = format!("project.{}", crate::project::project_extension(has_samples));
+        let default_name = self
+            .current_project_path
+            .as_ref()
+            .and_then(|p| p.file_name())
+            .and_then(|n| n.to_str())
+            .map_or(fallback, ToString::to_string);
+        let initial_dir = self.resolve_project_dir();
+        self.dialog_state.open_file_dialog(
+            FileDialogMode::SaveProject,
+            Some(&default_name),
+            initial_dir.as_deref(),
+        );
+    }
+
     /// The "File" menu (projects, patches, examples, export, settings, quit).
     fn menu_file(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         use egui_remixicon::icons as ri;
+        use shortcuts::AppShortcut;
+
         ui.menu_button("File", |ui| {
             // --- Project ---
-            if ui.button((ri::FILE_ADD_LINE, "New Project")).clicked() {
-                if self.dirty {
-                    self.unsaved_dialog.pending_action = Some(PendingAction::NewProject);
-                    self.unsaved_dialog.open = true;
-                } else {
-                    self.reset_to_new_project();
-                    self.dirty = false;
-                    self.dialog_state
-                        .set_status("New project created".to_string());
-                }
+            // Each entry renders the same binding the dispatcher acts on, so
+            // the menu cannot advertise a shortcut that does something else.
+            if menu_entry(ui, ri::FILE_ADD_LINE, AppShortcut::New) {
+                self.request_new_project();
                 ui.close();
             }
-            if ui
-                .button((ri::FOLDER_OPEN_LINE, "Open Project..."))
-                .clicked()
-            {
-                if self.dirty {
-                    self.unsaved_dialog.pending_action = Some(PendingAction::OpenProject);
-                    self.unsaved_dialog.open = true;
-                } else {
-                    let initial_dir = self.resolve_project_dir();
-                    self.dialog_state.open_file_dialog(
-                        FileDialogMode::OpenProject,
-                        None,
-                        initial_dir.as_deref(),
-                    );
-                }
+            if menu_entry(ui, ri::FOLDER_OPEN_LINE, AppShortcut::Open) {
+                self.request_open_project();
                 ui.close();
             }
-            if ui.button((ri::SAVE_LINE, "Save Project")).clicked() {
+            if menu_entry(ui, ri::SAVE_LINE, AppShortcut::Save) {
                 self.save_current_project();
                 ui.close();
             }
-            if ui.button((ri::SAVE_LINE, "Save Project As...")).clicked() {
-                let has_samples = self.sample_library.read().is_ok_and(|lib| !lib.is_empty());
-                let fallback =
-                    format!("project.{}", crate::project::project_extension(has_samples));
-                let default_name = self
-                    .current_project_path
-                    .as_ref()
-                    .and_then(|p| p.file_name())
-                    .and_then(|n| n.to_str())
-                    .map_or(fallback, ToString::to_string);
-                let initial_dir = self.resolve_project_dir();
-                self.dialog_state.open_file_dialog(
-                    FileDialogMode::SaveProject,
-                    Some(&default_name),
-                    initial_dir.as_deref(),
-                );
+            if menu_entry(ui, ri::SAVE_LINE, AppShortcut::SaveAs) {
+                self.open_save_project_as_dialog();
                 ui.close();
             }
             // --- Recent Projects ---
@@ -1757,7 +2121,7 @@ impl SynthApp {
                         let label = path.file_name().and_then(|n| n.to_str()).unwrap_or("???");
                         let btn = ui.button(label).on_hover_text(path.display().to_string());
                         if btn.clicked() {
-                            if self.dirty {
+                            if self.is_dirty() {
                                 self.unsaved_dialog.pending_action =
                                     Some(PendingAction::LoadProject(path.clone()));
                                 self.unsaved_dialog.open = true;
@@ -1856,7 +2220,7 @@ impl SynthApp {
             }
             ui.separator();
             if ui.button((ri::SHUT_DOWN_LINE, "Quit")).clicked() {
-                if self.dirty {
+                if self.is_dirty() {
                     self.unsaved_dialog.pending_action = Some(PendingAction::Quit);
                     self.unsaved_dialog.open = true;
                 } else {
@@ -1928,6 +2292,47 @@ impl SynthApp {
     /// (edit the `InstrumentUiState` here, push to session/engine afterwards).
     /// Returns `true` if Auto Layout was requested this frame.
     fn render_patch_toolbar(&mut self, ui: &mut egui::Ui, active_id: InstrumentId) -> bool {
+        // Snapshot before the editor runs and compare after, rather than
+        // recording each of the fifteen properties at its own call site. The
+        // editor already collects its changes into `send_*` flags and applies
+        // them at the end, so a per-property recording would have to duplicate
+        // that bookkeeping — and a property added later would silently miss it.
+        let settings_before = self
+            .instruments
+            .iter()
+            .find(|i| i.id == active_id)
+            .map(super::instrument_rack::InstrumentUiState::settings);
+        let result = self.render_patch_toolbar_inner(ui, active_id);
+        self.record_instrument_settings_change(active_id, settings_before);
+        result
+    }
+
+    /// Record an instrument-property edit, if the editor changed anything.
+    fn record_instrument_settings_change(
+        &mut self,
+        instrument_id: InstrumentId,
+        before: Option<crate::gui::instrument_rack::InstrumentSettings>,
+    ) {
+        let (Some(before), Some(after)) = (
+            before,
+            self.instruments
+                .iter()
+                .find(|i| i.id == instrument_id)
+                .map(crate::gui::instrument_rack::InstrumentUiState::settings),
+        ) else {
+            return;
+        };
+        if before != after {
+            self.undo_manager
+                .push(crate::undo::UndoAction::SetInstrumentSettings {
+                    instrument_id,
+                    old: Box::new(before),
+                    new: Box::new(after),
+                });
+        }
+    }
+
+    fn render_patch_toolbar_inner(&mut self, ui: &mut egui::Ui, active_id: InstrumentId) -> bool {
         use egui_remixicon::icons as ri;
         use synth_engine::InstrumentCategory;
         let Some(idx) = self.instruments.iter().position(|i| i.id == active_id) else {
@@ -2618,6 +3023,34 @@ impl SynthApp {
             // through a category whitelist and had their edits silently
             // dropped — now reach shared state like every other module.
             for (module_id, param) in result.param_changes {
+                // The pre-edit value comes from the engine's snapshot, not
+                // the patch editor's cache: the widget already wrote the new
+                // value into that cache when it drew this frame. The snapshot
+                // publishes synchronously when a command is *sent*, and this
+                // loop has not sent one yet, so it still holds the old value.
+                let previous = self
+                    .session
+                    .state()
+                    .shared_graph
+                    .get_module(active_id, module_id)
+                    .and_then(|snapshot| {
+                        snapshot
+                            .parameters
+                            .into_iter()
+                            .find(|p| synth_core::ModuleParam::same_kind(p, &param))
+                    });
+                if let Some(old) = previous
+                    && old != param
+                {
+                    self.undo_manager
+                        .push(crate::undo::UndoAction::SetModuleParameter {
+                            instrument_id: active_id,
+                            module_id,
+                            old,
+                            new: param,
+                        });
+                }
+
                 if module_id.module_type.is_effect() {
                     self.handle.send(EngineCommand::SetEffectParameter {
                         instrument_id: Some(active_id),
@@ -2705,6 +3138,18 @@ impl SynthApp {
                         || d.type_id.as_str() == "inline_signal_monitor"
                 });
 
+                // Capture the module and its cables *before* removing them:
+                // removing also drops every cable attached, so undo has to put
+                // both back or the module returns disconnected.
+                let removed = std::collections::HashSet::from([module_id]);
+                let module_states = patch_editor.extract_module_states(&removed);
+                let attached: Vec<synth_engine::graph::Connection> = patch_editor
+                    .connections()
+                    .iter()
+                    .filter(|c| c.from_module == module_id || c.to_module == module_id)
+                    .copied()
+                    .collect();
+
                 // Remove from session (registry + engine command)
                 if let Err(e) = self.session.remove_module(active_id, module_id) {
                     eprintln!("Failed to remove module {module_id:?}: {e}");
@@ -2712,6 +3157,17 @@ impl SynthApp {
                 }
 
                 patch_editor.remove_module(module_id);
+
+                self.undo_manager
+                    .push(crate::undo::UndoAction::SetRackModules {
+                        instrument_id: active_id,
+                        modules: module_states,
+                        connections: attached,
+                        // A removal cuts cables but never leaves one behind to
+                        // restore — the module's own cables are `attached`.
+                        severed: Vec::new(),
+                        restore: false,
+                    });
 
                 // Clean up visualization buffer if needed
                 if has_vis_buffer {
@@ -2817,6 +3273,8 @@ impl SynthApp {
                             &self.sample_library,
                             &mut self.sample_view_state,
                             &mut self.dialog_state,
+                            &mut self.undo_manager,
+                            &mut self.drag_coalescer,
                         );
                     }
                 }
@@ -2901,6 +3359,20 @@ impl SynthApp {
                 }
             }
 
+            // Module additions are recorded by diffing the editor's module
+            // set around the add handlers, rather than inside each of them.
+            // The handlers are static helpers shared by several entry points
+            // and some of them add more than one module (a quick-add wires a
+            // module in and may insert it inline on a cable) — diffing catches
+            // all of it, including paths added later.
+            let modules_before: std::collections::HashSet<ModuleId> =
+                patch_editor.module_ids().into_iter().collect();
+            // Cables are diffed too: an inline add splices the new module onto
+            // an existing cable, which means *removing* that cable. Undo has to
+            // put it back, so it cannot be left out of the entry.
+            let cables_before: Vec<synth_engine::graph::Connection> =
+                patch_editor.connections().to_vec();
+
             // Handle quick-add requests (right-click on port → add module)
             for request in result.quick_add_requests {
                 Self::handle_quick_add(
@@ -2923,6 +3395,40 @@ impl SynthApp {
                     world_pos,
                     inline_cable,
                 );
+            }
+
+            let added: std::collections::HashSet<ModuleId> = patch_editor
+                .module_ids()
+                .into_iter()
+                .filter(|id| !modules_before.contains(id))
+                .collect();
+            if !added.is_empty() {
+                let module_states = patch_editor.extract_module_states(&added);
+                // Only cables touching the new modules belong to this entry —
+                // a quick-add wires its module in, and an inline insert splices
+                // it onto an existing cable.
+                let attached: Vec<synth_engine::graph::Connection> = patch_editor
+                    .connections()
+                    .iter()
+                    .filter(|c| added.contains(&c.from_module) || added.contains(&c.to_module))
+                    .copied()
+                    .collect();
+                // The cable an inline insert replaced: present before, gone
+                // after. Undoing has to lay it back down.
+                let remaining = patch_editor.connections();
+                let severed: Vec<synth_engine::graph::Connection> = cables_before
+                    .into_iter()
+                    .filter(|c| !remaining.contains(c))
+                    .collect();
+                self.undo_manager
+                    .push(crate::undo::UndoAction::SetRackModules {
+                        instrument_id: active_id,
+                        modules: module_states,
+                        connections: attached,
+                        severed,
+                        // This entry records an addition, so applying it adds.
+                        restore: true,
+                    });
             }
 
             // Handle group template actions (open browser / save template)
@@ -3821,6 +4327,21 @@ impl SynthApp {
     }
 
     fn render_instrument_edit_window(&mut self, ctx: &egui::Context) {
+        // Same snapshot-and-compare as the patch toolbar; see there for why.
+        let target = self.instrument_edit_target;
+        let settings_before = target.and_then(|id| {
+            self.instruments
+                .iter()
+                .find(|i| i.id == id)
+                .map(crate::gui::instrument_rack::InstrumentUiState::settings)
+        });
+        self.render_instrument_edit_window_inner(ctx);
+        if let Some(id) = target {
+            self.record_instrument_settings_change(id, settings_before);
+        }
+    }
+
+    fn render_instrument_edit_window_inner(&mut self, ctx: &egui::Context) {
         use egui_remixicon::icons as ri;
         use synth_engine::InstrumentCategory;
 

@@ -101,7 +101,7 @@ impl PlaybackSpeed {
 }
 
 /// How a sample was created.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub enum SampleSource {
     /// Recorded from audio input.
     Recorded,
@@ -112,7 +112,7 @@ pub enum SampleSource {
 }
 
 /// Loop region within a sample.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct LoopRegion {
     /// Loop start frame.
     pub start: FrameIndex,
@@ -123,7 +123,7 @@ pub struct LoopRegion {
 }
 
 /// Crop region — the audible portion of the full sample buffer.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
 pub struct CropRegion {
     /// Crop start frame.
     pub start: FrameIndex,
@@ -169,7 +169,10 @@ pub enum BitDepth {
 }
 
 /// A sample's metadata (does NOT contain audio data).
-#[derive(Debug, Clone, Serialize, Deserialize)]
+///
+/// `PartialEq` lets the undo layer tell a real metadata edit from a no-op
+/// (a drag that returned to where it started) without comparing field by field.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SampleMeta {
     pub id: SampleId,
     pub name: String,

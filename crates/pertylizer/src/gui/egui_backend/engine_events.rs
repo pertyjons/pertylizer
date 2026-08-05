@@ -34,14 +34,14 @@ impl SynthApp {
                                 .unwrap_or_else(|e| e.into_inner())
                                 .clone();
                             self.refresh_ui_from_project(&project);
-                            self.dirty = false;
+                            self.mark_saved();
                         }
                         ProjectRefresh::Reset => {
                             self.refresh_ui_after_reset();
                             self.current_project_path = None;
                             self.current_patch_name = "Init".to_string();
                             self.current_patch_path = None;
-                            self.dirty = false;
+                            self.mark_saved();
                         }
                     }
                 }
@@ -148,6 +148,10 @@ impl SynthApp {
                     // Known limitation: if the song lock is poisoned, recorded notes are
                     // silently dropped. Buffering for retry adds complexity for a scenario
                     // that is extremely unlikely since only the UI thread writes.
+                    // Committing a take is one undo step, whether it
+                    // overdubbed or replaced: a whole-pattern swap, because a
+                    // non-overdub take clears every note that was there.
+                    let before = self.song.read().pattern(pattern_id).cloned();
                     {
                         let mut song = self.song.write();
                         if let Some(pattern) = song.pattern_mut(pattern_id) {
@@ -166,6 +170,16 @@ impl SynthApp {
                                 notes.len()
                             );
                         }
+                    }
+                    if let Some(before) = before
+                        && let Some(after) = self.song.read().pattern(pattern_id).cloned()
+                    {
+                        self.undo_manager
+                            .push(crate::undo::UndoAction::SwapPattern {
+                                pattern_id,
+                                old: Box::new(before),
+                                new: Box::new(after),
+                            });
                     }
                     self.mark_dirty();
 

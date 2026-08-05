@@ -39,6 +39,7 @@ mod module_params;
 mod normalized;
 mod pitch;
 mod range;
+mod revision;
 mod samples;
 mod state;
 mod time;
@@ -60,6 +61,7 @@ pub use pitch::{
     CcNumber, Cents, MidiCcNumber, MidiChannel, MidiNote, Octaves, Semitones, Velocity,
 };
 pub use range::ValueRange;
+pub use revision::ContentRevision;
 pub use samples::{BlockSize, SampleCount, SamplePosition};
 pub use state::{
     BypassState, ClipMode, EnableState, FreezeState, LimitMode, MuteState, NoteReleaseState,

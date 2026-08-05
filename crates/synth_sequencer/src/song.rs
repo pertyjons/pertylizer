@@ -1348,6 +1348,42 @@ impl Song {
         Some(self.return_busses.remove(pos))
     }
 
+    /// The position of a return bus in the strip order, if it exists.
+    ///
+    /// Callers capture this before [`Self::delete_return_bus`] so
+    /// [`Self::restore_return_bus`] can put the bus back where it was.
+    #[must_use]
+    pub fn return_bus_index(&self, id: ReturnBusId) -> Option<usize> {
+        self.return_busses.iter().position(|b| b.id == id)
+    }
+
+    /// Put a previously deleted return bus back at `index`, preserving its id.
+    ///
+    /// The inverse of [`Self::delete_return_bus`], for undo. Note it cannot
+    /// restore the track sends that deletion stripped — those are separate
+    /// undo entries, because a user removing a single send should not have that
+    /// entangled with the bus itself.
+    ///
+    /// `index` is the position the bus held before it was deleted; restoring it
+    /// there keeps the mixer strip order (and the bus-to-bus processing order)
+    /// stable instead of shunting an undeleted bus to the end. An out-of-range
+    /// index is clamped to the end.
+    ///
+    /// Replaces any existing bus with the same id rather than duplicating it,
+    /// so a redo that runs twice cannot produce two buses answering to one id.
+    /// `next_return_bus_id` is advanced past the restored id so a later
+    /// [`Self::create_return_bus`] cannot collide with it.
+    pub fn restore_return_bus(&mut self, index: usize, bus: ReturnBus) {
+        let id = bus.id;
+        if let Some(existing) = self.return_busses.iter_mut().find(|b| b.id == id) {
+            *existing = bus;
+        } else {
+            let at = index.min(self.return_busses.len());
+            self.return_busses.insert(at, bus);
+        }
+        self.next_return_bus_id = self.next_return_bus_id.max(id.0.saturating_add(1));
+    }
+
     /// Would adding a bus-to-bus send from `from` to `to` create a cycle in the
     /// return-routing graph? A self-send (`from == to`) is always a cycle. Other
     /// cases are rejected when `to` can already reach `from` through existing
@@ -2049,6 +2085,47 @@ mod tests {
             0,
             "sends targeting a deleted return bus must be removed"
         );
+    }
+
+    /// Undoing the deletion of a *middle* return bus must put it back where it
+    /// was: appending it instead silently reorders the mixer strips (and the
+    /// bus-to-bus processing order) every time the user undoes a delete.
+    #[test]
+    fn restore_return_bus_puts_it_back_at_its_old_position() {
+        let mut song = Song::new("rt");
+        let _ = song.create_return_bus("A");
+        let middle = song.create_return_bus("B");
+        let _ = song.create_return_bus("C");
+
+        let index = song.return_bus_index(middle).expect("index");
+        assert_eq!(index, 1);
+        let removed = song.delete_return_bus(middle).expect("removed");
+
+        song.restore_return_bus(index, removed);
+
+        let names: Vec<&str> = song
+            .return_busses()
+            .iter()
+            .map(|b| b.name.as_str())
+            .collect();
+        assert_eq!(names, ["A", "B", "C"]);
+    }
+
+    /// Redo running twice must not duplicate the bus, and an index past the end
+    /// must not panic.
+    #[test]
+    fn restore_return_bus_replaces_an_existing_bus_and_clamps_the_index() {
+        let mut song = Song::new("rt");
+        let id = song.create_return_bus("A");
+        let mut bus = song.return_busses()[0].clone();
+        bus.name = "renamed".to_string();
+
+        song.restore_return_bus(99, bus.clone());
+        song.restore_return_bus(99, bus);
+
+        assert_eq!(song.return_busses().len(), 1, "no duplicate for one id");
+        assert_eq!(song.return_busses()[0].name, "renamed");
+        assert_eq!(song.return_bus_index(id), Some(0));
     }
 
     #[test]
