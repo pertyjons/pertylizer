@@ -273,12 +273,30 @@ pub fn apply_fonts(ctx: &egui::Context, selected: &str) {
 /// Setup custom egui style for synth look.
 /// Reads colors from the current theme, so call this after changing theme.
 pub fn setup_custom_style(ctx: &egui::Context) {
-    let mut style = (*ctx.global_style()).clone();
     let t = theme();
     let colors = &t.colors;
 
-    // Dark theme with synth colors
-    style.visuals.dark_mode = true;
+    // Which kind of palette this preset is. Everything below hangs off it, so
+    // derive it once from the palette itself rather than assuming "dark".
+    let egui_theme = if colors.is_dark() {
+        egui::Theme::Dark
+    } else {
+        egui::Theme::Light
+    };
+
+    let mut style = (*ctx.global_style()).clone();
+
+    // Reset the visuals to egui's base for *this* palette's kind before applying
+    // our overrides. Cloning whatever was there before is not enough: on the
+    // first call it is egui's default for the OS theme (so a dark preset on a
+    // light-mode desktop inherited light shadows/strokes), and on a later call it
+    // is the previous preset's visuals. Only the fields we do not override below
+    // are affected — shadows, hyperlink colour, code background, and so on.
+    style.visuals = match egui_theme {
+        egui::Theme::Dark => egui::Visuals::dark(),
+        egui::Theme::Light => egui::Visuals::light(),
+    };
+
     style.visuals.override_text_color = Some(colors.text_primary);
     style.visuals.panel_fill = colors.bg_panel;
     style.visuals.window_fill = colors.bg_module;
@@ -334,7 +352,17 @@ pub fn setup_custom_style(ctx: &egui::Context) {
         style.debug.warn_if_rect_changes_id = false;
     }
 
-    ctx.set_global_style(style);
+    // Write the style into *both* theme slots, not via `set_global_style` — that
+    // only writes the slot of the currently active theme, so pinning the
+    // preference afterwards would swap in egui's untouched defaults.
+    ctx.set_style_of(egui::Theme::Dark, style.clone());
+    ctx.set_style_of(egui::Theme::Light, style);
+
+    // Pin the preference to match the palette. Without this egui stays on
+    // `ThemePreference::System`, which is what the windowing layer syncs the OS
+    // window decorations to — a light preset would otherwise get dark chrome
+    // (and vice versa) purely from the desktop's own setting.
+    ctx.set_theme(egui_theme);
 }
 
 /// Main application state.

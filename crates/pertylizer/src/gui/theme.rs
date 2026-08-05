@@ -256,10 +256,25 @@ pub struct Colors {
 }
 
 impl Colors {
+    /// Whether this is a dark palette (light text on a dark background).
+    ///
+    /// Derived from the panel background's perceived luminance instead of a
+    /// hand-maintained flag, so a new preset cannot forget to declare itself.
+    /// egui has to be told this truthfully: it drives `Visuals::dark_mode` and
+    /// the [`egui::Theme`] we pin as the theme preference, which in turn decides
+    /// the colour of the OS window decorations.
+    #[must_use]
+    pub fn is_dark(&self) -> bool {
+        // Rec. 601 luma, scaled by 1000 to stay in integer arithmetic.
+        let c = self.bg_panel;
+        let luma = 299 * u32::from(c.r()) + 587 * u32::from(c.g()) + 114 * u32::from(c.b());
+        luma < 128 * 1000
+    }
+
     /// Default dark theme - synth-focused with deep backgrounds and warm accents.
     pub const fn dark() -> Self {
         Self {
-            // Backgrounds - mörkare, mer "rack"-känsla
+            // Backgrounds - darker, more of a "rack" feel
             bg_dark: Color32::from_rgb(12, 12, 16),
             bg_panel: Color32::from_rgb(22, 24, 28),
             bg_module: Color32::from_rgb(32, 34, 38),
@@ -816,5 +831,38 @@ impl WidgetStyle {
             meter_segments: 20,
             cable_curvature: 0.5,
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Colors, ThemePreset};
+
+    /// `Colors::is_dark` classifies every preset the way its name implies. It is
+    /// what `setup_custom_style` feeds to egui as `Visuals::dark_mode` and as the
+    /// theme preference the OS window decorations follow, so a preset whose
+    /// palette drifts across the luminance threshold must fail here first.
+    #[test]
+    fn presets_are_classified_by_luminance() {
+        for preset in ThemePreset::ALL {
+            let expected_dark = !matches!(preset, ThemePreset::Light);
+            assert_eq!(
+                preset.theme().colors.is_dark(),
+                expected_dark,
+                "{} classified as {}",
+                preset.name(),
+                if expected_dark { "light" } else { "dark" }
+            );
+        }
+    }
+
+    /// The threshold itself, independent of the shipped palettes.
+    #[test]
+    fn is_dark_follows_the_panel_background() {
+        let mut colors = Colors::dark();
+        assert!(colors.is_dark());
+
+        colors.bg_panel = Colors::light().bg_panel;
+        assert!(!colors.is_dark());
     }
 }
