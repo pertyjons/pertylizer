@@ -5,7 +5,8 @@ use super::super::*;
 #[tool_router(router = automation_tool_router, vis = "pub(crate)")]
 impl SynthMcpServer {
     #[tool(
-        description = "Add automation points to a pattern. Each point specifies a parameter (e.g. Volume, Pan, FilterCutoff), position in beats, and a normalized value (0.0-1.0)."
+        description = "Add automation points to a pattern. Each point specifies a parameter (e.g. Volume, Pan, FilterCutoff), position in beats, and a normalized value (0.0-1.0).",
+        annotations(destructive_hint = false)
     )]
     pub(crate) async fn add_automation_points(
         &self,
@@ -36,7 +37,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "List all automation lanes in a pattern with their target parameters and point counts."
+        description = "List all automation lanes in a pattern with their target parameters and point counts.",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn list_automation_lanes(&self, params: Parameters<PatternIdParam>) -> String {
         match self.bridge.list_automation_lanes(params.0.pattern_id) {
@@ -46,7 +48,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "List the valid automation targets for an instrument: every automatable per-module parameter in its graph (with ready-to-use 'module:<type>:<instance>:<param>' target strings, ranges, and units) plus the instrument-level macros. Use this to discover correct targets before adding automation points."
+        description = "List the valid automation targets for an instrument: every automatable per-module parameter in its graph (with ready-to-use 'module:<type>:<instance>:<param>' target strings, ranges, and units) plus the instrument-level macros. Use this to discover correct targets before adding automation points.",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn get_instrument_automation_targets(
         &self,
@@ -61,7 +64,10 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(description = "Get all automation points for a specific parameter lane in a pattern.")]
+    #[tool(
+        description = "Get all automation points for a specific parameter lane in a pattern.",
+        annotations(read_only_hint = true)
+    )]
     pub(crate) async fn get_automation_points(
         &self,
         params: Parameters<GetAutomationPointsParam>,
@@ -78,7 +84,10 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(description = "Remove automation points at specific beat positions from a lane.")]
+    #[tool(
+        description = "Remove automation points at specific beat positions from a lane.",
+        annotations(destructive_hint = true)
+    )]
     pub(crate) async fn remove_automation_points(
         &self,
         params: Parameters<RemoveAutomationPointsParam>,
@@ -97,7 +106,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Clear all automation points from one or more lanes (each a pattern + target + optional instrument ID)."
+        description = "Clear all automation points from one or more lanes (each a pattern + target + optional instrument ID).",
+        annotations(destructive_hint = true, idempotent_hint = true)
     )]
     pub(crate) async fn clear_automation_lane(
         &self,
@@ -130,7 +140,8 @@ impl SynthMcpServer {
                        is simplified across a step boundary); Linear/Exponential/S-Curve segments are measured \
                        with their own interpolation. Scope with `pattern_id` and/or `target` (both omitted = \
                        every lane in every pattern). Unlike optimize_project (which only prunes unused objects) \
-                       this rewrites lane point sets."
+                       this rewrites lane point sets.",
+        annotations(destructive_hint = true)
     )]
     pub(crate) async fn simplify_automation(
         &self,
@@ -159,7 +170,8 @@ impl SynthMcpServer {
     #[tool(
         description = "Scale one or more automation lanes' values around a pivot, in place (tick + curve preserved). \
                        Makes a filter sweep (or any lane) more or less dramatic without re-entering points. \
-                       value' = clamp((value - pivot) * scale + pivot, 0..1)."
+                       value' = clamp((value - pivot) * scale + pivot, 0..1).",
+        annotations(destructive_hint = true)
     )]
     pub(crate) async fn scale_automation_lane(
         &self,
@@ -186,7 +198,8 @@ impl SynthMcpServer {
 
     #[tool(
         description = "Shift one or more automation lanes' values by a constant, in place (tick + curve preserved). \
-                       value' = clamp(value + offset, 0..1)."
+                       value' = clamp(value + offset, 0..1).",
+        annotations(destructive_hint = true)
     )]
     pub(crate) async fn offset_automation_lane(
         &self,
@@ -214,7 +227,8 @@ impl SynthMcpServer {
     #[tool(
         description = "Copy one or more automation lanes' points to another pattern/target (tick + curve preserved), \
                        optionally scaled/offset. Useful for reusing filter motion between similar voices. \
-                       By default points are merged into the destination; set clear_destination to replace."
+                       By default points are merged into the destination; set clear_destination to replace.",
+        annotations(destructive_hint = true)
     )]
     pub(crate) async fn copy_automation_lane(
         &self,
@@ -246,7 +260,8 @@ impl SynthMcpServer {
     #[tool(
         description = "Project-wide automation overview: every lane in every pattern, grouped by 'instrument' \
                        (default), 'target', or 'pattern'. Read-only — use to audit where automation lives without \
-                       querying each pattern."
+                       querying each pattern.",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn get_automation_summary(
         &self,
@@ -268,7 +283,8 @@ impl SynthMcpServer {
     // === Track control ===
 
     #[tool(
-        description = "Rebuild an existing instrument's voice graph (new modules/params/connections) while keeping its pattern automation working. Instance counters are reset before the rebuild so modules are numbered deterministically (1.. per type, in add order) — wherever the new module set matches the old, the module ids line up and their automation lanes stay valid automatically. Lanes whose target module no longer exists are reported as `orphaned_lanes`; set `drop_orphaned: true` to delete them, otherwise they are left dangling. Returns the rebuilt module ids, preserved-lane count, and the orphaned lanes. Use this instead of build_instrument when the instrument already has automation you don't want to lose. Note: matching is by module type + add-order, so reordering same-type modules can still re-point a lane."
+        description = "Rebuild an existing instrument's voice graph (new modules/params/connections) while keeping its pattern automation working. Instance counters are reset before the rebuild so modules are numbered deterministically (1.. per type, in add order) — wherever the new module set matches the old, the module ids line up and their automation lanes stay valid automatically. Lanes whose target module no longer exists are reported as `orphaned_lanes`; set `drop_orphaned: true` to delete them, otherwise they are left dangling. Returns the rebuilt module ids, preserved-lane count, and the orphaned lanes. Use this instead of build_instrument when the instrument already has automation you don't want to lose. Note: matching is by module type + add-order, so reordering same-type modules can still re-point a lane.",
+        annotations(destructive_hint = true)
     )]
     pub(crate) async fn rebuild_instrument_preserve_automation(
         &self,

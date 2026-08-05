@@ -5,7 +5,8 @@ use super::super::*;
 #[tool_router(router = discovery_tool_router, vis = "pub(crate)")]
 impl SynthMcpServer {
     #[tool(
-        description = "List all instruments with ID, name, category, volume, pan, mute/solo state, and module/effect counts."
+        description = "List all instruments with ID, name, category, volume, pan, mute/solo state, and module/effect counts.",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn list_instruments(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.list_instruments() {
@@ -21,7 +22,8 @@ impl SynthMcpServer {
                        confidence in [0.0, 1.0] and a signal trail that explains the classification. \
                        Same inference path that `analyze_harmony`'s `exclude_drums = true` default \
                        uses; expose it directly to debug or override the classification. Manual \
-                       `set_instrument_category` always wins (reports as `manual-override`)."
+                       `set_instrument_category` always wins (reports as `manual-override`).",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn get_instrument_profiles(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.get_instrument_profiles() {
@@ -31,7 +33,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Get detailed information about a specific instrument including module count and effects"
+        description = "Get detailed information about a specific instrument including module count and effects",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn get_instrument_info(
         &self,
@@ -44,7 +47,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "List all modules in an instrument's voice graph with their types and names"
+        description = "List all modules in an instrument's voice graph with their types and names",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn list_modules(&self, params: Parameters<InstrumentIdParam>) -> String {
         match self.bridge.list_modules(params.0.instrument_id) {
@@ -54,7 +58,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Get detailed info for a specific module including all parameters and port connections"
+        description = "Get detailed info for a specific module including all parameters and port connections",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn get_module_info(&self, params: Parameters<ModuleParam>) -> String {
         match self
@@ -67,7 +72,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Get all connections (cables) between modules in the voice graph. Returns from_module:from_port → to_module:to_port pairs."
+        description = "Get all connections (cables) between modules in the voice graph. Returns from_module:from_port → to_module:to_port pairs.",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn get_connections(&self, params: Parameters<InstrumentIdParam>) -> String {
         match self.bridge.get_connections(params.0.instrument_id) {
@@ -77,7 +83,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Get all active Mod Matrix routings across every Mod Matrix module in the instrument. Slot rows include semantic source IDs (e.g. 'lfo-1', 'env-2', or 'velocity'/'mod_wheel' for non-module sources) and dotted destination IDs (e.g. 'flt-1.cutoff'), plus amount in -1..1 and enabled flag. A slot with a YAMS control script (Step 2) also reports its `script` source text — then the offset is the script's output, not amount × source. Inactive slots (None → None, no script) are filtered out."
+        description = "Get all active Mod Matrix routings across every Mod Matrix module in the instrument. Slot rows include semantic source IDs (e.g. 'lfo-1', 'env-2', or 'velocity'/'mod_wheel' for non-module sources) and dotted destination IDs (e.g. 'flt-1.cutoff'), plus amount in -1..1 and enabled flag. A slot with a YAMS control script (Step 2) also reports its `script` source text — then the offset is the script's output, not amount × source. Inactive slots (None → None, no script) are filtered out.",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn get_mod_matrix_routings(
         &self,
@@ -90,7 +97,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Get the current value of a specific module parameter. Returns name, raw value, formatted display string (e.g. '440 Hz'), and min/max/default range."
+        description = "Get the current value of a specific module parameter. Returns name, raw value, formatted display string (e.g. '440 Hz'), and min/max/default range.",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn get_parameter(&self, params: Parameters<GetParameterParam>) -> String {
         match self.bridge.get_parameter(
@@ -104,7 +112,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Get engine status: CPU usage (0.0-1.0), active voice count, peak/RMS meters (dB), sample rate, tempo, and whether sequencer is playing."
+        description = "Get engine status: CPU usage (0.0-1.0), active voice count, peak/RMS meters (dB), sample rate, tempo, and whether sequencer is playing.",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn get_engine_status(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.get_engine_status() {
@@ -118,7 +127,8 @@ impl SynthMcpServer {
                        timestamp (ISO 8601 / RFC 3339 UTC, e.g. 2026-07-03T14:30:00Z), git \
                        commit hash, branch, and whether the working tree had uncommitted \
                        changes at build time. Git fields are null when the binary was built \
-                       outside a git checkout."
+                       outside a git checkout.",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn get_version(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.get_version() {
@@ -128,7 +138,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Run diagnostics on the module graph to find issues like disconnected modules or missing connections"
+        description = "Run diagnostics on the module graph to find issues like disconnected modules or missing connections",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn get_graph_diagnostics(
         &self,
@@ -145,7 +156,8 @@ impl SynthMcpServer {
                        plus the build version that generated it. Use this to validate or diff project \
                        files against the exact committed schema — it avoids the introspection-vs-disk \
                        encoding drift you'd get from reading parameter values live (e.g. an enum reported \
-                       numerically here but stored as a string on disk)."
+                       numerically here but stored as a string on disk).",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn get_project_schema(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.get_project_schema() {
@@ -159,7 +171,8 @@ impl SynthMcpServer {
                        aggregate them into one report. Surfaces behavioural issues schema validation \
                        can't — unconnected ports, silent voices, feedback loops, missing audio paths, \
                        and tracks that reference missing instruments — with total error/warning/info counts. A healthy project reports \
-                       error_count = 0 and warning_count = 0. Use after loading a project or before export."
+                       error_count = 0 and warning_count = 0. Use after loading a project or before export.",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn lint_project(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.lint_project() {
@@ -173,7 +186,8 @@ impl SynthMcpServer {
         (every port + parameter per type) — this is hundreds of KB and can exceed the tool-result \
         token cap, so pass brief:true for a compact {type_key, name, category} list, then call \
         get_module_type_info for the one type you want. Use the type_key to add modules with \
-        add_module."
+        add_module.",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn list_module_types(
         &self,
@@ -194,7 +208,8 @@ impl SynthMcpServer {
     #[tool(
         description = "Get detailed info for a single module type by its type key (e.g. 'osc', 'flt', 'env'). \
                        Returns ports, parameters with ranges/units/choices, and signal flow hints. \
-                       Lighter than list_module_types when you already know which module you need."
+                       Lighter than list_module_types when you already know which module you need.",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn get_module_type_info(
         &self,
@@ -236,7 +251,8 @@ impl SynthMcpServer {
     #[tool(
         description = "Search available module types by category, port signal type, or text query. \
                        All filters are optional and combined with AND logic. Returns matching modules \
-                       with full port/parameter details."
+                       with full port/parameter details.",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn search_modules(&self, params: Parameters<SearchModulesParam>) -> String {
         let p = params.0;
@@ -293,7 +309,8 @@ impl SynthMcpServer {
 
     #[tool(
         description = "List all port signal types with descriptions, value ranges, and compatibility. \
-                       Use this to understand which port types can connect to each other."
+                       Use this to understand which port types can connect to each other.",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn list_port_types(&self, _params: Parameters<NoParams>) -> String {
         use crate::types::PortSignalTypeInfo;
@@ -336,7 +353,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Get the full YAMS (Yet Another Modulation Script) Markdown reference: shared grammar, functions, arrays, state and `param` knobs, plus the Mod Matrix, Script (4 CV inputs/outputs), AudioScript, and Note Grid note-event dialects. Read this before using set_mod_matrix_script or set_note_graph_script."
+        description = "Get the full YAMS (Yet Another Modulation Script) Markdown reference: shared grammar, functions, arrays, state and `param` knobs, plus the Mod Matrix, Script (4 CV inputs/outputs), AudioScript, and Note Grid note-event dialects. Read this before using set_mod_matrix_script or set_note_graph_script.",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn get_yams_reference(&self, _params: Parameters<NoParams>) -> String {
         synth_script::REFERENCE.to_string()
@@ -344,7 +362,8 @@ impl SynthMcpServer {
 
     #[tool(
         description = "Check whether a connection between two module ports would be valid. \
-                       Returns compatibility info and hints. Use this before connect to avoid errors."
+                       Returns compatibility info and hints. Use this before connect to avoid errors.",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn check_connection(
         &self,

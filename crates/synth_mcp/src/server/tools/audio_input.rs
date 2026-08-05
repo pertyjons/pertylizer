@@ -4,7 +4,10 @@ use super::super::*;
 
 #[tool_router(router = audio_input_tool_router, vis = "pub(crate)")]
 impl SynthMcpServer {
-    #[tool(description = "List available audio input devices (microphones, line-in, etc.).")]
+    #[tool(
+        description = "List available audio input devices (microphones, line-in, etc.).",
+        annotations(read_only_hint = true)
+    )]
     pub(crate) async fn list_input_devices(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.list_input_devices() {
             Ok(devices) => to_json(&devices),
@@ -14,7 +17,8 @@ impl SynthMcpServer {
 
     #[tool(
         description = "Get the current audio input state: monitoring status, recording status, \
-                       peak level, and recording duration."
+                       peak level, and recording duration.",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn get_input_state(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.get_input_state() {
@@ -24,7 +28,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Select an audio input device by id/name; pass null for the backend default."
+        description = "Select an audio input device by id/name; pass null for the backend default.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_input_device(&self, params: Parameters<SetInputDeviceParam>) -> String {
         match self.bridge.set_input_device(params.0.device_id) {
@@ -33,7 +38,10 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(description = "Start audio-input monitoring and connect it to Audio Input modules.")]
+    #[tool(
+        description = "Start audio-input monitoring and connect it to Audio Input modules.",
+        annotations(destructive_hint = false)
+    )]
     pub(crate) async fn start_monitoring(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.start_monitoring() {
             Ok(()) => "Input monitoring started".to_string(),
@@ -41,7 +49,10 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(description = "Stop audio-input monitoring and disconnect the engine input.")]
+    #[tool(
+        description = "Stop audio-input monitoring and disconnect the engine input.",
+        annotations(destructive_hint = false, idempotent_hint = true)
+    )]
     pub(crate) async fn stop_monitoring(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.stop_monitoring() {
             Ok(()) => "Input monitoring stopped".to_string(),
@@ -50,7 +61,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Start recording the monitored input on the dedicated recording-drain thread."
+        description = "Start recording the monitored input on the dedicated recording-drain thread.",
+        annotations(destructive_hint = false)
     )]
     pub(crate) async fn start_recording(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.start_recording() {
@@ -59,7 +71,10 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(description = "Stop input recording and commit the captured audio as a library sample.")]
+    #[tool(
+        description = "Stop input recording and commit the captured audio as a library sample.",
+        annotations(destructive_hint = false, idempotent_hint = true)
+    )]
     pub(crate) async fn stop_recording(&self, params: Parameters<StopRecordingParam>) -> String {
         match self.bridge.stop_recording(params.0.name) {
             Ok(sample) => to_json(&sample),

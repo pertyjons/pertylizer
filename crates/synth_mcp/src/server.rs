@@ -5464,3 +5464,7 @@ mod panic_isolation_tests;
 #[cfg(test)]
 #[path = "server/tests/schema_range.rs"]
 mod schema_range_tests;
+
+#[cfg(test)]
+#[path = "server/tests/tool_annotations.rs"]
+mod tool_annotations_tests;

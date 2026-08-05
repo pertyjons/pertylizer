@@ -6,7 +6,8 @@ use super::super::*;
 impl SynthMcpServer {
     #[tool(
         description = "Set or clear a track's free-text description (its role, e.g. \"kick layer\", \
-        \"sidechain source\"). Pass \"\" to clear. Surfaces in list_tracks."
+        \"sidechain source\"). Pass \"\" to clear. Surfaces in list_tracks.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_track_description(
         &self,
@@ -28,7 +29,8 @@ impl SynthMcpServer {
 
     #[tool(
         description = "Set the display color of one or more tracks from a \"#RRGGBB\" / \"#RRGGBBAA\" hex string \
-        (alpha ignored). Paints the arrangement so it is visually scannable. Surfaces in list_tracks."
+        (alpha ignored). Paints the arrangement so it is visually scannable. Surfaces in list_tracks.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_track_color(&self, params: Parameters<SetTrackColorParam>) -> String {
         let mut ok_count = 0usize;
@@ -46,7 +48,8 @@ impl SynthMcpServer {
         description = "Set mixer state on one or more tracks in a single call. Each item carries \
         a track_id plus any of volume (0.0=silent, 1.0=full, up to 2.0 for boost), pan \
         (-1.0=left..1.0=right), muted, and solo. Omitted fields are left unchanged. When any track \
-        is soloed, only soloed tracks sound. To (un)assign a track's instrument, use set_track_instrument."
+        is soloed, only soloed tracks sound. To (un)assign a track's instrument, use set_track_instrument.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_track_mixer(&self, params: Parameters<SetTrackMixerParam>) -> String {
         for it in &params.0.items {
@@ -99,7 +102,8 @@ impl SynthMcpServer {
 
     #[tool(
         description = "Assign (or unassign) the instrument driving one or more tracks. Each item's \
-        instrument_id is required: a number assigns that instrument, null unassigns (the track plays nothing)."
+        instrument_id is required: a number assigns that instrument, null unassigns (the track plays nothing).",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_track_instrument(
         &self,
@@ -120,7 +124,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Rename one or more tracks. The name is shown in the sequencer track headers."
+        description = "Rename one or more tracks. The name is shown in the sequencer track headers.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn rename_track(&self, params: Parameters<RenameTrackParam>) -> String {
         for it in &params.0.items {
@@ -140,7 +145,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Delete one or more tracks and all their placements from the arrangement."
+        description = "Delete one or more tracks and all their placements from the arrangement.",
+        annotations(destructive_hint = true)
     )]
     pub(crate) async fn delete_track(&self, params: Parameters<DeleteTracksParam>) -> String {
         let mut ok_count = 0usize;
@@ -157,7 +163,8 @@ impl SynthMcpServer {
     // === Return busses (effect sends) ===
 
     #[tool(
-        description = "List all return busses (effect-send destinations) with their fader settings."
+        description = "List all return busses (effect-send destinations) with their fader settings.",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn list_return_busses(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.list_return_busses() {
@@ -167,7 +174,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Create one or more return busses (each a sub-mix with its own effect chain, fed by track sends). Returns the assigned IDs."
+        description = "Create one or more return busses (each a sub-mix with its own effect chain, fed by track sends). Returns the assigned IDs.",
+        annotations(destructive_hint = false)
     )]
     pub(crate) async fn create_return_bus(
         &self,
@@ -190,7 +198,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Delete one or more return busses and remove every track send that targeted them."
+        description = "Delete one or more return busses and remove every track send that targeted them.",
+        annotations(destructive_hint = true)
     )]
     pub(crate) async fn delete_return_bus(
         &self,
@@ -211,7 +220,8 @@ impl SynthMcpServer {
         description = "Set mixer state on one or more return busses in a single call. Each item \
         carries a return_id plus any of volume (0.0=silent..1.0=full), pan (-1.0=left..1.0=right), \
         muted, and solo. Omitted fields are left unchanged. When any return is soloed, only soloed \
-        returns reach the master mix (bus-to-bus routing still flows)."
+        returns reach the master mix (bus-to-bus routing still flows).",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_return_bus_mixer(
         &self,
@@ -267,7 +277,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Set the display color of one or more return busses from a \"#RRGGBB\" hex string."
+        description = "Set the display color of one or more return busses from a \"#RRGGBB\" hex string.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_return_bus_color(
         &self,
@@ -285,7 +296,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Set the free-text description / intent (\"\" clears it) on one or more return busses. Never affects audio."
+        description = "Set the free-text description / intent (\"\" clears it) on one or more return busses. Never affects audio.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_return_bus_description(
         &self,
@@ -305,7 +317,10 @@ impl SynthMcpServer {
         batch_msg(ok_count, "return bus descriptions set", &[], &errors)
     }
 
-    #[tool(description = "Rename one or more return busses.")]
+    #[tool(
+        description = "Rename one or more return busses.",
+        annotations(destructive_hint = false, idempotent_hint = true)
+    )]
     pub(crate) async fn rename_return_bus(
         &self,
         params: Parameters<RenameReturnBusParam>,
@@ -327,7 +342,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Add or update one or more track effect sends to return busses (upsert by track+return target). pre_fader taps before the channel fader."
+        description = "Add or update one or more track effect sends to return busses (upsert by track+return target). pre_fader taps before the channel fader.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_track_send(&self, params: Parameters<SetTrackSendParam>) -> String {
         // The raw f32 is validated *before* it becomes a NormalizedValue (which
@@ -358,7 +374,10 @@ impl SynthMcpServer {
         batch_msg(ok_count, "track sends set", &[], &errors)
     }
 
-    #[tool(description = "Remove one or more track effect sends to return busses.")]
+    #[tool(
+        description = "Remove one or more track effect sends to return busses.",
+        annotations(destructive_hint = true)
+    )]
     pub(crate) async fn remove_track_send(
         &self,
         params: Parameters<RemoveTrackSendsParam>,
@@ -378,7 +397,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Add or update one or more bus-to-bus sends: route one return bus's output into another (e.g. a delay return into a reverb return). Upsert by from+to target; each is rejected if it would create a routing cycle."
+        description = "Add or update one or more bus-to-bus sends: route one return bus's output into another (e.g. a delay return into a reverb return). Upsert by from+to target; each is rejected if it would create a routing cycle.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_return_send(&self, params: Parameters<SetReturnSendParam>) -> String {
         // Validate the raw f32 before it becomes a NormalizedValue (see
@@ -404,7 +424,10 @@ impl SynthMcpServer {
         batch_msg(ok_count, "return sends set", &[], &errors)
     }
 
-    #[tool(description = "Remove one or more bus-to-bus sends from one return bus into another.")]
+    #[tool(
+        description = "Remove one or more bus-to-bus sends from one return bus into another.",
+        annotations(destructive_hint = true)
+    )]
     pub(crate) async fn remove_return_send(
         &self,
         params: Parameters<RemoveReturnSendsParam>,
@@ -423,7 +446,8 @@ impl SynthMcpServer {
     // === Return-bus insert effects ===
 
     #[tool(
-        description = "Add one or more insert effects to a return bus's effect chain, in order (e.g. put a reverb on a Reverb return). Each effect_type is a module-type key like 'rev', 'delay', 'chorus', 'eq', 'compressor'. Returns the new effects' module-ids (e.g. 'rev-1')."
+        description = "Add one or more insert effects to a return bus's effect chain, in order (e.g. put a reverb on a Reverb return). Each effect_type is a module-type key like 'rev', 'delay', 'chorus', 'eq', 'compressor'. Returns the new effects' module-ids (e.g. 'rev-1').",
+        annotations(destructive_hint = false)
     )]
     pub(crate) async fn add_return_effect(
         &self,
@@ -447,7 +471,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Remove one or more insert effects from a return bus's effect chain by their module-ids."
+        description = "Remove one or more insert effects from a return bus's effect chain by their module-ids.",
+        annotations(destructive_hint = true)
     )]
     pub(crate) async fn remove_return_effect(
         &self,
@@ -471,7 +496,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Set parameters on return-bus insert effects (one or many). Each item gives return_id, module_id, param_name (type_id or display name) and value (number, boolean, or choice string). Use list_return_busses to discover effects and their parameters."
+        description = "Set parameters on return-bus insert effects (one or many). Each item gives return_id, module_id, param_name (type_id or display name) and value (number, boolean, or choice string). Use list_return_busses to discover effects and their parameters.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_return_effect_parameter(
         &self,
@@ -501,7 +527,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Enable or bypass one or more return-bus insert effects (enabled = false bypasses)."
+        description = "Enable or bypass one or more return-bus insert effects (enabled = false bypasses).",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_return_effect_enabled(
         &self,
@@ -522,7 +549,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Move one or more return-bus insert effects up or down within their effect chain (direction: 'up' = earlier, 'down' = later). Moves are applied in array order."
+        description = "Move one or more return-bus insert effects up or down within their effect chain (direction: 'up' = earlier, 'down' = later). Moves are applied in array order.",
+        annotations(destructive_hint = false)
     )]
     pub(crate) async fn reorder_return_effect(
         &self,
@@ -555,7 +583,10 @@ impl SynthMcpServer {
 
     // === Master bus ===
 
-    #[tool(description = "Read the master output volume (0.0 = silent, 1.0 = unity).")]
+    #[tool(
+        description = "Read the master output volume (0.0 = silent, 1.0 = unity).",
+        annotations(read_only_hint = true)
+    )]
     pub(crate) async fn get_master_volume(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.get_master_volume() {
             Ok(v) => format!("{v}"),
@@ -563,7 +594,10 @@ impl SynthMcpServer {
         }
     }
 
-    #[tool(description = "Set the master output volume (0.0 = silent, 1.0 = unity).")]
+    #[tool(
+        description = "Set the master output volume (0.0 = silent, 1.0 = unity).",
+        annotations(destructive_hint = false, idempotent_hint = true)
+    )]
     pub(crate) async fn set_master_volume(
         &self,
         params: Parameters<SetMasterVolumeParam>,
@@ -578,7 +612,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "List the master-bus insert effects (the final effect chain applied to the full mix) in processing order, with parameters."
+        description = "List the master-bus insert effects (the final effect chain applied to the full mix) in processing order, with parameters.",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn list_master_effects(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.list_master_effects() {
@@ -588,7 +623,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Add one or more insert effects to the master-bus effect chain, in order (applied to the full mix, e.g. a limiter or EQ on the master). Each effect_type is a module-type key. Returns the new module-ids."
+        description = "Add one or more insert effects to the master-bus effect chain, in order (applied to the full mix, e.g. a limiter or EQ on the master). Each effect_type is a module-type key. Returns the new module-ids.",
+        annotations(destructive_hint = false)
     )]
     pub(crate) async fn add_master_effect(
         &self,
@@ -606,7 +642,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Remove one or more insert effects from the master-bus effect chain by their module-ids."
+        description = "Remove one or more insert effects from the master-bus effect chain by their module-ids.",
+        annotations(destructive_hint = true)
     )]
     pub(crate) async fn remove_master_effect(
         &self,
@@ -624,7 +661,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Set a parameter on a master-bus insert effect. param_name is the parameter's type_id or display name; value is a number, boolean, or choice string. Use list_master_effects to discover effects and parameters."
+        description = "Set a parameter on a master-bus insert effect. param_name is the parameter's type_id or display name; value is a number, boolean, or choice string. Use list_master_effects to discover effects and parameters.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_master_effect_parameter(
         &self,
@@ -652,7 +690,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Enable or bypass one or more master-bus insert effects (enabled = false bypasses)."
+        description = "Enable or bypass one or more master-bus insert effects (enabled = false bypasses).",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_master_effect_enabled(
         &self,
@@ -673,7 +712,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Move one or more master-bus insert effects up or down within the chain (direction: 'up' = earlier, 'down' = later). Moves are applied in array order."
+        description = "Move one or more master-bus insert effects up or down within the chain (direction: 'up' = earlier, 'down' = later). Moves are applied in array order.",
+        annotations(destructive_hint = false)
     )]
     pub(crate) async fn reorder_master_effect(
         &self,

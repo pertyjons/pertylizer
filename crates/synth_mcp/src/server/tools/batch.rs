@@ -10,7 +10,8 @@ impl SynthMcpServer {
                        Cannot nest batch_execute inside a batch. \
                        Set `dry_run: true` to validate every operation (tool name + params) without \
                        executing any — nothing is mutated. Set `rollback: true` to make the batch \
-                       all-or-nothing: the project is snapshotted first and restored if any operation fails."
+                       all-or-nothing: the project is snapshotted first and restored if any operation fails.",
+        annotations(destructive_hint = false)
     )]
     pub(crate) async fn batch_execute(&self, params: Parameters<BatchExecuteParam>) -> String {
         use crate::types::{BatchExecItemResult, BatchExecResult};

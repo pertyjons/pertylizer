@@ -5,7 +5,8 @@ use super::super::*;
 #[tool_router(router = instruments_tool_router, vis = "pub(crate)")]
 impl SynthMcpServer {
     #[tool(
-        description = "Install or clear YAMS on a Mod Matrix (`mmx-N`), Script (`scr-N`), or AudioScript (`asc-N`) module. Despite the historical tool name, `module_id` selects the dialect. A Mod Matrix program writes one normalized offset with `out`; a Script is one control-rate program with `in1..in4` and `out1..out4` (bare `out` aliases `out1`); an AudioScript is one per-sample stereo program. `param` declarations expose real knobs on Script and AudioScript modules. An empty `source` clears the selected slot/program. `slot` is 1-based: Mod Matrix accepts 1..=16; Script and AudioScript require slot 1. Read back with get_mod_matrix_routings (mmx) or get_module_info (scr/asc); see get_yams_reference for the complete language."
+        description = "Install or clear YAMS on a Mod Matrix (`mmx-N`), Script (`scr-N`), or AudioScript (`asc-N`) module. Despite the historical tool name, `module_id` selects the dialect. A Mod Matrix program writes one normalized offset with `out`; a Script is one control-rate program with `in1..in4` and `out1..out4` (bare `out` aliases `out1`); an AudioScript is one per-sample stereo program. `param` declarations expose real knobs on Script and AudioScript modules. An empty `source` clears the selected slot/program. `slot` is 1-based: Mod Matrix accepts 1..=16; Script and AudioScript require slot 1. Read back with get_mod_matrix_routings (mmx) or get_module_info (scr/asc); see get_yams_reference for the complete language.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_mod_matrix_script(
         &self,
@@ -25,7 +26,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Play one or more MIDI notes (note on) — pass several to strike a whole chord in one call. Use note=60 for middle C, velocity=100 for moderate strength."
+        description = "Play one or more MIDI notes (note on) — pass several to strike a whole chord in one call. Use note=60 for middle C, velocity=100 for moderate strength.",
+        annotations(destructive_hint = false)
     )]
     pub(crate) async fn note_on(&self, params: Parameters<NoteOnParam>) -> String {
         for n in &params.0.notes {
@@ -55,7 +57,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Stop one or more MIDI notes (note off). Use the same note numbers as the corresponding note_on."
+        description = "Stop one or more MIDI notes (note off). Use the same note numbers as the corresponding note_on.",
+        annotations(destructive_hint = false)
     )]
     pub(crate) async fn note_off(&self, params: Parameters<NoteOffParam>) -> String {
         for n in &params.0.notes {
@@ -79,7 +82,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "A/B a mix change. Call with action='capture' to render the current master mix and store it as a baseline, make your change (EQ, levels, effects, …), then call action='compare' to re-render and get the deltas: lufs_delta, peak/true-peak/rms delta in dB, crest_delta_db (positive = more dynamic), stereo_width_delta (positive = wider), mono_compat_delta. Compare re-renders with the exact same window and signal chain the baseline used, so the deltas reflect only your change. The baseline is per-session and is never written to the project; capturing again overwrites it. Use this to confirm a tweak did what you intended (e.g. 'did adding the limiter actually lower the true peak without crushing dynamics?')."
+        description = "A/B a mix change. Call with action='capture' to render the current master mix and store it as a baseline, make your change (EQ, levels, effects, …), then call action='compare' to re-render and get the deltas: lufs_delta, peak/true-peak/rms delta in dB, crest_delta_db (positive = more dynamic), stereo_width_delta (positive = wider), mono_compat_delta. Compare re-renders with the exact same window and signal chain the baseline used, so the deltas reflect only your change. The baseline is per-session and is never written to the project; capturing again overwrites it. Use this to confirm a tweak did what you intended (e.g. 'did adding the limiter actually lower the true peak without crushing dynamics?').",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn compare_mix_before_after(
         &self,
@@ -100,7 +104,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Find recurring melodic motifs in the scope. Converts each track's notes into a pitch-interval sequence (signed semitone deltas between consecutive notes in time order, ignoring rests), slides an n-gram window across each track (lengths min_interval_length..=max_interval_length, defaults 3..=6), counts identical interval sequences, and returns the top_n motifs (default 10) that appear at least min_count times (default 3). Transposition-invariant — the same shape rooted at different pitches collapses to one entry. Each motif lists its interval sequence, count, and per-occurrence locations (track id, start tick, bar/beat, first pitch). Pure symbolic — no audio rendering. `exclude_drums` defaults to true."
+        description = "Find recurring melodic motifs in the scope. Converts each track's notes into a pitch-interval sequence (signed semitone deltas between consecutive notes in time order, ignoring rests), slides an n-gram window across each track (lengths min_interval_length..=max_interval_length, defaults 3..=6), counts identical interval sequences, and returns the top_n motifs (default 10) that appear at least min_count times (default 3). Transposition-invariant — the same shape rooted at different pitches collapses to one entry. Each motif lists its interval sequence, count, and per-occurrence locations (track id, start tick, bar/beat, first pitch). Pure symbolic — no audio rendering. `exclude_drums` defaults to true.",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn find_motifs(&self, params: Parameters<FindMotifsParam>) -> String {
         match self.bridge.find_motifs(
@@ -121,7 +126,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "List all available example patches with their categories, descriptions, and tags"
+        description = "List all available example patches with their categories, descriptions, and tags",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn list_example_patches(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.list_example_patches() {
@@ -131,7 +137,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Load an example patch by name. The GUI will update on the next frame. Use list_example_patches to see available patches."
+        description = "Load an example patch by name. The GUI will update on the next frame. Use list_example_patches to see available patches.",
+        annotations(destructive_hint = true)
     )]
     pub(crate) async fn load_example_patch(
         &self,
@@ -144,7 +151,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Request auto-layout of modules in the patch view. The GUI applies the layout on the next Rack-view frame, arranging modules by signal flow. If the user is in another view (AcousticWorld, Sequencer, Sample), the request stays pending until they return to Rack."
+        description = "Request auto-layout of modules in the patch view. The GUI applies the layout on the next Rack-view frame, arranging modules by signal flow. If the user is in another view (AcousticWorld, Sequencer, Sample), the request stays pending until they return to Rack.",
+        annotations(destructive_hint = true)
     )]
     pub(crate) async fn auto_layout(&self, _params: Parameters<NoParams>) -> String {
         match self.bridge.request_auto_layout() {
@@ -154,7 +162,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Get a snapshot of the current UI layout: module positions, sizes, connections, and overlap analysis for debugging"
+        description = "Get a snapshot of the current UI layout: module positions, sizes, connections, and overlap analysis for debugging",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn get_ui_snapshot(&self, params: Parameters<InstrumentIdParam>) -> String {
         match self.bridge.get_ui_snapshot(params.0.instrument_id) {
@@ -164,7 +173,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Add one or more modules to the instrument's voice graph. Modules appear in the GUI on the next frame. Returns the assigned module IDs (see also list_modules). GUI-only visualizer types (Oscilloscope/Meter/Spectrum) can't be added over MCP — they're flagged gui_only:true in list_module_types."
+        description = "Add one or more modules to the instrument's voice graph. Modules appear in the GUI on the next frame. Returns the assigned module IDs (see also list_modules). GUI-only visualizer types (Oscilloscope/Meter/Spectrum) can't be added over MCP — they're flagged gui_only:true in list_module_types.",
+        annotations(destructive_hint = false)
     )]
     pub(crate) async fn add_module(&self, params: Parameters<AddModulesParam>) -> String {
         let p = params.0;
@@ -180,7 +190,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Remove one or more modules from the instrument's voice graph and disconnect all their cables."
+        description = "Remove one or more modules from the instrument's voice graph and disconnect all their cables.",
+        annotations(destructive_hint = true)
     )]
     pub(crate) async fn remove_module(&self, params: Parameters<RemoveModulesParam>) -> String {
         let p = params.0;
@@ -197,7 +208,8 @@ impl SynthMcpServer {
 
     #[tool(
         description = "Connect one or more module port pairs in one call. Returns the number of successful connections and any errors. \
-                       Each connection specifies from_module:from_port → to_module:to_port. Port names must match the module's ports (typically 'out'/'in'); the aliases 'output'→'out' and 'input'→'in' are also accepted."
+                       Each connection specifies from_module:from_port → to_module:to_port. Port names must match the module's ports (typically 'out'/'in'); the aliases 'output'→'out' and 'input'→'in' are also accepted.",
+        annotations(destructive_hint = false)
     )]
     pub(crate) async fn connect(&self, params: Parameters<ConnectMultipleParam>) -> String {
         let mut ok_count = 0usize;
@@ -229,7 +241,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Clear the entire voice graph for an instrument, removing all modules and connections. Use this to start from scratch."
+        description = "Clear the entire voice graph for an instrument, removing all modules and connections. Use this to start from scratch.",
+        annotations(destructive_hint = true, idempotent_hint = true)
     )]
     pub(crate) async fn clear_graph(&self, params: Parameters<InstrumentIdParam>) -> String {
         match self.bridge.clear_graph(params.0.instrument_id) {
@@ -244,7 +257,8 @@ impl SynthMcpServer {
                        Choose where with one anchor: `after`/`before` (a module id), `after_type`/`before_type` \
                        (a module type — robust across instruments), or the explicit from_module/from_port/to_module/to_port \
                        cable when the path branches. With no anchor it inserts at the end of the audio path, just before output. \
-                       The module type must carry audio. On any wiring failure the original cable is restored."
+                       The module type must carry audio. On any wiring failure the original cable is restored.",
+        annotations(destructive_hint = false)
     )]
     pub(crate) async fn insert_module_between(
         &self,
@@ -268,7 +282,8 @@ impl SynthMcpServer {
         description = "Quick go/no-go check that an instrument actually produces audio: renders one test note offline \
                        and returns a compact verdict (is_audible, peak/RMS, clipping, fundamental, DC offset) plus warnings. \
                        Use to catch silent or broken patches before wiring them into a song. For full spectral detail use \
-                       analyze_instrument_range or analyze_velocity_response."
+                       analyze_instrument_range or analyze_velocity_response.",
+        annotations(read_only_hint = true)
     )]
     pub(crate) async fn validate_instrument_audio(
         &self,
@@ -299,7 +314,8 @@ impl SynthMcpServer {
     // === Instrument lifecycle ===
 
     #[tool(
-        description = "Create one or more instruments. Returns the array of created instrument infos, each with its assigned ID."
+        description = "Create one or more instruments. Returns the array of created instrument infos, each with its assigned ID.",
+        annotations(destructive_hint = false)
     )]
     pub(crate) async fn create_instrument(
         &self,
@@ -322,7 +338,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Delete one or more instruments and all their modules. Cannot delete the default instrument (ID 0)."
+        description = "Delete one or more instruments and all their modules. Cannot delete the default instrument (ID 0).",
+        annotations(destructive_hint = true)
     )]
     pub(crate) async fn delete_instrument(
         &self,
@@ -340,7 +357,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Rename one or more instruments. The name is shown in the UI instrument strip and track selector."
+        description = "Rename one or more instruments. The name is shown in the UI instrument strip and track selector.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn rename_instrument(
         &self,
@@ -367,7 +385,8 @@ impl SynthMcpServer {
         The description never affects audio and is read back via list_instruments / \
         get_instrument_info. Use it to record why an instrument exists, what role it plays \
         in the song, or any analysis notes you want a future agent (or human) to see. \
-        Pass an empty string to clear."
+        Pass an empty string to clear.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_instrument_description(
         &self,
@@ -392,7 +411,8 @@ impl SynthMcpServer {
         \"#RRGGBB\" / \"#RRGGBBAA\" hex string (pass \"\" to clear back to the default/auto \
         tint). Never affects audio; paints instruments so the mixer / arrangement is visually \
         scannable (e.g. red kick, blue pad, green bass) and is read back via list_instruments / \
-        get_instrument_info. The color travels with the project on save."
+        get_instrument_info. The color travels with the project on save.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_instrument_color(
         &self,
@@ -417,7 +437,8 @@ impl SynthMcpServer {
         \"#RRGGBB\" / \"#RRGGBBAA\" hex string (pass \"\" to clear). Distinct from \
         set_instrument_color: this color travels with the patch when it is saved/exported, so a \
         shared patch carries its own suggested tint. Never affects audio; read back via \
-        list_instruments / get_instrument_info as patch_color."
+        list_instruments / get_instrument_info as patch_color.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_patch_color(&self, params: Parameters<SetPatchColorParam>) -> String {
         let mut ok_count = 0usize;
@@ -436,7 +457,8 @@ impl SynthMcpServer {
         loaded patch. This describes the *patch* (sound design intent, how it works, what it's \
         good for) and is distinct from set_instrument_description, which records the \
         instrument's per-instance role in the song. The patch description travels with the \
-        patch when saved. Pass \"\" to clear."
+        patch when saved. Pass \"\" to clear.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_patch_description(
         &self,
@@ -472,7 +494,8 @@ impl SynthMcpServer {
         Distinct from get_module_type_info, which documents the module *type*. The description \
         travels with the patch when saved and is readable via get_module_info / list_modules. \
         Pass \"\" to clear an item. Max 2000 characters; an item is rejected if the module does \
-        not exist."
+        not exist.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_module_description(
         &self,
@@ -499,7 +522,8 @@ impl SynthMcpServer {
 
     #[tool(
         description = "Set or clear a sample's free-text description (its intent / source). \
-        Pass \"\" to clear. Surfaces in list_samples / get_sample_info."
+        Pass \"\" to clear. Surfaces in list_samples / get_sample_info.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_sample_description(
         &self,
@@ -524,7 +548,8 @@ impl SynthMcpServer {
         engine routes the source instrument's audio output into this instrument's \
         sidechain-capable modules (compressors with sidechain_enabled, envelope followers). \
         Use it for classic pumping/ducking — e.g. let a kick drum sidechain the pad. \
-        Pass source = null (or omit) to disable. Self-routing is rejected."
+        Pass source = null (or omit) to disable. Self-routing is rejected.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_sidechain_source(
         &self,
@@ -549,7 +574,8 @@ impl SynthMcpServer {
         carries an instrument_id plus any of volume (0.0=silent, 1.0=unity, 2.0=max), pan \
         (-1.0=left..1.0=right), muted, solo, and enabled (disabled instruments skip all audio \
         processing — lighter than mute, which still processes but silences output). Omitted \
-        fields are left unchanged. When any instrument is soloed, only soloed instruments sound."
+        fields are left unchanged. When any instrument is soloed, only soloed instruments sound.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_instrument_mixer(
         &self,
@@ -617,7 +643,8 @@ impl SynthMcpServer {
         unison_detune (0..100 cents, audible only in Unison mode), unison_spread (0.0..1.0 stereo \
         width, audible only in Unison mode), and max_voices (1..=128; applied on the next voice-graph \
         rebuild / project load, not live). Omitted fields are left unchanged. Read the current \
-        values back via get_instrument_info."
+        values back via get_instrument_info.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_allocator_config(
         &self,
@@ -697,7 +724,10 @@ impl SynthMcpServer {
         batch_msg(ok_count, "allocator configs updated", &[], &errors)
     }
 
-    #[tool(description = "Set the MIDI channel (1-16) for one or more instruments.")]
+    #[tool(
+        description = "Set the MIDI channel (1-16) for one or more instruments.",
+        annotations(destructive_hint = false, idempotent_hint = true)
+    )]
     pub(crate) async fn set_instrument_midi_channel(
         &self,
         params: Parameters<SetInstrumentMidiChannelParam>,
@@ -722,7 +752,8 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Set the category of one or more instruments (for visualization routing). Categories: Uncategorized, Drums, Bass, Pad, Lead, Arp, Keys, FX."
+        description = "Set the category of one or more instruments (for visualization routing). Categories: Uncategorized, Drums, Bass, Pad, Lead, Arp, Keys, FX.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_instrument_category(
         &self,
@@ -744,7 +775,8 @@ impl SynthMcpServer {
 
     #[tool(
         description = "Disconnect one or more cables between module ports in one call. \
-                       Each connection specifies from_module:from_port → to_module:to_port (same shape as connect)."
+                       Each connection specifies from_module:from_port → to_module:to_port (same shape as connect).",
+        annotations(destructive_hint = true, idempotent_hint = true)
     )]
     pub(crate) async fn disconnect(&self, params: Parameters<ConnectMultipleParam>) -> String {
         let mut ok_count = 0usize;
@@ -770,7 +802,8 @@ impl SynthMcpServer {
     // === Sequencer: Song ===
 
     #[tool(
-        description = "Set one or more module parameters in one call. Each entry is {module_id, param_name, value}; value is a number in the parameter's native range, a boolean, or a string for a choice/enum or an address (e.g. a Mod Matrix slot_N_dest of 'spp-1.x')."
+        description = "Set one or more module parameters in one call. Each entry is {module_id, param_name, value}; value is a number in the parameter's native range, a boolean, or a string for a choice/enum or an address (e.g. a Mod Matrix slot_N_dest of 'spp-1.x').",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_parameter(&self, params: Parameters<SetParametersParam>) -> String {
         let p = params.0;
@@ -808,7 +841,8 @@ impl SynthMcpServer {
         segments with time (0-60 seconds), target level (0-1), and curve (-1 logarithmic, 0 \
         linear, +1 exponential). The tool sets the active segment count automatically and \
         updates the descriptor-backed segN_time/level/curve parameters used by the GUI and \
-        project persistence."
+        project persistence.",
+        annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_mseg_segments(
         &self,
@@ -874,7 +908,8 @@ impl SynthMcpServer {
                        modules are referenced by 0-based array index in connections. Returns per-instrument results with instrument_id and module_ids. \
                        Port names must match the module's ports (osc/amp/out expose 'out'/'in'); the aliases 'output'→'out' and 'input'→'in' are also accepted. If every requested connection fails the whole call errors instead of returning a zero-connection instrument (a freshly-created instrument is rolled back, so no orphan is left). \
                        PARTIAL SUCCESS: an unknown parameter name or a single failed connection does NOT fail the call — the instrument is still created and each result carries `partial_success: true` plus an `errors` list. Always check `partial_success` (parameter names are module-specific; use get_module_type_info for the valid names) before treating the patch as complete. \
-                       Example instrument: modules=[{module_type:'osc'},{module_type:'amp'},{module_type:'out'}], connections=[{from:0,from_port:'out',to:1,to_port:'in'},{from:1,from_port:'out',to:2,to_port:'in'}]"
+                       Example instrument: modules=[{module_type:'osc'},{module_type:'amp'},{module_type:'out'}], connections=[{from:0,from_port:'out',to:1,to_port:'in'},{from:1,from_port:'out',to:2,to_port:'in'}]",
+        annotations(destructive_hint = false)
     )]
     pub(crate) async fn build_instrument(
         &self,
@@ -917,7 +952,8 @@ impl SynthMcpServer {
     #[tool(
         description = "Apply a named example patch directly to an instrument, creating all modules, parameters, and connections. \
                        If instrument_id is omitted, creates a new instrument. Much faster than load_example_patch (no GUI queue). \
-                       Use list_example_patches to see available patches."
+                       Use list_example_patches to see available patches.",
+        annotations(destructive_hint = true)
     )]
     pub(crate) async fn apply_example_patch(
         &self,
