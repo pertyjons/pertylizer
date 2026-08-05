@@ -189,6 +189,11 @@ domain.
     * For `egui-remixicon`: when upstream releases a 0.35 version, bump `egui-remixicon` in `Cargo.toml`, remove the
       `[patch.crates-io]` block and the `third_party/egui-remixicon` directory, and verify the build.
       Watch: https://github.com/get200/egui-remixicon
+    * **egui 0.36 (released 2026-08-05) repeats the pattern**, with the roles swapped: this time
+      `egui-file-dialog` is the blocker (0.14.1 is pinned to egui 0.35) while the remixicon fork
+      only needs its egui dep bumped. After that bump, eyeball the piano-roll and arrangement
+      pinned gutter/ruler strips (upstream #8367 now counts the panel separator line in the outer
+      width) and knob/note dragging (#8365 treats a press that leaves a widget as a drag).
 
 ### 3.6 Review the mixer view layout
 
@@ -327,6 +332,76 @@ domain.
   streaming for large files, multi-sample zones (pull the `SampleZone` data model
   earlier to avoid a voice/GUI rewrite), slicing, timestretch, granular
   `GrainSource::Sample`, audio track in the sequencer.
+
+## 6. MCP protocol capabilities
+
+> Added 2026-08-05 after the `rmcp` 2.2 → 3.1 upgrade (MCP spec `2026-07-28`).
+> Tool annotations from that audit have shipped; the rest is open. None of these
+> are bug fixes — they are capabilities the protocol gained that we do not use.
+
+### 6.7 Structured tool output (`outputSchema` + `structuredContent`)
+
+- [ ] **Return typed results instead of a JSON string.** All 219 tools return
+  `String` built by `to_json(...)`, so a client receives an opaque text blob it
+  must parse blind, with no schema to validate against. rmcp's `Json<T>` wrapper
+  (`IntoCallToolResult for Json<T> where T: Serialize + JsonSchema`) emits
+  `structuredContent` and `#[tool]` can declare a matching `outputSchema`.
+  Two obstacles, neither fatal:
+    * The ~139 result structs in `synth_mcp/src/types.rs` derive `Serialize` only,
+      not `JsonSchema`. Adding the derive is mechanical but touches every type.
+    * Our in-band error convention (`format!("Error: {e}")`) has no place in a
+      typed result — those would have to become real `is_error` results, which is
+      exactly what `result_is_failure` and the batch rollback gate key off. Change
+      that convention and the batch verdict logic must move with it.
+
+  **Do this incrementally on the most-used tools, not as one sweep.** **L.**
+
+### 6.8 Argument completions (`ServerHandler::complete`)
+
+- [ ] **Implement `complete` for our string-keyed argument space.** Module type
+  keys (`osc`, `flt`), parameter addresses (`flt-1.cutoff`), instrument names,
+  pattern ids and automation target DSL strings are all free-text today; a typo
+  costs a failed call plus a `search_modules`/`list_*` round trip to recover. The
+  catalogs the completions would draw from already exist behind the discovery
+  tools. **M**, and probably the biggest day-to-day ergonomics win left.
+
+### 6.9 Long-running calls: tasks extension + progress
+
+- [ ] **Return a task handle for offline renders instead of blocking.** The
+  `analyze_*` family and `render_to_wav` render offline inside the call, so a long
+  render is indistinguishable from a hang and can hit a client timeout. MCP
+  `2026-07-28` moved tasks into the `io.modelcontextprotocol/tasks` extension:
+  the server returns a task handle, the client polls `tasks/get`, and
+  `notifications/progress` reports progress meanwhile. rmcp exposes the
+  `get_task`/`update_task`/`cancel_task` handler hooks and our `call_tool`
+  already passes the `Task` response variant through untouched. **M–L.**
+
+### 6.10 Confirmation via MRTR / elicitation
+
+- [ ] **Ask before irreversible calls.** Multi-round-trip requests let a tool
+  return `InputRequiredResult` mid-call to ask the client for input, replacing the
+  old server-initiated elicitation. The 50 tools now marked `destructiveHint`
+  (`delete_*`, `clear_*`, `new_project`, `load_project`, `set_song`, …) are the
+  natural candidates: confirm before discarding unsaved work. `call_tool` already
+  passes `InputRequired` through. Weigh against the annotation hints, which may
+  already give clients enough to prompt on their own. **M.**
+
+### 6.11 Cacheable list results (`ttlMs` / `cacheScope`)
+
+- [ ] **Advertise cache lifetimes on the static catalogs.** `2026-07-28` adds
+  `ttlMs` + `cacheScope` to `tools/list`, `resources/list` and friends. Our module
+  and port-type catalogs are immutable for the life of a build, so they can carry
+  a long TTL and stop being re-fetched. Small win, small task. **S.**
+
+### 6.12 Not applicable — deprecated features
+
+  For the record, so nobody adds them later: the spec deprecates **Roots**,
+  **Sampling** and **Logging** (12-month window). We use none of them, and our
+  `tracing`-to-stderr logging is already the migration the spec recommends. The
+  deterministic `tools/list` ordering it now asks for is also already satisfied
+  (verified: identical order hash across runs).
+
+---
 
 ## Maybe later
 
