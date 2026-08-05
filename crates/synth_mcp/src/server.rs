@@ -11,9 +11,10 @@ use futures_util::FutureExt;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    CallToolResult, ContentBlock, Implementation, JsonObject, ListResourceTemplatesResult,
-    ListResourcesResult, PaginatedRequestParams, ReadResourceRequestParams, ReadResourceResult,
-    Resource, ResourceContents, ResourceTemplate, ServerCapabilities, ServerInfo,
+    CallToolResponse, CallToolResult, ContentBlock, Implementation, JsonObject,
+    ListResourceTemplatesResult, ListResourcesResult, PaginatedRequestParams,
+    ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult, Resource,
+    ResourceContents, ResourceTemplate, ServerCapabilities, ServerInfo,
 };
 use rmcp::service::{NotificationContext, RequestContext};
 use rmcp::{ErrorData, RoleServer, ServerHandler, tool, tool_handler, tool_router};
@@ -5024,6 +5025,41 @@ impl Drop for SynthMcpServer {
     }
 }
 
+impl SynthMcpServer {
+    /// The running application's version, for the `initialize` handshake.
+    ///
+    /// Deliberately *not* `env!("CARGO_PKG_VERSION")`: that expands to
+    /// `synth_mcp`'s own crate version (`0.1.0`), not the app's, so clients were
+    /// told the wrong version on every connect. The bridge is the same source
+    /// `get_version` reports from, so the two can no longer disagree.
+    fn app_version(&self) -> String {
+        self.bridge
+            .get_version()
+            .map_or_else(|_| "unknown".to_owned(), |info| info.version)
+    }
+
+    /// One-line summary of what this build can synthesize, counted from the live
+    /// descriptor catalog rather than written out by hand — the previous fixed
+    /// string claimed "35 voice modules, 21 effects" long after the real counts
+    /// had moved on. Visualizer types are excluded: `add_module` rejects them
+    /// over MCP, so they are not part of what a client can build with.
+    fn describe_catalog(&self) -> String {
+        let Ok(types) = self.bridge.list_module_types_brief() else {
+            return "Modular synthesizer with MCP integration".to_owned();
+        };
+        let voice = types.iter().filter(|t| t.category == "voice").count();
+        let effects = types.iter().filter(|t| t.category == "effect").count();
+        format!(
+            "Modular synthesizer with {voice} voice modules, {effects} effects, \
+             and MCP integration"
+        )
+    }
+}
+
+// NOTE: this attribute must stay glued to the `impl ServerHandler` block below —
+// it generates the tool routing (`list_tools`, and the `call_tool` our override
+// delegates to). Slipping any other item between the two compiles cleanly but
+// silently leaves `tools/list` empty.
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for SynthMcpServer {
     /// Override the macro-generated `call_tool` to isolate panics. A tool body
@@ -5036,7 +5072,7 @@ impl ServerHandler for SynthMcpServer {
         &self,
         request: rmcp::model::CallToolRequestParams,
         context: RequestContext<RoleServer>,
-    ) -> Result<CallToolResult, ErrorData> {
+    ) -> Result<CallToolResponse, ErrorData> {
         let tool_name = request.name.clone();
         // Summarize args before `request` is moved into the call context, so the
         // per-call log line (and the activity-log console) shows what the call
@@ -5057,7 +5093,11 @@ impl ServerHandler for SynthMcpServer {
         // at the default level; a tool-reported failure (in-band `Error:` text
         // or the `is_error` flag) is demoted to warn.
         match outcome {
-            Ok(Ok(mut result)) => {
+            // Only a completed call carries a result to inspect. The other
+            // `CallToolResponse` variants (`InputRequired`, `Task`) mean the call
+            // has not produced an outcome yet, so there is nothing to judge as
+            // failed — pass them through untouched.
+            Ok(Ok(CallToolResponse::Complete(mut result))) => {
                 let failed = result.is_error.unwrap_or(false)
                     || result
                         .content
@@ -5083,7 +5123,18 @@ impl ServerHandler for SynthMcpServer {
                         "MCP tool call"
                     );
                 }
-                Ok(result)
+                Ok(CallToolResponse::Complete(result))
+            }
+            Ok(Ok(response)) => {
+                tracing::info!(
+                    target: "synth_mcp::call",
+                    session_id = self.session_id,
+                    tool = %tool_name,
+                    elapsed_ms,
+                    params = %param_summary,
+                    "MCP tool call did not complete in one round trip"
+                );
+                Ok(response)
             }
             Ok(Err(e)) => {
                 tracing::warn!(
@@ -5121,11 +5172,9 @@ impl ServerHandler for SynthMcpServer {
                 .build(),
         )
         .with_server_info(
-            Implementation::new("pertylizer", env!("CARGO_PKG_VERSION"))
+            Implementation::new("pertylizer", self.app_version())
                 .with_title("Pertylizer")
-                .with_description(
-                    "Modular synthesizer with 35 voice modules, 21 effects, and MCP integration",
-                )
+                .with_description(self.describe_catalog())
                 .with_website_url("https://github.com/pertyjons/pertylizer"),
         )
         .with_instructions(
@@ -5269,7 +5318,7 @@ impl ServerHandler for SynthMcpServer {
         &self,
         request: ReadResourceRequestParams,
         _context: RequestContext<RoleServer>,
-    ) -> Result<ReadResourceResult, ErrorData> {
+    ) -> Result<ReadResourceResponse, ErrorData> {
         let uri = &request.uri;
 
         if let Some(type_key) = uri.strip_prefix("synth://module-types/") {
@@ -5290,10 +5339,7 @@ impl ServerHandler for SynthMcpServer {
                 })?;
 
             let json = to_json(info);
-            Ok(ReadResourceResult::new(vec![ResourceContents::text(
-                json,
-                uri.clone(),
-            )]))
+            Ok(ReadResourceResult::new(vec![ResourceContents::text(json, uri.clone())]).into())
         } else if let Some(slug) = uri.strip_prefix("synth://patches/") {
             // Look up patch by slug — match by converting name to slug
             let patches = self
@@ -5315,10 +5361,7 @@ impl ServerHandler for SynthMcpServer {
                 .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
             let json = to_json(&data);
-            Ok(ReadResourceResult::new(vec![ResourceContents::text(
-                json,
-                uri.clone(),
-            )]))
+            Ok(ReadResourceResult::new(vec![ResourceContents::text(json, uri.clone())]).into())
         } else {
             Err(ErrorData::resource_not_found(
                 format!("Unknown resource URI: {uri}"),

@@ -126,7 +126,12 @@ pub async fn serve_http(
         Arc::new(LocalSessionManager::default()),
         {
             let mut config = StreamableHttpServerConfig::default();
-            config.stateful_mode = true;
+            // Sessions were removed from the protocol in MCP 2026-07-28, so this
+            // only governs clients that negotiate an older version — those keep
+            // the session-per-connection behaviour our `McpSessionRegistry`
+            // identities rely on. 2026-07-28 clients are served statelessly no
+            // matter what this says.
+            config.legacy_session_mode = true;
             config.cancellation_token = ct.child_token();
             config
         },

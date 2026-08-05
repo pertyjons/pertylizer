@@ -31,7 +31,7 @@ rust-version = "1.97"
 authors = ["Per Jonsson"]
 license = "MIT"
 repository = "https://github.com/pertyjons/pertylizer"
-description = "Pertylizer — a modular synthesizer with 70 module types (including 25 effects) and MCP integration"
+description = "Pertylizer — a modular synthesizer with 75 module types (including 26 effects) and MCP integration"
 
 [workspace.dependencies]
 # Core dependencies
@@ -44,7 +44,7 @@ serde = { version = "1.0.229", features = ["derive", "rc"] }
 # re-serializing on every call.
 serde_json = { version = "1.0.151", features = ["raw_value"] }
 # TOML parsing for the runtime config file (pertylizer.toml).
-toml = "1.1.3"
+toml = "1.1.4"
 thiserror = "2.0.19"
 # Date/time. `clock` pulls in `Local`/`Utc::now()` via `iana-time-zone` for
 # correct, multithreaded-safe local time (unlike `time`'s `now_local`); we drop
@@ -90,14 +90,14 @@ rayon = "1.12.0"
 hound = "3.5.1"
 
 # Base64 encoding
-base64 = "0.23.0"
+base64 = "0.23.1"
 
 # ZIP archive (bundle project format)
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
 
 # Testing
 tempfile = "3.27.0"
-jsonschema = "0.48.5"
+jsonschema = "0.49.5"
 
 # Fixed-size heap-free collections
 arrayvec = "0.7.8"
@@ -110,9 +110,9 @@ dirs = "6.0.0"
 futures-util = { version = "0.3.33", default-features = false, features = ["std"] }
 
 # MCP (Model Context Protocol)
-rmcp = { version = "2.2.0", features = ["server", "transport-io", "transport-streamable-http-server"] }
+rmcp = { version = "3.1.0", features = ["server", "transport-io", "transport-streamable-http-server"] }
 tokio = { version = "1.53.1", features = ["rt-multi-thread", "macros", "io-std", "net"] }
-schemars = "1.2.1"
+schemars = "1.2.2"
 axum = "0.8.9"
 tokio-util = { version = "0.7.19", features = ["rt"] }
 
