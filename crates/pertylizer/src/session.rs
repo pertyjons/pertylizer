@@ -932,6 +932,20 @@ impl SynthSession {
         self.state.command_sync.processed() >= target
     }
 
+    /// Number of commands the engine has lost to a full command ring since it
+    /// started.
+    ///
+    /// [`wait_for_pending_commands`](Self::wait_for_pending_commands) cannot
+    /// report this: a dropped command never enters the enqueue count, so the
+    /// barrier sees the queue fully drained and returns `true` over state the
+    /// engine never reached. Take this value before a batch of commands and
+    /// compare it after — growth means what the engine applied is *not* what
+    /// the batch described.
+    #[must_use]
+    pub fn dropped_commands(&self) -> u64 {
+        self.state.command_sync.dropped()
+    }
+
     /// Check the synchronously published control snapshot.
     pub fn instrument_exists(&self, instrument_id: InstrumentId) -> bool {
         self.state

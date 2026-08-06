@@ -72,6 +72,12 @@ pub fn apply_project(
     song: &SharedSong,
     sample_library: &SharedSampleLibrary,
 ) -> Result<String, String> {
+    // Most of the sends below discard their result, and a `false` return means
+    // the command was lost rather than deferred. Snapshot the engine's drop
+    // count now so the end of the load can tell whether the engine actually
+    // reached the state this file describes — see the check before the summary.
+    let dropped_before = session.dropped_commands();
+
     let sender = session.command_sender();
     sender.send(EngineCommand::Stop);
 
@@ -170,6 +176,19 @@ pub fn apply_project(
         }
     };
     sender.send(EngineCommand::SetFocusedInstrument(focused));
+
+    // The engine's command ring is bounded and a push onto a full one is
+    // dropped, so a load can finish with the queue reporting itself fully
+    // drained over a project the engine only partly received. That is worse
+    // than a failed load: the session looks fine, a save would write back the
+    // truncated graph, and an offline render would measure it. Fail instead.
+    let dropped = session.dropped_commands().saturating_sub(dropped_before);
+    if dropped > 0 {
+        return Err(format!(
+            "the engine dropped {dropped} command(s) while loading — its command queue \
+             overflowed, so the loaded project is incomplete and does not match the file"
+        ));
+    }
 
     let pattern_count = project.song.patterns().count();
     let track_count = project.song.tracks().count();
@@ -1178,6 +1197,75 @@ mod tests {
     /// project whose instruments climbed the counter, the next `add_instrument`
     /// should start from a low ID again rather than continuing the high-water
     /// mark (the bug where a fresh project's first instrument got ID 41).
+    /// An empty project, which needs no instrument installs and so reaches the
+    /// end of `apply_project` on non-blocking sends alone.
+    fn empty_project(name: &str) -> ProjectFile {
+        ProjectFile::new(
+            Vec::new(),
+            0,
+            None,
+            Song::new(name),
+            crate::project::GlobalProjectState::default(),
+        )
+    }
+
+    /// A load that overflows the engine's command ring must fail.
+    ///
+    /// The drain barrier cannot catch this on its own: a dropped command never
+    /// enters the enqueue count, so `processed >= enqueued` reports the queue
+    /// fully drained over a project the engine only partly received. Reporting
+    /// success there is worse than failing — the session looks fine, and a save
+    /// would write the truncated state back over the file.
+    #[test]
+    fn a_load_the_engine_could_not_take_fails_instead_of_reporting_success() {
+        // Four slots and nothing draining them. Wide enough that the load gets
+        // past `SetSong` — one of the few sends whose result *is* checked, and
+        // which would otherwise fail this for a different reason — and narrow
+        // enough that the unchecked sends after it run out of ring. Those are
+        // the ones nothing but the drop counter can see.
+        let Some(capacity) = synth_engine::CommandCapacity::new(4) else {
+            panic!("test command capacity must be non-zero");
+        };
+        let (mut engine, handle) = SynthEngine::with_command_capacity(capacity);
+        let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
+        let song: SharedSong = Arc::new(synth_sequencer::SharedSong::new(Song::new("Tiny")));
+        let sample_library: SharedSampleLibrary = Arc::new(std::sync::RwLock::new(
+            synth_sampler::SampleLibrary::default(),
+        ));
+
+        let error = apply_project(&empty_project("Tiny"), &session, &song, &sample_library)
+            .expect_err("a load that lost commands must not report success");
+        assert!(error.contains("dropped"), "{error}");
+        assert!(session.dropped_commands() > 0);
+
+        // Drain what did fit. The barrier now reports the queue caught up — over
+        // a project the engine only partly received. That gap between "drained"
+        // and "applied" is the whole reason the drop counter has to exist.
+        drive(&mut engine, 2);
+        assert!(
+            session.wait_for_pending_commands(0),
+            "the barrier reports success even though commands were lost"
+        );
+    }
+
+    /// The contrast: with a ring big enough to hold the load, nothing is
+    /// dropped and the summary is returned as before. Without this the test
+    /// above would pass just as well against a function that always failed.
+    #[test]
+    fn a_load_that_fits_drops_nothing() {
+        let (_engine, handle) = SynthEngine::new();
+        let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
+        let song: SharedSong = Arc::new(synth_sequencer::SharedSong::new(Song::new("Roomy")));
+        let sample_library: SharedSampleLibrary = Arc::new(std::sync::RwLock::new(
+            synth_sampler::SampleLibrary::default(),
+        ));
+
+        let summary = apply_project(&empty_project("Roomy"), &session, &song, &sample_library)
+            .expect("a load that fits must succeed");
+        assert!(summary.starts_with("Loaded project"), "{summary}");
+        assert_eq!(session.dropped_commands(), 0);
+    }
+
     #[test]
     fn new_project_resets_instrument_id_counter() {
         let (mut engine, handle) = SynthEngine::new();

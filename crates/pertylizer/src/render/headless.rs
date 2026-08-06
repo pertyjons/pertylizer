@@ -10,12 +10,22 @@
 //!
 //! That ordering is not just convenience. The engine's command ring is bounded
 //! and a push onto a full ring is *dropped*, so a large project loaded against
-//! a stalled engine can silently lose commands. Draining concurrently — with no
+//! a stalled engine can lose commands. Draining concurrently — with no
 //! real-time sleep between blocks, unlike the null audio backend — keeps the
 //! ring far from full. The load is then complete when the engine has drained as
 //! many commands as the loader enqueued, which
-//! [`CommandSync`](synth_engine::shared_state::CommandSync) reports exactly, so
-//! nothing here waits on a timer.
+//! [`synth_engine::CommandSync`] reports exactly, so nothing here waits on a
+//! timer.
+//!
+//! A drop is no longer invisible if it does happen:
+//! [`crate::project_apply::apply_project`] compares
+//! [`synth_engine::CommandSync::dropped`]
+//! across the load and fails rather than returning a clean summary over a
+//! partly-applied project, so it reaches the caller here as
+//! [`RenderError::ProjectLoad`]. Without that the settle loop would report
+//! success — `processed >= enqueued` cannot see a command that never entered
+//! the enqueue count — and the render would measure a project missing whatever
+//! did not fit.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;

@@ -68,6 +68,85 @@ fn command_capacity_rejects_an_empty_ring() {
     assert_eq!(CommandCapacity::new(0), None);
 }
 
+/// A command that does not fit is lost, not deferred, and `enqueued` cannot
+/// record it — counting it there would leave `processed` permanently behind and
+/// hang every barrier. So the loss has to be visible somewhere else, or a
+/// caller waiting on `processed >= enqueued` concludes the engine applied
+/// everything it was sent.
+#[test]
+fn a_command_that_does_not_fit_is_counted_as_dropped() {
+    let Some(capacity) = CommandCapacity::new(1) else {
+        panic!("test command capacity must be non-zero");
+    };
+    let (_engine, mut handle) = SynthEngine::with_command_capacity(capacity);
+    let sync = Arc::clone(&handle.state.command_sync);
+
+    assert!(handle.send(EngineCommand::ResetDsp));
+    assert_eq!(sync.enqueued(), 1);
+    assert_eq!(sync.dropped(), 0, "an accepted command is not a drop");
+
+    assert!(!handle.send(EngineCommand::ResetDsp), "the ring is full");
+    assert_eq!(sync.dropped(), 1);
+    assert_eq!(
+        sync.enqueued(),
+        1,
+        "a dropped command must not advance the enqueue counter"
+    );
+}
+
+/// The blocking sender gives up with an error the caller may well log and move
+/// past. The command is just as lost as in the non-blocking case, so it counts
+/// the same.
+#[test]
+fn a_blocking_send_that_times_out_is_counted_as_dropped() {
+    let Some(capacity) = CommandCapacity::new(1) else {
+        panic!("test command capacity must be non-zero");
+    };
+    let (_engine, mut handle) = SynthEngine::with_command_capacity(capacity);
+    let sync = Arc::clone(&handle.state.command_sync);
+    assert!(handle.send(EngineCommand::ResetDsp));
+
+    let sender = handle.command_sender();
+    assert_eq!(
+        sender.send_with_timeout(EngineCommand::ResetDsp, Duration::from_millis(5)),
+        Err(CommandSendError::Timeout)
+    );
+    assert_eq!(sync.dropped(), 1);
+}
+
+/// The other way a push fails: a pointer-swap command is refused for want of a
+/// return slot even though the ring itself has room. That path returns early,
+/// so it needs its own count.
+#[test]
+fn a_pointer_swap_refused_for_want_of_a_return_slot_is_counted_as_dropped() {
+    // One slot, so the first pointer swap takes it and does not give it back
+    // until `cleanup_dropped_modules` runs.
+    let Some(capacity) = CommandCapacity::new(1) else {
+        panic!("test command capacity must be non-zero");
+    };
+    let (mut engine, mut handle) = SynthEngine::with_command_capacity(capacity);
+    let sync = Arc::clone(&handle.state.command_sync);
+    let replacement = || {
+        Arc::new(synth_sequencer::SharedSong::new(
+            synth_sequencer::Song::new("replacement"),
+        ))
+    };
+
+    assert!(handle.send(EngineCommand::SetSong {
+        song: replacement(),
+    }));
+    engine.process_commands();
+    assert_eq!(sync.dropped(), 0);
+
+    assert!(
+        !handle.send(EngineCommand::SetSong {
+            song: replacement(),
+        }),
+        "the ring has room, but there is no return slot"
+    );
+    assert_eq!(sync.dropped(), 1);
+}
+
 #[test]
 fn pointer_swap_commands_wait_for_deferred_drop_capacity() {
     let Some(capacity) = CommandCapacity::new(1) else {

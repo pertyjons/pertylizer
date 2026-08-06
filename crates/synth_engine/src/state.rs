@@ -449,10 +449,18 @@ pub const NO_FOCUSED_INSTRUMENT: u64 = u64::MAX;
 /// multi-client `EngineHub` (which pushes without bumping) is ever wired to the
 /// engine's `command_consumer`, it must bump here too or the barrier can satisfy
 /// a wait before an earlier, uncounted command is drained.
+///
+/// The pair says nothing about commands that never made it onto the ring, which
+/// is why [`dropped`](Self::dropped) exists alongside them: a failed push cannot
+/// advance `enqueued` without stranding `processed` behind it forever, so
+/// `processed >= enqueued` reports a fully drained queue over state the engine
+/// never received. Any caller whose correctness depends on the engine having
+/// applied its whole batch has to check that counter too.
 #[derive(Debug, Default)]
 pub struct CommandSync {
     enqueued: AtomicU64,
     processed: AtomicU64,
+    dropped: AtomicU64,
 }
 
 impl CommandSync {
@@ -480,6 +488,33 @@ impl CommandSync {
     #[must_use]
     pub fn processed(&self) -> u64 {
         self.processed.load(Ordering::Acquire)
+    }
+
+    /// Record that one command could **not** be pushed and was lost.
+    ///
+    /// Call once per failed enqueue, from the producer side. A dropped command
+    /// is deliberately *not* counted in [`enqueued`](Self::enqueued) — doing so
+    /// would leave `processed` permanently unable to catch up and hang every
+    /// barrier — but that is exactly what makes a drop invisible to
+    /// `processed >= enqueued`: the queue reports itself fully drained while the
+    /// engine never saw the command at all. This counter is the only way a
+    /// caller can tell "the engine applied everything I sent" from "the engine
+    /// applied everything that fit".
+    pub fn note_dropped(&self) {
+        self.dropped.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// The number of commands lost to a full ring since the engine started.
+    ///
+    /// Compare a value taken before a batch against one taken after it; growth
+    /// means the state the engine reached is *not* the state the batch
+    /// described. Relaxed on both sides: nothing is published alongside a drop,
+    /// so the count carries no ordering obligation beyond being monotonic —
+    /// unlike [`processed`](Self::processed), whose release/acquire pair also
+    /// hands over the mirrored state a drained command wrote.
+    #[must_use]
+    pub fn dropped(&self) -> u64 {
+        self.dropped.load(Ordering::Relaxed)
     }
 }
 

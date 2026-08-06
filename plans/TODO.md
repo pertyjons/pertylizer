@@ -484,6 +484,18 @@ domain.
 > correctness/RT-safety issues, but architectural enough to be driven by an
 > *actually observed symptom*, not done pre-emptively.
 
+### The build gate does not cover rustdoc
+
+- [ ] **Broken intra-doc links pass every check.** `-D warnings` is set through
+  `RUSTFLAGS` in `.cargo/config.toml`, which rustdoc does not read, so a link to
+  a moved or misspelled item survives `build`, `clippy`, and `test`. Four are
+  live today (`InputGate`, `AppShortcut`/`AppShortcut::label`, `atomic`'s
+  private `inherit_permissions`, `recovery`'s private `MAX_AGE`), plus a `write`
+  function/macro ambiguity. Fix them, then add `RUSTDOCFLAGS="-D warnings"` and
+  a `cargo doc --no-deps` step to the commit checklist so they cannot come back.
+  Found while closing the dropped-command item: a link written one commit
+  earlier had already rotted.
+
 ### Trigger-based hardening (do when the symptom appears)
 
 #### Real-time safety: replace HashMap usage on the audio thread
@@ -609,14 +621,16 @@ domain.
 - [ ] **Regenerate `THIRD-PARTY-LICENSES.md` at the next release.** `clap` and
   `sha2` are new direct dependencies (`cargo about`, see the `new version` flow
   in `CLAUDE.md`).
-- [ ] **A dropped engine command is invisible.** `CommandSender::send` does not
-  bump `CommandSync::enqueued` when the ring is full, so
-  `render::headless::load_project_file`'s settle loop — `processed >= enqueued`
-  — cannot tell a complete load from one that silently lost commands, and the
-  receipt would report a clean render of a partially-loaded project. Mitigated
-  (the drain runs concurrently with no sleep, and `apply_project`'s bulk work
-  uses `send_blocking`) but not detectable. A real fix needs a drop counter in
-  `synth_engine`, and would also cover the GUI and MCP load paths.
+- [x] **A dropped engine command is invisible.** Closed: `CommandSync` gained a
+  `dropped` counter, bumped from every failing enqueue path in
+  `CommandSender`, and `apply_project` fails a load whose count grew instead of
+  returning a clean summary over a partly-applied project — one place covering
+  the GUI open, MCP `load_project`, and the render command. A drop cannot ride
+  `enqueued` (that would strand `processed` behind it forever and hang every
+  barrier), which is exactly why `processed >= enqueued` could not see it.
+  *Remaining:* the delta is global, so a concurrent MCP or GUI send that drops
+  during a load is attributed to that load — the alarm is real, the attribution
+  approximate. Per-sender counters would fix it if it ever matters.
 - [ ] **Test a valid bundle whose samples are missing.** The plan asked for it;
   a *truncated* bundle is covered instead, because it was never established
   whether `load_bundle` errors or merely warns when a referenced sample entry is

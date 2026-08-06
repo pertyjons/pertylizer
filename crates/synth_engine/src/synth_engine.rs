@@ -181,6 +181,12 @@ impl CommandSender {
     }
 
     /// Send a command to the engine (non-blocking, may fail if queue full).
+    ///
+    /// A `false` return means the command was **lost**, not deferred. Most
+    /// callers discard it, so every failing path here also bumps
+    /// [`CommandSync::note_dropped`] — that counter is what lets a bulk
+    /// operation (a project load, a patch install) find out afterwards that the
+    /// engine never saw part of what it sent.
     pub fn send(&self, command: EngineCommand) -> bool {
         // Bump `enqueued` *inside* the producer lock, atomically with the push:
         // it must advance in lockstep with FIFO position so a save's
@@ -192,6 +198,7 @@ impl CommandSender {
         if !producer.is_full() {
             let reserved_drop = command_retires_control_ownership(&command);
             if reserved_drop && !self.deferred_drop_slots.try_reserve() {
+                self.command_sync.note_dropped();
                 return false;
             }
             crate::control_snapshot::publish(&command, &self.state);
@@ -199,11 +206,15 @@ impl CommandSender {
             debug_assert!(pushed, "a sole producer lost a reserved command slot");
             if pushed {
                 self.command_sync.note_enqueued();
-            } else if reserved_drop {
-                self.deferred_drop_slots.release();
+            } else {
+                self.command_sync.note_dropped();
+                if reserved_drop {
+                    self.deferred_drop_slots.release();
+                }
             }
             pushed
         } else {
+            self.command_sync.note_dropped();
             false
         }
     }
@@ -261,6 +272,10 @@ impl CommandSender {
 
             let now = Instant::now();
             if now >= deadline {
+                // Counted like a non-blocking failure: the caller gets an error
+                // it may well log and move past, and the command is just as
+                // lost either way.
+                self.command_sync.note_dropped();
                 return Err(CommandSendError::Timeout);
             }
 
