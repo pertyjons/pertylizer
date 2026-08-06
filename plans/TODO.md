@@ -486,15 +486,18 @@ domain.
 
 ### The build gate does not cover rustdoc
 
-- [ ] **Broken intra-doc links pass every check.** `-D warnings` is set through
-  `RUSTFLAGS` in `.cargo/config.toml`, which rustdoc does not read, so a link to
-  a moved or misspelled item survives `build`, `clippy`, and `test`. Four are
-  live today (`InputGate`, `AppShortcut`/`AppShortcut::label`, `atomic`'s
-  private `inherit_permissions`, `recovery`'s private `MAX_AGE`), plus a `write`
-  function/macro ambiguity. Fix them, then add `RUSTDOCFLAGS="-D warnings"` and
-  a `cargo doc --no-deps` step to the commit checklist so they cannot come back.
-  Found while closing the dropped-command item: a link written one commit
-  earlier had already rotted.
+- [ ] **CI's Documentation step is red, and the commit checklist cannot see it.**
+  `.cargo/config.toml`'s `[build] warnings = "deny"` *does* cover rustdoc, so
+  `cargo doc --workspace --no-deps` fails on a broken intra-doc link — but
+  `CLAUDE.md`'s checklist runs only `fmt`/`build`/`clippy`/`test`, so nobody
+  meets that failure locally while `quality.yml` runs it on every push to
+  `main`. It has been failing on `origin/main` for a while: **31 warnings in
+  `synth_core` alone** there. Six remain locally — `InputGate`,
+  `AppShortcut`/`AppShortcut::label`, `atomic`'s private `inherit_permissions`,
+  `recovery`'s private `MAX_AGE`/`MAX_ENTRIES` — plus a `write` function/macro
+  ambiguity. Clear them, then add `cargo doc --workspace --no-deps` to the
+  checklist in `CLAUDE.md` so the gate matches CI. Found while closing the
+  dropped-command item: a link written one commit earlier had already rotted.
 
 ### Trigger-based hardening (do when the symptom appears)
 
