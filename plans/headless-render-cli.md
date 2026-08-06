@@ -155,12 +155,42 @@ boolean flag and unpleasant for ten flags with values, two of them repeatable.
 Hand-rolling would also mean hand-rolling `--help`, arity and validation errors,
 and the quoting behaviour the reproducible-command field depends on.
 
-Two consequences to plan for:
+### Move the whole existing surface onto it, not just the new command
 
-- The existing `--headless` handling should move onto the same parser rather
-  than leaving two argument dialects in one binary.
-- A new dependency means `THIRD-PARTY-LICENSES.md` must be regenerated at the
-  next release (`cargo about`, see the `new version` flow in `CLAUDE.md`).
+The migration is part of this work, not a follow-up. Leaving two argument
+dialects in one binary is worse than either one alone: the rules for what counts
+as a valid invocation would depend on which flag you happened to use.
+
+Today's surface is small, which is exactly why this is cheap to do now:
+
+| Flag | Gate |
+|---|---|
+| `--headless` | `feature = "mcp"` |
+| `--no-osc` | `feature = "osc"` |
+| `-h` / `--help` | always |
+
+All three move to a `clap` derive struct, with `#[cfg(feature = ...)]` on the
+gated fields so the help text keeps matching the build. Three things go away
+with them:
+
+- **The hand-written `print_help`**, which is feature-gated in three separate
+  places and has to be kept in step with the matching by hand. `clap` derives it
+  from the same struct that parses, so they cannot drift.
+- **The second `env::args()` collection.** `main` collects the arguments and
+  `run_gui` collects them again to look for `--no-osc`; parsing once and passing
+  the parsed value down removes the duplicate.
+- **Silent acceptance of unknown arguments.** Nothing today rejects them, so
+  `pertylizer --headles` starts the GUI without a word, and any misspelled flag
+  is indistinguishable from an unsupported one. That matters more once an
+  external harness drives the binary: a typo in a generated command line must
+  fail loudly, not render the wrong thing successfully.
+
+`render` becomes a subcommand of the same parser. Running with no subcommand
+keeps today's behaviour — launch the GUI — so existing invocations and desktop
+launchers are unaffected.
+
+A new dependency means `THIRD-PARTY-LICENSES.md` must be regenerated at the next
+release (`cargo about`, see the `new version` flow in `CLAUDE.md`).
 
 ## Implementation
 
@@ -201,6 +231,9 @@ Two consequences to plan for:
   selection.
 - Paths containing spaces round-trip in the emitted reproducible command.
 - The command runs without an audio device or GUI.
+- The migrated flags still behave: `--headless` starts the MCP server, `--no-osc`
+  disables telemetry, no subcommand launches the GUI, and an unknown flag exits
+  non-zero with a message instead of being ignored.
 
 ## Exit gate
 
@@ -212,3 +245,5 @@ Two consequences to plan for:
   by integration tests.
 - MCP and CLI renders use the same load, validation, render, and WAV-writing
   implementation.
+- The binary has one argument parser. No hand-rolled matching or hand-written
+  help text remains in `main.rs`.
