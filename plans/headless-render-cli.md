@@ -3,6 +3,10 @@
 > **Status:** planned.
 >
 > **Planning baseline:** Pertylizer `3e25e679`, 2026-07-29.
+>
+> **Revised 2026-08-06** at `2d21a0cb`: the `--tap` enum is replaced by track
+> mute/solo. See [Selecting what is rendered](#selecting-what-is-rendered) for
+> why, and [Argument parsing](#argument-parsing) for the `clap` decision.
 
 ## Goal
 
@@ -17,9 +21,13 @@ general enough for CI render tests and other offline producers.
 ## Current code and gap
 
 - `crates/pertylizer/src/main.rs` accepts `--headless`, which starts the
-  long-lived MCP server on stdio.
-- `crates/pertylizer/src/mcp_bridge.rs` exposes the tested
-  `render_to_wav_impl` path.
+  long-lived MCP server on stdio. Arguments are matched by hand
+  (`args.iter().any(|a| a == "--headless")`); there is no argument parser.
+- `crates/pertylizer/src/mcp_bridge/analysis_impl.rs` exposes the tested
+  `render_to_wav_impl` path. Its signature is MCP-coloured — `&McpSharedState`
+  in, `McpBridgeError` out, `synth_mcp::AnalysisScope` for scope — even though
+  what the render actually needs from the shared state is the song and the time
+  window.
 - `crates/pertylizer/tests/render_to_wav.rs` verifies WAV creation and tails.
 - Project loading and headless application live in `project_apply.rs` and are
   exercised by `tests/mcp_project_load.rs`.
@@ -41,21 +49,118 @@ pertylizer render \
   --output render.wav \
   --sample-rate 44100 \
   --seconds 10 \
-  --tap final-mix \
   --seed 0 \
   --tail-seconds 0 \
   --normalization none \
   --result-json render-result.json
 ```
 
-Required taps are `final-mix` and a stable physical track/voice identifier.
-Unsupported taps must fail before rendering. Duration may later gain an exact
-tick/source-span alternative without changing version 1.
+with an optional mix selection, either flag repeatable:
+
+```text
+  --solo-track <id|name> ...
+  --mute-track <id|name> ...
+```
+
+Duration may later gain an exact tick/source-span alternative without changing
+version 1.
 
 The JSON result records protocol version, Pertylizer revision, input and output
-content digests, resolved sample rate/frame count, tap, seed, tail,
-normalization, warnings, and the complete reproducible command. Human progress
-goes to stderr; stdout remains usable for JSON when `--result-json` is omitted.
+content digests, resolved sample rate/frame count, the effective mix selection,
+seed, tail, normalization, warnings, and the complete reproducible command.
+Human progress goes to stderr; stdout remains usable for JSON when
+`--result-json` is omitted.
+
+## Selecting what is rendered
+
+Version 1 originally specified a `--tap` enum taking `final-mix` or "a stable
+physical track/voice identifier". That is dropped in favour of the primitive the
+application already has, for three reasons.
+
+**A SID voice is not one instrument.** In an exported SID project one voice
+spreads across several instruments — `Nemesis_the_Warlock.json` carries
+`V1 drum (drop)` and `V1 Lead`, `V2 triangle flt` and `V2 triangle flt rng` —
+because the tune reassigns the voice over time. So `voice-2` would have had to
+name a *set*, which the renderer's single `instrument_id` cannot express, and
+keying on the `V<N> ` name prefix would break the moment an instrument is
+renamed.
+
+**Mute/solo is what the reference side already does.** `sid-abtest` isolates a
+voice on the sidplayfp side by muting the other two (`-u<other>`). Mute/solo is
+therefore the symmetric primitive; a bespoke tap enum is a second vocabulary for
+the same idea.
+
+**It is already implemented and already exercised.** `SequencerTrack` carries
+`mute` and `solo` (`track.rs:100`, `:104`) with the usual DAW semantics via
+`song.any_solo()` + `track.is_audible(any_solo)`, both are serialized per track,
+and the offline arrangement renderer honours them (`arrangement_render.rs:616`).
+`analyze_section` already performs per-track soloed renders through that path,
+including the subtle parts: reverb/delay/compressor tails must not bleed from
+one soloed render into the next, and a reused session has to be reset between
+them (`arrangement_render.rs:322`, `:521`). The command reuses that, and must
+not reimplement it.
+
+The consumer keeps the mapping, which is the right place for it: `sid-analyzer`
+generated the project and knows which tracks it wrote for which voice.
+
+### Identifiers
+
+`TrackId` is canonical. It is a `u16` serialized as the track's `id` field, it
+is stable under renaming *and* reordering, and the producer of the file already
+holds it.
+
+A name is accepted as a convenience but must resolve **unambiguously** — zero
+matches or more than one is an error before rendering, because `create_track`
+does not enforce unique names.
+
+Display index is not accepted: it shifts when tracks are reordered, so the same
+command would render different audio from the same file.
+
+### The flags are the whole mix state
+
+On load, `mute` and `solo` are cleared on **every** track, and then exactly what
+the flags say is applied.
+
+| Command | Result |
+|---|---|
+| neither flag | the true full mix, whatever the file had saved |
+| `--solo-track 3` | track 3 only |
+| `--mute-track 3` | everything except track 3 |
+
+Saved flags are deliberately not honoured. The JSON result must be a function of
+the command plus the input digest; if the file's saved solo leaked in, two
+projects with identical audio content but different saved mix state would render
+differently under the same command, and the receipt could not explain why.
+
+Because that override is invisible otherwise, a project whose stored flags were
+non-default emits a **warning** in the result — someone asking why the render
+differs from what they hear in the app finds the answer in the receipt.
+
+Solo and mute may be combined; the semantics are inherited from
+`is_audible(any_solo)` rather than restated, so the command sounds like the
+application. There is deliberately no `--respect-saved-mix` escape hatch in
+version 1: nothing asks for it, and it would reintroduce exactly the
+irreproducibility this rule removes.
+
+The command sets these flags on the in-memory project only. It renders and
+exits; it must never write the input file back.
+
+## Argument parsing
+
+Adopt **`clap` 4.6.5** (latest at time of writing; MSRV 1.85 against this
+workspace's 1.97) as a workspace dependency, with the derive API.
+
+`main.rs` matches argument strings by hand today, which is tolerable for one
+boolean flag and unpleasant for ten flags with values, two of them repeatable.
+Hand-rolling would also mean hand-rolling `--help`, arity and validation errors,
+and the quoting behaviour the reproducible-command field depends on.
+
+Two consequences to plan for:
+
+- The existing `--headless` handling should move onto the same parser rather
+  than leaving two argument dialects in one binary.
+- A new dependency means `THIRD-PARTY-LICENSES.md` must be regenerated at the
+  next release (`cargo about`, see the `new version` flow in `CLAUDE.md`).
 
 ## Implementation
 
@@ -63,13 +168,19 @@ goes to stderr; stdout remains usable for JSON when `--result-json` is omitted.
    library function whose inputs contain no MCP types.
 2. Reuse `project_apply` and the same offline arrangement renderer used by
    `render_to_wav_impl`; do not reconstruct projects through public MCP calls.
-3. Add typed errors for project/schema load, missing assets, unsupported tap,
-   invalid time range, render failure, and output write failure.
-4. Write WAV and JSON through temporary sibling files, then rename after both
-   complete.
-5. Include the renderer/build revision in successful output. A dirty build must
+   Per-track renders go through the existing soloed-render path so the
+   tail-isolation and session-reset behaviour is shared, not duplicated.
+3. Resolve and validate the mix selection **before** rendering: unknown track
+   id, an unresolvable or ambiguous name, invalid time range. A ten-second
+   render must not run before the arguments are known to be good.
+4. Add typed errors for project/schema load, missing assets, unresolved track
+   selection, invalid time range, render failure, and output write failure.
+5. Write WAV and JSON through temporary sibling files, then rename after both
+   complete. `io/atomic.rs` already does exactly this and is reused rather than
+   reimplemented.
+6. Include the renderer/build revision in successful output. A dirty build must
    say so rather than claim the commit is an exact identity.
-6. Keep the MCP tool as an adapter over the same library operation so both
+7. Keep the MCP tool as an adapter over the same library operation so both
    entry points share defaults and validation.
 
 ## Tests
@@ -78,16 +189,25 @@ goes to stderr; stdout remains usable for JSON when `--result-json` is omitted.
   and one-shot command for the same configuration.
 - Repeated invocations are byte-identical for a fixed seed.
 - PCM16 and float32 output parse with the declared sample rate and frame count.
-- Tail, normalization, and tap changes produce the expected output metadata.
-- Missing bundle samples and unsupported taps return typed errors and no
-  partial final output.
+- Tail and normalization changes produce the expected output metadata.
+- `--solo-track` and `--mute-track` produce the expected audible set, by id and
+  by name, and combine per `is_audible`.
+- A project saved with a soloed track renders the **full** mix when no flag is
+  given, and reports the override as a warning.
+- An unknown track id, and a name matching zero or several tracks, return typed
+  errors before any rendering and leave no partial final output.
+- Missing bundle samples return a typed error and no partial final output.
+- The input file is byte-identical after a render that changed the mix
+  selection.
 - Paths containing spaces round-trip in the emitted reproducible command.
 - The command runs without an audio device or GUI.
 
 ## Exit gate
 
 - `sid-abtest render` can invoke the installed Pertylizer command directly,
-  without an MCP client or wrapper script.
+  without an MCP client or wrapper script. Note that `sid-abtest.rs` currently
+  emits `--tap final-mix` / `--tap voice-N`; it moves to `--solo-track` with the
+  track ids its own exporter wrote.
 - The command's version-1 arguments and JSON result are documented and covered
   by integration tests.
 - MCP and CLI renders use the same load, validation, render, and WAV-writing
