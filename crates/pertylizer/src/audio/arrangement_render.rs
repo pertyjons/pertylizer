@@ -46,7 +46,12 @@ const CHANNELS: usize = 2;
 /// Hard ceiling on how many seconds an arrangement render may produce, to
 /// keep the MCP request bounded. 5 minutes at 44.1 kHz stereo ≈ 105 MB f32
 /// — comfortably above any reasonable analysis window.
-const MAX_RENDER_SECONDS: f32 = 300.0;
+///
+/// A range longer than this is *clamped* here, with a warning. The `render`
+/// command checks its `--seconds` against this up front instead, because a
+/// harness that asked for ten minutes and silently got five would compare the
+/// wrong audio.
+pub(crate) const MAX_RENDER_SECONDS: f32 = 300.0;
 
 /// Maximum amount of pre-roll (audio before the requested `start_tick`) that
 /// the renderer will run to seed sustained notes that started before the

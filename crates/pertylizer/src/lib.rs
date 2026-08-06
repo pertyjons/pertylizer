@@ -39,6 +39,7 @@ pub mod patches;
 pub mod project;
 pub mod project_apply;
 pub mod recovery;
+pub mod render;
 pub mod session;
 #[cfg(feature = "gui-egui")]
 pub(crate) mod undo;

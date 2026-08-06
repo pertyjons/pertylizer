@@ -105,6 +105,15 @@ arrayvec = "0.7.8"
 # File system paths
 dirs = "6.0.0"
 
+# Command-line argument parsing. One parser for the whole binary — the GUI
+# flags and the `render` subcommand — so what counts as a valid invocation
+# does not depend on which flag you happened to use.
+clap = { version = "4.6.5", features = ["derive"] }
+
+# SHA-256 content digests for the `render` command's JSON receipt, so a receipt
+# names the exact input it rendered and the exact bytes it produced.
+sha2 = "0.11.0"
+
 # Async combinators (FutureExt::catch_unwind for MCP panic isolation).
 # Only the `std` feature is needed (catch_unwind); already pulled transitively.
 futures-util = { version = "0.3.33", default-features = false, features = ["std"] }

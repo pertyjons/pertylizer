@@ -1,12 +1,31 @@
 # Headless project render CLI
 
-> **Status:** planned.
+> **Status:** implemented and squash-merged to `main`, 2026-08-06. The
+> remaining open work lives in `plans/TODO.md` §5.6; this document is kept as
+> the record of *why* the version-1 contract looks the way it does.
 >
 > **Planning baseline:** Pertylizer `3e25e679`, 2026-07-29.
 >
 > **Revised 2026-08-06** at `2d21a0cb`: the `--tap` enum is replaced by track
 > mute/solo. See [Selecting what is rendered](#selecting-what-is-rendered) for
 > why, and [Argument parsing](#argument-parsing) for the `clap` decision.
+>
+> **Implemented 2026-08-06.** Decisions taken during the work, beyond what is
+> written below:
+>
+> - **`--seed` and `--normalization` are not in version 1** (see below).
+> - **The render is always the full chain** — master and return effects
+>   included — because the command's job is to produce the file the project
+>   sounds like. The analyzers default the other way, and for the opposite
+>   reason. There is no flag to change it in version 1.
+> - **`--seconds` is capped at 300 s**, the offline renderer's existing ceiling.
+>   The renderer would clamp a longer range and warn; the command refuses, so a
+>   harness never compares a truncated render against a full-length reference.
+> - **Digests are SHA-256**, via a new `sha2` dependency. Together with `clap`
+>   that makes two new crates for `THIRD-PARTY-LICENSES.md` to pick up at the
+>   next release.
+> - **The reproducible command is an argv array, not a shell string** — it
+>   round-trips spaces and quotes with no quoting rules to get wrong.
 
 ## Goal
 
@@ -49,9 +68,7 @@ pertylizer render \
   --output render.wav \
   --sample-rate 44100 \
   --seconds 10 \
-  --seed 0 \
   --tail-seconds 0 \
-  --normalization none \
   --result-json render-result.json
 ```
 
@@ -65,9 +82,16 @@ with an optional mix selection, either flag repeatable:
 Duration may later gain an exact tick/source-span alternative without changing
 version 1.
 
+`--seed` and `--normalization` are deliberately **not** part of version 1. No
+global render seed exists — seeds live per note-processor in the project and are
+already deterministic, so a given project renders byte-identically — and no
+normalization stage exists in the render path, where it would actively harm the
+A/B budget's `maximum_peak_error` / `maximum_rms_error`. Adding either as an
+optional flag later does not break version 1.
+
 The JSON result records protocol version, Pertylizer revision, input and output
 content digests, resolved sample rate/frame count, the effective mix selection,
-seed, tail, normalization, warnings, and the complete reproducible command.
+tail, warnings, and the complete reproducible command.
 Human progress goes to stderr; stdout remains usable for JSON when
 `--result-json` is omitted.
 
@@ -190,7 +214,8 @@ keeps today's behaviour — launch the GUI — so existing invocations and deskt
 launchers are unaffected.
 
 A new dependency means `THIRD-PARTY-LICENSES.md` must be regenerated at the next
-release (`cargo about`, see the `new version` flow in `CLAUDE.md`).
+release (`cargo about`, see the `new version` flow in `CLAUDE.md`). The same
+applies to `sha2`, added for the receipt's content digests.
 
 ## Implementation
 
@@ -217,9 +242,9 @@ release (`cargo about`, see the `new version` flow in `CLAUDE.md`).
 
 - A saved synthetic project renders byte-identically through the MCP adapter
   and one-shot command for the same configuration.
-- Repeated invocations are byte-identical for a fixed seed.
-- PCM16 and float32 output parse with the declared sample rate and frame count.
-- Tail and normalization changes produce the expected output metadata.
+- Repeated invocations of the same configuration are byte-identical.
+- float32 output parses with the declared sample rate and frame count.
+- Tail changes produce the expected output metadata.
 - `--solo-track` and `--mute-track` produce the expected audible set, by id and
   by name, and combine per `is_audible`.
 - A project saved with a soloed track renders the **full** mix when no flag is
@@ -237,13 +262,46 @@ release (`cargo about`, see the `new version` flow in `CLAUDE.md`).
 
 ## Exit gate
 
-- `sid-abtest render` can invoke the installed Pertylizer command directly,
+- [ ] `sid-abtest render` can invoke the installed Pertylizer command directly,
   without an MCP client or wrapper script. Note that `sid-abtest.rs` currently
   emits `--tap final-mix` / `--tap voice-N`; it moves to `--solo-track` with the
-  track ids its own exporter wrote.
-- The command's version-1 arguments and JSON result are documented and covered
-  by integration tests.
-- MCP and CLI renders use the same load, validation, render, and WAV-writing
-  implementation.
-- The binary has one argument parser. No hand-rolled matching or hand-written
-  help text remains in `main.rs`.
+  track ids its own exporter wrote. **Open — the change is in the `sid-analyzer`
+  repository, not this one.**
+- [x] The command's version-1 arguments and JSON result are documented and
+  covered by integration tests (`crates/pertylizer/tests/render_command.rs`,
+  plus the parser tests in `main.rs`).
+- [x] MCP and CLI renders use the same load, validation, render, and
+  WAV-writing implementation (`crates/pertylizer/src/render/`), asserted
+  byte-for-byte by `the_mcp_tool_renders_the_same_bytes`.
+- [x] The binary has one argument parser. No hand-rolled matching or
+  hand-written help text remains in `main.rs`.
+
+### Not covered
+
+The plan asks for a test that *missing bundle samples* return a typed error. A
+truncated bundle is covered instead; a structurally valid bundle whose sample
+entries are absent is not, because it was not clear that the loader treats that
+as an error rather than a warning. Carried to `plans/TODO.md` §5.6 along with
+the other open follow-ups.
+
+## What shipped
+
+`crates/pertylizer/src/render/` holds the core both entry points use:
+
+| File | Contents |
+|---|---|
+| `wav.rs` | `TickWindow` (cannot hold an empty range), `tick_window_from_seconds`, `render_window_to_wav` |
+| `mix.rs` | `TrackSelector` / `MixSelection` / `apply_mix_selection` |
+| `headless.rs` | `load_project_file`, `path_identity` |
+| `receipt.rs` | `RenderReceipt` and its parts |
+| `command.rs` | `RenderCommand` / `run_render_command` — validate, load, mix, render, write |
+
+`mcp_bridge/analysis_impl.rs`'s `render_to_wav_with_tail_impl` is now an adapter
+over the same code, and `write_interleaved_wav_f32` writes through
+`io::atomic`, so the MCP tool's WAV write became crash-safe as a side effect.
+
+Two review passes over the finished branch found twelve real defects between
+them — the mix-inverting solo+mute overlap, `--output` able to be `--input`,
+unbounded tail and window×rate allocations, a collision guard that compared
+paths `canonicalize` could not resolve, and a silence warning that never fired.
+All are fixed and covered by tests.

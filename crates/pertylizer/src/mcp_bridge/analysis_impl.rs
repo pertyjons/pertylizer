@@ -2716,9 +2716,11 @@ fn describe_signal_chain(scope: synth_mcp::AnalysisScope, master_volume: f32) ->
 
 /// Resolve a duration-window analysis request to an absolute `[start, end)`
 /// tick range. Applies the shared NaN/non-positive default and 300-second cap,
-/// then converts the duration to ticks via the song tempo. Shared by the
-/// duration-window analyzers (`analyze_mix_bus`, `analyze_master_chain`) so the
-/// validation and tempo math stay in one place.
+/// then hands the tempo arithmetic to [`crate::render::tick_window_from_seconds`].
+/// Shared by the duration-window analyzers (`analyze_mix_bus`,
+/// `analyze_master_chain`) so the validation stays in one place. The analyzer
+/// policy — the default duration and the cap — lives here rather than in the
+/// render core, which the render command drives under different limits.
 fn resolve_duration_window(
     shared: &McpSharedState,
     duration_seconds: f32,
@@ -2734,21 +2736,12 @@ fn resolve_duration_window(
             "duration_seconds {dur} exceeds the {MAX_ANALYSIS_WINDOW_SECONDS}-second maximum"
         )));
     }
-    let start = start_tick.map_or(0, |tick| tick.0);
-    // Convert the requested duration into a tick offset using the song's tempo
-    // so the renderer can do its own tick-range render.
-    let end = {
-        let song = shared.song.read();
-        let start_seconds = song.tick_to_seconds(Tick(start));
-        let target_seconds = start_seconds + f64::from(dur);
-        song.seconds_to_tick(target_seconds).0
-    };
-    if end <= start {
-        return Err(McpBridgeError::Other(
-            "Requested duration resolves to zero song ticks — check tempo".to_string(),
-        ));
-    }
-    Ok((start, end))
+    let window = crate::render::tick_window_from_seconds(
+        &shared.song,
+        start_tick,
+        synth_core::Seconds::new(dur),
+    )?;
+    Ok((window.start().0, window.end().0))
 }
 
 /// Render one `[start, end)` range against `song` on a prepared offline session
@@ -2780,8 +2773,12 @@ fn render_range_to_metrics(
 /// `render_to_wav` bridge implementation. Renders the requested window exactly
 /// like `analyze_mix_bus_impl` (same offline render + scope), optionally soloing
 /// one instrument against a cloned song so the live project is untouched, then
-/// writes the interleaved buffer to a 32-bit float WAV via the shared `hound`
-/// writer in `audio::export`.
+/// writes the interleaved buffer to a 32-bit float WAV.
+///
+/// The render and the write themselves live in [`crate::render`], which the
+/// `pertylizer render` command drives too; this is the MCP-facing adapter that
+/// resolves the window, applies instrument isolation, and reshapes the outcome
+/// into the tool's result type.
 #[doc(hidden)]
 #[allow(clippy::too_many_arguments)]
 pub fn render_to_wav_impl(
@@ -2823,6 +2820,7 @@ pub fn render_to_wav_with_tail_impl(
     tail: synth_core::Seconds,
 ) -> Result<RenderToWavResult, McpBridgeError> {
     let (start, end) = resolve_duration_window(shared, duration_seconds, start_tick)?;
+    let window = crate::render::TickWindow::new(Tick(start), Tick(end))?;
     let mut warnings = Vec::new();
     let song = if let Some(inst_id) = instrument_id {
         let mut isolated = shared.song.read().clone();
@@ -2838,51 +2836,28 @@ pub fn render_to_wav_with_tail_impl(
     } else {
         Arc::clone(&shared.song)
     };
-    let (mut engine_session, setup_warnings) =
-        crate::audio::arrangement_render::OfflineEngineSession::new_with_scope(
-            session,
-            sample_library,
-            scope,
-        )?;
-    warnings.extend(setup_warnings);
-    let rendered = engine_session.render_range_with_tail(&song, start, end, tail)?;
-    warnings.extend(rendered.warnings.iter().cloned());
 
-    // Resolve and create the target directory before the (potentially
-    // expensive) write so a missing parent dir or relative path is handled
-    // up front rather than failing after the render.
     let path_buf = std::path::PathBuf::from(&path);
-    if let Some(parent) = path_buf.parent().filter(|p| !p.as_os_str().is_empty()) {
-        std::fs::create_dir_all(parent).map_err(|e| {
-            McpBridgeError::Other(format!(
-                "failed to create directory {} for WAV output: {e}",
-                parent.display()
-            ))
-        })?;
-    }
-
-    let peak = crate::audio::export::write_interleaved_wav_f32(
-        &path_buf,
-        &rendered.samples,
-        rendered.sample_rate,
-        rendered.channels,
-    )
-    .map_err(|e| McpBridgeError::Other(format!("failed to write WAV to {path}: {e}")))?;
-
-    let frames = rendered.samples.len() as u64 / u64::from(rendered.channels.max(1));
-    // Report the absolute path the agent can actually read back; canonicalize
-    // only succeeds now that the file exists, so fall back to the input.
-    let resolved_path = std::fs::canonicalize(&path_buf)
-        .map(|p| p.to_string_lossy().into_owned())
-        .unwrap_or(path);
+    let mut outcome = crate::render::render_window_to_wav(
+        session,
+        sample_library,
+        &crate::render::WavRenderRequest {
+            song: &song,
+            window,
+            tail,
+            scope,
+            output_path: &path_buf,
+        },
+    )?;
+    warnings.append(&mut outcome.warnings);
 
     Ok(RenderToWavResult {
-        path: resolved_path,
-        sample_rate: rendered.sample_rate,
-        channels: rendered.channels,
-        duration_seconds: rendered.duration_seconds,
-        frames,
-        peak,
+        path: outcome.path.to_string_lossy().into_owned(),
+        sample_rate: outcome.sample_rate,
+        channels: outcome.channels,
+        duration_seconds: outcome.duration_seconds,
+        frames: outcome.frames,
+        peak: outcome.peak,
         soloed_instrument_id: instrument_id,
         warnings,
     })

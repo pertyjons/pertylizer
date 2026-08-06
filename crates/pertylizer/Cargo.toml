@@ -86,6 +86,12 @@ tempfile = { workspace = true }
 # File system paths
 dirs = { workspace = true }
 
+# Command-line argument parsing (binary target).
+clap = { workspace = true }
+
+# Content digests for the `render` command's JSON receipt.
+sha2 = { workspace = true }
+
 # GUI - egui (optional)
 eframe = { workspace = true, optional = true }
 egui = { workspace = true, optional = true }

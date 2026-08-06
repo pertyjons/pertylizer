@@ -596,6 +596,41 @@ domain.
   earlier to avoid a voice/GUI rewrite), slicing, timestretch, granular
   `GrainSource::Sample`, audio track in the sequencer.
 
+### 5.6 Headless render CLI — open follow-ups
+
+*(`pertylizer render` shipped to main 2026-08-06; contract and rationale kept in
+`plans/headless-render-cli.md`. Core in `crates/pertylizer/src/render/`.)*
+
+- [ ] **Point `sid-abtest` at the new command.** It still emits
+  `--tap final-mix` / `--tap voice-N`, which never existed; it moves to
+  `--solo-track <id>` with the track ids its own exporter wrote. The change
+  lives in the **`sid-analyzer` repository**, not this one — this was the
+  feature's whole reason to exist, so it is the one open exit-gate item.
+- [ ] **Regenerate `THIRD-PARTY-LICENSES.md` at the next release.** `clap` and
+  `sha2` are new direct dependencies (`cargo about`, see the `new version` flow
+  in `CLAUDE.md`).
+- [ ] **A dropped engine command is invisible.** `CommandSender::send` does not
+  bump `CommandSync::enqueued` when the ring is full, so
+  `render::headless::load_project_file`'s settle loop — `processed >= enqueued`
+  — cannot tell a complete load from one that silently lost commands, and the
+  receipt would report a clean render of a partially-loaded project. Mitigated
+  (the drain runs concurrently with no sleep, and `apply_project`'s bulk work
+  uses `send_blocking`) but not detectable. A real fix needs a drop counter in
+  `synth_engine`, and would also cover the GUI and MCP load paths.
+- [ ] **Test a valid bundle whose samples are missing.** The plan asked for it;
+  a *truncated* bundle is covered instead, because it was never established
+  whether `load_bundle` errors or merely warns when a referenced sample entry is
+  absent. Settle the behaviour first, then test it.
+- [ ] **`AnalysisScope` and `McpBridgeError` still leak into the render core.**
+  The scope type is plain configuration data living in `synth_mcp`, and
+  `arrangement_render` still fails with `McpBridgeError`, which
+  `RenderError::Render` flattens to a string. Relocating the scope to
+  `synth_core` and re-typing `arrangement_render` are each their own cleanup.
+- [ ] **`--no-default-features --features gui-egui` does not build.** Pre-dates
+  this work (verified on main): `gui/egui_backend.rs`'s `VersionTracker::at` is
+  dead without `mcp`, and `-D warnings` rejects it. The `gui-egui,mcp` and
+  default configurations are fine.
+
 ## 6. MCP protocol capabilities
 
 > Added 2026-08-05 after the `rmcp` 2.2 → 3.1 upgrade (MCP spec `2026-07-28`).

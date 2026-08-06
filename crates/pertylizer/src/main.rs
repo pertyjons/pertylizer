@@ -14,7 +14,9 @@
 //! cargo run -- --no-osc
 //! ```
 
-use std::env;
+use std::path::PathBuf;
+
+use clap::{Parser, Subcommand};
 
 #[cfg(any(feature = "gui-egui", feature = "mcp"))]
 use pertylizer::audio::{
@@ -26,6 +28,104 @@ use pertylizer::gui::{SynthGuiConfig, create_backend};
 use pertylizer::synth_core::VoiceCount;
 #[cfg(any(feature = "gui-egui", feature = "mcp"))]
 use pertylizer::synth_engine::{AllocationMode, AllocatorConfig, SynthEngine};
+
+/// Everything the binary accepts.
+///
+/// One parser for the whole surface. The flags below used to be matched by
+/// hand against `env::args()`, with a separately maintained `print_help` and no
+/// rejection of anything unrecognised — so a misspelled `--headles` silently
+/// started the GUI. Deriving both the parse and the help from this struct means
+/// they cannot drift, and an unknown argument now exits non-zero.
+///
+/// Fields are `#[cfg]`-gated on the feature that gives them meaning, so the
+/// help text a build prints describes that build rather than the full set.
+#[derive(Debug, Parser)]
+// `long_about = None` keeps the rationale in the doc comment above out of
+// `--help`; without it clap promotes the whole comment into the long help.
+#[command(
+    name = "pertylizer",
+    version,
+    about = "Pertylizer — a modular synthesizer",
+    long_about = None,
+    after_help = KEYBOARD_HELP
+)]
+struct Cli {
+    /// Run without GUI (MCP server on stdio).
+    #[cfg(feature = "mcp")]
+    #[arg(long)]
+    headless: bool,
+
+    /// Disable OSC telemetry output (enabled by default).
+    #[cfg(feature = "osc")]
+    #[arg(long)]
+    no_osc: bool,
+
+    /// What to do. Omitted launches the GUI, as it always has.
+    #[command(subcommand)]
+    command: Option<Command>,
+}
+
+/// The binary's non-GUI modes.
+#[derive(Debug, Subcommand)]
+enum Command {
+    /// Render a saved project to a WAV file and exit.
+    Render(RenderArgs),
+}
+
+/// Version-1 arguments of `pertylizer render`.
+///
+/// The mix flags are the whole mix state: whatever the project saved is
+/// cleared, and exactly what is asked for here is applied. That keeps a render
+/// a function of this command plus the input's content, which is what makes the
+/// receipt worth reading.
+#[derive(Debug, clap::Args)]
+struct RenderArgs {
+    /// Contract version this invocation speaks.
+    #[arg(long, default_value_t = pertylizer::render::PROTOCOL_VERSION)]
+    protocol_version: u32,
+
+    /// Project, bundle, or patch file to render. Never written to.
+    #[arg(long, value_name = "FILE")]
+    input: PathBuf,
+
+    /// Destination 32-bit float WAV.
+    #[arg(long, value_name = "FILE")]
+    output: PathBuf,
+
+    /// Sample rate to render at.
+    #[arg(long, default_value_t = 44_100, value_name = "HZ")]
+    sample_rate: u32,
+
+    /// How much of the arrangement to render, from the start.
+    #[arg(long, default_value_t = 10.0, value_name = "SECONDS")]
+    seconds: f32,
+
+    /// Extra audio to capture after the transport stops, for reverb and delay
+    /// tails.
+    #[arg(long, default_value_t = 0.0, value_name = "SECONDS")]
+    tail_seconds: f32,
+
+    /// Where to write the JSON result. Omitted prints it on stdout.
+    #[arg(long, value_name = "FILE")]
+    result_json: Option<PathBuf>,
+
+    /// Solo a track, by id or by unique name. Repeatable.
+    #[arg(long, value_name = "ID|NAME")]
+    solo_track: Vec<pertylizer::render::TrackSelector>,
+
+    /// Mute a track, by id or by unique name. Repeatable.
+    #[arg(long, value_name = "ID|NAME")]
+    mute_track: Vec<pertylizer::render::TrackSelector>,
+}
+
+/// Trailing help section. Not a set of flags, so it rides `after_help` rather
+/// than being invented as arguments nobody can pass.
+const KEYBOARD_HELP: &str = "\
+KEYBOARD:
+    Z-M           Play notes (C3-B3)
+    Q-I           Play notes (C4-C5)
+    2,3,5,6,7     Black keys
+    -/+           Shift octave";
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Initialise tracing FIRST. Writer is locked to stderr so --headless mode
@@ -43,7 +143,12 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // panic on any thread is logged and dumped to a crash report file.
     pertylizer::panic_hook::install();
 
-    // stderr so stdout stays a clean JSON-RPC channel in --headless mode.
+    // Parsed before the banner and the thread pool, so `--help` and a rejected
+    // argument print exactly one thing and exit without starting anything.
+    let cli = Cli::parse();
+
+    // stderr so stdout stays a clean JSON-RPC channel in --headless mode, and a
+    // clean JSON channel for `render` without --result-json.
     eprintln!(
         "Pertylizer v{} ({})",
         env!("CARGO_PKG_VERSION"),
@@ -66,15 +171,26 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         tracing::warn!(error = %e, "rayon global thread pool was already initialised");
     }
 
-    let args: Vec<String> = env::args().collect();
+    // `--headless` and a subcommand are two different things to do. Taking the
+    // subcommand and ignoring the flag would let `pertylizer --headless render
+    // …` look like it started an MCP server while it rendered and exited.
+    // Printed and exited rather than returned: `main`'s error path `Debug`-
+    // prints, and `Custom { kind: Other, error: "…" }` is not a usage message.
+    #[cfg(feature = "mcp")]
+    if cli.headless && cli.command.is_some() {
+        eprintln!("error: --headless runs the MCP server and cannot be combined with a subcommand");
+        std::process::exit(1);
+    }
 
-    if args.iter().any(|a| a == "--help" || a == "-h") {
-        print_help();
-        return Ok(());
+    if let Some(Command::Render(args)) = &cli.command {
+        // Nothing here draws or listens; drop the GUI's log clone.
+        #[cfg(feature = "gui-egui")]
+        drop(activity_log);
+        return run_render(args);
     }
 
     #[cfg(feature = "mcp")]
-    if args.iter().any(|a| a == "--headless") {
+    if cli.headless {
         // No GUI to render the log; drop the capture clone.
         #[cfg(feature = "gui-egui")]
         drop(activity_log);
@@ -83,7 +199,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(feature = "gui-egui")]
     {
-        run_gui(activity_log)
+        run_gui(activity_log, &cli)
     }
     #[cfg(not(feature = "gui-egui"))]
     {
@@ -94,12 +210,85 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
 }
 
+/// Render one project and exit.
+///
+/// Failures print their message, then exit non-zero. Returning the error to
+/// `main` instead would `Debug`-print it — `MixSelection(UnknownTrackId(42))`
+/// rather than "no track with id 42 in this project" — which is no use to
+/// whoever generated the command line. The cause chain is not walked because
+/// every error here already names its source in its own message.
+fn run_render(args: &RenderArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let Err(error) = render_project(args) else {
+        return Ok(());
+    };
+    eprintln!("error: {error}");
+    std::process::exit(1);
+}
+
+/// The render itself.
+///
+/// Progress goes to stderr so stdout stays a clean JSON channel: without
+/// `--result-json` the receipt is printed there and nothing else is.
+fn render_project(args: &RenderArgs) -> Result<(), Box<dyn std::error::Error>> {
+    use pertylizer::render::{MixSelection, RenderCommand, run_render_command};
+
+    if args.protocol_version != pertylizer::render::PROTOCOL_VERSION {
+        return Err(std::io::Error::other(format!(
+            "unsupported --protocol-version {}; this build speaks version {}",
+            args.protocol_version,
+            pertylizer::render::PROTOCOL_VERSION
+        ))
+        .into());
+    }
+
+    let command = RenderCommand {
+        input: args.input.clone(),
+        output: args.output.clone(),
+        sample_rate: args.sample_rate,
+        seconds: pertylizer::synth_core::Seconds::new(args.seconds),
+        tail: pertylizer::synth_core::Seconds::new(args.tail_seconds),
+        result_json: args.result_json.clone(),
+        mix: MixSelection {
+            solo: args.solo_track.clone(),
+            mute: args.mute_track.clone(),
+        },
+        // `args_os`, not `args`: clap parses paths from `args_os` and happily
+        // accepts a non-UTF-8 one, so `env::args()` — which panics mid-iteration
+        // on exactly that input — would crash on a command line the parser had
+        // already approved.
+        argv: std::env::args_os()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect(),
+    };
+
+    let receipt = run_render_command(&command)?;
+    for warning in &receipt.warnings {
+        eprintln!("warning: {warning}");
+    }
+    match &args.result_json {
+        Some(path) => eprintln!(
+            "✓ Rendered {} frames to {} (receipt: {})",
+            receipt.audio.frames,
+            receipt.output.path,
+            path.display()
+        ),
+        None => {
+            let json = receipt.to_json()?;
+            std::io::Write::write_all(&mut std::io::stdout(), &json)?;
+        }
+    }
+    Ok(())
+}
+
 #[cfg(feature = "gui-egui")]
+// `cli` is read only for `--no-osc`, and `handle` is only borrowed mutably to
+// hand the note-event consumer to the telemetry thread. A build without `osc`
+// needs neither, and `-D warnings` would otherwise fail that configuration.
+#[cfg_attr(not(feature = "osc"), allow(unused_variables, unused_mut))]
 fn run_gui(
     activity_log: pertylizer::activity_log::ActivityLog,
+    cli: &Cli,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let args: Vec<String> = env::args().collect();
-
     // Load persistent settings
     let settings = pertylizer::io::AppSettings::load();
 
@@ -118,7 +307,7 @@ fn run_gui(
 
     // Start OSC telemetry by default (disable with --no-osc)
     #[cfg(feature = "osc")]
-    let (_osc_telemetry, osc_shared) = if args.iter().any(|a| a == "--no-osc") {
+    let (_osc_telemetry, osc_shared) = if cli.no_osc {
         (None, None)
     } else {
         let mut osc = synth_osc::OscTelemetry::new(synth_osc::OscConfig::from_parts(
@@ -367,22 +556,157 @@ fn init_tracing() {
     }
 }
 
-fn print_help() {
-    println!("Pertylizer — a modular synthesizer");
-    println!();
-    println!("USAGE:");
-    println!("    pertylizer [OPTIONS]");
-    println!();
-    println!("OPTIONS:");
+#[cfg(test)]
+mod cli_tests {
+    use super::*;
+
+    /// Running with no arguments is how the GUI is launched, so it has to stay
+    /// a valid invocation — a required argument here would break every desktop
+    /// launcher.
+    #[test]
+    fn no_arguments_parses() {
+        assert!(Cli::try_parse_from(["pertylizer"]).is_ok());
+    }
+
+    /// The headline regression: nothing rejected unknown arguments before, so
+    /// `--headles` started the GUI as if it had been asked to. A harness
+    /// generating command lines needs a typo to fail, not to render the wrong
+    /// thing successfully.
+    #[test]
+    fn an_unknown_argument_is_rejected() {
+        let err = Cli::try_parse_from(["pertylizer", "--headles"]).expect_err("must not parse");
+        assert_eq!(err.kind(), clap::error::ErrorKind::UnknownArgument);
+    }
+
     #[cfg(feature = "mcp")]
-    println!("    --headless    Run without GUI (MCP server on stdio)");
+    #[test]
+    fn headless_sets_its_flag() {
+        let cli = Cli::try_parse_from(["pertylizer", "--headless"]).expect("parses");
+        assert!(cli.headless);
+        assert!(
+            !Cli::try_parse_from(["pertylizer"])
+                .expect("parses")
+                .headless
+        );
+    }
+
+    /// Telemetry is on unless asked otherwise, so the flag's absence must read
+    /// as "enabled" rather than defaulting the other way.
     #[cfg(feature = "osc")]
-    println!("    --no-osc      Disable OSC telemetry output (enabled by default)");
-    println!("    -h, --help    Print this help message");
-    println!();
-    println!("KEYBOARD:");
-    println!("    Z-M           Play notes (C3-B3)");
-    println!("    Q-I           Play notes (C4-C5)");
-    println!("    2,3,5,6,7     Black keys");
-    println!("    -/+           Shift octave");
+    #[test]
+    fn osc_is_on_unless_disabled() {
+        assert!(!Cli::try_parse_from(["pertylizer"]).expect("parses").no_osc);
+        assert!(
+            Cli::try_parse_from(["pertylizer", "--no-osc"])
+                .expect("parses")
+                .no_osc
+        );
+    }
+
+    /// A flag whose feature is off must be rejected rather than silently
+    /// accepted, or a build would advertise one surface and accept another.
+    #[cfg(not(feature = "mcp"))]
+    #[test]
+    fn headless_is_unknown_without_the_mcp_feature() {
+        assert!(Cli::try_parse_from(["pertylizer", "--headless"]).is_err());
+    }
+
+    /// clap's own consistency check: conflicting or malformed argument
+    /// definitions panic here rather than at the first user invocation.
+    #[test]
+    fn the_command_definition_is_valid() {
+        use clap::CommandFactory;
+        Cli::command().debug_assert();
+    }
+
+    /// No subcommand still means "launch the GUI", so adding `render` must not
+    /// have made a subcommand mandatory.
+    #[test]
+    fn no_subcommand_is_still_valid() {
+        assert!(
+            Cli::try_parse_from(["pertylizer"])
+                .expect("parses")
+                .command
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn render_parses_its_version_1_arguments() {
+        let cli = Cli::try_parse_from([
+            "pertylizer",
+            "render",
+            "--input",
+            "a project.ptz",
+            "--output",
+            "out.wav",
+            "--seconds",
+            "10",
+            "--tail-seconds",
+            "2",
+            "--sample-rate",
+            "48000",
+            "--result-json",
+            "result.json",
+            "--solo-track",
+            "3",
+            "--solo-track",
+            "Lead",
+            "--mute-track",
+            "Kick",
+        ])
+        .expect("parses");
+        let Some(Command::Render(args)) = cli.command else {
+            panic!("expected the render subcommand");
+        };
+        assert_eq!(args.input, PathBuf::from("a project.ptz"));
+        assert_eq!(args.output, PathBuf::from("out.wav"));
+        assert_eq!(args.sample_rate, 48_000);
+        assert_eq!(args.seconds, 10.0);
+        assert_eq!(args.tail_seconds, 2.0);
+        assert_eq!(args.result_json, Some(PathBuf::from("result.json")));
+        // Repeatable, and a bare number is an id while anything else is a name.
+        assert_eq!(args.solo_track.len(), 2);
+        assert_eq!(args.mute_track.len(), 1);
+    }
+
+    /// Both paths are required: rendering without knowing where the audio goes
+    /// is not a partial success worth having.
+    #[test]
+    fn render_requires_an_input_and_an_output() {
+        assert!(Cli::try_parse_from(["pertylizer", "render"]).is_err());
+        assert!(Cli::try_parse_from(["pertylizer", "render", "--input", "a.ptz"]).is_err());
+    }
+
+    /// Defaults exist so the common invocation is short, but they have to be
+    /// the documented ones.
+    #[test]
+    fn render_defaults_match_the_contract() {
+        let cli = Cli::try_parse_from([
+            "pertylizer",
+            "render",
+            "--input",
+            "a.ptz",
+            "--output",
+            "b.wav",
+        ])
+        .expect("parses");
+        let Some(Command::Render(args)) = cli.command else {
+            panic!("expected the render subcommand");
+        };
+        assert_eq!(args.protocol_version, pertylizer::render::PROTOCOL_VERSION);
+        assert_eq!(args.sample_rate, 44_100);
+        assert_eq!(args.seconds, 10.0);
+        assert_eq!(args.tail_seconds, 0.0);
+        assert_eq!(args.result_json, None);
+        assert!(args.solo_track.is_empty() && args.mute_track.is_empty());
+    }
+
+    /// A misspelled subcommand must fail like a misspelled flag does, or a
+    /// generated command line could quietly launch the GUI instead of
+    /// rendering.
+    #[test]
+    fn an_unknown_subcommand_is_rejected() {
+        assert!(Cli::try_parse_from(["pertylizer", "rendr"]).is_err());
+    }
 }
