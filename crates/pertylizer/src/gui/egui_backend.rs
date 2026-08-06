@@ -702,6 +702,7 @@ impl SynthApp {
                 self.keyboard.octave_offset(),
                 self.glide_time,
             ),
+            effect_order: crate::dirty::effect_order_fingerprint(self.session.state()),
         }
     }
 

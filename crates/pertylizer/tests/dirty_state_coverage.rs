@@ -2,15 +2,17 @@
 //!
 //! Dirty state is derived from three edit counters (`SharedSong::revision`,
 //! `SharedGraph::version`, `SampleLibrary::revision`) plus fingerprints of the
-//! patch-canvas layout and of the project's global state. The point of that
-//! design is that an editor cannot silently bypass it — but only as long as
-//! each editor really does route its mutations through the shared state those
-//! counters watch.
+//! patch-canvas layout, of the project's global state, and of each instrument's
+//! effect-chain order. The point of that design is that an editor cannot
+//! silently bypass it — but only as long as each editor really does route its
+//! mutations through the shared state those terms watch.
 //!
-//! The global fingerprint's own terms — master volume, octave, glide, the
-//! transport loop region and the master/return effect chains — are covered by
-//! the unit tests in `dirty::tests::global`, which can reach the `pub(crate)`
-//! fingerprint directly.
+//! The fingerprints' own terms — master volume, octave, glide, the transport
+//! loop region, the master/return effect chains, and the chain orders — are
+//! covered by the unit tests in `dirty::tests`, which can reach the
+//! `pub(crate)` fingerprints directly. What those cannot see is whether a
+//! command actually publishes into the state a fingerprint reads, which is what
+//! the chain-reorder test below asserts.
 //!
 //! These tests perform one representative mutation per view and assert the
 //! corresponding counter moved. A future editor that starts writing somewhere
@@ -124,6 +126,58 @@ fn rack_module_edits_mark_the_project_dirty() {
         handle.state.shared_graph.version(),
         before,
         "an edit from the rack must advance the engine graph version",
+    );
+}
+
+/// Moving an effect along an instrument's chain changes nothing the three
+/// counters watch: the same modules with the same parameters, only in a new
+/// sequence. The order is persisted all the same, so it has its own fingerprint
+/// term — and that term reads `instrument_snapshots`, which is what this
+/// asserts the reorder command actually reaches.
+#[test]
+fn instrument_effect_chain_reorder_marks_the_project_dirty() {
+    use synth_core::{InstrumentId, ModuleType};
+    use synth_engine::{EngineCommand, ModuleId, ReorderDirection, instrument::Instrument};
+
+    let (_engine, handle) = SynthEngine::new();
+    let sender = handle.command_sender();
+    sender.send(EngineCommand::AddInstrument {
+        instrument: Box::new(Instrument::new(InstrumentId::FIRST, "Lead")),
+    });
+
+    let effects = [
+        ModuleId::new(ModuleType::Reverb, 1),
+        ModuleId::new(ModuleType::Delay, 1),
+    ];
+    for id in effects {
+        let Some((effect, _descriptor)) = pertylizer::module_factory::create_effect(id.module_type)
+        else {
+            panic!("the factory must know {:?}", id.module_type);
+        };
+        sender.send(EngineCommand::AddEffectInstance {
+            instrument_id: Some(InstrumentId::FIRST),
+            id,
+            effect,
+        });
+    }
+
+    let chain_order = || {
+        handle.state.instrument_snapshots.read()[0]
+            .effect_chain_order
+            .clone()
+    };
+    assert_eq!(chain_order(), effects, "both effects joined the chain");
+
+    sender.send(EngineCommand::ReorderEffect {
+        instrument_id: Some(InstrumentId::FIRST),
+        module_id: effects[1],
+        direction: ReorderDirection::Up,
+    });
+
+    assert_eq!(
+        chain_order(),
+        [effects[1], effects[0]],
+        "a reorder must reach the instrument snapshot the fingerprint reads",
     );
 }
 

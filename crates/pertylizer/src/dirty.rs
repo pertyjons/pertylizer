@@ -18,15 +18,17 @@
 //! | [`ProjectRevision::ui`] | GUI-owned state the others do not hold — instrument properties and project metadata |
 //! | [`ProjectRevision::layout`] | patch-canvas layout: module positions, group boxes and their persisted fields |
 //! | [`ProjectRevision::global`] | master volume, keyboard octave, glide, the transport loop region, and the master / return-bus effect chains |
+//! | [`ProjectRevision::effect_order`] | the order of each instrument's effect chain |
 //!
 //! A new editor added to any of those subsystems is covered automatically,
 //! because it has to go through the same shared state to have any effect.
 //!
-//! The last two are fingerprints rather than counters, for the same reason: the
-//! state they watch is reached from too many places for "remember to report" to
-//! hold. The `global` row is the one that had to be added after the fact — the
-//! effect chains in particular are *not* part of `SharedGraph`, they are
-//! `RwLock`s on `EngineState`, so the graph version never saw them.
+//! The last three are fingerprints rather than counters, for the same reason:
+//! the state they watch is reached from too many places for "remember to
+//! report" to hold. The last two had to be added after the fact, and for the
+//! same underlying reason — both watch state that hangs off `EngineState`
+//! rather than off the `SharedGraphState` whose version the `graph` counter
+//! reads, so the graph version never saw either of them.
 //!
 //! # Undoing back to the saved state
 //!
@@ -91,6 +93,24 @@ pub(crate) struct ProjectRevision {
     ///
     /// [`GlobalProjectState`]: crate::project::GlobalProjectState
     pub global: u64,
+    /// Fingerprint of the order of every instrument's effect chain.
+    ///
+    /// Persisted as `patch.settings.effect_chain_order`, and read by the save
+    /// path straight off `EngineState::instrument_snapshots` — which is neither
+    /// the `SharedGraphState` the `graph` counter watches nor part of
+    /// [`GlobalProjectState`]. So before this existed, moving an effect up or
+    /// down a chain changed the file that would be written while the project
+    /// still reported itself clean: no `*`, no autosave snapshot, no prompt on
+    /// close. The GUI reorder buttons are undoable and would have been caught by
+    /// the undo stack, but an MCP `reorder_effect` passes neither.
+    ///
+    /// Its own row rather than a term folded into `global`, because `global` is
+    /// defined as what [`GlobalProjectState`] plus the loop mirror persist.
+    /// Quietly widening a row past its documented contents is exactly how the
+    /// effect chains went unnoticed the first time round.
+    ///
+    /// [`GlobalProjectState`]: crate::project::GlobalProjectState
+    pub effect_order: u64,
 }
 
 impl ProjectRevision {
@@ -162,6 +182,48 @@ pub(crate) fn global_fingerprint(
     splitmix64(hasher.finish())
 }
 
+/// Fingerprint the order of every instrument's effect chain.
+///
+/// Order only: *what* a chain holds is modules and their parameters, which the
+/// `graph` counter already watches. The sequence is the part that lives on the
+/// instrument snapshot and is persisted separately.
+///
+/// Each instrument is hashed with its id and the results summed, so the order
+/// the engine happens to list instruments in is not itself mistaken for an edit
+/// — the same reason [`ProjectRevision::layout`] sums. Summing cannot silently
+/// cancel out, because a term only moves when that instrument's chain moves.
+pub(crate) fn effect_order_fingerprint(engine: &synth_engine::EngineState) -> u64 {
+    hash_effect_orders(
+        engine
+            .instrument_snapshots
+            .read()
+            .iter()
+            .map(|instrument| (instrument.id, instrument.effect_chain_order.as_slice())),
+    )
+}
+
+/// The hashing itself, over `(instrument, chain order)` pairs.
+///
+/// Split from the engine read so it can be tested directly:
+/// `InstrumentSnapshot` is only ever built from a live `Instrument`, and a test
+/// that had to stand one up would be testing the engine rather than this.
+fn hash_effect_orders<'a>(
+    chains: impl Iterator<Item = (synth_engine::InstrumentId, &'a [synth_engine::ModuleId])>,
+) -> u64 {
+    use std::hash::{Hash, Hasher};
+    use synth_core::hash::splitmix64;
+
+    chains.fold(0u64, |acc, (instrument_id, order)| {
+        let mut hasher = std::collections::hash_map::DefaultHasher::new();
+        instrument_id.hash(&mut hasher);
+        order.len().hash(&mut hasher);
+        for module_id in order {
+            module_id.hash(&mut hasher);
+        }
+        acc.wrapping_add(splitmix64(hasher.finish()))
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -173,6 +235,7 @@ mod tests {
         ui: u64,
         layout: u64,
         global: u64,
+        effect_order: u64,
     ) -> ProjectRevision {
         ProjectRevision {
             song: ContentRevision::new(song),
@@ -181,30 +244,33 @@ mod tests {
             ui: ContentRevision::new(ui),
             layout,
             global,
+            effect_order,
         }
     }
 
     #[test]
     fn an_unchanged_snapshot_is_not_dirty() {
-        let baseline = revision(3, 7, 1, 0, 99, 42);
+        let baseline = revision(3, 7, 1, 0, 99, 42, 11);
         assert!(!baseline.differs_from(baseline));
     }
 
     /// Each subsystem must be able to make the project dirty on its own — that
     /// is the whole point of tracking them separately. In particular `layout`
-    /// covers dragging a module, which reported nothing at all before, and
-    /// `global` covers the master fader and the effect chains, which reported
-    /// nothing either.
+    /// covers dragging a module, which reported nothing at all before, `global`
+    /// covers the master fader and the master/return effect chains, and
+    /// `effect_order` covers moving an effect along an instrument's chain —
+    /// none of which reported anything either.
     #[test]
     fn a_change_in_any_subsystem_is_dirty() {
-        let baseline = revision(3, 7, 1, 0, 99, 42);
+        let baseline = revision(3, 7, 1, 0, 99, 42, 11);
         for changed in [
-            revision(4, 7, 1, 0, 99, 42),
-            revision(3, 8, 1, 0, 99, 42),
-            revision(3, 7, 2, 0, 99, 42),
-            revision(3, 7, 1, 1, 99, 42),
-            revision(3, 7, 1, 0, 100, 42),
-            revision(3, 7, 1, 0, 99, 43),
+            revision(4, 7, 1, 0, 99, 42, 11),
+            revision(3, 8, 1, 0, 99, 42, 11),
+            revision(3, 7, 2, 0, 99, 42, 11),
+            revision(3, 7, 1, 1, 99, 42, 11),
+            revision(3, 7, 1, 0, 100, 42, 11),
+            revision(3, 7, 1, 0, 99, 43, 11),
+            revision(3, 7, 1, 0, 99, 42, 12),
         ] {
             assert!(
                 changed.differs_from(baseline),
@@ -365,12 +431,100 @@ mod tests {
         }
     }
 
+    /// The effect-chain order of each instrument, which is persisted but owned
+    /// by none of the counters.
+    mod effect_order {
+        use super::*;
+        use synth_core::ModuleType;
+        use synth_engine::{InstrumentId, ModuleId};
+
+        /// One instrument's chain, written as reverb instance numbers.
+        fn chain(instance_numbers: &[u16]) -> Vec<ModuleId> {
+            instance_numbers
+                .iter()
+                .map(|instance| ModuleId::new(ModuleType::Reverb, *instance))
+                .collect()
+        }
+
+        /// The fingerprint of a set of `(instrument id, chain)` pairs.
+        fn fingerprint(instruments: &[(u64, Vec<ModuleId>)]) -> u64 {
+            hash_effect_orders(
+                instruments
+                    .iter()
+                    .map(|(id, order)| (InstrumentId::new(*id), order.as_slice())),
+            )
+        }
+
+        /// The headline case: the same effects in a new sequence. Nothing is
+        /// added or removed, so no counter moves — but the file that would be
+        /// written differs.
+        #[test]
+        fn reordering_an_instrument_chain_changes_the_fingerprint() {
+            assert_ne!(
+                fingerprint(&[(0, chain(&[1, 3, 2]))]),
+                fingerprint(&[(0, chain(&[1, 2, 3]))]),
+            );
+        }
+
+        /// The sum must not let one instrument's reorder cancel another's.
+        #[test]
+        fn one_instrument_reordering_is_not_cancelled_by_another() {
+            assert_ne!(
+                fingerprint(&[(0, chain(&[2, 1])), (1, chain(&[2, 1]))]),
+                fingerprint(&[(0, chain(&[1, 2])), (1, chain(&[2, 1]))]),
+            );
+        }
+
+        /// A chain belongs to an instrument: the same sequence under a
+        /// different id is a different project.
+        #[test]
+        fn the_same_chain_on_a_different_instrument_is_a_different_fingerprint() {
+            assert_ne!(
+                fingerprint(&[(7, chain(&[1, 2]))]),
+                fingerprint(&[(0, chain(&[1, 2]))]),
+            );
+        }
+
+        /// Summing is what makes the engine's listing order irrelevant — that
+        /// order is not saved state, so it must not read as an edit.
+        #[test]
+        fn the_order_instruments_are_listed_in_does_not_matter() {
+            assert_eq!(
+                fingerprint(&[(1, chain(&[3])), (0, chain(&[1, 2]))]),
+                fingerprint(&[(0, chain(&[1, 2])), (1, chain(&[3]))]),
+            );
+        }
+
+        /// Adding an effect lengthens a chain, and removing one shortens it —
+        /// the `graph` counter sees those, but the fingerprint must not read
+        /// them as unchanged either.
+        #[test]
+        fn a_shorter_chain_is_a_different_fingerprint() {
+            assert_ne!(
+                fingerprint(&[(0, chain(&[1]))]),
+                fingerprint(&[(0, chain(&[1, 2]))]),
+            );
+        }
+
+        /// Reading must not itself look like an edit, or a freshly opened
+        /// project would report unsaved changes immediately.
+        #[test]
+        fn the_fingerprint_is_stable_across_reads() {
+            let engine = synth_engine::EngineState::new();
+
+            assert_eq!(
+                effect_order_fingerprint(&engine),
+                effect_order_fingerprint(&engine),
+            );
+        }
+    }
+
     /// Saving captures a new baseline, which makes the same state clean again
     /// without any counter being reset.
     #[test]
     fn re_baselining_clears_dirtiness() {
-        let baseline = revision(3, 7, 1, 0, 99, 42);
-        let after_edit = revision(4, 7, 1, 0, 99, 42);
+        let baseline = revision(3, 7, 1, 0, 99, 42, 11);
+        let after_edit = revision(4, 7, 1, 0, 99, 42, 11);
         assert!(after_edit.differs_from(baseline));
 
         let saved = after_edit;

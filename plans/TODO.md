@@ -62,17 +62,25 @@ undo-back-to-clean. Verified live afterwards: fader, octave and master-effect
 edits each raise the `*`; New Project reads clean immediately; and undoing a
 master-effect add returns the title to clean.
 
-**Still open — an instrument's effect-chain order is in no counter.** Found
-2026-08-06 while closing the §0.3 reorder gap. `effect_chain_order` lives on
+**An instrument's effect-chain order escaped the counters too — fixed
+2026-08-06.** Found while closing the §0.3 reorder gap, and the same hole the
+master fader had: `effect_chain_order` lives on
 `EngineState::instrument_snapshots`, not on the `SharedGraphState` whose version
 the `graph` counter reads, and the `global` fingerprint covers only the master
-and return chains — yet the order *is* persisted (`patch.settings
-.effect_chain_order`). So it is the same hole the master fader had. The GUI path
-is covered as of the §0.3 fix, but only via the undo stack, which is exactly the
-"remember to report" fragility this section exists to remove; an MCP reorder
-still changes the file that would be written while the project reads clean.
-Fix by deriving it: either a per-instrument term in `layout` (which already
-walks every instrument) or a new fingerprint. **S.**
+and return chains — yet the order *is* persisted
+(`patch.settings.effect_chain_order`). Moving an effect up or down a chain
+therefore changed the file that would be written while the project read clean,
+so the work was neither autosaved nor asked about on close.
+
+An `effect_order` fingerprint now joins `layout` and `global` as a derived term.
+Its own row rather than a term inside `global`, which is defined as what
+`GlobalProjectState` plus the loop mirror persist — quietly widening a row past
+its documented contents is exactly how the effect chains went unnoticed the
+first time. `dirty::tests::effect_order` covers the hashing (reorder, per-
+instrument attribution, length, listing order), and
+`dirty_state_coverage::instrument_effect_chain_reorder_marks_the_project_dirty`
+covers the part a unit test cannot see: that `ReorderEffect` really does publish
+into the snapshot the fingerprint reads.
 
 ### 0.2 Atomic save, autosave, and recovery
 
