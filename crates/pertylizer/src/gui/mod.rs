@@ -59,7 +59,12 @@ pub mod instrument_rack;
 #[cfg(feature = "gui-egui")]
 pub mod input;
 
-/// Application-wide keyboard shortcuts and the focus gate that guards them.
+// No `///` summary here on purpose. An outer doc comment on a `mod`
+// declaration is merged ahead of the module's own `//!` docs, and the merged
+// block then resolves intra-doc links in *this* module's scope — so
+// `shortcuts.rs`'s own `[`InputGate`]` silently became "no item named
+// `InputGate` in module `gui`". The module's inner docs already open with a
+// better one-line summary than this line carried.
 pub mod shortcuts;
 
 #[cfg(feature = "gui-egui")]

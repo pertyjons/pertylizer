@@ -13,7 +13,9 @@
 //!    `/tmp` would degrade to a copy and reintroduce the torn-write window.
 //! 2. Write the full contents into it.
 //! 3. `sync_all` so the bytes reach the disk before anything points at them.
-//! 4. Match the destination's existing permissions (see [`inherit_permissions`]).
+//! 4. Match the destination's existing permissions (`inherit_permissions`; a
+//!    plain code span because the function is private and so absent from these
+//!    docs — a link would resolve to nothing a reader can follow).
 //! 5. Replace the destination with a single `rename`.
 //!
 //! Until step 5 the destination is untouched, so *any* failure before it leaves
@@ -98,7 +100,7 @@ pub fn write(path: &Path, contents: &[u8]) -> Result<(), AtomicWriteError> {
 /// Build the contents of `path` by writing into a temporary file, then replace
 /// the destination atomically.
 ///
-/// Use this instead of [`write`] when the payload is streamed rather than held
+/// Use this instead of [`write()`] when the payload is streamed rather than held
 /// in one buffer — [`crate::bundle::save_bundle`] hands the handle to a ZIP
 /// writer. The destination keeps its previous contents if `write_contents`
 /// fails, and its error is returned unchanged.

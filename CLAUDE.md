@@ -19,7 +19,18 @@ cargo fmt --check
 cargo build
 cargo clippy --workspace --all-targets
 cargo test --workspace
+cargo doc --workspace --no-deps
 ```
+
+`cargo doc` is part of the gate because `.cargo/config.toml`'s
+`[build] warnings = "deny"` covers rustdoc too, and `.github/workflows/quality.yml`
+runs it on every push to `main` — so a broken intra-doc link fails CI while
+passing `build`, `clippy`, and `test` in silence. It stayed broken upstream for
+a long time exactly because the checklist did not run it. That workflow also
+runs `cargo check --workspace --all-targets` with `--no-default-features` and
+with `--all-features`, plus a `cargo check --workspace` at MSRV 1.97; those are
+cheap and worth running by hand before a push that touches features or
+dependencies.
 
 `--workspace` is required, not optional. `default-members = ["crates/pertylizer"]`
 means a bare `cargo test` / `cargo clippy --all-targets` selects only the
@@ -236,10 +247,11 @@ fn set_frequency(freq: Hertz) { ... }
 ALL must pass with **zero warnings or errors**:
 
 ```bash
-cargo build                            # RUSTFLAGS="-D warnings" in .cargo/config.toml
+cargo build                            # `[build] warnings = "deny"` in .cargo/config.toml
 cargo clippy --workspace --all-targets # Lints configured in Cargo.toml
 cargo test --workspace                 # `--workspace` is required — see `git commit` above
 cargo fmt --check
+cargo doc --workspace --no-deps        # `warnings = "deny"` covers rustdoc; CI runs it
 ```
 
 Allowed clippy exceptions: `too_many_lines` (large `process()` functions), `cast_precision_loss` (usize → f32 in audio),

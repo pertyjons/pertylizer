@@ -486,18 +486,16 @@ domain.
 
 ### The build gate does not cover rustdoc
 
-- [ ] **CI's Documentation step is red, and the commit checklist cannot see it.**
-  `.cargo/config.toml`'s `[build] warnings = "deny"` *does* cover rustdoc, so
-  `cargo doc --workspace --no-deps` fails on a broken intra-doc link — but
-  `CLAUDE.md`'s checklist runs only `fmt`/`build`/`clippy`/`test`, so nobody
-  meets that failure locally while `quality.yml` runs it on every push to
-  `main`. It has been failing on `origin/main` for a while: **31 warnings in
-  `synth_core` alone** there. Six remain locally — `InputGate`,
-  `AppShortcut`/`AppShortcut::label`, `atomic`'s private `inherit_permissions`,
-  `recovery`'s private `MAX_AGE`/`MAX_ENTRIES` — plus a `write` function/macro
-  ambiguity. Clear them, then add `cargo doc --workspace --no-deps` to the
-  checklist in `CLAUDE.md` so the gate matches CI. Found while closing the
-  dropped-command item: a link written one commit earlier had already rotted.
+- [x] **CI's Documentation step is red, and the commit checklist cannot see it.**
+  Closed: `cargo doc --workspace --no-deps` is clean and is now part of the
+  checklist in `CLAUDE.md`, so the gate matches CI. `.cargo/config.toml`'s
+  `[build] warnings = "deny"` covers rustdoc, so the failures were real — the
+  checklist simply never ran it, which is how they survived. The three
+  `shortcuts` links had a non-obvious cause worth remembering: an outer `///`
+  on a `mod` declaration is merged *ahead* of that module's own `//!` docs, and
+  the merged block then resolves intra-doc links in the **parent** module's
+  scope, so a module's links to its own items break. Deleting the one-line
+  outer summary fixed all three.
 
 ### Trigger-based hardening (do when the symptom appears)
 

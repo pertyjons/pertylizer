@@ -24,9 +24,11 @@
 //!
 //! # Bounds
 //!
-//! Recovery storage is capped by both age ([`MAX_AGE`]) and count
-//! ([`MAX_ENTRIES`]), pruned on startup. Without that, every abandoned untitled
-//! project would leave a snapshot behind forever.
+//! Recovery storage is capped by both age (30 days) and count (20 snapshots,
+//! oldest pruned first), applied on startup. Without that, every abandoned
+//! untitled project would leave a snapshot behind forever. The two constants
+//! are private, so the numbers are spelled out here rather than linked to
+//! items this page does not contain.
 
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime};
