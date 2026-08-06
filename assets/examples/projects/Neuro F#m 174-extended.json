@@ -1,6 +1,6 @@
 {
   "file_type": "project",
-  "version": "1.0",
+  "version": "1.1",
   "instruments": [
     {
       "id": 1,
@@ -44,12 +44,15 @@
               "fm_amt": 1.0,
               "fm_mode": "exponential",
               "frequency": 440.0,
+              "glide_time": 0.0,
               "level": 0.5,
+              "octave": 0.0,
+              "phase": 0.0,
               "pulse_width": 0.5,
               "uni_detune": 18.0,
               "uni_phase": 1.0,
               "uni_spread": 1.0,
-              "unison": 5.0,
+              "unison": 5,
               "waveform": "sawtooth",
               "x_mod": 0.0
             }
@@ -67,12 +70,15 @@
               "fm_amt": 1.0,
               "fm_mode": "exponential",
               "frequency": 440.0,
+              "glide_time": 0.0,
               "level": 0.45,
+              "octave": 0.0,
+              "phase": 0.0,
               "pulse_width": 0.5,
               "uni_detune": 16.0,
               "uni_phase": 1.0,
               "uni_spread": 0.85,
-              "unison": 5.0,
+              "unison": 5,
               "waveform": "sawtooth",
               "x_mod": 0.0
             }
@@ -85,6 +91,7 @@
               "y": 736.0
             },
             "parameters": {
+              "glide_time": 0.0,
               "level": 0.88,
               "octave": "minus1",
               "waveform": "sine"
@@ -143,6 +150,7 @@
               "rel_curve": 0.0,
               "release": 0.05,
               "sustain": 0.88,
+              "time_scale": 1.0,
               "vel_sens": 0.4
             }
           },
@@ -161,6 +169,7 @@
               "rel_curve": 0.0,
               "release": 0.06,
               "sustain": 0.35,
+              "time_scale": 1.0,
               "vel_sens": 0.5
             }
           },
@@ -175,6 +184,9 @@
               "depth": 0.25,
               "phase": 0.0,
               "rate": 0.18,
+              "retrigger": false,
+              "sync_division": 1.0,
+              "tempo_sync": false,
               "waveform": "triangle"
             }
           },
@@ -186,7 +198,7 @@
               "y": 32.0
             },
             "parameters": {
-              "cv_bipolar": 0.0,
+              "cv_bipolar": false,
               "level": 1.0,
               "pan": 0.0
             }
@@ -199,7 +211,7 @@
               "y": 288.0
             },
             "parameters": {
-              "cv_bipolar": 0.0,
+              "cv_bipolar": false,
               "level": 1.0,
               "pan": 0.0
             }
@@ -220,7 +232,9 @@
               "input_6": 1.0,
               "input_7": 1.0,
               "input_8": 1.0,
-              "master": 0.85
+              "limit": false,
+              "master": 0.85,
+              "mute": false
             }
           },
           {
@@ -239,7 +253,9 @@
               "input_6": 1.0,
               "input_7": 1.0,
               "input_8": 1.0,
-              "master": 0.85
+              "limit": false,
+              "master": 0.85,
+              "mute": false
             }
           },
           {
@@ -258,7 +274,9 @@
               "input_6": 1.0,
               "input_7": 1.0,
               "input_8": 1.0,
-              "master": 1.0
+              "limit": false,
+              "master": 1.0,
+              "mute": false
             }
           },
           {
@@ -277,7 +295,9 @@
               "input_6": 1.0,
               "input_7": 1.0,
               "input_8": 1.0,
-              "master": 1.0
+              "limit": false,
+              "master": 1.0,
+              "mute": false
             }
           },
           {
@@ -288,10 +308,10 @@
               "y": 32.0
             },
             "parameters": {
-              "dither": 0.0,
-              "limit": 1.0,
+              "dither": false,
+              "limit": true,
               "master": 0.82,
-              "mute": 0.0,
+              "mute": false,
               "pan": 0.0
             }
           },
@@ -324,7 +344,7 @@
               "ratio": 5.0,
               "release": 90.0,
               "sc_filter": 100.0,
-              "sidechain": 1.0,
+              "sidechain": true,
               "threshold": -22.0
             }
           },
@@ -343,7 +363,7 @@
               "rate": 0.42,
               "stereo_width": 1.0,
               "tone": 0.45,
-              "voices": 2.0
+              "voices": 2
             }
           }
         ],
@@ -607,12 +627,15 @@
               "fm_amt": 1.0,
               "fm_mode": "exponential",
               "frequency": 440.0,
+              "glide_time": 0.0,
               "level": 1.0,
+              "octave": 0.0,
+              "phase": 0.0,
               "pulse_width": 0.5,
               "uni_detune": 10.0,
               "uni_phase": 1.0,
               "uni_spread": 0.5,
-              "unison": 1.0,
+              "unison": 1,
               "waveform": "sine",
               "x_mod": 0.0
             }
@@ -663,6 +686,7 @@
               "rel_curve": 0.0,
               "release": 0.05,
               "sustain": 0.0,
+              "time_scale": 1.0,
               "vel_sens": 1.0
             }
           },
@@ -681,6 +705,7 @@
               "rel_curve": 0.0,
               "release": 0.0,
               "sustain": 0.0,
+              "time_scale": 1.0,
               "vel_sens": 1.0
             }
           },
@@ -692,7 +717,7 @@
               "y": 32.0
             },
             "parameters": {
-              "cv_bipolar": 0.0,
+              "cv_bipolar": false,
               "level": 1.0,
               "pan": 0.0
             }
@@ -705,7 +730,7 @@
               "y": 32.0
             },
             "parameters": {
-              "cv_bipolar": 0.0,
+              "cv_bipolar": false,
               "level": 0.7,
               "pan": 0.0
             }
@@ -726,7 +751,9 @@
               "input_6": 1.0,
               "input_7": 1.0,
               "input_8": 1.0,
-              "master": 1.0
+              "limit": false,
+              "master": 1.0,
+              "mute": false
             }
           },
           {
@@ -737,10 +764,10 @@
               "y": 32.0
             },
             "parameters": {
-              "dither": 0.0,
-              "limit": 1.0,
+              "dither": false,
+              "limit": true,
               "master": 0.95,
-              "mute": 0.0,
+              "mute": false,
               "pan": 0.0
             }
           },
@@ -898,12 +925,15 @@
               "fm_amt": 0.18,
               "fm_mode": "exponential",
               "frequency": 195.0,
+              "glide_time": 0.0,
               "level": 0.55,
+              "octave": 0.0,
+              "phase": 0.0,
               "pulse_width": 0.5,
               "uni_detune": 10.0,
               "uni_phase": 1.0,
               "uni_spread": 0.5,
-              "unison": 1.0,
+              "unison": 1,
               "waveform": "triangle",
               "x_mod": 0.0
             }
@@ -954,6 +984,7 @@
               "rel_curve": 0.0,
               "release": 0.05,
               "sustain": 0.0,
+              "time_scale": 1.0,
               "vel_sens": 1.0
             }
           },
@@ -972,6 +1003,7 @@
               "rel_curve": 0.0,
               "release": 0.03,
               "sustain": 0.0,
+              "time_scale": 1.0,
               "vel_sens": 1.0
             }
           },
@@ -983,7 +1015,7 @@
               "y": 32.0
             },
             "parameters": {
-              "cv_bipolar": 0.0,
+              "cv_bipolar": false,
               "level": 1.0,
               "pan": 0.0
             }
@@ -1004,7 +1036,9 @@
               "input_6": 1.0,
               "input_7": 1.0,
               "input_8": 1.0,
-              "master": 1.0
+              "limit": false,
+              "master": 1.0,
+              "mute": false
             }
           },
           {
@@ -1015,10 +1049,10 @@
               "y": 32.0
             },
             "parameters": {
-              "dither": 0.0,
-              "limit": 1.0,
+              "dither": false,
+              "limit": true,
               "master": 0.9,
-              "mute": 0.0,
+              "mute": false,
               "pan": 0.0
             }
           },
@@ -1070,7 +1104,7 @@
               "rate": 0.55,
               "stereo_width": 1.0,
               "tone": 0.55,
-              "voices": 3.0
+              "voices": 3
             }
           }
         ],
@@ -1128,16 +1162,6 @@
           {
             "from": [
               "amp-1",
-              "left"
-            ],
-            "to": [
-              "out-1",
-              "in_l"
-            ]
-          },
-          {
-            "from": [
-              "amp-1",
               "out"
             ],
             "to": [
@@ -1148,7 +1172,17 @@
           {
             "from": [
               "amp-1",
-              "right"
+              "out_l"
+            ],
+            "to": [
+              "out-1",
+              "in_l"
+            ]
+          },
+          {
+            "from": [
+              "amp-1",
+              "out_r"
             ],
             "to": [
               "out-1",
@@ -1257,6 +1291,7 @@
               "rel_curve": 0.0,
               "release": 0.02,
               "sustain": 0.0,
+              "time_scale": 1.0,
               "vel_sens": 0.6
             }
           },
@@ -1268,7 +1303,7 @@
               "y": 32.0
             },
             "parameters": {
-              "cv_bipolar": 0.0,
+              "cv_bipolar": false,
               "level": 1.0,
               "pan": 0.0
             }
@@ -1281,10 +1316,10 @@
               "y": 32.0
             },
             "parameters": {
-              "dither": 0.0,
-              "limit": 1.0,
+              "dither": false,
+              "limit": true,
               "master": 0.7,
-              "mute": 0.0,
+              "mute": false,
               "pan": 0.0
             }
           },
@@ -1438,6 +1473,7 @@
               "rel_curve": 0.0,
               "release": 0.04,
               "sustain": 0.0,
+              "time_scale": 1.0,
               "vel_sens": 0.5
             }
           },
@@ -1449,7 +1485,7 @@
               "y": 32.0
             },
             "parameters": {
-              "cv_bipolar": 0.0,
+              "cv_bipolar": false,
               "level": 1.0,
               "pan": 0.0
             }
@@ -1462,10 +1498,10 @@
               "y": 32.0
             },
             "parameters": {
-              "dither": 0.0,
-              "limit": 1.0,
+              "dither": false,
+              "limit": true,
               "master": 0.85,
-              "mute": 0.0,
+              "mute": false,
               "pan": 0.0
             }
           },
@@ -1480,7 +1516,10 @@
               "feedback": 0.35,
               "mix": 0.25,
               "mode": "ping_pong",
-              "time": 0.086,
+              "sync_division": 1.0,
+              "tempo_sync": false,
+              "time_left": 0.375,
+              "time_right": 0.5,
               "tone": 0.5
             }
           },
@@ -1517,7 +1556,7 @@
               "rate": 0.7,
               "stereo_width": 1.0,
               "tone": 0.6,
-              "voices": 3.0
+              "voices": 3
             }
           }
         ],
@@ -1555,16 +1594,6 @@
           {
             "from": [
               "amp-1",
-              "left"
-            ],
-            "to": [
-              "out-1",
-              "in_l"
-            ]
-          },
-          {
-            "from": [
-              "amp-1",
               "out"
             ],
             "to": [
@@ -1575,7 +1604,17 @@
           {
             "from": [
               "amp-1",
-              "right"
+              "out_l"
+            ],
+            "to": [
+              "out-1",
+              "in_l"
+            ]
+          },
+          {
+            "from": [
+              "amp-1",
+              "out_r"
             ],
             "to": [
               "out-1",
@@ -1641,12 +1680,15 @@
               "fm_amt": 1.0,
               "fm_mode": "exponential",
               "frequency": 880.0,
+              "glide_time": 0.0,
               "level": 0.3,
+              "octave": 0.0,
+              "phase": 0.0,
               "pulse_width": 0.5,
               "uni_detune": 10.0,
               "uni_phase": 1.0,
               "uni_spread": 0.5,
-              "unison": 1.0,
+              "unison": 1,
               "waveform": "triangle",
               "x_mod": 0.0
             }
@@ -1697,6 +1739,7 @@
               "rel_curve": 0.0,
               "release": 0.02,
               "sustain": 0.0,
+              "time_scale": 1.0,
               "vel_sens": 0.6
             }
           },
@@ -1708,7 +1751,7 @@
               "y": 32.0
             },
             "parameters": {
-              "cv_bipolar": 0.0,
+              "cv_bipolar": false,
               "level": 1.0,
               "pan": 0.0
             }
@@ -1729,7 +1772,9 @@
               "input_6": 1.0,
               "input_7": 1.0,
               "input_8": 1.0,
-              "master": 1.0
+              "limit": false,
+              "master": 1.0,
+              "mute": false
             }
           },
           {
@@ -1740,10 +1785,10 @@
               "y": 32.0
             },
             "parameters": {
-              "dither": 0.0,
-              "limit": 1.0,
+              "dither": false,
+              "limit": true,
               "master": 0.85,
-              "mute": 0.0,
+              "mute": false,
               "pan": 0.0
             }
           },
@@ -1758,7 +1803,10 @@
               "feedback": 0.25,
               "mix": 0.2,
               "mode": "ping_pong",
-              "time": 0.172,
+              "sync_division": 1.0,
+              "tempo_sync": false,
+              "time_left": 0.375,
+              "time_right": 0.5,
               "tone": 0.6
             }
           }
@@ -1807,16 +1855,6 @@
           {
             "from": [
               "amp-1",
-              "left"
-            ],
-            "to": [
-              "out-1",
-              "in_l"
-            ]
-          },
-          {
-            "from": [
-              "amp-1",
               "out"
             ],
             "to": [
@@ -1827,7 +1865,17 @@
           {
             "from": [
               "amp-1",
-              "right"
+              "out_l"
+            ],
+            "to": [
+              "out-1",
+              "in_l"
+            ]
+          },
+          {
+            "from": [
+              "amp-1",
+              "out_r"
             ],
             "to": [
               "out-1",
@@ -1901,12 +1949,15 @@
               "fm_amt": 1.0,
               "fm_mode": "exponential",
               "frequency": 440.0,
+              "glide_time": 0.0,
               "level": 0.55,
+              "octave": 0.0,
+              "phase": 0.0,
               "pulse_width": 0.5,
               "uni_detune": 14.0,
               "uni_phase": 1.0,
               "uni_spread": 1.0,
-              "unison": 3.0,
+              "unison": 3,
               "waveform": "sawtooth",
               "x_mod": 0.0
             }
@@ -1924,12 +1975,15 @@
               "fm_amt": 1.0,
               "fm_mode": "exponential",
               "frequency": 440.0,
+              "glide_time": 0.0,
               "level": 0.5,
+              "octave": 0.0,
+              "phase": 0.0,
               "pulse_width": 0.5,
               "uni_detune": 12.0,
               "uni_phase": 1.0,
               "uni_spread": 0.85,
-              "unison": 3.0,
+              "unison": 3,
               "waveform": "sawtooth",
               "x_mod": 0.0
             }
@@ -1987,6 +2041,7 @@
               "rel_curve": 0.0,
               "release": 1.4,
               "sustain": 0.7,
+              "time_scale": 1.0,
               "vel_sens": 0.3
             }
           },
@@ -2001,6 +2056,9 @@
               "depth": 0.45,
               "phase": 0.0,
               "rate": 0.13,
+              "retrigger": false,
+              "sync_division": 1.0,
+              "tempo_sync": false,
               "waveform": "sine"
             }
           },
@@ -2015,6 +2073,9 @@
               "depth": 0.35,
               "phase": 0.5,
               "rate": 0.09,
+              "retrigger": false,
+              "sync_division": 1.0,
+              "tempo_sync": false,
               "waveform": "triangle"
             }
           },
@@ -2026,7 +2087,7 @@
               "y": 32.0
             },
             "parameters": {
-              "cv_bipolar": 0.0,
+              "cv_bipolar": false,
               "level": 1.0,
               "pan": 0.0
             }
@@ -2039,7 +2100,7 @@
               "y": 288.0
             },
             "parameters": {
-              "cv_bipolar": 0.0,
+              "cv_bipolar": false,
               "level": 1.0,
               "pan": 0.0
             }
@@ -2060,7 +2121,9 @@
               "input_6": 1.0,
               "input_7": 1.0,
               "input_8": 1.0,
-              "master": 0.85
+              "limit": false,
+              "master": 0.85,
+              "mute": false
             }
           },
           {
@@ -2079,7 +2142,9 @@
               "input_6": 1.0,
               "input_7": 1.0,
               "input_8": 1.0,
-              "master": 0.85
+              "limit": false,
+              "master": 0.85,
+              "mute": false
             }
           },
           {
@@ -2090,10 +2155,10 @@
               "y": 32.0
             },
             "parameters": {
-              "dither": 0.0,
-              "limit": 1.0,
+              "dither": false,
+              "limit": true,
               "master": 0.9,
-              "mute": 0.0,
+              "mute": false,
               "pan": 0.0
             }
           },
@@ -2130,7 +2195,7 @@
               "rate": 0.4,
               "stereo_width": 1.0,
               "tone": 0.55,
-              "voices": 3.0
+              "voices": 3
             }
           }
         ],
@@ -2333,12 +2398,15 @@
               "fm_amt": 1.0,
               "fm_mode": "exponential",
               "frequency": 440.0,
+              "glide_time": 0.0,
               "level": 0.55,
+              "octave": 0.0,
+              "phase": 0.0,
               "pulse_width": 0.5,
               "uni_detune": 10.0,
               "uni_phase": 1.0,
               "uni_spread": 0.75,
-              "unison": 3.0,
+              "unison": 3,
               "waveform": "sawtooth",
               "x_mod": 0.0
             }
@@ -2356,12 +2424,15 @@
               "fm_amt": 1.0,
               "fm_mode": "exponential",
               "frequency": 440.0,
+              "glide_time": 0.0,
               "level": 0.5,
+              "octave": 0.0,
+              "phase": 0.0,
               "pulse_width": 0.5,
               "uni_detune": 8.0,
               "uni_phase": 1.0,
               "uni_spread": 0.55,
-              "unison": 3.0,
+              "unison": 3,
               "waveform": "sawtooth",
               "x_mod": 0.0
             }
@@ -2419,6 +2490,7 @@
               "rel_curve": 0.0,
               "release": 0.04,
               "sustain": 0.0,
+              "time_scale": 1.0,
               "vel_sens": 0.6
             }
           },
@@ -2437,6 +2509,7 @@
               "rel_curve": 0.0,
               "release": 0.04,
               "sustain": 0.1,
+              "time_scale": 1.0,
               "vel_sens": 0.5
             }
           },
@@ -2448,7 +2521,7 @@
               "y": 32.0
             },
             "parameters": {
-              "cv_bipolar": 0.0,
+              "cv_bipolar": false,
               "level": 1.0,
               "pan": 0.0
             }
@@ -2461,7 +2534,7 @@
               "y": 288.0
             },
             "parameters": {
-              "cv_bipolar": 0.0,
+              "cv_bipolar": false,
               "level": 1.0,
               "pan": 0.0
             }
@@ -2482,7 +2555,9 @@
               "input_6": 1.0,
               "input_7": 1.0,
               "input_8": 1.0,
-              "master": 0.9
+              "limit": false,
+              "master": 0.9,
+              "mute": false
             }
           },
           {
@@ -2501,7 +2576,9 @@
               "input_6": 1.0,
               "input_7": 1.0,
               "input_8": 1.0,
-              "master": 0.9
+              "limit": false,
+              "master": 0.9,
+              "mute": false
             }
           },
           {
@@ -2512,10 +2589,10 @@
               "y": 32.0
             },
             "parameters": {
-              "dither": 0.0,
-              "limit": 1.0,
+              "dither": false,
+              "limit": true,
               "master": 1.0,
-              "mute": 0.0,
+              "mute": false,
               "pan": 0.0
             }
           },
@@ -2530,7 +2607,10 @@
               "feedback": 0.42,
               "mix": 0.28,
               "mode": "ping_pong",
-              "time": 0.258,
+              "sync_division": 1.0,
+              "tempo_sync": false,
+              "time_left": 0.375,
+              "time_right": 0.5,
               "tone": 0.5
             }
           },
@@ -2567,7 +2647,7 @@
               "rate": 0.55,
               "stereo_width": 1.0,
               "tone": 0.55,
-              "voices": 2.0
+              "voices": 2
             }
           }
         ],
@@ -2771,12 +2851,15 @@
               "fm_amt": 1.0,
               "fm_mode": "exponential",
               "frequency": 440.0,
+              "glide_time": 0.0,
               "level": 0.55,
+              "octave": 0.0,
+              "phase": 0.0,
               "pulse_width": 0.5,
               "uni_detune": 12.0,
               "uni_phase": 1.0,
               "uni_spread": 0.85,
-              "unison": 3.0,
+              "unison": 3,
               "waveform": "triangle",
               "x_mod": 0.0
             }
@@ -2794,12 +2877,15 @@
               "fm_amt": 1.0,
               "fm_mode": "exponential",
               "frequency": 440.0,
+              "glide_time": 0.0,
               "level": 0.25,
+              "octave": 0.0,
+              "phase": 0.0,
               "pulse_width": 0.5,
               "uni_detune": 9.0,
               "uni_phase": 1.0,
               "uni_spread": 0.65,
-              "unison": 3.0,
+              "unison": 3,
               "waveform": "sawtooth",
               "x_mod": 0.0
             }
@@ -2857,6 +2943,7 @@
               "rel_curve": 0.0,
               "release": 0.18,
               "sustain": 0.0,
+              "time_scale": 1.0,
               "vel_sens": 0.5
             }
           },
@@ -2875,6 +2962,7 @@
               "rel_curve": 0.0,
               "release": 0.08,
               "sustain": 0.05,
+              "time_scale": 1.0,
               "vel_sens": 0.4
             }
           },
@@ -2886,7 +2974,7 @@
               "y": 32.0
             },
             "parameters": {
-              "cv_bipolar": 0.0,
+              "cv_bipolar": false,
               "level": 1.0,
               "pan": 0.0
             }
@@ -2899,7 +2987,7 @@
               "y": 288.0
             },
             "parameters": {
-              "cv_bipolar": 0.0,
+              "cv_bipolar": false,
               "level": 1.0,
               "pan": 0.0
             }
@@ -2920,7 +3008,9 @@
               "input_6": 1.0,
               "input_7": 1.0,
               "input_8": 1.0,
-              "master": 0.9
+              "limit": false,
+              "master": 0.9,
+              "mute": false
             }
           },
           {
@@ -2939,7 +3029,9 @@
               "input_6": 1.0,
               "input_7": 1.0,
               "input_8": 1.0,
-              "master": 0.9
+              "limit": false,
+              "master": 0.9,
+              "mute": false
             }
           },
           {
@@ -2950,10 +3042,10 @@
               "y": 32.0
             },
             "parameters": {
-              "dither": 0.0,
-              "limit": 1.0,
+              "dither": false,
+              "limit": true,
               "master": 0.82,
-              "mute": 0.0,
+              "mute": false,
               "pan": 0.0
             }
           },
@@ -2990,7 +3082,7 @@
               "rate": 0.45,
               "stereo_width": 1.0,
               "tone": 0.4,
-              "voices": 3.0
+              "voices": 3
             }
           }
         ],
@@ -3245,6 +3337,7 @@
               "rel_curve": 0.0,
               "release": 0.5,
               "sustain": 1.0,
+              "time_scale": 1.0,
               "vel_sens": 0.4
             }
           },
@@ -3263,6 +3356,7 @@
               "rel_curve": 0.0,
               "release": 0.4,
               "sustain": 1.0,
+              "time_scale": 1.0,
               "vel_sens": 0.3
             }
           },
@@ -3277,6 +3371,9 @@
               "depth": 0.3,
               "phase": 0.0,
               "rate": 0.18,
+              "retrigger": false,
+              "sync_division": 1.0,
+              "tempo_sync": false,
               "waveform": "sine"
             }
           },
@@ -3291,6 +3388,9 @@
               "depth": 0.25,
               "phase": 0.5,
               "rate": 0.14,
+              "retrigger": false,
+              "sync_division": 1.0,
+              "tempo_sync": false,
               "waveform": "triangle"
             }
           },
@@ -3302,7 +3402,7 @@
               "y": 32.0
             },
             "parameters": {
-              "cv_bipolar": 0.0,
+              "cv_bipolar": false,
               "level": 1.0,
               "pan": 0.0
             }
@@ -3315,7 +3415,7 @@
               "y": 288.0
             },
             "parameters": {
-              "cv_bipolar": 0.0,
+              "cv_bipolar": false,
               "level": 1.0,
               "pan": 0.0
             }
@@ -3328,10 +3428,10 @@
               "y": 32.0
             },
             "parameters": {
-              "dither": 0.0,
-              "limit": 1.0,
+              "dither": false,
+              "limit": true,
               "master": 1.0,
-              "mute": 0.0,
+              "mute": false,
               "pan": 0.0
             }
           },
@@ -3383,7 +3483,7 @@
               "rate": 0.5,
               "stereo_width": 1.0,
               "tone": 0.5,
-              "voices": 3.0
+              "voices": 3
             }
           }
         ],
@@ -3567,12 +3667,15 @@
               "fm_amt": 1.0,
               "fm_mode": "exponential",
               "frequency": 440.0,
+              "glide_time": 0.0,
               "level": 1.0,
+              "octave": 0.0,
+              "phase": 0.0,
               "pulse_width": 0.5,
               "uni_detune": 10.0,
               "uni_phase": 1.0,
               "uni_spread": 0.5,
-              "unison": 1.0,
+              "unison": 1,
               "waveform": "sine",
               "x_mod": 0.0
             }
@@ -3592,6 +3695,7 @@
               "rel_curve": 0.0,
               "release": 0.08,
               "sustain": 0.0,
+              "time_scale": 1.0,
               "vel_sens": 1.0
             }
           },
@@ -3603,7 +3707,7 @@
               "y": 32.0
             },
             "parameters": {
-              "cv_bipolar": 0.0,
+              "cv_bipolar": false,
               "level": 1.0,
               "pan": 0.0
             }
@@ -3616,10 +3720,10 @@
               "y": 32.0
             },
             "parameters": {
-              "dither": 0.0,
-              "limit": 1.0,
+              "dither": false,
+              "limit": true,
               "master": 0.95,
-              "mute": 0.0,
+              "mute": false,
               "pan": 0.0
             }
           },
@@ -3798,6 +3902,7 @@
               "rel_curve": 0.0,
               "release": 0.4,
               "sustain": 0.85,
+              "time_scale": 1.0,
               "vel_sens": 0.4
             }
           },
@@ -3816,6 +3921,7 @@
               "rel_curve": 0.0,
               "release": 0.05,
               "sustain": 0.9,
+              "time_scale": 1.0,
               "vel_sens": 1.0
             }
           },
@@ -3827,7 +3933,7 @@
               "y": 32.0
             },
             "parameters": {
-              "cv_bipolar": 0.0,
+              "cv_bipolar": false,
               "level": 1.0,
               "pan": 0.0
             }
@@ -3840,7 +3946,7 @@
               "y": 288.0
             },
             "parameters": {
-              "cv_bipolar": 0.0,
+              "cv_bipolar": false,
               "level": 1.0,
               "pan": 0.0
             }
@@ -3853,10 +3959,10 @@
               "y": 32.0
             },
             "parameters": {
-              "dither": 0.0,
-              "limit": 1.0,
+              "dither": false,
+              "limit": true,
               "master": 0.9,
-              "mute": 0.0,
+              "mute": false,
               "pan": 0.0
             }
           },
@@ -3908,7 +4014,7 @@
               "rate": 0.6,
               "stereo_width": 1.0,
               "tone": 0.4,
-              "voices": 2.0
+              "voices": 2
             }
           }
         ],
@@ -4072,12 +4178,15 @@
               "fm_amt": 1.0,
               "fm_mode": "exponential",
               "frequency": 440.0,
+              "glide_time": 0.0,
               "level": 0.6,
+              "octave": 0.0,
+              "phase": 0.0,
               "pulse_width": 0.5,
               "uni_detune": 8.0,
               "uni_phase": 1.0,
               "uni_spread": 0.7,
-              "unison": 2.0,
+              "unison": 2,
               "waveform": "sawtooth",
               "x_mod": 0.0
             }
@@ -4095,12 +4204,15 @@
               "fm_amt": 1.0,
               "fm_mode": "exponential",
               "frequency": 440.0,
+              "glide_time": 0.0,
               "level": 0.55,
+              "octave": 0.0,
+              "phase": 0.0,
               "pulse_width": 0.5,
               "uni_detune": 8.0,
               "uni_phase": 1.0,
               "uni_spread": 0.6,
-              "unison": 2.0,
+              "unison": 2,
               "waveform": "sawtooth",
               "x_mod": 0.0
             }
@@ -4113,6 +4225,7 @@
               "y": 736.0
             },
             "parameters": {
+              "glide_time": 0.0,
               "level": 0.25,
               "octave": "minus1",
               "waveform": "sine"
@@ -4171,6 +4284,7 @@
               "rel_curve": 0.0,
               "release": 0.85,
               "sustain": 0.78,
+              "time_scale": 1.0,
               "vel_sens": 0.5
             }
           },
@@ -4189,6 +4303,7 @@
               "rel_curve": 0.0,
               "release": 0.6,
               "sustain": 0.4,
+              "time_scale": 1.0,
               "vel_sens": 0.4
             }
           },
@@ -4200,7 +4315,7 @@
               "y": 32.0
             },
             "parameters": {
-              "cv_bipolar": 0.0,
+              "cv_bipolar": false,
               "level": 1.0,
               "pan": 0.0
             }
@@ -4213,7 +4328,7 @@
               "y": 288.0
             },
             "parameters": {
-              "cv_bipolar": 0.0,
+              "cv_bipolar": false,
               "level": 1.0,
               "pan": 0.0
             }
@@ -4234,7 +4349,9 @@
               "input_6": 1.0,
               "input_7": 1.0,
               "input_8": 1.0,
-              "master": 0.85
+              "limit": false,
+              "master": 0.85,
+              "mute": false
             }
           },
           {
@@ -4253,7 +4370,9 @@
               "input_6": 1.0,
               "input_7": 1.0,
               "input_8": 1.0,
-              "master": 0.85
+              "limit": false,
+              "master": 0.85,
+              "mute": false
             }
           },
           {
@@ -4264,10 +4383,10 @@
               "y": 32.0
             },
             "parameters": {
-              "dither": 0.0,
-              "limit": 1.0,
+              "dither": false,
+              "limit": true,
               "master": 0.9,
-              "mute": 0.0,
+              "mute": false,
               "pan": 0.0
             }
           },
@@ -4282,7 +4401,10 @@
               "feedback": 0.38,
               "mix": 0.28,
               "mode": "ping_pong",
-              "time": 0.258,
+              "sync_division": 1.0,
+              "tempo_sync": false,
+              "time_left": 0.375,
+              "time_right": 0.5,
               "tone": 0.5
             }
           },
@@ -4334,7 +4456,7 @@
               "rate": 0.4,
               "stereo_width": 1.0,
               "tone": 0.5,
-              "voices": 3.0
+              "voices": 3
             }
           }
         ],
@@ -19145,7 +19267,8 @@
         "start": 0,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 9,
@@ -19153,7 +19276,8 @@
         "start": 0,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 16,
@@ -19161,7 +19285,8 @@
         "start": 0,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 2,
@@ -19169,7 +19294,8 @@
         "start": 30720,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 9,
@@ -19177,7 +19303,8 @@
         "start": 30720,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 7,
@@ -19185,7 +19312,8 @@
         "start": 30720,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 2,
@@ -19193,7 +19321,8 @@
         "start": 61440,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 9,
@@ -19201,7 +19330,8 @@
         "start": 61440,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 0,
@@ -19209,7 +19339,8 @@
         "start": 61440,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 7,
@@ -19217,7 +19348,8 @@
         "start": 61440,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 4,
@@ -19225,7 +19357,8 @@
         "start": 61440,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 6,
@@ -19233,7 +19366,8 @@
         "start": 61440,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 10,
@@ -19241,7 +19375,8 @@
         "start": 76800,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 2,
@@ -19249,7 +19384,8 @@
         "start": 92160,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 9,
@@ -19257,7 +19393,8 @@
         "start": 92160,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 0,
@@ -19265,7 +19402,8 @@
         "start": 92160,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 3,
@@ -19273,7 +19411,8 @@
         "start": 92160,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 4,
@@ -19281,7 +19420,8 @@
         "start": 92160,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 7,
@@ -19289,7 +19429,8 @@
         "start": 92160,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 5,
@@ -19297,7 +19438,8 @@
         "start": 92160,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 6,
@@ -19305,7 +19447,8 @@
         "start": 92160,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 8,
@@ -19313,7 +19456,8 @@
         "start": 92160,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 15,
@@ -19321,7 +19465,8 @@
         "start": 92160,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 16,
@@ -19329,7 +19474,8 @@
         "start": 92160,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 2,
@@ -19337,7 +19483,8 @@
         "start": 122880,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 9,
@@ -19345,7 +19492,8 @@
         "start": 122880,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 11,
@@ -19353,7 +19501,8 @@
         "start": 122880,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 12,
@@ -19361,7 +19510,8 @@
         "start": 122880,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 13,
@@ -19369,7 +19519,8 @@
         "start": 122880,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 7,
@@ -19377,7 +19528,8 @@
         "start": 122880,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 14,
@@ -19385,7 +19537,8 @@
         "start": 122880,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 6,
@@ -19393,7 +19546,8 @@
         "start": 122880,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 8,
@@ -19401,7 +19555,8 @@
         "start": 122880,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 10,
@@ -19409,7 +19564,8 @@
         "start": 138240,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 2,
@@ -19417,7 +19573,8 @@
         "start": 153600,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 9,
@@ -19425,7 +19582,8 @@
         "start": 153600,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 0,
@@ -19433,7 +19591,8 @@
         "start": 153600,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 3,
@@ -19441,7 +19600,8 @@
         "start": 153600,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 4,
@@ -19449,7 +19609,8 @@
         "start": 153600,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 7,
@@ -19457,7 +19618,8 @@
         "start": 153600,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 5,
@@ -19465,7 +19627,8 @@
         "start": 153600,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 6,
@@ -19473,7 +19636,8 @@
         "start": 153600,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 8,
@@ -19481,7 +19645,8 @@
         "start": 153600,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 10,
@@ -19489,7 +19654,8 @@
         "start": 168960,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 16,
@@ -19497,7 +19663,8 @@
         "start": 184320,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 19,
@@ -19505,7 +19672,8 @@
         "start": 184320,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 24,
@@ -19513,7 +19681,8 @@
         "start": 184320,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 25,
@@ -19521,7 +19690,8 @@
         "start": 184320,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 7,
@@ -19529,7 +19699,8 @@
         "start": 215040,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 19,
@@ -19537,7 +19708,8 @@
         "start": 215040,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 24,
@@ -19545,7 +19717,8 @@
         "start": 215040,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 25,
@@ -19553,7 +19726,8 @@
         "start": 215040,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 26,
@@ -19561,7 +19735,8 @@
         "start": 215040,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 10,
@@ -19569,7 +19744,8 @@
         "start": 230400,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 2,
@@ -19577,7 +19753,8 @@
         "start": 245760,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 9,
@@ -19585,7 +19762,8 @@
         "start": 245760,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 0,
@@ -19593,7 +19771,8 @@
         "start": 245760,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 3,
@@ -19601,7 +19780,8 @@
         "start": 245760,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 4,
@@ -19609,7 +19789,8 @@
         "start": 245760,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 7,
@@ -19617,7 +19798,8 @@
         "start": 245760,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 5,
@@ -19625,7 +19807,8 @@
         "start": 245760,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 18,
@@ -19633,7 +19816,8 @@
         "start": 245760,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 19,
@@ -19641,7 +19825,8 @@
         "start": 245760,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 19,
@@ -19649,7 +19834,8 @@
         "start": 276480,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 2,
@@ -19657,7 +19843,8 @@
         "start": 276480,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 9,
@@ -19665,7 +19852,8 @@
         "start": 276480,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 0,
@@ -19673,7 +19861,8 @@
         "start": 276480,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 16,
@@ -19681,7 +19870,8 @@
         "start": 276480,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 2,
@@ -19689,7 +19879,8 @@
         "start": 307200,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 9,
@@ -19697,7 +19888,8 @@
         "start": 307200,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 0,
@@ -19705,7 +19897,8 @@
         "start": 307200,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 3,
@@ -19713,7 +19906,8 @@
         "start": 307200,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 7,
@@ -19721,7 +19915,8 @@
         "start": 307200,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 5,
@@ -19729,7 +19924,8 @@
         "start": 307200,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 18,
@@ -19737,7 +19933,8 @@
         "start": 307200,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 13,
@@ -19745,7 +19942,8 @@
         "start": 307200,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 23,
@@ -19753,7 +19951,8 @@
         "start": 307200,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 2,
@@ -19761,7 +19960,8 @@
         "start": 337920,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 9,
@@ -19769,7 +19969,8 @@
         "start": 337920,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 19,
@@ -19777,7 +19978,8 @@
         "start": 337920,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 20,
@@ -19785,7 +19987,8 @@
         "start": 368640,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 21,
@@ -19793,7 +19996,8 @@
         "start": 368640,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       },
       {
         "pattern_id": 22,
@@ -19801,9 +20005,11 @@
         "start": 368640,
         "transpose": 0.0,
         "gain": 1.0,
-        "length_override": null
+        "length_override": null,
+        "loop_mode": "repeat"
       }
     ],
+    "next_section_id": 0,
     "tempo_changes": [],
     "time_signature_changes": [],
     "default_tempo": 174.0,
@@ -19860,7 +20066,8 @@
       }
     ],
     "next_return_bus_id": 3,
-    "next_note_graph_id": 0
+    "next_note_graph_id": 0,
+    "next_mod_graph_id": 0
   },
   "global": {
     "master_volume": 0.93,
@@ -19904,7 +20111,10 @@
               "feedback": 0.31,
               "mix": 1.0,
               "mode": "ping_pong",
-              "time": 0.259,
+              "sync_division": 1.0,
+              "tempo_sync": false,
+              "time_left": 0.375,
+              "time_right": 0.5,
               "tone": 0.33
             }
           },
@@ -19942,7 +20152,7 @@
               "depth": 0.55,
               "mix": 0.45,
               "rate": 0.42,
-              "voices": 4.0
+              "voices": 4
             }
           },
           {
@@ -19999,7 +20209,7 @@
           "ratio": 1.6,
           "release": 120.0,
           "sc_filter": 120.0,
-          "sidechain": 0.0,
+          "sidechain": false,
           "threshold": -18.0
         }
       },

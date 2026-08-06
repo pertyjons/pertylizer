@@ -193,6 +193,43 @@ First pass done 2026-08-06 on v0.316.0, driven through the egui inspection MCP.
   file is whole was not exercised (needs the file dialog).
 - [ ] **Modal input priority** was not exercised.
 
+**Code read over the three open items, 2026-08-06.** No substitute for the ear
+test, but it turned up three defects that a click-through would have hit. None
+are fixed yet.
+
+- [ ] **The instrument-delete confirmation is not in `modal_is_open()`.**
+  `render_instrument_delete_confirm` (`egui_backend.rs`) is the one confirmation
+  dialog missing from that predicate, so while "Delete instrument?" is up a bare
+  space toggles playback, the letter keys play the piano, and Ctrl+N/O/Z reach
+  the document behind it — Ctrl+N raises the unsaved-changes prompt on top of it.
+  The dialog's own text says "This cannot be undone", which makes it the worst
+  one to leave live. The root cause is the shape: `modal_is_open()` is a
+  hand-maintained list of nine flags, the "remember to report" pattern §0.1
+  exists to remove. Either derive it (a registry every dialog registers into) or
+  at minimum add the missing flag and a test that fails when a new dialog is not
+  listed. **S.**
+- [ ] **"Save" in the unsaved-changes dialog drops the pending action for an
+  untitled project.** `show_unsaved_changes_dialog` (`project_flow.rs`) calls
+  `save_current_project()`, which — with no `current_project_path` — opens the
+  Save Project dialog and returns `false`. `execute_pending_action` is correctly
+  skipped, but `close = true` then runs unconditionally and clears
+  `pending_action`. The `SaveProject` completion handler in `dialog_flow.rs`
+  never resumes it. So on a never-saved project: close the window, click Save,
+  pick a filename — the project saves and the app does *not* quit. Same for the
+  New and Open that raised the prompt. Fix by keeping the dialog's pending action
+  alive across the file dialog. **S.**
+- [ ] **Three pattern-creating actions in the arrangement view record no undo.**
+  Double-click on empty timeline (`arrangement.rs:~1830`), "New Pattern Here"
+  (`~2776`) and "Duplicate Pattern" (`~2688`) all mutate the song with no
+  `UndoAction::AddPattern`, and "Place Existing Pattern" (`~2793`) records no
+  `InsertPlacement`. The same operations *from the pattern view* do record
+  (`pattern_view.rs:288`, `:380`), and "Delete Pattern" in the very same context
+  menu records `DeletePattern` — so this is an inconsistency inside one menu, not
+  a missing feature. Two consequences: Ctrl+Z after creating a pattern undoes the
+  *previous* edit and leaves the new pattern behind, and the untracked mutation
+  latches `untracked_mutation_since_save`, disabling undo-back-to-clean for the
+  rest of the session. **S.**
+
 **Found during the pass:**
 
 - **Master volume recorded no undo entry** — fixed. The fader sent
