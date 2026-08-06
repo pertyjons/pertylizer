@@ -11,6 +11,12 @@ These are high-priority correctness and trust items. A creative application must
 not lose work, make destructive edits impossible to reverse, or let view-specific
 input handling interfere with standard application shortcuts.
 
+**All five subsections are closed as of 2026-08-06.** The section is kept rather
+than deleted: it is the design record for how dirty state, atomic saves,
+recovery, undo coverage and input routing fit together, and each one names the
+failure it exists to prevent. What was closed by decision instead of by
+observation is called out in §0.5.
+
 ### 0.1 Reliable dirty-state propagation
 
 **Done** (`c417e404`). Dirty state is *derived*, not reported: `SharedSong` and
@@ -163,7 +169,13 @@ a note.
 
 ### 0.5 In-app verification of section 0
 
-First pass done 2026-08-06 on v0.316.0, driven through the egui inspection MCP.
+**Closed 2026-08-06.** Driven through the egui inspection MCP on v0.316.0, then
+a code read over what the MCP could not judge. Section 0 is done.
+
+Closed rather than fully verified, and the difference is worth keeping straight:
+three checks below were never performed and were signed off as an owner's call,
+not observed. If §0 behaviour ever looks wrong, start there — the list is the
+map of what was never watched.
 
 **Verified working:**
 
@@ -183,19 +195,25 @@ First pass done 2026-08-06 on v0.316.0, driven through the egui inspection MCP.
   Recover restored the instrument, master fader, master Reverb and octave exactly,
   and the document opened as `Untitled *` with "save to keep it".
 
-**Still to do:**
+**Never observed — closed by decision, not by test:**
 
-- [ ] **Undo/redo per editor, by ear.** Only the mixer path was driven, and it
-  turned up the §0.1 gate bug plus the missing master-fader capture below. The
-  rest — samples, instruments/rack, sequencer — still needs change/undo/redo with
-  the *sound* confirmed following, which no automated pass can judge.
-- [ ] **Save-path checks.** Overwriting an existing project and confirming the
-  file is whole was not exercised (needs the file dialog).
-- [ ] **Modal input priority** was not exercised.
+- **Undo/redo per editor, by ear.** Only the mixer path was driven. Samples,
+  instruments/rack and the sequencer were never taken through
+  change/undo/redo with the *sound* confirmed following, which no automated
+  pass can judge. Their record/apply paths were read instead, and the pattern
+  gaps that read found are fixed below.
+- **Save-path checks.** Overwriting an existing project through the file
+  dialog and confirming the file is whole was never exercised in the app.
+  `io/atomic.rs` covers the mechanism — overwrite, permission inheritance, a
+  failing payload leaving the previous save intact, no leaked temp files — but
+  not the GUI path to it.
+- **Modal input priority** was never exercised in the app. The two defects the
+  code read found here are fixed below, and `dialogs::tests` now pins the
+  predicate.
 
-**Code read over the three open items, 2026-08-06 — four defects found, all
-fixed.** A read is no substitute for the ear test, which is still open above, but
-each of these would have been hit by a click-through.
+**Code read over those three, 2026-08-06 — four defects found, all fixed.** A
+read is no substitute for the ear test, but each of these would have been hit by
+a click-through.
 
 - **A cancelled file dialog closed the input gate for the rest of the session.**
   The sharpest of the four, and it was found while fixing the modal predicate
