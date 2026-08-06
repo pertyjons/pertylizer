@@ -206,8 +206,87 @@ impl SynthApp {
 
     /// Execute an undo operation by popping the undo stack and applying the inverse.
     pub(super) fn execute_undo(&mut self) {
+        self.refresh_added_effect_snapshot();
         if let Some(action) = self.undo_manager.undo() {
             self.apply_undo_action(&action);
+        }
+    }
+
+    /// Bring the top entry's effect snapshot up to date, if it is an addition.
+    ///
+    /// An addition records the effect as it was *created*, carrying the
+    /// descriptor's defaults, because that is all undoing an addition needs:
+    /// take it off the chain again. Redo replays that same entry, though, so
+    /// anything changed on the effect afterwards outside this manager — an MCP
+    /// `set_master_effect_parameter`, a chain reorder — would come back as
+    /// defaults appended to the end. Reading the live chain at the moment the
+    /// addition is undone makes the entry describe the effect as it actually
+    /// was when it went away.
+    ///
+    /// Peeked twice rather than once so the live read sits between the two
+    /// borrows of the manager.
+    fn refresh_added_effect_snapshot(&mut self) {
+        use crate::undo::UndoAction;
+
+        let Some((chain, module_id)) =
+            self.undo_manager
+                .peek_undo_mut()
+                .and_then(|action| match action {
+                    UndoAction::SetChainEffect {
+                        chain,
+                        old: None,
+                        new: Some(snapshot),
+                    } => Some((*chain, snapshot.module_id)),
+                    _ => None,
+                })
+        else {
+            return;
+        };
+        let Some(fresh) = self.live_chain_effect(chain, module_id) else {
+            // Something already took the effect off the chain, so there is no
+            // live state to read; the entry keeps what it captured and its
+            // removal command lands as a no-op.
+            return;
+        };
+        if let Some(UndoAction::SetChainEffect {
+            new: Some(snapshot),
+            ..
+        }) = self.undo_manager.peek_undo_mut()
+        {
+            **snapshot = fresh;
+        }
+    }
+
+    /// What an effect on a return-bus or master chain looks like right now,
+    /// including the chain's slot order so a restore puts it back where it sat.
+    fn live_chain_effect(
+        &self,
+        chain: crate::undo::EffectChain,
+        module_id: synth_engine::ModuleId,
+    ) -> Option<crate::undo::EffectSnapshot> {
+        fn snapshot_of(
+            effects: &[synth_engine::ReturnEffectSnapshot],
+            module_id: synth_engine::ModuleId,
+        ) -> Option<crate::undo::EffectSnapshot> {
+            let effect = effects.iter().find(|e| e.module_id == module_id)?;
+            Some(crate::undo::EffectSnapshot {
+                chain_order: effects.iter().map(|e| e.module_id).collect(),
+                module_id,
+                module_type: effect.module_type,
+                params: effect.parameters.clone(),
+                bypassed: effect.bypassed,
+            })
+        }
+
+        match chain {
+            crate::undo::EffectChain::Master => {
+                snapshot_of(&self.handle.state.master_effects.read(), module_id)
+            }
+            crate::undo::EffectChain::Return(return_id) => {
+                let busses = self.handle.state.return_bus_effects.read();
+                let bus = busses.iter().find(|bus| bus.id == return_id)?;
+                snapshot_of(&bus.effects, module_id)
+            }
         }
     }
 
@@ -860,6 +939,14 @@ impl SynthApp {
             } => {
                 // The command takes *enabled*, the inverse of bypassed.
                 self.handle.send(chain.set_enabled(*module_id, !*new));
+            }
+            UndoAction::SetEffectChainOrder {
+                instrument_id, new, ..
+            } => {
+                self.handle.send(EngineCommand::SetEffectChainOrder {
+                    instrument_id: *instrument_id,
+                    order: new.clone(),
+                });
             }
 
             // Rack structure. Restoring goes through the same id-preserving

@@ -505,6 +505,26 @@ pub(crate) enum UndoAction {
         old: bool,
         new: bool,
     },
+    /// An effect chain's slot order changed — the ▲/▼ buttons on an effect
+    /// module's header in the patch editor.
+    ///
+    /// Addressed the way the engine addresses a chain (`None` is the master
+    /// bus) rather than by [`EffectChain`], because what this reaches is the
+    /// *instrument* chains, which `EffectChain` deliberately does not name: its
+    /// add/remove/parameter commands do not apply to patch modules. Return
+    /// buses have no reorder surface today; when they get one they get their
+    /// own variant, the way [`Self::SetTrackSend`] and [`Self::SetReturnSend`]
+    /// are separate twins.
+    ///
+    /// Both sides carry the whole order rather than the direction of the move.
+    /// Replaying "one slot up" would swap whichever pair happens to sit at that
+    /// index by then; an explicit order restores the arrangement that was
+    /// actually there.
+    SetEffectChainOrder {
+        instrument_id: Option<InstrumentId>,
+        old: Vec<synth_engine::ModuleId>,
+        new: Vec<synth_engine::ModuleId>,
+    },
 
     // ── Sample library ──
     /// A sample was imported (`old: None`) or deleted (`new: None`).
@@ -765,6 +785,29 @@ impl EffectChain {
             },
         }
     }
+}
+
+/// The chain order that results from moving `module_id` one slot in
+/// `direction`, or `None` when nothing would move.
+///
+/// Mirrors the swap the engine's `ReorderEffect` performs, so the order an
+/// undo entry records is the one the engine actually ends up in. `None` covers
+/// both a module that is not on the chain and one already at the end it is
+/// being moved towards — neither is an edit, and recording one would leave a
+/// history step that reverses something that never happened.
+pub(crate) fn reordered_chain(
+    order: &[synth_engine::ModuleId],
+    module_id: synth_engine::ModuleId,
+    direction: synth_engine::ReorderDirection,
+) -> Option<Vec<synth_engine::ModuleId>> {
+    let index = order.iter().position(|id| *id == module_id)?;
+    let target = match direction {
+        synth_engine::ReorderDirection::Up => index.checked_sub(1)?,
+        synth_engine::ReorderDirection::Down => (index + 1 < order.len()).then_some(index + 1)?,
+    };
+    let mut reordered = order.to_vec();
+    reordered.swap(index, target);
+    Some(reordered)
 }
 
 impl EffectSnapshot {
@@ -1404,6 +1447,17 @@ impl UndoManager {
         Some(action)
     }
 
+    /// The action the next [`Self::undo`] will reverse.
+    ///
+    /// For callers that must bring a captured snapshot up to date against live
+    /// state before the entry is applied and moves to the redo stack — see the
+    /// effect-addition refresh in `undo_flow`. Amending a payload this way
+    /// deliberately leaves the entry's id alone: it still describes the same
+    /// edit, so the saved-position comparison is unaffected.
+    pub(crate) fn peek_undo_mut(&mut self) -> Option<&mut UndoAction> {
+        self.undo_stack.last_mut().map(|entry| &mut entry.action)
+    }
+
     /// Where the history stands right now.
     ///
     /// The unsaved-changes check compares this against the position at save
@@ -1945,6 +1999,15 @@ impl UndoManager {
                 module_id: *module_id,
                 old: *new,
                 new: *old,
+            },
+            UndoAction::SetEffectChainOrder {
+                instrument_id,
+                old,
+                new,
+            } => UndoAction::SetEffectChainOrder {
+                instrument_id: *instrument_id,
+                old: new.clone(),
+                new: old.clone(),
             },
 
             // ── Sample library ──
@@ -2918,6 +2981,139 @@ mod tests {
                 .iter()
                 .any(|c| matches!(c, synth_engine::EngineCommand::SetEffectChainOrder { .. })),
             "an appended effect needs no reorder",
+        );
+    }
+
+    // ── Effect-chain reordering ──
+
+    /// Moving a slot is its own edit, and its inverse is the order that was
+    /// there before — not a move in the opposite direction, which would swap
+    /// whatever pair happens to sit at that index by the time it is replayed.
+    #[test]
+    fn inverse_of_a_chain_reorder_restores_the_previous_order() {
+        let before = vec![effect_id(1), effect_id(2), effect_id(3)];
+        let after = vec![effect_id(2), effect_id(1), effect_id(3)];
+        let action = UndoAction::SetEffectChainOrder {
+            instrument_id: Some(InstrumentId::FIRST),
+            old: before.clone(),
+            new: after.clone(),
+        };
+
+        let UndoAction::SetEffectChainOrder {
+            instrument_id,
+            old,
+            new,
+        } = UndoManager::inverse(&action)
+        else {
+            panic!("expected a chain-order entry");
+        };
+
+        assert_eq!(instrument_id, Some(InstrumentId::FIRST));
+        assert_eq!(new, before, "undo must put the original order back");
+        assert_eq!(old, after, "and redo must return to the reordered one");
+    }
+
+    /// The recorded order has to be the one the engine's own swap produces, or
+    /// undo would restore a chain the user never saw.
+    #[test]
+    fn reordering_swaps_with_the_neighbour() {
+        let order = vec![effect_id(1), effect_id(2), effect_id(3)];
+
+        assert_eq!(
+            reordered_chain(&order, effect_id(3), synth_engine::ReorderDirection::Up),
+            Some(vec![effect_id(1), effect_id(3), effect_id(2)]),
+            "moving up trades places with the slot before it",
+        );
+        assert_eq!(
+            reordered_chain(&order, effect_id(1), synth_engine::ReorderDirection::Down),
+            Some(vec![effect_id(2), effect_id(1), effect_id(3)]),
+            "moving down trades places with the slot after it",
+        );
+    }
+
+    /// A click at either end of the chain moves nothing, so it must not leave a
+    /// history step — one that would reorder the chain when undone.
+    #[test]
+    fn reordering_off_either_end_is_not_an_edit() {
+        let order = vec![effect_id(1), effect_id(2)];
+
+        assert_eq!(
+            reordered_chain(&order, effect_id(1), synth_engine::ReorderDirection::Up),
+            None,
+            "the first slot cannot move up",
+        );
+        assert_eq!(
+            reordered_chain(&order, effect_id(2), synth_engine::ReorderDirection::Down),
+            None,
+            "the last slot cannot move down",
+        );
+    }
+
+    /// Same reasoning for a module the chain does not hold at all — the engine
+    /// ignores it, so nothing happened.
+    #[test]
+    fn reordering_a_module_off_the_chain_is_not_an_edit() {
+        let order = vec![effect_id(1)];
+
+        assert_eq!(
+            reordered_chain(&order, effect_id(9), synth_engine::ReorderDirection::Up),
+            None,
+        );
+    }
+
+    // ── Refreshing a captured snapshot ──
+
+    /// An addition's snapshot is refreshed against live state just before it is
+    /// undone, so redo brings the effect back as it was when it went away
+    /// rather than with the defaults it was created with. Amending the payload
+    /// describes the same edit, so it must not move the history position — a
+    /// project saved at this point would otherwise start reading as dirty
+    /// merely because the user pressed Ctrl+Z.
+    #[test]
+    fn refreshing_the_top_entry_leaves_the_history_position_alone() {
+        let mut manager = UndoManager::new();
+        manager.push(UndoAction::SetChainEffect {
+            chain: EffectChain::Master,
+            old: None,
+            new: Some(Box::new(EffectSnapshot {
+                chain_order: Vec::new(),
+                module_id: effect_id(1),
+                module_type: synth_core::ModuleType::Reverb,
+                params: Vec::new(),
+                bypassed: false,
+            })),
+        });
+        let position = manager.position();
+        let mutations = manager.mutation_count();
+
+        let Some(UndoAction::SetChainEffect {
+            new: Some(snapshot),
+            ..
+        }) = manager.peek_undo_mut()
+        else {
+            panic!("the addition must be on top of the stack");
+        };
+        snapshot.bypassed = true;
+
+        assert_eq!(
+            manager.position(),
+            position,
+            "refreshing a payload is not a new edit",
+        );
+        assert_eq!(
+            manager.mutation_count(),
+            mutations,
+            "and it must not register as a mutation",
+        );
+
+        let UndoAction::SetChainEffect { old: Some(old), .. } =
+            manager.undo().expect("one entry to undo")
+        else {
+            panic!("the inverse of an addition removes the effect it captured");
+        };
+        assert!(
+            old.bypassed,
+            "the refreshed state is what redo will restore",
         );
     }
 

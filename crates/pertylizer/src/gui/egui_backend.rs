@@ -3257,13 +3257,36 @@ impl SynthApp {
                 });
             }
 
-            // Handle effect chain reorder requests
+            // Handle effect chain reorder requests. Undo records the whole slot
+            // order on both sides rather than the direction of the move — see
+            // `UndoAction::SetEffectChainOrder` — so the running order is
+            // threaded through the loop rather than re-read per click.
+            let mut chain_order = effect_chain_order.clone();
             for (module_id, direction) in result.reorder_effects {
-                self.handle.send(EngineCommand::ReorderEffect {
+                let Some(reordered) =
+                    crate::undo::reordered_chain(&chain_order, module_id, direction)
+                else {
+                    // Already at that end of the chain, or not on it at all:
+                    // the engine's own swap would be a no-op, so there is
+                    // nothing to undo either.
+                    continue;
+                };
+                if !self.handle.send(EngineCommand::ReorderEffect {
                     instrument_id: Some(active_id),
                     module_id,
                     direction,
-                });
+                }) {
+                    // The engine never got the move, so the chain still stands
+                    // as it was and an entry here would reorder it on Ctrl+Z.
+                    continue;
+                }
+                let previous = std::mem::replace(&mut chain_order, reordered);
+                self.undo_manager
+                    .push(crate::undo::UndoAction::SetEffectChainOrder {
+                        instrument_id: Some(active_id),
+                        old: previous,
+                        new: chain_order.clone(),
+                    });
             }
 
             // Handle audio input actions from patch module

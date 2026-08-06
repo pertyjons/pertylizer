@@ -62,6 +62,18 @@ undo-back-to-clean. Verified live afterwards: fader, octave and master-effect
 edits each raise the `*`; New Project reads clean immediately; and undoing a
 master-effect add returns the title to clean.
 
+**Still open — an instrument's effect-chain order is in no counter.** Found
+2026-08-06 while closing the §0.3 reorder gap. `effect_chain_order` lives on
+`EngineState::instrument_snapshots`, not on the `SharedGraphState` whose version
+the `graph` counter reads, and the `global` fingerprint covers only the master
+and return chains — yet the order *is* persisted (`patch.settings
+.effect_chain_order`). So it is the same hole the master fader had. The GUI path
+is covered as of the §0.3 fix, but only via the undo stack, which is exactly the
+"remember to report" fragility this section exists to remove; an MCP reorder
+still changes the file that would be written while the project reads clean.
+Fix by deriving it: either a per-instrument term in `layout` (which already
+walks every instrument) or a new fingerprint. **S.**
+
 ### 0.2 Atomic save, autosave, and recovery
 
 **Done** (`c417e404`).
@@ -109,17 +121,23 @@ depth — a shortcut that disables itself for the session if any mutation is see
 that did not pass through the undo manager, so it can never produce a false
 *clean*.
 
-Remaining:
+**The last two gaps closed 2026-08-06.**
 
-- [ ] **Effect-chain reordering is not undoable.** Add/remove/bypass/parameters
-  are, and a restored effect returns to its original slot, but dragging an
-  effect to a new slot records nothing. The engine command it needs now exists
-  (`SetReturnEffectChainOrder`, added alongside the master one), so this is just
-  capturing the order around the drag. **S.**
-- [ ] **An undone effect addition loses parameter edits made after it.** The
-  entry records a freshly-created effect with default parameters, so redoing an
-  add restores defaults rather than the state the effect had when it was
-  removed. Only affects add-then-edit-then-undo-then-redo. **S.**
+- **Effect-chain reordering** now records `UndoAction::SetEffectChainOrder`,
+  carrying the whole slot order on both sides rather than the direction of the
+  move — replaying "one slot up" would swap whichever pair sits at that index by
+  then. The surface is the ▲/▼ buttons on an effect module's header in the patch
+  editor, i.e. the *instrument* chains; the master and return chains have no
+  reorder control in the mixer at all (only MCP reorders them), which is why the
+  original entry's "dragging an effect to a new slot" never matched anything.
+- **An undone effect addition** no longer redoes as a default-parameter effect
+  appended to the end. The entry is refreshed against the live chain at the
+  moment it is undone, so redo restores the effect as it actually was when it
+  went away. In a pure-GUI sequence the later parameter entries already replayed
+  those values; what this fixes is state that changed *outside* the undo manager
+  (an MCP `set_master_effect_parameter`, a chain reorder) and the half-redone
+  state after redoing only the add.
+
 ### 0.4 Focus-safe shortcuts and global transport
 
 **Done** (`c417e404`). One binding table (`gui/shortcuts.rs`, `AppShortcut`:
