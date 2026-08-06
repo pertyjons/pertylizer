@@ -1337,9 +1337,16 @@ fn draw_master_strip(
                         ui.add_space(center_pad(METER_WIDTH + 24.0));
                         draw_meter_bar(ui, level);
                         let mut vol = master;
-                        if vertical_fader(ui, &mut vol).changed() {
+                        let fader = vertical_fader(ui, &mut vol);
+                        if fader.changed() {
                             handle.send(EngineCommand::SetMasterVolume(Gain::new(vol)));
                         }
+                        undo.record_drag(
+                            &fader,
+                            MixerValue::Level(NormalizedValue::new(master)),
+                            MixerValue::Level(NormalizedValue::new(vol)),
+                            |old, new| UndoAction::SetMasterVolume { old, new },
+                        );
                     });
                     caption(ui, format!("{master:.2}"), CaptionTone::Secondary);
                 });

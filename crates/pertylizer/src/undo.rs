@@ -386,6 +386,14 @@ pub(crate) enum UndoAction {
         old: MixerValue,
         new: MixerValue,
     },
+    /// The master fader moved.
+    ///
+    /// Its own action rather than a `param` on one of the others because master
+    /// volume is not a `Song` field: it is an engine atomic set by command, and
+    /// undoing it means re-sending that command rather than writing a struct.
+    /// It is still saved state, so it belongs in the history like any other
+    /// mixer control.
+    SetMasterVolume { old: MixerValue, new: MixerValue },
     /// A bus-to-bus send (return feeding another return) was added, changed,
     /// or removed.
     ///
@@ -1842,6 +1850,10 @@ impl UndoManager {
                 old: *new,
                 new: *old,
             },
+            UndoAction::SetMasterVolume { old, new } => UndoAction::SetMasterVolume {
+                old: *new,
+                new: *old,
+            },
             UndoAction::SetReturnSend {
                 from,
                 target,
@@ -2277,6 +2289,38 @@ mod tests {
         };
         assert_eq!(old, MixerValue::Balance(BipolarValue::new(-1.0)));
         assert_eq!(new, MixerValue::Balance(BipolarValue::new(0.5)));
+    }
+
+    /// The master fader is the one mixer control that is not a `Song` field, so
+    /// it carries its own action — but it has to invert like every other one.
+    #[test]
+    fn inverse_of_a_master_volume_change_swaps_the_values() {
+        let action = UndoAction::SetMasterVolume {
+            old: MixerValue::Level(NormalizedValue::new(1.0)),
+            new: MixerValue::Level(NormalizedValue::new(0.32)),
+        };
+
+        let UndoAction::SetMasterVolume { old, new } = UndoManager::inverse(&action) else {
+            panic!("inverse must stay a SetMasterVolume");
+        };
+        assert_eq!(old, MixerValue::Level(NormalizedValue::new(0.32)));
+        assert_eq!(new, MixerValue::Level(NormalizedValue::new(1.0)));
+    }
+
+    #[test]
+    fn a_master_volume_change_round_trips_through_two_inversions() {
+        let action = UndoAction::SetMasterVolume {
+            old: MixerValue::Level(NormalizedValue::new(1.0)),
+            new: MixerValue::Level(NormalizedValue::new(0.32)),
+        };
+
+        let back = UndoManager::inverse(&UndoManager::inverse(&action));
+
+        let UndoAction::SetMasterVolume { old, new } = back else {
+            panic!("expected SetMasterVolume");
+        };
+        assert_eq!(old, MixerValue::Level(NormalizedValue::new(1.0)));
+        assert_eq!(new, MixerValue::Level(NormalizedValue::new(0.32)));
     }
 
     /// Creating a send and deleting one are the same action seen from opposite

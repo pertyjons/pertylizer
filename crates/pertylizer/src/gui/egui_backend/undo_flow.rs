@@ -731,6 +731,20 @@ impl SynthApp {
                     );
                 }
             }
+            UndoAction::SetMasterVolume { new, .. } => {
+                if let crate::undo::MixerValue::Level(level) = new {
+                    self.handle
+                        .send(EngineCommand::SetMasterVolume(synth_core::Gain::new(
+                            level.as_f32(),
+                        )));
+                } else {
+                    tracing::warn!(
+                        target: "pertylizer::undo",
+                        ?new,
+                        "master-volume undo entry does not carry a level",
+                    );
+                }
+            }
             UndoAction::SetReturnSend {
                 from, target, new, ..
             } => {

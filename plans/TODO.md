@@ -167,19 +167,24 @@ First pass done 2026-08-06 on v0.316.0, driven through the egui inspection MCP.
   file is whole was not exercised (needs the file dialog).
 - [ ] **Modal input priority** was not exercised.
 
-**Found during the pass, needing fixes:**
+**Found during the pass:**
 
-- [ ] **Master volume records no undo entry.** `mixer_view.rs:1340` sends
-  `SetMasterVolume` directly, past the `MixerUndo` already in scope. Every other
-  mixer control captures, so this is a one-control inconsistency in a section
-  §0.3 declares complete. **S.** (Its data-safety half — the fader not marking
-  the project dirty — is fixed; see §0.1.)
-- [ ] **Menu popups render see-through.** The File and Edit dropdowns let the
-  panel behind them show through — over the Rack view, "Instruments", the search
-  field and the instrument list are all legible *through* the menu items, making
-  it hard to read. Both menus, so it is the popup frame fill, not one call site.
-  Prime suspect is `1d4139f1` ("Derive egui theme from the active palette"): a
-  window/popup fill that picked up an alpha from the palette. **S, visual.**
+- **Master volume recorded no undo entry** — fixed. The fader sent
+  `SetMasterVolume` straight past the `MixerUndo` already in scope, while every
+  other mixer control captured, so it was the one control in the mixer with no
+  history. It now records through `record_drag` like the rest, via a
+  `SetMasterVolume` undo action that re-sends the command (master volume is an
+  engine atomic, not a `Song` field, so it cannot reuse the mixer-value
+  appliers). Verified live: fader 1.00 → 0.32, Ctrl+Z restores 1.00 and the
+  title reads clean again.
+- **"Menu popups render see-through" was not a bug — withdrawn.** Recorded here
+  so it does not get re-filed. Menus looked translucent in every screenshot with
+  panel content legible straight through them; that is egui's `Area` fade-in
+  animation, caught mid-transition because each screenshot was taken in the same
+  MCP round trip as the click that opened the menu. Waiting a beat first shows a
+  fully opaque menu. **Lesson for future GUI checks through the inspection MCP:
+  let animations settle (`wait_for`, or a second call) before judging what a
+  screenshot shows.**
 
 ## 1. Sequencer & Arrangement
 
