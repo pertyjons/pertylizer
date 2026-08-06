@@ -13,40 +13,75 @@ input handling interfere with standard application shortcuts.
 
 ### 0.1 Reliable dirty-state propagation
 
-- [ ] **Mark the project dirty after every successful project mutation.** Dirty
-  tracking is currently driven by scattered `SynthApp::mark_dirty()` calls, while
-  several editors mutate shared song/sample state without reporting the change to
-  the application shell. Establish one reliable mutation signal or revision-based
-  mechanism covering at least notes, patterns, placements, tempo/time signatures,
-  automation, Note/Mod Grid graphs, mixer controls and routing, return/master FX,
-  sample edits, rack/module edits, and instrument/project metadata.
+**Done** (`c417e404`). Dirty state is *derived*, not reported: `SharedSong` and
+`SampleLibrary` carry edit revisions, the engine graph version is reused, and the
+patch canvas contributes a fingerprint of the layout the save path writes.
+`SharedSong`'s counter keys off the write guard's `DerefMut`, so a guard that only
+reads is not mistaken for an edit. Loading and a successful save establish the
+clean baseline; undo back to the save point reads clean again via history
+position, and that shortcut disables itself for the session if any mutation
+bypasses the undo manager, so it can never report a false *clean*.
+`tests/dirty_state_coverage.rs` asserts a mutation from each major view (piano
+roll/tracker, arrangement, transport, Note Grid, Mod Grid, mixer, return buses,
+rack, samples) reaches the signal, plus that reading never marks dirty.
 
-  Loading a project and completing a successful save must establish the clean
-  baseline; undo/redo must update dirty state relative to that baseline rather
-  than blindly clearing it. Closing, opening, or creating a project after any
-  mutation must consistently show the unsaved-changes prompt. Add focused tests
-  for mutations originating in each major view so future editors cannot silently
-  bypass the mechanism. **P0, M, correctness/data safety.**
+**Global state escaped the counters — fixed 2026-08-06.** The in-app pass (§0.5)
+found that persisted state outside the four counters could be changed with the
+project still reporting itself clean: the master fader (0.80 → 0.38), the
+keyboard octave, and adding a master effect all left the title reading `Untitled`
+with no `*`. The last was the sharpest — the undo manager *had* recorded it, but
+`is_dirty` returned at its opening counter check before the undo position was
+ever read. `dirty.rs`'s own table was part of the cause: it claimed
+`SharedGraph::version` covered "return/master effect chains", which it never did
+(those are `RwLock`s on `EngineState`, a different struct).
+
+The consequence was not a missing asterisk. Autosave (`autosave_flow.rs`) and the
+close prompt are gated on the same predicate, so that work was neither
+snapshotted for crash recovery nor asked about on close.
+
+Two changes:
+
+- **A `global` fingerprint** joins `layout` as a derived term, covering master
+  volume, keyboard octave, glide, the transport loop region and the master /
+  return-bus effect chains — everything `GlobalProjectState` and the loop mirror
+  persist. Derived rather than reported for the same reason `layout` is: these
+  are reached from the GUI, MCP, project load and undo, and none of them should
+  have to remember. `dirty::tests::global` covers each term one mutation at a
+  time, including chain reorder and knob edits.
+- **The undo stack is consulted before the counters.** They are independent
+  observers and either seeing a change is enough; making the counters a gate is
+  what let a recorded edit report clean.
+
+Taking a baseline now waits (bounded, 100 ms) for queued engine commands to be
+applied first. Without that the fingerprint exposed a latent race: a project
+reset sends the master volume to the audio thread, which applies it a block
+later, so the baseline described a state the engine had not reached — a freshly
+opened project read dirty for a frame, and `observe_untracked_mutation` would
+latch `untracked_mutation_since_save` for the session, permanently disabling
+undo-back-to-clean. Verified live afterwards: fader, octave and master-effect
+edits each raise the `*`; New Project reads clean immediately; and undoing a
+master-effect add returns the title to clean.
 
 ### 0.2 Atomic save, autosave, and recovery
 
-- [ ] **Make manual saves atomic for both plain projects and sample bundles.** Write
-  the complete project to a uniquely named temporary file beside the destination,
-  flush/sync it, and only then replace the destination. Preserve or restore the
-  previous valid file if serialization, sample encoding, disk I/O, or the final
-  replacement fails; never truncate the user's last good save before the new one
-  is complete. Cover new files, overwrite saves, `.ptz` projects, bundled projects,
-  and platform-specific replacement behaviour with failure-path tests.
+**Done** (`c417e404`).
 
-- [ ] **Add debounced autosave and startup recovery without overwriting the manual
-  project file.** Store recovery snapshots in a separate per-project location,
-  write them atomically, and retain enough identity/timestamp information to offer
-  recovery only when the snapshot is newer than the last manual save or follows an
-  unclean shutdown. A recovered document must open as unsaved, successful manual
-  saves should retire obsolete recovery data, and failed autosaves must be reported
-  non-disruptively without clearing dirty state. Define retention/cleanup for
-  abandoned and untitled projects so recovery storage remains bounded. **P0, L,
-  data safety.**
+- **Atomic saves.** `io/atomic.rs` writes to a uniquely named temp file in the
+  destination's own directory, syncs, inherits the destination's permissions and
+  replaces with a single rename. Used by projects (`project.rs`), sample bundles
+  (`bundle.rs`, via `write_with` so ZIP encoding failures are caught before the
+  replace), patches, group templates, settings, and the recovery sidecar.
+  Failure-path tests cover payload errors keeping the previous file, temp-file
+  cleanup, missing destination directories, and permission inheritance.
+- **Crash recovery.** `recovery.rs` writes debounced snapshots to a private
+  directory on a worker thread, never over the user's file, and as a ZIP bundle
+  when the project holds samples so recovery does not hand back a project with
+  every recorded sample gone. Snapshots are retired whenever the work stops being
+  at risk, which makes one surviving to startup the crash signal itself — no lock
+  file needed. Bounded by age and count; recovered documents open unsaved.
+  `tests/recovery_lifecycle.rs` covers offer-after-crash, saved work not being
+  re-offered, declining, an external manual save beating an older snapshot,
+  ordering, round-tripping, and one-snapshot-per-project.
 
 ### 0.3 Complete and consistent undo/redo
 
@@ -85,28 +120,66 @@ Remaining:
   entry records a freshly-created effect with default parameters, so redoing an
   add restores defaults rather than the state the effect had when it was
   removed. Only affects add-then-edit-then-undo-then-redo. **S.**
-- [ ] **In-app verification.** None of this has been clicked through in the
-  running app — only tested headlessly. Worth a pass over each editor: change,
-  undo, redo, and confirm both the display and the sound follow. This is the
-  biggest remaining risk: the undo paths that write both a GUI mirror and the
-  engine are exactly where a wrong ordering shows up only live.
-
 ### 0.4 Focus-safe shortcuts and global transport
 
-- [ ] **Centralize shortcut routing and prevent the computer-keyboard piano from
-  consuming text or command input.** Do not trigger piano notes, octave changes,
-  editor actions, undo, or transport from ordinary typing in a focused text field;
-  modifier chords such as Ctrl/Cmd+C, V, X, Z, S, O, and N must never also play
-  notes. Handle focus loss and view changes without leaving stuck notes, and let
-  modal dialogs take input priority.
+**Done** (`c417e404`). One binding table (`gui/shortcuts.rs`, `AppShortcut`:
+New, Open, Save, Save As, Undo, Redo, TogglePlayback) serves both the dispatcher
+and the File menu, so a menu entry cannot drift from the key it advertises.
+Shortcuts dispatch before view input and consume their keys. An `InputGate`
+silences the piano *and* the shortcuts whenever a text field or a modal owns the
+keyboard, which fixes the piano reading raw key state: the computer-keyboard
+layout uses exactly the letters the editing chords use, so every Ctrl+S played a
+C-sharp on its way to saving. Held notes release on focus loss. Transport is the
+bare spacebar, dispatched at app level rather than per sequencer editor, and
+yields to a focused widget. `tests/shortcut_routing.rs` covers all of it,
+including the standing assertion that no application shortcut can be mistaken for
+a note.
 
-  Provide consistent application-wide shortcuts for Save, Save As, New, Open,
-  Undo/Redo, and play/stop, using the platform command modifier. Spacebar transport
-  must work from every main view when no text field or modal owns it, rather than
-  only from individual sequencer editors. Route commands through one dispatcher so
-  menus can show the same bindings and views do not implement conflicting copies;
-  add input tests for text focus, modifiers, modal focus, view switching, and global
-  transport. **P0, M, correctness/UX.**
+### 0.5 In-app verification of section 0
+
+First pass done 2026-08-06 on v0.316.0, driven through the egui inspection MCP.
+
+**Verified working:**
+
+- **Shortcut routing.** The File menu renders Ctrl+N/O/S/Shift+S and the Edit menu
+  Ctrl+Z / Ctrl+Shift+Z, greyed out correctly on an empty stack — one table, so
+  menu and dispatcher cannot drift. Typing `asdfgzxcv` into the instrument search
+  field played **no** notes (Voices stayed 0, no keys lit): the headline §0.4 bug
+  is gone.
+- **Global transport.** Bare spacebar toggles play/pause from all eight main views
+  (Home, Rack, Notes, Mod, Pattern, Seq, Mixer, Sample), checked per view rather
+  than by parity so a single dead view could not hide.
+- **Unsaved-changes prompt.** New Project over a dirty project raises the
+  Save / Don't Save / Cancel modal; Don't Save establishes a clean baseline.
+- **Crash recovery, end to end.** Edited, waited out the 30 s debounce, confirmed
+  `~/.local/share/pertylizer/recovery/untitled.{ptz,json}` appeared, `kill -9`,
+  relaunched: the offer appeared ("closed with unsaved changes to 'Untitled'"),
+  Recover restored the instrument, master fader, master Reverb and octave exactly,
+  and the document opened as `Untitled *` with "save to keep it".
+
+**Still to do:**
+
+- [ ] **Undo/redo per editor, by ear.** Only the mixer path was driven, and it
+  turned up the §0.1 gate bug plus the missing master-fader capture below. The
+  rest — samples, instruments/rack, sequencer — still needs change/undo/redo with
+  the *sound* confirmed following, which no automated pass can judge.
+- [ ] **Save-path checks.** Overwriting an existing project and confirming the
+  file is whole was not exercised (needs the file dialog).
+- [ ] **Modal input priority** was not exercised.
+
+**Found during the pass, needing fixes:**
+
+- [ ] **Master volume records no undo entry.** `mixer_view.rs:1340` sends
+  `SetMasterVolume` directly, past the `MixerUndo` already in scope. Every other
+  mixer control captures, so this is a one-control inconsistency in a section
+  §0.3 declares complete. **S.** (Its data-safety half — the fader not marking
+  the project dirty — is fixed; see §0.1.)
+- [ ] **Menu popups render see-through.** The File and Edit dropdowns let the
+  panel behind them show through — over the Rack view, "Instruments", the search
+  field and the instrument list are all legible *through* the menu items, making
+  it hard to read. Both menus, so it is the popup frame fill, not one call site.
+  Prime suspect is `1d4139f1` ("Derive egui theme from the active palette"): a
+  window/popup fill that picked up an alpha from the palette. **S, visual.**
 
 ## 1. Sequencer & Arrangement
 

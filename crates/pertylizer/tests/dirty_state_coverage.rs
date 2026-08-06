@@ -1,10 +1,16 @@
 //! Every major editor's mutations must reach the unsaved-changes mechanism.
 //!
 //! Dirty state is derived from three edit counters (`SharedSong::revision`,
-//! `SharedGraph::version`, `SampleLibrary::revision`) plus a fingerprint of the
-//! patch-canvas layout. The point of that design is that an editor cannot
-//! silently bypass it — but only as long as each editor really does route its
-//! mutations through the shared state those counters watch.
+//! `SharedGraph::version`, `SampleLibrary::revision`) plus fingerprints of the
+//! patch-canvas layout and of the project's global state. The point of that
+//! design is that an editor cannot silently bypass it — but only as long as
+//! each editor really does route its mutations through the shared state those
+//! counters watch.
+//!
+//! The global fingerprint's own terms — master volume, octave, glide, the
+//! transport loop region and the master/return effect chains — are covered by
+//! the unit tests in `dirty::tests::global`, which can reach the `pub(crate)`
+//! fingerprint directly.
 //!
 //! These tests perform one representative mutation per view and assert the
 //! corresponding counter moved. A future editor that starts writing somewhere

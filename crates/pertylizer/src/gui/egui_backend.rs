@@ -222,6 +222,14 @@ include!(concat!(env!("OUT_DIR"), "/bundled_fonts.rs"));
 /// Default monospace font family, used when no valid selection is stored.
 pub const DEFAULT_FONT: &str = "Share Tech Mono";
 
+/// How long taking a clean baseline waits for queued engine commands to be
+/// applied, so it describes the state the engine actually reached.
+///
+/// Draining normally costs one audio block; this leaves room for many while
+/// staying far below a perceptible stall on the UI thread. See
+/// `SynthApp::capture_clean_baseline`.
+const BASELINE_SETTLE_TIMEOUT_MS: u64 = 100;
+
 /// Resolve a possibly-missing or unknown font selection to a valid bundled
 /// family name. Falls back to [`DEFAULT_FONT`], then to the first bundled font.
 #[must_use]
@@ -689,6 +697,11 @@ impl SynthApp {
             layout: self.instruments.iter().fold(0u64, |acc, inst| {
                 acc.wrapping_add(inst.patch_editor.layout_fingerprint())
             }),
+            global: crate::dirty::global_fingerprint(
+                self.session.state(),
+                self.keyboard.octave_offset(),
+                self.glide_time,
+            ),
         }
     }
 
@@ -713,14 +726,26 @@ impl SynthApp {
     /// `untracked_mutation_since_save` disables the shortcut and the project
     /// stays dirty. Erring toward dirty costs a redundant save prompt; erring
     /// the other way would discard work.
+    ///
+    /// The undo stack is consulted *before* the counters, not after. The two
+    /// are independent observers and either one seeing a change is enough; the
+    /// old order made the counters a gate that returned clean before the stack
+    /// was ever read, so an edit the undo manager had recorded still reported
+    /// clean if it happened to touch no counter — which is exactly what adding
+    /// a master effect did.
     fn is_dirty(&self) -> bool {
-        if !self.current_revision().differs_from(self.saved_revision) {
-            return false;
-        }
-        if self.untracked_mutation_since_save {
+        // Standing anywhere other than the saved position means recorded work
+        // is not in the file, whatever the counters say.
+        if self.undo_manager.position() != self.saved_undo_position {
             return true;
         }
-        self.undo_manager.position() != self.saved_undo_position
+        // Back at the save point on the undo stack. That is proof of clean only
+        // while every mutation is undoable — otherwise fall through and let the
+        // counters answer.
+        if !self.untracked_mutation_since_save {
+            return false;
+        }
+        self.current_revision().differs_from(self.saved_revision)
     }
 
     /// Notice a project change that did not pass through the undo manager.
@@ -763,6 +788,21 @@ impl SynthApp {
     /// waiting to be offered — and retiring it here would delete the crashed
     /// session's work before anyone was asked about it.
     fn capture_clean_baseline(&mut self) {
+        // Let queued engine commands land first. Resetting or loading a project
+        // sends the master volume, glide and effect chains to the audio thread,
+        // which applies them a block or two later — so a baseline taken right
+        // now describes a state the engine has not reached yet, and the next
+        // frame reads the difference as an edit. That would mark a freshly
+        // opened project dirty, and worse, `observe_untracked_mutation` would
+        // see a revision move with no undo entry behind it and latch
+        // `untracked_mutation_since_save` for the rest of the session, killing
+        // the undo-back-to-clean shortcut. `project_apply` waits here for the
+        // same reason; this bound is much tighter because it runs on the UI
+        // thread, and timing out merely risks a spurious `*` — the safe way to
+        // be wrong.
+        let _ = self
+            .session
+            .wait_for_pending_commands(BASELINE_SETTLE_TIMEOUT_MS);
         self.saved_revision = self.current_revision();
         self.saved_undo_position = self.undo_manager.position();
         self.untracked_mutation_since_save = false;
