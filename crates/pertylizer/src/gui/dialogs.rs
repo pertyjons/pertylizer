@@ -252,20 +252,104 @@ impl DialogState {
     }
 
     /// Update the file dialog and return any completed result.
+    ///
+    /// Reports a cancellation as well as a pick. `take_picked` yields nothing
+    /// when the user backs out, so without the second branch `file_dialog_mode`
+    /// would stay set for the rest of the session — and since
+    /// [`Self::is_file_dialog_open`] reads it, one cancelled Open Project left
+    /// the input gate permanently closed: no application shortcuts and no
+    /// computer-keyboard piano until the app was restarted.
     pub fn update_file_dialog(&mut self, ctx: &egui::Context) -> Option<FileDialogResult> {
         self.file_dialog.update(ctx);
 
-        let path = self.file_dialog.take_picked()?;
-        let mode = self.file_dialog_mode.take();
-        Some(match mode {
-            Some(kind) if kind.is_save() => FileDialogResult::Saved(path, mode),
-            _ => FileDialogResult::Picked(path, mode),
-        })
+        if let Some(path) = self.file_dialog.take_picked() {
+            let mode = self.file_dialog_mode.take();
+            return Some(match mode {
+                Some(kind) if kind.is_save() => FileDialogResult::Saved(path, mode),
+                _ => FileDialogResult::Picked(path, mode),
+            });
+        }
+        // Anything that is not still open, without a path to take, is the user
+        // backing out. `take_picked` above already closed the picked case, so a
+        // mode still set here cannot be one.
+        if self.file_dialog_mode.is_some()
+            && *self.file_dialog.state() != egui_file_dialog::DialogState::Open
+        {
+            return Some(FileDialogResult::Cancelled(self.file_dialog_mode.take()));
+        }
+        None
     }
 
     /// Check if a file dialog is currently open.
     pub fn is_file_dialog_open(&self) -> bool {
         self.file_dialog_mode.is_some()
+    }
+}
+
+/// Every dialog that owns keyboard input while it is up.
+///
+/// A struct rather than a boolean expression at the call site, because
+/// [`Self::any_open`] destructures it **exhaustively**: adding a field without
+/// adding it to the disjunction is a compile error. That is what the old
+/// hand-maintained `||` chain could not do — the instrument-delete confirmation
+/// was simply left out of it, so a window whose own text says the action cannot
+/// be undone let a bare space start playback and Ctrl+N reach the project
+/// behind it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ModalDialogs {
+    /// The post-crash "recover unsaved work?" offer.
+    pub recovery_prompt: bool,
+    /// The open/save/import file picker, in any mode.
+    ///
+    /// Included because it is the one dialog the user routinely leaves without
+    /// a focused text field, so without it a bare space would start playback
+    /// and the letter keys would play the piano while they browse.
+    pub file_dialog: bool,
+    /// The unsaved-changes prompt.
+    pub unsaved_changes: bool,
+    /// Application settings.
+    pub settings: bool,
+    /// The about box.
+    pub about: bool,
+    /// The built-in patch browser.
+    pub load_patch: bool,
+    /// The group-template browser.
+    pub group_templates: bool,
+    /// The save-group-template form.
+    pub save_group_template: bool,
+    /// The WAV export dialog.
+    pub export_wav: bool,
+    /// The "Delete instrument?" confirmation.
+    pub instrument_delete: bool,
+}
+
+impl ModalDialogs {
+    /// Whether any dialog currently owns keyboard input.
+    #[must_use]
+    pub const fn any_open(self) -> bool {
+        // Destructured without `..` on purpose: see the type's documentation.
+        let Self {
+            recovery_prompt,
+            file_dialog,
+            unsaved_changes,
+            settings,
+            about,
+            load_patch,
+            group_templates,
+            save_group_template,
+            export_wav,
+            instrument_delete,
+        } = self;
+        recovery_prompt
+            || file_dialog
+            || unsaved_changes
+            || settings
+            || about
+            || load_patch
+            || group_templates
+            || save_group_template
+            || export_wav
+            || instrument_delete
     }
 }
 
@@ -275,6 +359,13 @@ pub enum FileDialogResult {
     Picked(PathBuf, Option<FileDialogMode>),
     /// User saved to a file.
     Saved(PathBuf, Option<FileDialogMode>),
+    /// User closed the dialog without choosing anything.
+    ///
+    /// Reported rather than swallowed because a caller may be holding work that
+    /// was waiting on the path — see the unsaved-changes prompt's pending
+    /// action, which has to be dropped when the save it deferred to never
+    /// happens.
+    Cancelled(Option<FileDialogMode>),
 }
 
 /// Result from showing the load patch dialog (built-in patches).
@@ -989,6 +1080,40 @@ mod tests {
         FileDialogMode::ExportSample,
         FileDialogMode::ExportActivityLog,
     ];
+
+    /// Nothing open is the only state in which keystrokes reach the document.
+    #[test]
+    fn no_dialog_open_leaves_the_gate_alone() {
+        assert!(!ModalDialogs::default().any_open());
+    }
+
+    /// Each dialog on its own has to close the gate. Written out one field at a
+    /// time rather than in a loop: this is the list that must be complete, and
+    /// `any_open`'s exhaustive destructuring is what makes a *new* field fail to
+    /// compile until it is handled — this test is what catches a field handled
+    /// wrongly. The instrument-delete confirmation was the one that had been
+    /// missed, on a window whose own text says the action cannot be undone.
+    #[test]
+    fn any_single_dialog_closes_the_gate() {
+        type OpenOne = fn(&mut ModalDialogs);
+        let cases: [(&str, OpenOne); 10] = [
+            ("recovery_prompt", |m| m.recovery_prompt = true),
+            ("file_dialog", |m| m.file_dialog = true),
+            ("unsaved_changes", |m| m.unsaved_changes = true),
+            ("settings", |m| m.settings = true),
+            ("about", |m| m.about = true),
+            ("load_patch", |m| m.load_patch = true),
+            ("group_templates", |m| m.group_templates = true),
+            ("save_group_template", |m| m.save_group_template = true),
+            ("export_wav", |m| m.export_wav = true),
+            ("instrument_delete", |m| m.instrument_delete = true),
+        ];
+        for (name, open) in cases {
+            let mut modals = ModalDialogs::default();
+            open(&mut modals);
+            assert!(modals.any_open(), "{name} must own keyboard input");
+        }
+    }
 
     #[test]
     fn every_mode_offers_usable_filters() {

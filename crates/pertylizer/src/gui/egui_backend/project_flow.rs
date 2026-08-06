@@ -2,6 +2,24 @@
 
 use super::*;
 
+/// What came of asking to save the current project.
+///
+/// The distinction that matters is between [`Self::Failed`] and
+/// [`Self::AwaitingPath`]: both leave the project unsaved *this instant*, but
+/// only the first means it will stay that way. A caller holding an action that
+/// was waiting on the save — quit, new project, open — must drop it on a
+/// failure and hold it across a deferral.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum SaveOutcome {
+    /// The project is on disk.
+    Saved,
+    /// The save was attempted and did not succeed.
+    Failed,
+    /// The project has no path yet, so the file dialog is now open. The save
+    /// completes — or is cancelled — when that dialog reports back.
+    AwaitingPath,
+}
+
 impl SynthApp {
     /// Resolve the initial directory for the Open file dialog.
     ///
@@ -841,7 +859,18 @@ impl SynthApp {
     }
 
     /// Save the current project (returns true on success).
+    ///
+    /// Kept as a `bool` for the callers that only ask "is it on disk now?".
+    /// Anything that has work waiting on the save wants
+    /// [`Self::save_current_project_outcome`] instead — a project with no path
+    /// yet has not failed, it has only deferred to the file dialog, and the two
+    /// are not the same answer.
     pub(super) fn save_current_project(&mut self) -> bool {
+        self.save_current_project_outcome() == SaveOutcome::Saved
+    }
+
+    /// Save the current project, distinguishing "not yet" from "no".
+    pub(super) fn save_current_project_outcome(&mut self) -> SaveOutcome {
         if let Some(path) = self.current_project_path.clone() {
             let proj = self.create_project_from_app();
             let has_samples = self.sample_library.read().is_ok_and(|lib| !lib.is_empty());
@@ -863,12 +892,12 @@ impl SynthApp {
                     self.settings.save();
                     self.dialog_state
                         .set_status(format!("Project saved: {}", path.display()));
-                    true
+                    SaveOutcome::Saved
                 }
                 Err(e) => {
                     self.dialog_state
                         .set_status(format!("Error saving project: {e}"));
-                    false
+                    SaveOutcome::Failed
                 }
             }
         } else {
@@ -881,7 +910,7 @@ impl SynthApp {
                 Some(&default_name),
                 initial_dir.as_deref(),
             );
-            false
+            SaveOutcome::AwaitingPath
         }
     }
 
@@ -891,6 +920,7 @@ impl SynthApp {
             return;
         }
         let mut close = false;
+        let mut keep_pending = false;
         egui::Window::new("Unsaved Changes")
             .collapsible(false)
             .resizable(false)
@@ -900,9 +930,18 @@ impl SynthApp {
                 ui.add_space(theme().spacing.md);
                 ui.horizontal(|ui| {
                     if ui.button("Save").clicked() {
-                        let saved = self.save_current_project();
-                        if saved {
-                            self.execute_pending_action(ctx);
+                        match self.save_current_project_outcome() {
+                            SaveOutcome::Saved => self.execute_pending_action(ctx),
+                            // The save has not happened yet — it is waiting on a
+                            // filename. The prompt closes because the file
+                            // dialog replaces it, but the action it was asked to
+                            // perform has to survive until that dialog reports
+                            // back, or a never-saved project would save and then
+                            // simply not quit.
+                            SaveOutcome::AwaitingPath => keep_pending = true,
+                            // Nothing reached disk, so the action that would
+                            // discard the work must not run.
+                            SaveOutcome::Failed => {}
                         }
                         close = true;
                     }
@@ -918,7 +957,9 @@ impl SynthApp {
             });
         if close {
             self.unsaved_dialog.open = false;
-            self.unsaved_dialog.pending_action = None;
+            if !keep_pending {
+                self.unsaved_dialog.pending_action = None;
+            }
         }
     }
 

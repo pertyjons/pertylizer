@@ -193,42 +193,43 @@ First pass done 2026-08-06 on v0.316.0, driven through the egui inspection MCP.
   file is whole was not exercised (needs the file dialog).
 - [ ] **Modal input priority** was not exercised.
 
-**Code read over the three open items, 2026-08-06.** No substitute for the ear
-test, but it turned up three defects that a click-through would have hit. None
-are fixed yet.
+**Code read over the three open items, 2026-08-06 — four defects found, all
+fixed.** A read is no substitute for the ear test, which is still open above, but
+each of these would have been hit by a click-through.
 
-- [ ] **The instrument-delete confirmation is not in `modal_is_open()`.**
-  `render_instrument_delete_confirm` (`egui_backend.rs`) is the one confirmation
-  dialog missing from that predicate, so while "Delete instrument?" is up a bare
-  space toggles playback, the letter keys play the piano, and Ctrl+N/O/Z reach
-  the document behind it — Ctrl+N raises the unsaved-changes prompt on top of it.
-  The dialog's own text says "This cannot be undone", which makes it the worst
-  one to leave live. The root cause is the shape: `modal_is_open()` is a
-  hand-maintained list of nine flags, the "remember to report" pattern §0.1
-  exists to remove. Either derive it (a registry every dialog registers into) or
-  at minimum add the missing flag and a test that fails when a new dialog is not
-  listed. **S.**
-- [ ] **"Save" in the unsaved-changes dialog drops the pending action for an
-  untitled project.** `show_unsaved_changes_dialog` (`project_flow.rs`) calls
-  `save_current_project()`, which — with no `current_project_path` — opens the
-  Save Project dialog and returns `false`. `execute_pending_action` is correctly
-  skipped, but `close = true` then runs unconditionally and clears
-  `pending_action`. The `SaveProject` completion handler in `dialog_flow.rs`
-  never resumes it. So on a never-saved project: close the window, click Save,
-  pick a filename — the project saves and the app does *not* quit. Same for the
-  New and Open that raised the prompt. Fix by keeping the dialog's pending action
-  alive across the file dialog. **S.**
-- [ ] **Three pattern-creating actions in the arrangement view record no undo.**
-  Double-click on empty timeline (`arrangement.rs:~1830`), "New Pattern Here"
-  (`~2776`) and "Duplicate Pattern" (`~2688`) all mutate the song with no
-  `UndoAction::AddPattern`, and "Place Existing Pattern" (`~2793`) records no
-  `InsertPlacement`. The same operations *from the pattern view* do record
-  (`pattern_view.rs:288`, `:380`), and "Delete Pattern" in the very same context
-  menu records `DeletePattern` — so this is an inconsistency inside one menu, not
-  a missing feature. Two consequences: Ctrl+Z after creating a pattern undoes the
-  *previous* edit and leaves the new pattern behind, and the untracked mutation
-  latches `untracked_mutation_since_save`, disabling undo-back-to-clean for the
-  rest of the session. **S.**
+- **A cancelled file dialog closed the input gate for the rest of the session.**
+  The sharpest of the four, and it was found while fixing the modal predicate
+  rather than looked for. `update_file_dialog` only cleared `file_dialog_mode`
+  when it had a path to hand back, but backing out never yields one — so
+  `is_file_dialog_open()` stayed true forever, and with it `modal_is_open()`.
+  One cancelled Open Project and every application shortcut plus the whole
+  computer-keyboard piano were dead until restart. `FileDialogResult` gained a
+  `Cancelled` variant so the mode is cleared either way, which the deferred-save
+  fix below then reuses as its own cancellation signal.
+- **The instrument-delete confirmation was not in `modal_is_open()`.** While
+  "Delete instrument?" was up a bare space toggled playback, the letter keys
+  played the piano, and Ctrl+N/O/Z reached the document behind it — on a window
+  whose own text says the action cannot be undone. The predicate was a
+  hand-maintained chain of nine flags, the "remember to report" shape §0.1
+  exists to remove, so the fix is structural: a `ModalDialogs` struct whose
+  `any_open` destructures it **exhaustively**, making a new dialog that earns a
+  field a compile error until it is handled.
+- **"Save" in the unsaved-changes prompt dropped the pending action for an
+  untitled project.** `save_current_project` returned a bare `bool`, which
+  cannot tell "the save failed" from "the save is waiting on a filename", and
+  the prompt cleared `pending_action` on both. So on a never-saved project:
+  close the window, Save, pick a name — the project saved and the app did not
+  quit. `SaveOutcome` now distinguishes the two; the file dialog resumes the
+  action once the bytes are on disk, and drops it on failure or cancel.
+- **Four pattern actions in the arrangement view recorded no undo.**
+  Double-click on empty timeline, "New Pattern Here", "Duplicate Pattern" and
+  "Place Existing Pattern" — while the same operations in the pattern view did
+  record, and "Delete Pattern" in the same context menu did too. Ctrl+Z after
+  creating a pattern therefore undid the *previous* edit and left the new
+  pattern standing, and the untracked mutation latched
+  `untracked_mutation_since_save`, disabling undo-back-to-clean for the session.
+  A create-and-place now collapses into one `AddPattern` entry, and placing an
+  existing pattern records an `InsertPlacement`.
 
 **Found during the pass:**
 

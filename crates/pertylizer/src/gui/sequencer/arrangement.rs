@@ -30,6 +30,70 @@ fn edit_sections(
     }
 }
 
+/// Record a pattern this view just created, together with the placement it was
+/// dropped at, as one undo step.
+///
+/// [`UndoAction::AddPattern`](crate::undo::UndoAction::AddPattern) carries its
+/// placements, so a create-and-place collapses into a single entry — undoing
+/// takes both away, which is what the user made in one gesture. Call after the
+/// write lock is released.
+///
+/// The arrangement view creates patterns from three places (double-click on
+/// empty timeline, "New Pattern Here", "Duplicate Pattern") and every one of
+/// them used to record nothing, while the *same* operations in the pattern view
+/// did — so Ctrl+Z here undid the previous edit and left the new pattern
+/// standing.
+fn record_created_pattern(
+    song: &Arc<synth_sequencer::SharedSong>,
+    undo_manager: &mut crate::undo::UndoManager,
+    pattern_id: PatternId,
+) {
+    let captured = {
+        let song_r = song.read();
+        song_r.pattern(pattern_id).cloned().map(|pattern| {
+            let placements: Vec<_> = song_r
+                .arrangement()
+                .iter()
+                .filter(|p| p.pattern_id == pattern_id)
+                .cloned()
+                .collect();
+            (pattern, placements)
+        })
+    };
+    if let Some((pattern, placements)) = captured {
+        undo_manager.push(crate::undo::UndoAction::AddPattern {
+            pattern,
+            placements,
+        });
+    }
+}
+
+/// Record a placement of an *existing* pattern as one undo step.
+///
+/// The pattern itself is untouched, so this is an
+/// [`InsertPlacement`](crate::undo::UndoAction::InsertPlacement) rather than an
+/// `AddPattern` — undoing must take the clip off the timeline without deleting
+/// the pattern every other placement still refers to. Looks the placement up
+/// rather than reconstructing it, so whatever defaults `place_pattern` chose
+/// are the ones restored.
+fn record_placement(
+    song: &Arc<synth_sequencer::SharedSong>,
+    undo_manager: &mut crate::undo::UndoManager,
+    pattern_id: PatternId,
+    track_id: TrackId,
+    start: Tick,
+) {
+    let placement = song
+        .read()
+        .arrangement()
+        .iter()
+        .find(|p| p.pattern_id == pattern_id && p.track_id == track_id && p.start == start)
+        .cloned();
+    if let Some(placement) = placement {
+        undo_manager.push(crate::undo::UndoAction::InsertPlacement { placement });
+    }
+}
+
 /// Collect arrangement data from song (short read-lock, then release).
 pub(super) fn collect_arrangement_data(
     song: &Arc<synth_sequencer::SharedSong>,
@@ -1825,12 +1889,14 @@ fn handle_arrangement_pointer(
             let target_track = data.tracks[row_idx].id;
             let click_tick = x_to_tick(pos.x);
             let placement_tick = snap_tick(click_tick);
-            {
+            let new_pat_id = {
                 let mut song_w = song.write();
                 let new_pat_id = song_w.create_pattern(SeqDuration::WHOLE * 4);
                 song_w.place_pattern(new_pat_id, target_track, Tick(placement_tick));
                 *double_clicked_pattern = Some(new_pat_id);
-            }
+                new_pat_id
+            };
+            record_created_pattern(song, undo_manager, new_pat_id);
         }
     }
 
@@ -2683,18 +2749,21 @@ fn draw_arrangement_context_menu(
         });
 
         if ui.button("Duplicate Pattern").clicked() {
-            {
+            let duplicated = {
                 let mut song_w = song.write();
-                if let Some(new_id) = song_w.duplicate_pattern(pat_id) {
+                song_w.duplicate_pattern(pat_id).inspect(|new_id| {
                     let pattern_length = song_w
                         .pattern(pat_id)
                         .map_or(SeqDuration::WHOLE, |p| p.length);
                     song_w.place_pattern(
-                        new_id,
+                        *new_id,
                         trk_id,
                         Tick(start_tick + pattern_length.0 as u64),
                     );
-                }
+                })
+            };
+            if let Some(new_id) = duplicated {
+                record_created_pattern(song, undo_manager, new_id);
             }
             ui.close();
         }
@@ -2771,11 +2840,13 @@ fn draw_arrangement_context_menu(
             ui.separator();
 
             if ui.button((ri::ADD_LINE, "New Pattern Here")).clicked() {
-                {
+                let new_pat_id = {
                     let mut song_w = song.write();
                     let new_pat_id = song_w.create_pattern(SeqDuration::WHOLE * 4);
                     song_w.place_pattern(new_pat_id, target_track, Tick(bar_tick));
-                }
+                    new_pat_id
+                };
+                record_created_pattern(song, undo_manager, new_pat_id);
                 ui.close();
             }
 
@@ -2789,8 +2860,18 @@ fn draw_arrangement_context_menu(
                             .button(format!("{} ({:.0} beats)", pat.name, beats))
                             .clicked()
                         {
-                            song.write()
-                                .place_pattern(pat.id, target_track, Tick(bar_tick));
+                            let placed =
+                                song.write()
+                                    .place_pattern(pat.id, target_track, Tick(bar_tick));
+                            if placed {
+                                record_placement(
+                                    song,
+                                    undo_manager,
+                                    pat.id,
+                                    target_track,
+                                    Tick(bar_tick),
+                                );
+                            }
                             ui.close();
                         }
                     }

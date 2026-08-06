@@ -2004,21 +2004,23 @@ impl SynthApp {
     ///
     /// These are ordinary egui windows rather than true modals, so egui cannot
     /// answer this for us — but while one is up, keystrokes must not reach the
-    /// document behind it.
+    /// document behind it. Collected into [`ModalDialogs`] so the disjunction is
+    /// exhaustive by construction; a new dialog is caught by the compiler the
+    /// moment it earns a field there.
     fn modal_is_open(&self) -> bool {
-        self.recovery_prompt.is_some()
-            // The file picker is the one dialog the user routinely leaves
-            // without a focused text field, so without this a bare space would
-            // start playback and the letter keys would play the piano while
-            // they browse for a project.
-            || self.dialog_state.is_file_dialog_open()
-            || self.unsaved_dialog.open
-            || self.dialog_state.show_settings
-            || self.dialog_state.show_about
-            || self.dialog_state.show_load_patch
-            || self.dialog_state.show_group_templates
-            || self.dialog_state.show_save_group_template
-            || self.dialog_state.show_export_wav
+        crate::gui::dialogs::ModalDialogs {
+            recovery_prompt: self.recovery_prompt.is_some(),
+            file_dialog: self.dialog_state.is_file_dialog_open(),
+            unsaved_changes: self.unsaved_dialog.open,
+            settings: self.dialog_state.show_settings,
+            about: self.dialog_state.show_about,
+            load_patch: self.dialog_state.show_load_patch,
+            group_templates: self.dialog_state.show_group_templates,
+            save_group_template: self.dialog_state.show_save_group_template,
+            export_wav: self.dialog_state.show_export_wav,
+            instrument_delete: self.pending_instrument_delete.is_some(),
+        }
+        .any_open()
     }
 
     /// Run the application-wide shortcuts.

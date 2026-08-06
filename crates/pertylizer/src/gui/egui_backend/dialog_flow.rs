@@ -297,12 +297,30 @@ impl SynthApp {
                             self.settings.save();
                             self.dialog_state
                                 .set_status(format!("Project saved: {}", path.display()));
+                            // The save that got here may have been the unsaved-
+                            // changes prompt deferring to this dialog for a
+                            // filename. Now that the work is on disk, whatever
+                            // it was holding — quit, new project, open — runs.
+                            // Nothing is pending in the ordinary Save As case,
+                            // so this is a no-op there.
+                            self.execute_pending_action(ctx);
                         }
                         Err(e) => {
                             self.settings.save();
                             self.dialog_state
                                 .set_status(format!("Error saving project: {e}"));
+                            // Nothing reached disk, so an action that would
+                            // discard the work must not run.
+                            self.unsaved_dialog.pending_action = None;
                         }
+                    }
+                }
+                FileDialogResult::Cancelled(mode) => {
+                    // Backing out of the save the unsaved-changes prompt
+                    // deferred to cancels what it was waiting to do; leaving it
+                    // pending would fire it on some unrelated save later.
+                    if mode == Some(FileDialogMode::SaveProject) {
+                        self.unsaved_dialog.pending_action = None;
                     }
                 }
                 FileDialogResult::Saved(path, Some(FileDialogMode::ExportWav)) => {
