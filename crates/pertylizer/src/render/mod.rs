@@ -2,8 +2,8 @@
 //!
 //! The work that the MCP `render_to_wav` tool and the headless `pertylizer
 //! render` command both do: resolve a tick window against a song, build an
-//! offline engine session, render that window, and write the buffer to a
-//! 32-bit float WAV.
+//! offline engine session, render that window, and write the buffer to a WAV in
+//! the caller's chosen [`WavFormat`].
 //!
 //! It lives here rather than in `mcp_bridge` so a caller does not have to speak
 //! a protocol to render a file. Nothing in this module's inputs, outputs, or
@@ -30,6 +30,7 @@ pub mod mix;
 pub mod receipt;
 pub mod wav;
 
+pub use crate::audio::wav_format::WavFormat;
 pub use command::{RenderCommand, run_render_command};
 pub use mix::{AppliedMix, MixSelection, MixSelectionError, TrackSelector, apply_mix_selection};
 pub use receipt::{PROTOCOL_VERSION, RenderReceipt};

@@ -7,9 +7,8 @@ use std::path::PathBuf;
 
 use egui::{Align, Layout, ProgressBar, RichText};
 
-use crate::audio::export::{
-    BitDepth, ExportConfig, ExportProgress, SharedSampleLibrary, start_export,
-};
+use crate::audio::export::{ExportConfig, ExportProgress, SharedSampleLibrary, start_export};
+use crate::audio::wav_format::WavFormat;
 use crate::gui::theme::theme;
 use crate::gui::widgets::time_drag_value;
 use crate::project::ProjectFile;
@@ -18,8 +17,8 @@ use crate::project::ProjectFile;
 pub struct ExportDialogState {
     /// Selected sample rate.
     pub sample_rate_index: usize,
-    /// Selected bit depth.
-    pub bit_depth: BitDepth,
+    /// Selected sample format.
+    pub format: WavFormat,
     /// Duration in seconds to render.
     pub duration_seconds: f64,
     /// Extra tail time for reverb/delay.
@@ -42,7 +41,7 @@ impl Default for ExportDialogState {
     fn default() -> Self {
         Self {
             sample_rate_index: 1, // 48000 Hz
-            bit_depth: BitDepth::TwentyFour,
+            format: WavFormat::Int24,
             duration_seconds: 60.0,
             tail_seconds: 2.0,
             export_path: None,
@@ -74,7 +73,7 @@ impl ExportDialogState {
             let config = ExportConfig {
                 path: path.clone(),
                 sample_rate,
-                bit_depth: self.bit_depth,
+                format: self.format,
                 duration_seconds: self.duration_seconds,
                 tail_seconds: self.tail_seconds,
             };
@@ -162,10 +161,10 @@ pub fn show_export_dialog(
                     // Bit depth
                     ui.label("Bit Depth:");
                     egui::ComboBox::from_id_salt("export_bit_depth")
-                        .selected_text(state.bit_depth.label())
+                        .selected_text(state.format.label())
                         .show_ui(ui, |ui| {
-                            for bd in BitDepth::ALL {
-                                ui.selectable_value(&mut state.bit_depth, bd, bd.label());
+                            for format in WavFormat::ALL {
+                                ui.selectable_value(&mut state.format, format, format.label());
                             }
                         });
                     ui.end_row();
@@ -191,11 +190,7 @@ pub fn show_export_dialog(
             let total_secs = state.duration_seconds + f64::from(state.tail_seconds);
             let sample_rate = SAMPLE_RATES[state.sample_rate_index];
             let total_frames = (total_secs * f64::from(sample_rate)) as u64;
-            let bytes_per_sample: u64 = match state.bit_depth {
-                BitDepth::Sixteen => 2,
-                BitDepth::TwentyFour => 3,
-                BitDepth::ThirtyTwoFloat => 4,
-            };
+            let bytes_per_sample = u64::from(state.format.bytes_per_sample());
             let estimated_size = total_frames * 2 * bytes_per_sample; // stereo
             ui.label(
                 RichText::new(format!(

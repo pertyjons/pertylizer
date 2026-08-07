@@ -20,13 +20,16 @@ use super::{
     MAX_RENDER_BYTES, MAX_RENDER_SAMPLE_RATE, MAX_TAIL_SECONDS, MIN_RENDER_SAMPLE_RATE, RenderError,
 };
 use crate::audio::arrangement_render::MAX_RENDER_SECONDS;
+use crate::audio::wav_format::WavFormat;
 
 /// Channels the offline renderer always produces. Only used to size the
 /// allocation check in [`RenderCommand::validate`].
 const RENDER_CHANNELS: u32 = 2;
 
-/// Bytes per rendered sample — the output is always 32-bit float.
-const BYTES_PER_SAMPLE: u32 = 4;
+/// Bytes per sample in the renderer's own buffer. The engine renders `f32`
+/// whatever format the file is written in, so this is fixed even though
+/// [`WavFormat::bytes_per_sample`] is not.
+const RENDER_BUFFER_BYTES_PER_SAMPLE: u32 = 4;
 
 /// One render invocation, already parsed but not yet validated against a
 /// project.
@@ -38,6 +41,8 @@ pub struct RenderCommand {
     pub output: PathBuf,
     /// Sample rate to render at.
     pub sample_rate: u32,
+    /// Sample format the output WAV is encoded in.
+    pub format: WavFormat,
     /// How much of the arrangement to render, from tick 0.
     pub seconds: Seconds,
     /// Extra audio captured after the transport stops, for reverb and delay
@@ -102,10 +107,15 @@ impl RenderCommand {
         // renderer allocates in one `Vec`, and an over-large allocation aborts
         // the process instead of returning an error. Every factor is already
         // bounded by the checks above, so the product cannot overflow.
+        //
+        // Measured against the *render* buffer, which is `f32` whatever
+        // `--bit-depth` writes: the allocation this guards is the one the
+        // renderer makes before any encoding happens. A narrower output format
+        // makes the file smaller, not the buffer.
         let bytes = (f64::from(seconds + tail)
             * f64::from(self.sample_rate)
             * f64::from(RENDER_CHANNELS)
-            * f64::from(BYTES_PER_SAMPLE))
+            * f64::from(RENDER_BUFFER_BYTES_PER_SAMPLE))
         .ceil() as u64;
         if bytes > MAX_RENDER_BYTES {
             return Err(RenderError::RenderTooLarge {
@@ -225,6 +235,7 @@ pub fn run_render_command(command: &RenderCommand) -> Result<RenderReceipt, Rend
             window,
             tail: command.tail,
             scope: command.scope(),
+            format: command.format,
             output_path: &command.output,
         },
     )?;
@@ -251,6 +262,20 @@ pub fn run_render_command(command: &RenderCommand) -> Result<RenderReceipt, Rend
         );
     }
 
+    // An integer format has no headroom: everything past ±1.0 was clamped to
+    // full scale on the way out, and unlike the float default that loss is in
+    // the file for good. The receipt's `peak` records what the engine produced,
+    // so it is the only place the overshoot survives — say so rather than
+    // leaving a harness to compare `peak` against `sample_format` itself.
+    if outcome.format != WavFormat::Float32 && outcome.peak > 1.0 {
+        warnings.push(format!(
+            "the render clipped: peak {:.3} exceeds full scale and {} output clamped it — \
+             lower the mix or render at --bit-depth 32f",
+            outcome.peak,
+            outcome.format.label()
+        ));
+    }
+
     let output = FileDigest::of(&outcome.path)?;
 
     let receipt = RenderReceipt {
@@ -261,6 +286,8 @@ pub fn run_render_command(command: &RenderCommand) -> Result<RenderReceipt, Rend
         audio: AudioInfo {
             sample_rate: outcome.sample_rate,
             channels: outcome.channels,
+            bit_depth: outcome.format.bits_per_sample(),
+            sample_format: outcome.format.encoding(),
             frames: outcome.frames,
             duration_seconds: outcome.duration_seconds,
             requested_seconds: command.seconds.as_f32(),

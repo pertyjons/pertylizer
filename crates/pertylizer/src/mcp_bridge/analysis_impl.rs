@@ -2846,6 +2846,11 @@ pub fn render_to_wav_with_tail_impl(
             window,
             tail,
             scope,
+            // Deliberately not configurable: this render feeds the analyzers and
+            // fingerprinting, so it must stay lossless against the engine's own
+            // `f32` output. Quantizing here would put encoding noise into a
+            // measurement.
+            format: crate::audio::wav_format::WavFormat::Float32,
             output_path: &path_buf,
         },
     )?;

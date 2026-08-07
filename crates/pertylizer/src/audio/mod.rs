@@ -73,6 +73,7 @@ pub mod mix_analysis;
 pub mod preview;
 mod traits;
 mod types;
+pub mod wav_format;
 
 pub use backends::{CpalBackend, NullBackend};
 pub use traits::{AudioBackend, AudioHost, AudioHostTrait, AudioProcessor, AudioStream};

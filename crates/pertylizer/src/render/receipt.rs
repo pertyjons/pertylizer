@@ -159,6 +159,11 @@ pub struct AudioInfo {
     pub sample_rate: u32,
     /// Channels in the WAV.
     pub channels: u16,
+    /// Bits per sample the WAV header declares.
+    pub bit_depth: u16,
+    /// `"int"` or `"float"`. Recorded next to `bit_depth` because the two
+    /// together are what identifies the encoding: 32 alone is ambiguous.
+    pub sample_format: &'static str,
     /// Frames (samples per channel) written.
     pub frames: u64,
     /// Length in seconds, tail included.

@@ -88,13 +88,19 @@ struct RenderArgs {
     #[arg(long, value_name = "FILE")]
     input: PathBuf,
 
-    /// Destination 32-bit float WAV.
+    /// Destination WAV.
     #[arg(long, value_name = "FILE")]
     output: PathBuf,
 
     /// Sample rate to render at.
     #[arg(long, default_value_t = 44_100, value_name = "HZ")]
     sample_rate: u32,
+
+    /// Sample format of the output WAV. Integer depths are 8, 16, 24, and 32i;
+    /// 32f is 32-bit float, which is lossless against the renderer's own
+    /// output.
+    #[arg(long = "bit-depth", default_value = "32f", value_name = "DEPTH")]
+    format: pertylizer::render::WavFormat,
 
     /// How much of the arrangement to render, from the start.
     #[arg(long, default_value_t = 10.0, value_name = "SECONDS")]
@@ -245,6 +251,7 @@ fn render_project(args: &RenderArgs) -> Result<(), Box<dyn std::error::Error>> {
         input: args.input.clone(),
         output: args.output.clone(),
         sample_rate: args.sample_rate,
+        format: args.format,
         seconds: pertylizer::synth_core::Seconds::new(args.seconds),
         tail: pertylizer::synth_core::Seconds::new(args.tail_seconds),
         result_json: args.result_json.clone(),
@@ -668,6 +675,30 @@ mod cli_tests {
         // Repeatable, and a bare number is an id while anything else is a name.
         assert_eq!(args.solo_track.len(), 2);
         assert_eq!(args.mute_track.len(), 1);
+    }
+
+    /// A bare `--bit-depth 32` must be refused rather than silently selecting
+    /// the integer format. "32-bit WAV" usually means the float one, so
+    /// accepting the ambiguous spelling would quietly hand back the encoding
+    /// the caller did not want — and clip it into the bargain.
+    #[test]
+    fn an_ambiguous_bit_depth_is_refused() {
+        let parse = |depth: &str| {
+            Cli::try_parse_from([
+                "pertylizer",
+                "render",
+                "--input",
+                "a.ptz",
+                "--output",
+                "out.wav",
+                "--bit-depth",
+                depth,
+            ])
+        };
+        assert!(parse("32").is_err(), "a bare 32 must not resolve");
+        for depth in ["8", "16", "24", "32i", "32f"] {
+            assert!(parse(depth).is_ok(), "{depth} must parse");
+        }
     }
 
     /// Both paths are required: rendering without knowing where the audio goes

@@ -1,4 +1,4 @@
-//! Render one tick window of a song to a 32-bit float WAV.
+//! Render one tick window of a song to a WAV in a caller-chosen sample format.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -10,6 +10,7 @@ use synth_sequencer::{SharedSong, Tick};
 use super::RenderError;
 use crate::audio::arrangement_render::OfflineEngineSession;
 use crate::audio::preview::SharedSampleLibrary;
+use crate::audio::wav_format::WavFormat;
 use crate::session::SynthSession;
 
 /// An absolute, non-empty song range: `start` inclusive, `end` exclusive.
@@ -95,6 +96,8 @@ pub struct WavRenderRequest<'a> {
     pub tail: Seconds,
     /// Which optional signal stages to reconstruct, and at what sample rate.
     pub scope: AnalysisScope,
+    /// Sample format the WAV is encoded in.
+    pub format: WavFormat,
     /// Destination WAV. Missing parent directories are created.
     pub output_path: &'a Path,
 }
@@ -108,6 +111,8 @@ pub struct WavRenderOutcome {
     pub sample_rate: u32,
     /// Channel count of the written file.
     pub channels: u16,
+    /// Sample format the file was encoded in.
+    pub format: WavFormat,
     /// Rendered length in seconds, tail included.
     pub duration_seconds: f32,
     /// Frames (samples per channel) written.
@@ -121,8 +126,9 @@ pub struct WavRenderOutcome {
 /// Render `request` and write the result to `request.output_path`.
 ///
 /// Builds one [`OfflineEngineSession`] from the live instruments in `session`,
-/// renders the window plus its tail, and writes a 32-bit float WAV. The live
-/// project is never mutated; the caller decides what `request.song` contains.
+/// renders the window plus its tail, and writes the WAV in `request.format`.
+/// The live project is never mutated; the caller decides what `request.song`
+/// contains.
 ///
 /// # Errors
 ///
@@ -159,11 +165,12 @@ pub fn render_window_to_wav(
     )?;
     warnings.extend(rendered.warnings.iter().cloned());
 
-    let peak = crate::audio::export::write_interleaved_wav_f32(
+    let peak = crate::audio::export::write_interleaved_wav(
         request.output_path,
         &rendered.samples,
         rendered.sample_rate,
         rendered.channels,
+        request.format,
     )
     .map_err(|source| RenderError::WriteWav {
         path: request.output_path.to_path_buf(),
@@ -180,6 +187,7 @@ pub fn render_window_to_wav(
         path,
         sample_rate: rendered.sample_rate,
         channels: rendered.channels,
+        format: request.format,
         duration_seconds: rendered.duration_seconds,
         frames,
         peak,

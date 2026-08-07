@@ -18,7 +18,7 @@ use synth_sequencer::{
 
 use pertylizer::project_apply::{ProjectBuildOptions, save_project_to};
 use pertylizer::render::{
-    MixSelection, RenderCommand, RenderError, TrackSelector, run_render_command,
+    MixSelection, RenderCommand, RenderError, TrackSelector, WavFormat, run_render_command,
 };
 
 use common::{TEST_SR, setup_with_patch, sustain_patch};
@@ -89,6 +89,7 @@ fn command(input: &Path, output: PathBuf) -> RenderCommand {
         input: input.to_path_buf(),
         output,
         sample_rate: TEST_SR,
+        format: WavFormat::default(),
         seconds: Seconds::new(0.5),
         tail: Seconds::ZERO,
         result_json: Some(result_json),
@@ -144,6 +145,143 @@ fn the_wav_parses_and_matches_the_receipt() {
     assert_eq!(written["output"]["sha256"], receipt.output.sha256);
     assert_eq!(written["protocol_version"], receipt.protocol_version);
     assert_eq!(written["audio"]["frames"], receipt.audio.frames);
+    assert_eq!(written["audio"]["bit_depth"], 32);
+    assert_eq!(written["audio"]["sample_format"], "float");
+}
+
+/// Every `--bit-depth` must produce a WAV whose header says what was asked for,
+/// with the receipt agreeing. The header is the part a consumer reads to decide
+/// how to decode the file, so a format that rendered but mislabelled itself
+/// would be worse than one that failed.
+#[test]
+fn every_bit_depth_writes_a_matching_header_and_receipt() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = dir.path().join("fixture.json");
+    write_project(&input, |_| {});
+
+    for format in WavFormat::ALL {
+        let output = dir.path().join(format!("render-{}.wav", format.label()));
+        let mut request = command(&input, output.clone());
+        request.format = format;
+        let receipt = run_render_command(&request)
+            .unwrap_or_else(|e| panic!("{} should render: {e}", format.label()));
+
+        let reader = hound::WavReader::open(&output)
+            .unwrap_or_else(|e| panic!("{} should be readable: {e}", format.label()));
+        let spec = reader.spec();
+        assert_eq!(
+            spec.bits_per_sample,
+            format.bits_per_sample(),
+            "{}",
+            format.label()
+        );
+        let expected_encoding = if format == WavFormat::Float32 {
+            hound::SampleFormat::Float
+        } else {
+            hound::SampleFormat::Int
+        };
+        assert_eq!(spec.sample_format, expected_encoding, "{}", format.label());
+
+        assert_eq!(
+            receipt.audio.bit_depth,
+            format.bits_per_sample(),
+            "{}",
+            format.label()
+        );
+        assert_eq!(receipt.audio.frames, u64::from(reader.len()) / 2);
+        assert_eq!(receipt.output.bytes, read(&output).len() as u64);
+    }
+}
+
+/// A narrower format writes a proportionally smaller file at the same frame
+/// count. This is the property a `--bit-depth` flag exists for, and it also
+/// catches a format that silently fell back to the 32-bit float default.
+#[test]
+fn a_narrower_format_writes_a_smaller_file() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = dir.path().join("fixture.json");
+    write_project(&input, |_| {});
+
+    let mut sizes = Vec::new();
+    for format in [WavFormat::Int8, WavFormat::Int16, WavFormat::Float32] {
+        let output = dir.path().join(format!("size-{}.wav", format.label()));
+        let mut request = command(&input, output.clone());
+        request.format = format;
+        let receipt = run_render_command(&request).expect("render succeeds");
+        sizes.push((format, receipt.audio.frames, receipt.output.bytes));
+    }
+
+    // Same window, same rate: the frame count must not depend on the format.
+    let frames = sizes[0].1;
+    assert!(
+        sizes.iter().all(|(_, f, _)| *f == frames),
+        "frame counts differ across formats: {sizes:?}"
+    );
+    assert!(
+        sizes[0].2 < sizes[1].2 && sizes[1].2 < sizes[2].2,
+        "8-bit must be smaller than 16-bit, which must be smaller than 32-bit float: {sizes:?}"
+    );
+}
+
+/// Integer output clamps everything past ±1.0, so the receipt warns when the
+/// engine's peak went over. The fixture renders well under full scale, so no
+/// format may claim it clipped — a warning that fired on every integer render
+/// would be noise a harness learns to ignore, which is how the real overshoot
+/// gets missed.
+#[test]
+fn an_unclipped_integer_render_does_not_warn_about_clipping() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = dir.path().join("fixture.json");
+    write_project(&input, |_| {});
+
+    for format in WavFormat::ALL {
+        let output = dir.path().join(format!("clean-{}.wav", format.label()));
+        let mut request = command(&input, output);
+        request.format = format;
+        let receipt = run_render_command(&request).expect("render succeeds");
+        assert!(
+            receipt.audio.peak <= 1.0,
+            "{} fixture should render below full scale, got {}",
+            format.label(),
+            receipt.audio.peak
+        );
+        assert!(
+            !receipt.warnings.iter().any(|w| w.contains("clipped")),
+            "{} must not warn about clipping: {:?}",
+            format.label(),
+            receipt.warnings
+        );
+    }
+}
+
+/// The render buffer is `f32` whatever the output format is, so the size guard
+/// that protects the allocation must not loosen when a narrower format is
+/// chosen. Otherwise `--bit-depth 8` would let through a request four times
+/// larger than the buffer the renderer can actually allocate.
+#[test]
+fn the_size_guard_does_not_depend_on_the_output_format() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = dir.path().join("fixture.json");
+    write_project(&input, |_| {});
+
+    // Inside the 300-second duration cap, so the *size* guard is what rejects
+    // this and not the duration check ahead of it: 250 s of stereo `f32` at
+    // 384 kHz is ~732 MiB against a 512 MiB budget.
+    let mut request = command(&input, dir.path().join("huge.wav"));
+    request.sample_rate = 384_000;
+    request.seconds = Seconds::new(250.0);
+
+    for format in [WavFormat::Float32, WavFormat::Int8] {
+        request.format = format;
+        assert!(
+            matches!(
+                run_render_command(&request),
+                Err(RenderError::RenderTooLarge { .. })
+            ),
+            "{} must hit the same size guard",
+            format.label()
+        );
+    }
 }
 
 fn receipt_path(command: &RenderCommand) -> PathBuf {

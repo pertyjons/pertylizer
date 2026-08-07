@@ -297,7 +297,7 @@ the other open follow-ups.
 | `command.rs` | `RenderCommand` / `run_render_command` — validate, load, mix, render, write |
 
 `mcp_bridge/analysis_impl.rs`'s `render_to_wav_with_tail_impl` is now an adapter
-over the same code, and `write_interleaved_wav_f32` writes through
+over the same code, and `write_interleaved_wav` writes through
 `io::atomic`, so the MCP tool's WAV write became crash-safe as a side effect.
 
 Two review passes over the finished branch found twelve real defects between

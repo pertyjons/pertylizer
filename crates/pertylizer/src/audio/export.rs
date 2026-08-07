@@ -13,6 +13,7 @@ use synth_core::{AudioCallbackContext, AudioProcessor, DenormalGuard};
 use synth_engine::{CommandCapacity, EngineCommand, EngineHandle, SynthEngine};
 use synth_sampler::SampleLibrary;
 
+use crate::audio::wav_format::{WavFormat, write_samples};
 use crate::project::ProjectFile;
 use crate::session::SynthSession;
 
@@ -22,39 +23,14 @@ use crate::session::SynthSession;
 /// used by the project loader.
 pub(crate) type SharedSampleLibrary = Arc<std::sync::RwLock<SampleLibrary>>;
 
-/// Bit depth for WAV export.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BitDepth {
-    /// 16-bit signed integer.
-    Sixteen,
-    /// 24-bit signed integer.
-    TwentyFour,
-    /// 32-bit IEEE float.
-    ThirtyTwoFloat,
-}
-
-impl BitDepth {
-    /// Display label for the UI.
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Sixteen => "16-bit",
-            Self::TwentyFour => "24-bit",
-            Self::ThirtyTwoFloat => "32-bit float",
-        }
-    }
-
-    /// All available bit depths for iteration.
-    pub const ALL: [Self; 3] = [Self::Sixteen, Self::TwentyFour, Self::ThirtyTwoFloat];
-}
-
 /// Configuration for a WAV export.
 pub struct ExportConfig {
     /// Output file path.
     pub path: PathBuf,
     /// Sample rate (e.g. 44100, 48000, 96000).
     pub sample_rate: u32,
-    /// Bit depth of the output WAV.
-    pub bit_depth: BitDepth,
+    /// Sample format of the output WAV.
+    pub format: WavFormat,
     /// Duration in seconds to render.
     pub duration_seconds: f64,
     /// Extra tail time in seconds for reverb/delay tails.
@@ -153,39 +129,32 @@ impl From<hound::Error> for ExportError {
     }
 }
 
-/// Write an already-rendered interleaved f32 buffer to a 32-bit float WAV file.
+/// Write an already-rendered interleaved f32 buffer to a WAV file in `format`.
 ///
 /// `samples` is channel-interleaved (`L0, R0, L1, R1, …` for stereo). This is
 /// the writer both offline render entry points — the `render_to_wav` MCP tool
 /// and the `pertylizer render` command — reuse instead of hand-rolling a WAV
 /// header. Returns the absolute peak sample amplitude seen in the buffer (0.0
-/// for silence), so callers can report whether the render clipped or was empty.
+/// for silence), measured on the `f32` input, so callers can report whether the
+/// render clipped or was empty whatever `format` it was written in.
 ///
 /// The file is written through [`crate::io::atomic`] like every other document
 /// this application produces: an interrupted render leaves the previous file at
 /// `path` intact rather than a truncated WAV that still parses as one.
-pub(crate) fn write_interleaved_wav_f32(
+pub(crate) fn write_interleaved_wav(
     path: &std::path::Path,
     samples: &[f32],
     sample_rate: u32,
     channels: u16,
+    format: WavFormat,
 ) -> Result<f32, ExportError> {
-    let spec = hound::WavSpec {
-        channels,
-        sample_rate,
-        bits_per_sample: 32,
-        sample_format: hound::SampleFormat::Float,
-    };
+    let spec = format.spec(channels, sample_rate);
     crate::io::atomic::write_with(path, |file| {
         // hound patches the header length fields on finalize, so the sink has
         // to be seekable — a BufWriter over the temp file is both, and without
         // it every sample would be its own write syscall.
         let mut writer = hound::WavWriter::new(std::io::BufWriter::new(file), spec)?;
-        let mut peak = 0.0_f32;
-        for &sample in samples {
-            peak = peak.max(sample.abs());
-            writer.write_sample(sample)?;
-        }
+        let peak = write_samples(&mut writer, samples, format)?;
         writer.finalize()?;
         Ok(peak)
     })
@@ -402,26 +371,7 @@ fn render_to_wav(
     engine.process(&mut buffer, &warmup_context);
 
     // 9. Create WAV writer
-    let spec = match config.bit_depth {
-        BitDepth::Sixteen => hound::WavSpec {
-            channels: channels as u16,
-            sample_rate: config.sample_rate,
-            bits_per_sample: 16,
-            sample_format: hound::SampleFormat::Int,
-        },
-        BitDepth::TwentyFour => hound::WavSpec {
-            channels: channels as u16,
-            sample_rate: config.sample_rate,
-            bits_per_sample: 24,
-            sample_format: hound::SampleFormat::Int,
-        },
-        BitDepth::ThirtyTwoFloat => hound::WavSpec {
-            channels: channels as u16,
-            sample_rate: config.sample_rate,
-            bits_per_sample: 32,
-            sample_format: hound::SampleFormat::Float,
-        },
-    };
+    let spec = config.format.spec(channels as u16, config.sample_rate);
 
     let mut writer = hound::WavWriter::create(&config.path, spec)?;
 
@@ -454,28 +404,7 @@ fn render_to_wav(
 
         engine.process(&mut buffer[..sample_count], &context);
 
-        // Write samples to WAV
-        match config.bit_depth {
-            BitDepth::Sixteen => {
-                for &sample in &buffer[..sample_count] {
-                    let clamped = sample.clamp(-1.0, 1.0);
-                    let int_val = (clamped * f32::from(i16::MAX)) as i16;
-                    writer.write_sample(int_val)?;
-                }
-            }
-            BitDepth::TwentyFour => {
-                for &sample in &buffer[..sample_count] {
-                    let clamped = sample.clamp(-1.0, 1.0);
-                    let int_val = (clamped * 8_388_607.0) as i32; // 2^23 - 1
-                    writer.write_sample(int_val)?;
-                }
-            }
-            BitDepth::ThirtyTwoFloat => {
-                for &sample in &buffer[..sample_count] {
-                    writer.write_sample(sample)?;
-                }
-            }
-        }
+        write_samples(&mut writer, &buffer[..sample_count], config.format)?;
 
         frames_written += this_buffer as u64;
         progress
