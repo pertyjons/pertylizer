@@ -715,4 +715,4 @@ out.gate = 0.5
 - Toolchain crate (lexer/parser/compiler/`yamsfmt`): `crates/synth_script`
 - Real-time bytecode + evaluator: `crates/synth_core/src/script`
 - Runnable demo: `cargo run -p synth_script --example demo`
-- Bundled example project: `assets/examples/projects/YAMS Script Demo.json`
+- Bundled example project: `assets/examples/projects/YAMS Script Demo.ptz`

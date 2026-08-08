@@ -102,7 +102,7 @@ physical track/voice identifier". That is dropped in favour of the primitive the
 application already has, for three reasons.
 
 **A SID voice is not one instrument.** In an exported SID project one voice
-spreads across several instruments — `Nemesis_the_Warlock.json` carries
+spreads across several instruments — `Nemesis_the_Warlock.ptz` carries
 `V1 drum (drop)` and `V1 Lead`, `V2 triangle flt` and `V2 triangle flt rng` —
 because the tune reassigns the voice over time. So `voice-2` would have had to
 name a *set*, which the renderer's single `instrument_id` cannot express, and

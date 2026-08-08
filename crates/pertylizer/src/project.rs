@@ -387,7 +387,7 @@ mod tests {
         // load (the unknown `awe` key is ignored) and be flagged by the detector
         // that drives the load-time warning.
         let example = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../assets/examples/projects/all-modules-reference.json");
+            .join("../../assets/examples/projects/all-modules-reference.ptz");
         let mut value: serde_json::Value =
             serde_json::from_str(&fs::read_to_string(&example).expect("read example"))
                 .expect("parse example");

@@ -28,7 +28,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut touched = 0usize;
     for path in list_dir(&root.join("projects"))? {
         match path.extension().and_then(|e| e.to_str()) {
-            Some("json") => {
+            Some("ptz") => {
                 let mut proj = ProjectFile::load(&path)?;
                 normalise_project(&mut proj);
                 proj.save(&path)?;

@@ -337,8 +337,8 @@ pub fn examples_dir() -> PathBuf {
         .join("assets/examples/projects")
 }
 
-/// Every bundled example project, sorted by path. Accepts both
-/// plain-JSON and `.zip` bundles.
+/// Every bundled example project, sorted by path. Accepts both plain
+/// `.ptz` projects and `.zip` bundles (named `<name>.ptz.zip`).
 pub fn list_example_projects() -> Vec<PathBuf> {
     let dir = examples_dir();
     let mut files: Vec<PathBuf> = std::fs::read_dir(&dir)
@@ -348,7 +348,7 @@ pub fn list_example_projects() -> Vec<PathBuf> {
             p.is_file()
                 && p.extension()
                     .and_then(|e| e.to_str())
-                    .is_some_and(|e| e == "json" || e == "zip")
+                    .is_some_and(|e| e == "ptz" || e == "zip")
         })
         .collect();
     files.sort();

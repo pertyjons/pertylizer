@@ -312,7 +312,7 @@ fn assert_focused_instrument_matches(project: &ProjectFile, rig: &Rig) {
 #[test]
 fn apply_project_sidechain_demo_engine_state() {
     let mut rig = Rig::new();
-    let (project, _lib) = example_project("Sidechain Demo.json");
+    let (project, _lib) = example_project("Sidechain Demo.ptz");
     project_apply::apply_project(&project, &rig.session, &rig.song, &rig.sample_library)
         .expect("apply_project");
 
@@ -328,7 +328,7 @@ fn apply_project_sidechain_demo_engine_state() {
 #[test]
 fn apply_project_neuro_engine_state() {
     let mut rig = Rig::new();
-    let (project, _lib) = example_project("Neuro F#m 174-extended.json");
+    let (project, _lib) = example_project("Neuro F#m 174-extended.ptz");
     project_apply::apply_project(&project, &rig.session, &rig.song, &rig.sample_library)
         .expect("apply_project");
     rig.pump(32);
@@ -342,7 +342,7 @@ fn apply_new_project_clears_engine() {
     let mut rig = Rig::new();
 
     // First load a project so the engine is non-empty.
-    let (project, _lib) = example_project("Sidechain Demo.json");
+    let (project, _lib) = example_project("Sidechain Demo.ptz");
     project_apply::apply_project(&project, &rig.session, &rig.song, &rig.sample_library)
         .expect("apply_project");
     rig.pump(32);
@@ -411,9 +411,9 @@ fn replacing_song_with_equal_generation_refreshes_cached_arrangement_length() {
 #[test]
 fn apply_representative_example_projects_to_engine() {
     const REPRESENTATIVE: &[&str] = &[
-        "echoing.zip",                      // bundle + embedded samples
-        "Oxygene Dreams (80s Techno).json", // rich multi-instrument + effects
-        "Classic Amiga module.json",        // simpler patch
+        "echoing.ptz.zip",                 // bundle + embedded samples
+        "Oxygene Dreams (80s Techno).ptz", // rich multi-instrument + effects
+        "Classic Amiga module.ptz",        // simpler patch
     ];
 
     let mut failures: Vec<String> = Vec::new();

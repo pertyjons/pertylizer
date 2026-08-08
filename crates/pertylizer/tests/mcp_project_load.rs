@@ -123,7 +123,7 @@ fn example_project_path() -> PathBuf {
         .expect("crates/")
         .parent()
         .expect("workspace root")
-        .join("assets/examples/projects/Neuro F#m 174-extended.json")
+        .join("assets/examples/projects/Neuro F#m 174-extended.ptz")
 }
 
 // ---------------------------------------------------------------------------

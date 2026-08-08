@@ -33,12 +33,16 @@ fn fixtures_dir() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/project_snapshots")
 }
 
-/// Sanitize an example filename for use as a fixture filename.
+/// Sanitize an example filename for use as a fixture filename. A bundle is
+/// named `<name>.ptz.zip`, so stripping one extension leaves `<name>.ptz`;
+/// drop that too, and `echoing.ptz.zip` and `Ornament Demo.ptz` both reduce
+/// to the plain project name.
 fn fixture_name(path: &Path) -> String {
     let stem = path
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("unknown");
+    let stem = stem.strip_suffix(".ptz").unwrap_or(stem);
     let mut sanitized = String::with_capacity(stem.len());
     for ch in stem.chars() {
         if ch.is_ascii_alphanumeric() || ch == '-' || ch == '_' {

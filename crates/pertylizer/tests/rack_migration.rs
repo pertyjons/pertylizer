@@ -12,7 +12,7 @@ use pertylizer::project::ProjectFile;
 fn demo_fixture_racks_migrate_to_note_graphs() {
     let path = concat!(
         env!("CARGO_MANIFEST_DIR"),
-        "/../../assets/examples/projects/Expression & Note-Processor Demo.json"
+        "/../../assets/examples/projects/Expression & Note-Processor Demo.ptz"
     );
     let project = ProjectFile::load(path).expect("load demo fixture");
     let mut song = project.song;

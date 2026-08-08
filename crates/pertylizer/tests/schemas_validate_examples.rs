@@ -78,7 +78,7 @@ fn checked_in_schemas_match_generated() {
 }
 
 /// Load each schema and validate every example file under
-/// `assets/examples/<kind>/*.json`. Catches the case where a schema is up
+/// `assets/examples/<kind>/`. Catches the case where a schema is up
 /// to date with code but doesn't actually match real saved files (e.g. a
 /// type change broke serialized form but the schema was regenerated to
 /// match the new form, while existing fixtures still use the old form).
@@ -87,12 +87,15 @@ fn example_files_validate_against_schemas() {
     let schemas_dir = workspace_root().join("schemas");
     let examples_dir = workspace_root().join("assets").join("examples");
 
-    let groups: &[(&str, &str, &str)] = &[
-        ("project.schema.json", "projects", "project"),
-        ("patch.schema.json", "patches", "patch"),
+    // Projects are saved as `.ptz`, patches as `.json`; a `.zip` bundle in the
+    // projects directory carries its project data inside the archive and is
+    // covered by the round-trip and snapshot tests instead.
+    let groups: &[(&str, &str, &str, &str)] = &[
+        ("project.schema.json", "projects", "project", "ptz"),
+        ("patch.schema.json", "patches", "patch", "json"),
     ];
 
-    for (schema_file, subdir, label) in groups {
+    for (schema_file, subdir, label, extension) in groups {
         let schema_path = schemas_dir.join(schema_file);
         let schema: Value = serde_json::from_slice(
             &std::fs::read(&schema_path).unwrap_or_else(|e| panic!("read {schema_path:?}: {e}")),
@@ -108,7 +111,7 @@ fn example_files_validate_against_schemas() {
         let mut checked = 0;
         for entry in entries {
             let path = entry.expect("dir entry").path();
-            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+            if path.extension().and_then(|s| s.to_str()) != Some(*extension) {
                 continue;
             }
             checked += 1;
