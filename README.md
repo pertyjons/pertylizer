@@ -64,6 +64,10 @@ A quick tour of what's inside — each item is described in more detail in its o
   live input through an Audio Input module directly into a patch's module chain to process it with filters and effects
 - **WAV export** — render your song offline (faster than real-time) to a WAV file at 16/24-bit or 32-bit float and
   44.1/48/96 kHz, with adjustable duration and reverb/delay tail
+- **Headless rendering** — `pertylizer render` turns a project into a WAV from the command line, with per-track
+  solo/mute for stems and a JSON receipt (digests, peak, warnings) for scripts and CI
+- **Project safety** — atomic saves, autosave with crash recovery, derived unsaved-changes tracking, and undo/redo
+  spanning the pattern, arrangement, mixer and rack views
 - **3D visualizer** — a separate Bevy app driven by OSC telemetry, with 27 audio-reactive effects, 11 scene presets,
   and 8 themes
 - **AI integration** — 200+ MCP tools let agents build patches, Note/Mod graphs, arrangements, mixes, and analyses
@@ -190,6 +194,47 @@ input.
 - **Audio input & recording** — monitor and record mic/line-in into the sample bank, or feed it live into a patch via
   the Audio Input module to process external sound through the voice graph and effects
 
+## Headless Rendering
+
+`pertylizer render` turns a saved project into a WAV file and exits. It opens no window and claims no audio device, so
+it runs over SSH, in a container, or from a build script:
+
+```bash
+pertylizer render --input song.ptz --output song.wav --seconds 60 --tail-seconds 4
+```
+
+- **Renders the full chain** — send/return busses, return effects, and master effects included, because the job is to
+  produce the file the project actually sounds like. The offline analyzers default the other way, on purpose
+- **Picks apart the mix** — `--solo-track` and `--mute-track` take a track id or a unique track name and repeat, so one
+  project yields a stem per part without ever being edited
+- **Chooses its own precision** — `--bit-depth` spans 8/16/24/32-bit integer and 32-bit float; float is the default
+  because it is lossless against the renderer's own output. `--sample-rate` is independent of any device
+- **Reports machine-readably** — a JSON receipt goes to stdout, or to a file with `--result-json`. It carries SHA-256
+  digests of *both* the project read and the WAV written, the audio's rate/depth/frames/peak, which tracks were
+  audible, any warnings, and the argv that produced it — so a harness can diff two renders without decoding the audio,
+  and reproduce either one
+
+The input is never written to, and `--protocol-version` pins the contract so a script can tell a changed CLI from a
+changed song.
+
+## Project Safety
+
+Losing work is the one failure a creative application never gets forgiven for, so the save path is built to make it
+hard:
+
+- **Atomic saves** — a project is serialized in full before the destination is touched, then written through a
+  temp-and-rename. A disk error or a crash mid-write cannot truncate the last good save
+- **Autosave and crash recovery** — periodic snapshots land in a private recovery directory, never on top of the file
+  you opened, so "close without saving" keeps meaning what it says. A snapshot is deleted once the work it protects is
+  safe (a manual save, or discarding the changes), which means one still present at startup is itself the evidence that
+  the last run ended with unsaved edits — no lock file or shutdown flag needed
+- **Unsaved-changes tracking that is derived, not reported** — the title bar's `*` follows edit revisions on the song,
+  sample library, engine graph, patch layout, and global state, so a change made from the GUI, from MCP, or by undo
+  cannot forget to announce itself. The same predicate gates autosave and the close prompt, which is why it has to be
+  right
+- **Undo/redo across the views** — pattern and arrangement edits, mixer and master moves, effect-chain reordering, and
+  rack changes share one history
+
 ## AI Integration via MCP
 
 Pertylizer exposes **200+ MCP tools** that let AI agents (Claude Code, Claude Desktop, or any MCP-capable client)
@@ -313,14 +358,14 @@ cd visualizer && cargo run
 
 ## Tech Stack
 
-- **Language:** Rust 1.95+ (edition 2024)
+- **Language:** Rust 1.97+ (edition 2024)
 - **Audio:** cpal (cross-platform I/O)
 - **GUI:** egui/eframe with custom knobs, meters, scopes, and spectrum analyzer
 - **MIDI:** midir
 - **DSP:** PolyBLEP oscillators, SVF/biquad/ladder filters, FFT via realfft
 - **MCP:** rmcp + axum (Streamable HTTP on port 9850)
 - **OSC:** rosc (Open Sound Control over UDP)
-- **Visualizer:** Bevy 0.18 (3D rendering)
+- **Visualizer:** Bevy 0.19 (3D rendering)
 - **Concurrency:** lock-free ringbuf, parking_lot
 
 ## Building & Running
@@ -338,9 +383,22 @@ cargo run -- --no-osc
 # Run headless (no GUI, MCP server on stdio)
 cargo run -- --headless
 
+# Render a saved project to WAV and exit — no GUI, no audio device
+cargo run -- render --input song.ptz --output song.wav --seconds 60
+
 # Tests, lints, formatting
-cargo test && cargo clippy --all-targets && cargo fmt --check
+cargo fmt --check
+cargo build
+cargo clippy --workspace --all-targets
+cargo test --workspace
+cargo doc --workspace --no-deps
 ```
+
+`--workspace` is required rather than optional: `default-members` selects only
+the `pertylizer` package, so without it every other crate's tests, benches and
+examples go unbuilt. `cargo doc` is in the list because `[build] warnings =
+"deny"` covers rustdoc too — a broken intra-doc link fails CI while the other
+commands stay silent.
 
 ## Workspace Crates
 
