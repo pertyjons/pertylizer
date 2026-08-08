@@ -694,6 +694,61 @@ domain.
 
 ---
 
+## 7. Load & apply diagnostics
+
+- [ ] **A load that silently drops project objects reports success.** A master
+  effect saved with the schema-valid type `limiter` but the module id `lim-1`
+  (the canonical prefix is `lmt`) is discarded without a word: the project
+  loads, the GUI says nothing, and a `pertylizer render` receipt carries an
+  empty `warnings` list over a mix that is missing an effect. Renaming the id
+  to `lmt-1` makes the same project render through the limiter.
+
+  This is the same failure class as the `dropped` command counter closed in
+  §5.6 — an operation reporting success over state the engine never received —
+  and it matters most where it is hardest to notice: an offline render feeding
+  an external A/B harness has no human looking at it.
+
+  **Two halves, and the second is the bigger one.**
+
+  *`project_apply.rs` throws diagnoses away.* Eight `continue;` sites drop
+  silently: an unparsable module id and an unknown effect type, each for both
+  return-bus (`:237`, `:241`) and master (`:269`, `:273`) chains, plus the
+  sampler binding path (`:947`–`:960`) where a missing sample id, an unparsable
+  module id, or a sample absent from the library each skip a voice's audio
+  without comment.
+
+  *`ApplyPatchResult::errors` already exists and goes to stderr.* Every module,
+  connection and parameter failure inside an instrument is already collected —
+  `session.rs:1369` — and both callers (`project_apply.rs:738` and `:766`)
+  `eprintln!` it and move on. So the per-instrument diagnoses are *already
+  computed*; nothing routes them anywhere a caller can see. That is the cheap
+  half of this task, and it covers exactly the bad cables, modules and
+  parameters the effect-chain sites do not.
+
+  Scope, in order:
+  1. **A typed diagnostic** carrying the project-object path
+     (`global.master_effects[0]`), a stable code, severity, and message.
+     Recoverable omissions are warnings; reserve errors for a load that cannot
+     produce a coherent project. `ApplyPatchResult::errors` is a `Vec<String>`
+     today, so it needs the same treatment rather than being wrapped.
+  2. **Return it from `apply_project`** alongside the existing summary, folding
+     in each instrument's `ApplyPatchResult::errors` instead of printing them.
+  3. **Thread it into `RenderReceipt.warnings`** before the render runs, so a
+     receipt cannot look clean over a partial project.
+  4. **Show it in the GUI load result and the MCP `load_project` response**, so
+     all three entry points agree on what happened.
+  5. **Name the expected prefix** when the effect type is known but the id's
+     prefix is wrong (`limiter` → `lmt`). A prior draft of this proposed
+     `ModuleType::short_key`, which **does not exist** — the available
+     accessor is `prefix()` at `synth_core/src/params/mod.rs:528`; confirm what
+     type it hangs off before building on it.
+
+  Verify with one valid and one deliberately malformed `.ptz` through
+  `pertylizer render`, comparing both receipts, plus a bundled example loading
+  with no new diagnostics. **M.**
+
+---
+
 ## Maybe later
 
 ### Graph-level feedback edges (mostly redundant with Script — only build for audio-rate/UX)
