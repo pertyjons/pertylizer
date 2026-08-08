@@ -32,6 +32,34 @@
   state the engine never received. A `dropped` counter now fails `apply_project`
   instead of returning a clean summary over a partly-applied project.
 
+### Load diagnostics — a load now says what it could not reconstruct
+
+- **A partial load no longer reports success.** A master effect saved with the
+  valid type `limiter` but the id `lim-1` (the prefix is `lmt`) used to vanish
+  silently: the project loaded, the GUI said nothing, and a render receipt
+  carried an empty warning list over a mix missing an effect. Applying a project
+  now returns a typed diagnostic per skipped object, each with a stable code and
+  a path into the file (`global.master_effects[0]`).
+- **The per-instrument diagnoses were already computed and thrown away.** Every
+  module, cable, parameter and script a patch could not apply was collected and
+  then printed to stderr, which nothing reads under MCP or a headless render.
+  They now carry the same type and reach the caller.
+- **Five entry points surface them**: the render receipt takes them as warnings
+  *before* the render, the GUI logs one Activity-panel event each, `load_project`
+  and the GUI's WAV export append them, and a failed MCP batch's rollback no
+  longer claims to have restored what it could not.
+- **Three silent losses found on the way**: an unparsable effect-chain-order
+  entry made an effect render in a position the file never described; a poisoned
+  sample-library lock reported a faithful load while every sampler went silent;
+  and the WAV export discarded all three diagnostic sets because `Vec` is not
+  `#[must_use]`.
+- **Two bundled examples were quietly broken, and the diagnostics found them.**
+  `YAMS Script Lab` shipped slot-2 programs from when a Script module was a rack
+  of slots, so every load discarded its pulse-width and resonance scripts while
+  the cables to them remained — merged into one program per module, confirmed by
+  a changed render digest. `Nemesis_the_Warlock` is replaced by a newer
+  sid-analyzer export. All 18 examples now load with zero diagnostics.
+
 ### Headless rendering
 
 - **`pertylizer render`** — a one-shot load-render-exit subcommand that writes a WAV
@@ -126,10 +154,13 @@
   own intra-doc links to its parent, which caused three of the seven.
 - **Four hardening and cleanup sweeps** across the workspace, plus consolidated
   `ModuleParam` implementations and split-out module boundaries.
-- **The save-failure tests no longer rely on a mechanism Windows ignores.** Marking
-  the destination's directory read-only does not stop a write there, so the two
-  data-safety tests failed on Windows only. The mechanism is now `#[cfg(unix)]`, with
-  a portable twin that fails at the replace step instead.
+- **Two Windows-only test failures, both from Unix filesystem assumptions.**
+  Marking the destination's directory read-only does not stop a write there, so
+  the data-safety tests failed on Windows only; that mechanism is now
+  `#[cfg(unix)]` with a portable twin that fails at the replace step instead.
+  Separately, four tests saved onto a `NamedTempFile`'s path — an atomic save
+  replaces by rename, which Windows denies while another handle holds the file —
+  and now save into a tempdir. Both traps are documented where the rename lives.
 
 ### Docs & plans
 
@@ -139,6 +170,9 @@
 - **A reviewed plan for a game runtime library** (`pertylizer-runtime`), naming the two
   decisions that block Phase 1, plus a rewritten headless-render plan and new TODO
   sections for project safety and unused MCP protocol capabilities.
+- **New TODO sections** for load diagnostics (§7, now closed, with the two
+  follow-ups the work turned up) and for how automation-only pattern carriers
+  should coexist with overlapping musical placements (§1.1).
 
 ### Dependencies
 
