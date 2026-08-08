@@ -487,9 +487,14 @@ impl PolyModule for Sampler {
             PlayDirection::Forward => {} // default
         }
 
-        // Apply start offset
+        // Apply start offset — the modulated value, the same one the guard
+        // tests. Passing `self.start_offset` here meant a mod-matrix routing
+        // into `start_offset` could only open the gate, never move the start:
+        // with the parameter at its default the player still began at zero, and
+        // with it set the routing was ignored. `fine_tune` and
+        // `velocity_sensitivity` above already resolve through `mod_offsets`.
         if start_offset > 0.001 {
-            player.set_start_offset(self.start_offset);
+            player.set_start_offset(NormalizedValue::new(start_offset));
         }
 
         self.player = Some(player);
@@ -556,6 +561,55 @@ mod tests {
         out.insert(PortName::OUT, AudioBuffer::new(n));
         s.process(InputPorts::empty(), &mut out, &ctx(n));
         (0..n).map(|i| out[&PortName::OUT][i].abs()).sum::<f32>()
+    }
+
+    /// A sampler holding a sample that is silent for its first half and full
+    /// for its second, so where playback *starts* is audible.
+    fn halved_sampler() -> Sampler {
+        let mut s = Sampler::new();
+        let desc = s.descriptor();
+        s.mod_offsets_mut().unwrap().populate(&desc);
+        let frames = 4096;
+        let mut data = vec![0.0_f32; frames * 2];
+        for frame in (frames / 2)..frames {
+            data[frame * 2] = 1.0;
+            data[frame * 2 + 1] = 1.0;
+        }
+        s.load_sample(
+            data.into(),
+            ChannelCount::Stereo,
+            frames,
+            None,
+            None,
+            MidiNote::new(60),
+        );
+        s
+    }
+
+    /// A mod-matrix routing into `start_offset` has to move the start, not just
+    /// permit it. The note-on path used to test the modulated value but pass the
+    /// raw parameter, so with `start_offset` at its default the routing opened
+    /// the gate and playback still began at zero.
+    #[test]
+    fn test_sampler_start_offset_mod_offset_moves_the_start() {
+        let mut s = halved_sampler();
+        s.note_on(MidiNote::new(60), Velocity::new(1.0));
+        let from_zero = render_energy(&mut s, 64);
+        assert!(
+            from_zero < 0.01,
+            "unmodulated playback starts in the silent half, got {from_zero}"
+        );
+
+        // Sampled at note-on, so the routing has to be in place before the
+        // trigger.
+        let mut s = halved_sampler();
+        s.set_mod_offset("start_offset", 0.6);
+        s.note_on(MidiNote::new(60), Velocity::new(1.0));
+        let from_offset = render_energy(&mut s, 64);
+        assert!(
+            from_offset > 1.0,
+            "a routing to 0.6 must start in the full half, got {from_offset}"
+        );
     }
 
     /// `level` used to be dropped (Sampler never overrode set_mod_offset); it now
