@@ -126,6 +126,10 @@
   own intra-doc links to its parent, which caused three of the seven.
 - **Four hardening and cleanup sweeps** across the workspace, plus consolidated
   `ModuleParam` implementations and split-out module boundaries.
+- **The save-failure tests no longer rely on a mechanism Windows ignores.** Marking
+  the destination's directory read-only does not stop a write there, so the two
+  data-safety tests failed on Windows only. The mechanism is now `#[cfg(unix)]`, with
+  a portable twin that fails at the replace step instead.
 
 ### Docs & plans
 

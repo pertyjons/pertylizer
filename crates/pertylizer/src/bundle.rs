@@ -437,6 +437,11 @@ mod tests {
 
     /// The data-safety guarantee for bundles: a failed save must leave the
     /// previous bundle loadable rather than truncating it to a partial ZIP.
+    ///
+    /// Unix-only *mechanism*, not a Unix-only guarantee — see the twin in
+    /// `project.rs` for why a read-only directory does not stop a save on
+    /// Windows, and where the portable coverage lives.
+    #[cfg(unix)]
     #[test]
     fn a_failed_bundle_save_preserves_the_previous_bundle() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -474,5 +479,37 @@ mod tests {
                 .name,
             "last good save",
         );
+    }
+
+    /// The replace step, portably: a bundle written onto a path that is a
+    /// directory must fail and leave that directory as it was, with no
+    /// scratch file abandoned beside it.
+    #[test]
+    fn a_bundle_save_that_cannot_replace_the_destination_leaves_it_alone() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("song.ptz.zip");
+        std::fs::create_dir(&path).expect("destination directory");
+        std::fs::write(path.join("keep.txt"), b"untouched").expect("marker");
+
+        let result = save_bundle(
+            &sample_project("would-be corruption"),
+            &seeded_library(),
+            &path,
+        );
+
+        assert!(result.is_err(), "saving onto a directory must fail");
+        assert!(path.is_dir(), "the destination directory must survive");
+        assert_eq!(
+            std::fs::read(path.join("keep.txt")).expect("read marker"),
+            b"untouched",
+            "the destination's contents must be untouched",
+        );
+
+        let strays: Vec<_> = std::fs::read_dir(dir.path())
+            .expect("read_dir")
+            .filter_map(|entry| entry.ok().map(|e| e.path()))
+            .filter(|p| *p != path)
+            .collect();
+        assert!(strays.is_empty(), "temp file left behind: {strays:?}");
     }
 }

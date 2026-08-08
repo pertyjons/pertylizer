@@ -384,6 +384,13 @@ mod tests {
 
     /// The data-safety guarantee: a save that fails must leave the user's last
     /// good project exactly as it was, rather than truncating it first.
+    ///
+    /// Unix-only *mechanism*, not a Unix-only guarantee: Windows largely
+    /// ignores the readonly attribute on a directory, so the temp file is
+    /// created anyway and the save never fails. The portable halves are
+    /// [`crate::io::atomic`]'s payload-failure tests and the
+    /// destination-is-a-directory case below.
+    #[cfg(unix)]
     #[test]
     fn a_failed_save_preserves_the_previous_project() {
         let dir = tempfile::tempdir().expect("tempdir");
@@ -416,6 +423,35 @@ mod tests {
             ProjectFile::load(&path).expect("reload").song.name,
             "last good save",
         );
+    }
+
+    /// The same guarantee at the replace step, on every platform: a path that
+    /// is a directory cannot be renamed over anywhere, so the save must fail
+    /// and leave that directory exactly as it was — not empty it, and not
+    /// abandon the scratch file next to it.
+    #[test]
+    fn a_save_that_cannot_replace_the_destination_leaves_it_alone() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let path = dir.path().join("song.ptz");
+        fs::create_dir(&path).expect("destination directory");
+        fs::write(path.join("keep.txt"), b"untouched").expect("marker");
+
+        let result = sample_project("would-be corruption").save(&path);
+
+        assert!(result.is_err(), "saving onto a directory must fail");
+        assert!(path.is_dir(), "the destination directory must survive");
+        assert_eq!(
+            fs::read(path.join("keep.txt")).expect("read marker"),
+            b"untouched",
+            "the destination's contents must be untouched",
+        );
+
+        let strays: Vec<_> = fs::read_dir(dir.path())
+            .expect("read_dir")
+            .filter_map(|entry| entry.ok().map(|e| e.path()))
+            .filter(|p| *p != path)
+            .collect();
+        assert!(strays.is_empty(), "temp file left behind: {strays:?}");
     }
 
     #[test]
