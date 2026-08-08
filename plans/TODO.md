@@ -484,19 +484,6 @@ domain.
 > correctness/RT-safety issues, but architectural enough to be driven by an
 > *actually observed symptom*, not done pre-emptively.
 
-### The build gate does not cover rustdoc
-
-- [x] **CI's Documentation step is red, and the commit checklist cannot see it.**
-  Closed: `cargo doc --workspace --no-deps` is clean and is now part of the
-  checklist in `CLAUDE.md`, so the gate matches CI. `.cargo/config.toml`'s
-  `[build] warnings = "deny"` covers rustdoc, so the failures were real — the
-  checklist simply never ran it, which is how they survived. The three
-  `shortcuts` links had a non-obvious cause worth remembering: an outer `///`
-  on a `mod` declaration is merged *ahead* of that module's own `//!` docs, and
-  the merged block then resolves intra-doc links in the **parent** module's
-  scope, so a module's links to its own items break. Deleting the one-line
-  outer summary fixed all three.
-
 ### Trigger-based hardening (do when the symptom appears)
 
 #### Real-time safety: replace HashMap usage on the audio thread
@@ -619,19 +606,10 @@ domain.
   `--solo-track <id>` with the track ids its own exporter wrote. The change
   lives in the **`sid-analyzer` repository**, not this one — this was the
   feature's whole reason to exist, so it is the one open exit-gate item.
-- [ ] **Regenerate `THIRD-PARTY-LICENSES.md` at the next release.** `clap` and
-  `sha2` are new direct dependencies (`cargo about`, see the `new version` flow
-  in `CLAUDE.md`).
-- [x] **A dropped engine command is invisible.** Closed: `CommandSync` gained a
-  `dropped` counter, bumped from every failing enqueue path in
-  `CommandSender`, and `apply_project` fails a load whose count grew instead of
-  returning a clean summary over a partly-applied project — one place covering
-  the GUI open, MCP `load_project`, and the render command. A drop cannot ride
-  `enqueued` (that would strand `processed` behind it forever and hang every
-  barrier), which is exactly why `processed >= enqueued` could not see it.
-  *Remaining:* the delta is global, so a concurrent MCP or GUI send that drops
-  during a load is attributed to that load — the alarm is real, the attribution
-  approximate. Per-sender counters would fix it if it ever matters.
+- [ ] **Per-sender dropped-command counters.** `CommandSync::dropped` closed the
+  "a lost command is invisible" hole, but its delta is global: a concurrent MCP
+  or GUI send that drops during a load is attributed to that load. The alarm is
+  real, the attribution approximate. Only worth splitting if it ever misleads.
 - [ ] **Test a valid bundle whose samples are missing.** The plan asked for it;
   a *truncated* bundle is covered instead, because it was never established
   whether `load_bundle` errors or merely warns when a referenced sample entry is

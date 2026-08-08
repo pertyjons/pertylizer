@@ -1,5 +1,147 @@
 # Version History
 
+## [0.317.0] - 2026-08-08
+
+### Project safety — the application will not quietly lose your work
+
+- **Atomic saves.** Projects, bundles, patches, templates and settings were written
+  straight to their destination, so a serialization error, a full disk or a crash
+  midway truncated the last good file. All now write to a temp file beside the
+  target and replace it with a single rename.
+- **Crash recovery.** Debounced autosave snapshots go to a private directory, never
+  over the user's own file. A snapshot is retired once the work stops being at risk,
+  so one surviving to startup is itself the crash signal — no lock file needed.
+- **Unsaved-changes state is derived, not reported.** A scattered set of
+  `mark_dirty()` calls is replaced by edit revisions plus fingerprints of the patch
+  layout, the global state (master volume, keyboard octave, glide, loop region,
+  master/return effect chains) and each instrument's effect-chain order. Autosave and
+  the close prompt read the same predicate, which is why it had to be right.
+- **Keyboard input goes through one dispatcher.** The computer-keyboard piano read
+  raw key state, so every Ctrl+S played a C-sharp and typing in a text field played
+  chords. An input gate now silences it while a text field or modal owns the keyboard.
+- **Undo/redo covers every editor** — mixer, samples, instruments, module parameters,
+  rack structure and the sequencer gaps an audit found, with gestures collapsed into
+  one entry. Later fixes added the master fader, effect-chain reordering, effect
+  additions, and four arrangement actions that recorded nothing.
+- **A cancelled file dialog no longer kills input for the session.** Backing out never
+  yielded a path, so the mode was never cleared and every shortcut plus the keyboard
+  piano stayed dead until restart. The modal predicate became a struct whose
+  exhaustive destructuring makes a forgotten dialog a compile error.
+- **A dropped engine command is now detectable.** The command ring is bounded and a
+  push onto a full one is lost; `processed >= enqueued` reported a drained queue over
+  state the engine never received. A `dropped` counter now fails `apply_project`
+  instead of returning a clean summary over a partly-applied project.
+
+### Headless rendering
+
+- **`pertylizer render`** — a one-shot load-render-exit subcommand that writes a WAV
+  plus a JSON receipt (SHA-256 digests of input and output, audio properties, audible
+  tracks, warnings, argv), with `--solo-track`/`--mute-track` for stems. Lets an
+  external regression runner get a WAV without speaking MCP.
+- **All CLI flags moved onto clap**, with `render` as a subcommand and no subcommand
+  still launching the GUI. Unknown arguments are now rejected instead of silently
+  starting the app.
+- **`--bit-depth` spans 8/16/24/32-bit integer and 32-bit float**, behind one shared
+  `WavFormat` used by the CLI, the GUI's Export WAV and MCP's `render_to_wav`. Integer
+  conversion now rounds against 2^(n-1); the GUI export truncated, biasing every
+  sample toward silence.
+
+### Sequencer & GUI
+
+- **MSEG editor** plus improved ADSR controls.
+- **Arrangement section markers** and **clip/repeat placement modes**.
+- **The egui theme derives from the active palette.** `dark_mode` was hardcoded true
+  for all eight presets, so the Light preset claimed to be dark, and the visuals base
+  was whatever theme happened to be active at startup.
+- **One display name per domain enum**, read by the GUI instead of its own drifted
+  copies — a module was called "Envelope" over MCP and "ADSR" in the app.
+- **One persistent file dialog across kinds**, so its directory and selection survive
+  switching between e.g. Open Patch and Save Project; the activity-log export silently
+  did nothing and now works.
+- **The five browsers share one list panel.** Pattern-browser search filtered on the
+  raw empty name, so any query hid every freshly created pattern.
+
+### Sound design
+
+- **AudioScript sees `note_hz` and knobs per sample**, so `phasor(note_hz)` glides and
+  `smooth(drive, 5ms)` ramps without block-edge stepping.
+- **A `unit` clause on YAMS `param` declarations** tags a knob's display unit; an
+  unrecognized token is simply unitless, so scripts stay forward-compatible.
+- **Transient Shaper effect (`tsh`)** — differential-envelope transient designer with
+  independent attack/sustain gain.
+- **Ports carry semantic metadata and value domains** — direction, signal type,
+  connection compatibility, and the value contract each port accepts, exposed through
+  the descriptor catalog and validated at the boundary.
+
+### MCP
+
+- **Migrated to rmcp 3.1.0 (MCP 2026-07-28)**, which removes protocol-level sessions;
+  three call sites absorbed it rather than 229. Also fixes `serverInfo` drift — the
+  version came from `synth_mcp`'s own 0.1.0 and the description was a stale hardcoded
+  module count.
+- **All 219 tools carry behaviour hints** (71 read-only, 50 destructive, 65
+  idempotent), classified by mapping each tool to the bridge methods it reaches rather
+  than guessing from names, with four tests locking the invariants.
+- **`simplify_automation`** — curve-aware breakpoint reduction with a normalized
+  tolerance, dry-run by default.
+- **`build_instrument` reports `partial_success`**, so an unknown parameter or failed
+  connection is no longer mistaken for a clean build.
+- **Over-unity sends are rejected** rather than silently clamped to 1.0.
+- **`analyze_masking_matrix` reports the range it actually analyzed** — a render is
+  capped at 300 s, so a longer request silently trimmed every per-track tail while
+  claiming full coverage — and excludes tracks below a −60 dBFS floor so two silent
+  tracks no longer score as a perfect conflict.
+- **Long-song mix analysis samples the densest representative window** instead of
+  being skipped, and automation-target errors name the instrument they checked.
+
+### Fixes
+
+- **Export WAV rendered a stripped mix.** Send/return busses, return effects and the
+  master chain were never loaded, so anything heard through a send or the master bus
+  was silent in the exported file; sampler audio was never pushed either.
+- **A large project could lose load commands.** Both offline renderers bulk-sent into
+  a non-draining engine whose ring holds 256 entries, so a project generating more
+  silently rendered wrong. The ring is now drained during the load.
+- **Pattern length was clamped to 64 bars by the GUI.** The piano roll's DragValue
+  reported `changed()` on the value egui had clamped for display, writing it back over
+  a length set via MCP or load. Adds a lint for events hidden past the pattern end.
+- **A modulated sampler `start_offset` was resolved and then discarded**, so a routing
+  into it could only open the gate: playback still began at frame zero.
+
+### File format
+
+- **A sample-embedded project is saved as `.ptz.zip`**, not a bare `.zip` — the name
+  now states both halves of what the file is.
+- **The bundled example projects are `.ptz`** rather than `.json`, and `echoing.zip`
+  is `echoing.ptz.zip`.
+
+### Code quality & tooling
+
+- **`--workspace` reached the gate and all three CI jobs.** `default-members` meant
+  the other crates' test targets never compiled — which is how 14 broken references
+  hid, and why only 769 of 2226 tests ever ran.
+- **`cargo doc` joined the checklist and CI's Documentation step is green again.**
+  `warnings = "deny"` covers rustdoc, so the failures were always real; the checklist
+  simply never ran it. An outer `///` on a `mod` declaration re-scopes that module's
+  own intra-doc links to its parent, which caused three of the seven.
+- **Four hardening and cleanup sweeps** across the workspace, plus consolidated
+  `ModuleParam` implementations and split-out module boundaries.
+
+### Docs & plans
+
+- **The README matches the code again** — Bevy 0.19 and Rust 1.97 rather than 0.18 and
+  1.95, the real build gate, and new sections for headless rendering and project
+  safety, neither of which was mentioned anywhere.
+- **A reviewed plan for a game runtime library** (`pertylizer-runtime`), naming the two
+  decisions that block Phase 1, plus a rewritten headless-render plan and new TODO
+  sections for project safety and unused MCP protocol capabilities.
+
+### Dependencies
+
+- New: `clap` and `sha2` (the render command). Bumped: rmcp 3.1.0, Bevy 0.19, toml,
+  base64, schemars, jsonschema. `THIRD-PARTY-LICENSES.md` regenerated.
+- The egui/eframe 0.35 → 0.36 bump stays blocked on `egui-file-dialog`.
+
 ## [0.316.0] - 2026-07-20
 
 ### Note Grid — modular note & pattern processing (new node view)
