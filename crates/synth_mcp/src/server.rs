@@ -4122,7 +4122,7 @@ pub struct ApplyExamplePatchParam {
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct ProjectPathParam {
     #[schemars(
-        description = "Absolute file path for the project. `.ptz` (recommended) and `.json` are both accepted and preserved; any other extension is normalized to `.ptz`. A project that embeds samples is always written as a `.zip` bundle regardless of the requested extension. Loading auto-detects the format by content, so the extension never blocks a round-trip. save_project returns the actual path written."
+        description = "Absolute file path for the project. `.ptz` (recommended) and `.json` are both accepted and preserved; any other extension is normalized to `.ptz`. A project that embeds samples is always written as a `.ptz.zip` bundle regardless of the requested extension. Loading auto-detects the format by content, so the extension never blocks a round-trip. save_project returns the actual path written."
     )]
     pub path: String,
 }

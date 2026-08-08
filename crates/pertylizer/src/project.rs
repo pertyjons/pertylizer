@@ -140,13 +140,22 @@ pub enum LoadedFile {
 }
 
 /// The file extension a project should be saved with given whether the
-/// sample library is non-empty: `"zip"` for bundles (sample-embedded),
-/// `"ptz"` otherwise. Lets the filename on disk tell the truth about
-/// the format inside.
+/// sample library is non-empty: [`BUNDLE_EXTENSION`] for bundles
+/// (sample-embedded), `"ptz"` otherwise. Lets the filename on disk tell the
+/// truth about the format inside.
 #[must_use]
 pub fn project_extension(has_samples: bool) -> &'static str {
-    if has_samples { "zip" } else { "ptz" }
+    if has_samples { BUNDLE_EXTENSION } else { "ptz" }
 }
+
+/// The extension of a sample-embedded project: a ZIP archive whose payload is
+/// a `.ptz` project, so the name states both halves.
+///
+/// [`Path::extension`] only ever sees the `zip` half — `song.ptz.zip` has stem
+/// `song.ptz` — which is why [`normalize_project_path`] strips this by name
+/// before re-applying it. Without that, normalizing an already-normalized
+/// bundle path would append a second `.ptz.zip`.
+pub const BUNDLE_EXTENSION: &str = "ptz.zip";
 
 /// Extensions accepted as-is for a plain-JSON (sample-free) project. `.ptz` is
 /// the Pertylizer project extension; `.json` is kept for backward
@@ -156,19 +165,19 @@ const PLAIN_PROJECT_EXTENSIONS: &[&str] = &["ptz", "json"];
 
 /// Return `path` with an extension appropriate for the save format.
 ///
-/// - **Bundle** (`has_samples`): forced to `.zip`, because a sample-embedded
-///   project is a ZIP archive and the filename must not claim otherwise.
+/// - **Bundle** (`has_samples`): forced to `.ptz.zip`, because a
+///   sample-embedded project is a ZIP archive around a `.ptz` project and the
+///   filename must not claim otherwise.
 /// - **Plain project** (no samples): a caller-supplied `.ptz` or `.json` is
 ///   **preserved** rather than silently rewritten; any other (or missing)
 ///   extension is normalized to the default `.ptz`.
 ///
-/// Idempotent.
+/// Idempotent, in both directions: a bundle path that loses its samples
+/// normalizes to `.ptz` rather than growing a `.ptz.ptz`.
 #[must_use]
 pub fn normalize_project_path(path: &Path, has_samples: bool) -> PathBuf {
     if has_samples {
-        let mut p = path.to_path_buf();
-        p.set_extension("zip");
-        return p;
+        return set_project_extension(path, BUNDLE_EXTENSION);
     }
     let keep = path
         .extension()
@@ -181,10 +190,38 @@ pub fn normalize_project_path(path: &Path, has_samples: bool) -> PathBuf {
     if keep {
         path.to_path_buf()
     } else {
-        let mut p = path.to_path_buf();
-        p.set_extension(project_extension(false));
-        p
+        set_project_extension(path, project_extension(false))
     }
+}
+
+/// `path` with its extension replaced by `extension`, treating a trailing
+/// [`BUNDLE_EXTENSION`] as the single extension it means to be.
+///
+/// [`Path::set_extension`] replaces everything after the *last* dot, so on
+/// `song.ptz.zip` it would leave the `.ptz` behind as part of the stem. The
+/// two-dot suffix is therefore stripped by name first; every other case is a
+/// single extension `set_extension` handles correctly.
+fn set_project_extension(path: &Path, extension: &str) -> PathBuf {
+    let stripped = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .and_then(strip_bundle_extension)
+        .map(|base| path.with_file_name(base));
+    let mut out = stripped.unwrap_or_else(|| path.to_path_buf());
+    out.set_extension(extension);
+    out
+}
+
+/// `name` without a trailing `.ptz.zip`, or `None` if it has none.
+///
+/// Case-insensitive, matching the [`PLAIN_PROJECT_EXTENSIONS`] comparison. A
+/// name that is *only* the suffix yields `None` rather than an empty stem,
+/// which would make the caller rewrite the parent directory instead of a file.
+fn strip_bundle_extension(name: &str) -> Option<&str> {
+    let split = name.len().checked_sub(BUNDLE_EXTENSION.len() + 1)?;
+    let (base, tail) = name.split_at_checked(split)?;
+    let suffix = tail.strip_prefix('.')?;
+    (!base.is_empty() && suffix.eq_ignore_ascii_case(BUNDLE_EXTENSION)).then_some(base)
 }
 
 /// Read a file, auto-detect whether it's a ZIP bundle, patch, or project,
@@ -301,8 +338,8 @@ mod tests {
     }
 
     #[test]
-    fn project_extension_picks_zip_for_samples_ptz_otherwise() {
-        assert_eq!(project_extension(true), "zip");
+    fn project_extension_picks_ptz_zip_for_samples_ptz_otherwise() {
+        assert_eq!(project_extension(true), "ptz.zip");
         assert_eq!(project_extension(false), "ptz");
     }
 
@@ -427,21 +464,57 @@ mod tests {
     }
 
     #[test]
-    fn normalize_project_path_forces_zip_for_bundles() {
-        // Samples present → always `.zip`, whatever the user typed (a bundle is
-        // a ZIP archive; the filename must not claim otherwise).
+    fn normalize_project_path_forces_ptz_zip_for_bundles() {
+        // Samples present → always `.ptz.zip`, whatever the user typed (a
+        // bundle is a ZIP archive around a project; the filename must not
+        // claim otherwise).
         assert_eq!(
             normalize_project_path(Path::new("/songs/track.json"), true),
-            PathBuf::from("/songs/track.zip")
+            PathBuf::from("/songs/track.ptz.zip")
         );
         assert_eq!(
             normalize_project_path(Path::new("/songs/track.ptz"), true),
-            PathBuf::from("/songs/track.zip")
+            PathBuf::from("/songs/track.ptz.zip")
         );
         assert_eq!(
             normalize_project_path(Path::new("/songs/track"), true),
-            PathBuf::from("/songs/track.zip")
+            PathBuf::from("/songs/track.ptz.zip")
         );
+        // A bare `.zip` is upgraded rather than left half-named.
+        assert_eq!(
+            normalize_project_path(Path::new("/songs/track.zip"), true),
+            PathBuf::from("/songs/track.ptz.zip")
+        );
+    }
+
+    /// The two-dot suffix is the reason `set_extension` alone is not enough:
+    /// it replaces only what follows the *last* dot, so re-normalizing an
+    /// already-correct bundle path would keep stacking `.ptz`.
+    #[test]
+    fn normalize_project_path_does_not_stack_the_bundle_suffix() {
+        assert_eq!(
+            normalize_project_path(Path::new("/songs/track.ptz.zip"), true),
+            PathBuf::from("/songs/track.ptz.zip")
+        );
+        // Case-insensitive, like the plain-extension comparison.
+        assert_eq!(
+            normalize_project_path(Path::new("/songs/track.PTZ.ZIP"), true),
+            PathBuf::from("/songs/track.ptz.zip")
+        );
+        // Dropping every sample takes the same path back down to `.ptz`
+        // instead of producing `track.ptz.ptz`.
+        assert_eq!(
+            normalize_project_path(Path::new("/songs/track.ptz.zip"), false),
+            PathBuf::from("/songs/track.ptz")
+        );
+    }
+
+    /// A name that is *only* the suffix has no stem to keep, and stripping it
+    /// would leave the parent directory as the thing being renamed.
+    #[test]
+    fn normalize_project_path_does_not_consume_the_parent_directory() {
+        let normalized = normalize_project_path(Path::new("/songs/.ptz.zip"), true);
+        assert_eq!(normalized.parent(), Some(Path::new("/songs")));
     }
 
     #[test]

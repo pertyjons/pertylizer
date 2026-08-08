@@ -16,7 +16,7 @@ impl SynthMcpServer {
     }
 
     #[tool(
-        description = "Save the current project (all instruments, patches, song, arrangement). A caller-supplied `.ptz` (recommended) or `.json` path is preserved as-is; any other extension is normalized to `.ptz`. If the project embeds samples it is written as a `.zip` bundle instead (the filename must tell the truth about the format). The returned message reports the exact path written.",
+        description = "Save the current project (all instruments, patches, song, arrangement). A caller-supplied `.ptz` (recommended) or `.json` path is preserved as-is; any other extension is normalized to `.ptz`. If the project embeds samples it is written as a `.ptz.zip` bundle instead (the filename must tell the truth about the format). The returned message reports the exact path written.",
         annotations(destructive_hint = true)
     )]
     pub(crate) async fn save_project(&self, params: Parameters<ProjectPathParam>) -> String {
