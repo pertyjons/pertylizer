@@ -340,15 +340,16 @@ fn load_empty_song_without_gui() {
         Song::new("Empty Subtune"),
         pertylizer::project::GlobalProjectState::default(),
     );
-    let tmp = tempfile::Builder::new()
-        .suffix(".json")
-        .tempfile()
-        .expect("temp file");
-    empty.save(tmp.path()).expect("write empty project");
+    // A directory, not a `NamedTempFile`: that keeps the destination open, and
+    // an atomic save replaces the destination by rename, which Windows refuses
+    // for a file another handle still holds. See `save_project_works_without_gui`.
+    let dir = tempfile::tempdir().expect("temp dir");
+    let target = dir.path().join("empty.json");
+    empty.save(&target).expect("write empty project");
 
     let before = rig._shared.project_revision.load(Ordering::Acquire);
     rig.bridge
-        .load_project(tmp.path().to_str().expect("UTF-8 path"))
+        .load_project(target.to_str().expect("UTF-8 path"))
         .expect("load_project should accept an empty song without a GUI");
     rig.pump(16);
     let after = rig._shared.project_revision.load(Ordering::Acquire);
@@ -594,20 +595,23 @@ fn save_project_works_without_gui() {
         .expect("load_project");
     rig.pump(32);
 
-    // Use a .json suffix so `normalize_project_path` is a no-op — the
-    // loaded example has no samples, so save chooses JSON and we want
-    // the temp file's name to match.
-    let tmp = tempfile::Builder::new()
-        .suffix(".json")
-        .tempfile()
-        .expect("temp file");
-    let target = tmp.path().to_str().expect("UTF-8 path");
+    // A `.json` name so `normalize_project_path` is a no-op — the loaded example
+    // has no samples, so save chooses JSON and the destination should match.
+    //
+    // A path inside a temp *directory* rather than a `NamedTempFile`, because
+    // that would hold the destination open: an atomic save replaces the
+    // destination by rename, and Windows denies a rename over a file another
+    // handle still has open, while Unix allows it. A `NamedTempFile` here passes
+    // locally and fails only in CI.
+    let dir = tempfile::tempdir().expect("temp dir");
+    let path = dir.path().join("saved.json");
+    let target = path.to_str().expect("UTF-8 path");
     rig.bridge
         .save_project(target)
         .expect("save_project should succeed without a GUI");
 
     // File exists and re-parses as a ProjectFile.
-    let reloaded = pertylizer::project::ProjectFile::load(tmp.path()).expect("reloaded saved file");
+    let reloaded = pertylizer::project::ProjectFile::load(&path).expect("reloaded saved file");
     assert!(
         !reloaded.instruments.is_empty(),
         "saved project should contain instruments from the loaded source"

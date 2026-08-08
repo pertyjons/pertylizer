@@ -30,13 +30,17 @@ fn round_trip_project(path: &Path) {
     let original =
         ProjectFile::load(path).unwrap_or_else(|e| panic!("load {}: {e}", path.display()));
 
-    let tmp = tempfile::NamedTempFile::new().expect("create temp file");
+    // A path inside a temp directory, not a `NamedTempFile`: the latter holds
+    // the destination open, and an atomic save replaces it by rename — which
+    // Windows denies while another handle is on the file, though Unix allows it.
+    let dir = tempfile::tempdir().expect("create temp dir");
+    let tmp = dir.path().join("round_trip.ptz");
     original
-        .save(tmp.path())
-        .unwrap_or_else(|e| panic!("save {}: {e}", tmp.path().display()));
+        .save(&tmp)
+        .unwrap_or_else(|e| panic!("save {}: {e}", tmp.display()));
 
-    let reloaded = ProjectFile::load(tmp.path())
-        .unwrap_or_else(|e| panic!("reload {}: {e}", tmp.path().display()));
+    let reloaded =
+        ProjectFile::load(&tmp).unwrap_or_else(|e| panic!("reload {}: {e}", tmp.display()));
 
     let original_value = serde_json::to_value(&original).expect("serialize original");
     let reloaded_value = serde_json::to_value(&reloaded).expect("serialize reloaded");

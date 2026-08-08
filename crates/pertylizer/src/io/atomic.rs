@@ -21,6 +21,23 @@
 //! Until step 5 the destination is untouched, so *any* failure before it leaves
 //! the previous file exactly as it was — there is nothing to roll back. The
 //! temporary file is removed when the [`NamedTempFile`] drops.
+//!
+//! # Replacing an open file is a platform difference
+//!
+//! Step 5 is a rename over the destination, and the platforms disagree about
+//! whether that is allowed while some other handle still has the destination
+//! open. Unix does not care — the rename succeeds and the open handle keeps
+//! pointing at the now-unlinked inode. Windows denies it with `Access is
+//! denied. (os error 5)`.
+//!
+//! For the application this is the right behaviour on both: the save fails
+//! loudly and the previous file survives, which is the whole contract above.
+//!
+//! For **tests** it is a trap, because it only fails on one platform. A test
+//! that saves onto a [`NamedTempFile`]'s path is holding the destination open,
+//! so it passes locally on Linux or macOS and fails only in Windows CI. Save
+//! into a path inside a [`tempfile::tempdir`] instead — the directory is
+//! cleaned up just the same and nothing holds the file.
 
 use std::fs::File;
 use std::io::Write;

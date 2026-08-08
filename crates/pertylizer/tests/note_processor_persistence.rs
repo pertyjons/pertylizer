@@ -89,9 +89,13 @@ fn rack_and_ornament_survive_project_save_load_and_play_identically() {
 
     // Round-trip through the real .ptz file path.
     let project = ProjectFile::new(Vec::new(), 0, None, song, GlobalProjectState::default());
-    let tmp = tempfile::NamedTempFile::new().expect("temp file");
-    project.save(tmp.path()).expect("save project");
-    let reloaded = ProjectFile::load(tmp.path()).expect("load project");
+    // A path inside a temp directory rather than a `NamedTempFile`, which would
+    // hold the destination open: an atomic save replaces by rename, and Windows
+    // denies that while another handle is on the file.
+    let dir = tempfile::tempdir().expect("temp dir");
+    let tmp = dir.path().join("round_trip.ptz");
+    project.save(&tmp).expect("save project");
+    let reloaded = ProjectFile::load(&tmp).expect("load project");
 
     // The rack and the ornament config survived verbatim.
     let orig_pattern = project.song.pattern(pid).expect("orig pattern");
