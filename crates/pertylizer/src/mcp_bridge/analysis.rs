@@ -552,13 +552,25 @@ impl synth_mcp::bridge::AnalysisBridge for AppSynthBridge {
             self.rollback_snapshot.lock().take().ok_or_else(|| {
                 McpBridgeError::Other("no project snapshot to restore".to_string())
             })?;
-        crate::project_apply::apply_project(
+        let report = crate::project_apply::apply_project(
             &project,
             &self.session,
             &self.shared.song,
             &self.sample_library,
         )
         .map_err(McpBridgeError::Other)?;
+        // A rollback that quietly restores *less* than it snapshotted is the
+        // worst kind of partial load: the client asked for the previous state
+        // back and is told it got it. This path returns `()`, so the Activity
+        // panel / log is where it can still be said.
+        for diagnostic in &report.diagnostics {
+            tracing::warn!(
+                target: "pertylizer::project",
+                code = %diagnostic.code,
+                path = %diagnostic.path,
+                "rollback restore: {}", diagnostic.message,
+            );
+        }
         // Rebuild the GUI mirrors against the restored project, mirroring a
         // project load — otherwise the GUI keeps showing the failed-batch state.
         self.stash_refresh(crate::mcp_shared::ProjectRefresh::Loaded(project));

@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use synth_core::ModuleParam;
-use synth_core::{ModuleType, Param, ParameterDescriptor, VoiceCount};
+use synth_core::{ModuleDescriptor, ModuleType, Param, ParameterDescriptor, VoiceCount};
 use synth_engine::commands::InstrumentParam;
 use synth_engine::shared_state::{
     ConnectionSnapshot, InstrumentSnapshot, ModuleStateSnapshot, ReturnBusSnapshot,
@@ -18,6 +18,10 @@ use synth_sequencer::Song;
 
 use crate::patch::{ConnectionState, InstrumentState, ModuleState, ParamValue, Patch, Position};
 use crate::project::{GlobalProjectState, ProjectFile, ReturnBusEffectsState};
+use crate::project_diagnostics::{
+    DiagnosticCode, ProjectApplyDiagnostic, ProjectApplyReport, ProjectPath,
+    invalid_module_id_message, mismatched_module_id_message,
+};
 use crate::session::{SessionError, SynthSession};
 
 type SharedSong = Arc<synth_sequencer::SharedSong>;
@@ -71,7 +75,8 @@ pub fn apply_project(
     session: &SynthSession,
     song: &SharedSong,
     sample_library: &SharedSampleLibrary,
-) -> Result<String, String> {
+) -> Result<ProjectApplyReport, String> {
+    let mut diagnostics: Vec<ProjectApplyDiagnostic> = Vec::new();
     // Most of the sends below discard their result, and a `false` return means
     // the command was lost rather than deferred. Snapshot the engine's drop
     // count now so the end of the load can tell whether the engine actually
@@ -84,10 +89,10 @@ pub fn apply_project(
     tear_down_all_instruments(session);
 
     for inst_state in &project.instruments {
-        install_instrument(session, &sender, inst_state)?;
+        diagnostics.extend(install_instrument(session, &sender, inst_state)?);
     }
 
-    push_loaded_sample_data(&sender, project, sample_library);
+    diagnostics.extend(push_loaded_sample_data(&sender, project, sample_library));
 
     sender.send(EngineCommand::SetTempo(project.song.default_tempo));
     {
@@ -156,7 +161,7 @@ pub fn apply_project(
     // effect chain. Non-blocking `send`: the live audio thread drains the queue
     // continuously. The offline WAV export shares this exact reconstruction via
     // `apply_global_mix_chain` (with `send_blocking`), so both hear the same mix.
-    apply_global_mix_chain(project, |c| sender.send(c));
+    diagnostics.extend(apply_global_mix_chain(project, |c| sender.send(c)));
 
     // Bridge the async gap between queued `AddInstrument` commands and the
     // audio thread updating its snapshot — without this, a client calling
@@ -192,12 +197,15 @@ pub fn apply_project(
 
     let pattern_count = project.song.patterns().count();
     let track_count = project.song.tracks().count();
-    Ok(format!(
-        "Loaded project: {} instrument(s), {} pattern(s), {} track(s)",
-        project.instruments.len(),
-        pattern_count,
-        track_count
-    ))
+    Ok(ProjectApplyReport {
+        summary: format!(
+            "Loaded project: {} instrument(s), {} pattern(s), {} track(s)",
+            project.instruments.len(),
+            pattern_count,
+            track_count
+        ),
+        diagnostics,
+    })
 }
 
 /// Reconstruct a project's global mix chain in the engine: the send/return-bus
@@ -216,10 +224,14 @@ pub fn apply_project(
 ///
 /// `on_stream_start` must have run on the target engine first: the effect-add
 /// handlers stamp each effect with the engine's current sample rate.
+///
+/// Returns every effect it could not rebuild. Both callers surface these: a
+/// silently shorter chain is the failure that started this work.
 pub(crate) fn apply_global_mix_chain(
     project: &ProjectFile,
     mut send: impl FnMut(EngineCommand) -> bool,
-) {
+) -> Vec<ProjectApplyDiagnostic> {
+    let mut diagnostics = Vec::new();
     // Reset any return-bus channels left over from a previously-loaded project
     // before recreating this project's — otherwise CreateReturnBus is a no-op
     // for a surviving id and AddReturnEffect would stack onto the old chain.
@@ -233,14 +245,21 @@ pub(crate) fn apply_global_mix_chain(
     }
     for rb in &project.global.return_bus_effects {
         let return_id = synth_sequencer::ReturnBusId(rb.id);
-        for fx in &rb.effects {
-            let Ok(module_id) = fx.id.parse::<ModuleId>() else {
-                continue;
+        for (index, fx) in rb.effects.iter().enumerate() {
+            let path = ProjectPath::return_bus_effect(return_id, index);
+            let ResolvedEffect {
+                module_id,
+                effect,
+                descriptor,
+                note,
+            } = match resolve_effect_entry(fx, &path) {
+                Ok(resolved) => resolved,
+                Err(diagnostic) => {
+                    diagnostics.push(diagnostic);
+                    continue;
+                }
             };
-            let Some((effect, descriptor)) = crate::module_factory::create_effect(fx.module_type)
-            else {
-                continue;
-            };
+            diagnostics.extend(note);
             send(EngineCommand::AddReturnEffect {
                 return_id,
                 id: module_id,
@@ -264,14 +283,21 @@ pub(crate) fn apply_global_mix_chain(
     // load over a previous project starts from an empty master chain rather than
     // stacking onto leftover effects.
     send(EngineCommand::ClearMasterEffects);
-    for fx in &project.global.master_effects {
-        let Ok(module_id) = fx.id.parse::<ModuleId>() else {
-            continue;
+    for (index, fx) in project.global.master_effects.iter().enumerate() {
+        let path = ProjectPath::master_effect(index);
+        let ResolvedEffect {
+            module_id,
+            effect,
+            descriptor,
+            note,
+        } = match resolve_effect_entry(fx, &path) {
+            Ok(resolved) => resolved,
+            Err(diagnostic) => {
+                diagnostics.push(diagnostic);
+                continue;
+            }
         };
-        let Some((effect, descriptor)) = crate::module_factory::create_effect(fx.module_type)
-        else {
-            continue;
-        };
+        diagnostics.extend(note);
         send(EngineCommand::AddEffectInstance {
             instrument_id: None,
             id: module_id,
@@ -287,6 +313,70 @@ pub(crate) fn apply_global_mix_chain(
             }
         }
     }
+    diagnostics
+}
+
+/// A saved effect entry, resolved into what the engine needs to install it.
+struct ResolvedEffect {
+    module_id: ModuleId,
+    effect: Box<dyn synth_core::AudioEffect>,
+    descriptor: ModuleDescriptor,
+    /// Something worth saying about the entry that is *not* a reason to drop
+    /// it. Reported alongside the installed effect.
+    note: Option<ProjectApplyDiagnostic>,
+}
+
+/// Resolve one saved effect entry into the id and instance the engine needs, or
+/// explain why it cannot be built.
+///
+/// Shared by the return-bus and master chains, which had the same two silent
+/// `continue`s each. Both failures leave a chain that is *shorter* than the one
+/// saved, which the mixer then displays as if it were complete.
+fn resolve_effect_entry(
+    fx: &ModuleState,
+    path: &ProjectPath,
+) -> Result<ResolvedEffect, ProjectApplyDiagnostic> {
+    let module_id = fx.id.parse::<ModuleId>().map_err(|e| {
+        ProjectApplyDiagnostic::warning(
+            DiagnosticCode::InvalidModuleId,
+            path.clone(),
+            invalid_module_id_message(&fx.id, fx.module_type, &e),
+        )
+    })?;
+
+    // An id whose prefix disagrees with the entry's type is worth saying, but
+    // it is *not* worth dropping the effect over. The instance is built from
+    // `fx.module_type` and the chain stores it under `module_id` as an opaque
+    // key — the engine never reads the prefix back — so such an entry loads
+    // and sounds correct today. Skipping it would shorten the chain to protect
+    // against a lie that costs nothing here, which is the exact silent loss
+    // this whole mechanism exists to prevent. Report, then install.
+    let note = (module_id.module_type != fx.module_type).then(|| {
+        ProjectApplyDiagnostic::warning(
+            DiagnosticCode::InvalidModuleId,
+            path.clone(),
+            mismatched_module_id_message(&fx.id, fx.module_type, module_id.module_type),
+        )
+    });
+
+    let (effect, descriptor) =
+        crate::module_factory::create_effect(fx.module_type).ok_or_else(|| {
+            ProjectApplyDiagnostic::warning(
+                DiagnosticCode::UnsupportedModuleType,
+                path.clone(),
+                format!(
+                    "this build cannot construct a {} effect",
+                    fx.module_type.name()
+                ),
+            )
+        })?;
+
+    Ok(ResolvedEffect {
+        module_id,
+        effect,
+        descriptor,
+        note,
+    })
 }
 
 /// Reset to an empty project — clears all instruments and replaces the song
@@ -295,7 +385,7 @@ pub fn reset_to_new_project(
     session: &SynthSession,
     song: &SharedSong,
     sample_library: &SharedSampleLibrary,
-) -> Result<String, String> {
+) -> Result<ProjectApplyReport, String> {
     let empty = ProjectFile::new(
         Vec::new(),
         0,
@@ -314,7 +404,7 @@ pub fn load_file_into_engine(
     session: &SynthSession,
     song: &SharedSong,
     sample_library: &SharedSampleLibrary,
-) -> Result<String, String> {
+) -> Result<ProjectApplyReport, String> {
     use crate::project::{LoadedFile, load_file};
 
     if !path.exists() {
@@ -709,20 +799,23 @@ fn load_bundle_into_engine(
     session: &SynthSession,
     song: &SharedSong,
     sample_library: &SharedSampleLibrary,
-) -> Result<String, String> {
+) -> Result<ProjectApplyReport, String> {
     let project = {
         let mut lib = sample_library
             .write()
             .map_err(|_| "sample library lock poisoned".to_string())?;
         crate::bundle::load_bundle(path, &mut lib).map_err(|e| e.to_string())?
     };
-    apply_project(&project, session, song, sample_library).map(|msg| format!("{msg} (bundle)"))
+    apply_project(&project, session, song, sample_library).map(|mut report| {
+        report.summary = format!("{} (bundle)", report.summary);
+        report
+    })
 }
 
 fn apply_patch_as_single_instrument(
     patch: &Patch,
     session: &SynthSession,
-) -> Result<String, String> {
+) -> Result<ProjectApplyReport, String> {
     tear_down_all_instruments(session);
 
     let cfg = synth_engine::voice_allocator::AllocatorConfig {
@@ -734,17 +827,21 @@ fn apply_patch_as_single_instrument(
         return Err(format!("create instrument: {e}"));
     }
     let apply_result = session.apply_patch(inst_id, patch);
-    if !apply_result.errors.is_empty() {
-        eprintln!("apply_patch errors: {:?}", apply_result.errors);
-    }
-    Ok(format!("Loaded patch '{}' as instrument 1", patch.name))
+    Ok(ProjectApplyReport {
+        summary: format!("Loaded patch '{}' as instrument 1", patch.name),
+        diagnostics: apply_result.errors,
+    })
 }
 
+/// Create the instrument and apply its patch, returning everything in the patch
+/// that could not be reconstructed. A failure to *create* the instrument is an
+/// `Err` — nothing coherent follows from it — while a module or cable the patch
+/// lost is a diagnostic, because the rest of the instrument still plays.
 pub(crate) fn install_instrument(
     session: &SynthSession,
     sender: &CommandSender,
     inst_state: &InstrumentState,
-) -> Result<(), String> {
+) -> Result<Vec<ProjectApplyDiagnostic>, String> {
     let inst_id = inst_state.id;
     let cfg = synth_engine::voice_allocator::AllocatorConfig {
         max_voices: inst_state.max_voices,
@@ -764,21 +861,27 @@ pub(crate) fn install_instrument(
     }
 
     let apply_result = session.apply_patch(inst_id, &inst_state.patch);
-    for err in &apply_result.errors {
-        eprintln!(
-            "apply_patch({}, {}): {err}",
-            inst_state.name,
-            inst_id.as_u64()
-        );
-    }
+    let mut diagnostics = apply_result.errors;
 
-    let order: Vec<ModuleId> = inst_state
-        .patch
-        .settings
-        .effect_chain_order
-        .iter()
-        .filter_map(|s| s.parse::<ModuleId>().ok())
-        .collect();
+    // An entry that does not parse used to vanish from the order, which the
+    // engine reads as "not listed" — so that effect quietly moves behind every
+    // effect that did parse and the chain renders in an order the file never
+    // described. Same silent loss as the effect-chain skips above; report it.
+    let mut order: Vec<ModuleId> =
+        Vec::with_capacity(inst_state.patch.settings.effect_chain_order.len());
+    for entry in &inst_state.patch.settings.effect_chain_order {
+        match entry.parse::<ModuleId>() {
+            Ok(id) => order.push(id),
+            Err(e) => diagnostics.push(ProjectApplyDiagnostic::warning(
+                DiagnosticCode::InvalidModuleId,
+                ProjectPath::instrument_effect_chain_order(inst_id, entry),
+                format!(
+                    "id '{entry}' does not parse as a module id ({e}) — this effect keeps its \
+                     position behind every effect the order could place"
+                ),
+            )),
+        }
+    }
     if !order.is_empty() {
         let _ = sender.send_blocking(EngineCommand::SetEffectChainOrder {
             instrument_id: Some(inst_id),
@@ -797,7 +900,7 @@ pub(crate) fn install_instrument(
         enabled: true,
     });
 
-    Ok(())
+    Ok(diagnostics)
 }
 
 /// Route per-instrument settings through `session` (rather than direct engine
@@ -933,30 +1036,62 @@ fn tear_down_all_instruments(session: &SynthSession) {
 /// the id; the engine also needs the audio buffer. Mirrors
 /// `egui_backend::send_loaded_sample_data`. Also called by the offline WAV
 /// export so its samplers render audio instead of silence.
+///
+/// Returns what it could not load. A sampler whose buffer never arrives plays
+/// silence while looking perfectly configured — the id is still in the patch,
+/// the module is still in the graph — so these skips are exactly the kind that
+/// used to be impossible to notice.
 pub(crate) fn push_loaded_sample_data(
     sender: &CommandSender,
     project: &ProjectFile,
     sample_library: &SharedSampleLibrary,
-) {
+) -> Vec<ProjectApplyDiagnostic> {
+    let mut diagnostics = Vec::new();
     let Ok(lib) = sample_library.read() else {
-        return;
+        // Not one sampler but all of them: without the library nothing can be
+        // shipped, and returning an empty list here would report the load as
+        // faithful while every sampler in the project renders silence.
+        diagnostics.push(ProjectApplyDiagnostic::warning(
+            DiagnosticCode::SampleMissing,
+            ProjectPath::sample_library(),
+            "the sample library lock is poisoned, so no sampler received its \
+             audio — every sampler in this project will be silent",
+        ));
+        return diagnostics;
     };
     for inst_state in &project.instruments {
         for module in &inst_state.patch.modules {
             if module.module_type != ModuleType::Sampler {
                 continue;
             }
+            // No `sample_select` at all, or one holding something other than a
+            // sample id, means the sampler was never pointed at a sample —
+            // an empty slot, not a failure to load one.
             let sample_id = match module.parameters.get("sample_select") {
                 Some(crate::patch::ParamValue::SampleId { sample_id }) => *sample_id,
                 _ => continue,
             };
+            // Zero is the "no sample" sentinel, likewise not a failure.
             if sample_id == 0 {
                 continue;
             }
-            let Ok(mod_id) = module.id.parse::<ModuleId>() else {
-                continue;
+            let mod_id = match module.id.parse::<ModuleId>() {
+                Ok(id) => id,
+                // Not reported here: both callers run `SynthSession::apply_patch`
+                // over the same modules first, and it already emits an
+                // `InvalidModuleId` at this exact path for this exact module.
+                // A second, byte-identical diagnostic would only make the load
+                // look twice as lossy as it is.
+                Err(_) => continue,
             };
             let Some(sample) = lib.get(synth_sampler::SampleId::new(sample_id)) else {
+                diagnostics.push(ProjectApplyDiagnostic::warning(
+                    DiagnosticCode::SampleMissing,
+                    ProjectPath::instrument_module(inst_state.id, &module.id),
+                    format!(
+                        "sample {sample_id} is not in the library, so this sampler will be silent"
+                    ),
+                ));
                 continue;
             };
             sender.send(crate::audio::preview::load_sample_data_command(
@@ -966,6 +1101,7 @@ pub(crate) fn push_loaded_sample_data(
             ));
         }
     }
+    diagnostics
 }
 
 /// Collect `SampleId`s referenced by live `Sampler` modules. Live-engine
@@ -1209,6 +1345,190 @@ mod tests {
         )
     }
 
+    /// A master effect entry with `id` and `module_type` as given.
+    fn master_effect(id: &str, module_type: ModuleType) -> ProjectFile {
+        let mut project = empty_project("Master FX");
+        project.global.master_effects.push(ModuleState {
+            id: id.to_string(),
+            module_type,
+            position: Position { x: 0.0, y: 0.0 },
+            description: String::new(),
+            parameters: BTreeMap::new(),
+            scripts: BTreeMap::new(),
+        });
+        project
+    }
+
+    fn fresh_rig() -> (SynthEngine, SynthSession, SharedSong, SharedSampleLibrary) {
+        let (engine, handle) = SynthEngine::new();
+        let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
+        let song: SharedSong = Arc::new(synth_sequencer::SharedSong::new(Song::new("Master FX")));
+        let library: SharedSampleLibrary = Arc::new(std::sync::RwLock::new(
+            synth_sampler::SampleLibrary::default(),
+        ));
+        (engine, session, song, library)
+    }
+
+    /// An unparsable `effect_chain_order` entry does not stop the load, but it
+    /// drops out of the order the engine is given — so that effect renders
+    /// behind every effect the order could place, in a position the file never
+    /// described. Silent before; reported now.
+    #[test]
+    fn an_unparsable_effect_chain_order_entry_is_reported() {
+        let (_engine, session, _song, _library) = fresh_rig();
+        let sender = session.command_sender();
+
+        let mut inst_state = crate::project::default_instrument_state();
+        inst_state.id = InstrumentId::FIRST;
+        inst_state
+            .patch
+            .settings
+            .effect_chain_order
+            .push("dly-1".to_string());
+        inst_state
+            .patch
+            .settings
+            .effect_chain_order
+            .push("nope".to_string());
+
+        let diagnostics =
+            install_instrument(&session, &sender, &inst_state).expect("the instrument is created");
+
+        let diagnostic = diagnostics
+            .iter()
+            .find(|d| d.path.as_str().contains("effect_chain_order[nope]"))
+            .unwrap_or_else(|| {
+                panic!(
+                    "no diagnostic: {:?}",
+                    diagnostics
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>()
+                )
+            });
+        assert_eq!(diagnostic.code, DiagnosticCode::InvalidModuleId);
+        // The well-formed entry alongside it must not warn.
+        assert!(
+            !diagnostics
+                .iter()
+                .any(|d| d.path.as_str().contains("effect_chain_order[dly-1]")),
+            "a parsable entry must stay silent"
+        );
+    }
+
+    /// The case this whole mechanism exists for: a limiter saved with the
+    /// plausible-but-wrong id `lim-1` (the prefix is `lmt`). It used to vanish
+    /// between two `continue`s, leaving a master chain shorter than the file's
+    /// with nothing said about it.
+    #[test]
+    fn a_master_effect_with_a_wrong_id_prefix_is_reported() {
+        let (_engine, session, song, library) = fresh_rig();
+
+        let report = apply_project(
+            &master_effect("lim-1", ModuleType::Limiter),
+            &session,
+            &song,
+            &library,
+        )
+        .expect("the rest of the project still loads");
+
+        let diagnostic = report
+            .diagnostics
+            .iter()
+            .find(|d| d.path.as_str() == "global.master_effects[0]")
+            .unwrap_or_else(|| panic!("no diagnostic: {:?}", report.diagnostic_lines()));
+        assert_eq!(diagnostic.code, DiagnosticCode::InvalidModuleId);
+        // The point is naming the fix, not just the failure.
+        assert!(
+            diagnostic.message.contains("lmt"),
+            "the message must name the expected prefix: {}",
+            diagnostic.message
+        );
+    }
+
+    /// The same entry with the right prefix loads silently — otherwise the
+    /// diagnostic above would be noise on every healthy project.
+    #[test]
+    fn a_master_effect_with_the_right_id_prefix_is_silent() {
+        let (_engine, session, song, library) = fresh_rig();
+
+        let report = apply_project(
+            &master_effect("lmt-1", ModuleType::Limiter),
+            &session,
+            &song,
+            &library,
+        )
+        .expect("load");
+
+        assert!(
+            report.is_clean(),
+            "a well-formed master effect must not warn: {:?}",
+            report.diagnostic_lines()
+        );
+    }
+
+    /// An id that parses but names a *different* module is reported **without**
+    /// dropping the effect.
+    ///
+    /// The entry loads correctly today: the instance is built from the saved
+    /// `type` and the chain stores it under the id as an opaque key, so the
+    /// prefix is never read back. Skipping it to punish the inconsistent name
+    /// would shorten the chain — the exact silent loss this mechanism exists to
+    /// prevent — so the diagnostic rides alongside a successful install.
+    #[test]
+    fn a_master_effect_whose_id_names_another_module_loads_and_is_reported() {
+        let path = ProjectPath::master_effect(0);
+        let entry = ModuleState {
+            id: "flt-1".to_string(),
+            module_type: ModuleType::Limiter,
+            position: Position { x: 0.0, y: 0.0 },
+            description: String::new(),
+            parameters: BTreeMap::new(),
+            scripts: BTreeMap::new(),
+        };
+
+        let resolved = resolve_effect_entry(&entry, &path)
+            .unwrap_or_else(|d| panic!("the effect must still resolve, not be dropped: {d}"));
+        assert_eq!(
+            resolved.module_id.to_string(),
+            "flt-1",
+            "the saved id is kept as the chain key",
+        );
+
+        let note = resolved.note.expect("the mismatch must be reported");
+        assert_eq!(note.code, DiagnosticCode::InvalidModuleId);
+        assert!(
+            note.message.contains("Filter") && note.message.contains("Limiter"),
+            "the message must name both types: {}",
+            note.message
+        );
+    }
+
+    /// …and the note reaches the report, rather than being noticed only inside
+    /// the resolver.
+    #[test]
+    fn a_mismatched_effect_id_reaches_the_load_report() {
+        let (_engine, session, song, library) = fresh_rig();
+
+        let report = apply_project(
+            &master_effect("flt-1", ModuleType::Limiter),
+            &session,
+            &song,
+            &library,
+        )
+        .expect("load");
+
+        assert!(
+            report
+                .diagnostics
+                .iter()
+                .any(|d| d.code == DiagnosticCode::InvalidModuleId
+                    && d.path.as_str() == "global.master_effects[0]"),
+            "{:?}",
+            report.diagnostic_lines()
+        );
+    }
+
     /// A load that overflows the engine's command ring must fail.
     ///
     /// The drain barrier cannot catch this on its own: a dropped command never
@@ -1260,9 +1580,18 @@ mod tests {
             synth_sampler::SampleLibrary::default(),
         ));
 
-        let summary = apply_project(&empty_project("Roomy"), &session, &song, &sample_library)
+        let report = apply_project(&empty_project("Roomy"), &session, &song, &sample_library)
             .expect("a load that fits must succeed");
-        assert!(summary.starts_with("Loaded project"), "{summary}");
+        assert!(
+            report.summary.starts_with("Loaded project"),
+            "{}",
+            report.summary
+        );
+        assert!(
+            report.is_clean(),
+            "an empty project loses nothing: {:?}",
+            report.diagnostic_lines()
+        );
         assert_eq!(session.dropped_commands(), 0);
     }
 

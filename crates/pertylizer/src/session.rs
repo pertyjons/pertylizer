@@ -17,6 +17,9 @@ use synth_engine::{CommandSender, EngineCommand, ModuleId};
 
 use crate::module_factory;
 use crate::patch::{ParamValue, Patch};
+use crate::project_diagnostics::{
+    DiagnosticCode, ProjectApplyDiagnostic, ProjectPath, invalid_module_id_message,
+};
 
 /// Error type for session operations.
 #[derive(Debug, thiserror::Error)]
@@ -1113,7 +1116,11 @@ impl SynthSession {
 
         // Clear existing modules
         if let Err(e) = self.clear_graph(instrument_id) {
-            result.errors.push(format!("clear_graph failed: {e}"));
+            result.errors.push(ProjectApplyDiagnostic::warning(
+                DiagnosticCode::GraphResetFailed,
+                ProjectPath::instrument(instrument_id),
+                format!("could not clear the existing graph: {e}"),
+            ));
             return result;
         }
 
@@ -1135,10 +1142,12 @@ impl SynthSession {
 
             let module_id: ModuleId = match module_state.id.parse() {
                 Ok(id) => id,
-                Err(_) => {
-                    result
-                        .errors
-                        .push(format!("invalid module ID: {}", module_state.id));
+                Err(e) => {
+                    result.errors.push(ProjectApplyDiagnostic::warning(
+                        DiagnosticCode::InvalidModuleId,
+                        ProjectPath::instrument_module(instrument_id, &module_state.id),
+                        invalid_module_id_message(&module_state.id, module_type, &e),
+                    ));
                     result.module_ids.push(None);
                     continue;
                 }
@@ -1161,9 +1170,15 @@ impl SynthSession {
                             if let Err(e) =
                                 self.set_parameter(instrument_id, module_id, param_name, value)
                             {
-                                result
-                                    .errors
-                                    .push(format!("{} param '{}': {e}", module_id, param_name));
+                                result.errors.push(ProjectApplyDiagnostic::warning(
+                                    DiagnosticCode::ParameterRejected,
+                                    ProjectPath::instrument_module_param(
+                                        instrument_id,
+                                        module_id,
+                                        param_name,
+                                    ),
+                                    e.to_string(),
+                                ));
                             }
                         }
                     }
@@ -1180,7 +1195,15 @@ impl SynthSession {
                         let slot = match parse_mod_slot_key(slot_key) {
                             Ok(slot) => slot,
                             Err(msg) => {
-                                result.errors.push(format!("{module_id} script: {msg}"));
+                                result.errors.push(ProjectApplyDiagnostic::warning(
+                                    DiagnosticCode::ScriptRejected,
+                                    ProjectPath::instrument_module_script(
+                                        instrument_id,
+                                        module_id,
+                                        slot_key,
+                                    ),
+                                    msg,
+                                ));
                                 continue;
                             }
                         };
@@ -1193,17 +1216,28 @@ impl SynthSession {
                             ModuleType::Script | ModuleType::AudioScript
                         ) && slot != 0
                         {
-                            result.errors.push(format!(
-                                "{module_id} slot {slot_key} script dropped: this module has \
-                                 one program (slot 1 only)"
+                            result.errors.push(ProjectApplyDiagnostic::warning(
+                                DiagnosticCode::ScriptRejected,
+                                ProjectPath::instrument_module_script(
+                                    instrument_id,
+                                    module_id,
+                                    slot_key,
+                                ),
+                                "dropped: this module has one program (slot 1 only)",
                             ));
                             continue;
                         }
                         if let Err(e) = self.set_mod_script(instrument_id, module_id, slot, source)
                         {
-                            result
-                                .errors
-                                .push(format!("{module_id} slot {slot_key} script: {e}"));
+                            result.errors.push(ProjectApplyDiagnostic::warning(
+                                DiagnosticCode::ScriptRejected,
+                                ProjectPath::instrument_module_script(
+                                    instrument_id,
+                                    module_id,
+                                    slot_key,
+                                ),
+                                e.to_string(),
+                            ));
                         }
                     }
 
@@ -1215,9 +1249,15 @@ impl SynthSession {
                             if let Err(e) =
                                 self.set_parameter(instrument_id, module_id, param_name, value)
                             {
-                                result
-                                    .errors
-                                    .push(format!("{} knob '{}': {e}", module_id, param_name));
+                                result.errors.push(ProjectApplyDiagnostic::warning(
+                                    DiagnosticCode::ParameterRejected,
+                                    ProjectPath::instrument_module_param(
+                                        instrument_id,
+                                        module_id,
+                                        param_name,
+                                    ),
+                                    format!("script knob rejected: {e}"),
+                                ));
                             }
                         }
                     }
@@ -1231,13 +1271,19 @@ impl SynthSession {
                             Some(&module_state.description),
                         )
                     {
-                        result.errors.push(format!("{module_id} description: {e}"));
+                        result.errors.push(ProjectApplyDiagnostic::warning(
+                            DiagnosticCode::DescriptionRejected,
+                            ProjectPath::instrument_module(instrument_id, &module_state.id),
+                            format!("description rejected: {e}"),
+                        ));
                     }
                 }
                 Err(e) => {
-                    result
-                        .errors
-                        .push(format!("add module {}: {e}", module_state.id));
+                    result.errors.push(ProjectApplyDiagnostic::warning(
+                        DiagnosticCode::ModuleAddFailed,
+                        ProjectPath::instrument_module(instrument_id, &module_state.id),
+                        format!("could not add the module: {e}"),
+                    ));
                     result.module_ids.push(None);
                 }
             }
@@ -1246,21 +1292,34 @@ impl SynthSession {
         // Add connections (source port migrated for legacy stereo-out names —
         // see `migrate_stereo_out_port`).
         for conn in &patch.connections {
+            let connection_path = || {
+                ProjectPath::instrument_connection(
+                    instrument_id,
+                    &conn.from.0,
+                    &conn.from.1,
+                    &conn.to.0,
+                    &conn.to.1,
+                )
+            };
             let from_id: ModuleId = match conn.from.0.parse() {
                 Ok(id) => id,
-                Err(_) => {
-                    result
-                        .errors
-                        .push(format!("invalid from module: {}", conn.from.0));
+                Err(e) => {
+                    result.errors.push(ProjectApplyDiagnostic::warning(
+                        DiagnosticCode::InvalidModuleId,
+                        connection_path(),
+                        format!("source id '{}' does not parse: {e}", conn.from.0),
+                    ));
                     continue;
                 }
             };
             let to_id: ModuleId = match conn.to.0.parse() {
                 Ok(id) => id,
-                Err(_) => {
-                    result
-                        .errors
-                        .push(format!("invalid to module: {}", conn.to.0));
+                Err(e) => {
+                    result.errors.push(ProjectApplyDiagnostic::warning(
+                        DiagnosticCode::InvalidModuleId,
+                        connection_path(),
+                        format!("destination id '{}' does not parse: {e}", conn.to.0),
+                    ));
                     continue;
                 }
             };
@@ -1273,9 +1332,10 @@ impl SynthSession {
                 conn.to.1.clone(),
             ) {
                 Ok(()) => result.connection_count += 1,
-                Err(e) => result.errors.push(format!(
-                    "connect {}:{} → {}:{}: {e}",
-                    conn.from.0, conn.from.1, conn.to.0, conn.to.1
+                Err(e) => result.errors.push(ProjectApplyDiagnostic::warning(
+                    DiagnosticCode::ConnectionFailed,
+                    connection_path(),
+                    format!("could not connect: {e}"),
                 )),
             }
         }
@@ -1374,8 +1434,22 @@ pub struct ApplyPatchResult {
     /// Module IDs in the same order as the patch's module array.
     /// `None` for skipped modules (visualizers, invalid IDs).
     pub module_ids: Vec<Option<String>>,
-    /// Non-fatal errors encountered during loading.
-    pub errors: Vec<String>,
+    /// Everything in the patch that could not be reconstructed. Non-fatal: the
+    /// rest of the instrument is built, and the caller decides whether a
+    /// partial instrument is acceptable.
+    ///
+    /// Typed rather than pre-formatted strings so a caller can filter by
+    /// [`DiagnosticCode`] — the render receipt and the MCP response render
+    /// them differently, and neither should be parsing prose to do it.
+    pub errors: Vec<ProjectApplyDiagnostic>,
+}
+
+impl ApplyPatchResult {
+    /// The diagnostics as one line each, for a log or a string-typed result.
+    #[must_use]
+    pub fn error_lines(&self) -> Vec<String> {
+        self.errors.iter().map(ToString::to_string).collect()
+    }
 }
 
 /// Migrate a connection's source port name when loading a patch.
@@ -1491,15 +1565,20 @@ mod tests {
             result
                 .errors
                 .iter()
-                .any(|e| e.contains("slot 2") && e.contains("dropped")),
+                .any(|d| d.code == DiagnosticCode::ScriptRejected
+                    && d.path.as_str().contains("scripts[2]")
+                    && d.message.contains("one program")),
             "legacy slot 2 must be dropped with a note: {:?}",
-            result.errors
+            result.error_lines()
         );
         // Only the slot-2 drop note — slot 1 installs without an error of its own.
         assert!(
-            !result.errors.iter().any(|e| e.contains("slot 1 script:")),
+            !result
+                .errors
+                .iter()
+                .any(|d| d.path.as_str().contains("scripts[1]")),
             "slot 1 must install cleanly: {:?}",
-            result.errors
+            result.error_lines()
         );
 
         let mut patch = Patch::new("Legacy audio");
@@ -1512,9 +1591,11 @@ mod tests {
             result
                 .errors
                 .iter()
-                .any(|e| e.contains("asc-1") && e.contains("slot 2") && e.contains("dropped")),
+                .any(|d| d.code == DiagnosticCode::ScriptRejected
+                    && d.path.as_str().contains("asc-1")
+                    && d.path.as_str().contains("scripts[2]")),
             "legacy AudioScript slot 2 must be dropped with a note: {:?}",
-            result.errors
+            result.error_lines()
         );
     }
 

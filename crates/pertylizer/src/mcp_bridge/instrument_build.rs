@@ -359,7 +359,7 @@ impl synth_mcp::bridge::InstrumentBuildBridge for AppSynthBridge {
             patch_name: patch.name,
             module_count: result.module_count,
             connection_count: result.connection_count,
-            errors: result.errors,
+            errors: result.error_lines(),
         })
     }
 }

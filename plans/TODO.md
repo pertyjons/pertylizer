@@ -270,6 +270,43 @@ a click-through.
 
 ## 1. Sequencer & Arrangement
 
+### 1.1 Automation carriers and overlapping placements
+
+- [ ] **Review and improve how automation-only pattern carriers coexist with
+  musical placements on the same track. High priority.** A real exported project
+  (`Nemesis_the_Warlock.ptz` from `sid-analyzer --format synth-native`) contains
+  one song-length automation-only pattern per instrument track, overlapping the
+  sequential musical pattern placements. Playback is currently correct: the
+  arrangement engine evaluates every active placement, automation still runs on
+  a muted host track, and explicit `Module` targets can address several
+  instruments from one carrier. The arrangement UI nevertheless makes these
+  carriers look like empty or conflicting musical clips, and overlapping lanes
+  that address the same target have no clearly surfaced conflict policy.
+
+  Investigate and decide, in order:
+
+  1. **Recommended persistence model** — keep lanes pattern-owned, add true
+     track/song-owned automation, or formally recommend one consolidated or
+     dedicated automation carrier. Confirm that one carrier targeting multiple
+     instruments survives save/load and produces live/offline-render parity.
+  2. **Arrangement presentation** — distinguish automation-only placements from
+     note clips, prevent a song-length carrier from visually obscuring the
+     musical arrangement, and keep its lanes discoverable and editable.
+  3. **Overlap semantics** — define and surface what happens when two active
+     placements automate the same target at the same tick (deterministic
+     precedence, merge rule, validation error, or load/render warning).
+  4. **Producer guidance** — document the preferred project shape for external
+     exporters and expose enough schema/MCP diagnostics to detect redundant or
+     conflicting carriers.
+  5. **Regression coverage** — pin automation-only plus musical overlap,
+     automation on muted hosts, cross-instrument module targets from one
+     carrier, conflict handling, save/load, and headless rendering.
+
+  The goal is not to forbid placement overlap: overlapping note clips are a
+  useful layering feature. The goal is to make automation layering intentional,
+  legible, and deterministic without forcing exporters to manufacture dozens of
+  apparently empty clips. **High priority; M, sequencer UX/data-model review.**
+
 ### 1.3 Automation targets for send/return routing
 
 - [ ] **Expose track send levels and return-bus volume/mute as automatable
@@ -696,7 +733,34 @@ domain.
 
 ## 7. Load & apply diagnostics
 
-- [ ] **A load that silently drops project objects reports success.** A master
+**Done.** `apply_project` returns a `ProjectApplyReport` — the summary it always
+returned, plus a typed `ProjectApplyDiagnostic` for everything it could not
+reconstruct. The eight silent `continue`s report, `ApplyPatchResult::errors`
+carries the same type instead of prose bound for stderr, and all three entry
+points surface it: the render receipt takes them as warnings *before* the
+render, the GUI logs one Activity-panel event each, and `load_project` appends
+them to its reply. A clean load reads exactly as it did before.
+
+Two follow-ups the work turned up:
+
+- [ ] **A module id that names a different type than the entry claims is still
+  silent inside an instrument patch.** The effect chains now report it
+  (`resolve_effect_entry`) while still installing the effect — the declared
+  type builds the instance and the id is only an opaque chain key, so the entry
+  works and merely lies about itself. `create_and_send` behaves the same way
+  inside a patch but says nothing. The fix is to emit the same note there; the
+  reason it was not done here is that a patch module's id *is* read back by
+  prefix in places (address parsing, the editor's descriptor lookup), so the
+  consequences need checking before deciding whether a note is enough. **S.**
+- [ ] **The GUI only shows diagnostics in the Activity panel.** A user who never
+  opens the panel loads a partial project with no indication. A count in the
+  status line, or a one-line banner that opens the panel, would close it.
+  Deliberately not done blind — it is a design call about how loud a
+  recoverable load failure should be. **S.**
+
+Original entry, kept for the diagnosis:
+
+- [x] **A load that silently drops project objects reports success.** A master
   effect saved with the schema-valid type `limiter` but the module id `lim-1`
   (the canonical prefix is `lmt`) is discarded without a word: the project
   loads, the GUI says nothing, and a `pertylizer render` receipt carries an

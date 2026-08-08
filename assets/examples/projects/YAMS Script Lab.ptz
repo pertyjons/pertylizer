@@ -17,7 +17,7 @@
       "transpose": 0.0,
       "oversampling": 1,
       "category": 0,
-      "description": "Pedagogical demo of the Script (scr) module + YAMS. The voice (pulse osc → acid LP filter → amp/env → out) has NO LFO — every bit of movement comes from two Script modules. scr-1 'Rhythm Brain' is global/tempo-synced (arr lookup tables driven by `beat`, polyrhythm, `playing` mute) — press PLAY to hear it. scr-2 'Voice Motion' is per-voice/expressive (vibrato that fades in with note age + mod wheel, per-note random rate, velocity→resonance) — audible on any single note. Read the slot scripts via get_module_info(scr-1/scr-2).",
+      "description": "Pedagogical demo of the Script (scr) module + YAMS. The voice (pulse osc → acid LP filter → amp/env → out) has NO LFO — every bit of movement comes from two Script modules. scr-1 'Rhythm Brain' is global/tempo-synced (arr lookup tables driven by `beat`, polyrhythm, `playing` mute) — press PLAY to hear it. scr-2 'Voice Motion' is per-voice/expressive (vibrato that fades in with note age + mod wheel, per-note random rate, velocity→resonance) — audible on any single note. Read the programs via get_module_info(scr-1/scr-2).",
       "allocation_mode": "Polyphonic",
       "stealing_strategy": "Oldest",
       "unison_detune": 10.0,
@@ -36,7 +36,7 @@
               "x": 0.0,
               "y": 0.0
             },
-            "description": "Pulse oscillator, the sole tone source. Pulse waveform is chosen so the pulse-width (pwm) CV input matters: scr-1 slot 2 sequences the width for a moving, hollow timbre. The fm input (exponential) receives scr-2 slot 1's vibrato. Frequency tracks the played note automatically.",
+            "description": "Pulse oscillator, the sole tone source. Pulse waveform is chosen so the pulse-width (pwm) CV input matters: scr-1's out2 sequences the width for a moving, hollow timbre. The fm input (exponential) receives scr-2's out1 vibrato. Frequency tracks the played note automatically.",
             "parameters": {
               "anti_alias": "polyblep",
               "detune": 0.0,
@@ -60,7 +60,7 @@
               "x": 0.0,
               "y": 0.0
             },
-            "description": "Acid-model lowpass (TB-303-style ladder voicing) — the heart of the sound. cutoff_cv is driven by scr-1 slot 1's 8-step sequence (Env Amt 0.5 gives ~2-octave range); res_cv is driven by scr-2 slot 2 (velocity + random drift). Base cutoff sits low (350 Hz) so the script does the talking.",
+            "description": "Acid-model lowpass (TB-303-style ladder voicing) — the heart of the sound. cutoff_cv is driven by scr-1's out1 8-step sequence (Env Amt 0.5 gives ~2-octave range); res_cv is driven by scr-2's out2 (velocity + random drift). Base cutoff sits low (350 Hz) so the script does the talking.",
             "parameters": {
               "cutoff": 350.0,
               "cv_amt": 1.0,
@@ -80,7 +80,7 @@
               "x": 0.0,
               "y": 0.0
             },
-            "description": "ADSR amplitude envelope → amp-1 cv. Also read back by scr-2 slot 1 via `src eg = env-1.out`, so the scripted vibrato tapers with the note's amplitude. Plucky acid settings: fast attack, 0.25 s decay, 0.65 sustain, 0.35 s release.",
+            "description": "ADSR amplitude envelope → amp-1 cv. Also read back by scr-2 via `src eg = env-1.out`, so the scripted vibrato tapers with the note's amplitude. Plucky acid settings: fast attack, 0.25 s decay, 0.65 sustain, 0.35 s release.",
             "parameters": {
               "atk_curve": 0.0,
               "attack": 0.005,
@@ -132,8 +132,7 @@
             "description": "Rhythm Brain (tempo-synced). out1 → filter cutoff (8-step glided sequence), out2 → osc pulse-width (5-step). Coprime lengths 8 vs 5 = 40-beat polyrhythm. Both gated by `playing`, so silent until the transport runs. Demonstrates arr tables, beat/modulo, lag, playing.",
             "parameters": {},
             "scripts": {
-              "1": "# Slot 1 → flt.cutoff_cv\n# An 8-step filter-cutoff sequencer. `beat` is the transport position, so the\n# pattern advances one step per beat; `% len(cut)` wraps it every 8 beats.\n# `lag` glides between steps (35 ms) so the filter sings instead of clicking.\n# `* playing` mutes the sequence whenever the transport is stopped.\narr cut = [0.25, 0.55, 0.4, 0.95, 0.35, 0.7, 0.5, 0.85]\n\nlet step = cut[floor(beat) % len(cut)]\nout = lag(step, 35ms) * playing",
-              "2": "# Slot 2 → osc.pwm\n# A 5-step pulse-width sequence (bipolar, around the 0.5 base width). Length 5\n# against slot 1's length 8 is coprime, so the combined groove only repeats\n# every 40 beats — instant polyrhythm from two const tables, zero extra modules.\narr pw = [0, 0.6, -0.4, 0.3, -0.2]\n\nout = pw[floor(beat) % len(pw)] * 0.4 * playing"
+              "1": "# out1 -> flt.cutoff_cv, out2 -> osc.pwm\n# One program drives both sequences. `beat` is the transport position, so each\n# table advances one step per beat; `% len(...)` wraps it. `lag` glides between\n# cutoff steps (35 ms) so the filter sings instead of clicking, and `* playing`\n# mutes both whenever the transport is stopped.\n# Lengths 8 and 5 are coprime, so the combined groove only repeats every 40\n# beats - polyrhythm from two const tables, zero extra modules.\narr cut = [0.25, 0.55, 0.4, 0.95, 0.35, 0.7, 0.5, 0.85]\narr pw = [0, 0.6, -0.4, 0.3, -0.2]\n\nlet step = cut[floor(beat) % len(cut)]\nout1 = lag(step, 35ms) * playing\nout2 = pw[floor(beat) % len(pw)] * 0.4 * playing"
             }
           },
           {
@@ -146,8 +145,7 @@
             "description": "Voice Motion (per-voice, expressive). out1 → osc FM (vibrato: src-bound to env-1, fades in with age, depth from mod wheel, random rate per note). out2 → filter resonance (velocity base + rand_smooth drift, decorrelated per voice). Demonstrates src bindings, macros (velocity/mod_wheel/age), phasor, rand/rand_smooth, eager evaluation.",
             "parameters": {},
             "scripts": {
-              "1": "# Slot 1 → osc.fm  (expressive pitch vibrato)\n# `src` binds another module's output to a clean name — here the amp envelope,\n# so the vibrato tapers away as the note releases. The vibrato eases in over\n# ~1 s (smoothstep on `age`), its depth follows the mod wheel, and each note\n# picks its own random speed (rand() is latched per note-on) so no two notes\n# wobble identically. Remember: YAMS is eager — phasor() keeps ticking every\n# block regardless of the envelope value, so the LFO never stalls or jumps.\nsrc eg = env-1.out\n\nlet fade = smoothstep(0.2, 1.2, age)\nlet depth = lerp(0.04, 0.14, mod_wheel)\nlet rate = lerp(4.5, 6.5, rand())\nlet vib = sin(phasor(rate) * tau)\nout = vib * depth * fade * eg",
-              "2": "# Slot 2 → flt.res_cv  (per-note timbre)\n# Harder hits get more resonance (velocity), plus a slow random shimmer.\n# rand_smooth re-seeds per voice from the voice index, so simultaneous notes in\n# a chord drift independently — built-in movement/width with no LFO module.\nlet base = lerp(0.1, 0.6, velocity)\nlet drift = bipolar(rand_smooth(0.4)) * 0.15\nout = clamp(base + drift, 0, 1)"
+              "1": "# out1 -> osc.fm (pitch vibrato), out2 -> flt.res_cv (per-note timbre)\n# `src` binds another module's output to a clean name - here the amp envelope,\n# so the vibrato tapers away as the note releases. The vibrato eases in over\n# ~1 s (smoothstep on `age`), its depth follows the mod wheel, and each note\n# picks its own random speed (rand() is latched per note-on) so no two notes\n# wobble identically. Remember: YAMS is eager - phasor() keeps ticking every\n# block regardless of the envelope value, so the LFO never stalls or jumps.\n# Resonance rides velocity plus a slow random shimmer; rand_smooth re-seeds per\n# voice, so simultaneous notes in a chord drift independently.\nsrc eg = env-1.out\n\nlet fade = smoothstep(0.2, 1.2, age)\nlet depth = lerp(0.04, 0.14, mod_wheel)\nlet rate = lerp(4.5, 6.5, rand())\nlet vib = sin(phasor(rate) * tau)\nlet base = lerp(0.1, 0.6, velocity)\nlet drift = bipolar(rand_smooth(0.4)) * 0.15\nout1 = vib * depth * fade * eg\nout2 = clamp(base + drift, 0, 1)"
             }
           }
         ],
@@ -246,7 +244,7 @@
   "song": {
     "name": "YAMS Script Lab",
     "author": "Pertylizer Examples",
-    "description": "A teaching example for the Script (scr) module and the YAMS control-script language. One acid voice with NO LFO module: all movement comes from two Script modules. scr-1 'Rhythm Brain' is tempo-synced/global (arr lookup tables indexed by `beat` → an 8-step filter sequence and a 5-step pulse-width sequence; coprime lengths = polyrhythm; gated by `playing`). scr-2 'Voice Motion' is per-voice/expressive (envelope-tapered vibrato that fades in with note age + mod wheel, random rate per note, velocity→resonance with rand_smooth drift). Press play to hear scr-1; preview a single note to hear scr-2. Open the scr modules' ƒx editors to read the scripts; get_yams_reference documents the language.\"",
+    "description": "A teaching example for the Script (scr) module and the YAMS control-script language. One acid voice with NO LFO module: all movement comes from two Script modules. scr-1 'Rhythm Brain' is tempo-synced/global (arr lookup tables indexed by `beat` → an 8-step filter sequence and a 5-step pulse-width sequence; coprime lengths = polyrhythm; gated by `playing`). scr-2 'Voice Motion' is per-voice/expressive (envelope-tapered vibrato that fades in with note age + mod wheel, random rate per note, velocity→resonance with rand_smooth drift). Press play to hear scr-1; preview a single note to hear scr-2. Open the scr modules' ƒx editors to read the scripts; get_yams_reference documents the language.",
     "patterns": [
       {
         "id": 0,

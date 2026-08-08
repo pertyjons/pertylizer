@@ -36,15 +36,15 @@ pub struct RenderReceipt {
     /// Which tracks were audible, and why.
     pub mix: MixInfo,
     /// What the project loader reported — instrument counts, and whatever else
-    /// it summarises about the file it just applied.
+    /// it summarises about the file it just applied, with a count of anything
+    /// it could not reconstruct appended.
     ///
-    /// Recorded separately from `warnings` because the loader returns one
-    /// summary line rather than a list, and because per-instrument load
-    /// failures currently only reach stderr: this field is the closest the
-    /// receipt gets to "what the load actually did".
+    /// A one-line human summary. Each thing the load lost is also listed
+    /// individually at the head of `warnings`, which is the field to read
+    /// programmatically.
     pub load_summary: String,
-    /// Everything non-fatal the mix resolution and the render had to say.
-    /// Empty when both were clean.
+    /// Everything non-fatal the load, the mix resolution and the render had to
+    /// say. Empty when all three were clean.
     pub warnings: Vec<String>,
     /// The invocation, argument by argument.
     ///

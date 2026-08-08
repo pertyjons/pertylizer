@@ -38,6 +38,7 @@ pub mod patch;
 pub mod patches;
 pub mod project;
 pub mod project_apply;
+pub mod project_diagnostics;
 pub mod recovery;
 pub mod render;
 pub mod session;

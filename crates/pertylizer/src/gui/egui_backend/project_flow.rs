@@ -764,13 +764,16 @@ impl SynthApp {
         // generation is unrelated to the previous song's, so don't trust the
         // cached value to differ.
         self.mod_grid_version.invalidate();
-        if let Err(e) = crate::project_apply::apply_project(
+        match crate::project_apply::apply_project(
             project,
             &self.session,
             &self.song,
             &self.sample_library,
         ) {
-            tracing::warn!(target: "pertylizer::project", error = %e, "apply_project failed during GUI load");
+            Ok(report) => log_load_diagnostics(&report),
+            Err(e) => {
+                tracing::warn!(target: "pertylizer::project", error = %e, "apply_project failed during GUI load");
+            }
         }
         self.refresh_ui_from_project(project);
         let project_name = {
@@ -792,12 +795,15 @@ impl SynthApp {
     /// Reset to a new empty project, clearing all instruments and song data.
     pub(super) fn reset_to_new_project(&mut self) {
         self.undo_manager.clear();
-        if let Err(e) = crate::project_apply::reset_to_new_project(
+        match crate::project_apply::reset_to_new_project(
             &self.session,
             &self.song,
             &self.sample_library,
         ) {
-            tracing::warn!(target: "pertylizer::project", error = %e, "reset_to_new_project failed");
+            Ok(report) => log_load_diagnostics(&report),
+            Err(e) => {
+                tracing::warn!(target: "pertylizer::project", error = %e, "reset_to_new_project failed");
+            }
         }
         tracing::info!(target: "pertylizer::project", "new project");
         self.sample_view_state.invalidate_peaks();
@@ -1024,5 +1030,25 @@ impl SynthApp {
             .clone()
             .or_else(|| self.settings.directories.projects_dir.clone())
             .or_else(|| project::default_projects_dir().ok())
+    }
+}
+
+/// Put everything a load could not reconstruct in front of the user.
+///
+/// The Activity panel is fed by a `tracing` layer, so a warn-level event with
+/// the project target is the GUI's existing route for "this happened and you
+/// should know". One event per diagnostic rather than one joined line, so the
+/// panel can be scrolled, filtered and read a row at a time.
+///
+/// Silent on a clean load — a healthy project must not produce log noise, or
+/// the entries that matter stop being noticed.
+fn log_load_diagnostics(report: &crate::project_diagnostics::ProjectApplyReport) {
+    for diagnostic in &report.diagnostics {
+        tracing::warn!(
+            target: "pertylizer::project",
+            code = %diagnostic.code,
+            path = %diagnostic.path,
+            "{}", diagnostic.message,
+        );
     }
 }

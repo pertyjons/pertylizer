@@ -847,7 +847,7 @@ impl AppSynthBridge {
                 }
             };
 
-        crate::project_apply::apply_project(
+        let mut report = crate::project_apply::apply_project(
             &project,
             &self.session,
             &self.shared.song,
@@ -855,7 +855,13 @@ impl AppSynthBridge {
         )
         .map_err(McpBridgeError::Other)?;
 
-        Ok((format!("Loaded {}", path.display()), project))
+        // A caller that gets "Loaded <path>" back and nothing else has no way
+        // to learn the file held an effect this build skipped. This path names
+        // the file rather than the loader's instrument counts, so swap the
+        // summary and let the report append what it lost — one formatting rule
+        // for every caller. Reads exactly as before when the load was faithful.
+        report.summary = format!("Loaded {}", path.display());
+        Ok((report.summary_with_diagnostics(), project))
     }
 
     /// Save the current shared state as a project file (bundle if the
@@ -918,6 +924,7 @@ impl AppSynthBridge {
             &self.shared.song,
             &self.sample_library,
         )
+        .map(|report| report.summary_with_diagnostics())
         .map_err(McpBridgeError::Other);
 
         if result.is_ok() {

@@ -20,7 +20,7 @@
       "transpose_semitones": 0.0,
       "oversampling": 1,
       "category": 0,
-      "description_len": 543,
+      "description_len": 539,
       "color_present": false,
       "allocation_mode": "Polyphonic",
       "unison_detune_cents": 10.0,

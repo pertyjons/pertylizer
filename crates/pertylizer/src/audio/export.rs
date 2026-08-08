@@ -285,7 +285,7 @@ fn build_loaded_export_engine_with_capacity(
     // 4. Load all instruments (voice graphs + per-instrument effect chains),
     // draining the command ring after each so a large multi-instrument project
     // (the SetSong command included) cannot overflow it.
-    let warnings = load_project_into_engine(
+    let mut warnings = load_project_into_engine(
         project,
         &session,
         &mut handle,
@@ -316,13 +316,21 @@ fn build_loaded_export_engine_with_capacity(
     // live app uses. `send_blocking` because this engine is not draining on its
     // own between commands — without a running audio thread, non-blocking sends
     // would drop under backpressure.
+    //
+    // Anything the chain could not rebuild joins the export's warnings: a WAV
+    // rendered through a shorter chain than the project's is exactly the silent
+    // difference the caller has no other way to notice.
     let sender = handle.command_sender();
-    crate::project_apply::apply_global_mix_chain(project, |c| sender.send_blocking(c).is_ok());
+    let mix_chain_diagnostics =
+        crate::project_apply::apply_global_mix_chain(project, |c| sender.send_blocking(c).is_ok());
+    warnings.extend(mix_chain_diagnostics.iter().map(ToString::to_string));
 
     // 8. Sampler audio buffers — referenced by id in the patch, but the data
     // lives in the shared library, not the `ProjectFile`. Without this, samplers
-    // export as silence.
-    crate::project_apply::push_loaded_sample_data(&sender, project, sample_library);
+    // export as silence — so a buffer that never arrives is a warning too.
+    let sample_diagnostics =
+        crate::project_apply::push_loaded_sample_data(&sender, project, sample_library);
+    warnings.extend(sample_diagnostics.iter().map(ToString::to_string));
 
     // 9. Drain the mix-chain + sample-data commands before the caller plays.
     crate::audio::drain_command_queue(&mut engine, &mut buffer, &drain_ctx);
@@ -436,10 +444,15 @@ fn load_project_into_engine(
     let sender = handle.command_sender();
 
     for inst_state in &project.instruments {
-        if let Err(e) = crate::project_apply::install_instrument(session, &sender, inst_state) {
-            let msg = format!("Failed to load instrument '{}': {e}", inst_state.name);
-            eprintln!("Warning: {msg}");
-            warnings.push(msg);
+        match crate::project_apply::install_instrument(session, &sender, inst_state) {
+            // A module or cable the patch lost still renders — quieter, or
+            // routed differently — so it belongs in the receipt, not nowhere.
+            Ok(diagnostics) => warnings.extend(diagnostics.iter().map(ToString::to_string)),
+            Err(e) => {
+                let msg = format!("Failed to load instrument '{}': {e}", inst_state.name);
+                eprintln!("Warning: {msg}");
+                warnings.push(msg);
+            }
         }
         crate::audio::drain_command_queue(engine, drain_buf, drain_ctx);
     }

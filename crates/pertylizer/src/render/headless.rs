@@ -36,6 +36,7 @@ use synth_sequencer::{SharedSong, Song};
 
 use super::RenderError;
 use crate::audio::preview::SharedSampleLibrary;
+use crate::project_diagnostics::ProjectApplyReport;
 use crate::session::SynthSession;
 
 /// Block size the load-drain loop runs at. Only the drain rate depends on it;
@@ -76,8 +77,10 @@ pub struct LoadedProject {
     pub song: Arc<SharedSong>,
     /// Samples the project's instruments reference.
     pub sample_library: SharedSampleLibrary,
-    /// The loader's own summary line (instrument counts, skipped modules, …).
-    pub summary: String,
+    /// What the loader made of the file: its summary line, plus everything in
+    /// the project it could not reconstruct. The receipt reports both — a
+    /// render over a project that lost an effect must not look clean.
+    pub report: ProjectApplyReport,
 }
 
 /// The callback context the drain loop pretends to be called with.
@@ -164,7 +167,7 @@ pub fn load_project_file(path: &Path) -> Result<LoadedProject, RenderError> {
         }
     }
 
-    let summary = loader
+    let report = loader
         .join()
         .map_err(|_| RenderError::ProjectLoad {
             path: path.to_path_buf(),
@@ -186,7 +189,7 @@ pub fn load_project_file(path: &Path) -> Result<LoadedProject, RenderError> {
         session,
         song,
         sample_library,
-        summary,
+        report,
     })
 }
 

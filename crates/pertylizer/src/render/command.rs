@@ -217,6 +217,11 @@ pub fn run_render_command(command: &RenderCommand) -> Result<RenderReceipt, Rend
     let project = super::headless::load_project_file(&command.input)?;
     let mut warnings = Vec::new();
 
+    // First, and before the render: an object the load could not reconstruct
+    // changes what the WAV contains. A receipt whose only warnings came from
+    // the mix and the render would be describing a file it had mis-measured.
+    warnings.extend(project.report.diagnostic_lines());
+
     let applied = {
         let mut song = project.song.write();
         super::mix::apply_mix_selection(&mut song, &command.mix)?
@@ -296,7 +301,7 @@ pub fn run_render_command(command: &RenderCommand) -> Result<RenderReceipt, Rend
             end_tick: window.end().0,
             peak: outcome.peak,
         },
-        load_summary: project.summary.clone(),
+        load_summary: project.report.summary_with_diagnostics(),
         mix: MixInfo {
             soloed: applied.soloed.iter().map(|id| id.0).collect(),
             muted: applied.muted.iter().map(|id| id.0).collect(),
