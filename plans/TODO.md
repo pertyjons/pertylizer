@@ -741,22 +741,38 @@ points surface it: the render receipt takes them as warnings *before* the
 render, the GUI logs one Activity-panel event each, and `load_project` appends
 them to its reply. A clean load reads exactly as it did before.
 
-Two follow-ups the work turned up:
+Both follow-ups the work turned up are now closed.
 
-- [ ] **A module id that names a different type than the entry claims is still
-  silent inside an instrument patch.** The effect chains now report it
-  (`resolve_effect_entry`) while still installing the effect — the declared
-  type builds the instance and the id is only an opaque chain key, so the entry
-  works and merely lies about itself. `create_and_send` behaves the same way
-  inside a patch but says nothing. The fix is to emit the same note there; the
-  reason it was not done here is that a patch module's id *is* read back by
-  prefix in places (address parsing, the editor's descriptor lookup), so the
-  consequences need checking before deciding whether a note is enough. **S.**
-- [ ] **The GUI only shows diagnostics in the Activity panel.** A user who never
-  opens the panel loads a partial project with no indication. A count in the
-  status line, or a one-line banner that opens the panel, would close it.
-  Deliberately not done blind — it is a design call about how loud a
-  recoverable load failure should be. **S.**
+- [x] **A module id that names a different type than the entry claims was still
+  silent inside an instrument patch.** `apply_patch` now emits the same note the
+  effect chains do, and still installs the module — but the consequence check
+  this entry was waiting on came back worse than the chain case, so a note alone
+  would have been the wrong answer. In a chain the id is an opaque slot key and
+  such an entry loads and sounds correct. Inside a patch the id *is* the
+  module's identity, and `set_parameter` picked `SetEffectParameter` vs
+  `SetModuleParameter` off its prefix: a Delay filed under `flt-9` was built as
+  an effect and then had every parameter sent to the voice-module map, where the
+  send succeeded and the value was dropped without a word. Routing now reads the
+  descriptor's `category` — the truth was already in hand two lines above —
+  and `module_factory::tests::category_and_kind_agree_for_every_module_type`
+  holds that invariant for every module type, since it is now load-bearing.
+
+  What a note *is* the whole answer for is the rest: the engine's per-type scans
+  (`find_module_by_type`, the per-block Script collection) and mod-matrix address
+  resolution key on the id, so a Script saved as `osc-1` is built correctly and
+  then never evaluated. Nothing can look that up — the id is the identity — so
+  the diagnostic is the fix. Asserted through rendered audio, not the saved
+  parameter: the shared-graph mirror stores the value by id and reports it
+  applied either way (the §5.6 mirror-vs-engine class again).
+- [x] **The GUI only showed diagnostics in the Activity panel.** The panel is
+  worse than "a user might not open it": it lives on the Home view, and loading
+  a project moves the user to the Rack — so the one place the account was
+  written is the one place they are no longer looking. A status-bar badge
+  (`widgets::controls::attention_badge`) now carries the count, with the first
+  eight diagnostics in its tooltip; clicking it goes to Home and clears the
+  badge, on the grounds that following it is the acknowledgement. Chosen over a
+  banner: a recoverable load failure should be visible without being modal.
+  **Not yet eyeballed in-app.**
 
 Original entry, kept for the diagnosis:
 

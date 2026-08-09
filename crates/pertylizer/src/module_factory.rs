@@ -937,4 +937,41 @@ mod tests {
             "get_params() entries with no descriptor (silently dropped on save): {offenders:#?}"
         );
     }
+
+    /// `SynthSession::set_parameter` picks `SetEffectParameter` over
+    /// `SetModuleParameter` from the descriptor's category, because the engine
+    /// keeps effects and voice modules in separate maps and the wrong command
+    /// finds nothing — the send succeeds and the value is dropped in silence.
+    /// That makes "a factory-built effect is categorized `Effect`, and nothing
+    /// else is" a routing invariant rather than a labelling detail, so it is
+    /// asserted over every module type instead of trusted per descriptor.
+    #[test]
+    fn category_and_kind_agree_for_every_module_type() {
+        use synth_core::ModuleCategory;
+
+        let mut offenders = Vec::new();
+        for module_type in ModuleType::all() {
+            if module_type.is_effect()
+                && let Some((_, descriptor)) = create_effect(module_type)
+                && descriptor.category != ModuleCategory::Effect
+            {
+                offenders.push(format!(
+                    "{module_type:?} is an effect but is categorized {:?}",
+                    descriptor.category
+                ));
+            }
+            if module_type.is_voice_module()
+                && let Some((_, descriptor)) = create_voice_module(module_type)
+                && descriptor.category == ModuleCategory::Effect
+            {
+                offenders.push(format!(
+                    "{module_type:?} is a voice module but is categorized Effect"
+                ));
+            }
+        }
+        assert!(
+            offenders.is_empty(),
+            "parameters would be routed to the wrong engine map: {offenders:#?}"
+        );
+    }
 }

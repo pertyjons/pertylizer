@@ -770,7 +770,7 @@ impl SynthApp {
             &self.song,
             &self.sample_library,
         ) {
-            Ok(report) => log_load_diagnostics(&report),
+            Ok(report) => self.record_load_diagnostics(&report),
             Err(e) => {
                 tracing::warn!(target: "pertylizer::project", error = %e, "apply_project failed during GUI load");
             }
@@ -800,7 +800,7 @@ impl SynthApp {
             &self.song,
             &self.sample_library,
         ) {
-            Ok(report) => log_load_diagnostics(&report),
+            Ok(report) => self.record_load_diagnostics(&report),
             Err(e) => {
                 tracing::warn!(target: "pertylizer::project", error = %e, "reset_to_new_project failed");
             }
@@ -1031,24 +1031,34 @@ impl SynthApp {
             .or_else(|| self.settings.directories.projects_dir.clone())
             .or_else(|| project::default_projects_dir().ok())
     }
-}
 
-/// Put everything a load could not reconstruct in front of the user.
-///
-/// The Activity panel is fed by a `tracing` layer, so a warn-level event with
-/// the project target is the GUI's existing route for "this happened and you
-/// should know". One event per diagnostic rather than one joined line, so the
-/// panel can be scrolled, filtered and read a row at a time.
-///
-/// Silent on a clean load — a healthy project must not produce log noise, or
-/// the entries that matter stop being noticed.
-fn log_load_diagnostics(report: &crate::project_diagnostics::ProjectApplyReport) {
-    for diagnostic in &report.diagnostics {
-        tracing::warn!(
-            target: "pertylizer::project",
-            code = %diagnostic.code,
-            path = %diagnostic.path,
-            "{}", diagnostic.message,
-        );
+    /// Put everything a load could not reconstruct in front of the user, twice
+    /// over: once as detail, once as a signal.
+    ///
+    /// The detail goes to the Activity panel, which is fed by a `tracing` layer
+    /// — a warn-level event with the project target is the GUI's existing route
+    /// for "this happened and you should know". One event per diagnostic rather
+    /// than one joined line, so the panel can be scrolled, filtered and read a
+    /// row at a time.
+    ///
+    /// The signal is the retained list, which raises the status-bar badge. The
+    /// panel alone is not enough: it lives on the Home view, and loading a
+    /// project moves the user to the Rack — so the one place the account was
+    /// written is the one place they are no longer looking.
+    ///
+    /// Both are silent on a clean load. A healthy project must not produce log
+    /// noise or a badge, or the ones that matter stop being noticed.
+    fn record_load_diagnostics(&mut self, report: &crate::project_diagnostics::ProjectApplyReport) {
+        for diagnostic in &report.diagnostics {
+            tracing::warn!(
+                target: "pertylizer::project",
+                code = %diagnostic.code,
+                path = %diagnostic.path,
+                "{}", diagnostic.message,
+            );
+        }
+        // Assigned, not extended: the badge reports the load the user just did,
+        // and a clean one has to clear a previous load's count.
+        self.load_diagnostics = report.diagnostics.clone();
     }
 }

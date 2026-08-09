@@ -29,8 +29,8 @@ use crate::gui::patch_editor::{GroupTemplateAction, PatchEditor, QuickAddRequest
 use crate::gui::shortcuts;
 use crate::gui::theme::theme;
 use crate::gui::widgets::{
-    danger_button, dim_label, draw_oscilloscope, draw_stereo_meter, empty_state, expose_selected,
-    menu_entry, stepper, submenu_button,
+    attention_badge, danger_button, dim_label, draw_oscilloscope, draw_stereo_meter, empty_state,
+    expose_selected, menu_entry, stepper, submenu_button,
 };
 use crate::gui::{GuiBackend, GuiResult, SynthGuiConfig};
 use crate::io::settings::AppSettings;
@@ -543,6 +543,10 @@ struct SynthApp {
     activity_log: crate::activity_log::ActivityLog,
     /// UI state for the Home activity-log console.
     activity_log_view: crate::gui::activity_log_view::ActivityLogViewState,
+    /// What the most recent project load could not reconstruct. Drives the
+    /// status-bar badge; emptied by the next load or by the user following the
+    /// badge to the Activity console.
+    load_diagnostics: Vec<crate::project_diagnostics::ProjectApplyDiagnostic>,
 }
 
 impl SynthApp {
@@ -657,6 +661,7 @@ impl SynthApp {
             current_project_author: project_author,
             activity_log: config.activity_log,
             activity_log_view: crate::gui::activity_log_view::ActivityLogViewState::default(),
+            load_diagnostics: Vec::new(),
         };
 
         // Whatever engine and song state startup produced is the clean baseline
@@ -3998,9 +4003,15 @@ impl SynthApp {
             });
     }
 
-    /// Bottom status bar: octave +/- and glide on the left, CPU / voices /
-    /// latency on the right.
+    /// Bottom status bar: octave +/- and glide on the left, load warnings /
+    /// CPU / voices / latency on the right.
     fn render_status_bar(&mut self, ui: &mut egui::Ui) {
+        /// How many load diagnostics the badge's tooltip spells out before it
+        /// counts the rest. A version-skewed project can produce one per
+        /// parameter per module, and a tooltip taller than the window is a
+        /// worse answer than a count plus the console.
+        const BADGE_DIAGNOSTIC_LIMIT: usize = 8;
+
         egui::Panel::bottom("status_bar")
             .min_size(22.0)
             .show(ui, |ui| {
@@ -4047,8 +4058,41 @@ impl SynthApp {
                             .send(EngineCommand::SetGlideTime(self.glide_time));
                     }
 
-                    // ── Right side: CPU / Voices / Latency ──
+                    // ── Right side: load warnings / CPU / Voices / Latency ──
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        // A load that dropped something has to say so where the
+                        // user actually is. The full account goes to the
+                        // Activity console — which lives on Home, while loading
+                        // a project puts the user in the Rack — so without this
+                        // a partial load looks exactly like a clean one. First
+                        // in a right-to-left layout, i.e. the far corner.
+                        if !self.load_diagnostics.is_empty() {
+                            let count = self.load_diagnostics.len();
+                            let mut tooltip = self
+                                .load_diagnostics
+                                .iter()
+                                .take(BADGE_DIAGNOSTIC_LIMIT)
+                                .map(ToString::to_string)
+                                .collect::<Vec<_>>()
+                                .join("\n");
+                            if let Some(elided) = count.checked_sub(BADGE_DIAGNOSTIC_LIMIT)
+                                && elided > 0
+                            {
+                                tooltip.push_str(&format!("\n… and {elided} more"));
+                            }
+                            tooltip.push_str("\n\nClick to open the Activity log.");
+                            let label = format!("{count} not loaded");
+                            if attention_badge(ui, &label, tooltip).clicked() {
+                                self.active_view = AppView::Home;
+                                // Following the badge is the acknowledgement:
+                                // the entries stay in the console, which is now
+                                // on screen, so keeping the badge up would only
+                                // be a nag with nowhere further to go.
+                                self.load_diagnostics.clear();
+                            }
+                            ui.separator();
+                        }
+
                         if synth_engine::EngineHandle::cpu_profiling_enabled() {
                             let cpu = self.handle.cpu_usage().as_f32();
                             // Copy snapshot so the hover closure captures no borrow of `self`.

@@ -19,6 +19,7 @@ use crate::module_factory;
 use crate::patch::{ParamValue, Patch};
 use crate::project_diagnostics::{
     DiagnosticCode, ProjectApplyDiagnostic, ProjectPath, invalid_module_id_message,
+    mismatched_module_id_message,
 };
 
 /// Error type for session operations.
@@ -996,7 +997,13 @@ impl SynthSession {
 
         let param = value.to_param(param_desc);
 
-        let cmd = if module_id.module_type.is_effect() {
+        // The engine keeps voice modules and effects in separate maps, so the
+        // command has to name the right one. Take that from the descriptor the
+        // instance was actually built from, not from the id's prefix: a saved id
+        // whose prefix disagrees with its entry's type (reported by
+        // `apply_patch`) would otherwise address the map the module is not in,
+        // and the send would succeed while the value went nowhere.
+        let cmd = if descriptor.category == ModuleCategory::Effect {
             EngineCommand::SetEffectParameter {
                 instrument_id: Some(instrument_id),
                 module_id,
@@ -1153,6 +1160,30 @@ impl SynthSession {
                 }
             };
 
+            // An id whose prefix names a different type than the entry claims
+            // costs more here than it does in an effect chain, where the id is
+            // an opaque slot key and such an entry loads and sounds correct.
+            // Inside a patch the id *is* the module's identity: the engine files
+            // it under that id, mod-matrix addresses resolve to it, and the
+            // per-type scans (`find_module_by_type`, the per-block Script
+            // collection) key on its prefix — so a Script saved as `osc-1` is
+            // built correctly and then never evaluated, because nothing looking
+            // for Scripts will find it. Which is the case for saying so, not for
+            // dropping the module: the instance itself is right, its cables and
+            // parameters resolve by id, and skipping it would cost the user the
+            // whole module plus everything patched into it.
+            if module_id.module_type != module_type {
+                result.errors.push(ProjectApplyDiagnostic::warning(
+                    DiagnosticCode::InvalidModuleId,
+                    ProjectPath::instrument_module(instrument_id, &module_state.id),
+                    mismatched_module_id_message(
+                        &module_state.id,
+                        module_type,
+                        module_id.module_type,
+                    ),
+                ));
+            }
+
             match self.add_module_with_id(instrument_id, module_id, module_type) {
                 Ok(_descriptor) => {
                     result.module_count += 1;
@@ -1211,10 +1242,8 @@ impl SynthSession {
                         // legacy multi-slot patch keeps slot 1 and drops the rest
                         // with a note — graceful migration, no panic (the engine's
                         // set_script would silently no-op the higher slots anyway).
-                        if matches!(
-                            module_id.module_type,
-                            ModuleType::Script | ModuleType::AudioScript
-                        ) && slot != 0
+                        if matches!(module_type, ModuleType::Script | ModuleType::AudioScript)
+                            && slot != 0
                         {
                             result.errors.push(ProjectApplyDiagnostic::warning(
                                 DiagnosticCode::ScriptRejected,

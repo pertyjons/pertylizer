@@ -27,15 +27,15 @@ pub use cable::{
     draw_cable_highlighted, draw_flow_particles, point_near_cable,
 };
 pub use controls::{
-    CaptionTone, DialogButton, ICON_BUTTON_SIZE, InlineEdit, bypass_toggle, caption,
-    clickable_label, count_drag_value, danger_button, dialog_button_row, dim_label, empty_state,
-    enum_combo, enum_combo_all, expose, expose_selected, icon_button, icon_text_button,
-    inline_editable_text, knob_normalized, labeled_row, log_suffix_slider, menu_entry,
-    modal_window, monitor_toggle, mute_toggle, optional_index_combo, paint_marker_corners,
-    record_toggle, right_aligned_row, section_header, seed_reroll, selectable_toggle, solo_toggle,
-    stepper, strong_label, submenu_button, suffix_slider, time_drag_value, toggle_button,
-    toggle_button_colored, tree_picker_button, unit_drag_value, wrapped_control_row,
-    wrapped_row_break,
+    CaptionTone, DialogButton, ICON_BUTTON_SIZE, InlineEdit, attention_badge, bypass_toggle,
+    caption, clickable_label, count_drag_value, danger_button, dialog_button_row, dim_label,
+    empty_state, enum_combo, enum_combo_all, expose, expose_selected, icon_button,
+    icon_text_button, inline_editable_text, knob_normalized, labeled_row, log_suffix_slider,
+    menu_entry, modal_window, monitor_toggle, mute_toggle, optional_index_combo,
+    paint_marker_corners, record_toggle, right_aligned_row, section_header, seed_reroll,
+    selectable_toggle, solo_toggle, stepper, strong_label, submenu_button, suffix_slider,
+    time_drag_value, toggle_button, toggle_button_colored, tree_picker_button, unit_drag_value,
+    wrapped_control_row, wrapped_row_break,
 };
 pub use envelope::{EnvelopeChanges, EnvelopeEditor, draw_adsr_curve};
 pub(crate) use frame::{ModuleCard, ModuleCardGeometry};

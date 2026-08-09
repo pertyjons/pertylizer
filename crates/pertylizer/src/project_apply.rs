@@ -1621,6 +1621,114 @@ mod tests {
         );
     }
 
+    /// Load `patch` into a fresh engine and return the peak amplitude of the
+    /// first blocks after a note-on — a reading of what the *live engine*
+    /// actually renders. Deliberately not a shared-graph read: that mirror is
+    /// updated from the command stream by module id, so it reports a parameter
+    /// as applied whether or not the engine could route it anywhere.
+    ///
+    /// Also returns the load's diagnostics, so a caller can assert on both what
+    /// was reported and what came out of the speakers.
+    fn load_and_measure_peak(patch: &Patch) -> (Vec<ProjectApplyDiagnostic>, f32) {
+        let (mut engine, mut handle) = SynthEngine::new();
+        let session = SynthSession::new(handle.command_sender(), Arc::clone(&handle.state));
+        let id = InstrumentId::FIRST;
+        session
+            .add_instrument_with_id(id, "Mismatched")
+            .expect("add instrument");
+
+        let stream_info = synth_core::StreamInfo {
+            sample_rate: HwSampleRate::new(TEST_SR),
+            buffer_size: synth_core::BufferSize::new(256),
+            channels: synth_core::ChannelCount::Stereo,
+            output_latency: std::time::Duration::ZERO,
+            input_latency: None,
+        };
+        engine.on_stream_start(&stream_info);
+        drive(&mut engine, 2);
+
+        let diagnostics = session.apply_patch(id, patch).errors;
+        drive(&mut engine, 8);
+
+        handle.note_on(MidiNote::new(60), synth_core::Velocity::from_midi(100));
+        let context = AudioCallbackContext {
+            sample_rate: HwSampleRate::new(TEST_SR),
+            frames: 256,
+            channels: 2,
+            stream_time: 0.0,
+            sample_position: 0,
+            output_latency: synth_core::Seconds::ZERO,
+        };
+        let mut peak = 0.0f32;
+        let mut block = vec![0.0f32; 256 * 2];
+        // 8 blocks ≈ 46 ms — well inside the Delay's 375 ms shortest tap, so a
+        // fully-wet mix has nothing but an empty delay line to output.
+        for _ in 0..8 {
+            block.fill(0.0);
+            engine.process(&mut block, &context);
+            peak = block.iter().fold(peak, |m, s| m.max(s.abs()));
+        }
+        (diagnostics, peak)
+    }
+
+    /// A patch module whose saved id names a different type than its own entry
+    /// claims is reported — and still loads, with its parameters applied.
+    ///
+    /// The effect-chain case (`limiter` saved as `lim-1`) costs nothing beyond
+    /// the note, because a chain keys on the id opaquely. Inside a patch the id
+    /// is the module's identity, and the parameter routing used to be read off
+    /// its prefix: a Delay filed under `flt-9` was built as an effect and then
+    /// had every parameter sent as `SetModuleParameter`, which the engine looks
+    /// for among the voice modules. The send succeeded, the value went nowhere,
+    /// and nothing said so.
+    ///
+    /// Asserted through the rendered audio rather than the saved parameter,
+    /// because the shared-graph mirror stores the value by id and would report
+    /// it applied either way. Fully wet against fully dry is the discriminator:
+    /// the two must differ, which they only can if the mix reached the effect.
+    #[test]
+    fn a_mismatched_module_id_is_reported_and_its_parameters_still_land() {
+        // The same shape the master-chain case was found in: a plausible, wrong
+        // prefix on an otherwise valid entry.
+        let patch_with_delay_mix = |mix: f32| {
+            let mut patch = minimal_patch("Mismatched");
+            let mut delay = ModuleBuilder::new(9, ModuleType::Delay)
+                .param_f("mix", mix)
+                .build();
+            delay.id = "flt-9".to_string();
+            patch.add_module(delay);
+            patch
+        };
+
+        let (diagnostics, dry_peak) = load_and_measure_peak(&patch_with_delay_mix(0.0));
+
+        assert!(
+            diagnostics
+                .iter()
+                .any(|d| d.code == DiagnosticCode::InvalidModuleId
+                    && d.path.as_str().contains("flt-9")
+                    && d.message.contains("Delay")),
+            "the mismatch must be reported: {:?}",
+            diagnostics
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+        );
+        assert!(
+            dry_peak > 0.01,
+            "the module must still load and pass audio — reporting the id is not \
+             a reason to drop it (peak {dry_peak})"
+        );
+
+        let (_, wet_peak) = load_and_measure_peak(&patch_with_delay_mix(1.0));
+        assert!(
+            wet_peak < dry_peak * 0.1,
+            "a fully-wet mix must silence these first blocks; it only can if the \
+             parameter reached the effect instead of a voice-module lookup that \
+             drops it (dry {dry_peak}, wet {wet_peak})"
+        );
+    }
+
     /// A YAMS control script installed on a Mod Matrix slot survives the engine
     /// → snapshot → save path: `set_mod_script` refreshes the shared snapshot
     /// (`ModuleStateSnapshot.scripts`), and `build_patch_from_engine` persists it

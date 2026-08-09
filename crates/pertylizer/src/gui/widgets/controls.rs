@@ -305,6 +305,26 @@ pub fn icon_text_button(
     response
 }
 
+/// A compact status badge for something that went wrong and is still worth the
+/// user's attention: a warning glyph plus `label`, in the theme's attention
+/// colour, with `tooltip` carrying the detail.
+///
+/// A `Button` rather than a `Label` because a badge reading "3 items could not
+/// be loaded" is only useful if it takes you to them — read `.clicked()` and
+/// navigate to wherever the full account lives. Returns the [`Response`].
+pub fn attention_badge(ui: &mut Ui, label: &str, tooltip: impl Into<WidgetText>) -> Response {
+    let t = theme();
+    icon_text_button(
+        ui,
+        ri::ERROR_WARNING_LINE,
+        label,
+        t.colors.accent_orange,
+        t.fonts.size_small,
+        true,
+    )
+    .on_hover_text(tooltip)
+}
+
 /// A frameless icon button — one uniform look for every icon: the
 /// `ICON_BUTTON_SIZE` (18×20) hit target, `size_normal` glyph, the given hover
 /// `tooltip`, and the arrow cursor. Used both for interactive controls (read
