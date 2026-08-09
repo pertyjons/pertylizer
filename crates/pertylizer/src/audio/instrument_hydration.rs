@@ -46,10 +46,17 @@ pub(crate) fn hydrate_snapshot_instrument(
     let appended_effects = {
         let mut install = |module: &ModuleStateSnapshot, kind: &str| {
             let module_id = module.id;
+            // Rebuild from the type the snapshot carries — the live module's own
+            // — not the id's prefix. A saved id whose prefix disagrees with its
+            // entry (reported by `apply_patch`, which builds from the entry) is
+            // installed live as the entry's type; rebuilding it here from the
+            // prefix would put a different module in the render than the one the
+            // user hears, and would contradict the effect/voice bucketing above,
+            // which already reads the snapshot's type.
             let descriptor = match session.add_module_with_id(
                 request.instrument_id,
                 module_id,
-                module_id.module_type,
+                module.module_type,
             ) {
                 Ok(descriptor) => descriptor,
                 Err(error) => {
@@ -61,7 +68,10 @@ pub(crate) fn hydrate_snapshot_instrument(
                 }
             };
 
-            let is_effect = module_id.module_type.is_effect();
+            // Same reason `SynthSession::set_parameter` reads the category: the
+            // engine keeps effects and voice modules in separate maps, so the
+            // command has to name the map the instance was actually built into.
+            let is_effect = descriptor.category == synth_core::ModuleCategory::Effect;
             for descriptor_param in &descriptor.parameters {
                 let Some(param) = module
                     .parameters

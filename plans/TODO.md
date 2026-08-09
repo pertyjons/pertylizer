@@ -741,7 +741,8 @@ points surface it: the render receipt takes them as warnings *before* the
 render, the GUI logs one Activity-panel event each, and `load_project` appends
 them to its reply. A clean load reads exactly as it did before.
 
-Both follow-ups the work turned up are now closed.
+Both follow-ups the work turned up are now closed; the first one left one
+narrower item behind, filed below it.
 
 - [x] **A module id that names a different type than the entry claims was still
   silent inside an instrument patch.** `apply_patch` now emits the same note the
@@ -764,6 +765,25 @@ Both follow-ups the work turned up are now closed.
   the diagnostic is the fix. Asserted through rendered audio, not the saved
   parameter: the shared-graph mirror stores the value by id and reports it
   applied either way (the §5.6 mirror-vs-engine class again).
+
+  The review pass found the same prefix-vs-truth split one layer out:
+  `audio/instrument_hydration.rs` bucketed modules effect-vs-voice from the
+  snapshot's real type but *rebuilt* them from the id's prefix, so preview and
+  offline render would have built a Filter where the live engine has a Delay.
+  Now builds from `module.module_type` and routes from `descriptor.category`,
+  the same rule as `set_parameter`. Deciding to keep mismatched modules is what
+  made that reachable, so it belongs to this entry.
+
+- [ ] **`set_mod_script` still reads the module's kind off the id prefix.**
+  The compile dialect (`script_is_audio_rate` / `script_uses_control_ports`)
+  and the rebuilt knob descriptor both come from `module_id.module_type`, so an
+  `AudioScript` saved as `scr-1` compiles in the control-rate dialect. Left as
+  it is on purpose: unlike `set_parameter` the truth is *not* at hand — the
+  session registry stores a `ModuleDescriptor` whose `type_id` is a string with
+  no route back to `ModuleType` — so fixing it means threading the declared type
+  through a public API with eight-plus call sites, most of which only hold the
+  id. The diagnostic now warns about exactly this module. Revisit if the
+  registry ever starts recording the type it was built from. **S.**
 - [x] **The GUI only showed diagnostics in the Activity panel.** The panel is
   worse than "a user might not open it": it lives on the Home view, and loading
   a project moves the user to the Rack — so the one place the account was

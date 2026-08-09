@@ -4075,13 +4075,22 @@ impl SynthApp {
                                 .map(ToString::to_string)
                                 .collect::<Vec<_>>()
                                 .join("\n");
-                            if let Some(elided) = count.checked_sub(BADGE_DIAGNOSTIC_LIMIT)
-                                && elided > 0
-                            {
+                            let elided = count.saturating_sub(BADGE_DIAGNOSTIC_LIMIT);
+                            if elided > 0 {
                                 tooltip.push_str(&format!("\n… and {elided} more"));
                             }
                             tooltip.push_str("\n\nClick to open the Activity log.");
-                            let label = format!("{count} not loaded");
+                            // "warnings", not "not loaded": a diagnostic does not
+                            // always mean the object is gone. A mismatched module
+                            // id is reported and still installed, and a rejected
+                            // parameter leaves its module loaded — a badge reading
+                            // "1 not loaded" over a project that loaded whole
+                            // sends the user hunting for nothing.
+                            let label = if count == 1 {
+                                "1 load warning".to_string()
+                            } else {
+                                format!("{count} load warnings")
+                            };
                             if attention_badge(ui, &label, tooltip).clicked() {
                                 self.active_view = AppView::Home;
                                 // Following the badge is the acknowledgement:

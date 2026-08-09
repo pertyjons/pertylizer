@@ -772,6 +772,10 @@ impl SynthApp {
         ) {
             Ok(report) => self.record_load_diagnostics(&report),
             Err(e) => {
+                // The previous load's badge must not outlive the project it
+                // described: following it would take the user to an account of
+                // a project that is no longer open.
+                self.load_diagnostics.clear();
                 tracing::warn!(target: "pertylizer::project", error = %e, "apply_project failed during GUI load");
             }
         }
@@ -802,6 +806,9 @@ impl SynthApp {
         ) {
             Ok(report) => self.record_load_diagnostics(&report),
             Err(e) => {
+                // Same reason as the load path: a stale badge would point at a
+                // project the reset has already torn down.
+                self.load_diagnostics.clear();
                 tracing::warn!(target: "pertylizer::project", error = %e, "reset_to_new_project failed");
             }
         }

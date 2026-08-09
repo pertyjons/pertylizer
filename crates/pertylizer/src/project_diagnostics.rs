@@ -18,8 +18,10 @@
 //! ([`DiagnosticCode`], stable enough to match on), and a human message. The
 //! collection is returned to the caller, which decides how to show it.
 //!
-//! Severity is deliberately coarse. [`Severity::Warning`] means the object was
-//! skipped and the rest of the project is coherent; [`Severity::Error`] is
+//! Severity is deliberately coarse. [`Severity::Warning`] means the rest of the
+//! project is coherent — usually because the object was skipped, though some
+//! warnings (a module id naming the wrong type) report a defect in an object
+//! that was still installed; [`Severity::Error`] is
 //! reserved for a load that cannot produce a coherent project at all. Today
 //! everything here is a warning — a load that cannot continue returns `Err`
 //! from the apply function rather than a diagnostic — but the distinction is
@@ -34,7 +36,8 @@ use synth_sequencer::ReturnBusId;
 /// How badly a diagnostic affects the loaded project.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Severity {
-    /// The object was skipped; the rest of the project loaded coherently.
+    /// The rest of the project loaded coherently. The object was usually
+    /// skipped, but may also have loaded with a reported defect.
     Warning,
     /// The project could not be reconstructed coherently.
     Error,
@@ -251,7 +254,10 @@ pub struct ProjectApplyDiagnostic {
 }
 
 impl ProjectApplyDiagnostic {
-    /// A recoverable skip: the object is gone, the project is otherwise whole.
+    /// A recoverable defect: the project is still coherent. Usually the object
+    /// was skipped, but not always — a module id that names the wrong type is
+    /// reported and still installed, so a caller must not read this as "the
+    /// object is gone".
     #[must_use]
     pub fn warning(code: DiagnosticCode, path: ProjectPath, message: impl Into<String>) -> Self {
         Self {

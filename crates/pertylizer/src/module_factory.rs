@@ -951,22 +951,34 @@ mod tests {
 
         let mut offenders = Vec::new();
         for module_type in ModuleType::all() {
-            if module_type.is_effect()
-                && let Some((_, descriptor)) = create_effect(module_type)
-                && descriptor.category != ModuleCategory::Effect
-            {
-                offenders.push(format!(
-                    "{module_type:?} is an effect but is categorized {:?}",
-                    descriptor.category
-                ));
+            // A missing factory entry is an offence in its own right, not a
+            // reason to skip the check: letting `None` pass silently would let a
+            // type opt out of the very invariant this test exists to hold.
+            if module_type.is_effect() {
+                match create_effect(module_type) {
+                    Some((_, descriptor)) if descriptor.category == ModuleCategory::Effect => {}
+                    Some((_, descriptor)) => offenders.push(format!(
+                        "{module_type:?} is an effect but is categorized {:?}",
+                        descriptor.category
+                    )),
+                    None => offenders.push(format!(
+                        "{module_type:?} is an effect but `create_effect` has no entry for it"
+                    )),
+                }
             }
-            if module_type.is_voice_module()
-                && let Some((_, descriptor)) = create_voice_module(module_type)
-                && descriptor.category == ModuleCategory::Effect
-            {
-                offenders.push(format!(
-                    "{module_type:?} is a voice module but is categorized Effect"
-                ));
+            if module_type.is_voice_module() {
+                match create_voice_module(module_type) {
+                    Some((_, descriptor)) if descriptor.category == ModuleCategory::Effect => {
+                        offenders.push(format!(
+                            "{module_type:?} is a voice module but is categorized Effect"
+                        ));
+                    }
+                    Some(_) => {}
+                    None => offenders.push(format!(
+                        "{module_type:?} is a voice module but `create_voice_module` has no \
+                         entry for it"
+                    )),
+                }
             }
         }
         assert!(
