@@ -1192,10 +1192,12 @@ fn ticks_to_beats(ticks: u32) -> f32 {
     ticks as f32 / synth_sequencer::TICKS_PER_QUARTER as f32
 }
 
-/// Normalize a parameter name for fuzzy matching (lowercase, underscores → spaces).
-fn normalize_param_name(s: &str) -> String {
-    s.to_lowercase().replace('_', " ")
-}
+/// Normalize a parameter name for fuzzy matching (lowercase, underscores →
+/// spaces). Re-exported from `synth_core` rather than re-spelled here, so this
+/// crate's name-matching folds exactly the way
+/// [`ModuleDescriptor::find_parameter`](synth_core::ModuleDescriptor::find_parameter)
+/// does.
+use synth_core::normalize_param_name;
 
 /// Strip every non-alphanumeric character and lowercase the rest, so that the
 /// prefix, `snake_case`, `CamelCase`, and spaced display forms of a name all

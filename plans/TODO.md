@@ -718,23 +718,44 @@ of the work below changes the type story.
 
 What is actually available, smallest first:
 
-- [ ] **`complete` for the two resource templates we already expose.** Real but
-  small: `synth://module-types/{type_key}` and `synth://patches/{name}`
-  (`server.rs:5297`) are legitimate `ref/resource` completion targets, and
-  `list_module_types` / `list_example_patches` already supply the candidates.
-  Needs the `completions` capability declared — the builder currently enables
-  only tools and resources (`server.rs:5169`). This helps a client browsing
-  resources; it does **not** help anyone calling `set_parameter`. **S.**
-- [ ] **Put `enum` in the input schema for the closed-set arguments.** This is
-  the replacement for what 6.8 originally promised, and it works today: spec
-  `2026-07-28` minor change 10 (SEP-2106) loosened `inputSchema` to any JSON
-  Schema 2020-12 keyword. An argument whose valid values are known at build time
-  — module type keys above all, plus the fixed choice-strings — can ship its
-  candidate list *in the tool schema*, where every client already validates and
-  completes against it, with no new RPC. Scope it to genuinely closed sets:
-  module ids, parameter names and automation DSL strings depend on live session
-  state and cannot be enumerated at schema time. **S–M**, entirely inside
-  `synth_mcp`.
+- [x] **`complete` for the two resource templates we already expose.** Done. The
+  `completions` capability is declared and `completion/complete` serves
+  `synth://module-types/{type_key}` and `synth://patches/{name}`; a prompt
+  reference gets an empty result, since we advertise no prompts.
+
+  Completion turned out to need a **looser** match than the near-miss hints,
+  which was not obvious: a hint guesses at what was meant and must stay quiet
+  when unsure, while a completion filters a list the caller is already looking
+  at. The hint ranking answers `ba` with nothing — a two-character needle is
+  below its containment floor — which is right for an error message and useless
+  for a dropdown over `sub-bass` and `spacey-bass`. So containment matches at
+  any length, prefix first, and only when *nothing* contains the text does it
+  fall back to the shared ranking, which is what still recovers `lmit` → `lmt`.
+  Both spellings are matched and the canonical one answered, so typing a display
+  name reaches a value keyed by something else.
+
+- [x] **Put `enum` in the input schema for the closed-set arguments.** Done for
+  the sets that are genuinely closed: `search_modules`' `category` and its two
+  signal-type filters are real enums now, so their values ship in the tool's
+  `inputSchema` and the hand-written validation behind them is gone —
+  deserialization rejects a bad value, and its message ("unknown variant
+  `bogus`, expected one of `voice`, `effect`, `visualizer`") is better than the
+  string we used to build.
+
+  **Module type keys were deliberately left open, against this entry's own
+  advice.** Every module-type argument is parsed by `parse_module_type`, which
+  accepts the short key, the snake_case name *and* the display name, and three
+  of the four field descriptions promise exactly that. A 75-key `enum` would
+  advertise a constraint stricter than the server enforces, so a strict client
+  would refuse calls that work today. Closing that gap means narrowing the
+  parser first — a contract change, not a schema change —, and the leniency
+  exists on purpose because clients pass names. `schema_enum.rs` pins the
+  decision so it is not "finished" later by mistake.
+
+  Watch the doc comments on any type reaching a tool schema: schemars publishes
+  `///` as the schema's `description`, so implementation rationale written there
+  ships to every client on every `tools/list`. The rationale above lives in
+  plain `//` comments for that reason.
 - [x] **Make the parse failures name the near miss.** Done. `ModuleId::from_str`
   answers `lim-1` with "Did you mean 'lmt' (Limiter)?" — the §7 limiter
   confusion one layer earlier — and the same hint now closes the three

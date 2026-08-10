@@ -38,7 +38,7 @@ pub use module_traits::{
     ModuleDescriptor, ModuleParam, ModuleTypeId, ModuleWidth, ParamKind, ParamModOffsets,
     ParamValueError, ParameterDescriptor, ParameterUnit, PolyModule, PortDescriptor, PortDirection,
     PortType, PortValueDomain, PortValueRange, ProcessContext, ResponseCurve, ScalarParam,
-    VisualizationSink, VoicePitch, WidgetHint,
+    VisualizationSink, VoicePitch, WidgetHint, normalize_param_name,
 };
 pub use params::{
     AdditiveParam, AlgoParamInfo, AmFormantParam, AmplifierParam, AntiAliasMode, AudioPort,

@@ -1671,7 +1671,14 @@ impl ModuleDescriptor {
 
 /// Lowercase and treat `_` as a space, so the `snake_case` `type_id` and the
 /// spaced display name of the same parameter compare equal.
-fn normalize_param_name(s: &str) -> String {
+///
+/// Public because [`find_parameter`](ModuleDescriptor::find_parameter) is not
+/// the only lookup that must fold names this way — a caller matching runtime
+/// parameters against descriptor entries by name needs the *same* folding, and
+/// a second copy of this one-liner is exactly how two lookups end up accepting
+/// different spellings.
+#[must_use]
+pub fn normalize_param_name(s: &str) -> String {
     s.to_lowercase().replace('_', " ")
 }
 

@@ -11,10 +11,10 @@ use futures_util::FutureExt;
 use rmcp::handler::server::router::tool::ToolRouter;
 use rmcp::handler::server::wrapper::Parameters;
 use rmcp::model::{
-    CallToolResponse, CallToolResult, ContentBlock, Implementation, JsonObject,
-    ListResourceTemplatesResult, ListResourcesResult, PaginatedRequestParams,
-    ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult, Resource,
-    ResourceContents, ResourceTemplate, ServerCapabilities, ServerInfo,
+    CallToolResponse, CallToolResult, CompleteRequestParams, CompleteResult, CompletionInfo,
+    ContentBlock, Implementation, JsonObject, ListResourceTemplatesResult, ListResourcesResult,
+    PaginatedRequestParams, ReadResourceRequestParams, ReadResourceResponse, ReadResourceResult,
+    Reference, Resource, ResourceContents, ResourceTemplate, ServerCapabilities, ServerInfo,
 };
 use rmcp::service::{NotificationContext, RequestContext};
 use rmcp::{ErrorData, RoleServer, ServerHandler, tool, tool_handler, tool_router};
@@ -584,8 +584,81 @@ fn distill_audio_validation(
     }
 }
 
-/// Valid port signal type strings.
-const VALID_SIGNAL_TYPES: &[&str] = &["audio", "control", "gate", "midi"];
+// A real enum rather than a validated `String` so the closed set reaches the
+// caller in the tool's `inputSchema` as a JSON Schema `enum` — MCP has no way to
+// complete a *tool* argument, so the schema is the only place a client can learn
+// the valid values without a discovery round trip. Rejecting a bad value stops
+// being our hand-written check and becomes deserialization.
+//
+// Kept as a plain comment, not a doc comment: schemars publishes `///` as the
+// type's `description`, and every word of it then ships to every client on every
+// `tools/list`. Rationale for us, not for them.
+/// A module category.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+#[schemars(rename_all = "lowercase")]
+pub enum ModuleCategoryFilter {
+    Voice,
+    Effect,
+    Visualizer,
+}
+
+impl ModuleCategoryFilter {
+    /// The wire spelling, which is what the bridge matches on.
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Voice => "voice",
+            Self::Effect => "effect",
+            Self::Visualizer => "visualizer",
+        }
+    }
+}
+
+// See `ModuleCategoryFilter` above for why this is an enum, and why that
+// reasoning is not a doc comment.
+/// A port signal type.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "lowercase")]
+#[schemars(rename_all = "lowercase")]
+pub enum SignalTypeFilter {
+    Audio,
+    Control,
+    Gate,
+    Midi,
+}
+
+impl SignalTypeFilter {
+    /// The wire spelling, which is what the bridge matches on.
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Audio => "audio",
+            Self::Control => "control",
+            Self::Gate => "gate",
+            Self::Midi => "midi",
+        }
+    }
+}
+
+/// URI template for the module-type resource, and the name of the variable
+/// inside it. Shared by `list_resource_templates`, `read_resource` and
+/// `complete`, so a completion cannot offer a value the reader would reject.
+const MODULE_TYPE_URI_TEMPLATE: &str = "synth://module-types/{type_key}";
+const MODULE_TYPE_URI_PREFIX: &str = "synth://module-types/";
+const MODULE_TYPE_URI_VARIABLE: &str = "type_key";
+
+/// The same three for the example-patch resource.
+const PATCH_URI_TEMPLATE: &str = "synth://patches/{name}";
+const PATCH_URI_PREFIX: &str = "synth://patches/";
+const PATCH_URI_VARIABLE: &str = "name";
+
+/// The slug an example patch is addressed by in its resource URI.
+///
+/// One definition because three places must agree on it: the URI
+/// `list_resources` advertises, the lookup `read_resource` performs, and the
+/// values `complete` offers.
+fn patch_slug(name: &str) -> String {
+    name.to_ascii_lowercase().replace(' ', "-")
+}
 
 // === MCP session tracking ===
 
@@ -706,16 +779,12 @@ pub struct GetModuleTypeInfoParam {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct SearchModulesParam {
-    #[schemars(description = "Filter by category: 'voice', 'effect', or 'visualizer'")]
-    pub category: Option<String>,
-    #[schemars(
-        description = "Filter to modules that have an input port of this signal type: 'audio', 'control', 'gate', or 'midi'"
-    )]
-    pub has_input_type: Option<String>,
-    #[schemars(
-        description = "Filter to modules that have an output port of this signal type: 'audio', 'control', 'gate', or 'midi'"
-    )]
-    pub has_output_type: Option<String>,
+    #[schemars(description = "Filter by module category")]
+    pub category: Option<ModuleCategoryFilter>,
+    #[schemars(description = "Filter to modules that have an input port of this signal type")]
+    pub has_input_type: Option<SignalTypeFilter>,
+    #[schemars(description = "Filter to modules that have an output port of this signal type")]
+    pub has_output_type: Option<SignalTypeFilter>,
     #[schemars(
         description = "Text search in module name, description, and parameter names (case-insensitive)"
     )]
@@ -5122,6 +5191,7 @@ impl ServerHandler for SynthMcpServer {
             ServerCapabilities::builder()
                 .enable_tools()
                 .enable_resources()
+                .enable_completions()
                 .build(),
         )
         .with_server_info(
@@ -5214,7 +5284,7 @@ impl ServerHandler for SynthMcpServer {
         if let Ok(types) = self.bridge.list_module_types() {
             for info in &types {
                 let mut r = Resource::new(
-                    format!("synth://module-types/{}", info.type_key),
+                    format!("{MODULE_TYPE_URI_PREFIX}{}", info.type_key),
                     info.name.clone(),
                 );
                 r.description = Some(format!(
@@ -5232,8 +5302,8 @@ impl ServerHandler for SynthMcpServer {
         // Example patch resources
         if let Ok(patches) = self.bridge.list_example_patches() {
             for patch in &patches {
-                let slug = patch.name.to_ascii_lowercase().replace(' ', "-");
-                let mut r = Resource::new(format!("synth://patches/{slug}"), patch.name.clone());
+                let slug = patch_slug(&patch.name);
+                let mut r = Resource::new(format!("{PATCH_URI_PREFIX}{slug}"), patch.name.clone());
                 r.description = Some(format!(
                     "{}: {} | {} modules, {} connections",
                     patch.category, patch.description, patch.module_count, patch.connection_count
@@ -5253,10 +5323,10 @@ impl ServerHandler for SynthMcpServer {
         _context: RequestContext<RoleServer>,
     ) -> Result<ListResourceTemplatesResult, ErrorData> {
         let templates = vec![
-            ResourceTemplate::new("synth://module-types/{type_key}", "Module Type")
+            ResourceTemplate::new(MODULE_TYPE_URI_TEMPLATE, "Module Type")
                 .with_description("Detailed info about a synth module type (ports, parameters)")
                 .with_mime_type("application/json"),
-            ResourceTemplate::new("synth://patches/{name}", "Example Patch")
+            ResourceTemplate::new(PATCH_URI_TEMPLATE, "Example Patch")
                 .with_description(
                     "Full patch data (modules, connections, parameters) for an example patch",
                 )
@@ -5274,26 +5344,34 @@ impl ServerHandler for SynthMcpServer {
     ) -> Result<ReadResourceResponse, ErrorData> {
         let uri = &request.uri;
 
-        if let Some(type_key) = uri.strip_prefix("synth://module-types/") {
-            // Look up module type
-            let types = self
+        if let Some(type_key) = uri.strip_prefix(MODULE_TYPE_URI_PREFIX) {
+            // The brief listing decides existence and one type is then built.
+            // The full listing would build ports, parameters and algorithm JSON
+            // for all ~75 types just to return one of them — and it is also the
+            // listing `complete` does *not* use, so sourcing existence from the
+            // brief one keeps reader and completion over the same set.
+            //
+            // Matched exactly against the key: `get_module_type_info` also
+            // accepts display names, but only the key is ever advertised in a
+            // resource URI, so the reader stays as strict as it was.
+            let known = self
                 .bridge
-                .list_module_types()
+                .list_module_types_brief()
+                .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
+            if !known.iter().any(|t| t.type_key == type_key) {
+                return Err(ErrorData::resource_not_found(
+                    format!("Module type '{type_key}' not found"),
+                    None,
+                ));
+            }
+            let info = self
+                .bridge
+                .get_module_type_info(type_key)
                 .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
 
-            let info = types
-                .iter()
-                .find(|t| t.type_key == type_key)
-                .ok_or_else(|| {
-                    ErrorData::resource_not_found(
-                        format!("Module type '{type_key}' not found"),
-                        None,
-                    )
-                })?;
-
-            let json = to_json(info);
+            let json = to_json(&info);
             Ok(ReadResourceResult::new(vec![ResourceContents::text(json, uri.clone())]).into())
-        } else if let Some(slug) = uri.strip_prefix("synth://patches/") {
+        } else if let Some(slug) = uri.strip_prefix(PATCH_URI_PREFIX) {
             // Look up patch by slug — match by converting name to slug
             let patches = self
                 .bridge
@@ -5302,7 +5380,7 @@ impl ServerHandler for SynthMcpServer {
 
             let patch_name = patches
                 .iter()
-                .find(|p| p.name.to_ascii_lowercase().replace(' ', "-") == slug)
+                .find(|p| patch_slug(&p.name) == slug)
                 .map(|p| p.name.clone())
                 .ok_or_else(|| {
                     ErrorData::resource_not_found(format!("Patch '{slug}' not found"), None)
@@ -5321,6 +5399,155 @@ impl ServerHandler for SynthMcpServer {
                 None,
             ))
         }
+    }
+
+    /// Autocomplete a variable in one of our resource-template URIs.
+    ///
+    /// The protocol addresses completion at prompts and resource templates
+    /// only — there is no `ref/tool`, in this spec version or the draft — so
+    /// this reaches the two templates and nothing else. Tool arguments are
+    /// served by their input schemas instead (see the `enum`s on the
+    /// closed-set arguments) and by the near-miss hints their errors carry.
+    ///
+    /// Candidates are ranked by the same policy every hint uses, so what a
+    /// completion offers first is what a typo would have been corrected to.
+    /// An empty value lists everything, which is what a client opening a
+    /// dropdown before typing expects, and is the one case the hint ranking
+    /// deliberately answers with nothing.
+    #[allow(clippy::unused_async)]
+    async fn complete(
+        &self,
+        request: CompleteRequestParams,
+        _context: RequestContext<RoleServer>,
+    ) -> Result<CompleteResult, ErrorData> {
+        // We advertise no prompts, so a prompt reference has nothing to offer.
+        let Reference::Resource(template) = &request.r#ref else {
+            return Ok(CompleteResult::default());
+        };
+
+        let argument = &request.argument;
+        let values = match template.uri.as_str() {
+            MODULE_TYPE_URI_TEMPLATE if argument.name == MODULE_TYPE_URI_VARIABLE => {
+                self.complete_module_type_key(&argument.value)
+            }
+            PATCH_URI_TEMPLATE if argument.name == PATCH_URI_VARIABLE => {
+                self.complete_patch_slug(&argument.value)
+            }
+            _ => Vec::new(),
+        };
+
+        let total = values.len();
+        let truncated: Vec<String> = values
+            .into_iter()
+            .take(CompletionInfo::MAX_VALUES)
+            .collect();
+        let has_more = total > truncated.len();
+        // Cannot fail — the take() above is the cap `with_pagination` checks —
+        // but surfaced rather than swallowed, so raising that cap can never
+        // turn into a silently empty completion.
+        let completion =
+            CompletionInfo::with_pagination(truncated, u32::try_from(total).ok(), has_more)
+                .map_err(|e| ErrorData::internal_error(e, None))?;
+        Ok(CompleteResult::new(completion))
+    }
+}
+
+/// One completion candidate: the value to offer, and a second spelling it is
+/// also findable by (a module key and its display name, a patch slug and the
+/// patch's real name).
+type CompletionCandidate = (String, String);
+
+/// The candidates matching what has been typed, best first.
+///
+/// Completion matches far more loosely than the near-miss hints, because it is
+/// a *filter over a list the caller can see* rather than a guess at one: any
+/// substring counts and there is no minimum length. Someone two characters into
+/// a dropdown means "narrow this down", not "I may have misspelled something" —
+/// the hint ranking answers `ba` with nothing, which is right for an error
+/// message and useless for a dropdown over `sub-bass` and `spacey-bass`.
+///
+/// Only when nothing contains the text does it fall back to the shared
+/// near-miss ranking, which is what still recovers an actual typo (`lmit`).
+/// Both spellings are matched, so typing a name reaches a value keyed by
+/// something else.
+fn filter_completions(typed: &str, candidates: &[CompletionCandidate]) -> Vec<String> {
+    let typed = typed.trim().to_lowercase();
+    if typed.is_empty() {
+        return candidates.iter().map(|(value, _)| value.clone()).collect();
+    }
+
+    let mut ranked: Vec<(usize, &str)> = candidates
+        .iter()
+        .filter_map(|(value, alias)| {
+            let rank = [value, alias]
+                .into_iter()
+                .filter_map(|spelling| {
+                    let spelling = spelling.to_lowercase();
+                    if spelling.starts_with(&typed) {
+                        Some(0)
+                    } else if spelling.contains(&typed) {
+                        Some(1)
+                    } else {
+                        None
+                    }
+                })
+                .min()?;
+            Some((rank, value.as_str()))
+        })
+        .collect();
+    ranked.sort_by_key(|(rank, _)| *rank);
+    if !ranked.is_empty() {
+        return ranked
+            .into_iter()
+            .map(|(_, value)| value.to_string())
+            .collect();
+    }
+
+    // Uncapped on purpose: `complete` is the one place that truncates, and it
+    // counts `total` from what this returns. Capping here too would report a
+    // `total` that had already been cut down to the cap, so `hasMore` would say
+    // `false` over a list that really did have more.
+    synth_core::suggest::similar_by(
+        &typed,
+        candidates.iter(),
+        |(value, alias)| [value.as_str(), alias.as_str()],
+        candidates.len(),
+    )
+    .into_iter()
+    .map(|(value, _)| value.clone())
+    .collect()
+}
+
+impl SynthMcpServer {
+    /// Module type keys matching what has been typed so far.
+    ///
+    /// Findable by display name as well as key, then answered with the key: a
+    /// caller part-way through typing `limit` has written neither a prefix nor
+    /// a near miss of `lmt`, and only the name connects the two.
+    fn complete_module_type_key(&self, typed: &str) -> Vec<String> {
+        let Ok(types) = self.bridge.list_module_types_brief() else {
+            return Vec::new();
+        };
+        let candidates: Vec<CompletionCandidate> = types
+            .into_iter()
+            .map(|info| (info.type_key, info.name))
+            .collect();
+        filter_completions(typed, &candidates)
+    }
+
+    /// Example-patch slugs matching what has been typed so far.
+    ///
+    /// Findable by the patch's real name too, since the slug is a rendering of
+    /// that name and a caller is far likelier to know the name.
+    fn complete_patch_slug(&self, typed: &str) -> Vec<String> {
+        let Ok(patches) = self.bridge.list_example_patches() else {
+            return Vec::new();
+        };
+        let candidates: Vec<CompletionCandidate> = patches
+            .into_iter()
+            .map(|patch| (patch_slug(&patch.name), patch.name))
+            .collect();
+        filter_completions(typed, &candidates)
     }
 }
 
@@ -5421,3 +5648,11 @@ mod schema_range_tests;
 #[cfg(test)]
 #[path = "server/tests/tool_annotations.rs"]
 mod tool_annotations_tests;
+
+#[cfg(test)]
+#[path = "server/tests/completions.rs"]
+mod completions_tests;
+
+#[cfg(test)]
+#[path = "server/tests/schema_enum.rs"]
+mod schema_enum_tests;

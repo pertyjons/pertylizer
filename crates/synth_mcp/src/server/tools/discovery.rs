@@ -279,33 +279,13 @@ impl SynthMcpServer {
     )]
     pub(crate) async fn search_modules(&self, params: Parameters<SearchModulesParam>) -> String {
         let p = params.0;
-        // Validate category if provided
-        if let Some(ref cat) = p.category
-            && !["voice", "effect", "visualizer"].contains(&cat.as_str())
-        {
-            return format!(
-                "Error: invalid category '{}'. Valid categories: voice, effect, visualizer",
-                cat
-            );
-        }
-        // Validate signal types if provided
-        for (name, val) in [
-            ("has_input_type", &p.has_input_type),
-            ("has_output_type", &p.has_output_type),
-        ] {
-            if let Some(st) = val
-                && !VALID_SIGNAL_TYPES.contains(&st.as_str())
-            {
-                return format!(
-                    "Error: invalid {name} '{}'. Valid signal types: audio, control, gate, midi",
-                    st
-                );
-            }
-        }
+        // The category and signal-type filters are enums, so an invalid value
+        // is refused by deserialization against the schema's own `enum` list —
+        // there is no hand-written check here to fall behind that list.
         match self.bridge.search_modules(
-            p.category.as_deref(),
-            p.has_input_type.as_deref(),
-            p.has_output_type.as_deref(),
+            p.category.map(ModuleCategoryFilter::as_str),
+            p.has_input_type.map(SignalTypeFilter::as_str),
+            p.has_output_type.map(SignalTypeFilter::as_str),
             p.query.as_deref(),
         ) {
             Ok(result) => {
