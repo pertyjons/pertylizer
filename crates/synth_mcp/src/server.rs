@@ -587,52 +587,6 @@ fn distill_audio_validation(
 /// Valid port signal type strings.
 const VALID_SIGNAL_TYPES: &[&str] = &["audio", "control", "gate", "midi"];
 
-/// Find strings similar to `needle` in `haystack` using simple edit distance.
-fn find_similar(needle: &str, haystack: &[&str], max_results: usize) -> Vec<String> {
-    let needle_lower = needle.to_lowercase();
-    let mut scored: Vec<(&str, usize)> = haystack
-        .iter()
-        .filter_map(|&s| {
-            let s_lower = s.to_lowercase();
-            // Substring match gets priority
-            if s_lower.contains(&needle_lower) || needle_lower.contains(&s_lower) {
-                Some((s, 0))
-            } else {
-                let dist = edit_distance(&needle_lower, &s_lower);
-                if dist <= 3 { Some((s, dist)) } else { None }
-            }
-        })
-        .collect();
-    scored.sort_by_key(|(_, d)| *d);
-    scored
-        .into_iter()
-        .take(max_results)
-        .map(|(s, _)| format!("'{s}'"))
-        .collect()
-}
-
-/// Simple Levenshtein edit distance.
-fn edit_distance(a: &str, b: &str) -> usize {
-    let a: Vec<char> = a.chars().collect();
-    let b: Vec<char> = b.chars().collect();
-    let mut dp = vec![vec![0usize; b.len() + 1]; a.len() + 1];
-    for (i, row) in dp.iter_mut().enumerate() {
-        row[0] = i;
-    }
-    for j in 0..=b.len() {
-        dp[0][j] = j;
-    }
-    for i in 1..=a.len() {
-        for j in 1..=b.len() {
-            let cost = if a[i - 1] == b[j - 1] { 0 } else { 1 };
-            dp[i][j] = (dp[i - 1][j] + 1)
-                .min(dp[i][j - 1] + 1)
-                .min(dp[i - 1][j - 1] + cost);
-        }
-    }
-    dp[a.len()][b.len()]
-}
-
 // === MCP session tracking ===
 
 /// Information about a connected MCP client.
@@ -4519,12 +4473,11 @@ macro_rules! dispatch_tools {
             )*
             _ => {
                 let known: &[&str] = &[ $( $name ),* ];
-                let similar = find_similar($tool, known, 3);
-                let hint = if similar.is_empty() {
-                    String::new()
-                } else {
-                    format!(". Did you mean {}?", similar.join(", "))
-                };
+                let hint = synth_core::suggest::did_you_mean(
+                    $tool,
+                    known.iter().copied(),
+                    synth_core::suggest::DEFAULT_MAX_HINTS,
+                );
                 Err(format!("Error: unknown tool '{}'{}", $tool, hint))
             }
         }

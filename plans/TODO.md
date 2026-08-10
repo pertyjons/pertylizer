@@ -666,6 +666,12 @@ domain.
 > Added 2026-08-05 after the `rmcp` 2.2 → 3.1 upgrade (MCP spec `2026-07-28`).
 > Tool annotations from that audit have shipped; the rest is open. None of these
 > are bug fixes — they are capabilities the protocol gained that we do not use.
+>
+> **The audit was written from the changelog, not from the schema, and §6.8 was
+> wrong as a result** — it proposed a completion mechanism that cannot target
+> tool arguments in any spec version. Corrected 2026-08-10. Before building any
+> entry here, confirm the feature reaches the surface it is claimed for by
+> reading `schema/<version>/schema.ts`, not the prose.
 
 ### 6.7 Structured tool output (`outputSchema` + `structuredContent`)
 
@@ -684,14 +690,73 @@ domain.
 
   **Do this incrementally on the most-used tools, not as one sweep.** **L.**
 
-### 6.8 Argument completions (`ServerHandler::complete`)
+### 6.8 Ergonomics for string-keyed tool arguments
 
-- [ ] **Implement `complete` for our string-keyed argument space.** Module type
-  keys (`osc`, `flt`), parameter addresses (`flt-1.cutoff`), instrument names,
-  pattern ids and automation target DSL strings are all free-text today; a typo
-  costs a failed call plus a `search_modules`/`list_*` round trip to recover. The
-  catalogs the completions would draw from already exist behind the discovery
-  tools. **M**, and probably the biggest day-to-day ergonomics win left.
+**Rewritten 2026-08-10 — the original entry rested on a false premise.** It read
+"implement `complete` for our string-keyed argument space", naming module type
+keys (`osc`, `flt`), parameter addresses (`flt-1.cutoff`), instrument names,
+pattern ids and automation target DSL strings, and called it the biggest
+day-to-day ergonomics win left. **MCP completion cannot address tool arguments
+at all.** `completion/complete` targets exactly two reference types, `ref/prompt`
+and `ref/resource`; there is no `ref/tool`. Verified three ways — the pinned
+`schema/2026-07-28/schema.ts` (`ref: PromptReference | ResourceTemplateReference`),
+the 2026-07-28 *Reference Types* table, and the **draft** spec's identical table —
+and `rmcp` 3.1's `Reference` enum (`model.rs:3365`) has the same two variants, so
+the SDK is spec-correct rather than lagging. Nothing is queued upstream either:
+SEP-1862 ("Tool Resolution", draft since 2026-02) is preflight *annotation*
+refinement before invocation, not argument suggestion — it belongs to §6.10 if
+anywhere.
+
+Note for anyone re-reading this against the newtype convention: the domain keys
+*are* typed. `ModuleType` is a 75-variant enum with `prefix()` / `from_prefix()`
+(`synth_core/src/params/mod.rs:528`, `:614`) and `ModuleId` is
+`{ module_type, instance }` with `FromStr` (`synth_engine/src/commands.rs:30`,
+`:62`); `InstrumentId` even crosses the boundary as itself
+(`SetParametersParam.instrument_id`). The `String` on `ParamSetInput.module_id`
+is the JSON wire form — CLAUDE.md's documented serialization exception — so none
+of the work below changes the type story.
+
+What is actually available, smallest first:
+
+- [ ] **`complete` for the two resource templates we already expose.** Real but
+  small: `synth://module-types/{type_key}` and `synth://patches/{name}`
+  (`server.rs:5297`) are legitimate `ref/resource` completion targets, and
+  `list_module_types` / `list_example_patches` already supply the candidates.
+  Needs the `completions` capability declared — the builder currently enables
+  only tools and resources (`server.rs:5169`). This helps a client browsing
+  resources; it does **not** help anyone calling `set_parameter`. **S.**
+- [ ] **Put `enum` in the input schema for the closed-set arguments.** This is
+  the replacement for what 6.8 originally promised, and it works today: spec
+  `2026-07-28` minor change 10 (SEP-2106) loosened `inputSchema` to any JSON
+  Schema 2020-12 keyword. An argument whose valid values are known at build time
+  — module type keys above all, plus the fixed choice-strings — can ship its
+  candidate list *in the tool schema*, where every client already validates and
+  completes against it, with no new RPC. Scope it to genuinely closed sets:
+  module ids, parameter names and automation DSL strings depend on live session
+  state and cannot be enumerated at schema time. **S–M**, entirely inside
+  `synth_mcp`.
+- [x] **Make the parse failures name the near miss.** Done. `ModuleId::from_str`
+  answers `lim-1` with "Did you mean 'lmt' (Limiter)?" — the §7 limiter
+  confusion one layer earlier — and the same hint now closes the three
+  descriptor parameter lookups in the bridge, `set_parameter`'s not-found, and
+  the automation DSL's unknown module type / track / global / instrument param.
+  The DSL's three param lists became tables the parser and the hint both read,
+  so neither can fall behind the other.
+
+  One shared policy in `synth_core::suggest` rather than a third
+  implementation: `synth_mcp` and the bridge's module search each had grown
+  their own Levenshtein with different thresholds, and both moved onto it.
+
+  Two things the work established, both counter-intuitive enough to record.
+  **An edit-distance ceiling cannot do this job alone** — every module key is a
+  3-char consonant skeleton, so `flt` is exactly as far from `filter` as it is
+  from `osc`, and any threshold loose enough to connect the first connects the
+  second. Name→key is recovered by offering the *name* as its own candidate and
+  mapping the winner back (`ModuleType::suggest`), which is exact rather than
+  approximate. **Containment must be anchored**, or the suggestion is
+  confidently wrong: unanchored, `grain` "means" `ain` (Audio Input) and `ent`
+  "means" `tsh` (Transient Shaper) while `env` sits one edit away. Both are
+  pinned by tests against the real 75-type catalogue.
 
 ### 6.9 Long-running calls: tasks extension + progress
 

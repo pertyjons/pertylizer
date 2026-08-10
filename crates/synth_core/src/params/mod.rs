@@ -725,6 +725,44 @@ impl ModuleType {
             snake.as_str().into_deserializer();
         Self::deserialize(de).ok()
     }
+
+    /// The module type a caller most likely meant by `token`, for a token that
+    /// [`from_token`](Self::from_token) already refused.
+    ///
+    /// Matches against both the prefix and the display name, because the two
+    /// catch opposite mistakes: writing the name where a key belongs
+    /// (`limiter` → `lmt`) and writing a guessed key that opens the name
+    /// (`lim` → `Limiter`). Returns `None` when nothing is close enough, which
+    /// is the answer for genuine nonsense — a wrong suggestion costs more than
+    /// no suggestion.
+    #[must_use]
+    pub fn suggest(token: &str) -> Option<Self> {
+        // Prefix and name interleaved per type, so a tie between two types is
+        // broken by declaration order rather than by which field matched.
+        let candidates =
+            Self::all().flat_map(|module_type| [module_type.prefix(), module_type.name()]);
+        let best = crate::suggest::nearest(token, candidates)?;
+        Self::all().find(|module_type| module_type.prefix() == best || module_type.name() == best)
+    }
+
+    /// A hint naming the module type `token` most likely meant, or an empty
+    /// string when nothing is close.
+    ///
+    /// Always names the **prefix** first: every caller that reaches this has
+    /// just been rejected for supplying something where a prefix was required,
+    /// so the prefix is the actionable half and the display name is the
+    /// confirmation. Appends to a message that does not end in punctuation.
+    #[must_use]
+    pub fn suggestion_hint(token: &str) -> String {
+        match Self::suggest(token) {
+            Some(module_type) => format!(
+                ". Did you mean '{}' ({})?",
+                module_type.prefix(),
+                module_type.name()
+            ),
+            None => String::new(),
+        }
+    }
 }
 
 // ============================================================================
@@ -1062,6 +1100,66 @@ mod tests {
         // Unknown tokens.
         assert_eq!(ModuleType::from_token("definitely_not_a_module"), None);
         assert_eq!(ModuleType::from_token(""), None);
+    }
+
+    /// The case this exists for: a project saved a limiter under `lim-1`, whose
+    /// canonical prefix is `lmt`. `lim` opens the display name, which is the
+    /// only relation that connects the two.
+    #[test]
+    fn suggest_recovers_a_guessed_prefix_from_the_display_name() {
+        assert_eq!(ModuleType::suggest("lim"), Some(ModuleType::Limiter));
+        assert_eq!(
+            ModuleType::suggestion_hint("lim"),
+            ". Did you mean 'lmt' (Limiter)?"
+        );
+    }
+
+    /// The opposite mistake: the name written where the key belongs. Every key
+    /// is a consonant skeleton of its name, so the name spells the key out.
+    #[test]
+    fn suggest_recovers_a_key_from_the_spelled_out_name() {
+        for (token, expected) in [
+            ("filter", ModuleType::Filter),
+            ("delay", ModuleType::Delay),
+            ("reverb", ModuleType::Reverb),
+            ("compressor", ModuleType::Compressor),
+        ] {
+            assert_eq!(ModuleType::suggest(token), Some(expected), "token {token}");
+        }
+    }
+
+    #[test]
+    fn suggest_recovers_a_single_character_slip() {
+        assert_eq!(ModuleType::suggest("fkt"), Some(ModuleType::Filter));
+    }
+
+    /// A wrong suggestion is worse than none, so nonsense must stay quiet.
+    #[test]
+    fn suggest_stays_quiet_on_nonsense() {
+        assert_eq!(ModuleType::suggest("definitely_not_a_module"), None);
+        assert_eq!(ModuleType::suggest("xyz"), None);
+        assert_eq!(ModuleType::suggest(""), None);
+        assert_eq!(ModuleType::suggestion_hint("xyz"), "");
+    }
+
+    /// Every type must be reachable from its own key and its own name, or the
+    /// hint would point somewhere else for whichever type the ranking favours.
+    #[test]
+    fn suggest_is_exact_for_every_type_s_own_key_and_name() {
+        for module_type in ModuleType::all() {
+            assert_eq!(
+                ModuleType::suggest(module_type.prefix()),
+                Some(module_type),
+                "prefix {}",
+                module_type.prefix()
+            );
+            assert_eq!(
+                ModuleType::suggest(module_type.name()),
+                Some(module_type),
+                "name {}",
+                module_type.name()
+            );
+        }
     }
 
     #[test]

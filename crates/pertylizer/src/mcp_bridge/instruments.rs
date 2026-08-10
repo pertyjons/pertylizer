@@ -949,7 +949,8 @@ impl synth_mcp::bridge::InstrumentBridge for AppSynthBridge {
             .parse()
             .map_err(|_| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
 
-        // Fetch the descriptor once and resolve the parameter entry the SAME way
+        // Fetch the descriptor once and resolve the parameter entry through the
+        // shared `find_parameter`, so this path accepts exactly what
         // session.set_parameter does — `type_id` first (the stable identifier
         // clients and project files usually pass), then display name. Matching
         // only on name would silently skip validation for type_id-addressed
@@ -957,18 +958,10 @@ impl synth_mcp::bridge::InstrumentBridge for AppSynthBridge {
         // entry is reused for both validation and the response below; the
         // descriptor is the single source of truth shared with schema generation
         // and MCP discovery.
-        let needle = normalize_param_name(param_name);
         let descriptor = self.session.module_descriptor(inst_id, mid);
-        let param_desc = descriptor.as_ref().and_then(|desc| {
-            desc.parameters
-                .iter()
-                .find(|pd| normalize_param_name(&pd.type_id) == needle)
-                .or_else(|| {
-                    desc.parameters
-                        .iter()
-                        .find(|pd| normalize_param_name(&pd.name) == needle)
-                })
-        });
+        let param_desc = descriptor
+            .as_ref()
+            .and_then(|desc| desc.find_parameter(param_name));
 
         // The mod-matrix source and destination accept a free-form address string
         // ("lfo-1.out" / "flt-1.cutoff", a macro id, a legacy id, or "none") so

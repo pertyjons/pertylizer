@@ -546,7 +546,8 @@ pub struct PortValueDomainInfo {
 /// Information about an available module type.
 #[derive(Debug, Clone, Serialize)]
 pub struct ModuleTypeInfo {
-    /// Type key to pass to add_module (e.g. "oscillator", "filter").
+    /// Type key to pass to add_module: the module's short prefix (e.g. "osc",
+    /// "flt"), which is also the prefix its module ids carry.
     pub type_key: String,
     /// Display name (e.g. "Oscillator", "Math Oscillator").
     pub name: String,

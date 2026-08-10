@@ -96,6 +96,29 @@ fn did_you_mean_respects_category_filter() {
     );
 }
 
+/// This suggestion and the one a mistyped module id gets are now ranked by the
+/// same policy in `synth_core::suggest`, rather than by two hand-tuned
+/// thresholds that could drift apart. The same slip must reach the same module
+/// through both doors.
+#[test]
+fn the_search_hint_and_the_module_id_hint_agree() {
+    for (typo, key) in [("lmit", "lmt"), ("fkt", "flt"), ("revrb", "rev")] {
+        let searched = search_module_types(None, None, None, Some(typo));
+        assert!(
+            searched.did_you_mean.iter().any(|s| s.contains(key)),
+            "search for {typo:?} should suggest {key}, got {:?}",
+            searched.did_you_mean
+        );
+
+        let parsed = format!("{typo}-1").parse::<synth_engine::ModuleId>();
+        let error = parsed.expect_err("the typo must not parse as a module id");
+        assert!(
+            error.contains(key),
+            "parsing {typo:?}-1 should suggest {key}, got: {error}"
+        );
+    }
+}
+
 /// An empty/whitespace query behaves like "no query": filters alone decide, and
 /// the full registry comes back (no scoring drop).
 #[test]

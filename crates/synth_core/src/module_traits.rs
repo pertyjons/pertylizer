@@ -1599,6 +1599,80 @@ impl ModuleDescriptor {
         self.tags.push(tag.into());
         self
     }
+
+    /// Look a parameter up by its stable `type_id` or, failing that, its display
+    /// name — matching case-insensitively with `_` and space interchangeable, so
+    /// a patch file's `"key_track"` and a client's `"Key Track"` both land.
+    ///
+    /// The `type_id` is tried first and exhaustively: it is the identifier that
+    /// can never be renamed, so a display name must never shadow it.
+    #[must_use]
+    pub fn find_parameter(&self, name: &str) -> Option<&ParameterDescriptor> {
+        let needle = normalize_param_name(name);
+        self.parameters
+            .iter()
+            .find(|parameter| normalize_param_name(&parameter.type_id) == needle)
+            .or_else(|| {
+                self.parameters
+                    .iter()
+                    .find(|parameter| normalize_param_name(&parameter.name) == needle)
+            })
+    }
+
+    /// A hint naming the parameter `type_id`s closest to `needle`, or an empty
+    /// string when none is close. Appends to a message that does not end in
+    /// punctuation.
+    ///
+    /// The rejecting lookup is holding the entire list of names it would have
+    /// accepted, so the caller should never have to spend a
+    /// `get_module_type_info` round trip to learn that `cutof` was nearly
+    /// `cutoff`.
+    ///
+    /// For a lookup that accepts display names too, use
+    /// [`param_lookup_hint`](Self::param_lookup_hint) — offering a display name
+    /// where only the `type_id` parses would be a hint the caller cannot act on.
+    #[must_use]
+    pub fn param_id_hint(&self, needle: &str) -> String {
+        crate::suggest::did_you_mean(
+            needle,
+            self.parameters
+                .iter()
+                .map(|parameter| parameter.type_id.as_str()),
+            crate::suggest::DEFAULT_MAX_HINTS,
+        )
+    }
+
+    /// As [`param_id_hint`](Self::param_id_hint), but for the lookups that also
+    /// accept a parameter's display name (see
+    /// [`find_parameter`](Self::find_parameter)).
+    ///
+    /// Ranks **both** spellings and answers with the `type_id`, the same way
+    /// [`ModuleType::suggest`](crate::ModuleType::suggest) ranks display names
+    /// and answers with the prefix. The two spellings are equivalent to the
+    /// lookup but not to the ranker, which counts plain edits: `"Key Tracking"`
+    /// is 3 edits from the name `"Key Track"` and 4 from the `type_id`
+    /// `"key_track"` — the `_`-for-space substitution is the edit that pushes it
+    /// over the threshold — so ranking the ids alone answers a recoverable typo
+    /// with silence.
+    #[must_use]
+    pub fn param_lookup_hint(&self, needle: &str) -> String {
+        // Ranked per *parameter* rather than per spelling: a parameter that
+        // matches by id and by name is one answer, and ranking the loose strings
+        // would spend two of the three slots on it.
+        let hits = crate::suggest::similar_by(
+            needle,
+            self.parameters.iter(),
+            |parameter| [parameter.type_id.as_str(), parameter.name.as_str()],
+            crate::suggest::DEFAULT_MAX_HINTS,
+        );
+        crate::suggest::hint_from(hits.into_iter().map(|parameter| parameter.type_id.as_str()))
+    }
+}
+
+/// Lowercase and treat `_` as a space, so the `snake_case` `type_id` and the
+/// spaced display name of the same parameter compare equal.
+fn normalize_param_name(s: &str) -> String {
+    s.to_lowercase().replace('_', " ")
 }
 
 // ============================================================================
@@ -2137,6 +2211,73 @@ pub trait VisualizationSink: Send + Sync {
 mod tests {
     use super::*;
     use std::assert_matches;
+
+    /// A descriptor shaped like the real filter's: a `type_id` in `snake_case`
+    /// and a display name that is *not* a respelling of it.
+    fn key_track_descriptor() -> ModuleDescriptor {
+        ModuleDescriptor::new("flt", "Filter")
+            .parameter(ParameterDescriptor::float(
+                "cutoff",
+                Param::Oscillator(crate::params::OscillatorParam::Frequency(
+                    crate::Hertz::new(1000.0),
+                )),
+                "Cutoff",
+            ))
+            .parameter(ParameterDescriptor::float(
+                "key_track",
+                Param::Oscillator(crate::params::OscillatorParam::Detune(crate::Cents::ZERO)),
+                "Key Track",
+            ))
+    }
+
+    /// Both spellings resolve, and the stable `type_id` is what a caller may
+    /// always rely on.
+    #[test]
+    fn find_parameter_accepts_the_type_id_and_the_display_name() {
+        let descriptor = key_track_descriptor();
+        for spelling in ["key_track", "Key Track", "KEY TRACK", "key track"] {
+            assert_eq!(
+                descriptor.find_parameter(spelling).map(|p| &p.type_id),
+                Some(&"key_track".to_string()),
+                "spelling {spelling}"
+            );
+        }
+        assert!(descriptor.find_parameter("nope").is_none());
+    }
+
+    /// The reason the lookup hint ranks display names too: `"Key Tracking"` is
+    /// 3 edits from the name `"Key Track"` and 4 from the `type_id`
+    /// `"key_track"`, so ranking the ids alone answers a recoverable typo with
+    /// silence. The answer is still the `type_id` — the spelling that always
+    /// parses.
+    #[test]
+    fn param_lookup_hint_recovers_a_display_name_the_ids_cannot() {
+        let descriptor = key_track_descriptor();
+        assert_eq!(descriptor.param_id_hint("Key Tracking"), "");
+        assert_eq!(
+            descriptor.param_lookup_hint("Key Tracking"),
+            ". Did you mean 'key_track'?"
+        );
+    }
+
+    /// A parameter that ranks by both its id and its name must not fill the
+    /// hint by itself.
+    #[test]
+    fn param_lookup_hint_offers_each_parameter_once() {
+        let descriptor = key_track_descriptor();
+        assert_eq!(
+            descriptor.param_lookup_hint("cutof"),
+            ". Did you mean 'cutoff'?"
+        );
+    }
+
+    /// A wrong suggestion is worse than none.
+    #[test]
+    fn param_hints_stay_quiet_on_nonsense() {
+        let descriptor = key_track_descriptor();
+        assert_eq!(descriptor.param_id_hint("zzzzzz"), "");
+        assert_eq!(descriptor.param_lookup_hint("zzzzzz"), "");
+    }
 
     #[test]
     fn port_type_ids_and_compatibility_are_stable() {

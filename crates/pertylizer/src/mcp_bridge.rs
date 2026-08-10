@@ -279,20 +279,21 @@ impl AppSynthBridge {
             .parse()
             .map_err(|_| McpBridgeError::ModuleNotFound(module_id.to_string()))?;
 
-        let needle = normalize_param_name(param_name);
         let descriptor = crate::module_factory::get_descriptor(mid.module_type);
-        let param_desc = descriptor.as_ref().and_then(|desc| {
-            desc.parameters
-                .iter()
-                .find(|pd| normalize_param_name(&pd.type_id) == needle)
-                .or_else(|| {
-                    desc.parameters
-                        .iter()
-                        .find(|pd| normalize_param_name(&pd.name) == needle)
-                })
-        });
+        let param_desc = descriptor
+            .as_ref()
+            .and_then(|desc| desc.find_parameter(param_name));
         let Some(pd) = param_desc else {
-            return Err(McpBridgeError::ParameterNotFound(param_name.to_string()));
+            // Name the near miss: the descriptor in hand lists every spelling
+            // this lookup would have accepted, so a typo need not cost a
+            // `get_module_type_info` round trip.
+            let hint = descriptor
+                .as_ref()
+                .map(|desc| desc.param_lookup_hint(param_name))
+                .unwrap_or_default();
+            return Err(McpBridgeError::ParameterNotFound(format!(
+                "{param_name}{hint}"
+            )));
         };
 
         let value = resolve_param_value(&value, Some(pd), param_name)?;
@@ -480,8 +481,9 @@ impl AppSynthBridge {
             .find(|parameter| parameter.type_id == param_id)
             .ok_or_else(|| {
                 McpBridgeError::Other(format!(
-                    "module '{}' has no parameter '{param_id}'",
-                    module_type.prefix()
+                    "module '{}' has no parameter '{param_id}'{}",
+                    module_type.prefix(),
+                    descriptor.param_id_hint(param_id)
                 ))
             })?;
         if !parameter.is_automatable() {
@@ -1477,8 +1479,9 @@ fn parse_mod_node(
                 .find(|param| param.type_id == *type_id)
                 .ok_or_else(|| {
                     McpBridgeError::Other(format!(
-                        "module '{:?}' has no parameter '{type_id}'",
-                        module.module_type
+                        "module '{:?}' has no parameter '{type_id}'{}",
+                        module.module_type,
+                        descriptor.param_id_hint(type_id)
                     ))
                 })?;
             *value = param.validate_f32(*value).map_err(|error| {
@@ -1592,42 +1595,79 @@ fn tempo_points(song: &synth_sequencer::Song) -> Vec<TempoPoint> {
         .collect()
 }
 
+/// The automation DSL's instrument-level parameter names.
+///
+/// A table rather than a `match` arm so the parser and the near-miss hint read
+/// the same list: a name reachable by one is offered by the other, and neither
+/// can quietly fall behind.
+const AUTO_INSTRUMENT_PARAMS: &[(&str, synth_sequencer::AutoInstrumentParam)] = {
+    use synth_sequencer::AutoInstrumentParam as P;
+    &[
+        ("Volume", P::Volume),
+        ("Pan", P::Pan),
+        ("FilterCutoff", P::FilterCutoff),
+        ("FilterResonance", P::FilterResonance),
+        ("Attack", P::Attack),
+        ("Decay", P::Decay),
+        ("Sustain", P::Sustain),
+        ("Release", P::Release),
+    ]
+};
+
+/// The automation DSL's track-parameter names, read straight off the enum
+/// through `display_name` — which is also what [`automation_target_info`]
+/// renders, so parser, hint and renderer cannot disagree.
+///
+/// A hand-written table here would be a *fourth* copy of a list the enum already
+/// owns (`TrackParam::ALL`), and a new variant would render to a `track:<name>`
+/// string the parser then rejected — a lane `list_automation_lanes` reports that
+/// no other automation tool can address.
+fn track_param_names() -> impl Iterator<Item = &'static str> {
+    synth_sequencer::TrackParam::ALL
+        .iter()
+        .map(synth_sequencer::TrackParam::display_name)
+}
+
+/// The automation DSL's global-parameter names.
+const GLOBAL_PARAMS: &[(&str, synth_sequencer::GlobalParam)] =
+    &[("MasterVolume", synth_sequencer::GlobalParam::MasterVolume)];
+
+/// Look a name up in one of the DSL tables above. Case-sensitive, as the DSL
+/// has always been — a case slip is recovered by the hint instead, which
+/// matches case-insensitively.
+fn lookup<T: Copy>(table: &[(&str, T)], name: &str) -> Option<T> {
+    table
+        .iter()
+        .find(|(candidate, _)| *candidate == name)
+        .map(|(_, value)| *value)
+}
+
+/// A hint naming the closest entries in one of the DSL tables.
+fn table_hint<T>(table: &[(&str, T)], name: &str) -> String {
+    synth_core::suggest::did_you_mean(
+        name,
+        table.iter().map(|(candidate, _)| *candidate),
+        synth_core::suggest::DEFAULT_MAX_HINTS,
+    )
+}
+
 /// Parse a parameter name string to `AutoInstrumentParam`.
 fn parse_auto_instrument_param(name: &str) -> Option<synth_sequencer::AutoInstrumentParam> {
-    use synth_sequencer::AutoInstrumentParam;
-    match name {
-        "Volume" => Some(AutoInstrumentParam::Volume),
-        "Pan" => Some(AutoInstrumentParam::Pan),
-        "FilterCutoff" => Some(AutoInstrumentParam::FilterCutoff),
-        "FilterResonance" => Some(AutoInstrumentParam::FilterResonance),
-        "Attack" => Some(AutoInstrumentParam::Attack),
-        "Decay" => Some(AutoInstrumentParam::Decay),
-        "Sustain" => Some(AutoInstrumentParam::Sustain),
-        "Release" => Some(AutoInstrumentParam::Release),
-        _ => None,
-    }
+    lookup(AUTO_INSTRUMENT_PARAMS, name)
 }
 
 /// Parse a track-parameter name (case-sensitive, matching `TrackParam`'s
-/// `Debug`/`display_name`): `Volume`, `Pan`, `Mute`, `Pitch`.
+/// `display_name`): `Volume`, `Pan`, `Mute`, `Pitch`.
 fn parse_track_param(name: &str) -> Option<synth_sequencer::TrackParam> {
-    use synth_sequencer::TrackParam;
-    match name {
-        "Volume" => Some(TrackParam::Volume),
-        "Pan" => Some(TrackParam::Pan),
-        "Mute" => Some(TrackParam::Mute),
-        "Pitch" => Some(TrackParam::Pitch),
-        _ => None,
-    }
+    synth_sequencer::TrackParam::ALL
+        .iter()
+        .copied()
+        .find(|param| param.display_name() == name)
 }
 
 /// Parse a global-parameter name: `MasterVolume`.
 fn parse_global_param(name: &str) -> Option<synth_sequencer::GlobalParam> {
-    use synth_sequencer::GlobalParam;
-    match name {
-        "MasterVolume" => Some(GlobalParam::MasterVolume),
-        _ => None,
-    }
+    lookup(GLOBAL_PARAMS, name)
 }
 
 /// Map a bridge [`CurveKind`](synth_mcp::bridge::CurveKind) plus optional
@@ -1702,20 +1742,36 @@ fn build_automation_target(
             }
             None => (rest, None),
         };
-        let param = parse_track_param(param_str)
-            .ok_or_else(|| McpBridgeError::Other(format!("unknown track param: '{param_str}'")))?;
+        let param = parse_track_param(param_str).ok_or_else(|| {
+            McpBridgeError::Other(format!(
+                "unknown track param: '{param_str}'{}",
+                synth_core::suggest::did_you_mean(
+                    param_str,
+                    track_param_names(),
+                    synth_core::suggest::DEFAULT_MAX_HINTS,
+                )
+            ))
+        })?;
         return Ok(synth_sequencer::AutomationTarget::Track { track, param });
     }
 
     // Global lane: `global:<param>` (e.g. `global:MasterVolume`).
     if let Some(rest) = target.strip_prefix("global:") {
-        let param = parse_global_param(rest)
-            .ok_or_else(|| McpBridgeError::Other(format!("unknown global param: '{rest}'")))?;
+        let param = parse_global_param(rest).ok_or_else(|| {
+            McpBridgeError::Other(format!(
+                "unknown global param: '{rest}'{}",
+                table_hint(GLOBAL_PARAMS, rest)
+            ))
+        })?;
         return Ok(synth_sequencer::AutomationTarget::Global(param));
     }
 
-    let param = parse_auto_instrument_param(target)
-        .ok_or_else(|| McpBridgeError::Other(format!("unknown automation param: {target}")))?;
+    let param = parse_auto_instrument_param(target).ok_or_else(|| {
+        McpBridgeError::Other(format!(
+            "unknown automation param: '{target}'{}",
+            table_hint(AUTO_INSTRUMENT_PARAMS, target)
+        ))
+    })?;
     Ok(synth_sequencer::AutomationTarget::Instrument { instrument, param })
 }
 
@@ -1760,7 +1816,10 @@ fn build_module_automation_target(
         .iter()
         .find(|p| p.type_id == param_id)
         .ok_or_else(|| {
-            McpBridgeError::Other(format!("module '{prefix}' has no parameter '{param_id}'"))
+            McpBridgeError::Other(format!(
+                "module '{prefix}' has no parameter '{param_id}'{}",
+                descriptor.param_id_hint(param_id)
+            ))
         })?;
     if !param.is_automatable() {
         return Err(McpBridgeError::Other(format!(
@@ -1790,8 +1849,12 @@ fn parse_module_automation_target(body: &str) -> Result<(ModuleType, u16, &str),
     // Splitting on the first separator would mis-slice such names.
     let (type_token, instance_str) = module_ref.rsplit_once([':', '-']).ok_or_else(malformed)?;
 
-    let module_type = parse_module_type(type_token)
-        .ok_or_else(|| McpBridgeError::Other(format!("unknown module type: '{type_token}'")))?;
+    let module_type = parse_module_type(type_token).ok_or_else(|| {
+        McpBridgeError::Other(format!(
+            "unknown module type: '{type_token}'{}",
+            synth_core::ModuleType::suggestion_hint(type_token)
+        ))
+    })?;
     let instance: u16 = instance_str
         .parse()
         .map_err(|_| McpBridgeError::Other(format!("invalid module instance: '{instance_str}'")))?;

@@ -93,6 +93,117 @@ fn build_module_target_rejects_non_automatable_and_invalid() {
     assert!(build_automation_target("module:flt:1", InstrumentId::new(0), &m).is_err());
 }
 
+/// The rejecting lookup is holding the descriptor that lists every name it
+/// would have accepted, so a near miss costs nothing to report — and saves the
+/// caller a `get_module_type_info` round trip.
+#[test]
+fn an_unknown_param_names_the_one_that_was_meant() {
+    let m = flt1();
+    let err = build_automation_target("module:flt:1:cutof", InstrumentId::new(0), &m)
+        .expect_err("'cutof' is not a filter parameter");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("'cutoff'"),
+        "expected the near miss to be named; got: {msg}"
+    );
+}
+
+/// A wrong suggestion is worse than none: a parameter name with no relation to
+/// anything on the module must be rejected without a guess.
+#[test]
+fn an_unrecognizable_param_suggests_nothing() {
+    let m = flt1();
+    let err = build_automation_target("module:flt:1:nope", InstrumentId::new(0), &m)
+        .expect_err("'nope' is not a filter parameter");
+    let msg = err.to_string();
+    assert!(
+        !msg.contains("Did you mean"),
+        "expected no suggestion; got: {msg}"
+    );
+}
+
+/// The DSL's parser, its near-miss hint and `automation_target_info`'s renderer
+/// are three views of one name list per lane kind. A variant that renders to a
+/// string the parser rejects is a lane `list_automation_lanes` reports and no
+/// other automation tool can address — the exact drift the shared name lists
+/// exist to prevent — so pin the round trip over *every* variant rather than
+/// over the handful a hand-written test would name.
+#[test]
+fn every_lane_name_round_trips_through_the_dsl() {
+    use synth_sequencer::{AutoInstrumentParam, GlobalParam, TrackParam};
+
+    let instrument = InstrumentId::new(0);
+    let mut targets: Vec<AutomationTarget> = Vec::new();
+    targets.extend(
+        AutoInstrumentParam::ALL
+            .iter()
+            .map(|&param| AutomationTarget::Instrument { instrument, param }),
+    );
+    targets.extend(
+        TrackParam::ALL
+            .iter()
+            .map(|&param| AutomationTarget::Track { track: None, param }),
+    );
+    targets.push(AutomationTarget::Global(GlobalParam::MasterVolume));
+
+    for target in targets {
+        let (rendered, _, _) = automation_target_info(&target);
+        assert_eq!(
+            build_automation_target(&rendered, instrument, &[]).ok(),
+            Some(target.clone()),
+            "{target:?} renders to {rendered:?}, which the DSL parser rejects"
+        );
+    }
+}
+
+/// The DSL's param names are case-sensitive, so a case slip is the likeliest
+/// way to get one wrong — and the one a hint recovers most cheaply, since the
+/// ranking is case-insensitive.
+#[test]
+fn an_unknown_dsl_param_names_the_one_that_was_meant() {
+    for (target, expected) in [
+        ("track:volume", "'Volume'"),
+        ("track:Volme", "'Volume'"),
+        ("global:mastervolume", "'MasterVolume'"),
+        ("filtercutoff", "'FilterCutoff'"),
+    ] {
+        let err = build_automation_target(target, InstrumentId::new(0), &flt1())
+            .expect_err("the DSL is case-sensitive, so this must not parse");
+        let msg = err.to_string();
+        assert!(
+            msg.contains(expected),
+            "target {target} should suggest {expected}; got: {msg}"
+        );
+    }
+}
+
+/// An unknown module type in a `module:` target names the type that was meant,
+/// keyed the way the DSL wants it written.
+#[test]
+fn an_unknown_dsl_module_type_names_the_key() {
+    let err = build_automation_target("module:lim:1:threshold", InstrumentId::new(0), &flt1())
+        .expect_err("'lim' is not a module type key");
+    let msg = err.to_string();
+    assert!(
+        msg.contains("'lmt' (Limiter)"),
+        "expected the near miss to be named; got: {msg}"
+    );
+}
+
+/// Nonsense stays nonsense — no guess.
+#[test]
+fn an_unrecognizable_dsl_token_suggests_nothing() {
+    for target in ["track:zzz", "global:zzz", "zzz"] {
+        let err = build_automation_target(target, InstrumentId::new(0), &flt1())
+            .expect_err("'zzz' is not a param");
+        let msg = err.to_string();
+        assert!(
+            !msg.contains("Did you mean"),
+            "target {target} must not guess; got: {msg}"
+        );
+    }
+}
+
 #[test]
 fn build_module_target_rejects_missing_instance() {
     // Instrument has flt-4 / flt-5 but no flt-1: a flt:1 target must be

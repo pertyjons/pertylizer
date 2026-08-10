@@ -160,11 +160,21 @@ fn field_matches(field: &str, tok: &str) -> bool {
     false
 }
 
-/// Edit-distance near-misses when a query matched nothing. Suggest a module when
-/// any query token is within 2 of its type key or within 3 of its display name,
-/// so `ringmd` surfaces `Ring Mod (rng)` but a random `xyz` yields nothing.
-/// Honours the caller's hard filters so a suggestion is never something the
-/// category/port filter would have excluded.
+/// How many near-miss modules a suggestion names.
+const MAX_MODULE_SUGGESTIONS: usize = 5;
+
+/// Near-miss modules when a query matched nothing, so an empty result reads as
+/// "mis-spelled" rather than "feature absent" — `ringmd` surfaces
+/// `Ring Mod (rng)` while a random `xyz` yields nothing.
+///
+/// Each type is ranked by the best its key or its display name can do against
+/// any one query token, on the shared ladder in [`synth_core::suggest`]. Ranking
+/// both spellings and answering with the type is what lets a caller who wrote
+/// the name get the key back, which is the same shape `ModuleType::suggest` and
+/// the `get_module_type_info` hint use.
+///
+/// Honours the caller's hard filters, so a suggestion is never something the
+/// category/port filter would have excluded anyway.
 fn did_you_mean_modules(
     tokens: &[String],
     category: Option<&str>,
@@ -181,64 +191,24 @@ fn did_you_mean_modules(
         if !passes_hard_filters(mt, &desc, category, has_input_type, has_output_type) {
             continue;
         }
-        let key = mt.prefix().to_lowercase();
-        let name = mt.name().to_lowercase();
-        let mut best: Option<usize> = None;
-        for tok in tokens {
-            if let Some(d) = best_match_distance(tok, &key, &name) {
-                best = Some(best.map_or(d, |b| b.min(d)));
-            }
-        }
-        if let Some(d) = best {
-            scored.push((d, format!("{} ({})", mt.name(), mt.prefix())));
+        let best = tokens
+            .iter()
+            .flat_map(|token| {
+                [mt.prefix(), mt.name()]
+                    .map(|spelling| synth_core::suggest::match_rank(token, spelling))
+            })
+            .flatten()
+            .min();
+        if let Some(rank) = best {
+            scored.push((rank, format!("{} ({})", mt.name(), mt.prefix())));
         }
     }
     scored.sort_by(|a, b| a.0.cmp(&b.0).then_with(|| a.1.cmp(&b.1)));
-    scored.into_iter().take(5).map(|(_, s)| s).collect()
-}
-
-/// Distance of `tok` to a module's key (clamp ≤2) or display name (clamp ≤3),
-/// returning the smaller qualifying distance or `None` if neither is close.
-///
-/// Each threshold is additionally clamped to `target.len() - 1` so a suggestion
-/// must preserve at least one character of the target: a 2-char name like "EQ"
-/// can't false-match a 4-char random string at distance 3.
-fn best_match_distance(tok: &str, key: &str, name: &str) -> Option<usize> {
-    let key_threshold = 2.min(key.chars().count().saturating_sub(1));
-    let name_threshold = 3.min(name.chars().count().saturating_sub(1));
-    let key_d = module_edit_distance(tok, key);
-    let name_d = module_edit_distance(tok, name);
-    let mut best: Option<usize> = None;
-    if key_d <= key_threshold {
-        best = Some(key_d);
-    }
-    if name_d <= name_threshold {
-        best = Some(best.map_or(name_d, |b| b.min(name_d)));
-    }
-    best
-}
-
-/// Levenshtein edit distance over chars (small inputs; allocation is fine here).
-fn module_edit_distance(a: &str, b: &str) -> usize {
-    let a: Vec<char> = a.chars().collect();
-    let b: Vec<char> = b.chars().collect();
-    if a.is_empty() {
-        return b.len();
-    }
-    if b.is_empty() {
-        return a.len();
-    }
-    let mut prev: Vec<usize> = (0..=b.len()).collect();
-    let mut cur = vec![0usize; b.len() + 1];
-    for i in 1..=a.len() {
-        cur[0] = i;
-        for j in 1..=b.len() {
-            let cost = usize::from(a[i - 1] != b[j - 1]);
-            cur[j] = (prev[j] + 1).min(cur[j - 1] + 1).min(prev[j - 1] + cost);
-        }
-        std::mem::swap(&mut prev, &mut cur);
-    }
-    prev[b.len()]
+    scored
+        .into_iter()
+        .take(MAX_MODULE_SUGGESTIONS)
+        .map(|(_, s)| s)
+        .collect()
 }
 
 /// Coarse catalog category for a module type: "voice", "effect", or "visualizer".

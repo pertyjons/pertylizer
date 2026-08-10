@@ -2,6 +2,39 @@
 
 use super::super::*;
 
+/// How many distinct type keys an unknown-type-key error offers.
+const MAX_TYPE_KEY_HINTS: usize = synth_core::suggest::DEFAULT_MAX_HINTS;
+
+/// The `\nHint:` line for an unrecognized `type_key`, naming up to
+/// [`MAX_TYPE_KEY_HINTS`] near misses from the catalog.
+///
+/// Ranks against the display names as well as the keys, then answers with the
+/// key. Spelling the module out ("filter") is the likeliest way to get a key
+/// wrong, and it is nowhere near its key ("flt") by any string measure — only
+/// the name it abbreviates connects the two.
+fn type_key_hint(type_key: &str, types: &[crate::ModuleTypeBrief]) -> String {
+    // Ranked per *type* rather than per spelling: a type that matches by key and
+    // by name is one answer, and ranking the loose strings would spend two of
+    // the three slots on it ("reverb" answering 'rev' twice).
+    let hits = synth_core::suggest::similar_by(
+        type_key,
+        types.iter(),
+        |t| [t.type_key.as_str(), t.name.as_str()],
+        MAX_TYPE_KEY_HINTS,
+    );
+    if hits.is_empty() {
+        return "\nHint: use list_module_types to see all available type keys.".to_string();
+    }
+    let list: Vec<String> = hits
+        .iter()
+        .map(|t| format!("'{}'", t.type_key.as_str()))
+        .collect();
+    format!(
+        "\nHint: did you mean {}? Use list_module_types to see all.",
+        list.join(", ")
+    )
+}
+
 #[tool_router(router = discovery_tool_router, vis = "pub(crate)")]
 impl SynthMcpServer {
     #[tool(
@@ -223,21 +256,11 @@ impl SynthMcpServer {
             Ok(info) => to_json(&info),
             Err(e) => {
                 let hint = if matches!(e, McpBridgeError::InvalidModuleType(_)) {
-                    match self.bridge.list_module_types() {
-                        Ok(types) => {
-                            let keys: Vec<&str> =
-                                types.iter().map(|t| t.type_key.as_str()).collect();
-                            let similar = find_similar(type_key, &keys, 3);
-                            if similar.is_empty() {
-                                "\nHint: use list_module_types to see all available type keys."
-                                    .to_string()
-                            } else {
-                                format!(
-                                    "\nHint: did you mean {}? Use list_module_types to see all.",
-                                    similar.join(", ")
-                                )
-                            }
-                        }
+                    // The brief listing, not the full one: the hint needs only
+                    // each type's key and name, and the full listing builds
+                    // ports, parameters and algorithm JSON for all 75 types.
+                    match self.bridge.list_module_types_brief() {
+                        Ok(types) => type_key_hint(type_key, &types),
                         Err(_) => String::new(),
                     }
                 } else {

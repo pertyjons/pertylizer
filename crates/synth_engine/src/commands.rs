@@ -65,14 +65,29 @@ impl FromStr for ModuleId {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         let parts: Vec<&str> = s.split('-').collect();
         if parts.len() != 2 {
-            return Err(format!("Invalid ModuleId format: {}", s));
+            return Err(format!(
+                "invalid module id '{s}': expected '<type>-<instance>', e.g. 'osc-1'"
+            ));
         }
 
-        let module_type = ModuleType::from_prefix(parts[0])
-            .ok_or_else(|| format!("Unknown module type prefix: {}", parts[0]))?;
-        let instance = parts[1]
-            .parse::<u16>()
-            .map_err(|_| format!("Invalid instance number: {}", parts[1]))?;
+        // Deliberately strict: only the canonical prefix parses, because a
+        // `ModuleId` renders back through `prefix()` and accepting the display
+        // name here would make `"limiter-1"` parse and print as `"lmt-1"`. The
+        // near miss goes in the error instead, where it costs nothing.
+        let module_type = ModuleType::from_prefix(parts[0]).ok_or_else(|| {
+            format!(
+                "unknown module type prefix '{}' in module id '{s}'{}",
+                parts[0],
+                ModuleType::suggestion_hint(parts[0])
+            )
+        })?;
+        let instance = parts[1].parse::<u16>().map_err(|_| {
+            format!(
+                "invalid instance number '{}' in module id '{s}': expected a number, e.g. '{}-1'",
+                parts[1],
+                module_type.prefix()
+            )
+        })?;
 
         Ok(Self {
             module_type,
@@ -1512,3 +1527,86 @@ const _: () = {
     assert_static::<EngineCommand>();
     assert_static::<EngineEvent>();
 };
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_module_id_round_trips_through_its_rendering() {
+        let id = ModuleId::new(ModuleType::Filter, 2);
+        assert_eq!(id.to_string(), "flt-2");
+        assert_eq!("flt-2".parse::<ModuleId>(), Ok(id));
+    }
+
+    /// A project that saved a limiter under `lim-1` — the canonical prefix is
+    /// `lmt` — used to be told only that `lim` was unknown, leaving the caller
+    /// to go and look the prefix up. See TODO 7 for what that cost.
+    #[test]
+    fn an_unknown_prefix_names_the_one_that_was_meant() {
+        let error = "lim-1".parse::<ModuleId>().unwrap_err();
+        assert!(
+            error.contains("lim") && error.contains("'lmt' (Limiter)"),
+            "expected the near miss to be named, got: {error}"
+        );
+    }
+
+    /// Only the prefix parses: accepting the display name here would let
+    /// `limiter-1` parse and then render as `lmt-1`.
+    #[test]
+    fn the_display_name_does_not_parse_as_a_prefix() {
+        assert!("limiter-1".parse::<ModuleId>().is_err());
+    }
+
+    #[test]
+    fn a_malformed_id_names_the_shape_it_wanted() {
+        let error = "osc".parse::<ModuleId>().unwrap_err();
+        assert!(
+            error.contains("<type>-<instance>"),
+            "expected the expected shape, got: {error}"
+        );
+        let error = "osc-x".parse::<ModuleId>().unwrap_err();
+        assert!(
+            error.contains("expected a number"),
+            "expected the instance rule, got: {error}"
+        );
+    }
+
+    /// Genuine nonsense must not be answered with a confident guess.
+    #[test]
+    fn an_unrecognizable_prefix_suggests_nothing() {
+        let error = "xyz-1".parse::<ModuleId>().unwrap_err();
+        assert!(
+            !error.contains("Did you mean"),
+            "expected no suggestion, got: {error}"
+        );
+    }
+
+    /// A three-letter key landing mid-word is a coincidence, not a near miss:
+    /// `grain` carries `ain` (Audio Input) in its middle. Suggesting it would
+    /// send the caller after a module that has nothing to do with what they
+    /// wrote.
+    #[test]
+    fn a_key_buried_inside_a_word_is_not_suggested() {
+        let error = "grain-1".parse::<ModuleId>().unwrap_err();
+        assert!(
+            !error.contains("'ain'"),
+            "expected no mid-word match, got: {error}"
+        );
+    }
+
+    /// The same coincidence in the other direction, over the real catalogue: a
+    /// one-character slip must beat a token that merely appears somewhere in a
+    /// longer display name. `ent` is one edit from `env` and also sits inside
+    /// "Transi**ent** Shaper".
+    #[test]
+    fn a_one_character_slip_outranks_a_mid_word_coincidence() {
+        for (id, expected) in [("ent-1", "'env'"), ("vol-1", "'vox'"), ("fkt-1", "'flt'")] {
+            let error = id.parse::<ModuleId>().unwrap_err();
+            assert!(
+                error.contains(expected),
+                "{id} should suggest {expected}, got: {error}"
+            );
+        }
+    }
+}

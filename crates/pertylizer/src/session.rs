@@ -978,22 +978,19 @@ impl SynthSession {
             .module_descriptor(instrument_id, module_id)
             .ok_or_else(|| SessionError::ModuleNotFound(module_id.to_string()))?;
 
-        // Normalize: lowercase and replace underscores with spaces for fuzzy matching.
-        // This allows patch files to use snake_case ("key_tracking") while engine
-        // uses Title Case with spaces ("Key Tracking").
-        let normalize = |s: &str| s.to_lowercase().replace('_', " ");
-        let needle = normalize(param_name);
-        let param_desc = descriptor
-            .parameters
-            .iter()
-            .find(|p| normalize(&p.type_id) == needle)
-            .or_else(|| {
-                descriptor
-                    .parameters
-                    .iter()
-                    .find(|p| normalize(&p.name) == needle)
-            })
-            .ok_or_else(|| SessionError::ParameterNotFound(param_name.to_string()))?;
+        // `find_parameter` matches the stable `type_id` first, then the display
+        // name, lowercasing and treating `_` as a space — so patch files may use
+        // snake_case ("key_tracking") while the engine uses Title Case with
+        // spaces ("Key Tracking").
+        let param_desc = descriptor.find_parameter(param_name).ok_or_else(|| {
+            // The rejecting lookup is holding the descriptor that lists
+            // every name it would have accepted, so name the near miss
+            // rather than send the caller off to `get_module_type_info`.
+            SessionError::ParameterNotFound(format!(
+                "{param_name}{}",
+                descriptor.param_lookup_hint(param_name)
+            ))
+        })?;
 
         let param = value.to_param(param_desc);
 
