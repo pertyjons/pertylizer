@@ -22,9 +22,13 @@ use pertylizer::session::SynthSession;
 
 /// Tools intentionally absent from the batch dispatch table:
 /// - `batch_execute` must not nest inside itself.
-/// - `preview_note` / `analyze_note` return binary audio (`CallToolResult`),
-///   which the `String`-returning batch dispatch path cannot carry.
-const BATCH_EXEMPT: &[&str] = &["batch_execute", "preview_note", "analyze_note"];
+/// - `preview_note` answers a base64 `audio/wav` content block, which the batch
+///   path cannot carry — it renders each op to one result value.
+///
+/// `analyze_note` used to be exempt for the same stated reason, but it never
+/// returned audio: it hand-serialized a plain `AnalyzeNoteResult` into a text
+/// block. Typed, it dispatches like any other reader.
+const BATCH_EXEMPT: &[&str] = &["batch_execute", "preview_note"];
 
 fn build_bridge() -> AppSynthBridge {
     let (_engine, handle) = SynthEngine::new();

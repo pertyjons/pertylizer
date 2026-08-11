@@ -374,8 +374,8 @@ impl synth_mcp::bridge::MixingBridge for AppSynthBridge {
         Ok(())
     }
 
-    fn get_master_volume(&self) -> Result<f32, McpBridgeError> {
-        Ok(self.session.state().master_volume.load())
+    fn get_master_volume(&self) -> Result<Gain, McpBridgeError> {
+        Ok(Gain::new(self.session.state().master_volume.load()))
     }
 
     fn set_master_volume(&self, volume: Gain) -> Result<(), McpBridgeError> {

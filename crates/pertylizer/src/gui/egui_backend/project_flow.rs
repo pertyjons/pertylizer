@@ -421,6 +421,17 @@ impl SynthApp {
                 window_size,
             };
         }
+
+        // The three project fields that exist only here. Published alongside the
+        // layout so the non-GUI save and rollback-snapshot paths stop writing
+        // zeros over them — see `McpSharedState::gui_globals`.
+        if let Ok(mut globals) = shared.gui_globals.lock() {
+            *globals = Some(crate::mcp_shared::GuiGlobals {
+                glide_time: self.glide_time,
+                octave_offset: self.keyboard.octave_offset(),
+                active_instrument_id: self.active_instrument_id,
+            });
+        }
     }
 
     /// Reset the active instrument to a new empty patch.
@@ -531,6 +542,9 @@ impl SynthApp {
             author,
             glide_time: Some(self.glide_time),
             octave_offset: Some(self.keyboard.octave_offset()),
+            // The GUI's own save already overwrote this field after building; it is
+            // passed in now so both callers get it from the same place.
+            active_instrument_id: self.active_instrument_id,
         }
     }
 

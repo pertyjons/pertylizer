@@ -5,80 +5,85 @@ use super::super::*;
 #[tool_router(router = instruments_tool_router, vis = "pub(crate)")]
 impl SynthMcpServer {
     #[tool(
+        output_schema = action_output_schema(),
         description = "Install or clear YAMS on a Mod Matrix (`mmx-N`), Script (`scr-N`), or AudioScript (`asc-N`) module. Despite the historical tool name, `module_id` selects the dialect. A Mod Matrix program writes one normalized offset with `out`; a Script is one control-rate program with `in1..in4` and `out1..out4` (bare `out` aliases `out1`); an AudioScript is one per-sample stereo program. `param` declarations expose real knobs on Script and AudioScript modules. An empty `source` clears the selected slot/program. `slot` is 1-based: Mod Matrix accepts 1..=16; Script and AudioScript require slot 1. Read back with get_mod_matrix_routings (mmx) or get_module_info (scr/asc); see get_yams_reference for the complete language.",
         annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_mod_matrix_script(
         &self,
         params: Parameters<SetModMatrixScriptParam>,
-    ) -> String {
+    ) -> CallToolResult {
         let p = params.0;
         match self
             .bridge
             .set_mod_matrix_script(p.instrument_id, &p.module_id, p.slot, &p.source)
         {
-            Ok(()) if p.source.trim().is_empty() => {
-                format!("OK: cleared script on {} slot {}", p.module_id, p.slot)
-            }
-            Ok(()) => format!("OK: installed script on {} slot {}", p.module_id, p.slot),
-            Err(e) => format!("Error: {e}"),
+            Ok(()) if p.source.trim().is_empty() => action_ok(format!(
+                "OK: cleared script on {} slot {}",
+                p.module_id, p.slot
+            )),
+            Ok(()) => action_ok(format!(
+                "OK: installed script on {} slot {}",
+                p.module_id, p.slot
+            )),
+            Err(e) => action_failed(format!("Error: {e}")),
         }
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Play one or more MIDI notes (note on) — pass several to strike a whole chord in one call. Use note=60 for middle C, velocity=100 for moderate strength.",
         annotations(destructive_hint = false)
     )]
-    pub(crate) async fn note_on(&self, params: Parameters<NoteOnParam>) -> String {
-        for n in &params.0.notes {
+    pub(crate) async fn note_on(&self, params: Parameters<NoteOnParam>) -> CallToolResult {
+        for (index, n) in params.0.notes.iter().enumerate() {
             if let Err(e) = validate_midi_note(n.note) {
-                return format!("Error: {e}");
+                return action_rejected_at(index, format!("Error: {e}"));
             }
             if let Err(e) = validate_velocity(n.velocity) {
-                return format!("Error: {e}");
+                return action_rejected_at(index, format!("Error: {e}"));
             }
             if let Err(e) = validate_midi_channel(n.channel.unwrap_or(MidiChannel::CH1)) {
-                return format!("Error: {e}");
+                return action_rejected_at(index, format!("Error: {e}"));
             }
         }
-        let mut ok_count = 0usize;
-        let mut errors = Vec::new();
+        let mut items = Mutations::new();
         for n in &params.0.notes {
             let channel = n.channel.unwrap_or(MidiChannel::CH1);
             match self
                 .bridge
                 .note_on(n.note, n.velocity, channel, n.instrument_id)
             {
-                Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("note {}: {e}", n.note)),
+                Ok(()) => items.ok(),
+                Err(e) => items.failed(format!("note {}: {e}", n.note)),
             }
         }
-        batch_msg(ok_count, "notes on", &[], &errors)
+        items.reply("notes on")
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Stop one or more MIDI notes (note off). Use the same note numbers as the corresponding note_on.",
         annotations(destructive_hint = false)
     )]
-    pub(crate) async fn note_off(&self, params: Parameters<NoteOffParam>) -> String {
-        for n in &params.0.notes {
+    pub(crate) async fn note_off(&self, params: Parameters<NoteOffParam>) -> CallToolResult {
+        for (index, n) in params.0.notes.iter().enumerate() {
             if let Err(e) = validate_midi_note(n.note) {
-                return format!("Error: {e}");
+                return action_rejected_at(index, format!("Error: {e}"));
             }
             if let Err(e) = validate_midi_channel(n.channel.unwrap_or(MidiChannel::CH1)) {
-                return format!("Error: {e}");
+                return action_rejected_at(index, format!("Error: {e}"));
             }
         }
-        let mut ok_count = 0usize;
-        let mut errors = Vec::new();
+        let mut items = Mutations::new();
         for n in &params.0.notes {
             let channel = n.channel.unwrap_or(MidiChannel::CH1);
             match self.bridge.note_off(n.note, channel, n.instrument_id) {
-                Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("note {}: {e}", n.note)),
+                Ok(()) => items.ok(),
+                Err(e) => items.failed(format!("note {}: {e}", n.note)),
             }
         }
-        batch_msg(ok_count, "notes off", &[], &errors)
+        items.reply("notes off")
     }
 
     #[tool(
@@ -88,7 +93,7 @@ impl SynthMcpServer {
     pub(crate) async fn compare_mix_before_after(
         &self,
         params: Parameters<CompareMixBeforeAfterParam>,
-    ) -> String {
+    ) -> Result<Json<CompareMixResult>, String> {
         let p = params.0;
         let duration = p.duration_seconds.unwrap_or(10.0);
         let scope = crate::bridge::AnalysisScope::from_flags(
@@ -97,7 +102,7 @@ impl SynthMcpServer {
             p.include_return_effects,
             crate::bridge::RenderQuality::parse(p.render_quality.as_deref()),
         );
-        run_blocking_json(|| {
+        run_blocking_typed(|| {
             self.bridge
                 .compare_mix_before_after(&p.action, duration, p.start_tick, p.label, scope)
         })
@@ -107,7 +112,10 @@ impl SynthMcpServer {
         description = "Find recurring melodic motifs in the scope. Converts each track's notes into a pitch-interval sequence (signed semitone deltas between consecutive notes in time order, ignoring rests), slides an n-gram window across each track (lengths min_interval_length..=max_interval_length, defaults 3..=6), counts identical interval sequences, and returns the top_n motifs (default 10) that appear at least min_count times (default 3). Transposition-invariant — the same shape rooted at different pitches collapses to one entry. Each motif lists its interval sequence, count, and per-occurrence locations (track id, start tick, bar/beat, first pitch). Pure symbolic — no audio rendering. `exclude_drums` defaults to true.",
         annotations(read_only_hint = true)
     )]
-    pub(crate) async fn find_motifs(&self, params: Parameters<FindMotifsParam>) -> String {
+    pub(crate) async fn find_motifs(
+        &self,
+        params: Parameters<FindMotifsParam>,
+    ) -> Result<Json<FindMotifsResult>, String> {
         match self.bridge.find_motifs(
             params.0.pattern_id,
             params.0.arrangement_start_tick,
@@ -120,8 +128,8 @@ impl SynthMcpServer {
             params.0.exclude_drums,
             params.0.exclude_track_ids,
         ) {
-            Ok(result) => to_json(&result),
-            Err(e) => format!("Error: {e}"),
+            Ok(result) => Ok(Json(result)),
+            Err(e) => Err(format!("Error: {e}")),
         }
     }
 
@@ -129,35 +137,40 @@ impl SynthMcpServer {
         description = "List all available example patches with their categories, descriptions, and tags",
         annotations(read_only_hint = true)
     )]
-    pub(crate) async fn list_example_patches(&self, _params: Parameters<NoParams>) -> String {
+    pub(crate) async fn list_example_patches(
+        &self,
+        _params: Parameters<NoParams>,
+    ) -> Result<Json<Listing<ExamplePatchInfo>>, String> {
         match self.bridge.list_example_patches() {
-            Ok(patches) => to_json(&patches),
-            Err(e) => format!("Error: {e}"),
+            Ok(patches) => Ok(Json(patches.into())),
+            Err(e) => Err(format!("Error: {e}")),
         }
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Load an example patch by name. The GUI will update on the next frame. Use list_example_patches to see available patches.",
         annotations(destructive_hint = true)
     )]
     pub(crate) async fn load_example_patch(
         &self,
         params: Parameters<LoadExamplePatchParam>,
-    ) -> String {
+    ) -> CallToolResult {
         match self.bridge.load_example_patch(&params.0.name) {
-            Ok(msg) => msg,
-            Err(e) => format!("Error: {e}"),
+            Ok(msg) => action_ok(msg),
+            Err(e) => action_failed(format!("Error: {e}")),
         }
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Request auto-layout of modules in the patch view. The GUI applies the layout on the next Rack-view frame, arranging modules by signal flow. If the user is in another view (AcousticWorld, Sequencer, Sample), the request stays pending until they return to Rack.",
         annotations(destructive_hint = true)
     )]
-    pub(crate) async fn auto_layout(&self, _params: Parameters<NoParams>) -> String {
+    pub(crate) async fn auto_layout(&self, _params: Parameters<NoParams>) -> CallToolResult {
         match self.bridge.request_auto_layout() {
-            Ok(msg) => msg,
-            Err(e) => format!("Error: {e}"),
+            Ok(msg) => action_ok(msg),
+            Err(e) => action_failed(format!("Error: {e}")),
         }
     }
 
@@ -165,55 +178,61 @@ impl SynthMcpServer {
         description = "Get a snapshot of the current UI layout: module positions, sizes, connections, and overlap analysis for debugging",
         annotations(read_only_hint = true)
     )]
-    pub(crate) async fn get_ui_snapshot(&self, params: Parameters<InstrumentIdParam>) -> String {
+    pub(crate) async fn get_ui_snapshot(
+        &self,
+        params: Parameters<InstrumentIdParam>,
+    ) -> Result<Json<UiSnapshot>, String> {
         match self.bridge.get_ui_snapshot(params.0.instrument_id) {
-            Ok(snapshot) => to_json(&snapshot),
-            Err(e) => format!("Error: {e}"),
+            Ok(snapshot) => Ok(Json(snapshot)),
+            Err(e) => Err(format!("Error: {e}")),
         }
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Add one or more modules to the instrument's voice graph. Modules appear in the GUI on the next frame. Returns the assigned module IDs (see also list_modules). GUI-only visualizer types (Oscilloscope/Meter/Spectrum) can't be added over MCP — they're flagged gui_only:true in list_module_types.",
         annotations(destructive_hint = false)
     )]
-    pub(crate) async fn add_module(&self, params: Parameters<AddModulesParam>) -> String {
+    pub(crate) async fn add_module(&self, params: Parameters<AddModulesParam>) -> CallToolResult {
         let p = params.0;
-        let mut oks = Vec::new();
-        let mut errors = Vec::new();
+        let mut items = Mutations::with_capacity(p.module_types.len());
         for module_type in &p.module_types {
             match self.bridge.add_module(p.instrument_id, module_type) {
-                Ok(msg) => oks.push(msg),
-                Err(e) => errors.push(format!("{module_type}: {e}")),
+                Ok(module_id) => items.named(module_id),
+                Err(e) => items.failed(format!("{module_type}: {e}")),
             }
         }
-        batch_msg(oks.len(), "modules added", &oks, &errors)
+        items.reply("modules added")
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Remove one or more modules from the instrument's voice graph and disconnect all their cables.",
         annotations(destructive_hint = true)
     )]
-    pub(crate) async fn remove_module(&self, params: Parameters<RemoveModulesParam>) -> String {
+    pub(crate) async fn remove_module(
+        &self,
+        params: Parameters<RemoveModulesParam>,
+    ) -> CallToolResult {
         let p = params.0;
-        let mut ok_count = 0usize;
-        let mut errors = Vec::new();
+        let mut items = Mutations::new();
         for module_id in &p.module_ids {
             match self.bridge.remove_module(p.instrument_id, module_id) {
-                Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{module_id}: {e}")),
+                Ok(()) => items.ok(),
+                Err(e) => items.failed(format!("{module_id}: {e}")),
             }
         }
-        batch_msg(ok_count, "modules removed", &[], &errors)
+        items.reply("modules removed")
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Connect one or more module port pairs in one call. Returns the number of successful connections and any errors. \
                        Each connection specifies from_module:from_port → to_module:to_port. Port names must match the module's ports (typically 'out'/'in'); the aliases 'output'→'out' and 'input'→'in' are also accepted.",
         annotations(destructive_hint = false)
     )]
-    pub(crate) async fn connect(&self, params: Parameters<ConnectMultipleParam>) -> String {
-        let mut ok_count = 0usize;
-        let mut errors = Vec::new();
+    pub(crate) async fn connect(&self, params: Parameters<ConnectMultipleParam>) -> CallToolResult {
+        let mut items = Mutations::new();
         for c in &params.0.connections {
             match self.bridge.connect(
                 params.0.instrument_id,
@@ -222,32 +241,33 @@ impl SynthMcpServer {
                 &c.to_module,
                 &c.to_port,
             ) {
-                Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!(
+                Ok(()) => items.ok(),
+                Err(e) => items.failed(format!(
                     "{}:{} → {}:{}: {e}",
                     c.from_module, c.from_port, c.to_module, c.to_port
                 )),
             }
         }
-        if errors.is_empty() {
-            format!("OK: {ok_count} connections made")
-        } else {
-            format!(
-                "OK: {ok_count} connections made, {} errors: {}",
-                errors.len(),
-                errors.join("; ")
-            )
-        }
+        // Hand-rolled prose used to lead with "OK:" even when *every* cable was
+        // rejected, which `result_is_failure` cannot see — a wholly-failed
+        // `connect` then counted as a success and a `rollback: true` batch kept
+        // the broken state. `action_reply` leads with "Error:" on total failure,
+        // exactly as its mirror `disconnect` does.
+        items.reply("connections made")
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Clear the entire voice graph for an instrument, removing all modules and connections. Use this to start from scratch.",
         annotations(destructive_hint = true, idempotent_hint = true)
     )]
-    pub(crate) async fn clear_graph(&self, params: Parameters<InstrumentIdParam>) -> String {
+    pub(crate) async fn clear_graph(
+        &self,
+        params: Parameters<InstrumentIdParam>,
+    ) -> CallToolResult {
         match self.bridge.clear_graph(params.0.instrument_id) {
-            Ok(()) => "OK: graph cleared".to_string(),
-            Err(e) => format!("Error: {e}"),
+            Ok(()) => action_ok("OK: graph cleared".to_string()),
+            Err(e) => action_failed(format!("Error: {e}")),
         }
     }
 
@@ -263,18 +283,18 @@ impl SynthMcpServer {
     pub(crate) async fn insert_module_between(
         &self,
         params: Parameters<InsertModuleBetweenParam>,
-    ) -> String {
+    ) -> Result<Json<InsertModuleResult>, String> {
         let p = params.0;
         let anchor = match p.resolve_anchor() {
             Ok(a) => a,
-            Err(e) => return format!("Error: {e}"),
+            Err(e) => return Err(format!("Error: {e}")),
         };
         match self
             .bridge
             .insert_module_between(p.instrument_id, &p.module_type, anchor)
         {
-            Ok(result) => to_json(&result),
-            Err(e) => format!("Error: {e}"),
+            Ok(result) => Ok(Json(result)),
+            Err(e) => Err(format!("Error: {e}")),
         }
     }
 
@@ -288,99 +308,108 @@ impl SynthMcpServer {
     pub(crate) async fn validate_instrument_audio(
         &self,
         params: Parameters<ValidateInstrumentAudioParam>,
-    ) -> String {
+    ) -> Result<Json<ValidateInstrumentAudioResult>, String> {
         let p = params.0;
         let note = p.note.unwrap_or(MidiNote::C4);
         let velocity = p.velocity.unwrap_or(100);
         let duration_ms = p.duration_ms.unwrap_or(500);
         let tail_ms = p.tail_ms.unwrap_or(500);
         if velocity > 127 {
-            return format!("Error: {}", McpBridgeError::InvalidVelocity(velocity));
+            return Err(format!(
+                "Error: {}",
+                McpBridgeError::InvalidVelocity(velocity)
+            ));
         }
-        match self.bridge.analyze_note(
-            p.instrument_id,
-            note,
-            velocity,
-            duration_ms,
-            tail_ms,
-            None,
-            None,
-        ) {
-            Ok(r) => to_json(&distill_audio_validation(&r)),
-            Err(e) => format!("Error: {e}"),
-        }
+        // Offline render — must not run straight on the tokio executor, or the
+        // worker is blocked for the whole render and SSE keep-alives stall.
+        // `analyze_note` (the same bridge call) wraps it the same way.
+        run_blocking_typed(|| {
+            self.bridge
+                .analyze_note(
+                    p.instrument_id,
+                    note,
+                    velocity,
+                    duration_ms,
+                    tail_ms,
+                    None,
+                    None,
+                )
+                .map(|r| distill_audio_validation(&r))
+        })
     }
 
     // === Instrument lifecycle ===
 
     #[tool(
-        description = "Create one or more instruments. Returns the array of created instrument infos, each with its assigned ID.",
+        description = "Create one or more instruments. Returns `{ message, items: [{ index, value, error }] }` — \
+                       one entry per requested name, in request order: `value` is the created instrument info \
+                       (with its assigned ID) and `error` names the failure. A name that fails does not fail the others.",
         annotations(destructive_hint = false)
     )]
     pub(crate) async fn create_instrument(
         &self,
         params: Parameters<CreateInstrumentParam>,
-    ) -> String {
+    ) -> Result<Json<MutationResult<InstrumentInfo>>, String> {
         for name in &params.0.names {
             if let Err(e) = validate_name("instrument", name) {
-                return format!("Error: {e}");
+                return Err(format!("Error: {e}"));
             }
         }
-        let mut infos = Vec::new();
-        let mut errors = Vec::new();
+        let mut items = Mutations::with_capacity(params.0.names.len());
         for name in &params.0.names {
             match self.bridge.create_instrument(name) {
-                Ok(info) => infos.push(info),
-                Err(e) => errors.push(format!("'{name}': {e}")),
+                Ok(info) => items.named(info),
+                Err(e) => items.failed(format!("'{name}': {e}")),
             }
         }
-        batch_json("created", &infos, &errors)
+        Ok(Json(items.into_result("instruments created")))
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Delete one or more instruments and all their modules. Cannot delete the default instrument (ID 0).",
         annotations(destructive_hint = true)
     )]
     pub(crate) async fn delete_instrument(
         &self,
         params: Parameters<DeleteInstrumentsParam>,
-    ) -> String {
-        let mut ok_count = 0usize;
-        let mut errors = Vec::new();
+    ) -> CallToolResult {
+        let mut items = Mutations::new();
         for id in &params.0.instrument_ids {
             match self.bridge.delete_instrument(*id) {
-                Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{}: {e}", id.as_u64())),
+                Ok(()) => items.ok(),
+                Err(e) => items.failed(format!("{}: {e}", id.as_u64())),
             }
         }
-        batch_msg(ok_count, "instruments deleted", &[], &errors)
+        items.reply("instruments deleted")
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Rename one or more instruments. The name is shown in the UI instrument strip and track selector.",
         annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn rename_instrument(
         &self,
         params: Parameters<RenameInstrumentParam>,
-    ) -> String {
-        for it in &params.0.items {
+    ) -> CallToolResult {
+        for (index, it) in params.0.items.iter().enumerate() {
             if let Err(e) = validate_name("instrument", &it.name) {
-                return format!("Error: {e}");
+                return action_rejected_at(index, format!("Error: {e}"));
             }
         }
-        let mut ok_count = 0usize;
-        let mut errors = Vec::new();
+        let mut items = Mutations::new();
         for it in &params.0.items {
             match self.bridge.rename_instrument(it.instrument_id, &it.name) {
-                Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{}: {e}", it.instrument_id.as_u64())),
+                Ok(()) => items.ok(),
+                Err(e) => items.failed(format!("{}: {e}", it.instrument_id.as_u64())),
             }
         }
-        batch_msg(ok_count, "instruments renamed", &[], &errors)
+        items.reply("instruments renamed")
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Set or clear the free-text description / intent on an instrument. \
         The description never affects audio and is read back via list_instruments / \
         get_instrument_info. Use it to record why an instrument exists, what role it plays \
@@ -391,22 +420,22 @@ impl SynthMcpServer {
     pub(crate) async fn set_instrument_description(
         &self,
         params: Parameters<SetInstrumentDescriptionParam>,
-    ) -> String {
-        let mut ok_count = 0usize;
-        let mut errors = Vec::new();
+    ) -> CallToolResult {
+        let mut items = Mutations::new();
         for it in &params.0.items {
             match self
                 .bridge
                 .set_instrument_description(it.instrument_id, &it.description)
             {
-                Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{}: {e}", it.instrument_id.as_u64())),
+                Ok(()) => items.ok(),
+                Err(e) => items.failed(format!("{}: {e}", it.instrument_id.as_u64())),
             }
         }
-        batch_msg(ok_count, "instrument descriptions set", &[], &errors)
+        items.reply("instrument descriptions set")
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Set or clear the accent color of one or more instruments from a \
         \"#RRGGBB\" / \"#RRGGBBAA\" hex string (pass \"\" to clear back to the default/auto \
         tint). Never affects audio; paints instruments so the mixer / arrangement is visually \
@@ -417,22 +446,22 @@ impl SynthMcpServer {
     pub(crate) async fn set_instrument_color(
         &self,
         params: Parameters<SetInstrumentColorParam>,
-    ) -> String {
-        let mut ok_count = 0usize;
-        let mut errors = Vec::new();
+    ) -> CallToolResult {
+        let mut items = Mutations::new();
         for it in &params.0.items {
             match self
                 .bridge
                 .set_instrument_color(it.instrument_id, &it.color)
             {
-                Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{}: {e}", it.instrument_id.as_u64())),
+                Ok(()) => items.ok(),
+                Err(e) => items.failed(format!("{}: {e}", it.instrument_id.as_u64())),
             }
         }
-        batch_msg(ok_count, "instrument colors set", &[], &errors)
+        items.reply("instrument colors set")
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Set or clear the patch-level accent color of one or more instruments from a \
         \"#RRGGBB\" / \"#RRGGBBAA\" hex string (pass \"\" to clear). Distinct from \
         set_instrument_color: this color travels with the patch when it is saved/exported, so a \
@@ -440,19 +469,22 @@ impl SynthMcpServer {
         list_instruments / get_instrument_info as patch_color.",
         annotations(destructive_hint = false, idempotent_hint = true)
     )]
-    pub(crate) async fn set_patch_color(&self, params: Parameters<SetPatchColorParam>) -> String {
-        let mut ok_count = 0usize;
-        let mut errors = Vec::new();
+    pub(crate) async fn set_patch_color(
+        &self,
+        params: Parameters<SetPatchColorParam>,
+    ) -> CallToolResult {
+        let mut items = Mutations::new();
         for it in &params.0.items {
             match self.bridge.set_patch_color(it.instrument_id, &it.color) {
-                Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{}: {e}", it.instrument_id.as_u64())),
+                Ok(()) => items.ok(),
+                Err(e) => items.failed(format!("{}: {e}", it.instrument_id.as_u64())),
             }
         }
-        batch_msg(ok_count, "patch colors set", &[], &errors)
+        items.reply("patch colors set")
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Set or clear the patch-level description on an instrument's currently \
         loaded patch. This describes the *patch* (sound design intent, how it works, what it's \
         good for) and is distinct from set_instrument_description, which records the \
@@ -463,30 +495,26 @@ impl SynthMcpServer {
     pub(crate) async fn set_patch_description(
         &self,
         params: Parameters<SetPatchDescriptionParam>,
-    ) -> String {
+    ) -> CallToolResult {
         match self
             .bridge
             .set_patch_description(params.0.instrument_id, &params.0.description)
         {
-            Ok(()) => {
-                if params.0.description.is_empty() {
-                    format!(
-                        "OK: cleared patch description on instrument {}",
-                        params.0.instrument_id
-                    )
-                } else {
-                    format!(
-                        "OK: set instrument {} patch description ({} chars)",
-                        params.0.instrument_id,
-                        params.0.description.chars().count()
-                    )
-                }
-            }
-            Err(e) => format!("Error: {e}"),
+            Ok(()) if params.0.description.is_empty() => action_ok(format!(
+                "OK: cleared patch description on instrument {}",
+                params.0.instrument_id
+            )),
+            Ok(()) => action_ok(format!(
+                "OK: set instrument {} patch description ({} chars)",
+                params.0.instrument_id,
+                params.0.description.chars().count()
+            )),
+            Err(e) => action_failed(format!("Error: {e}")),
         }
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Set or clear the free-text description on one or more module instances \
         (what a particular module is for — e.g. \"wobble LFO for the filter cutoff\"). Takes an \
         array of self-contained {instrument_id, module_id, description} items, so a single call \
@@ -500,27 +528,27 @@ impl SynthMcpServer {
     pub(crate) async fn set_module_description(
         &self,
         params: Parameters<SetModuleDescriptionParam>,
-    ) -> String {
-        let mut ok_count = 0usize;
-        let mut errors = Vec::new();
+    ) -> CallToolResult {
+        let mut items = Mutations::new();
         for it in &params.0.items {
             match self.bridge.set_module_description(
                 it.instrument_id,
                 &it.module_id,
                 &it.description,
             ) {
-                Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!(
+                Ok(()) => items.ok(),
+                Err(e) => items.failed(format!(
                     "{}:{}: {e}",
                     it.instrument_id.as_u64(),
                     it.module_id
                 )),
             }
         }
-        batch_msg(ok_count, "module descriptions set", &[], &errors)
+        items.reply("module descriptions set")
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Set or clear a sample's free-text description (its intent / source). \
         Pass \"\" to clear. Surfaces in list_samples / get_sample_info.",
         annotations(destructive_hint = false, idempotent_hint = true)
@@ -528,22 +556,22 @@ impl SynthMcpServer {
     pub(crate) async fn set_sample_description(
         &self,
         params: Parameters<SetSampleDescriptionParam>,
-    ) -> String {
-        let mut ok_count = 0usize;
-        let mut errors = Vec::new();
+    ) -> CallToolResult {
+        let mut items = Mutations::new();
         for it in &params.0.items {
             match self
                 .bridge
                 .set_sample_description(it.sample_id, &it.description)
             {
-                Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{}: {e}", it.sample_id)),
+                Ok(()) => items.ok(),
+                Err(e) => items.failed(format!("{}: {e}", it.sample_id)),
             }
         }
-        batch_msg(ok_count, "sample descriptions set", &[], &errors)
+        items.reply("sample descriptions set")
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Set or clear the sidechain source on an instrument. When set, the \
         engine routes the source instrument's audio output into this instrument's \
         sidechain-capable modules (compressors with sidechain_enabled, envelope followers). \
@@ -554,22 +582,22 @@ impl SynthMcpServer {
     pub(crate) async fn set_sidechain_source(
         &self,
         params: Parameters<SetSidechainSourceParam>,
-    ) -> String {
-        let mut ok_count = 0usize;
-        let mut errors = Vec::new();
+    ) -> CallToolResult {
+        let mut items = Mutations::new();
         for it in &params.0.items {
             match self
                 .bridge
                 .set_sidechain_source(it.instrument_id, it.source)
             {
-                Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{}: {e}", it.instrument_id.as_u64())),
+                Ok(()) => items.ok(),
+                Err(e) => items.failed(format!("{}: {e}", it.instrument_id.as_u64())),
             }
         }
-        batch_msg(ok_count, "sidechain sources set", &[], &errors)
+        items.reply("sidechain sources set")
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Set mixer state on one or more instruments in a single call. Each item \
         carries an instrument_id plus any of volume (0.0=silent, 1.0=unity, 2.0=max), pan \
         (-1.0=left..1.0=right), muted, solo, and enabled (disabled instruments skip all audio \
@@ -580,22 +608,21 @@ impl SynthMcpServer {
     pub(crate) async fn set_instrument_mixer(
         &self,
         params: Parameters<SetInstrumentMixerParam>,
-    ) -> String {
+    ) -> CallToolResult {
         // Validate all ranges up front so a bad value rejects the whole call.
-        for it in &params.0.items {
+        for (index, it) in params.0.items.iter().enumerate() {
             if let Some(v) = it.volume
                 && let Err(e) = validate_range("volume", v.as_f32(), 0.0, 2.0)
             {
-                return format!("Error: {e}");
+                return action_rejected_at(index, format!("Error: {e}"));
             }
             if let Some(p) = it.pan
                 && let Err(e) = validate_range("pan", p.as_f32(), -1.0, 1.0)
             {
-                return format!("Error: {e}");
+                return action_rejected_at(index, format!("Error: {e}"));
             }
         }
-        let mut ok_count = 0usize;
-        let mut errors = Vec::new();
+        let mut items = Mutations::new();
         for it in &params.0.items {
             let id = it.instrument_id;
             let mut item_err: Option<String> = None;
@@ -629,14 +656,15 @@ impl SynthMcpServer {
                 item_err = Some(e.to_string());
             }
             match item_err {
-                None => ok_count += 1,
-                Some(e) => errors.push(format!("{}: {e}", id.as_u64())),
+                None => items.ok(),
+                Some(e) => items.failed(format!("{}: {e}", id.as_u64())),
             }
         }
-        batch_msg(ok_count, "instrument mixer updates applied", &[], &errors)
+        items.reply("instrument mixer updates applied")
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Set voice-allocator config on one or more instruments in a single call. Each \
         item carries an instrument_id plus any of: allocation_mode (Polyphonic | Mono | Legato | \
         Unison), stealing_strategy (None | Oldest | Quietest | LowestPriority | SameNote), \
@@ -649,28 +677,30 @@ impl SynthMcpServer {
     pub(crate) async fn set_allocator_config(
         &self,
         params: Parameters<SetAllocatorConfigParam>,
-    ) -> String {
+    ) -> CallToolResult {
         // Validate all numeric ranges up front so a bad value rejects the whole
         // call (mode/strategy strings are validated per-item by the bridge).
-        for it in &params.0.items {
+        for (index, it) in params.0.items.iter().enumerate() {
             if let Some(d) = it.unison_detune
                 && let Err(e) = validate_range("unison_detune", d, 0.0, 100.0)
             {
-                return format!("Error: {e}");
+                return action_rejected_at(index, format!("Error: {e}"));
             }
             if let Some(s) = it.unison_spread
                 && let Err(e) = validate_range("unison_spread", s, 0.0, 1.0)
             {
-                return format!("Error: {e}");
+                return action_rejected_at(index, format!("Error: {e}"));
             }
             if let Some(v) = it.max_voices
                 && !(1..=128).contains(&v)
             {
-                return format!("Error: max_voices must be in 1..=128, got {v}");
+                return action_rejected_at(
+                    index,
+                    format!("Error: max_voices must be in 1..=128, got {v}"),
+                );
             }
         }
-        let mut ok_count = 0usize;
-        let mut errors = Vec::new();
+        let mut items = Mutations::new();
         for it in &params.0.items {
             let id = it.instrument_id;
             let mut item_err: Option<String> = None;
@@ -684,7 +714,7 @@ impl SynthMcpServer {
                 && it.unison_spread.is_none()
                 && it.max_voices.is_none();
             if sets_nothing && let Err(e) = self.bridge.get_instrument_info(id) {
-                errors.push(format!("{}: {e}", id.as_u64()));
+                items.failed(format!("{}: {e}", id.as_u64()));
                 continue;
             }
             if let Some(m) = &it.allocation_mode
@@ -717,70 +747,73 @@ impl SynthMcpServer {
                 item_err = Some(e.to_string());
             }
             match item_err {
-                None => ok_count += 1,
-                Some(e) => errors.push(format!("{}: {e}", id.as_u64())),
+                None => items.ok(),
+                Some(e) => items.failed(format!("{}: {e}", id.as_u64())),
             }
         }
-        batch_msg(ok_count, "allocator configs updated", &[], &errors)
+        items.reply("allocator configs updated")
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Set the MIDI channel (1-16) for one or more instruments.",
         annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_instrument_midi_channel(
         &self,
         params: Parameters<SetInstrumentMidiChannelParam>,
-    ) -> String {
-        for it in &params.0.items {
+    ) -> CallToolResult {
+        for (index, it) in params.0.items.iter().enumerate() {
             if let Err(e) = validate_midi_channel(it.channel) {
-                return format!("Error: {e}");
+                return action_rejected_at(index, format!("Error: {e}"));
             }
         }
-        let mut ok_count = 0usize;
-        let mut errors = Vec::new();
+        let mut items = Mutations::new();
         for it in &params.0.items {
             match self
                 .bridge
                 .set_instrument_midi_channel(it.instrument_id, it.channel)
             {
-                Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{}: {e}", it.instrument_id.as_u64())),
+                Ok(()) => items.ok(),
+                Err(e) => items.failed(format!("{}: {e}", it.instrument_id.as_u64())),
             }
         }
-        batch_msg(ok_count, "instrument MIDI channels set", &[], &errors)
+        items.reply("instrument MIDI channels set")
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Set the category of one or more instruments (for visualization routing). Categories: Uncategorized, Drums, Bass, Pad, Lead, Arp, Keys, FX.",
         annotations(destructive_hint = false, idempotent_hint = true)
     )]
     pub(crate) async fn set_instrument_category(
         &self,
         params: Parameters<SetInstrumentCategoryParam>,
-    ) -> String {
-        let mut ok_count = 0usize;
-        let mut errors = Vec::new();
+    ) -> CallToolResult {
+        let mut items = Mutations::new();
         for it in &params.0.items {
             match self
                 .bridge
                 .set_instrument_category(it.instrument_id, &it.category)
             {
-                Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{}: {e}", it.instrument_id.as_u64())),
+                Ok(()) => items.ok(),
+                Err(e) => items.failed(format!("{}: {e}", it.instrument_id.as_u64())),
             }
         }
-        batch_msg(ok_count, "instrument categories set", &[], &errors)
+        items.reply("instrument categories set")
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Disconnect one or more cables between module ports in one call. \
                        Each connection specifies from_module:from_port → to_module:to_port (same shape as connect).",
         annotations(destructive_hint = true, idempotent_hint = true)
     )]
-    pub(crate) async fn disconnect(&self, params: Parameters<ConnectMultipleParam>) -> String {
-        let mut ok_count = 0usize;
-        let mut errors = Vec::new();
+    pub(crate) async fn disconnect(
+        &self,
+        params: Parameters<ConnectMultipleParam>,
+    ) -> CallToolResult {
+        let mut items = Mutations::new();
         for c in &params.0.connections {
             match self.bridge.disconnect(
                 params.0.instrument_id,
@@ -789,14 +822,14 @@ impl SynthMcpServer {
                 &c.to_module,
                 &c.to_port,
             ) {
-                Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!(
+                Ok(()) => items.ok(),
+                Err(e) => items.failed(format!(
                     "{}:{} → {}:{}: {e}",
                     c.from_module, c.from_port, c.to_module, c.to_port
                 )),
             }
         }
-        batch_msg(ok_count, "cables disconnected", &[], &errors)
+        items.reply("cables disconnected")
     }
 
     // === Sequencer: Song ===
@@ -805,16 +838,19 @@ impl SynthMcpServer {
         description = "Set one or more module parameters in one call. Each entry is {module_id, param_name, value}; value is a number in the parameter's native range, a boolean, or a string for a choice/enum or an address (e.g. a Mod Matrix slot_N_dest of 'spp-1.x').",
         annotations(destructive_hint = false, idempotent_hint = true)
     )]
-    pub(crate) async fn set_parameter(&self, params: Parameters<SetParametersParam>) -> String {
+    pub(crate) async fn set_parameter(
+        &self,
+        params: Parameters<SetParametersParam>,
+    ) -> Result<Json<BatchResult>, String> {
         let p = params.0;
         for ps in &p.params {
             if let ParamValueInput::Number(n) = &ps.value
                 && n.is_nan()
             {
-                return format!(
+                return Err(format!(
                     "Error: NaN is not a valid value for parameter '{}' on module '{}'",
                     ps.param_name, ps.module_id
-                );
+                ));
             }
         }
         let param_sets: Vec<_> = p
@@ -831,8 +867,8 @@ impl SynthMcpServer {
             })
             .collect();
         match self.bridge.set_parameters(p.instrument_id, &param_sets) {
-            Ok(result) => to_json(&result),
-            Err(e) => format!("Error: {e}"),
+            Ok(result) => Ok(Json(result)),
+            Err(e) => Err(format!("Error: {e}")),
         }
     }
 
@@ -847,10 +883,10 @@ impl SynthMcpServer {
     pub(crate) async fn set_mseg_segments(
         &self,
         params: Parameters<SetMsegSegmentsParam>,
-    ) -> String {
+    ) -> Result<Json<BatchResult>, String> {
         let p = params.0;
         if p.segments.is_empty() || p.segments.len() > 16 {
-            return "Error: segments must contain between 1 and 16 items".to_string();
+            return Err("Error: segments must contain between 1 and 16 items".to_string());
         }
         for (index, segment) in p.segments.iter().enumerate() {
             for (field, value, minimum, maximum) in [
@@ -859,7 +895,7 @@ impl SynthMcpServer {
                 ("curve", segment.curve, -1.0, 1.0),
             ] {
                 if let Err(error) = validate_range(field, value, minimum, maximum) {
-                    return format!("Error: segments[{index}].{error}");
+                    return Err(format!("Error: segments[{index}].{error}"));
                 }
             }
         }
@@ -867,12 +903,12 @@ impl SynthMcpServer {
         match self.bridge.get_module_info(p.instrument_id, &p.module_id) {
             Ok(module) if module.module_type.eq_ignore_ascii_case("MSEG") => {}
             Ok(module) => {
-                return format!(
+                return Err(format!(
                     "Error: module '{}' is {}, not MSEG",
                     p.module_id, module.module_type
-                );
+                ));
             }
-            Err(error) => return format!("Error: {error}"),
+            Err(error) => return Err(format!("Error: {error}")),
         }
 
         let mut parameter_sets = Vec::with_capacity(1 + p.segments.len() * 3);
@@ -897,13 +933,17 @@ impl SynthMcpServer {
             }
         }
 
+        // One `BatchResult` over the `segments` count plus three parameters per
+        // segment — the same payload `set_parameter` answers, since that is what
+        // this tool expands into.
         match self.bridge.set_parameters(p.instrument_id, &parameter_sets) {
-            Ok(result) => to_json(&result),
-            Err(error) => format!("Error: {error}"),
+            Ok(result) => Ok(Json(result)),
+            Err(error) => Err(format!("Error: {error}")),
         }
     }
 
     #[tool(
+        output_schema = rmcp::handler::server::tool::schema_for_output::<Listing<BuildInstrumentResult>>(),
         description = "Build one or more complete instruments in one call. Each instrument has its own modules and connections; \
                        modules are referenced by 0-based array index in connections. Returns per-instrument results with instrument_id and module_ids. \
                        Port names must match the module's ports (osc/amp/out expose 'out'/'in'); the aliases 'output'→'out' and 'input'→'in' are also accepted. If every requested connection fails the whole call errors instead of returning a zero-connection instrument (a freshly-created instrument is rolled back, so no orphan is left). \
@@ -914,7 +954,7 @@ impl SynthMcpServer {
     pub(crate) async fn build_instrument(
         &self,
         params: Parameters<BuildInstrumentsParam>,
-    ) -> String {
+    ) -> CallToolResult {
         for (idx, inst) in params.0.instruments.iter().enumerate() {
             if let Err(e) = validate_build_instrument_fields(
                 &inst.name,
@@ -924,7 +964,9 @@ impl SynthMcpServer {
                 &inst.modules,
                 inst.connections.as_deref(),
             ) {
-                return validation_err(McpBridgeError::Other(format!("instrument[{idx}]: {e}")));
+                return typed_failure(validation_err(McpBridgeError::Other(format!(
+                    "instrument[{idx}]: {e}"
+                ))));
             }
         }
         let specs: Vec<_> = params
@@ -944,12 +986,24 @@ impl SynthMcpServer {
             })
             .collect();
         match self.bridge.build_instruments(&specs) {
-            Ok(results) => to_json(&results),
-            Err(e) => format!("Error: {e}"),
+            Ok(results) => {
+                // `partial_success` is the tool's own word for "the instrument
+                // exists but the patch is incomplete". Stated as the call's
+                // verdict too, so a `rollback: true` batch stops instead of
+                // leaving a half-built instrument standing.
+                let outcome = if results.iter().any(|r| r.partial_success) {
+                    ToolOutcome::Partial
+                } else {
+                    ToolOutcome::Success
+                };
+                typed_reply(&Listing::from(results), outcome)
+            }
+            Err(e) => typed_failure(format!("Error: {e}")),
         }
     }
 
     #[tool(
+        output_schema = rmcp::handler::server::tool::schema_for_output::<ApplyExamplePatchResult>(),
         description = "Apply a named example patch directly to an instrument, creating all modules, parameters, and connections. \
                        If instrument_id is omitted, creates a new instrument. Much faster than load_example_patch (no GUI queue). \
                        Use list_example_patches to see available patches.",
@@ -958,13 +1012,21 @@ impl SynthMcpServer {
     pub(crate) async fn apply_example_patch(
         &self,
         params: Parameters<ApplyExamplePatchParam>,
-    ) -> String {
+    ) -> CallToolResult {
         match self
             .bridge
             .apply_example_patch(params.0.instrument_id, &params.0.patch_name)
         {
-            Ok(result) => to_json(&result),
-            Err(e) => format!("Error: {e}"),
+            Ok(result) => {
+                // Non-fatal notes mean the patch applied but not all of it.
+                let outcome = if result.errors.is_empty() {
+                    ToolOutcome::Success
+                } else {
+                    ToolOutcome::Partial
+                };
+                typed_reply(&result, outcome)
+            }
+            Err(e) => typed_failure(format!("Error: {e}")),
         }
     }
 

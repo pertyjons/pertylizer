@@ -850,7 +850,15 @@ pub trait InstrumentBridge: DiscoveryBridge {
     /// callers that only need to pick a type without the full port/parameter dump.
     fn list_module_types_brief(&self) -> Result<Vec<ModuleTypeBrief>, McpBridgeError>;
 
-    /// Add a module to an instrument's voice graph. Returns confirmation message.
+    /// Add a module to an instrument's voice graph. Returns the new module's id
+    /// (e.g. `"osc-1"`).
+    ///
+    /// The id, not a sentence about it: module ids are the most passed-back values
+    /// in this API — `set_parameter`, `connect` and `remove_module` all take one —
+    /// so a caller that has to cut `"osc-1"` out of `"OK: Oscillator added as
+    /// osc-1"` has been handed a puzzle rather than an answer. It also forced
+    /// `insert_module_between` to find the id by set-difference over
+    /// `list_modules`, "robust to the confirmation-message format".
     fn add_module(
         &self,
         instrument_id: InstrumentId,
@@ -1011,21 +1019,9 @@ pub trait InstrumentBridge: DiscoveryBridge {
             }
         };
 
-        // Create the new module, then discover its id by set-difference (robust
-        // to the confirmation-message format).
-        let before_ids: std::collections::HashSet<String> =
-            modules.iter().map(|m| m.id.clone()).collect();
-        self.add_module(instrument_id, module_type)?;
-        let new_id = self
-            .list_modules(instrument_id)?
-            .into_iter()
-            .map(|m| m.id)
-            .find(|id| !before_ids.contains(id))
-            .ok_or_else(|| {
-                McpBridgeError::Other(
-                    "could not determine the id of the newly added module".to_string(),
-                )
-            })?;
+        // Create the new module. Its id comes back from the call that made it,
+        // which is why this no longer re-lists the graph and diffs the ids.
+        let new_id = self.add_module(instrument_id, module_type)?;
 
         // Splice: cut the old cable, route source → new → destination. Restore
         // the original wiring on any failure so a partial splice never lingers.
@@ -1207,16 +1203,19 @@ pub trait SequencerBridge {
     ) -> Result<(), McpBridgeError>;
 
     /// Set a `NoteScriptTransform` node's YAMS `note_event` source, compile it,
-    /// and install the program. Returns a human-readable compile status: the
-    /// source is always saved, and an empty source or a compile error leaves the
-    /// node pass-through (the diagnostic is returned in the status string, not as
-    /// an error). Errors only for an unknown graph/module or a non-script node.
+    /// and install the program.
+    ///
+    /// The source is always saved; an empty source or a compile error leaves the
+    /// node pass-through. Whether a program is actually *running* comes back as
+    /// [`ScriptInstallStatus::installed`](crate::types::ScriptInstallStatus::installed) rather than only inside the status
+    /// sentence, so a caller cannot read a broken transform as a live one. Errors
+    /// only for an unknown graph/module or a non-script node.
     fn set_note_graph_script(
         &self,
         graph_id: NoteGraphId,
         module_id: NoteModuleId,
         source: String,
-    ) -> Result<String, McpBridgeError>;
+    ) -> Result<crate::types::ScriptInstallStatus, McpBridgeError>;
 
     /// Remove a module and every connection touching it.
     fn remove_note_graph_module(
@@ -1855,7 +1854,10 @@ pub trait MixingBridge {
     // === Master bus ===
 
     /// Read the master output volume (0.0 = silent, 1.0 = unity; may exceed 1.0).
-    fn get_master_volume(&self) -> Result<f32, McpBridgeError>;
+    ///
+    /// Answers the same [`Gain`] its setter takes — a bare `f32` here made the
+    /// pair disagree about what a master volume is.
+    fn get_master_volume(&self) -> Result<Gain, McpBridgeError>;
 
     /// Set the master output volume (0.0 = silent, 1.0 = unity).
     fn set_master_volume(&self, volume: Gain) -> Result<(), McpBridgeError>;
@@ -2391,9 +2393,17 @@ pub trait AnalysisBridge: InstrumentBridge + SequencerBridge + MixingBridge {
     }
 
     /// Restore the project from the snapshot taken by
-    /// [`capture_snapshot`](Self::capture_snapshot), clearing the slot. Errors
-    /// if no snapshot was captured.
-    fn restore_snapshot(&self) -> Result<(), McpBridgeError> {
+    /// [`capture_snapshot`](Self::capture_snapshot), clearing the slot.
+    ///
+    /// `Ok` means the project **was** put back, so the batch's writes are gone;
+    /// the returned strings are the parts of the snapshot that could not be
+    /// reconstructed, so an empty vector is an exact restore and a non-empty one
+    /// is a restore that landed in a state matching neither the snapshot nor the
+    /// batch. `Err` means nothing was put back at all — no snapshot, or the
+    /// apply itself refused — and the batch's changes still stand. The two are
+    /// different recoveries for a caller, which is why they are different
+    /// variants rather than one error.
+    fn restore_snapshot(&self) -> Result<Vec<String>, McpBridgeError> {
         Err(McpBridgeError::Other(
             "project snapshots are not supported by this bridge".to_string(),
         ))
@@ -2401,6 +2411,22 @@ pub trait AnalysisBridge: InstrumentBridge + SequencerBridge + MixingBridge {
 
     /// Discard any captured snapshot without restoring. No-op if none exists.
     fn clear_snapshot(&self) {}
+
+    /// A counter that advances once per mutating tool call, shared by every
+    /// session on this bridge.
+    ///
+    /// `batch_execute` reads it to tell its *own* writes from someone else's: a
+    /// rollback restores a whole-project snapshot, so a write another client made
+    /// after the snapshot was taken would be undone with it. The default is a
+    /// constant, which reads as "nothing else can be mutating" — correct for a
+    /// bridge with a single caller.
+    fn mutation_seq(&self) -> u64 {
+        0
+    }
+
+    /// Record that a mutating tool call happened. Called once per call by the
+    /// server, not by the bridge's own methods.
+    fn note_mutation(&self) {}
 
     /// Measure the master mix (post master + return effects) and adjust the
     /// master fader toward `target_lufs` without pushing the true peak above

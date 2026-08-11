@@ -675,20 +675,488 @@ domain.
 
 ### 6.7 Structured tool output (`outputSchema` + `structuredContent`)
 
-- [ ] **Return typed results instead of a JSON string.** All 219 tools return
-  `String` built by `to_json(...)`, so a client receives an opaque text blob it
-  must parse blind, with no schema to validate against. rmcp's `Json<T>` wrapper
-  (`IntoCallToolResult for Json<T> where T: Serialize + JsonSchema`) emits
-  `structuredContent` and `#[tool]` can declare a matching `outputSchema`.
-  Two obstacles, neither fatal:
-    * The ~139 result structs in `synth_mcp/src/types.rs` derive `Serialize` only,
-      not `JsonSchema`. Adding the derive is mechanical but touches every type.
-    * Our in-band error convention (`format!("Error: {e}")`) has no place in a
-      typed result — those would have to become real `is_error` results, which is
-      exactly what `result_is_failure` and the batch rollback gate key off. Change
-      that convention and the batch verdict logic must move with it.
+**Complete 2026-08-11: 219 of 219.** A tool answers with a payload against a
+published schema, and says what its call amounted to; the two exceptions are
+documents, listed and reasoned. What follows is what the work established.
 
-  **Do this incrementally on the most-used tools, not as one sweep.** **L.**
+- All 171 serializable result types in `types.rs` derive `JsonSchema`
+  (`AudioPreview`, the 172nd, carries raw WAV bytes and is not `Serialize`).
+  Only two needed more than the derive: `ParamKind` gained it upstream, and
+  `ProjectSchemaInfo`'s raw JSON-Schema blob is described as a bare JSON value.
+- **A field that serde skips when empty needs `#[serde(default)]`, not just
+  `skip_serializing_if`.** schemars keys `required` off `default`, so
+  `skip_serializing_if` alone publishes a field the response then omits — the
+  payload violates its own `outputSchema`. `ParamTypeInfo::unit` shipped that
+  way; `output_schema.rs` now pins it.
+- **Output schemas go through `inline_schema_refs` too.** A `Json<Vec<T>>` tool
+  would otherwise publish `items: {"$ref": "#/$defs/T"}` — the `Array<unknown>`
+  problem the input-schema inlining exists to prevent.
+- **The error convention did not have to move.** A typed tool returns
+  `Result<Json<T>, String>`, whose error branch rmcp already renders as a real
+  `is_error` result — and which reaches the batch verdict as an `Err`, a case
+  the rollback/log path always handled. So `result_is_failure`'s string-sniffing
+  simply stops being load-bearing for converted tools instead of needing a
+  redesign. The real blocker was elsewhere and unlisted: `dispatch_tools!`
+  assumed every tool returns `String`, so one conversion broke that tool's
+  `batch_execute` arm. It now takes a second `typed:` list and renders those
+  payloads with the same `to_json`, keeping batch output byte-identical.
+
+Converted so far: `get_module_type_info` plus every tool whose body was exactly
+`match bridge.x() { Ok(v) => to_json(&v), Err(e) => format!("Error: {e}") }` —
+the inspection core (instruments, modules, connections, parameters, sequencer
+listings, automation lanes) and the analysis / mixing / sample / audio-input
+readers.
+
+The contract question this entry posed is answered: a mutating tool answers with
+**both halves**. Its prose stays in the reply's `content`, byte-identical to what
+it always returned, and a `MutationResult` goes in `structuredContent` beside it. `content` and
+`structured_content` are independent fields on `CallToolResult`, which is the
+whole reason both are possible — `Json<T>` fills them from one value and would
+have replaced every confirmation sentence with JSON.
+
+The payoff is concentrated in one place: `batch_msg` was *handed* a success
+count, the affected ids and per-item errors, then flattened them into
+`"OK: 2 modules added (osc-1, flt-1); 1 failed: …"`. Those values are per-item
+fields now, so a caller stops parsing ids out of a sentence *and* can tell which
+requested item each result belongs to. The ~50 tools that write their own
+one-line confirmation get the same envelope with a single item in it; that half
+buys catalog uniformity and an explicit verdict, not new information.
+
+**Done 2026-08-11: 219 of 219.** Every tool either publishes an `outputSchema`
+or is a listed, reasoned exception, and the exceptions are two.
+
+How the last 15 were resolved — the contract decisions, since those are the part
+worth remembering:
+
+  * **One-or-many, narrowed rather than union-typed.** `list_module_types` always
+    answers the brief listing (the full port/parameter catalog was the *default*,
+    hundreds of KB, and `get_module_type_info` already answers one type);
+    `get_note_graph` / `get_mod_graph` are singular, with `batch_execute` for
+    several; `search_modules` always answers `{ modules, did_you_mean, hint }`,
+    and zero hits is an empty array instead of a sentence.
+  * **`search_modules` gained a `limit` (default 20) and `total_matched`.**
+    Narrowing `list_module_types` made `search_modules {}` — every filter is
+    optional — the obvious way to ask for the whole catalog, at a measured 520 KB
+    per call. A search returns candidates to choose between.
+  * **`GraphResult<Id>`** for the four graph create/duplicate tools, generic so
+    `NoteGraphId` and `ModGraphId` stay distinct newtypes.
+  * **`analyze_note` and `preview_note` were missing from this list entirely.**
+    Inverting the schema roster found them (below). `analyze_note` hand-serialized
+    a plain result into a text block; `preview_note` keeps its `audio/wav` block
+    and publishes the render's facts beside it.
+  * **`batch_execute` is typed after all.** Its reply *is* the batch report, and
+    once the report carried structured sub-results there was nothing left to keep
+    it prose.
+
+- [x] **Carry sub-results through `batch_execute` as data.** `BatchExecItemResult`
+  is `{index, tool, status, structured?, message}`. A batched mutation reports its
+  per-item results, which it previously dropped entirely.
+
+- [x] **Let a handler state its own verdict.** `result_is_failure` is deleted.
+  `mutation_reply` stamps `is_error` from `MutationResult::outcome()` where the
+  items are known; `reply_outcome` asks a payload its own predicate rather than
+  guessing at its shape. Partial success is explicitly not failure — those items
+  landed, and a rollback would discard them.
+
+  Two regressions the rewrite introduced, both caught in review and worth
+  recording because they are easy to reintroduce:
+
+  1. **rmcp hardcodes `is_error: false` for a typed success.**
+     `CallToolResult::structured` sets it unconditionally, so "trust the flag rmcp
+     set" reports a total failure as a success for every `Result<Json<T>, String>`
+     tool — `import_sample` with two bad paths is the reachable case. `call_tool`
+     has to consult the payload.
+  2. **`BatchResult` has its own tally.** 11 tools answer it, and its
+     `failed > 0 && succeeded == 0` rule is not `MutationResult`'s; dropping it
+     left them all reading as success.
+
+- [x] **`MutationResult<T>` replaces `ActionResult`** and absorbs the three
+  create/import/duplicate envelopes. One `{index, value?, error?}` per requested
+  item: three parallel lists could say "three worked and here are two complaints"
+  but never *which* two. `ok_count` is derived, not stored.
+
+  **Catalog cost, measured over the real handshake:** 747 KB → 784 KB (+5%). The
+  shared mutation schema is 1134 bytes across 127 tools against `ActionResult`'s
+  689 across 112. Weigh against §6.13 before adding fields to it.
+
+- [x] **The rotting half of the tool register is gone; the rest cannot be
+  collapsed.** `output_schema.rs` listed all ~205 converted tools by name, needed
+  an edit per conversion, and existed to notice when someone forgot — so it was
+  inverted: `PROSE_TOOLS` names the exceptions, every other router-registered tool
+  must publish a schema, and the checks iterate whatever publishes one. That
+  immediately surfaced two tools no list anywhere mentioned.
+
+  The `dispatch_tools!` table (219 entries) **stays**, and this is the reason:
+  `batch_execute` cannot route through the rmcp router, because `dry_run` promises
+  "tool name known + params parse" without executing, and `ToolRoute` exposes only
+  a type-erased `call` plus the input schema — there is no way to deserialize-check
+  params without invoking the handler. Validating against the published JSON Schema
+  instead would be a *different* promise than serde's, and serde is what the real
+  call uses. The table is a name written twice, guarded by
+  `every_router_tool_is_reachable_via_batch_dispatch`; the category is enforced by
+  the compiler, since the wrong list is a type error.
+
+- [x] **Real `tools/call` coverage per reply family.** `mcp_wire_contract.rs`
+  drives the shipped binary over stdio JSON-RPC and validates each family's
+  `structuredContent` against the `outputSchema` its own catalog entry advertises,
+  with `jsonschema`. Nothing else checked that triple: every other MCP test goes
+  through `dispatch_tool_for_test`, which is the batch path and never builds a
+  `CallToolResult`. It also asserts the catalog is non-empty, since a compile-green
+  server has shipped an empty `tools/list` before.
+
+Three things worth knowing before continuing:
+
+  * **A typed reply ships its payload twice, and that decides which tools stay
+    prose.** `Json<T>` goes through `CallToolResult::structured`, which fills
+    `content` with the serialized JSON *and* `structured_content` with the same
+    value (rmcp `model.rs:3964`). That is what the spec asks for — a tool
+    answering structured content SHOULD also serialize it into a text block, so
+    clients that read only `content` still work — and for a 6 KB listing, paying
+    it to make fields addressable is a fair trade.
+
+    It stops being fair when the payload is one opaque document. Probed over the
+    real stdio handshake (2026-08-11), `get_project_schema` billed **258 KB of
+    text + 276 KB of structured content = 534 KB for one call**, buying nothing:
+    its schema field is an opaque JSON blob either way. So the rule is *payload
+    shape*, not tool kind — a result with addressable fields takes both halves; a
+    result that **is** a document stays prose and publishes no schema.
+    `get_yams_reference` and `get_project_schema` are the two, both recorded at
+    their handler and in `PROSE_TOOLS`.
+
+Two things worth knowing before continuing:
+
+  * **Every payload roots at an object — lists included.** A bare `Vec<T>`
+    serializes to a JSON array, which `structuredContent` permits only under
+    `2026-07-28` (SEP-2106 loosened it to any JSON value); `2025-06-18` and
+    `2025-11-25` define it as `{[key: string]: unknown}` and require
+    `outputSchema` to be `type: "object"`. rmcp negotiates down to whatever a
+    client asks for *and echoes that version back* — verified live — so an
+    array-rooted answer over such a handshake breaks the agreement the server
+    just made, and a client validating against it rejects the whole result.
+
+    `Listing<T>` wraps them under an `items` key, which makes every reply valid
+    under every revision and closed the interop risk this entry used to carry.
+    The cost was a real break: those tools' text output went from `[…]` to
+    `{"items": […]}`, since `Json<T>` renders one value into both halves. One
+    generic type rather than 23 named envelopes — the key carries nothing a
+    caller does not already know from the tool it called.
+    `every_output_schema_roots_at_an_object` holds the rule for the catalog.
+
+  * **`#[tool]` infers `outputSchema` from the return type's *syntax*.** Write
+    the same type behind an alias and the macro finds no `Json<…>`, publishes no
+    schema, and the tool still compiles and still returns `structuredContent`.
+    `output_schema.rs` lists the converted tools and fails if one loses its
+    schema; add to that list when converting.
+
+**Follow-ups filed 2026-08-11 from the post-§6.7 review.** The list has grown
+beyond the original two findings: open entries below now cover the wire shape,
+the meaning of an outcome, project fidelity, tool capabilities, and upstream
+behaviour that must be re-audited when `rmcp` changes.
+
+- [ ] **One mutation protocol, not two.** `BatchResult` (11 tools: `add_note`,
+  `set_parameter`, `create_pattern`, `update_placement`, …) carries stored
+  counters and `{success, id: Option<u64>, error}` per item; `MutationResult<T>`
+  carries `{index, value, error}` with derived counters. Two shapes for the same
+  idea means two outcome rules — and dropping one of them is exactly the
+  regression the §6.7 review caught, where every `BatchResult` tool read as
+  success. `BatchResult` also permits states its meaning excludes: `success: true`
+  with an `error`, or neither an id nor a reason.
+
+  Fold them into one tagged per-item status (`success { index, value? }` /
+  `failure { index, error }`), with the id as its own newtype rather than a bare
+  `u64`. **M**, and it deletes an outcome rule rather than adding one.
+
+  **External review (2026-08-11) — the goal is right, but the proposed shape is
+  not sufficient yet.** The two-way `success` / `failure` tag repeats the same
+  conflation called out in the later “how much happened” entry. There is already
+  a counterexample in production code: `create_patterns` creates the pattern and
+  then reports skipped automation as `success: true` plus `error: Some(...)`.
+  That combination is not merely an impossible state to eliminate; it currently
+  means “the requested object exists, but part of its contents did not land”. A
+  rollback batch needs to read that as a **partial effect**, while the diagnostic
+  may remain a warning rather than make the direct call an MCP error.
+
+  The other alleged impossible state also needs narrowing. `{success: true,
+  id: None, error: None}` is the normal answer for an update that succeeded but
+  created no object. What must be impossible is an item that says it failed but
+  supplies no reason, or a representation whose effect and diagnostic contradict
+  one another without stating whether the diagnostic is a warning or an error.
+
+  Design this entry together with “Separate how much happened from did it go
+  wrong” below. A useful target has one effect vocabulary (`complete | partial |
+  none`) and a separate diagnostic/error dimension; it can then represent all of
+  these without inference:
+
+  * `complete` + no error — an ordinary successful update or create;
+  * `partial` + warning — a pattern was created but some automation was skipped;
+  * `partial` + error — a script source was saved but did not compile/install;
+  * `none` + error — nothing requested landed.
+
+  The value should stay generic and use the domain newtypes that already exist:
+  `NoteId`, `PatternId`, `TrackId`, and so on. Do not introduce one generic “ID”
+  newtype that erases which domain the number belongs to. Request indices remain
+  plain loop indices. Once all 11 tools have moved, delete `BatchResult`,
+  `BatchItemResult`, their bridge signatures/construction sites, and the
+  `BatchResult` branch in `reply_outcome`; keeping a deprecated compatibility
+  shape would preserve the very second outcome rule this work is meant to remove.
+  Pin at least the create/update/no-value, partial-with-warning, total-failure,
+  direct-wire schema, `stop_on_error`, and rollback cases. Consider the combined
+  mutation/effect work **M–L**, rather than implementing two smaller designs that
+  immediately have to be reconciled.
+
+- [ ] **Let the non-GUI paths build a project with the GUI's layout in it.**
+  Two symptoms, one cause. `overlay_ui_metadata` (`project_flow.rs:555`) is the only
+  thing that puts module positions, group metadata, canvas size, instrument colour
+  and visualizer modules into a `ProjectFile`, and it is called from exactly one
+  place: the GUI's own save (`:527`). Every other builder — MCP `save_project`,
+  `batch_execute`'s rollback snapshot, the headless render CLI — calls
+  `build_project_from_engine` without it.
+
+  So:
+
+  1. **`save_project` over MCP silently flattens the user's patch.** An agent asked
+     to save writes a `.ptz` with every module at `Position::default()`, no groups,
+     no canvas size, default colours, and visualizer modules simply absent. Reopen
+     it and the layout is gone. This is a data-loss bug on a user-visible file and
+     is the more urgent half — it needs no batch and no failure to trigger.
+  2. **A rollback restores that same flattened project.** `restore_snapshot` ends
+     with `stash_refresh(ProjectRefresh::Loaded(project))`, so the GUI rebuilds its
+     editors *from* the snapshot — a faithful snapshot fixes the restore for free,
+     and a flat one resets the layout as surely as opening a flat file.
+
+  The three project globals are already fixed (2026-08-11): the GUI publishes
+  `glide_time`, `octave_offset` and the active instrument into
+  `McpSharedState::gui_globals` and `build_save_options` reads them. This is the
+  same shape one level up — the per-instrument metadata rather than the globals.
+
+  **Why `ui_layout` is not the answer.** It looks like the channel for this and is
+  not: `write_mcp_layout` (`project_flow.rs:373`) writes only the *active*
+  instrument's patch editor, as a flat `Vec<ModuleLayout>` of id/type/name/position/
+  size/parameters. No per-instrument dimension, no groups, no canvas, no
+  visualizers. It exists for `get_ui_snapshot`-style reads, not for reconstructing a
+  project.
+
+  **The fix.** Have the GUI hand over the project *it* would save, and let the
+  non-GUI callers ask for it:
+
+  - `McpSharedState` gains a request flag plus a slot (`pending_snapshot_request:
+    AtomicBool`, `gui_built_project: Mutex<Option<Box<ProjectFile>>>`). The request
+    pattern already exists as `pending_auto_layout`; the drain point is
+    `drain_mcp_state` (`engine_events.rs:10`), which the GUI already runs per frame.
+  - The GUI fills the slot with what its save path builds — `build_project_from_engine`
+    + `build_save_options` + `overlay_ui_metadata` — which is the code at
+    `project_flow.rs:515-530` and wants extracting into one method both callers use.
+  - `capture_snapshot` and the MCP save set the flag and **wait bounded**, the way
+    the save command-drain barrier already does (`SNAPSHOT_SYNC_TIMEOUT_MS`), then
+    fall back to today's engine reconstruction.
+
+  **Traps, all of which the fallback covers:**
+
+  - egui does not necessarily repaint an unfocused or minimised window, so the wait
+    must time out rather than hang — and should `request_repaint` when it asks.
+  - The fallback is not a nicety: `--headless`, the render CLI and every integration
+    test have no GUI to answer, and there zero/default *is* the truth.
+  - Keep the slot's mutex separate from anything the GUI holds while drawing, or the
+    bounded wait becomes a deadlock with a timeout.
+
+  **Rejected alternative:** make the restore partial — apply only the dimensions the
+  snapshot owns and leave GUI state untouched. `apply_project` is a whole-project
+  apply and the GUI rebuilds from the project it is handed, so "partial" would mean
+  teaching both sides which fields are authoritative. Carrying the real values is
+  less machinery than carrying a mask.
+
+  **Verification needs the real app, not the gate.** Move modules in the patch
+  editor, save over MCP, reopen — positions must survive; then run a failing
+  `rollback: true` batch and confirm the layout is unchanged. A headless test can
+  only pin that the fallback still produces a loadable project. **M.**
+
+  **External review (2026-08-11) — confirmed data-loss bug, with factual and
+  concurrency corrections.** The important diagnosis holds: engine-built
+  projects give engine modules `Position::default()`, do not carry patch-editor
+  groups/canvas metadata, and cannot emit GUI-only visualizers. Consequently an
+  MCP save flattens those fields and a rollback rebuilds the GUI from a flattened
+  snapshot. This remains independent of `rmcp` 3.1.2.
+
+  Correct three narrower claims before treating the text as an implementation
+  specification:
+
+  * instrument colour is already mirrored in `InstrumentSnapshot` and copied by
+    `snapshot_to_instrument_state`, so it is not part of the remaining loss;
+  * the production headless render CLI does not call
+    `build_project_from_engine`; the relevant production callers are MCP plain
+    save, MCP bundle save, and rollback capture (headless tests still exercise
+    the necessary fallback);
+  * `write_mcp_layout` does enumerate visualizer modules in the active patch
+    editor. It is still unsuitable because it has no per-instrument dimension,
+    groups, or patch canvas, not because the active snapshot excludes
+    visualizers.
+
+  Do not implement the request path as one `AtomicBool` plus one shared
+  `Option<ProjectFile>` slot. Two simultaneous callers can consume each other's
+  project, and a caller that times out can leave a late project for the next
+  request to mistake as its own. Prefer a queue of requests, each carrying its own
+  one-shot reply channel. The GUI can drain all current requests, build one
+  project, clone it for the waiters, and harmlessly fail to send to a receiver
+  that already timed out. Keep an atomic revision/flag only as the idle-frame fast
+  path if avoiding a mutex acquisition each frame matters.
+
+  Service requests **after** `reconcile_with_session`, ideally near the existing
+  end-of-frame `write_mcp_layout` point. `drain_mcp_state` currently runs before
+  reconciliation, so building there can combine a fresh engine graph with a stale
+  patch editor and give a module just added through MCP the default position. Use
+  a GUI-response timeout distinct from, and longer than, the engine snapshot's
+  `SNAPSHOT_SYNC_TIMEOUT_MS`: the GUI's own builder may spend that entire timeout
+  waiting for the audio-thread mirror, so equal nested deadlines create false
+  fallbacks and can duplicate the wait.
+
+  The real-app smoke test remains necessary for the last mile, but the gate can do
+  more than the entry currently says. Extract the metadata overlay so tests can
+  pin all-instrument positions/groups/canvas/visualizers; test a simulated GUI
+  responder, two concurrent requesters, timeout followed by a late response, and
+  the headless fallback. With the request lifecycle and both save formats in
+  scope, size this as **M–L**.
+
+- [x] **Isolate a rollback batch from concurrent mutation.** Done 2026-08-11 with
+  optimistic concurrency rather than a lock. `McpSharedState::mutation_seq` counts
+  mutating tool calls across every session; a rollback batch predicts where the
+  counter should land (capture value plus one per mutating operation it runs) and
+  **refuses to restore** when the real one moved further, leaving its own writes
+  standing and saying so in `rollback_error`. Reverting over a write another client
+  was told had succeeded is the worse failure.
+
+  Predicted, not observed: reading the counter back after each operation absorbs
+  exactly the increment this is meant to notice — which a first attempt did, and a
+  test caught. The read-only set comes from the router's own `read_only_hint`
+  annotations, so there is no second list to fall out of step.
+
+  Not covered: a *GUI* edit during a batch, which does not go through the MCP
+  chokepoint. And the true-positive path has no test — the op loop has no yield
+  point between dispatches, so a concurrent write cannot be interleaved
+  deterministically; the no-false-positive direction is pinned instead.
+
+  It does fire in practice, though, and the first thing it caught was a probe of
+  its own: a client that pipelines requests without waiting for replies overlaps
+  its own calls, and the batch refused. That is the right answer — the snapshot
+  predates the other write either way, and undoing a write someone was told had
+  succeeded is the worse outcome — but it is a real thing to hit, so the tool
+  description says so.
+
+- [ ] **Separate "how much happened" from "did it go wrong".** `ToolOutcome`
+  answers both, and they are not the same question: `set_note_graph_script`
+  reports `Failure` for a source that did not compile, yet the source *was*
+  saved, so "nothing landed" is not true of it. Two fields — an effect
+  (`complete | partial | none`) and an error flag — would let a reply say
+  `effect: partial, is_error: true`, which is what that case actually is. The
+  `_meta` outcome channel added 2026-08-11 is where the effect already travels;
+  this would formalize the split. **S–M.**
+
+  **External review (2026-08-11) — make this the semantic foundation of the
+  mutation migration above.** `rmcp` already gives the wire reply an `isError`
+  boolean; Pertylizer's extension should answer only the orthogonal question of
+  effect. Rename `ToolOutcome` to something like `ToolEffect`, and the metadata
+  key from `pertylizer/outcome` to `pertylizer/effect`, so neither name implies an
+  error verdict. `stamp_outcome` must accept effect and error independently rather
+  than deriving `is_error` from `effect == none`.
+
+  This distinction must survive through `batch_execute`, not stop at the direct
+  reply. Each `BatchExecItemResult` needs both fields. `rollback: true` should
+  restore whenever an operation's effect is not `complete`, because its promise
+  is all-or-nothing even when incompleteness was only a warning. In contrast,
+  `stop_on_error` should stop on the error flag, as its name says, rather than on a
+  warning-only partial effect. The batch's aggregate effect and error flag should
+  be derived from those per-operation facts.
+
+  `CallToolResult::structured_error` existing in `rmcp` 3.1.2 does not remove this
+  requirement: it can express a complete failure, but not Pertylizer's independent
+  partial-effect metadata, and `Json<T>` still chooses the success constructor for
+  an `Ok` payload. Add truth-table tests for the meaningful combinations, including
+  the saved-but-uncompiled script and created-with-skipped-automation cases. The
+  entry is **S–M only in isolation**; together with the required mutation and batch
+  wire migration it belongs to the **M–L** work above.
+
+- [ ] **Classify tools by capability, centrally.** Three lists now encode facts
+  about tools that live nowhere else: `PROSE_TOOLS` (no schema), `BATCH_EXEMPT`
+  (`preview_note` answers audio), and the `destructive_hint` annotations. A fourth
+  is missing and wanted: **rollback-safe**. `batch_execute`'s snapshot restores
+  project state only, so a batch containing `save_project`, `export_sample` or
+  `render_to_wav` cannot be undone by it — the description says so now, but
+  `rollback: true` could instead *refuse* an operation it cannot honour, which is
+  the difference between a documented caveat and a kept promise. **M.**
+
+  **External review (2026-08-11) — centralize the facts, but do not collapse
+  unrelated axes into one enum or one `rollback_safe` boolean.** `PROSE_TOOLS` and
+  `BATCH_EXEMPT` describe reply/transport families; read-only/destructive hints
+  describe mutation behaviour; rollback safety describes which side effects a
+  project snapshot can reverse. Model them as separate fields of one exhaustive
+  `ToolCapabilities` record (for example reply family, mutability, batch support,
+  and rollback scope), keyed once by the router's tool name.
+
+  Rollback scope needs more than safe/unsafe if diagnostics are to be useful. A
+  project mutation is restorable; filesystem output is not; transport, recording,
+  preview/audio-device, and other runtime effects may be neither project state nor
+  persistent files. Audit the entire mutating catalog rather than hard-coding only
+  the three examples in this entry. In particular, make an explicit decision for
+  every tool whose observable effect lives outside `ProjectFile`, then have
+  `batch_execute(rollback: true)` reject the operation before executing anything
+  when the requested batch contains an unsupported scope.
+
+  Make the registry compiler- or test-exhaustive against `ToolRouter::list_all`:
+  every registered tool must have capabilities, no stale capability entry may
+  name a missing tool, and existing annotations/tests should be generated or
+  checked from that one source. Keep protocol-specific exceptions such as the
+  audio reply family visible rather than disguising them as rollback facts. This
+  avoids replacing four drifting lists with one large list plus several hidden
+  special cases. **M** remains credible if the first implementation is metadata
+  plus enforcement/tests, without also attempting to redesign the router macro.
+
+- [ ] **Re-check these upstream-sensitive paths on the next `rmcp` bump.** Each
+  is a workaround for upstream behaviour, not a design choice of ours, and each
+  is documented where it lives without saying that. Verified still present in
+  **3.1.2** by diffing the 3.1.0 → 3.1.2 sources (the release notes do not mention
+  any of them):
+
+  1. **`CallToolResult::structured` hardcodes `is_error: false`** (`model.rs`), so a
+     typed `Ok` whose payload records a total failure reaches the client as a
+     success. That is why `stamp_outcome` sets the flag and why `call_tool` consults
+     `reply_outcome` instead of trusting it. If rmcp ever derives the flag, both
+     shrink.
+  2. **`content` and `structuredContent` are filled from the same value**, so a
+     typed reply ships its payload twice. That is the whole reason
+     `get_project_schema` and `get_yams_reference` stay prose (534 KB and 80 KB
+     respectively). A structured-only constructor would let both be typed and would
+     change §6.13's arithmetic.
+  3. **`ToolRoute` exposes only a type-erased `call` plus `attr`**, with no way to
+     deserialize-check params without invoking the handler. That is why the
+     219-entry `dispatch_tools!` table cannot be replaced by routing `batch_execute`
+     through the router: `dry_run` promises "params parse" without executing. A
+     route-level params check would delete the table.
+
+  **External review (2026-08-11) — all three observations are still present in
+  the locally resolved `rmcp` 3.1.2 sources, but qualify the first and add a
+  fourth audit item.** `CallToolResult::structured` is a success constructor, so
+  defaulting its `is_error` to false is not by itself an upstream defect: rmcp
+  cannot infer the domain meaning of an arbitrary `BatchResult` inside
+  `Ok(Json<T>)`. On a future bump, look for a typed wrapper or handler return path
+  that lets the handler explicitly select structured success/error while
+  retaining schema inference; do not wait for rmcp to “derive” the verdict from
+  Pertylizer's payload. The existing untyped `structured_error(Value)` constructor
+  is not that typed path.
+
+  Add this fourth check to every bump audit:
+
+  4. **`#[tool]` infers `outputSchema` by syntactically matching `Json<T>` or
+     `Result<Json<T>, E>`.** A return-type alias remains invisible in 3.1.2 even
+     though it resolves to the same Rust type, so `output_schema.rs` must keep
+     guarding against a tool returning `structuredContent` without publishing its
+     schema. Re-check whether inference has become trait-/type-driven or aliases
+     are recognized before retaining that workaround.
+
+  Also distinguish “upstream behaviour worth re-checking” from “upstream bug”.
+  The duplicate text/structured serialization and type-erased route API are real
+  limitations for these use cases; the success constructor's default is primarily
+  an integration constraint. Record the exact rmcp version and source locations
+  again on each audit, because none of these changes is guaranteed to appear in
+  release-note headlines.
 
 ### 6.8 Ergonomics for string-keyed tool arguments
 
@@ -800,12 +1268,39 @@ What is actually available, smallest first:
   passes `InputRequired` through. Weigh against the annotation hints, which may
   already give clients enough to prompt on their own. **M.**
 
+  **rmcp 3.1.2 removed the blocker** (#1104, #1103, noted 2026-08-11). A `#[tool]`
+  handler can now both *ask* and *read the answer*: `IntoCallToolResult` is
+  implemented for `CallToolResponse`, so a handler can return the `InputRequired`
+  variant directly instead of hand-rolling `call_tool`, and two new extractors —
+  `InputResponses` and `RequestState` — are `FromContextPart`, so the follow-up
+  round arrives as ordinary handler parameters. `ToolCallContext` carries both
+  fields, and our custom `call_tool` passes the whole request into it, so they are
+  already populated on our path. In 3.1.0 none of that was reachable from a
+  `#[tool]` fn.
+
 ### 6.11 Cacheable list results (`ttlMs` / `cacheScope`)
 
-- [ ] **Advertise cache lifetimes on the static catalogs.** `2026-07-28` adds
-  `ttlMs` + `cacheScope` to `tools/list`, `resources/list` and friends. Our module
-  and port-type catalogs are immutable for the life of a build, so they can carry
-  a long TTL and stop being re-fetched. Small win, small task. **S.**
+- [x] **`tools/list` advertises a cache lifetime.** Done 2026-08-11, and it turned
+  into a fix rather than an addition. rmcp 3.1.2's `#[tool_handler]` began filling
+  the SEP-2549 hints itself, as `ttlMs: 0` + `cacheScope: public` for clients on
+  `2026-07-28` — "immediately stale, and anyone may serve it to anyone". For a
+  219-tool catalog fixed at `build_router` time, both halves are wrong.
+
+  `list_tools` is overridden (the macro only generates what the impl does not
+  already define, which is how our `call_tool` has always coexisted with it):
+  `ttlMs` 10 minutes, `cacheScope: private`. Private because the list is *this
+  process's* — `disabled_tools` can differ between instances and an intermediary
+  must not serve one instance's catalog for another's. Bounded for the same reason.
+  Absent entirely for older revisions, which have no field for it.
+
+  Worth being clear about the size of the win: this saves *transfer* on reconnect,
+  not context. The catalog still enters the model's prompt once per session, which
+  is §6.13's separate and larger problem.
+
+- [ ] **`resources/list` is left alone deliberately.** Its payload is built from
+  `list_module_types` + `list_example_patches`, and the patch list reflects files on
+  disk, so it is not immutable the way the tool catalog is. It wants either a much
+  shorter TTL or an invalidation signal before it carries a hint. **S.**
 
 ### 6.12 Not applicable — deprecated features
 
@@ -814,6 +1309,44 @@ What is actually available, smallest first:
   `tracing`-to-stderr logging is already the migration the spec recommends. The
   deterministic `tools/list` ordering it now asks for is also already satisfied
   (verified: identical order hash across runs).
+
+### 6.13 Review the size of `tools/list`
+
+- [ ] **The tool catalog is 804 KB and every client loads all of it.** Measured
+  over a real `tools/list` on 2026-08-11, after §6.7 finished: 451 KB of output
+  schemas, 292 KB of input schemas, 61 KB of descriptions, across 219 tools.
+  Output schemas were 0 KB before §6.7. MCP clients put the catalog in the
+  model's context, so this is a per-session token cost paid whether or not a tool
+  is ever called — and this codebase already guards that budget elsewhere
+  (`ModuleTypeBrief` exists because the full type list "can exceed a tool-result
+  token cap").
+
+  Where it actually goes, measured rather than guessed:
+
+  1. **138 KB is one schema repeated 116 times.** Every mutating tool publishes
+     the same 1143-byte `MutationResult<String>`. A `$ref` into a shared `$defs`
+     would collapse it, which is the opposite of what output-schema `$ref`
+     *inlining* does — so this and lever 2 pull against each other and want
+     deciding together. Note the `Arc` sharing inside `build_router` does nothing
+     for this: it saves server allocations, not wire bytes.
+  2. **`$ref` inlining is not the lever it looks like.** It was added
+     deliberately for clients that do not resolve `$ref`, and the duplication it
+     introduces measures at only ~7% of the analysis schemas. Dropping it buys
+     little and costs those clients concrete shapes.
+  3. **`ttlMs` / `cacheScope`** (§6.11) does not shrink the catalog but stops it
+     being re-fetched, which is most of the practical cost over a long session.
+  4. **Descriptions.** ~59 KB of prose, some of it several sentences of usage
+     guidance that might belong in a resource rather than in every tool entry.
+
+  One trap already paid for twice: schemars publishes `///` doc comments into
+  the schema, so rationale written there ships to every client on every
+  `tools/list`. Moving the mutation envelope's rationale to `//` comments cut
+  35 KB by itself. Keep implementation notes out of doc comments on any type that
+  reaches a schema.
+
+  Measure before and after: a `--headless` stdio `tools/list`, summing
+  `json.dumps` per field. **S–M**, and worth doing before §6.7's last 15 tools
+  add more.
 
 ---
 

@@ -1047,9 +1047,13 @@ impl AppSynthBridge {
     }
 
     /// Snapshot shared-state metadata (author) into save options for
-    /// `project_apply::build_project_from_engine`. The MCP path doesn't
-    /// know about GUI-only fields (glide_time / octave_offset) so they
-    /// stay `None` and default to `0` on save.
+    /// `project_apply::build_project_from_engine`.
+    ///
+    /// `glide_time` and `octave_offset` live only in the GUI, which publishes them
+    /// into [`McpSharedState::gui_globals`]; they were unreachable from here and so
+    /// were written as zeros — over whatever the user had set, on every MCP save
+    /// and every rollback restore. They stay `None` when nothing has published
+    /// them, which is the headless case, where zero *is* the value.
     fn build_save_options(&self) -> crate::project_apply::ProjectBuildOptions {
         let author = self
             .shared
@@ -1057,10 +1061,18 @@ impl AppSynthBridge {
             .lock()
             .unwrap_or_else(|e| e.into_inner())
             .clone();
+        let globals = self
+            .shared
+            .gui_globals
+            .lock()
+            .unwrap_or_else(|e| e.into_inner())
+            .as_ref()
+            .copied();
         crate::project_apply::ProjectBuildOptions {
             author,
-            glide_time: None,
-            octave_offset: None,
+            glide_time: globals.map(|g| g.glide_time),
+            octave_offset: globals.map(|g| g.octave_offset),
+            active_instrument_id: globals.and_then(|g| g.active_instrument_id),
         }
     }
 }

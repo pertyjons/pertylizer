@@ -1,4 +1,17 @@
 //! Serializable response types for MCP tools.
+//!
+//! **On the newtype rule.** Domain *identities* cross this boundary as
+//! themselves — `InstrumentId`, `PatternId`, `MidiNote`, `Gain`, `Tick` — because
+//! a client that reads one is going to hand it straight back to another tool, and
+//! a raw `u64` there loses which pool it addresses. Physical quantities and
+//! counts, though, are written as the primitive the wire carries: `sample_rate:
+//! u32`, `duration_seconds: f32`, `velocity: u8` (the MIDI byte, not
+//! `synth_core::Velocity`'s normalized float), `ok_count: usize`. That is
+//! CLAUDE.md's documented serialization exception, and consistency across the
+//! ~170 types here matters more than a lone newtyped field: it has now been
+//! raised twice in review, so it is recorded rather than re-litigated. Changing
+//! one type to `Seconds` would make it the outlier among six siblings that all
+//! answer `duration_seconds: f32`.
 
 use serde::{Deserialize, Serialize};
 use synth_core::{
@@ -11,7 +24,7 @@ use synth_sequencer::{
 };
 
 /// Information about an instrument.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct InstrumentInfo {
     /// Instrument ID.
     pub id: InstrumentId,
@@ -74,7 +87,7 @@ pub struct InstrumentInfo {
 }
 
 /// Information about a module in the voice graph.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ModuleInfo {
     /// Module ID string (e.g. "osc-1").
     pub id: String,
@@ -111,7 +124,7 @@ pub struct ModuleInfo {
 
 /// One occupied script slot of a Script (`scr`) module: the YAMS source and the
 /// output port it drives. Read-back symmetric with `set_mod_matrix_script`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ScriptSlotInfo {
     /// 1-based slot index (1..=8 for the Script module).
     pub slot: u8,
@@ -125,7 +138,7 @@ pub struct ScriptSlotInfo {
 /// Surfaced alongside structural output (`get_graph_diagnostics`,
 /// `analyze_note`) so an AI agent sees *why* a module is there, not just *what*
 /// it is. Only modules with a non-empty description are listed.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ModuleDescriptionEntry {
     /// Module ID string (e.g. "lfo-1").
     pub module_id: String,
@@ -139,7 +152,7 @@ pub struct ModuleDescriptionEntry {
 }
 
 /// One row of a Mod Matrix's routing table.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct MatrixRoutingInfo {
     /// 1-based slot index (1..=16).
     pub slot: u8,
@@ -163,7 +176,7 @@ pub struct MatrixRoutingInfo {
 }
 
 /// Information about a parameter.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ParameterInfo {
     /// Parameter name (e.g. "frequency").
     pub name: String,
@@ -212,7 +225,7 @@ pub struct ParameterInfo {
 }
 
 /// Information about a connection between modules.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ConnectionInfo {
     /// Source module ID.
     pub from_module: String,
@@ -226,7 +239,7 @@ pub struct ConnectionInfo {
 
 /// Result of `insert_module_between`: a new module spliced into an existing
 /// audio cable.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct InsertModuleResult {
     /// ID of the newly created module (e.g. "flt-2").
     pub module_id: String,
@@ -237,7 +250,7 @@ pub struct InsertModuleResult {
 }
 
 /// Engine status information.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct EngineStatus {
     /// CPU usage (0.0-1.0).
     pub cpu_usage: f32,
@@ -262,7 +275,7 @@ pub struct EngineStatus {
 }
 
 /// Build/version information for the running application.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct VersionInfo {
     /// Application version (from Cargo.toml, e.g. "0.313.0").
     pub version: String,
@@ -280,7 +293,7 @@ pub struct VersionInfo {
 }
 
 /// A diagnostic issue found in the graph.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct GraphDiagnostic {
     /// Severity level.
     pub severity: DiagnosticSeverity,
@@ -291,7 +304,7 @@ pub struct GraphDiagnostic {
 }
 
 /// Severity of a diagnostic.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub enum DiagnosticSeverity {
     /// Informational note.
     Info,
@@ -305,7 +318,7 @@ pub enum DiagnosticSeverity {
 /// for instruments that have at least one *actionable* (`Warning`/`Error`)
 /// diagnostic; when included, carries **all** of that instrument's diagnostics
 /// (including any `Info` notes) for context.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ProjectLintEntry {
     /// Instrument the diagnostics belong to.
     pub instrument_id: InstrumentId,
@@ -316,7 +329,7 @@ pub struct ProjectLintEntry {
 }
 
 /// Track whose instrument reference does not resolve in the live engine.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct OrphanedTrackLint {
     pub track_id: TrackId,
     pub track_name: String,
@@ -329,7 +342,7 @@ pub struct OrphanedTrackLint {
 /// at `length`. Surfaces silently-inaudible events (e.g. a pattern truncated by
 /// an edit while thousands of later notes/automation stay in the file), which
 /// schema validation and the graph diagnostics cannot see.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct HiddenEventsLint {
     pub pattern_id: PatternId,
     pub pattern_name: String,
@@ -360,7 +373,7 @@ pub struct HiddenEventsLint {
 /// totals over *every* instrument, so they are **not** derivable from `entries`
 /// alone — `info_count` in particular includes notes from instruments that never
 /// appear in `entries`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ProjectLintReport {
     /// Number of instruments inspected.
     pub instruments_checked: usize,
@@ -384,15 +397,22 @@ pub struct ProjectLintReport {
 /// The authoritative on-disk JSON Schema for `.ptz` project files, paired
 /// with the format and build versions.
 ///
-/// Returned by `get_project_schema`. The `schema` is the exact committed
-/// `schemas/project.schema.json` (embedded at build time and passed through
-/// verbatim), not a live re-derived copy — so external tooling diffing against it
-/// sees zero introspection-vs-disk drift.
+/// Returned by `get_project_schema`. The `schema` is the committed
+/// `schemas/project.schema.json`, embedded at build time — not a live
+/// re-derived copy, so there is no introspection-vs-disk drift in its *content*.
+///
+/// It **is** byte-identical on both paths, because `get_project_schema` stayed
+/// a prose tool: direct calls and batch sub-ops both render it with `to_json`,
+/// which serializes the `RawValue` straight through. That is only true while the
+/// tool publishes no `output_schema` — typing it would route the document
+/// through `serde_json::to_value`, and re-serializing a parsed `f64` can shift
+/// the last digit (`0.10999999940395355` on disk reading back as `…357`). See
+/// `schema`.
 ///
 /// To detect a *format* change, pin `schema_format_version`: it bumps only when
 /// the on-disk project format changes. `app_version` is a build stamp that moves
 /// every release, so it is **not** a reliable format-change signal.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ProjectSchemaInfo {
     /// File name of the schema artifact (e.g. `"project.schema.json"`).
     pub schema_file: String,
@@ -402,13 +422,23 @@ pub struct ProjectSchemaInfo {
     /// Build version of the application (a release stamp; changes every release,
     /// so not a format-change signal — use `schema_format_version` for that).
     pub app_version: String,
-    /// The full JSON Schema document, passed through verbatim from the committed
-    /// artifact (no parse-then-reserialize round-trip).
+    /// The full JSON Schema document, read from the committed artifact.
+    ///
+    /// `RawValue` keeps it out of a parse-then-reserialize round-trip on the
+    /// string path (`to_json`), which is the only path this tool takes — so the
+    /// document is verbatim everywhere. Converting the tool to `Json<T>` would
+    /// break that: `Json<T>` goes through `serde_json::to_value`, which parses
+    /// the raw text into a `Value`.
+    ///
+    /// Described to schemars as a bare JSON value: the document it carries is
+    /// itself a *schema*, whose shape is not worth restating in the schema that
+    /// describes this response.
+    #[schemars(with = "serde_json::Value")]
     pub schema: Box<serde_json::value::RawValue>,
 }
 
 /// Information about an example patch.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ExamplePatchInfo {
     /// Patch name.
     pub name: String,
@@ -425,7 +455,7 @@ pub struct ExamplePatchInfo {
 }
 
 /// Snapshot of the current UI layout.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct UiSnapshot {
     /// Name of the loaded patch.
     pub patch_name: String,
@@ -440,7 +470,7 @@ pub struct UiSnapshot {
 }
 
 /// UI information about a single module.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct UiModuleInfo {
     /// Module ID string (e.g. "osc-1").
     pub id: String,
@@ -457,7 +487,7 @@ pub struct UiModuleInfo {
 }
 
 /// Connection in the UI snapshot.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct UiConnectionInfo {
     /// Source module ID.
     pub from_module: String,
@@ -470,12 +500,15 @@ pub struct UiConnectionInfo {
 }
 
 /// Information about a module parameter including range, unit, and choices.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ParamTypeInfo {
     /// Parameter name (use with set_parameter).
     pub name: String,
     /// Description of what this parameter does.
-    #[serde(skip_serializing_if = "String::is_empty")]
+    // `default` is what tells schemars the field is optional; without it the
+    // published `outputSchema` lists a skipped field as `required` and the
+    // response no longer conforms to its own schema.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
     /// Minimum value.
     pub min: f32,
@@ -484,7 +517,7 @@ pub struct ParamTypeInfo {
     /// Default value.
     pub default: f32,
     /// Unit (e.g. "Hz", "dB", "%", "ms", "s").
-    #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub unit: String,
     /// Allowed choices for enum/discrete parameters (id → display name).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -496,7 +529,7 @@ pub struct ParamTypeInfo {
 }
 
 /// A named choice for an enum/discrete parameter.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ChoiceInfo {
     /// Value to pass to set_parameter (float index: 0.0, 1.0, 2.0, ...).
     pub value: f32,
@@ -505,19 +538,19 @@ pub struct ChoiceInfo {
     /// Display name.
     pub name: String,
     /// What this choice does, for discovery and tooltips.
-    #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
 }
 
 /// Information about a module port.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct PortTypeInfo {
     /// Port name (use with connect/disconnect).
     pub name: String,
     /// Human-readable display label.
     pub label: String,
     /// What the port carries and its intended connections.
-    #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
     /// Signal type: "audio", "control", "gate", or "midi".
     pub signal_type: String,
@@ -526,7 +559,7 @@ pub struct PortTypeInfo {
 }
 
 /// Accepted values and nominal signal range for a module port.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct PortValueDomainInfo {
     /// Stable semantic identifier such as "unipolar", "bipolar", or "octaves".
     pub id: String,
@@ -544,7 +577,7 @@ pub struct PortValueDomainInfo {
 }
 
 /// Information about an available module type.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ModuleTypeInfo {
     /// Type key to pass to add_module: the module's short prefix (e.g. "osc",
     /// "flt"), which is also the prefix its module ids carry.
@@ -552,7 +585,7 @@ pub struct ModuleTypeInfo {
     /// Display name (e.g. "Oscillator", "Math Oscillator").
     pub name: String,
     /// Module description.
-    #[serde(skip_serializing_if = "String::is_empty")]
+    #[serde(default, skip_serializing_if = "String::is_empty")]
     pub description: String,
     /// Category: "voice", "effect", or "visualizer".
     pub category: String,
@@ -577,13 +610,15 @@ pub struct ModuleTypeInfo {
     pub algorithm_parameters: Option<serde_json::Value>,
 }
 
-/// Compact catalog entry returned by `list_module_types` in `brief` mode.
+/// Catalog entry returned by `list_module_types` — the only shape it answers.
 ///
 /// The full [`ModuleTypeInfo`] catalog (every port + parameter for ~70 module
-/// types) is hundreds of KB and can exceed a tool-result token cap; this trims
-/// it to just what a caller needs to pick a `type_key` and pass it to
-/// `add_module` / `get_module_type_info`.
-#[derive(Debug, Clone, Serialize)]
+/// types) is hundreds of KB and can exceed a tool-result token cap, so the
+/// listing trims it to just what a caller needs to pick a `type_key` and pass it
+/// to `add_module` / `get_module_type_info`. The full per-type detail is
+/// `get_module_type_info`'s job; the full catalog survives only as the
+/// `synth://module-types/…` resources.
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ModuleTypeBrief {
     /// Type key to pass to add_module (e.g. "osc", "flt").
     pub type_key: String,
@@ -601,18 +636,24 @@ pub struct ModuleTypeBrief {
 /// Carries the scored matches (best-first) plus, when a text query matched
 /// nothing, a `did_you_mean` list of near-miss module names so an agent reads
 /// "you mis-spelled it" rather than "the feature is absent".
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ModuleSearchResult {
-    /// Matching module types, best-first (highest relevance score first).
+    /// Matching module types, best-first (highest relevance score first). At most
+    /// `limit` of them — compare with `total_matched` to see if it was cut short.
     pub modules: Vec<ModuleTypeInfo>,
+    /// How many types matched before `limit` was applied.
+    pub total_matched: usize,
     /// Near-miss suggestions (e.g. `"Ring Mod (rng)"`) when a text query
     /// scored zero everywhere. Empty when there were matches or no query.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub did_you_mean: Vec<String>,
+    /// What to try next when nothing matched; absent when something did.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
 }
 
 /// Two modules that overlap in the UI.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct UiOverlap {
     /// First module ID.
     pub module_a: String,
@@ -625,7 +666,7 @@ pub struct UiOverlap {
 // === Batch operation types ===
 
 /// Result for a single item in a batch operation.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct BatchItemResult {
     /// Zero-based index of the item in the input array.
     pub index: usize,
@@ -638,7 +679,7 @@ pub struct BatchItemResult {
 }
 
 /// Aggregate result for a batch operation.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct BatchResult {
     /// Total number of items in the batch.
     pub total: usize,
@@ -650,8 +691,28 @@ pub struct BatchResult {
     pub items: Vec<BatchItemResult>,
 }
 
+impl BatchResult {
+    /// This call's verdict, by the same rule [`MutationResult::outcome`] uses.
+    ///
+    /// The bridge counts the items itself, so unlike a `MutationResult` this type
+    /// carries the tallies rather than deriving them — but the reading is the
+    /// same, and a tool answering `Json<BatchResult>` needs one: it reaches the
+    /// client through `CallToolResult::structured`, which stamps
+    /// `is_error: Some(false)` whatever the payload says.
+    #[must_use]
+    pub const fn outcome(&self) -> ToolOutcome {
+        if self.failed == 0 {
+            ToolOutcome::Success
+        } else if self.succeeded == 0 {
+            ToolOutcome::Failure
+        } else {
+            ToolOutcome::Partial
+        }
+    }
+}
+
 /// Result of a `set_song` operation that builds a full song in one call.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct SetSongResult {
     /// Number of patterns created.
     pub patterns_created: usize,
@@ -672,7 +733,7 @@ pub struct SetSongResult {
 // === Batch instrument building types ===
 
 /// Result of building a single instrument via `build_instrument`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct BuildInstrumentResult {
     /// Assigned instrument ID.
     pub instrument_id: InstrumentId,
@@ -684,8 +745,9 @@ pub struct BuildInstrumentResult {
     /// non-empty `errors` with `partial_success: true` must not be treated as a
     /// fully-configured instrument.
     pub partial_success: bool,
-    /// Module IDs in the same order as the input modules array.
-    pub module_ids: Vec<String>,
+    /// Module IDs in the same order as the input modules array; `null` where
+    /// that module could not be created (the reason is in `errors`).
+    pub module_ids: Vec<Option<String>>,
     /// Number of connections successfully created.
     pub connection_count: usize,
     /// Non-fatal errors encountered.
@@ -697,7 +759,7 @@ pub struct BuildInstrumentResult {
 
 /// An automation lane orphaned by `rebuild_instrument_preserve_automation`:
 /// its target module no longer exists in the rebuilt graph.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct OrphanedAutomationLane {
     /// Pattern the lane lives in.
     pub pattern_id: PatternId,
@@ -708,12 +770,13 @@ pub struct OrphanedAutomationLane {
 /// Result of `rebuild_instrument_preserve_automation`. Extends the
 /// `build_instrument` result with an accounting of what happened to the
 /// instrument's automation lanes across the rebuild.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct RebuildInstrumentResult {
     /// The rebuilt instrument's ID.
     pub instrument_id: InstrumentId,
-    /// Module IDs in the rebuilt graph, in input order.
-    pub module_ids: Vec<String>,
+    /// Module IDs in the rebuilt graph, in input order; `null` where that
+    /// module could not be created (the reason is in `errors`).
+    pub module_ids: Vec<Option<String>>,
     /// Number of connections successfully created.
     pub connection_count: usize,
     /// Count of module-scoped automation lanes (`module:<type>:<inst>:<param>`)
@@ -731,7 +794,7 @@ pub struct RebuildInstrumentResult {
 }
 
 /// Result of applying an example patch via `apply_example_patch`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ApplyExamplePatchResult {
     /// Instrument ID (created or reused).
     pub instrument_id: InstrumentId,
@@ -748,7 +811,7 @@ pub struct ApplyExamplePatchResult {
 // === Sequencer types ===
 
 /// Information about the current song.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct SongInfo {
     /// Song name.
     pub name: String,
@@ -785,7 +848,7 @@ pub struct SongInfo {
 }
 
 /// A single tempo-map point: a tempo change at an absolute tick position.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct TempoPoint {
     /// Absolute position in ticks (960 ticks = 1 quarter note).
     pub tick: Tick,
@@ -797,7 +860,7 @@ pub struct TempoPoint {
 }
 
 /// Information about a pattern.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct PatternInfo {
     /// Pattern ID.
     pub id: PatternId,
@@ -814,7 +877,7 @@ pub struct PatternInfo {
 }
 
 /// A pooled Note Grid graph in summary form (pool-list view).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct NoteGraphInfo {
     /// Pool-unique graph id (address for every note-graph tool).
     pub id: NoteGraphId,
@@ -833,7 +896,7 @@ pub struct NoteGraphInfo {
 }
 
 /// One module (node) in a note graph, as surfaced to MCP readers.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct NoteGraphModuleInfo {
     /// Graph-local module id (address for connect / set / remove).
     pub id: NoteModuleId,
@@ -848,7 +911,7 @@ pub struct NoteGraphModuleInfo {
 }
 
 /// One connection in a note graph, as surfaced to MCP readers.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct NoteGraphConnectionInfo {
     /// Source (output-side) module id.
     pub from: NoteModuleId,
@@ -861,7 +924,7 @@ pub struct NoteGraphConnectionInfo {
 }
 
 /// A note graph in full detail (nodes + connections), for `get_note_graph`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct NoteGraphDetail {
     /// Summary metadata.
     pub info: NoteGraphInfo,
@@ -872,7 +935,7 @@ pub struct NoteGraphDetail {
 }
 
 /// A pooled Mod Grid graph in summary form (pool-list view).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ModGraphInfo {
     /// Pool-unique graph id (address for every mod-graph tool).
     pub id: ModGraphId,
@@ -893,7 +956,7 @@ pub struct ModGraphInfo {
 }
 
 /// One node in a mod graph, as surfaced to MCP readers.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ModGraphNodeInfo {
     /// Graph-local node id (address for connect / remove).
     pub id: ModNodeId,
@@ -908,7 +971,7 @@ pub struct ModGraphNodeInfo {
 }
 
 /// One cable in a mod graph, as surfaced to MCP readers.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ModGraphConnectionInfo {
     /// Source node id.
     pub from: ModNodeId,
@@ -921,7 +984,7 @@ pub struct ModGraphConnectionInfo {
 }
 
 /// A mod graph in full detail (nodes + cables), for `get_mod_graph`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ModGraphDetail {
     /// Summary metadata.
     pub info: ModGraphInfo,
@@ -932,7 +995,7 @@ pub struct ModGraphDetail {
 }
 
 /// One routing sink ("what writes to a target"), for `list_mod_targets`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ModTargetInfo {
     /// The graph that owns this routing.
     pub graph_id: ModGraphId,
@@ -947,7 +1010,7 @@ pub struct ModTargetInfo {
 }
 
 /// Information about a note in a pattern.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct NoteInfo {
     /// Note ID.
     pub id: NoteId,
@@ -974,7 +1037,7 @@ pub struct NoteInfo {
 }
 
 /// Information about a sequencer track.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct TrackInfo {
     /// Track ID.
     pub id: TrackId,
@@ -1002,7 +1065,7 @@ pub struct TrackInfo {
 }
 
 /// An effect send from a track to a return bus.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct SendInfo {
     /// Destination return-bus ID.
     pub target: ReturnBusId,
@@ -1014,8 +1077,21 @@ pub struct SendInfo {
     pub enabled: bool,
 }
 
+/// `get_master_volume`'s reply.
+///
+/// A one-field envelope, and the reason is `structuredContent`: the spec defines
+/// it as an object for every revision before `2026-07-28`, so a bare number is
+/// not a legal payload even though the tool has exactly one number to report.
+/// The same reason [`Listing`] exists.
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+pub struct MasterVolumeInfo {
+    /// Master output volume: 0.0 = silent, 1.0 = unity. `set_master_volume`
+    /// accepts up to 4.0, so this can read above unity.
+    pub volume: Gain,
+}
+
 /// Information about a return bus (effect-send destination).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ReturnBusInfo {
     /// Return-bus ID (referenced by track sends).
     pub id: ReturnBusId,
@@ -1044,7 +1120,7 @@ pub struct ReturnBusInfo {
 }
 
 /// A bus-to-bus send tap (one return feeding another).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ReturnSendInfo {
     /// Destination return-bus ID.
     pub target: ReturnBusId,
@@ -1055,7 +1131,7 @@ pub struct ReturnSendInfo {
 }
 
 /// One insert effect on a return bus's effect chain.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ReturnEffectInfo {
     /// Module-id string (e.g. "rev-1"), unique within the bus's chain. Pass this
     /// to the per-effect tools (`remove_return_effect`, `set_return_effect_parameter`).
@@ -1069,7 +1145,7 @@ pub struct ReturnEffectInfo {
 }
 
 /// One parameter on a return-bus insert effect.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ReturnEffectParamInfo {
     /// Display name (e.g. "Mix").
     pub name: String,
@@ -1085,7 +1161,7 @@ pub struct ReturnEffectParamInfo {
 }
 
 /// Information about a pattern placement in the arrangement.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct PlacementInfo {
     /// Pattern ID.
     pub pattern_id: PatternId,
@@ -1118,7 +1194,7 @@ pub struct PlacementInfo {
 // === Automation types ===
 
 /// Information about an automation lane in a pattern.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AutomationLaneInfo {
     /// Round-trippable target string (e.g. "Volume", "module:flt:1:cutoff",
     /// "track:Pitch", "track:Volume:2", "global:MasterVolume") — pass it back
@@ -1134,7 +1210,7 @@ pub struct AutomationLaneInfo {
 }
 
 /// Per-lane result of `simplify_automation`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct LaneSimplification {
     /// Pattern the lane belongs to.
     pub pattern_id: PatternId,
@@ -1153,7 +1229,7 @@ pub struct LaneSimplification {
 
 /// Output of `simplify_automation`. In dry-run (`applied: false`) nothing is
 /// mutated; the per-lane `removed`/`max_error` preview what an apply would do.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct SimplifyAutomationResult {
     /// `true` if the lanes were rewritten; `false` for a dry-run preview.
     pub applied: bool,
@@ -1174,7 +1250,7 @@ pub struct SimplifyAutomationResult {
 /// A valid automation target for an instrument, returned by
 /// `get_instrument_automation_targets`. The `target` string is ready to pass to
 /// the automation tools (`add/get/remove/clear_automation_*`).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AutomationTargetInfo {
     /// Target string for the automation tools (e.g. "module:flt:4:cutoff" or
     /// "FilterCutoff").
@@ -1204,7 +1280,7 @@ pub struct AutomationTargetInfo {
 }
 
 /// Information about an automation point.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AutomationPointInfo {
     /// Position in beats.
     pub beat: f32,
@@ -1215,7 +1291,7 @@ pub struct AutomationPointInfo {
 }
 
 /// One automation lane in the project-wide `get_automation_summary`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AutomationSummaryLane {
     /// Pattern the lane lives in.
     pub pattern_id: PatternId,
@@ -1233,7 +1309,7 @@ pub struct AutomationSummaryLane {
 }
 
 /// One group (by instrument / target / pattern) in `get_automation_summary`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AutomationSummaryGroup {
     /// Group key (depends on `group_by`).
     pub group: String,
@@ -1246,7 +1322,7 @@ pub struct AutomationSummaryGroup {
 }
 
 /// Project-wide automation overview returned by `get_automation_summary`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AutomationSummaryResult {
     /// How the lanes were grouped ("instrument", "target", or "pattern").
     pub group_by: String,
@@ -1259,7 +1335,7 @@ pub struct AutomationSummaryResult {
 }
 
 /// Full data for an example patch (used by MCP resources).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct PatchResourceData {
     /// Patch name.
     pub name: String,
@@ -1276,7 +1352,7 @@ pub struct PatchResourceData {
 }
 
 /// Module info within a patch resource.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct PatchModuleInfo {
     /// Module ID (e.g. "osc-1").
     pub id: String,
@@ -1287,7 +1363,7 @@ pub struct PatchModuleInfo {
 }
 
 /// A parameter name+value pair in a patch resource.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct PatchParamInfo {
     /// Parameter name.
     pub name: String,
@@ -1299,7 +1375,7 @@ pub struct PatchParamInfo {
 }
 
 /// Parameter value variants for patch resources.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 #[serde(untagged)]
 pub enum PatchParamValue {
     /// Numeric value.
@@ -1321,7 +1397,7 @@ pub enum PatchParamValue {
 }
 
 /// Result of optimizing a project by removing unused items.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct OptimizeResult {
     /// Names of removed patterns.
     pub removed_patterns: Vec<String>,
@@ -1338,6 +1414,30 @@ pub struct OptimizeResult {
     pub total_removed: usize,
 }
 
+/// `preview_note`'s structured half: everything about the rendered clip except
+/// the clip.
+///
+/// The audio itself stays where it has to be — a base64 `audio/wav` content
+/// block, which is how a client plays it. This describes it, so the facts the
+/// prose sentence carried ("… (1.0s, 48000Hz WAV, 96044 bytes)") are readable as
+/// data. Deliberately *not* [`AudioPreview`] with the bytes dropped: that type is
+/// the bridge's render output and is not even `Serialize`.
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+pub struct NotePreviewInfo {
+    /// The instrument that was rendered.
+    pub instrument_id: InstrumentId,
+    /// MIDI note as requested.
+    pub note: MidiNote,
+    /// Velocity as requested (1-127).
+    pub velocity: u8,
+    /// Clip length in seconds, note plus release tail.
+    pub duration_seconds: f32,
+    /// Render sample rate in Hz.
+    pub sample_rate: u32,
+    /// Size of the WAV payload in bytes, before base64 encoding.
+    pub wav_bytes: usize,
+}
+
 /// Audio preview data returned by offline rendering.
 #[derive(Debug, Clone)]
 pub struct AudioPreview {
@@ -1350,7 +1450,7 @@ pub struct AudioPreview {
 }
 
 /// Single spectral peak (frequency and magnitude).
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
 pub struct AnalyzeSpectrumPeak {
     /// Peak frequency in Hz (parabolically interpolated).
     pub freq_hz: f32,
@@ -1362,7 +1462,7 @@ pub struct AnalyzeSpectrumPeak {
 /// Spectral energy split into 4 frequency bands. Use `sub`/`low` to confirm
 /// "is this actually a bass" vs `mid`/`high` for "leads / brightness". Each
 /// value is an RMS amplitude in 0.0..~1.0; not all four sum to `rms_overall`.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
 pub struct AnalyzeEnergyBands {
     /// 0-100 Hz energy (sub).
     pub sub: f32,
@@ -1377,7 +1477,7 @@ pub struct AnalyzeEnergyBands {
 /// Harmonic structure of a tonal signal at a known fundamental. Tells you
 /// whether a saw is clean, a square is really squarey, whether tube
 /// saturation has added even-order content, etc.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
 pub struct AnalyzeHarmonicContent {
     /// Total harmonic distortion in dB (power ratio of harmonics to
     /// fundamental). More negative = cleaner. -120 dB ≈ silent / no harmonics.
@@ -1392,7 +1492,7 @@ pub struct AnalyzeHarmonicContent {
 }
 
 /// Estimated ADSR-like envelope shape, derived from `rms_envelope`.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
 pub struct AnalyzeEnvelopeEstimate {
     /// Time from start to RMS peak, in ms.
     pub attack_ms: f32,
@@ -1405,7 +1505,7 @@ pub struct AnalyzeEnvelopeEstimate {
 }
 
 /// Boolean quality flags. Cheap one-glance status for an LLM agent.
-#[derive(Debug, Clone, Copy, Default, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, schemars::JsonSchema)]
 pub struct AnalyzeFlags {
     /// True when `peak_amplitude < 0.005` — patch produced essentially
     /// nothing audible.
@@ -1434,7 +1534,7 @@ pub struct AnalyzeFlags {
 /// the same buffer) was computed on. Lets the caller distinguish the
 /// "true mono" case from the synthesized phase-robust signal used for
 /// stereo input.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub enum AnalysisSignalMode {
     /// Mono input — analysis ran on the single channel.
     Mono,
@@ -1447,7 +1547,7 @@ pub enum AnalysisSignalMode {
 /// Compact go/no-go verdict on whether an instrument actually produces audio.
 /// Returned by `validate_instrument_audio` — a thin distillation of the full
 /// `analyze_note` render for the common "is this patch alive?" check.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ValidateInstrumentAudioResult {
     /// Whether the rendered note produced audible signal (peak above the
     /// silence floor, ~-80 dBFS).
@@ -1483,7 +1583,7 @@ pub struct ValidateInstrumentAudioResult {
 /// without downloading or decoding audio. Includes per-window pitch tracking,
 /// stereo correlation, banded energy, harmonic structure, an ADSR-like
 /// envelope estimate, centroid trend, and quick boolean flags.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AnalyzeNoteResult {
     /// MIDI note as requested by the caller.
     pub note_requested: u8,
@@ -1670,7 +1770,7 @@ pub struct AnalyzeNoteResult {
 // ============================================================================
 
 /// Information about a sample in the library.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct SampleInfo {
     /// Sample ID.
     pub id: u64,
@@ -1699,7 +1799,7 @@ pub struct SampleInfo {
 }
 
 /// Detailed information about a sample including audio statistics.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct DetailedSampleInfo {
     /// Basic sample info.
     #[serde(flatten)]
@@ -1723,7 +1823,7 @@ pub struct DetailedSampleInfo {
 }
 
 /// State of a Sampler module in the rack.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct SamplerStateInfo {
     /// Currently assigned sample ID (0 if none).
     pub sample_id: u64,
@@ -1750,7 +1850,7 @@ pub struct SamplerStateInfo {
 // ============================================================================
 
 /// Information about a port signal type (returned by `list_port_types`).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct PortSignalTypeInfo {
     /// Signal type identifier (matches `PortTypeInfo::signal_type`).
     pub signal_type: String,
@@ -1763,7 +1863,7 @@ pub struct PortSignalTypeInfo {
 }
 
 /// Result of checking whether a connection between two ports is valid.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ConnectionCheckResult {
     /// Whether the connection is valid.
     pub valid: bool,
@@ -1785,39 +1885,112 @@ pub struct ConnectionCheckResult {
 // ============================================================================
 
 /// Result of a single operation in a `batch_execute` call.
-#[derive(Debug, Clone, Serialize)]
+///
+/// Carries the op's payload as **data**. It used to be a `String`: a typed tool's
+/// result was serialized to JSON and stored as text, so a client parsed the batch
+/// reply, read `result`, and parsed JSON a second time — and a mutating tool fared
+/// worse, since only its sentence crossed the boundary and the per-item results
+/// beside it were dropped. Batching a call stopped costing you the structure.
+#[derive(Debug, Clone, Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct BatchExecItemResult {
     /// Zero-based index of the operation in the input array.
     pub index: usize,
     /// Tool name that was called.
     pub tool: String,
-    /// Whether the operation succeeded.
-    pub success: bool,
-    /// Result string (JSON or message) on success, error message on failure.
-    pub result: String,
+    /// What this operation amounted to, as its handler stated it.
+    pub status: ToolOutcome,
+    /// The operation's payload — the same value a direct call puts in
+    /// `structuredContent`. Absent when the tool has none (the two document
+    /// readers) and when the operation never ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub structured: Option<serde_json::Value>,
+    /// The operation's text, when it has any: a mutator's confirmation sentence,
+    /// a document, or the error that stopped it. Absent for a typed reader, whose
+    /// answer is `structured` — sending it as text as well would ship the payload
+    /// twice in every batch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
 }
 
 /// Aggregate result for a `batch_execute` call.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, serde::Deserialize, schemars::JsonSchema)]
 pub struct BatchExecResult {
-    /// Total number of operations.
+    /// Operations the request asked for.
     pub total: usize,
-    /// Number of operations that succeeded.
+    /// Operations that did everything they were asked to.
     pub succeeded: usize,
-    /// Number of operations that failed.
+    /// Operations that did *some* of what they were asked to. A batch with any of
+    /// these has left the project half-changed unless it was rolled back.
+    pub partial: usize,
+    /// Operations that did nothing.
     pub failed: usize,
+    /// Operations never attempted, because `stop_on_error` ended the run early.
+    /// They have no entry in `results`.
+    pub skipped: usize,
     /// True when this was a `dry_run`: every operation was validated (tool name
     /// known + params parse) but none executed, so no state changed.
     pub dry_run: bool,
-    /// True when this was a `rollback` batch that hit an error and the project
-    /// was restored to its pre-batch snapshot.
+    /// True when this was a `rollback` batch that did not complete cleanly and the
+    /// pre-batch snapshot was applied — so nothing the operations did survives.
+    /// Read together with `rollback_error`, which says the applied state is not
+    /// *exactly* the snapshot.
     pub rolled_back: bool,
-    /// Per-operation results.
+    /// What went wrong with the restore, when `rollback` was asked for and the
+    /// batch did not complete. With `rolled_back: false` nothing was put back and
+    /// the project is **still** half-changed; with `rolled_back: true` the snapshot
+    /// was applied but parts of it could not be reconstructed, so the project
+    /// matches neither the snapshot nor the batch.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rollback_error: Option<String>,
+    /// Per-operation results, one per *attempted* operation, in request order.
     pub results: Vec<BatchExecItemResult>,
 }
 
+impl BatchExecResult {
+    /// The whole batch's verdict, derived from the operations it ran.
+    ///
+    /// `batch_execute` answers `Json<BatchExecResult>`, so nothing else can stamp
+    /// its `is_error`: a batch in which *every* operation failed would otherwise
+    /// reach the client as a successful call.
+    ///
+    /// Derived rather than tallied, and counting a partial operation as
+    /// incomplete: a batch whose every op half-applied is not a success, which is
+    /// exactly what a stored `failed == 0` used to report.
+    ///
+    /// A batch that was **rolled back** is a failure whatever its operations did,
+    /// because none of it stands: reporting the ops that had succeeded before the
+    /// restore would describe a state the project is no longer in.
+    #[must_use]
+    pub fn outcome(&self) -> ToolOutcome {
+        // Nothing stands, so nothing succeeded — reporting the ops that had
+        // completed before the restore would describe a state the project is no
+        // longer in.
+        if self.rolled_back {
+            return ToolOutcome::Failure;
+        }
+        // The restore was asked for and went wrong without the project being put
+        // back: it is left half-changed with no way back, which is the worst
+        // outcome this tool has and must not read as "some of it worked".
+        if self.rollback_error.is_some() {
+            return ToolOutcome::Failure;
+        }
+        let complete = self
+            .results
+            .iter()
+            .filter(|op| op.status == ToolOutcome::Success)
+            .count();
+        if complete == self.total {
+            ToolOutcome::Success
+        } else if complete == 0 {
+            ToolOutcome::Failure
+        } else {
+            ToolOutcome::Partial
+        }
+    }
+}
+
 /// Current audio input state.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct InputStateInfo {
     /// Current state: "idle", "monitoring", or "recording".
     pub state: String,
@@ -1830,7 +2003,7 @@ pub struct InputStateInfo {
 }
 
 /// Info about an audio input device.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct InputDeviceInfo {
     /// Stable backend device identifier accepted by `set_input_device`.
     pub id: String,
@@ -1846,7 +2019,7 @@ pub struct InputDeviceInfo {
 
 /// What was analyzed by `analyze_harmony` — either a single pattern or an
 /// arrangement range.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum HarmonyScope {
     /// A pattern, identified by its `PatternId` value.
@@ -1859,7 +2032,7 @@ pub enum HarmonyScope {
 ///
 /// The window `[start_tick, end_tick)` is the grouping window the analyzer
 /// used; chord identification is based on every pitch that sounded inside it.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct HarmonyChordEvent {
     /// 1-indexed bar number at the event start, using the song's time
     /// signature at `start_tick`. For pattern scope, computed against the
@@ -1891,7 +2064,7 @@ pub struct HarmonyChordEvent {
 
 /// Inferred key entry. `analyze_harmony` returns one top match plus up to two
 /// runner-ups.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct HarmonyKeyEstimate {
     /// Tonic pitch class (0..12, C = 0).
     pub tonic: u8,
@@ -1906,7 +2079,7 @@ pub struct HarmonyKeyEstimate {
 }
 
 /// Aggregate counters for `analyze_harmony`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct HarmonyStats {
     /// Total notes considered.
     pub total_notes: u32,
@@ -1933,7 +2106,7 @@ pub struct HarmonyStats {
 /// groups overlapping notes into chord events on a configurable resolution,
 /// labels each event with a chord symbol when one matches, and infers the
 /// most likely key using Krumhansl-Schmuckler key-profile correlation.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AnalyzeHarmonyResult {
     /// What was analyzed (pattern id or arrangement range).
     pub scope: HarmonyScope,
@@ -1973,7 +2146,7 @@ pub struct AnalyzeHarmonyResult {
 /// JSON consumers don't have to special-case non-finite values. All `lufs_*`
 /// fields follow the same convention. `lufs_short_term_max` is `-200.0` for
 /// buffers shorter than 3 s (the short-term window length).
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
 pub struct MixBusMetrics {
     /// Sample rate the buffer was rendered at.
     pub sample_rate: u32,
@@ -2027,7 +2200,7 @@ pub struct MixBusMetrics {
 
 /// Output of `analyze_mix_bus`. Renders `duration_seconds` of the master bus
 /// starting from `start_tick` (defaults to 0) and returns mix-level metrics.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AnalyzeMixBusResult {
     /// 1-indexed bar number at `start_tick`, using the song's time signature
     /// at that tick.
@@ -2064,7 +2237,7 @@ pub struct AnalyzeMixBusResult {
 /// Result of `render_to_wav`: an offline render was written to a WAV file on
 /// disk. The agent can then run its own DSP (FFT, spectral distance, partial
 /// tracking) on the file and compare it against an external reference WAV.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct RenderToWavResult {
     /// Absolute path the WAV file was written to.
     pub path: String,
@@ -2086,7 +2259,7 @@ pub struct RenderToWavResult {
 }
 
 /// One detected spectral peak in `AnalyzeSpectrumResult`.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
 pub struct AnalyzePartial {
     /// Refined peak frequency in Hz.
     pub frequency_hz: f32,
@@ -2104,7 +2277,7 @@ pub struct AnalyzePartial {
 /// metric cannot. Flattened into both result types so the JSON fields are the
 /// same regardless of source, which keeps the render↔sample compare loop
 /// symmetric.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct SpectrumDescriptor {
     /// Detected fundamental in Hz; `null` = unvoiced (noise frame).
     pub f0_hz: Option<f32>,
@@ -2130,7 +2303,7 @@ pub struct SpectrumDescriptor {
 }
 
 /// Result of `analyze_spectrum`: a detailed spectrum of an offline render.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AnalyzeSpectrumResult {
     /// Tick where the analysed render started.
     pub start_tick: Tick,
@@ -2147,7 +2320,7 @@ pub struct AnalyzeSpectrumResult {
 
 /// One frame of an `analyze_spectrogram` result: its window-centre time plus the
 /// same spectral descriptor `analyze_spectrum` returns.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct SpectrogramFrame {
     /// Window-centre time of this frame, in seconds from the render start.
     pub time_seconds: f32,
@@ -2160,7 +2333,7 @@ pub struct SpectrogramFrame {
 /// render, so the time evolution of a sound (e.g. a SID voice alternating
 /// pitched/noise every video frame) is visible in one call. The per-frame
 /// `voiced` flag reads that alternation directly.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AnalyzeSpectrogramResult {
     /// Tick where the analysed render started.
     pub start_tick: Tick,
@@ -2184,7 +2357,7 @@ pub struct AnalyzeSpectrogramResult {
 /// `analyze_spectrum`, computed over an imported sample or a WAV file on disk —
 /// so a real reference (e.g. a SID render) can be fingerprinted in identical
 /// units and compared against a candidate patch render.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AnalyzeSampleSpectrumResult {
     /// Sample name (file stem for a path, or the imported sample's name).
     pub sample_name: String,
@@ -2206,7 +2379,7 @@ pub struct AnalyzeSampleSpectrumResult {
 /// counterpart of `analyze_spectrogram`, so the time evolution of a real
 /// reference recording (e.g. a SID render alternating pitched/noise) is visible
 /// in one call and lines up with the equivalent render's spectrogram.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AnalyzeSampleSpectrogramResult {
     /// Sample name (file stem for a path, or the imported sample's name).
     pub sample_name: String,
@@ -2227,7 +2400,7 @@ pub struct AnalyzeSampleSpectrogramResult {
 
 /// One target partial matched (or not) against the candidate, in
 /// `CompareSpectraResult`.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
 pub struct PartialDiff {
     /// Frequency of the partial (Hz).
     pub frequency_hz: f32,
@@ -2237,7 +2410,7 @@ pub struct PartialDiff {
 
 /// One diverging frame from the time-resolved comparison: the timestamp to
 /// listen to / re-window, and that frame's per-frame log-spectral distance.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
 pub struct WorstFrame {
     /// Window-centre time of the frame, in seconds from the (aligned) start.
     pub time_seconds: f32,
@@ -2249,7 +2422,7 @@ pub struct WorstFrame {
 /// target, and *where*. `log_spectral_distance` is the scalar to minimise;
 /// `missing_partials` is the actionable list ("the target has a strong partial
 /// at 1153 Hz your candidate lacks").
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct CompareSpectraResult {
     /// Primary spectral scalar to minimise: pure RMS dB difference over the
     /// shared log-spaced bins. Larger = further apart. Requires both spectra to
@@ -2345,7 +2518,7 @@ pub struct CompareSpectraResult {
 /// estimate and attack transient, derived purely from the rendered/decoded
 /// audio (no access to the synth's actual envelope parameters, so this works
 /// identically for a real WAV reference).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct EnvelopeSide {
     /// Time from the start to the RMS peak, ms (attack).
     pub attack_ms: f32,
@@ -2373,7 +2546,7 @@ pub struct EnvelopeSide {
 /// Result of `compare_envelopes`: how far apart two amplitude contours are in
 /// time (their ADSR shape), plus the per-side ADSR / transient breakdown and
 /// the key deltas. `dtw_distance` is the scalar to minimise.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct CompareEnvelopesResult {
     /// Primary scalar to minimise: normalised dynamic-time-warping distance
     /// between the two peak-normalised RMS contours (0 = identical shape, larger
@@ -2403,7 +2576,7 @@ pub struct CompareEnvelopesResult {
 
 /// Result of `auto_gain_stage`: the master fader was adjusted to bring the mix
 /// toward a target loudness without breaching a true-peak ceiling.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AutoGainStageResult {
     /// Integrated LUFS measured at the current master setting (post master +
     /// return effects).
@@ -2453,7 +2626,7 @@ pub struct AutoGainStageResult {
 /// Lets you spot a patch that clips internally even when the resulting master
 /// contribution looks safe. Equivalent to running `analyze_note` against the
 /// instrument and taking the max output peak across the section's notes.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct TrackContribution {
     /// Sequencer track ID.
     pub track_id: TrackId,
@@ -2478,7 +2651,7 @@ pub struct TrackContribution {
 
 /// Output of `analyze_section`. Same metrics as `analyze_mix_bus` but the
 /// tick range is explicit. Optionally includes a per-track breakdown.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AnalyzeSectionResult {
     /// 1-indexed bar number at `start_tick`.
     pub start_bar: u32,
@@ -2516,7 +2689,7 @@ pub struct AnalyzeSectionResult {
 /// the previous stage's output (the chain input for the first effect), so a
 /// limiter shows a negative `peak_delta_db`, an EQ boost a positive
 /// `rms_delta_db`, and a widener a positive `stereo_width_delta`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct MasterEffectStage {
     /// Effect module id (type prefix + instance, e.g. `lim:1`).
     pub module_id: String,
@@ -2550,7 +2723,7 @@ pub struct MasterEffectStage {
 /// is measured once, then the chain is rendered truncated after each effect so
 /// every stage's contribution can be isolated. Costs one offline render per
 /// master effect plus one for the input — O(effect_count).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AnalyzeMasterChainResult {
     /// 1-indexed bar number at `start_tick`.
     pub start_bar: u32,
@@ -2595,7 +2768,7 @@ pub struct AnalyzeMasterChainResult {
 /// that feeds another also removes the signal it routed downstream, so its
 /// delta absorbs that downstream contribution and the per-return deltas no
 /// longer sum to the full mix (the result carries a warning when this applies).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ReturnBusContribution {
     /// Return bus id.
     pub return_id: ReturnBusId,
@@ -2617,7 +2790,7 @@ pub struct ReturnBusContribution {
 /// bus's marginal contribution, measured by muting one return at a time. Costs
 /// one offline render for the full mix plus one per return bus —
 /// O(return_count).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AnalyzeReturnBussesResult {
     /// 1-indexed bar number at `start_tick`.
     pub start_bar: u32,
@@ -2645,7 +2818,7 @@ pub struct AnalyzeReturnBussesResult {
 /// Mix-bus metric deltas between two renders, `current − baseline`. Positive
 /// values mean the current mix is louder / peakier / wider / more dynamic than
 /// the baseline. Returned in `CompareMixResult` for the `compare` action.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct MixDelta {
     /// Integrated-LUFS change (current − baseline).
     pub lufs_delta: f32,
@@ -2670,7 +2843,7 @@ pub struct MixDelta {
 /// `baseline_metrics` is the stored baseline, `current_metrics` is the fresh
 /// render (same window + scope as the baseline), and `deltas` is
 /// `current − baseline`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct CompareMixResult {
     /// Which action ran: `"capture"` or `"compare"`.
     pub action: String,
@@ -2700,7 +2873,7 @@ pub struct CompareMixResult {
 /// track's lead in this band, regardless of direction. Combine with
 /// `track_a_energy` vs. `track_b_energy` to know *which* track is louder.
 /// Reported as `200.0` when one side is silent (avoids `+inf` in JSON).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct BandOverlap {
     /// `"sub"` | `"low"` | `"mid"` | `"high"`.
     pub band: String,
@@ -2723,7 +2896,7 @@ pub struct BandOverlap {
 /// One pair of tracks with their per-band overlap and an optional textual
 /// hint. Pairs are unordered (`track_a_id < track_b_id`); `dominant_track_id`
 /// flags which side wins overall on the band that has the highest overlap.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct MaskingPair {
     pub track_a_id: TrackId,
     pub track_a_name: String,
@@ -2752,7 +2925,7 @@ pub struct MaskingPair {
 /// that does not play in this section). Reported so callers can tell a silent
 /// track apart from missing data, rather than seeing it as a spurious `1.0`
 /// conflict against another equally-silent track.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct TrackBelowFloor {
     pub track_id: TrackId,
     pub track_name: String,
@@ -2765,7 +2938,7 @@ pub struct TrackBelowFloor {
 /// track renders as `analyze_section` with `include_per_track = true`, so the
 /// audio cost is one offline render per audible track; the pair matrix
 /// itself is computed in-memory from the per-track band energies.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AnalyzeMaskingMatrixResult {
     /// Bar/beat/tick fields below describe the range that was **actually
     /// analyzed**. A single offline render is capped at 300 seconds, so on a
@@ -2803,7 +2976,7 @@ pub struct AnalyzeMaskingMatrixResult {
 /// Auto-inferred profile for one instrument. Mirrors the internal
 /// `analysis::InstrumentProfile`; enums travel as snake_case strings so the
 /// MCP crate stays free of pertylizer-side types.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct InstrumentProfileResult {
     /// Sequencer instrument id (matches `InstrumentId.0`).
     pub instrument_id: InstrumentId,
@@ -2820,7 +2993,7 @@ pub struct InstrumentProfileResult {
     pub texture: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct RoleInferenceResult {
     /// `"drums" | "bass" | "lead" | "pad" | "pluck" | "keys" | "fx" | "unknown"`.
     pub role: String,
@@ -2831,7 +3004,7 @@ pub struct RoleInferenceResult {
     pub signals: Vec<ProfileSignalResult>,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ProfileSignalResult {
     /// `"name" | "graph" | "envelope" | "pattern" | "manual" | "decision"`.
     pub axis: String,
@@ -2845,7 +3018,7 @@ pub struct ProfileSignalResult {
 // ---------------------------------------------------------------------------
 
 /// Density-related metrics for a pattern.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
 pub struct PatternDensity {
     /// Average notes per bar over the pattern's length, using the song's
     /// default time signature.
@@ -2858,7 +3031,7 @@ pub struct PatternDensity {
 }
 
 /// Pitch-shape metrics for a pattern.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct PatternPitch {
     /// Lowest MIDI note encountered (0 when the pattern has no notes).
     pub low: u8,
@@ -2876,7 +3049,7 @@ pub struct PatternPitch {
 }
 
 /// Velocity-dynamics metrics for a pattern.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
 pub struct PatternVelocity {
     /// Lowest velocity (0..=1.0).
     pub min: f32,
@@ -2891,7 +3064,7 @@ pub struct PatternVelocity {
 }
 
 /// Rhythmic-structure metrics for a pattern.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
 pub struct PatternRhythm {
     /// Maximum simultaneous voices observed at any tick.
     pub max_polyphony: u32,
@@ -2915,7 +3088,7 @@ pub struct PatternRhythm {
 }
 
 /// Bar-level self-similarity metrics for a pattern.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
 pub struct PatternRepetition {
     /// Number of distinct bar-content signatures across the pattern. Bars are
     /// hashed by `(onset_quantized_to_32nd, midi_note)`; durations and
@@ -2934,7 +3107,7 @@ pub struct PatternRepetition {
 /// Pure symbolic — no audio rendering. Reads a pattern's notes directly and
 /// reports density, pitch shape, velocity dynamics, rhythmic structure, and
 /// bar-level repetition.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AnalyzePatternResult {
     /// Pattern ID that was analyzed.
     pub pattern_id: PatternId,
@@ -2966,7 +3139,7 @@ pub struct AnalyzePatternResult {
 // ---------------------------------------------------------------------------
 
 /// Per-component note counts inside the analyzed scope.
-#[derive(Debug, Clone, Copy, Default, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, schemars::JsonSchema)]
 pub struct DrumComposition {
     pub kick: u32,
     pub snare: u32,
@@ -2983,7 +3156,7 @@ pub struct DrumComposition {
 /// Backbeat = snare hits landing on beats 2 and 4 (in 4-beat bars). `strength`
 /// is the fraction of expected backbeat positions that actually carry a snare
 /// hit (1.0 = tight, 0.0 = no backbeat).
-#[derive(Debug, Clone, Copy, Default, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, schemars::JsonSchema)]
 pub struct DrumBackbeat {
     /// 0.0..=1.0.
     pub strength: f32,
@@ -2995,7 +3168,7 @@ pub struct DrumBackbeat {
     pub off_backbeat_snares: u32,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct DrumHat {
     /// `"quarter" | "8th" | "16th" | "triplet_8th" | "triplet_16th" |
     /// "irregular" | "none"`. `"none"` when no hat hits were found.
@@ -3004,7 +3177,7 @@ pub struct DrumHat {
     pub hat_count: u32,
 }
 
-#[derive(Debug, Clone, Copy, Default, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, schemars::JsonSchema)]
 pub struct DrumGhostNotes {
     pub count: u32,
     /// Velocity threshold (0..=1) below which a snare hit is counted as a
@@ -3015,7 +3188,7 @@ pub struct DrumGhostNotes {
 /// Fill detection per bar. A bar is flagged as a "fill candidate" when its
 /// drum-note density exceeds a fixed multiple of the mean drum density across
 /// the whole range.
-#[derive(Debug, Clone, Copy, Default, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, schemars::JsonSchema)]
 pub struct DrumFills {
     pub fill_bar_count: u32,
     pub density_threshold: f32,
@@ -3023,7 +3196,7 @@ pub struct DrumFills {
 }
 
 /// Bar-level self-similarity over drum notes.
-#[derive(Debug, Clone, Copy, Default, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, schemars::JsonSchema)]
 pub struct DrumRepetition {
     pub distinct_bars: u32,
     pub total_bars: u32,
@@ -3035,7 +3208,7 @@ pub struct DrumRepetition {
 /// One drum track that contributed notes to the analysis (arrangement scope
 /// only — `analyze_drum_groove` lists every track classified as Drums with
 /// confidence >= 0.6 by [`crate::types::InstrumentProfileResult`]).
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct DrumTrackInfo {
     pub track_id: TrackId,
     pub track_name: String,
@@ -3050,7 +3223,7 @@ pub struct DrumTrackInfo {
 /// `analysis::infer_all_profiles`. Reports backbeat strength, hat subdivision,
 /// ghost-note count, fill candidates, and bar-level repetition. Use this to
 /// answer "why does this beat sound flat?" without listening.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AnalyzeDrumGrooveResult {
     /// What was analyzed (pattern id or arrangement range).
     pub scope: HarmonyScope,
@@ -3092,7 +3265,7 @@ pub struct AnalyzeDrumGrooveResult {
 /// One bass-only track that contributed notes to a bass/drum-lock analysis.
 /// Reported alongside the drum tracks so callers can see what the analyzer
 /// pulled notes from. Mirrors `DrumTrackInfo` but for bass.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct BassTrackInfo {
     pub track_id: TrackId,
     pub track_name: String,
@@ -3104,7 +3277,7 @@ pub struct BassTrackInfo {
 /// Onset-level kick/bass alignment metrics. The two scores answer different
 /// questions: `lock_score` is "how often does the kick get bass support?";
 /// `coverage_score` is "how often does the bass have a kick beneath it?".
-#[derive(Debug, Clone, Copy, Default, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, schemars::JsonSchema)]
 pub struct BassDrumAlignment {
     pub matched_onsets: u32,
     pub kick_only: u32,
@@ -3121,7 +3294,7 @@ pub struct BassDrumAlignment {
 /// plays the chord root on the kick — high `on_kick_root_share` is the
 /// fingerprint of a "rooted" bass line; low share + many distinct PCs is the
 /// fingerprint of a walking or melodic bass.
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, schemars::JsonSchema)]
 pub struct BassPitchStability {
     /// Most common bass pitch class on matched onsets (0 = C, 11 = B).
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -3147,7 +3320,7 @@ pub struct BassPitchStability {
 /// `Bass`) the same way `analyze_harmony`'s drum filter does, then walks
 /// onsets and reports onset alignment, kick/bass solo counts, and a bass-
 /// pitch stability summary.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AnalyzeBassDrumLockResult {
     pub scope: HarmonyScope,
     pub start_bar: u32,
@@ -3183,7 +3356,7 @@ pub struct AnalyzeBassDrumLockResult {
 /// One chord event annotated with its tonal function. Mirrors
 /// `analysis::ChordFunction`; enums travel as snake_case strings so the MCP
 /// crate stays free of pertylizer-side types.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ChordFunctionEvent {
     /// Chord symbol, e.g. `"Cm7"`. `"?"` when no chord was identified.
     pub symbol: String,
@@ -3219,7 +3392,7 @@ pub struct ChordFunctionEvent {
 }
 
 /// Cadence event — one entry per detected cadence ending in the chord stream.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
 pub struct HarmonicCadenceEvent {
     /// Index into `AnalyzeHarmonicFunctionResult.chords` of the closing
     /// chord of the cadence.
@@ -3228,7 +3401,7 @@ pub struct HarmonicCadenceEvent {
     pub kind: HarmonicCadenceKind,
 }
 
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum HarmonicCadenceKind {
     Authentic,
@@ -3238,7 +3411,7 @@ pub enum HarmonicCadenceKind {
 }
 
 /// Per-function counts across the chord stream.
-#[derive(Debug, Clone, Copy, Default, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, schemars::JsonSchema)]
 pub struct FunctionDistribution {
     pub tonic: u32,
     pub subdominant: u32,
@@ -3248,7 +3421,7 @@ pub struct FunctionDistribution {
 }
 
 /// Tension-curve summary.
-#[derive(Debug, Clone, Copy, Default, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, schemars::JsonSchema)]
 pub struct TensionStats {
     /// Mean per-chord tension across the analyzed range (0.0..=1.0).
     pub mean: f32,
@@ -3266,7 +3439,7 @@ pub struct TensionStats {
 /// same key inference. For each chord event, the analyzer assigns a scale-
 /// degree Roman numeral, a tonal-function bucket, and a tension score;
 /// cadences are detected on consecutive chord pairs.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AnalyzeHarmonicFunctionResult {
     pub scope: HarmonyScope,
     /// Inferred key tonic name (`"C"`, `"F#"`, …) and mode (`"major"` /
@@ -3294,7 +3467,7 @@ pub struct AnalyzeHarmonicFunctionResult {
 /// `AnalyzeNoteResult` that's useful for spotting per-note breakage — full
 /// per-note `AnalyzeNoteResult` blobs would blow the response budget on a
 /// 60-note sweep.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
 pub struct InstrumentRangeStep {
     /// MIDI note requested.
     pub note: MidiNote,
@@ -3343,7 +3516,7 @@ pub struct InstrumentRangeStep {
 /// Cross-range warnings derived from a `Vec<InstrumentRangeStep>`. Each flag
 /// surfaces a specific bug class an agent would otherwise have to spot by
 /// eyeballing the per-step list.
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, Serialize, schemars::JsonSchema)]
 pub struct InstrumentRangeIssues {
     /// Notes (by MIDI number) where `silent == true`. Empty when the patch
     /// produced audible output at every step.
@@ -3372,7 +3545,7 @@ pub struct InstrumentRangeIssues {
 /// Output of `analyze_instrument_range`. Sweeps an instrument across a MIDI
 /// range, runs the same render-and-analyze pipeline as `analyze_note` at each
 /// step, and returns per-step metrics plus a cross-step issue summary.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AnalyzeInstrumentRangeResult {
     /// Instrument that was swept.
     pub instrument_id: InstrumentId,
@@ -3403,7 +3576,7 @@ pub struct AnalyzeInstrumentRangeResult {
 // ---------------------------------------------------------------------------
 
 /// One step in a velocity sweep at a fixed MIDI note.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
 pub struct VelocityResponseStep {
     /// Velocity used for this step (1..=127).
     pub velocity: u8,
@@ -3419,7 +3592,7 @@ pub struct VelocityResponseStep {
 }
 
 /// Cross-velocity diagnostics derived from a `Vec<VelocityResponseStep>`.
-#[derive(Debug, Clone, Copy, Default, Serialize)]
+#[derive(Debug, Clone, Copy, Default, Serialize, schemars::JsonSchema)]
 pub struct VelocityResponseIssues {
     /// `peak_amplitude` at the loudest step minus the quietest, in dB.
     /// `0.0` when fewer than two non-silent steps were found. Large values
@@ -3451,7 +3624,7 @@ pub struct VelocityResponseIssues {
 /// Output of `analyze_velocity_response`. Holds one MIDI note across a swept
 /// velocity range and returns per-velocity amplitude / brightness curves plus
 /// monotonicity / responsiveness flags.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AnalyzeVelocityResponseResult {
     pub instrument_id: InstrumentId,
     /// MIDI note held throughout the sweep.
@@ -3481,7 +3654,7 @@ pub struct AnalyzeVelocityResponseResult {
 
 /// Output of `generate_chord`. Pure symbolic — returns MIDI notes for a
 /// requested chord symbol so the caller can place them with `add_note`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct GenerateChordResult {
     /// Chord symbol echoed back.
     pub symbol: String,
@@ -3502,7 +3675,7 @@ pub struct GenerateChordResult {
 }
 
 /// One chord placed by `create_chord_progression_pattern`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct ChordProgressionStep {
     /// Chord symbol as supplied (e.g. "Gm").
     pub symbol: String,
@@ -3517,7 +3690,7 @@ pub struct ChordProgressionStep {
 }
 
 /// Result of `create_chord_progression_pattern`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct CreateChordProgressionResult {
     /// ID of the newly created pattern.
     pub pattern_id: PatternId,
@@ -3534,7 +3707,7 @@ pub struct CreateChordProgressionResult {
 
 /// Output of `transpose_notes`. Pure symbolic — mutates a single pattern in
 /// place and returns aggregate stats.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct TransposeNotesResult {
     pub pattern_id: PatternId,
     /// Signed semitone shift requested.
@@ -3559,7 +3732,7 @@ pub struct TransposeNotesResult {
 }
 
 /// Output of `quantize_notes_to_scale`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct QuantizeNotesToScaleResult {
     pub pattern_id: PatternId,
     /// Scale tonic (0..12, C = 0).
@@ -3579,8 +3752,45 @@ pub struct QuantizeNotesToScaleResult {
     pub warnings: Vec<String>,
 }
 
+/// Whether a YAMS source ended up *running*, beside the status text.
+///
+/// The source is always persisted, and a compile failure deliberately leaves the
+/// node passing notes through — so "saved" and "installed" are different facts and
+/// the reply has to be able to say which one happened. It used to answer one
+/// sentence, `"Script saved … but did not compile (passes notes through): <diag>"`,
+/// which a client reading only `structuredContent` could not distinguish from a
+/// clean install: the verdict was inferred from the leading `"OK:"`, so a broken
+/// transform reported `ok_count: 1` with no errors.
+#[derive(Debug, Clone)]
+pub struct ScriptInstallStatus {
+    /// `true` when a compiled program is now running on the node. `false` both for
+    /// a cleared source and for one that failed to compile.
+    pub installed: bool,
+    /// The compile diagnostic, when the source failed to compile. `None` for a
+    /// clean install *and* for a deliberate clear.
+    pub error: Option<String>,
+    /// Human-readable status, unchanged from what this call always returned.
+    pub message: String,
+}
+
+/// Output of `freeze_pattern`: what the bake produced, and what it lost.
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+pub struct FreezePatternResult {
+    /// The pattern that was baked.
+    pub pattern_id: PatternId,
+    /// Concrete notes in the pattern after the bake.
+    pub note_count: usize,
+    /// Note events discarded because a graph node hit its 128-event cap. Non-zero
+    /// means the bake is **incomplete** — the frozen pattern is missing notes the
+    /// generative setup would have played.
+    pub dropped_events: u32,
+    /// Spells out a non-zero `dropped_events`; absent when nothing was dropped.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub warning: Option<String>,
+}
+
 /// Output of `quantize_notes_to_grid`.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct QuantizeNotesToGridResult {
     pub pattern_id: PatternId,
     /// Grid resolution (in ticks) the snap was performed against.
@@ -3615,7 +3825,7 @@ pub struct QuantizeNotesToGridResult {
 /// note density, distinct pitch classes, dominant pitch class, mean velocity,
 /// and the set of tracks that contributed notes to the bar. Lets the caller
 /// inspect the raw matrix the section clustering ran on.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct BarFeatureSummary {
     /// 1-indexed bar number in the scope (1 = first bar of the analyzed range).
     pub bar: u32,
@@ -3638,7 +3848,7 @@ pub struct BarFeatureSummary {
 /// One detected section in `analyze_arrangement` — a contiguous bar range
 /// labeled by clustering similar adjacent bars and matching against
 /// previously seen labels.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct SectionSpan {
     /// Section label assigned by clustering (`"A"`, `"B"`, `"A'"`, …). Labels
     /// reflect first-appearance order; primes mark near-matches to an earlier
@@ -3665,7 +3875,7 @@ pub struct SectionSpan {
 /// Output of `analyze_arrangement`. Section-level structural diagnostic built
 /// from bar features and self-similarity clustering: detects repeating
 /// sections, labels them, and reports per-section stats.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AnalyzeArrangementResult {
     pub scope: HarmonyScope,
     pub start_bar: u32,
@@ -3697,7 +3907,7 @@ pub struct AnalyzeArrangementResult {
 /// `analyze_arrangement` — one label per bar, plus a coalesced run-length
 /// "form string" (`"AABA"`, `"ABACABA"`, …) that captures song structure at
 /// a glance.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AnalyzeFormMapResult {
     pub scope: HarmonyScope,
     pub start_bar: u32,
@@ -3725,7 +3935,7 @@ pub struct AnalyzeFormMapResult {
 }
 
 /// One occurrence of a motif inside the analyzed scope.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
 pub struct MotifOccurrence {
     /// Track that the motif starts on. `0` in pattern scope.
     pub track_id: TrackId,
@@ -3742,7 +3952,7 @@ pub struct MotifOccurrence {
 }
 
 /// One motif candidate — a recurring sequence of pitch intervals.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct MotifEntry {
     /// Length in intervals (i.e. one less than the number of notes).
     pub length: u8,
@@ -3760,7 +3970,7 @@ pub struct MotifEntry {
 /// recur at least `min_count` times across the scope. Transposition-
 /// invariant — the same melodic shape rooted at different pitches collapses
 /// to one entry.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct FindMotifsResult {
     pub scope: HarmonyScope,
     pub start_bar: u32,
@@ -3784,7 +3994,7 @@ pub struct FindMotifsResult {
 /// "does this song actually have a hook?" — high score = a clear, long,
 /// repeating motif covers a meaningful share of the melodic notes; low
 /// score = melody noodles without a memorable shape.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AnalyzeHookStrengthResult {
     pub scope: HarmonyScope,
     pub start_bar: u32,
@@ -3820,7 +4030,7 @@ pub struct AnalyzeHookStrengthResult {
 /// Audio-derived fields (`loudness_score`, `brightness`, `band_entropy`,
 /// `stereo_width_score`) are `None` when the caller asked for the cheap
 /// symbolic-only mode (or when the scope was too short to render).
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
 pub struct TensionCurveBar {
     /// 1-indexed bar number inside the analyzed scope.
     pub bar: u32,
@@ -3868,7 +4078,7 @@ pub struct TensionCurveBar {
 }
 
 /// Summary statistics over the per-bar `composite_tension` series.
-#[derive(Debug, Clone, Copy, Serialize)]
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
 pub struct TensionCurveSummary {
     /// 1-indexed bar with the highest composite tension. `None` for empty
     /// scopes.
@@ -3890,7 +4100,7 @@ pub struct TensionCurveSummary {
 /// from the existing harmony/dynamics/spectral analyzers — flags shape
 /// issues like a chorus that does not lift, a build that peaks too early,
 /// drops that lose low-end energy, and otherwise monotone curves.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct AnalyzeTensionCurveResult {
     pub scope: HarmonyScope,
     pub start_bar: u32,
@@ -3919,7 +4129,7 @@ pub struct AnalyzeTensionCurveResult {
 
 /// One ranked suggestion from `suggest_music_fixes`. Severity is in
 /// `[0, 1]`; the caller can decide how aggressively to act on each entry.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct FixSuggestion {
     /// Stable rule identifier, e.g. `"harmony.no_key_inferred"`. Lets the
     /// caller suppress specific rules in a follow-up call without parsing
@@ -3946,7 +4156,7 @@ pub struct FixSuggestion {
 /// concrete edits. No new measurements — the underlying analyzers are
 /// authoritative and surface their full output through their own MCP
 /// tools.
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
 pub struct SuggestMusicFixesResult {
     pub scope: HarmonyScope,
     pub start_bar: u32,
@@ -3971,4 +4181,156 @@ pub struct SuggestMusicFixesResult {
     pub rules_clean: Vec<String>,
     #[serde(skip_serializing_if = "Vec::is_empty", default)]
     pub warnings: Vec<String>,
+}
+
+/// What a call amounted to, stated by the handler that ran it.
+///
+/// Every verdict in the server comes from here. It used to be *inferred* from the
+/// reply after the fact — a leading `"Error:"` in the prose, or a JSON shape with
+/// an empty success array — and that inference drove both `is_error` on a direct
+/// call and stop-on-error/rollback in a batch. Re-deriving a verdict from
+/// serialized text is wrong twice over: it reads a total failure and a partial
+/// success the same way unless the wording cooperates, and a tool whose bridge
+/// reports trouble *inside* a successful sentence (`"Script saved … but did not
+/// compile"`) is read as a clean success.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Serialize, serde::Deserialize, schemars::JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum ToolOutcome {
+    /// Everything the call was asked to do landed.
+    Success,
+    /// Some items landed and some did not. **Not** a failure: the work that
+    /// succeeded is real and a rollback would discard it.
+    Partial,
+    /// Nothing landed.
+    Failure,
+}
+
+/// One requested item's outcome, addressable by where it was in the request.
+#[derive(Debug, Clone, Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(bound(deserialize = "T: serde::de::DeserializeOwned"))]
+pub struct MutationItem<T> {
+    // Field docs stay one terse line each: schemars copies them into this type's
+    // JSON Schema, and that schema is published on 112 tools.
+    /// Zero-based position in this reply's `items`; the request position too,
+    /// except where the tool reports per-effect rather than per-request entries.
+    pub index: usize,
+    /// What this item produced — a created id, a written path, a description of
+    /// the cable. Absent when the tool names nothing, and always absent on failure.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub value: Option<T>,
+    /// Why this item failed. Absent when it succeeded.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+impl<T> MutationItem<T> {
+    /// Did this item land?
+    #[must_use]
+    pub const fn succeeded(&self) -> bool {
+        self.error.is_none()
+    }
+}
+
+/// The structured half of a mutating tool's reply: one entry per requested item.
+///
+/// Most write tools have no payload to return — the information is "it worked",
+/// sometimes with the ids of what was created. They have always answered with a
+/// sentence, and [`batch_msg`](crate::server) built that sentence out of values it
+/// already had: a success count, the affected ids, and one message per failed
+/// item. Flattening them into prose is what forced a caller to pull ids back out
+/// of a string like `"OK: 2 modules added (osc-1, flt-1); 1 failed: …"`.
+///
+/// The values come back as data beside that sentence — which stays in `content`,
+/// unchanged — but *per item*, which is the part a flat `{ok_count, details,
+/// errors}` could not express. Given five requested items and two failures, three
+/// parallel lists say only "three worked, and here are two complaints"; a caller
+/// still could not say which two, because nothing tied a message to the item that
+/// produced it. `index` does.
+///
+/// `ok_count` is deliberately **not** a field: it is `items.iter().filter(…)`,
+/// and a stored count is one more thing that can disagree with the entries it
+/// counts.
+#[derive(Debug, Clone, Serialize, serde::Deserialize, schemars::JsonSchema)]
+#[serde(bound(deserialize = "T: serde::de::DeserializeOwned"))]
+pub struct MutationResult<T> {
+    // Duplicated from the reply's text content on purpose: a client that reads
+    // only `structuredContent` should not have to go back to `content` for the
+    // summary.
+    /// Human-readable confirmation; identical to the reply's text content.
+    pub message: String,
+    /// One entry per requested item, in request order — except for a whole-call
+    /// pre-flight refusal, which answers a single failed entry for the call.
+    pub items: Vec<MutationItem<T>>,
+}
+
+impl<T> MutationResult<T> {
+    /// How many items landed.
+    #[must_use]
+    pub fn ok_count(&self) -> usize {
+        self.items.iter().filter(|i| i.succeeded()).count()
+    }
+
+    /// This call's verdict.
+    ///
+    /// A call that was asked to do nothing succeeded at it: an empty `items` is
+    /// [`ToolOutcome::Success`], matching the prose `"OK: 0 widgets set"` that an
+    /// empty batch has always answered.
+    #[must_use]
+    pub fn outcome(&self) -> ToolOutcome {
+        let ok = self.ok_count();
+        if ok == self.items.len() {
+            ToolOutcome::Success
+        } else if ok == 0 {
+            ToolOutcome::Failure
+        } else {
+            ToolOutcome::Partial
+        }
+    }
+}
+
+/// A list reply, wrapped so its payload roots at an object.
+///
+/// A bare `Vec<T>` serializes to a JSON array, which is legal as
+/// `structuredContent` only under spec `2026-07-28` — SEP-2106 loosened it to
+/// any JSON value there. `2025-06-18` and `2025-11-25` define it as
+/// `{[key: string]: unknown}` and require `outputSchema` to be
+/// `type: "object"`, and rmcp negotiates down to whatever version a client
+/// asks for, echoing it back. Answering an array over a handshake that agreed
+/// to one of those revisions is a promise the server does not keep, and a
+/// client validating against what was agreed rejects the whole result.
+///
+/// Wrapping costs one key and makes every reply valid under every revision.
+/// One generic type rather than 23 named envelopes: the key carries no
+/// information a caller does not already have from the tool it called.
+#[derive(Debug, Clone, Serialize, schemars::JsonSchema)]
+pub struct Listing<T> {
+    /// The items, in the order the tool produced them.
+    pub items: Vec<T>,
+}
+
+impl<T> From<Vec<T>> for Listing<T> {
+    fn from(items: Vec<T>) -> Self {
+        Self { items }
+    }
+}
+
+/// A pooled-graph tool's reply: the id it created or copied.
+///
+/// Generic over the id type rather than one `{ graph_id: u64 }` struct, because
+/// `NoteGraphId` and `ModGraphId` are distinct newtypes and a shared raw-integer
+/// field would erase that — the four tools that answer this shape address two
+/// different pools. One generic keeps each id its own type and still writes the
+/// envelope once.
+#[derive(Debug, Clone, Copy, Serialize, schemars::JsonSchema)]
+pub struct GraphResult<Id> {
+    /// The graph the call created or duplicated.
+    pub graph_id: Id,
+}
+
+impl<Id> From<Id> for GraphResult<Id> {
+    fn from(graph_id: Id) -> Self {
+        Self { graph_id }
+    }
 }

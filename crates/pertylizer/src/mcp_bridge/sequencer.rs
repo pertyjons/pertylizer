@@ -504,7 +504,7 @@ impl synth_mcp::bridge::SequencerBridge for AppSynthBridge {
         graph_id: NoteGraphId,
         module_id: NoteModuleId,
         source: String,
-    ) -> Result<String, McpBridgeError> {
+    ) -> Result<synth_mcp::types::ScriptInstallStatus, McpBridgeError> {
         let mut song = self.shared.song.write();
         let gid = graph_id;
         let graph = song
@@ -526,32 +526,46 @@ impl synth_mcp::bridge::SequencerBridge for AppSynthBridge {
         // The source is always persisted; the compile result only decides whether
         // a program is installed (empty / failing sources are valid pass-through).
         transform.source = source;
-        let message = if transform.source().trim().is_empty() {
+        // `installed` is the fact the caller acts on, so it travels as data. The
+        // sentences are unchanged.
+        let status = if transform.source().trim().is_empty() {
             transform.set_compiled(None);
-            format!(
-                "Script cleared on module {module_id} (graph {graph_id}) — passes notes through"
-            )
+            synth_mcp::types::ScriptInstallStatus {
+                installed: false,
+                error: None,
+                message: format!(
+                    "Script cleared on module {module_id} (graph {graph_id}) — passes notes through"
+                ),
+            }
         } else {
             match crate::session::compile_note_event_script(transform.source()) {
                 Ok(program) => {
                     transform.set_compiled(Some(program));
-                    format!(
-                        "Script compiled and installed on module {module_id} (graph {graph_id})"
-                    )
+                    synth_mcp::types::ScriptInstallStatus {
+                        installed: true,
+                        error: None,
+                        message: format!(
+                            "Script compiled and installed on module {module_id} (graph {graph_id})"
+                        ),
+                    }
                 }
                 Err(e) => {
                     transform.set_compiled(None);
-                    format!(
-                        "Script saved on module {module_id} (graph {graph_id}) but did not compile \
-                     (passes notes through): {e}"
-                    )
+                    synth_mcp::types::ScriptInstallStatus {
+                        installed: false,
+                        error: Some(e.to_string()),
+                        message: format!(
+                            "Script saved on module {module_id} (graph {graph_id}) but did not \
+                             compile (passes notes through): {e}"
+                        ),
+                    }
                 }
             }
         };
         graph
             .try_insert_node(mid, node)
             .map_err(|error| McpBridgeError::Other(error.to_string()))?;
-        Ok(message)
+        Ok(status)
     }
 
     fn remove_note_graph_module(

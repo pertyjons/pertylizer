@@ -524,6 +524,18 @@ impl synth_mcp::bridge::AnalysisBridge for AppSynthBridge {
         )
     }
 
+    fn mutation_seq(&self) -> u64 {
+        self.shared
+            .mutation_seq
+            .load(std::sync::atomic::Ordering::Acquire)
+    }
+
+    fn note_mutation(&self) {
+        self.shared
+            .mutation_seq
+            .fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+    }
+
     fn capture_snapshot(&self) -> Result<(), McpBridgeError> {
         let mut slot = self.rollback_snapshot.lock();
         // Refuse rather than overwrite: an occupied slot means another rollback
@@ -547,7 +559,7 @@ impl synth_mcp::bridge::AnalysisBridge for AppSynthBridge {
         Ok(())
     }
 
-    fn restore_snapshot(&self) -> Result<(), McpBridgeError> {
+    fn restore_snapshot(&self) -> Result<Vec<String>, McpBridgeError> {
         let project =
             self.rollback_snapshot.lock().take().ok_or_else(|| {
                 McpBridgeError::Other("no project snapshot to restore".to_string())
@@ -559,10 +571,6 @@ impl synth_mcp::bridge::AnalysisBridge for AppSynthBridge {
             &self.sample_library,
         )
         .map_err(McpBridgeError::Other)?;
-        // A rollback that quietly restores *less* than it snapshotted is the
-        // worst kind of partial load: the client asked for the previous state
-        // back and is told it got it. This path returns `()`, so the Activity
-        // panel / log is where it can still be said.
         for diagnostic in &report.diagnostics {
             tracing::warn!(
                 target: "pertylizer::project",
@@ -574,7 +582,18 @@ impl synth_mcp::bridge::AnalysisBridge for AppSynthBridge {
         // Rebuild the GUI mirrors against the restored project, mirroring a
         // project load — otherwise the GUI keeps showing the failed-batch state.
         self.stash_refresh(crate::mcp_shared::ProjectRefresh::Loaded(project));
-        Ok(())
+        // A rollback that quietly restores *less* than it snapshotted is the worst
+        // kind of partial load: the caller asked for the previous state back and
+        // was told it got it. The log said so; the caller could not. It is reported
+        // now, as `batch_execute`'s `rollback_error` — but as an `Ok`, because the
+        // snapshot *was* applied: returning `Err` here made the batch answer
+        // `rolled_back: false`, i.e. "your writes are still there", about a project
+        // that had just been replaced.
+        Ok(report
+            .diagnostics
+            .iter()
+            .map(|d| format!("{}: {}", d.path, d.message))
+            .collect())
     }
 
     fn clear_snapshot(&self) {

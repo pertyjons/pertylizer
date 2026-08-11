@@ -648,8 +648,9 @@ impl ParameterUnit {
 ///
 /// See `docs/param-kinds.md` for the per-variant audit and
 /// `plans/param-type-system-plan.md` for the design.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 #[serde(rename_all = "lowercase")]
+#[schemars(rename_all = "lowercase")]
 pub enum ParamKind {
     /// f32 within `range`, shaped by `response_curve`, displayed with `unit`.
     Continuous,

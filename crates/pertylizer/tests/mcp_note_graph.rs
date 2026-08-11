@@ -95,9 +95,13 @@ async fn note_graph_round_trip_through_mcp() {
         ] }),
     )
     .await;
-    assert!(resp.contains("module 0"), "resp: {resp}");
-    assert!(resp.contains("module 1"), "resp: {resp}");
-    assert!(resp.contains("module 2"), "resp: {resp}");
+    // The created module ids, which the wiring below addresses. They used to be
+    // spelled "graph N @ module M"; the graph is in the request, so each value is
+    // the module id alone and the sentence lists them plainly.
+    assert!(
+        resp.starts_with("OK: 3 note graph modules added (0, 1, 2)"),
+        "resp: {resp}"
+    );
 
     // Wire the stream spine (0→1) and an LFO→gate-threshold Value edge (2→1@0).
     let resp = call(
@@ -201,17 +205,26 @@ async fn note_graph_round_trip_through_mcp() {
     .await;
     assert!(!metadata.contains("failed"), "metadata: {metadata}");
 
-    let bulk = call(
-        &server,
-        "get_note_graph",
-        serde_json::json!({ "graph_ids": [graph_id, 999] }),
-    )
-    .await;
+    // `get_note_graph` is singular, so reading several is `batch_execute`'s job —
+    // the shape its own description points at. A missing graph is a failed op
+    // rather than an `{graph_id, error}` entry inside a success payload.
+    let bulk = server
+        .batch_execute_for_test(serde_json::json!({ "operations": [
+            { "tool": "get_note_graph", "params": { "graph_id": graph_id } },
+            { "tool": "get_note_graph", "params": { "graph_id": 999 } },
+        ] }))
+        .await;
     let bulk: serde_json::Value = serde_json::from_str(&bulk).expect("bulk returns JSON");
-    assert_eq!(bulk[0]["graph_id"], graph_id);
-    assert_eq!(bulk[0]["detail"]["info"]["name"], "Updated Arp");
-    assert_eq!(bulk[1]["graph_id"], 999);
-    assert!(bulk[1]["error"].is_string());
+    assert_eq!(bulk["succeeded"], 1, "bulk: {bulk}");
+    assert_eq!(bulk["failed"], 1, "bulk: {bulk}");
+    // The op's payload crosses the batch boundary as data, not as a JSON string
+    // the caller has to parse a second time.
+    assert_eq!(
+        bulk["results"][0]["structured"]["info"]["name"],
+        "Updated Arp"
+    );
+    assert_eq!(bulk["results"][0]["status"], "success");
+    assert_eq!(bulk["results"][1]["status"], "failure");
 
     // Duplicate it: a fresh id with the same content and layout.
     let resp = call(
@@ -249,7 +262,10 @@ async fn note_graph_round_trip_through_mcp() {
     )
     .await;
     // Module ids fill the smallest free slot: 0/1/2 are taken, so this is 3.
-    assert!(resp.contains("module 3"), "resp: {resp}");
+    assert!(
+        resp.starts_with("OK: 1 note graph modules added (3)"),
+        "resp: {resp}"
+    );
 
     let resp = call(
         &server,
@@ -270,21 +286,35 @@ async fn note_graph_round_trip_through_mcp() {
         "the MCP-set script node must be compiled (not pass-through)"
     );
 
-    // A syntactically invalid source is saved but left pass-through, with the
-    // diagnostic surfaced in the status string (never a hard error).
-    let resp = call(
-        &server,
-        "set_note_graph_script",
-        serde_json::json!({
-            "graph_id": graph_id,
-            "module_id": 3,
-            "source": "out.pitch = @@@",
-        }),
-    )
-    .await;
+    // A syntactically invalid source is still *saved* — that is the feature, so it
+    // can be fixed and re-sent — but it is **not installed**, and the reply has to
+    // say so. It used to answer a sentence that led with "Script saved …", from
+    // which the verdict was inferred as a success: a client reading
+    // `structuredContent` saw `ok_count: 1` with no errors and believed a
+    // pass-through node was transforming notes.
+    //
+    // Driven through `batch_execute` because that is where the per-op `status` is
+    // visible; a direct call carries the same verdict as `is_error`.
+    let report = server
+        .batch_execute_for_test(serde_json::json!({ "operations": [{
+            "tool": "set_note_graph_script",
+            "params": {
+                "graph_id": graph_id,
+                "module_id": 3,
+                "source": "out.pitch = @@@",
+            }
+        }] }))
+        .await;
+    let report: serde_json::Value = serde_json::from_str(&report).expect("batch report is JSON");
+    let op = &report["results"][0];
+    assert_eq!(
+        op["status"], "failure",
+        "a source that did not compile is not an install: {op}"
+    );
+    let message = op["message"].as_str().unwrap_or_default();
     assert!(
-        !resp.to_lowercase().starts_with("error"),
-        "an invalid source must not be a hard error: {resp}"
+        message.contains("did not compile") && message.contains("saved"),
+        "the diagnostic and the fact it was saved both survive: {message}"
     );
     assert!(
         !note_script_compiled(&song, graph_id, 3),
@@ -359,6 +389,8 @@ async fn set_note_note_graph_binds_clears_and_validates() {
     )
     .await;
     let notes: serde_json::Value = serde_json::from_str(&resp).expect("list_notes returns JSON");
+    // List replies root at an object; the payload is under `items`.
+    let notes = &notes["items"];
     assert_eq!(
         notes[0]["note_graph"].as_u64(),
         Some(u64::from(gid)),

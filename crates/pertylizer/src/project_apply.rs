@@ -543,6 +543,10 @@ pub struct ProjectBuildOptions {
     pub glide_time: Option<synth_core::Seconds>,
     /// Keyboard octave offset. Defaults to `0` when unset.
     pub octave_offset: Option<i32>,
+    /// Which instrument the project reopens on. `None` falls back to the first
+    /// one built, which is a guess — and the wrong one whenever the caller has a
+    /// selection, as the GUI always does.
+    pub active_instrument_id: Option<synth_core::InstrumentId>,
 }
 
 /// Build a `ProjectFile` from current engine + session + song state,
@@ -634,7 +638,10 @@ pub fn build_project_from_engine(
         master_effects,
     };
 
-    let active_instrument_id = snapshots.first().map_or(0, |s| s.id.as_u64());
+    let active_instrument_id = opts
+        .active_instrument_id
+        .or_else(|| snapshots.first().map(|s| s.id))
+        .map_or(0, synth_core::InstrumentId::as_u64);
     ProjectFile::new(
         instrument_states,
         active_instrument_id,

@@ -52,8 +52,11 @@ impl synth_mcp::bridge::InstrumentBuildBridge for AppSynthBridge {
         }
 
         // 3. Add modules (keep descriptors for port validation)
+        // `None` marks a module that could not be added; it is reported as `null`
+        // in the result's `module_ids` rather than as an empty string, which read
+        // as an id a caller could pass back (and made the batch failure verdict
+        // count the placeholder as a module that landed).
         let mut module_ids: Vec<Option<ModuleId>> = Vec::with_capacity(spec.modules.len());
-        let mut module_id_strings: Vec<String> = Vec::with_capacity(spec.modules.len());
         let mut module_descriptors: Vec<Option<synth_core::ModuleDescriptor>> =
             Vec::with_capacity(spec.modules.len());
 
@@ -63,7 +66,6 @@ impl synth_mcp::bridge::InstrumentBuildBridge for AppSynthBridge {
                 None => {
                     errors.push(format!("invalid module type: {}", module_def.module_type));
                     module_ids.push(None);
-                    module_id_strings.push(String::new());
                     module_descriptors.push(None);
                     continue;
                 }
@@ -71,8 +73,6 @@ impl synth_mcp::bridge::InstrumentBuildBridge for AppSynthBridge {
 
             match self.session.add_module(inst_id, mt) {
                 Ok((mid, descriptor)) => {
-                    let mid_str = mid.to_string();
-
                     // Set parameters
                     for (param_name, value) in &module_def.params {
                         let pv = match value {
@@ -86,13 +86,11 @@ impl synth_mcp::bridge::InstrumentBuildBridge for AppSynthBridge {
                     }
 
                     module_ids.push(Some(mid));
-                    module_id_strings.push(mid_str);
                     module_descriptors.push(Some(descriptor));
                 }
                 Err(e) => {
                     errors.push(format!("add module '{}': {e}", module_def.module_type));
                     module_ids.push(None);
-                    module_id_strings.push(String::new());
                     module_descriptors.push(None);
                 }
             }
@@ -194,7 +192,10 @@ impl synth_mcp::bridge::InstrumentBuildBridge for AppSynthBridge {
         Ok(BuildInstrumentResult {
             instrument_id: inst_id,
             partial_success: !errors.is_empty(),
-            module_ids: module_id_strings,
+            module_ids: module_ids
+                .iter()
+                .map(|mid| mid.map(|id| id.to_string()))
+                .collect(),
             connection_count,
             errors,
             hint: Some(format!(

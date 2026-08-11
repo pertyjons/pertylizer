@@ -4,8 +4,15 @@ use super::super::*;
 
 #[tool_router(router = analysis_tool_router, vis = "pub(crate)")]
 impl SynthMcpServer {
+    // The one tool whose payload cannot *be* its structured half — a WAV clip
+    // belongs in an `audio/wav` content block, not in JSON. It still publishes a
+    // schema: the render's facts (length, rate, byte count) go in
+    // `structuredContent` beside the audio, so a client stops reading them out
+    // of the sentence. Built by hand rather than with `Json<T>`, which would
+    // replace the audio block with JSON text.
     #[tool(
-        description = "Render an audio preview of a note played on an instrument. Returns a WAV audio clip of the instrument's current sound. Useful for hearing what a patch sounds like after making changes.",
+        output_schema = rmcp::handler::server::tool::schema_for_output::<NotePreviewInfo>(),
+        description = "Render an audio preview of a note played on an instrument. Returns a WAV audio clip of the instrument's current sound, plus its length, sample rate and byte count. Useful for hearing what a patch sounds like after making changes.",
         annotations(destructive_hint = false)
     )]
     pub(crate) async fn preview_note(
@@ -47,17 +54,31 @@ impl SynthMcpServer {
 
         let audio = ContentBlock::audio(encoded, "audio/wav");
 
+        let info = NotePreviewInfo {
+            instrument_id: params.0.instrument_id,
+            note: params.0.note,
+            velocity: params.0.velocity,
+            duration_seconds: preview.duration_seconds,
+            sample_rate: preview.sample_rate,
+            wav_bytes: preview.wav_data.len(),
+        };
+
         let text = ContentBlock::text(format!(
             "Audio preview: note {} vel {} on instrument {} ({:.1}s, {}Hz WAV, {} bytes)",
-            params.0.note,
-            params.0.velocity,
-            params.0.instrument_id,
-            preview.duration_seconds,
-            preview.sample_rate,
-            preview.wav_data.len(),
+            info.note,
+            info.velocity,
+            info.instrument_id,
+            info.duration_seconds,
+            info.sample_rate,
+            info.wav_bytes,
         ));
 
-        Ok(CallToolResult::success(vec![text, audio]))
+        let mut reply = CallToolResult::success(vec![text, audio]);
+        // A struct of numbers and ids cannot fail to serialize; on the impossible
+        // branch the reply degrades to the audio and its sentence, which is what
+        // it answered before it had a structured half.
+        reply.structured_content = serde_json::to_value(&info).ok();
+        Ok(reply)
     }
 
     #[tool(
@@ -67,24 +88,24 @@ impl SynthMcpServer {
     pub(crate) async fn analyze_note(
         &self,
         params: Parameters<AnalyzeNoteParam>,
-    ) -> Result<CallToolResult, ErrorData> {
-        validate_midi_note(params.0.note).map_err(mcp_err)?;
-        validate_velocity(params.0.velocity).map_err(mcp_err)?;
+    ) -> Result<Json<AnalyzeNoteResult>, String> {
+        validate_midi_note(params.0.note).map_err(validation_err)?;
+        validate_velocity(params.0.velocity).map_err(validation_err)?;
         let duration_ms = params.0.duration_ms.unwrap_or(500);
         let tail_ms = params.0.tail_ms.unwrap_or(500);
         #[expect(clippy::cast_precision_loss, reason = "millisecond values fit in f32")]
-        validate_range("duration_ms", duration_ms as f32, 1.0, 30000.0).map_err(mcp_err)?;
+        validate_range("duration_ms", duration_ms as f32, 1.0, 30000.0).map_err(validation_err)?;
         #[expect(clippy::cast_precision_loss, reason = "millisecond values fit in f32")]
-        validate_range("tail_ms", tail_ms as f32, 1.0, 30000.0).map_err(mcp_err)?;
+        validate_range("tail_ms", tail_ms as f32, 1.0, 30000.0).map_err(validation_err)?;
 
         if let Some(expected) = params.0.expected_note {
-            validate_midi_note(MidiNote::new(expected)).map_err(mcp_err)?;
+            validate_midi_note(MidiNote::new(expected)).map_err(validation_err)?;
         }
         if let Some(window) = params.0.envelope_window_ms {
-            validate_range("envelope_window_ms", window, 1.0, 5000.0).map_err(mcp_err)?;
+            validate_range("envelope_window_ms", window, 1.0, 5000.0).map_err(validation_err)?;
         }
 
-        let result = tokio::task::block_in_place(|| {
+        run_blocking_typed(|| {
             self.bridge.analyze_note(
                 params.0.instrument_id,
                 params.0.note,
@@ -95,18 +116,16 @@ impl SynthMcpServer {
                 params.0.envelope_window_ms,
             )
         })
-        .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-
-        let json = serde_json::to_string_pretty(&result)
-            .map_err(|e| ErrorData::internal_error(e.to_string(), None))?;
-        Ok(CallToolResult::success(vec![ContentBlock::text(json)]))
     }
 
     #[tool(
         description = "Render N seconds of the master bus offline and return mix-level metrics: integrated/short-term-max/momentary-max LUFS (ITU-R BS.1770-4), sample peak in dBFS, true peak in dBTP (4× oversampled per BS.1770-4 Annex 2 — catches inter-sample overshoots that emerge after DA conversion), RMS in dBFS, crest factor, 4-band frequency-balance RMS energies (sub/low/mid/high), stereo correlation, mid/side RMS, stereo width, mono-compatibility score (0..1 — how well L+R survive a mono sum), and a clipped-sample count. Use this to judge whether a mix is balanced, too quiet/loud, narrow, anti-phase, or clipping (sample or inter-sample). LUFS-S requires ≥ 3 s of audio; shorter renders report -200.0 for that field. Renders the song from `start_tick` (default 0) for `duration_seconds` (default 10, max 300) using the engine snapshot — deterministic and offline. Pass `include_per_track: true` to also receive a per-track breakdown (one soloed render per audible track) so you can tell which track is responsible for clipping, dominant energy, or sub-bass — costs roughly O(track_count) extra render time. This is the same breakdown as analyze_section's, but keyed off a duration window rather than an explicit tick range.",
         annotations(read_only_hint = true)
     )]
-    pub(crate) async fn analyze_mix_bus(&self, params: Parameters<AnalyzeMixBusParam>) -> String {
+    pub(crate) async fn analyze_mix_bus(
+        &self,
+        params: Parameters<AnalyzeMixBusParam>,
+    ) -> Result<Json<AnalyzeMixBusResult>, String> {
         let duration = params.0.duration_seconds.unwrap_or(10.0);
         let scope = crate::bridge::AnalysisScope::from_flags(
             params.0.include_all,
@@ -114,7 +133,7 @@ impl SynthMcpServer {
             params.0.include_return_effects,
             crate::bridge::RenderQuality::parse(params.0.render_quality.as_deref()),
         );
-        run_blocking_json(|| {
+        run_blocking_typed(|| {
             self.bridge.analyze_mix_bus(
                 duration,
                 params.0.start_tick,
@@ -128,11 +147,14 @@ impl SynthMcpServer {
         description = "Render the arrangement offline to a 32-bit float stereo WAV and return path plus stats. At the requested range end the transport stops, then tail_seconds (default 1) captures voice/effect releases without triggering later arrangement events. Pass instrument_id to isolate one instrument against a cloned song. Deterministic and offline.",
         annotations(destructive_hint = true)
     )]
-    pub(crate) async fn render_to_wav(&self, params: Parameters<RenderToWavParam>) -> String {
+    pub(crate) async fn render_to_wav(
+        &self,
+        params: Parameters<RenderToWavParam>,
+    ) -> Result<Json<RenderToWavResult>, String> {
         let duration = params.0.duration_seconds.unwrap_or(10.0);
         let tail = params.0.tail_seconds.unwrap_or(1.0);
         if let Err(e) = validate_range("tail_seconds", tail, 0.0, 30.0) {
-            return validation_err(e);
+            return Err(validation_err(e));
         }
         let scope = crate::bridge::AnalysisScope::from_flags(
             params.0.include_all,
@@ -140,7 +162,7 @@ impl SynthMcpServer {
             params.0.include_return_effects,
             crate::bridge::RenderQuality::parse(params.0.render_quality.as_deref()),
         );
-        run_blocking_json(|| {
+        run_blocking_typed(|| {
             self.bridge.render_to_wav(
                 params.0.path.clone(),
                 duration,
@@ -159,7 +181,7 @@ impl SynthMcpServer {
     pub(crate) async fn analyze_spectrum(
         &self,
         params: Parameters<AnalyzeSpectrumParam>,
-    ) -> String {
+    ) -> Result<Json<AnalyzeSpectrumResult>, String> {
         let duration = params.0.duration_seconds.unwrap_or(10.0);
         let scope = crate::bridge::AnalysisScope::from_flags(
             params.0.include_all,
@@ -167,7 +189,7 @@ impl SynthMcpServer {
             params.0.include_return_effects,
             crate::bridge::RenderQuality::parse(params.0.render_quality.as_deref()),
         );
-        run_blocking_json(|| {
+        run_blocking_typed(|| {
             self.bridge.analyze_spectrum(
                 duration,
                 params.0.start_tick,
@@ -187,7 +209,7 @@ impl SynthMcpServer {
     pub(crate) async fn analyze_spectrogram(
         &self,
         params: Parameters<AnalyzeSpectrogramParam>,
-    ) -> String {
+    ) -> Result<Json<AnalyzeSpectrogramResult>, String> {
         let duration = params.0.duration_seconds.unwrap_or(10.0);
         let scope = crate::bridge::AnalysisScope::from_flags(
             params.0.include_all,
@@ -195,7 +217,7 @@ impl SynthMcpServer {
             params.0.include_return_effects,
             crate::bridge::RenderQuality::parse(params.0.render_quality.as_deref()),
         );
-        run_blocking_json(|| {
+        run_blocking_typed(|| {
             self.bridge.analyze_spectrogram(
                 duration,
                 params.0.start_tick,
@@ -217,8 +239,8 @@ impl SynthMcpServer {
     pub(crate) async fn analyze_sample_spectrum(
         &self,
         params: Parameters<AnalyzeSampleSpectrumParam>,
-    ) -> String {
-        run_blocking_json(|| {
+    ) -> Result<Json<AnalyzeSampleSpectrumResult>, String> {
+        run_blocking_typed(|| {
             self.bridge.analyze_sample_spectrum(
                 params.0.sample_id_or_path.clone(),
                 params.0.f0_hint,
@@ -237,8 +259,8 @@ impl SynthMcpServer {
     pub(crate) async fn analyze_sample_spectrogram(
         &self,
         params: Parameters<AnalyzeSampleSpectrogramParam>,
-    ) -> String {
-        run_blocking_json(|| {
+    ) -> Result<Json<AnalyzeSampleSpectrogramResult>, String> {
+        run_blocking_typed(|| {
             self.bridge.analyze_sample_spectrogram(
                 params.0.sample_id_or_path.clone(),
                 params.0.f0_hint,
@@ -254,7 +276,10 @@ impl SynthMcpServer {
         description = "Compare two rendered/sample spectra and report broadband distances, descriptor deltas, and missing/extra partials. Time-resolved comparison is enabled by default: frames are envelope-aligned and only target-energy frames are scored, so sparse/staccato references rank correctly instead of averaging over silence. Set time_resolved=false for aggregate-only output. Deterministic and offline.",
         annotations(read_only_hint = true)
     )]
-    pub(crate) async fn compare_spectra(&self, params: Parameters<CompareSpectraParam>) -> String {
+    pub(crate) async fn compare_spectra(
+        &self,
+        params: Parameters<CompareSpectraParam>,
+    ) -> Result<Json<CompareSpectraResult>, String> {
         let p = params.0;
         let scope = crate::bridge::AnalysisScope::from_flags(
             p.include_all,
@@ -287,7 +312,7 @@ impl SynthMcpServer {
                 .is_none_or(|a| !a.trim().eq_ignore_ascii_case("none")),
             align_max_ms: p.align_max_ms,
         };
-        run_blocking_json(move || {
+        run_blocking_typed(move || {
             self.bridge.compare_spectra(
                 target,
                 candidate,
@@ -308,7 +333,7 @@ impl SynthMcpServer {
     pub(crate) async fn compare_envelopes(
         &self,
         params: Parameters<CompareEnvelopesParam>,
-    ) -> String {
+    ) -> Result<Json<CompareEnvelopesResult>, String> {
         let p = params.0;
         let scope = crate::bridge::AnalysisScope::from_flags(
             p.include_all,
@@ -326,7 +351,7 @@ impl SynthMcpServer {
         };
         let target = to_source(&p.target);
         let candidate = to_source(&p.candidate);
-        run_blocking_json(move || {
+        run_blocking_typed(move || {
             self.bridge.compare_envelopes(
                 target,
                 candidate,
@@ -345,7 +370,7 @@ impl SynthMcpServer {
     pub(crate) async fn analyze_master_chain(
         &self,
         params: Parameters<AnalyzeMasterChainParam>,
-    ) -> String {
+    ) -> Result<Json<AnalyzeMasterChainResult>, String> {
         let duration = params.0.duration_seconds.unwrap_or(10.0);
         // The master chain is always measured; only the surrounding stages are
         // optional. `from_flags` with master_effects=Some(true) forces it on.
@@ -355,7 +380,7 @@ impl SynthMcpServer {
             params.0.include_return_effects,
             crate::bridge::RenderQuality::parse(params.0.render_quality.as_deref()),
         );
-        run_blocking_json(|| {
+        run_blocking_typed(|| {
             self.bridge
                 .analyze_master_chain(duration, params.0.start_tick, scope)
         })
@@ -368,7 +393,7 @@ impl SynthMcpServer {
     pub(crate) async fn analyze_return_busses(
         &self,
         params: Parameters<AnalyzeReturnBussesParam>,
-    ) -> String {
+    ) -> Result<Json<AnalyzeReturnBussesResult>, String> {
         let duration = params.0.duration_seconds.unwrap_or(10.0);
         // Return-bus chains are always measured; only the surrounding stages are
         // optional. `from_flags` with return_effects=Some(true) forces them on.
@@ -378,7 +403,7 @@ impl SynthMcpServer {
             Some(true),
             crate::bridge::RenderQuality::parse(params.0.render_quality.as_deref()),
         );
-        run_blocking_json(|| {
+        run_blocking_typed(|| {
             self.bridge
                 .analyze_return_busses(duration, params.0.start_tick, scope)
         })
@@ -392,17 +417,20 @@ impl SynthMcpServer {
                        `limited_by` (whether the target, the true-peak ceiling, or the fader range bound the result). Mutates master volume.",
         annotations(destructive_hint = true)
     )]
-    pub(crate) async fn auto_gain_stage(&self, params: Parameters<AutoGainStageParam>) -> String {
+    pub(crate) async fn auto_gain_stage(
+        &self,
+        params: Parameters<AutoGainStageParam>,
+    ) -> Result<Json<AutoGainStageResult>, String> {
         let p = params.0;
         if let Err(e) = validate_range("target_lufs", p.target_lufs, -60.0, 0.0) {
-            return validation_err(e);
+            return Err(validation_err(e));
         }
         let ceiling = p.true_peak_ceiling.unwrap_or(-1.0);
         if let Err(e) = validate_range("true_peak_ceiling", ceiling, -24.0, 0.0) {
-            return validation_err(e);
+            return Err(validation_err(e));
         }
         let duration = p.duration_seconds.unwrap_or(10.0);
-        run_blocking_json(|| {
+        run_blocking_typed(|| {
             self.bridge
                 .auto_gain_stage(p.target_lufs, ceiling, duration, p.start_tick)
         })
@@ -412,14 +440,17 @@ impl SynthMcpServer {
         description = "Render an explicit arrangement range [start_tick, end_tick) offline and return the same mix-bus metrics as analyze_mix_bus (LUFS-I/S/M, sample peak, true peak in dBTP, RMS, crest, banded energy, stereo correlation, mid/side, mono-compatibility, clipped samples). Use this when you want to A/B verses vs. choruses, compare a buildup to a drop, or inspect a specific musical passage rather than a fixed-duration window from the song start. Pass `include_per_track: true` to also receive a per-track breakdown (one soloed render per audible track) so you can tell which track is responsible for clipping, dominant energy, or sub-bass — costs roughly O(track_count) extra render time. Per-track `metrics.peak`/`metrics.rms` include pan-law attenuation (-3 dB at center pan: a center-panned source with internal peak 1.0 reports ~0.7071). Per-track `pre_master_peak` analytically reverses the instrument's pan + volume attenuation from the per-channel peaks and reports the patch's internal signal peak directly, so you can see internal clipping that would otherwise be hidden by a quiet pan-down.",
         annotations(read_only_hint = true)
     )]
-    pub(crate) async fn analyze_section(&self, params: Parameters<AnalyzeSectionParam>) -> String {
+    pub(crate) async fn analyze_section(
+        &self,
+        params: Parameters<AnalyzeSectionParam>,
+    ) -> Result<Json<AnalyzeSectionResult>, String> {
         let scope = crate::bridge::AnalysisScope::from_flags(
             params.0.include_all,
             params.0.include_master_effects,
             params.0.include_return_effects,
             crate::bridge::RenderQuality::parse(params.0.render_quality.as_deref()),
         );
-        run_blocking_json(|| {
+        run_blocking_typed(|| {
             self.bridge.analyze_section(
                 params.0.start_tick,
                 params.0.end_tick,
@@ -436,14 +467,14 @@ impl SynthMcpServer {
     pub(crate) async fn analyze_masking_matrix(
         &self,
         params: Parameters<AnalyzeMaskingMatrixParam>,
-    ) -> String {
+    ) -> Result<Json<AnalyzeMaskingMatrixResult>, String> {
         let scope = crate::bridge::AnalysisScope::from_flags(
             params.0.include_all,
             params.0.include_master_effects,
             params.0.include_return_effects,
             crate::bridge::RenderQuality::parse(params.0.render_quality.as_deref()),
         );
-        run_blocking_json(|| {
+        run_blocking_typed(|| {
             self.bridge.analyze_masking_matrix(
                 params.0.arrangement_start_tick,
                 params.0.arrangement_end_tick,
@@ -457,7 +488,10 @@ impl SynthMcpServer {
         description = "Symbolic harmonic analysis of a pattern or arrangement range. Walks notes in time order, groups simultaneous notes into chord events, identifies chord symbols (e.g. Cm7, F7sus4), infers the most likely key via Krumhansl-Schmuckler correlation, and reports an in-key ratio, out-of-scale pitch classes, and a composite harmonic stability score. Pure symbolic — no audio rendering. Use to verify chord progressions, spot accidentally out-of-key notes, and reason about the harmonic shape of generated music. Pass `pattern_id` for one pattern, or omit it (with optional `arrangement_start_tick` / `arrangement_end_tick`) for an arrangement range.",
         annotations(read_only_hint = true)
     )]
-    pub(crate) async fn analyze_harmony(&self, params: Parameters<AnalyzeHarmonyParam>) -> String {
+    pub(crate) async fn analyze_harmony(
+        &self,
+        params: Parameters<AnalyzeHarmonyParam>,
+    ) -> Result<Json<AnalyzeHarmonyResult>, String> {
         match self.bridge.analyze_harmony(
             params.0.pattern_id,
             params.0.arrangement_start_tick,
@@ -466,8 +500,8 @@ impl SynthMcpServer {
             params.0.exclude_drums,
             params.0.exclude_track_ids,
         ) {
-            Ok(result) => to_json(&result),
-            Err(e) => format!("Error: {e}"),
+            Ok(result) => Ok(Json(result)),
+            Err(e) => Err(format!("Error: {e}")),
         }
     }
 
@@ -475,10 +509,13 @@ impl SynthMcpServer {
         description = "Symbolic structural analysis of a single pattern. Reports density (notes per bar/beat, active ratio), pitch shape (range, mean, distinct count, duration-weighted pitch-class histogram), velocity dynamics (min/max/mean/std/range), rhythm (max/mean polyphony, distinct onsets/durations, inter-onset-interval mean+std, regularity score), and bar-level repetition (distinct bar signatures, repetition score). Pure symbolic — no audio rendering. Use to verify whether a pattern is interesting (varied vs. flat, dense vs. sparse, repetitive vs. through-composed) without listening, and as a prerequisite for variation generation heuristics.",
         annotations(read_only_hint = true)
     )]
-    pub(crate) async fn analyze_pattern(&self, params: Parameters<AnalyzePatternParam>) -> String {
+    pub(crate) async fn analyze_pattern(
+        &self,
+        params: Parameters<AnalyzePatternParam>,
+    ) -> Result<Json<AnalyzePatternResult>, String> {
         match self.bridge.analyze_pattern(params.0.pattern_id) {
-            Ok(result) => to_json(&result),
-            Err(e) => format!("Error: {e}"),
+            Ok(result) => Ok(Json(result)),
+            Err(e) => Err(format!("Error: {e}")),
         }
     }
 
@@ -489,8 +526,8 @@ impl SynthMcpServer {
     pub(crate) async fn analyze_instrument_range(
         &self,
         params: Parameters<AnalyzeInstrumentRangeParam>,
-    ) -> String {
-        run_blocking_json(|| {
+    ) -> Result<Json<AnalyzeInstrumentRangeResult>, String> {
+        run_blocking_typed(|| {
             self.bridge.analyze_instrument_range(
                 params.0.instrument_id,
                 params.0.low_note,
@@ -510,8 +547,8 @@ impl SynthMcpServer {
     pub(crate) async fn analyze_velocity_response(
         &self,
         params: Parameters<AnalyzeVelocityResponseParam>,
-    ) -> String {
-        run_blocking_json(|| {
+    ) -> Result<Json<AnalyzeVelocityResponseResult>, String> {
+        run_blocking_typed(|| {
             self.bridge.analyze_velocity_response(
                 params.0.instrument_id,
                 params.0.note,
@@ -531,7 +568,7 @@ impl SynthMcpServer {
     pub(crate) async fn analyze_arrangement(
         &self,
         params: Parameters<AnalyzeArrangementParam>,
-    ) -> String {
+    ) -> Result<Json<AnalyzeArrangementResult>, String> {
         match self.bridge.analyze_arrangement(
             params.0.pattern_id,
             params.0.arrangement_start_tick,
@@ -541,8 +578,8 @@ impl SynthMcpServer {
             params.0.exclude_drums,
             params.0.exclude_track_ids,
         ) {
-            Ok(result) => to_json(&result),
-            Err(e) => format!("Error: {e}"),
+            Ok(result) => Ok(Json(result)),
+            Err(e) => Err(format!("Error: {e}")),
         }
     }
 
@@ -550,7 +587,10 @@ impl SynthMcpServer {
         description = "Compact view of the same section clustering as `analyze_arrangement`: one label per bar and a run-length-compressed form string like 'AABA' or 'ABACABA'. Cheaper to read for 'what's the structure of this song?' prompts. Uses the same default similarity threshold (0.85) and section_min_bars (2) merging. Empty bars (no melodic notes) appear as '·' in `bar_labels` and are skipped in the form string.",
         annotations(read_only_hint = true)
     )]
-    pub(crate) async fn analyze_form_map(&self, params: Parameters<AnalyzeFormMapParam>) -> String {
+    pub(crate) async fn analyze_form_map(
+        &self,
+        params: Parameters<AnalyzeFormMapParam>,
+    ) -> Result<Json<AnalyzeFormMapResult>, String> {
         match self.bridge.analyze_form_map(
             params.0.pattern_id,
             params.0.arrangement_start_tick,
@@ -560,8 +600,8 @@ impl SynthMcpServer {
             params.0.exclude_drums,
             params.0.exclude_track_ids,
         ) {
-            Ok(result) => to_json(&result),
-            Err(e) => format!("Error: {e}"),
+            Ok(result) => Ok(Json(result)),
+            Err(e) => Err(format!("Error: {e}")),
         }
     }
 
@@ -572,7 +612,7 @@ impl SynthMcpServer {
     pub(crate) async fn analyze_hook_strength(
         &self,
         params: Parameters<AnalyzeHookStrengthParam>,
-    ) -> String {
+    ) -> Result<Json<AnalyzeHookStrengthResult>, String> {
         match self.bridge.analyze_hook_strength(
             params.0.pattern_id,
             params.0.arrangement_start_tick,
@@ -583,8 +623,8 @@ impl SynthMcpServer {
             params.0.exclude_drums,
             params.0.exclude_track_ids,
         ) {
-            Ok(result) => to_json(&result),
-            Err(e) => format!("Error: {e}"),
+            Ok(result) => Ok(Json(result)),
+            Err(e) => Err(format!("Error: {e}")),
         }
     }
 
@@ -595,8 +635,8 @@ impl SynthMcpServer {
     pub(crate) async fn analyze_tension_curve(
         &self,
         params: Parameters<AnalyzeTensionCurveParam>,
-    ) -> String {
-        run_blocking_json(|| {
+    ) -> Result<Json<AnalyzeTensionCurveResult>, String> {
+        run_blocking_typed(|| {
             self.bridge.analyze_tension_curve(
                 params.0.pattern_id,
                 params.0.arrangement_start_tick,
@@ -617,8 +657,8 @@ impl SynthMcpServer {
     pub(crate) async fn suggest_music_fixes(
         &self,
         params: Parameters<SuggestMusicFixesParam>,
-    ) -> String {
-        run_blocking_json(|| {
+    ) -> Result<Json<SuggestMusicFixesResult>, String> {
+        run_blocking_typed(|| {
             self.bridge.suggest_music_fixes(
                 params.0.pattern_id,
                 params.0.arrangement_start_tick,
@@ -636,14 +676,17 @@ impl SynthMcpServer {
         description = "Parse a chord symbol (e.g. 'Cm7', 'F#maj7', 'Bbsus4', 'G7sus4', 'C5') and return MIDI notes for the requested voicing rooted at `octave` (default 4 = middle-C octave). Voicings: 'close' (default — notes stacked above the root), 'drop2' (drop the 2nd-highest note an octave), 'drop3' (drop the 3rd-highest), 'open' (drop2+drop3 combined). Pure symbolic — does not touch the song; pair with `add_note` to place. Saves the AI from re-deriving chord intervals by hand on every progression.",
         annotations(destructive_hint = false)
     )]
-    pub(crate) async fn generate_chord(&self, params: Parameters<GenerateChordParam>) -> String {
+    pub(crate) async fn generate_chord(
+        &self,
+        params: Parameters<GenerateChordParam>,
+    ) -> Result<Json<GenerateChordResult>, String> {
         match self.bridge.generate_chord(
             &params.0.symbol,
             params.0.octave.unwrap_or(4),
             params.0.voicing.as_deref(),
         ) {
-            Ok(result) => to_json(&result),
-            Err(e) => format!("Error: {e}"),
+            Ok(result) => Ok(Json(result)),
+            Err(e) => Err(format!("Error: {e}")),
         }
     }
 
@@ -657,11 +700,14 @@ impl SynthMcpServer {
     pub(crate) async fn create_chord_progression_pattern(
         &self,
         params: Parameters<CreateChordProgressionPatternParam>,
-    ) -> String {
+    ) -> Result<Json<CreateChordProgressionResult>, String> {
         let p = params.0;
         let velocity = p.velocity.unwrap_or(80);
         if velocity > 127 {
-            return format!("Error: {}", McpBridgeError::InvalidVelocity(velocity));
+            return Err(format!(
+                "Error: {}",
+                McpBridgeError::InvalidVelocity(velocity)
+            ));
         }
         match self.bridge.create_chord_progression_pattern(
             &p.name,
@@ -671,8 +717,8 @@ impl SynthMcpServer {
             p.voicing.as_deref(),
             velocity,
         ) {
-            Ok(result) => to_json(&result),
-            Err(e) => format!("Error: {e}"),
+            Ok(result) => Ok(Json(result)),
+            Err(e) => Err(format!("Error: {e}")),
         }
     }
 
@@ -680,7 +726,10 @@ impl SynthMcpServer {
         description = "Transpose every note in `pattern_id` by `semitones` (signed). Notes whose new pitch would leave the 0..127 MIDI range are left untouched and counted in `notes_out_of_range`. When both `scale_tonic` (0..12) and `scale_name` are set, transposed pitches that land off-scale are snapped to the nearest in-scale pitch using `tie_break` ('up'/'down'/'nearest', default 'up') — useful for staying diatonic when the AI shifts a phrase. Scale names: major, minor, harmonic_minor, melodic_minor, dorian, phrygian, lydian, mixolydian, locrian, pentatonic_major, pentatonic_minor, blues, chromatic. Replaces a 20-call sequence of update_note transposes.",
         annotations(destructive_hint = true)
     )]
-    pub(crate) async fn transpose_notes(&self, params: Parameters<TransposeNotesParam>) -> String {
+    pub(crate) async fn transpose_notes(
+        &self,
+        params: Parameters<TransposeNotesParam>,
+    ) -> Result<Json<TransposeNotesResult>, String> {
         match self.bridge.transpose_notes(
             params.0.pattern_id,
             params.0.semitones,
@@ -688,8 +737,8 @@ impl SynthMcpServer {
             params.0.scale_name.as_deref(),
             params.0.tie_break.as_deref(),
         ) {
-            Ok(result) => to_json(&result),
-            Err(e) => format!("Error: {e}"),
+            Ok(result) => Ok(Json(result)),
+            Err(e) => Err(format!("Error: {e}")),
         }
     }
 
@@ -700,15 +749,15 @@ impl SynthMcpServer {
     pub(crate) async fn quantize_notes_to_scale(
         &self,
         params: Parameters<QuantizeNotesToScaleParam>,
-    ) -> String {
+    ) -> Result<Json<QuantizeNotesToScaleResult>, String> {
         match self.bridge.quantize_notes_to_scale(
             params.0.pattern_id,
             params.0.scale_tonic,
             &params.0.scale_name,
             params.0.tie_break.as_deref(),
         ) {
-            Ok(result) => to_json(&result),
-            Err(e) => format!("Error: {e}"),
+            Ok(result) => Ok(Json(result)),
+            Err(e) => Err(format!("Error: {e}")),
         }
     }
 
@@ -719,7 +768,7 @@ impl SynthMcpServer {
     pub(crate) async fn quantize_notes_to_grid(
         &self,
         params: Parameters<QuantizeNotesToGridParam>,
-    ) -> String {
+    ) -> Result<Json<QuantizeNotesToGridResult>, String> {
         match self.bridge.quantize_notes_to_grid(
             params.0.pattern_id,
             params.0.grid_ticks,
@@ -728,8 +777,8 @@ impl SynthMcpServer {
             params.0.humanize_ticks,
             params.0.humanize_seed,
         ) {
-            Ok(result) => to_json(&result),
-            Err(e) => format!("Error: {e}"),
+            Ok(result) => Ok(Json(result)),
+            Err(e) => Err(format!("Error: {e}")),
         }
     }
 
@@ -740,14 +789,14 @@ impl SynthMcpServer {
     pub(crate) async fn analyze_drum_groove(
         &self,
         params: Parameters<AnalyzeDrumGrooveParam>,
-    ) -> String {
+    ) -> Result<Json<AnalyzeDrumGrooveResult>, String> {
         match self.bridge.analyze_drum_groove(
             params.0.pattern_id,
             params.0.arrangement_start_tick,
             params.0.arrangement_end_tick,
         ) {
-            Ok(result) => to_json(&result),
-            Err(e) => format!("Error: {e}"),
+            Ok(result) => Ok(Json(result)),
+            Err(e) => Err(format!("Error: {e}")),
         }
     }
 
@@ -758,15 +807,15 @@ impl SynthMcpServer {
     pub(crate) async fn analyze_bass_drum_lock(
         &self,
         params: Parameters<AnalyzeBassDrumLockParam>,
-    ) -> String {
+    ) -> Result<Json<AnalyzeBassDrumLockResult>, String> {
         match self.bridge.analyze_bass_drum_lock(
             params.0.pattern_id,
             params.0.arrangement_start_tick,
             params.0.arrangement_end_tick,
             params.0.onset_tolerance_ticks,
         ) {
-            Ok(result) => to_json(&result),
-            Err(e) => format!("Error: {e}"),
+            Ok(result) => Ok(Json(result)),
+            Err(e) => Err(format!("Error: {e}")),
         }
     }
 
@@ -777,7 +826,7 @@ impl SynthMcpServer {
     pub(crate) async fn analyze_harmonic_function(
         &self,
         params: Parameters<AnalyzeHarmonicFunctionParam>,
-    ) -> String {
+    ) -> Result<Json<AnalyzeHarmonicFunctionResult>, String> {
         match self.bridge.analyze_harmonic_function(
             params.0.pattern_id,
             params.0.arrangement_start_tick,
@@ -786,8 +835,8 @@ impl SynthMcpServer {
             params.0.exclude_drums,
             params.0.exclude_track_ids,
         ) {
-            Ok(result) => to_json(&result),
-            Err(e) => format!("Error: {e}"),
+            Ok(result) => Ok(Json(result)),
+            Err(e) => Err(format!("Error: {e}")),
         }
     }
 }

@@ -72,6 +72,24 @@ pub struct McpSharedState {
     /// Bumped on every successful project apply (load / reset). The GUI
     /// observes increments to detect "something changed; refresh".
     pub project_revision: AtomicU64,
+    /// The globals a project carries that live only in the GUI, published for the
+    /// non-GUI save and snapshot paths to read. `None` until the GUI publishes
+    /// (headless runs never do).
+    ///
+    /// Without this, an MCP `save_project` wrote `glide_time: 0` and
+    /// `octave_offset: 0` over whatever the user had set — the fields simply were
+    /// not reachable from here — and a rollback restored those zeros.
+    pub gui_globals: Mutex<Option<GuiGlobals>>,
+    /// Bumped once per mutating MCP tool call, across every session sharing this
+    /// state.
+    ///
+    /// `batch_execute`'s rollback exists to undo *its own* writes. It restores a
+    /// whole-project snapshot, so anything another client wrote after the snapshot
+    /// was taken would be undone along with it — silently, and with the other
+    /// client having been told its write succeeded. Comparing this counter tells a
+    /// rollback whether the state it is about to overwrite is still the state its
+    /// own operations produced.
+    pub mutation_seq: AtomicU64,
     /// Bumped whenever MCP writes a one-shot GUI-mirror payload
     /// (`pending_patch`). Same fast-path pattern as
     /// `project_revision`: the GUI checks this atomic at the top of each
@@ -112,6 +130,8 @@ impl McpSharedState {
         Self {
             pending_patch: Mutex::new(None),
             ui_layout: Mutex::new(UiLayoutData::default()),
+            gui_globals: Mutex::new(None),
+            mutation_seq: AtomicU64::new(0),
             song,
             mcp_listening: AtomicBool::new(false),
             mcp_sessions: McpSessionRegistry::new(),
@@ -155,6 +175,21 @@ pub struct UiLayoutData {
     pub connections: Vec<ConnectionLayout>,
     /// Window size (width, height).
     pub window_size: (f32, f32),
+}
+
+/// Project-level state that exists only in the GUI.
+///
+/// The engine holds instruments, modules and the song; these three are the
+/// GUI's, and a project file carries them. Anything building a project outside
+/// the GUI has to be told them or it writes defaults.
+#[derive(Debug, Clone, Copy)]
+pub struct GuiGlobals {
+    /// Global glide / portamento time.
+    pub glide_time: synth_core::Seconds,
+    /// Keyboard octave offset.
+    pub octave_offset: i32,
+    /// The instrument the GUI has selected, which a project reopens on.
+    pub active_instrument_id: Option<synth_core::InstrumentId>,
 }
 
 /// Visual state of a single module in the UI.

@@ -51,7 +51,9 @@ async fn connect_enforces_the_same_port_type_contract_as_discovery() {
     )
     .await;
     let value: serde_json::Value = serde_json::from_str(&created).expect("create_instrument JSON");
-    let instrument_id = value["created"][0]["id"].as_u64().expect("instrument id");
+    let instrument_id = value["items"][0]["value"]["id"]
+        .as_u64()
+        .expect("instrument id");
 
     let added = call(
         &server,
@@ -90,7 +92,7 @@ async fn connect_enforces_the_same_port_type_contract_as_discovery() {
     )
     .await;
     assert!(
-        result.contains("1 connections made, 1 errors"),
+        result.contains("1 connections made") && result.contains("1 failed"),
         "one compatible and one incompatible connection expected: {result}"
     );
     assert!(
@@ -111,7 +113,9 @@ async fn set_mod_matrix_script_compiles_clears_and_validates() {
     )
     .await;
     let v: serde_json::Value = serde_json::from_str(&created).expect("create_instrument JSON");
-    let inst = v["created"][0]["id"].as_u64().expect("instrument id");
+    let inst = v["items"][0]["value"]["id"]
+        .as_u64()
+        .expect("instrument id");
     let add = call(
         &server,
         "add_module",

@@ -67,12 +67,15 @@ async fn create_instrument_accepts_an_array_of_names() {
     .await;
     let parsed: serde_json::Value = serde_json::from_str(&resp)
         .expect("create_instrument should return a JSON object (valid on full + partial success)");
-    let created = parsed["created"].as_array().expect("created array");
+    let created = parsed["items"].as_array().expect("per-item results");
     assert_eq!(created.len(), 2, "both instruments created: {resp}");
     assert!(
-        parsed["errors"].as_array().is_some_and(|a| a.is_empty()),
+        created.iter().all(|item| item.get("error").is_none()),
         "no errors expected: {resp}"
     );
+    // Each created instrument is addressable by the position it was requested in.
+    assert_eq!(created[0]["index"], serde_json::json!(0));
+    assert_eq!(created[1]["value"]["name"], serde_json::json!("Bass"));
 }
 
 #[tokio::test]
@@ -85,7 +88,9 @@ async fn set_instrument_mixer_applies_an_array_of_partial_updates() {
     )
     .await;
     let infos: serde_json::Value = serde_json::from_str(&created).unwrap();
-    let id = infos["created"][0]["id"].as_u64().expect("instrument id");
+    let id = infos["items"][0]["value"]["id"]
+        .as_u64()
+        .expect("instrument id");
 
     // Only the fields present are changed; pan/enabled omitted on the second item.
     let resp = call(
@@ -115,7 +120,7 @@ async fn set_instrument_mixer_rejects_out_of_range_volume_before_applying() {
     )
     .await;
     let infos: serde_json::Value = serde_json::from_str(&created).unwrap();
-    let id = infos["created"][0]["id"].as_u64().unwrap();
+    let id = infos["items"][0]["value"]["id"].as_u64().unwrap();
 
     let resp = call(
         &server,
@@ -139,7 +144,7 @@ async fn set_mseg_segments_replaces_the_complete_shape() {
     )
     .await;
     let instrument_id = serde_json::from_str::<serde_json::Value>(&created)
-        .expect("create instrument response")["created"][0]["id"]
+        .expect("create instrument response")["items"][0]["value"]["id"]
         .as_u64()
         .expect("instrument id");
     process_block(&mut engine, 1);
@@ -162,6 +167,8 @@ async fn set_mseg_segments_replaces_the_complete_shape() {
     )
     .await;
     let listed: serde_json::Value = serde_json::from_str(&modules).expect("module list");
+    // List replies root at an object; the payload is under `items`.
+    let listed = &listed["items"];
     assert!(listed.is_array(), "expected module array: {modules}");
     let module_id = listed
         .as_array()
@@ -209,10 +216,22 @@ async fn set_mseg_segments_replaces_the_complete_shape() {
             })
             .and_then(|parameter| parameter["value"].as_f64())
     };
-    assert_eq!(parameter("segments"), Some(2.0));
-    assert_eq!(parameter("seg0_time"), Some(0.25));
-    assert_eq!(parameter("seg1_level"), Some(0.2));
-    assert_eq!(parameter("seg1_curve"), Some(-0.25));
+    // Compared with a tolerance because the payload is read as *data*: a parameter
+    // is an `f32`, and `serde_json::Value` holds an `f64`, so 0.2f32 widens to
+    // 0.20000000298023224. The text half prints `0.2` — same number, different
+    // rendering — and asserting on either exactly would pin the rendering rather
+    // than the value.
+    let close = |type_id: &str, expected: f64| {
+        let actual = parameter(type_id).unwrap_or_else(|| panic!("{type_id} in {info}"));
+        assert!(
+            (actual - expected).abs() < 1e-6,
+            "{type_id}: expected ~{expected}, got {actual}"
+        );
+    };
+    close("segments", 2.0);
+    close("seg0_time", 0.25);
+    close("seg1_level", 0.2);
+    close("seg1_curve", -0.25);
 }
 
 #[tokio::test]
@@ -296,6 +315,8 @@ async fn pattern_placement_full_state_round_trips_and_updates() {
 
     let arrangement = call(&server, "list_arrangement", serde_json::json!({})).await;
     let listed: serde_json::Value = serde_json::from_str(&arrangement).expect("arrangement");
+    // List replies root at an object; the payload is under `items`.
+    let listed = &listed["items"];
     assert_eq!(listed[0]["start_tick"], 123);
     assert_eq!(listed[0]["transpose_semitones"], 7.0);
     assert_eq!(listed[0]["gain"], 0.5);
@@ -329,6 +350,8 @@ async fn pattern_placement_full_state_round_trips_and_updates() {
 
     let arrangement = call(&server, "list_arrangement", serde_json::json!({})).await;
     let listed: serde_json::Value = serde_json::from_str(&arrangement).expect("arrangement");
+    // List replies root at an object; the payload is under `items`.
+    let listed = &listed["items"];
     assert_eq!(listed[0]["track_id"], 1);
     assert_eq!(listed[0]["start_tick"], 456);
     assert_eq!(listed[0]["transpose_semitones"], -5.0);
@@ -419,6 +442,8 @@ async fn set_song_accepts_complete_tick_addressed_placements() {
 
     let arrangement = call(&server, "list_arrangement", serde_json::json!({})).await;
     let listed: serde_json::Value = serde_json::from_str(&arrangement).expect("arrangement");
+    // List replies root at an object; the payload is under `items`.
+    let listed = &listed["items"];
     assert_eq!(listed[0]["start_tick"], 37);
     assert_eq!(listed[0]["transpose_semitones"], 12.0);
     assert_eq!(listed[0]["gain"], 0.75);
@@ -454,9 +479,10 @@ async fn set_track_instrument_assigns_and_unassigns_via_null() {
         serde_json::json!({ "names": ["Inst"] }),
     )
     .await;
-    let id = serde_json::from_str::<serde_json::Value>(&created).unwrap()["created"][0]["id"]
-        .as_u64()
-        .unwrap();
+    let id =
+        serde_json::from_str::<serde_json::Value>(&created).unwrap()["items"][0]["value"]["id"]
+            .as_u64()
+            .unwrap();
     let _ = call(
         &server,
         "create_track",
@@ -568,6 +594,8 @@ async fn build_instrument_flags_unknown_params_as_partial_success() {
     )
     .await;
     let results: serde_json::Value = serde_json::from_str(&resp).expect("build result json");
+    // List replies root at an object; the payload is under `items`.
+    let results = &results["items"];
     let r = &results[0];
     assert_eq!(
         r["partial_success"], true,
@@ -580,6 +608,41 @@ async fn build_instrument_flags_unknown_params_as_partial_success() {
     assert!(
         r["instrument_id"].as_u64().is_some(),
         "instrument is still created: {resp}"
+    );
+}
+
+/// A module that could not be created is `null` in `module_ids`, not `""`.
+///
+/// The positions have to line up with the input array, so a failed module needs
+/// a placeholder — and an empty string reads as an id a caller can pass back to
+/// `set_parameter`. `null` says "this one is not there" in the data, the way
+/// `ApplyPatchResult::module_ids` already does inside the app.
+#[tokio::test]
+async fn build_instrument_reports_a_failed_module_as_null() {
+    let server = build_server();
+    let resp = call(
+        &server,
+        "build_instrument",
+        serde_json::json!({
+            "instruments": [{
+                "name": "Half",
+                "modules": [
+                    { "module_type": "not_a_module_type" },
+                    { "module_type": "osc" }
+                ]
+            }]
+        }),
+    )
+    .await;
+    let results: serde_json::Value = serde_json::from_str(&resp).expect("build result json");
+    let ids = results["items"][0]["module_ids"]
+        .as_array()
+        .expect("module_ids is an array");
+    assert_eq!(ids.len(), 2, "one entry per requested module: {resp}");
+    assert!(ids[0].is_null(), "the bogus type is null: {resp}");
+    assert!(
+        ids[1].as_str().is_some_and(|id| !id.is_empty()),
+        "the osc still got a real id: {resp}"
     );
 }
 
@@ -606,6 +669,8 @@ async fn build_instrument_clean_build_is_not_partial() {
     )
     .await;
     let results: serde_json::Value = serde_json::from_str(&resp).expect("build result json");
+    // List replies root at an object; the payload is under `items`.
+    let results = &results["items"];
     assert_eq!(
         results[0]["partial_success"], false,
         "a clean build must not be partial: {resp}"

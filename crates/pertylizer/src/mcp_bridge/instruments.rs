@@ -1332,7 +1332,7 @@ impl synth_mcp::bridge::InstrumentBridge for AppSynthBridge {
             return Err(McpBridgeError::Other(format!(
                 "{} is a GUI-only visualizer and cannot be added over MCP (it needs a \
                  VisualizationBuffer); such types are flagged gui_only:true by \
-                 list_module_types(brief:true) so you can filter them out",
+                 list_module_types so you can filter them out",
                 mt.name()
             )));
         }
@@ -1342,7 +1342,7 @@ impl synth_mcp::bridge::InstrumentBridge for AppSynthBridge {
             .add_module(instrument_id, mt)
             .map_err(|e| McpBridgeError::InvalidModuleType(e.to_string()))?;
 
-        Ok(format!("OK: {} added as {}", mt.name(), module_id))
+        Ok(module_id.to_string())
     }
 
     fn remove_module(

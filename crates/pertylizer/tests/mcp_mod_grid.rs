@@ -132,8 +132,13 @@ async fn mod_grid_create_route_enumerate_delete() {
         ] }),
     )
     .await;
+    // The reply names the created node ids — what every later call takes. It used
+    // to spell them "graph N @ node M", restating a graph id the request already
+    // carried; the value is the node id alone now, so `batch_msg` lists them
+    // plainly. (This helper returns a mutator's sentence; the per-item form is
+    // asserted over the wire in `mcp_wire_contract.rs`.)
     assert!(
-        add.contains("node 0") && add.contains("node 1"),
+        add.starts_with("OK: 2 mod graph nodes added (0, 1)"),
         "add: {add}"
     );
 
@@ -180,16 +185,25 @@ async fn mod_grid_create_route_enumerate_delete() {
     .await;
     assert!(!metadata.contains("failed"), "metadata: {metadata}");
 
-    let bulk = call(
-        &server,
-        "get_mod_graph",
-        serde_json::json!({ "graph_ids": [graph_id, 999] }),
-    )
-    .await;
+    // Singular tool, so several reads go through `batch_execute` — see the
+    // matching assertion in `mcp_note_graph.rs`.
+    let bulk = server
+        .batch_execute_for_test(serde_json::json!({ "operations": [
+            { "tool": "get_mod_graph", "params": { "graph_id": graph_id } },
+            { "tool": "get_mod_graph", "params": { "graph_id": 999 } },
+        ] }))
+        .await;
     let bulk: serde_json::Value = serde_json::from_str(&bulk).expect("bulk returns JSON");
-    assert_eq!(bulk[0]["detail"]["info"]["name"], "updated wobble");
-    assert_eq!(bulk[1]["graph_id"], 999);
-    assert!(bulk[1]["error"].is_string());
+    assert_eq!(bulk["succeeded"], 1, "bulk: {bulk}");
+    assert_eq!(bulk["failed"], 1, "bulk: {bulk}");
+    // The op's payload crosses the batch boundary as data, not as a JSON string
+    // the caller has to parse a second time.
+    assert_eq!(
+        bulk["results"][0]["structured"]["info"]["name"],
+        "updated wobble"
+    );
+    assert_eq!(bulk["results"][0]["status"], "success");
+    assert_eq!(bulk["results"][1]["status"], "failure");
 
     // 6. Provenance: exactly one routing sink, on this graph.
     let targets = call(
@@ -199,7 +213,8 @@ async fn mod_grid_create_route_enumerate_delete() {
     )
     .await;
     let targets: serde_json::Value = serde_json::from_str(&targets).unwrap();
-    let arr = targets.as_array().unwrap();
+    // List replies root at an object; the payload is under `items`.
+    let arr = targets["items"].as_array().unwrap();
     assert_eq!(arr.len(), 1);
     assert_eq!(arr[0]["graph_id"], graph_id);
     assert_eq!(arr[0]["amount"], 0.25);
@@ -260,9 +275,9 @@ async fn mod_grid_create_route_enumerate_delete() {
     .await;
     assert!(deleted.contains("deleted"), "delete: {deleted}");
     let list = call(&server, "list_mod_graphs", serde_json::json!({})).await;
+    // List replies root at an object; the payload is under `items`.
     assert_eq!(
-        serde_json::from_str::<serde_json::Value>(&list)
-            .unwrap()
+        serde_json::from_str::<serde_json::Value>(&list).unwrap()["items"]
             .as_array()
             .unwrap()
             .len(),
@@ -322,7 +337,17 @@ async fn mod_grid_set_node_and_disconnect() {
     )
     .await;
     let targets: serde_json::Value = serde_json::from_str(&targets).unwrap();
-    assert_eq!(targets[0]["amount"], 0.9, "amount not updated in place");
+    // List replies root at an object; the payload is under `items`.
+    // Tolerance, not equality: `amount` is an `f32` and the payload is read as
+    // data, where `serde_json::Value` widens it to an `f64` (0.9f32 →
+    // 0.8999999761581421). Same number, different rendering from the text half.
+    let amount = targets["items"][0]["amount"]
+        .as_f64()
+        .expect("amount is a number");
+    assert!(
+        (amount - 0.9).abs() < 1e-6,
+        "amount not updated in place: {amount}"
+    );
     let detail = call(
         &server,
         "get_mod_graph",

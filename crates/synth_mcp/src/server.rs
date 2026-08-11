@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use futures_util::FutureExt;
 use rmcp::handler::server::router::tool::ToolRouter;
-use rmcp::handler::server::wrapper::Parameters;
+use rmcp::handler::server::wrapper::{Json, Parameters};
 use rmcp::model::{
     CallToolResponse, CallToolResult, CompleteRequestParams, CompleteResult, CompletionInfo,
     ContentBlock, Implementation, JsonObject, ListResourceTemplatesResult, ListResourcesResult,
@@ -28,6 +28,33 @@ use synth_sequencer::{
 
 use crate::bridge::SynthBridge;
 use crate::error::McpBridgeError;
+// Result types named in a tool's signature because it returns them typed
+// (`Json<T>`); a string-returning tool never names its payload type. This list
+// grows as TODO 6.7 converts more tools.
+use crate::types::{
+    AnalyzeArrangementResult, AnalyzeBassDrumLockResult, AnalyzeDrumGrooveResult,
+    AnalyzeFormMapResult, AnalyzeHarmonicFunctionResult, AnalyzeHarmonyResult,
+    AnalyzeHookStrengthResult, AnalyzeInstrumentRangeResult, AnalyzeMaskingMatrixResult,
+    AnalyzeMasterChainResult, AnalyzeMixBusResult, AnalyzeNoteResult, AnalyzePatternResult,
+    AnalyzeReturnBussesResult, AnalyzeSampleSpectrogramResult, AnalyzeSampleSpectrumResult,
+    AnalyzeSectionResult, AnalyzeSpectrogramResult, AnalyzeSpectrumResult,
+    AnalyzeTensionCurveResult, AnalyzeVelocityResponseResult, ApplyExamplePatchResult,
+    AutoGainStageResult, AutomationLaneInfo, AutomationPointInfo, AutomationSummaryResult,
+    AutomationTargetInfo, BatchExecResult, BatchResult, BuildInstrumentResult,
+    CompareEnvelopesResult, CompareMixResult, CompareSpectraResult, ConnectionCheckResult,
+    ConnectionInfo, CreateChordProgressionResult, DetailedSampleInfo, EngineStatus,
+    ExamplePatchInfo, FindMotifsResult, FreezePatternResult, GenerateChordResult, GraphDiagnostic,
+    GraphResult, InputDeviceInfo, InputStateInfo, InsertModuleResult, InstrumentInfo,
+    InstrumentProfileResult, Listing, MasterVolumeInfo, MatrixRoutingInfo, ModGraphDetail,
+    ModGraphInfo, ModTargetInfo, ModuleInfo, ModuleSearchResult, ModuleTypeBrief, ModuleTypeInfo,
+    MutationItem, MutationResult, NoteGraphDetail, NoteGraphInfo, NoteInfo, NotePreviewInfo,
+    OptimizeResult, ParameterInfo, PatternInfo, PlacementInfo, PortSignalTypeInfo,
+    ProjectLintReport, QuantizeNotesToGridResult, QuantizeNotesToScaleResult,
+    RebuildInstrumentResult, RenderToWavResult, ReturnBusInfo, ReturnEffectInfo, SampleInfo,
+    SamplerStateInfo, SetSongResult, SimplifyAutomationResult, SongInfo, SuggestMusicFixesResult,
+    TempoPoint, ToolOutcome, TrackInfo, TransposeNotesResult, UiSnapshot,
+    ValidateInstrumentAudioResult, VersionInfo,
+};
 
 mod tools;
 
@@ -169,19 +196,24 @@ async fn run_catching_panic<R>(
     }
 }
 
-/// Run a blocking bridge call on a dedicated worker so the tokio executor
-/// stays available for SSE keep-alives, then format the result as JSON (or
-/// `"Error: …"` on failure). Use for every tool that performs offline
-/// rendering or other long-running synchronous work.
-fn run_blocking_json<T, E, F>(f: F) -> String
+/// Run a blocking bridge call on a dedicated worker so the tokio executor stays
+/// available for SSE keep-alives, then hand the payload back typed. Use for
+/// every tool that performs offline rendering or other long-running synchronous
+/// work.
+///
+/// On a direct call the payload reaches the caller as `structuredContent`
+/// against a declared `outputSchema` and a failure becomes an `is_error` result
+/// carrying the message. Through `dispatch_tools!` the same failure stays an
+/// `Err(String)`, which is what the batch verdict reads.
+fn run_blocking_typed<T, E, F>(f: F) -> Result<Json<T>, String>
 where
-    T: serde::Serialize,
+    T: serde::Serialize + schemars::JsonSchema,
     E: std::fmt::Display,
     F: FnOnce() -> Result<T, E>,
 {
     tokio::task::block_in_place(|| match f() {
-        Ok(result) => to_json(&result),
-        Err(e) => format!("Error: {e}"),
+        Ok(result) => Ok(Json(result)),
+        Err(e) => Err(format!("Error: {e}")),
     })
 }
 
@@ -437,53 +469,376 @@ fn batch_msg(ok_count: usize, noun: &str, details: &[String], errors: &[String])
     out
 }
 
-/// Summarise a batch of mutations that each return a JSON object (created /
-/// imported / duplicated entities) as a single valid-JSON response. Always emits
-/// `{ "<noun>": [...successes...], "errors": [...] }` so callers can `JSON.parse`
-/// the reply on full *and* partial success (unlike interleaving JSON with prose).
-fn batch_json<T: serde::Serialize>(noun: &str, oks: &[T], errors: &[String]) -> String {
-    let oks_value =
-        serde_json::to_value(oks).unwrap_or_else(|_| serde_json::Value::Array(Vec::new()));
-    to_json(&serde_json::json!({ noun: oks_value, "errors": errors }))
+/// Collects one [`MutationItem`] per requested item, in request order.
+///
+/// **Push exactly once per requested item, in the order the request listed
+/// them** — `index` is the push position, which is what makes it the request
+/// position. Every handler already loops over its input array once and reports
+/// each item exactly once, so this holds by construction; a handler that wants to
+/// skip an item should still record it as failed.
+pub(crate) struct Mutations<T> {
+    items: Vec<MutationItem<T>>,
 }
 
-/// Classify a tool result string as a *total* failure, for `batch_execute`'s
-/// stop-on-error / rollback gate. Prose results lead with `"Error:"` on failure
-/// (and [`batch_msg`] now does so for whole-batch failures too). [`batch_json`]
-/// results stay valid JSON, so their whole-batch failure is detected
-/// structurally: a non-empty `"errors"` array with no successes (every other
-/// array field empty) — the `{ "<noun>": [], "errors": [..] }` shape. Partial
-/// success (some items landed) is *not* a failure, matching the prose path.
-fn result_is_failure(result: &str) -> bool {
-    if result.starts_with("Error:") {
-        return true;
+impl<T> Mutations<T> {
+    /// An empty collector.
+    fn new() -> Self {
+        Self { items: Vec::new() }
     }
-    // Only batch_json emits an "errors" array, and it always starts with '{'.
-    if !result.starts_with('{') {
-        return false;
+
+    /// One collector for a request of `n` items.
+    fn with_capacity(n: usize) -> Self {
+        Self {
+            items: Vec::with_capacity(n),
+        }
     }
-    let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(result)
-    else {
-        return false;
-    };
-    let errors_nonempty = map
-        .get("errors")
-        .and_then(serde_json::Value::as_array)
-        .is_some_and(|a| !a.is_empty());
-    if let (Some(failed), Some(succeeded)) = (
-        map.get("failed").and_then(serde_json::Value::as_u64),
-        map.get("succeeded").and_then(serde_json::Value::as_u64),
-    ) {
-        return failed > 0 && succeeded == 0;
+
+    /// This item landed, and the tool has nothing to name for it.
+    fn ok(&mut self) {
+        self.push(None, None);
     }
-    if !errors_nonempty {
-        return false;
+
+    /// This item landed and produced `value` — an id, a path, a label.
+    fn named(&mut self, value: T) {
+        self.push(Some(value), None);
     }
-    // Total failure only: no non-"errors" array carries any success.
-    let any_success = map
+
+    /// This item did not land.
+    fn failed(&mut self, error: String) {
+        self.push(None, Some(error));
+    }
+
+    /// This item did not land, and it is item `index` of the request rather than
+    /// the next one in push order — for a pre-flight validator that walks the
+    /// array and refuses the whole call at the first bad entry, so the entries
+    /// before it are never recorded.
+    fn failed_at(&mut self, index: usize, error: String) {
+        self.items.push(MutationItem {
+            index,
+            value: None,
+            error: Some(error),
+        });
+    }
+
+    fn push(&mut self, value: Option<T>, error: Option<String>) {
+        self.items.push(MutationItem {
+            index: self.items.len(),
+            value,
+            error,
+        });
+    }
+
+    /// How many items landed.
+    fn ok_count(&self) -> usize {
+        self.items.iter().filter(|i| i.succeeded()).count()
+    }
+
+    /// One message per failed item, in request order — what [`batch_msg`] appends.
+    fn errors(&self) -> Vec<String> {
+        self.items
+            .iter()
+            .filter_map(|item| item.error.clone())
+            .collect()
+    }
+
+    /// The payload, with [`batch_msg`]'s sentence as its `message`.
+    ///
+    /// For a tool whose item values are *not* strings (a created `InstrumentInfo`,
+    /// an imported `SampleInfo`), so the sentence names counts only — the values
+    /// themselves are right there in `items`.
+    fn into_result(self, noun: &str) -> MutationResult<T> {
+        let message = batch_msg(self.ok_count(), noun, &[], &self.errors());
+        MutationResult {
+            message,
+            items: self.items,
+        }
+    }
+}
+
+impl Mutations<String> {
+    /// The reply: [`batch_msg`]'s sentence in `content`, the per-item results in
+    /// `structuredContent`.
+    ///
+    /// The prose is byte-identical to what these tools returned before they had a
+    /// structured half — `batch_msg` is still handed the same three things, they
+    /// are just derived from the items now instead of tracked beside them.
+    fn reply(self, noun: &str) -> CallToolResult {
+        let details: Vec<String> = self
+            .items
+            .iter()
+            .filter_map(|item| item.value.clone())
+            .collect();
+        let message = batch_msg(self.ok_count(), noun, &details, &self.errors());
+        mutation_reply(MutationResult {
+            message,
+            items: self.items,
+        })
+    }
+}
+
+/// How long a client may treat `tools/list` as fresh.
+///
+/// Ten minutes: long enough that reconnecting inside a working session does not
+/// re-fetch 219 tools, short enough that a restart with a different
+/// `disabled_tools` set is picked up rather than cached indefinitely. Note this
+/// saves *transfer*, not context — the catalog still enters the model's prompt
+/// once per session, which is TODO §6.13's separate problem.
+const TOOL_CATALOG_TTL_MS: u64 = 10 * 60 * 1_000;
+
+/// The `_meta` key a reply states its [`ToolOutcome`] under.
+///
+/// MCP has one boolean for "did this go wrong", and three answers are needed:
+/// a call can complete, half-complete, or do nothing. `is_error` carries the
+/// first distinction and this carries the rest, in the extension channel the
+/// spec provides for exactly that.
+pub const OUTCOME_META_KEY: &str = "pertylizer/outcome";
+
+/// State a reply's verdict on the reply itself.
+///
+/// Every helper here goes through this, so "what did this call amount to" is
+/// answered once, by the code that knows, and read everywhere else. Without it a
+/// payload's partiality is only expressed *inside its own type* — as
+/// `BuildInstrumentResult::partial_success`, `SetSongResult::errors`,
+/// `FreezePatternResult::dropped_events` — which is invisible to anything
+/// generic, and a half-built instrument inside a `rollback: true` batch was
+/// reported as a clean success and left standing.
+fn stamp_outcome(reply: &mut CallToolResult, outcome: ToolOutcome) {
+    // A *partial* call is not an error result: the work that landed is real, and
+    // the batch decides for itself whether "not complete" is grounds to restore.
+    reply.is_error = Some(outcome == ToolOutcome::Failure);
+    let mut meta = reply.meta.take().unwrap_or_default();
+    if let Ok(value) = serde_json::to_value(outcome) {
+        meta.0.insert(OUTCOME_META_KEY.to_string(), value);
+    }
+    reply.meta = Some(meta);
+}
+
+/// The verdict a reply states, if it states one.
+fn stated_outcome(reply: &CallToolResult) -> Option<ToolOutcome> {
+    reply
+        .meta
+        .as_ref()
+        .and_then(|meta| meta.0.get(OUTCOME_META_KEY))
+        .and_then(|value| serde_json::from_value(value.clone()).ok())
+}
+
+/// A typed payload that can come back *incomplete*, with the verdict its handler
+/// worked out from it.
+///
+/// The five results whose own type carries a "this is not the whole job" flag.
+/// They keep their published schema and their JSON body; what they gain is a
+/// verdict that something other than their own handler can read.
+fn typed_reply<T: serde::Serialize>(payload: &T, outcome: ToolOutcome) -> CallToolResult {
+    let text = to_json(payload);
+    let mut reply = CallToolResult::success(vec![ContentBlock::text(text)]);
+    reply.structured_content = serde_json::to_value(payload).ok();
+    stamp_outcome(&mut reply, outcome);
+    reply
+}
+
+/// A [`typed_reply`] tool's failure: the message, and *no* structured half.
+///
+/// These five publish their own result type as `output_schema`, so they cannot
+/// answer [`action_failed`] on the way out: a `MutationResult` there does not
+/// satisfy the schema their own catalog entry advertises, and a client that
+/// validates `structuredContent` — which is what `mcp_wire_contract.rs` does to
+/// every success reply — rejects the whole result and loses the error with it.
+/// Omitting the field is the one shape that is always valid: the spec only
+/// requires `structuredContent` to conform when it is present.
+fn typed_failure(message: impl Into<String>) -> CallToolResult {
+    let mut reply = CallToolResult::success(vec![ContentBlock::text(message.into())]);
+    stamp_outcome(&mut reply, ToolOutcome::Failure);
+    reply
+}
+
+/// Wrap a [`MutationResult`] as a reply: its sentence in `content`, itself in
+/// `structuredContent`.
+fn mutation_reply<T: serde::Serialize>(payload: MutationResult<T>) -> CallToolResult {
+    let outcome = payload.outcome();
+    let mut reply = CallToolResult::success(vec![ContentBlock::text(payload.message.clone())]);
+    // Serialization of a struct of owned strings cannot fail; leaving the field
+    // unset on the impossible branch degrades to a prose-only reply rather than
+    // failing the call.
+    reply.structured_content = serde_json::to_value(payload).ok();
+    // Stated by the code that has the items in hand, rather than recovered
+    // downstream from the sentence.
+    stamp_outcome(&mut reply, outcome);
+    reply
+}
+
+/// A one-item mutator's confirmation: it did the one thing it was asked to.
+///
+/// The ~50 tools that write their own sentence ("OK: master volume set to 0.80x")
+/// rather than going through [`batch_msg`]. They say so explicitly instead of
+/// having it read back off the sentence's leading marker — see [`ToolOutcome`].
+fn action_ok(message: impl Into<String>) -> CallToolResult {
+    let message = message.into();
+    let mut items = Mutations::<String>::with_capacity(1);
+    items.ok();
+    mutation_reply(MutationResult {
+        message,
+        items: items.items,
+    })
+}
+
+/// A one-item mutator's failure: it did not do the thing, and the message says
+/// why.
+///
+/// The message lands in both halves — as the reply's text and as the item's
+/// `error` — because for these tools the sentence *is* the error: there is no
+/// second per-item message to report.
+fn action_failed(message: impl Into<String>) -> CallToolResult {
+    let message = message.into();
+    let mut items = Mutations::<String>::with_capacity(1);
+    items.failed(message.clone());
+    mutation_reply(MutationResult {
+        message,
+        items: items.items,
+    })
+}
+
+/// A one-shot mutator that acted on `n` items and wrote its own sentence.
+///
+/// `set_tempo_at` and `remove_tempo_at` each address N ticks and report one
+/// sentence. [`action_ok`] would claim one item and under-report the call, so they
+/// say how many. There is nothing per-item to name — the sentence already carries
+/// the count — so the entries are bare.
+///
+/// `n` is the number of **requested** items, not of things that changed: `index`
+/// is a request position, so a shorter list would silently re-point every entry
+/// at the wrong request element.
+fn action_ok_n(message: impl Into<String>, n: usize) -> CallToolResult {
+    let message = message.into();
+    let mut items = Mutations::<String>::with_capacity(n);
+    for _ in 0..n {
+        items.ok();
+    }
+    mutation_reply(MutationResult {
+        message,
+        items: items.items,
+    })
+}
+
+/// A mutating tool's pre-flight refusal, naming the requested item that caused it.
+///
+/// The `index` is the whole point of a per-item result: it is what lets a caller
+/// line a failure up against the request that produced it. A refusal that always
+/// said `0` — which is what these reported before — points at the first item
+/// however far down the array the bad one actually is, which is worse than saying
+/// nothing, because it looks like an answer.
+///
+/// It carries the structured half for the same reason every other reply does: the
+/// tool declares an `output_schema`, so a reply without `structuredContent`
+/// contradicts its own catalog entry for any client that validates the payload.
+fn action_rejected_at(index: usize, message: String) -> CallToolResult {
+    let mut items = Mutations::<String>::with_capacity(1);
+    items.failed_at(index, message.clone());
+    mutation_reply(MutationResult {
+        message,
+        items: items.items,
+    })
+}
+
+/// A pre-flight refusal that belongs to the call rather than to one item — a bad
+/// scalar argument, a path that fails validation, a tool given no array at all.
+fn action_rejected(message: String) -> CallToolResult {
+    action_rejected_at(0, message)
+}
+
+/// The text a reply carries, for the batch path, which speaks strings.
+fn reply_text(reply: &CallToolResult) -> String {
+    reply
+        .content
         .iter()
-        .any(|(k, v)| k != "errors" && v.as_array().is_some_and(|a| !a.is_empty()));
-    !any_success
+        .filter_map(|block| block.as_text().map(|t| t.text.clone()))
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// The schema every [`action_reply`] answers against.
+///
+/// Named rather than spelled out at each `#[tool(output_schema = …)]`: the
+/// mutating tools share one payload type, and repeating the turbofish eighty
+/// times invites one of them to drift onto a different type unnoticed.
+///
+/// Built once and cloned by `Arc`: it is the *same* document for all 112 action
+/// tools, and generating it per route left the router holding 112 identical
+/// copies of it. `build_router` keeps the sharing intact by only replacing a
+/// schema that `$ref`-inlining actually rewrote — so the inlining happens *here*,
+/// once. `MutationResult<T>` `$ref`s its per-item type into `$defs`, and leaving
+/// that for `build_router` would have it rewrite and re-`Arc` this document 112
+/// times, which is exactly what the `OnceLock` exists to avoid.
+fn action_output_schema() -> std::sync::Arc<JsonObject> {
+    static SCHEMA: std::sync::OnceLock<std::sync::Arc<JsonObject>> = std::sync::OnceLock::new();
+    std::sync::Arc::clone(SCHEMA.get_or_init(|| {
+        let generated = rmcp::handler::server::tool::schema_for_output::<MutationResult<String>>();
+        std::sync::Arc::new(inline_schema_refs(generated.as_ref()))
+    }))
+}
+
+/// A reply's verdict, from the reply itself.
+///
+/// This is the whole of the server's failure classification, and it reads only
+/// two things: the `is_error` flag every reply already carries, and — for a
+/// mutator — the per-item results it published.
+///
+/// What it replaces is worth recording, because the bug class recurred three
+/// times. The verdict used to be *inferred* from serialized output: a leading
+/// `"Error:"` in the prose, plus a JSON-shape guess for the payloads that stayed
+/// valid JSON when they failed. That guess read `ApplyExamplePatchResult`'s
+/// non-fatal notes as a total failure, then `BuildInstrumentResult`'s and
+/// `RebuildInstrumentResult`'s, each found by inspecting one more type; keying it
+/// to three field names by hand fixed the symptom and left a predicate that a
+/// rename would silently blind. Worse, it could not see trouble a handler
+/// reported *inside* a success sentence — `"Script saved … but did not compile"`
+/// read as a clean install.
+///
+/// Now every reply states its own verdict at the point that knows it:
+/// `mutation_reply` stamps `is_error` from [`MutationResult::outcome`], and a
+/// typed tool's failure is an `Err`, which rmcp renders as `is_error` itself. The
+/// deserializations below are not a shape guess: each is one of our own result
+/// types deserialized back into itself and asked its own predicate, needed only
+/// because `CallToolResult` carries a `Value` rather than the `T` it came from.
+///
+/// Three types answer, because three can record a total failure inside an
+/// otherwise-successful reply. [`MutationResult`] is one; the other two are
+/// [`BatchResult`] and [`BatchExecResult`], which reach the client through
+/// `Json<T>` — and `CallToolResult::structured` hardcodes `is_error: Some(false)`,
+/// so a `update_note` whose every id was unknown, or a `batch_execute` whose every
+/// op failed, has no other way to say so.
+///
+/// The `contains_key` gates only choose which type to try, so a large reader
+/// payload is not deserialized three times over.
+fn reply_outcome(structured: Option<&serde_json::Value>, is_error: bool) -> ToolOutcome {
+    if is_error {
+        return ToolOutcome::Failure;
+    }
+    let Some(value) = structured else {
+        return ToolOutcome::Success;
+    };
+    let Some(map) = value.as_object() else {
+        return ToolOutcome::Success;
+    };
+    // `MutationResult<Value>` deserializes whatever the item values were. Gated on
+    // *both* its fields, not `message` alone: reader payloads carry a `message`
+    // too (`ConnectionCheckResult`, `CompareMixResult`), and only the pair is
+    // characteristic of a mutation reply.
+    if map.contains_key("message")
+        && map.contains_key("items")
+        && let Ok(result) =
+            serde_json::from_value::<MutationResult<serde_json::Value>>(value.clone())
+    {
+        return result.outcome();
+    }
+    if map.contains_key("succeeded") {
+        if let Ok(result) = serde_json::from_value::<BatchResult>(value.clone()) {
+            return result.outcome();
+        }
+        if let Ok(result) = serde_json::from_value::<BatchExecResult>(value.clone()) {
+            return result.outcome();
+        }
+    }
+    ToolOutcome::Success
 }
 
 /// Convert a tagged [`ParamValueInput`] into the bridge's [`BridgeParamValue`],
@@ -789,17 +1144,12 @@ pub struct SearchModulesParam {
         description = "Text search in module name, description, and parameter names (case-insensitive)"
     )]
     pub query: Option<String>,
-}
-
-#[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
-pub struct ListModuleTypesParam {
     #[schemars(
-        description = "If true, return a compact list of just {type_key, name, category} per \
-        module type instead of the full port/parameter catalog (which is hundreds of KB and can \
-        exceed the tool-result token cap). Use brief to pick a type_key, then get_module_type_info \
-        for that one type's full details. Default false."
+        description = "How many matches to return, best-first (default 20). Each match carries \
+        full port/parameter detail, so a large limit is a large reply; `total_matched` always \
+        reports how many there were. Use list_module_types for the whole catalog in compact form."
     )]
-    pub brief: Option<bool>,
+    pub limit: Option<usize>,
 }
 
 /// Single from/to port pair for the `check_connection` validator.
@@ -2795,12 +3145,8 @@ pub struct ConnectNoteGraphParam {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct GetNoteGraphParam {
-    #[schemars(
-        description = "One graph id to read in the single-detail shape; mutually exclusive with graph_ids"
-    )]
-    pub graph_id: Option<NoteGraphId>,
-    #[schemars(description = "Graph ids to read, or omit/null to read every graph")]
-    pub graph_ids: Option<Vec<NoteGraphId>>,
+    #[schemars(description = "The note graph to read")]
+    pub graph_id: NoteGraphId,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -2979,12 +3325,8 @@ pub struct SetModGraphNodeParam {
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
 pub struct GetModGraphParam {
-    #[schemars(
-        description = "One graph id to read in the single-detail shape; mutually exclusive with graph_ids"
-    )]
-    pub graph_id: Option<ModGraphId>,
-    #[schemars(description = "Graph ids to read, or omit/null to read every graph")]
-    pub graph_ids: Option<Vec<ModGraphId>>,
+    #[schemars(description = "The mod graph to read")]
+    pub graph_id: ModGraphId,
 }
 
 #[derive(Debug, serde::Deserialize, schemars::JsonSchema)]
@@ -4416,14 +4758,32 @@ impl SynthMcpServer {
         for name in disabled_tools {
             router.disable_route(*name);
         }
-        // rmcp generates each tool's input schema with schemars, which emits a
+        // rmcp generates each tool's schemas with schemars, which emits a
         // `$ref` into `$defs` for every nested struct (array item types, enums,
         // …). MCP clients that don't resolve `$ref` then render those as
         // `Array<unknown>`, hiding the required fields. Inline the refs once here
         // so every tool's schema is self-describing regardless of client.
+        //
+        // Output schemas need this just as badly: a `Json<Vec<T>>` tool publishes
+        // `{"type":"array","items":{"$ref":"#/$defs/T"}}`, which is exactly the
+        // `Array<unknown>` case for a non-resolving client.
+        //
+        // Only *replace* a schema that the inlining actually rewrote. A schema
+        // with no `$defs` comes back unchanged, and re-wrapping it in a fresh
+        // `Arc` would undo [`action_output_schema`]'s whole point: that one
+        // shared `MutationResult` document — which inlines its own `$defs` when
+        // it is built — stays one allocation instead of 112 identical copies.
         for route in router.map.values_mut() {
-            let inlined = inline_schema_refs(route.attr.input_schema.as_ref());
-            route.attr.input_schema = std::sync::Arc::new(inlined);
+            if schema_has_defs(route.attr.input_schema.as_ref()) {
+                let inlined = inline_schema_refs(route.attr.input_schema.as_ref());
+                route.attr.input_schema = std::sync::Arc::new(inlined);
+            }
+            if let Some(output) = route.attr.output_schema.as_ref()
+                && schema_has_defs(output.as_ref())
+            {
+                let inlined = inline_schema_refs(output.as_ref());
+                route.attr.output_schema = Some(std::sync::Arc::new(inlined));
+            }
         }
         router
     }
@@ -4486,11 +4846,22 @@ fn inline_refs_value(
     }
 }
 
-/// Inline a tool input schema's local `$ref`s and drop the now-redundant
-/// `$defs`, so array/object item schemas are concrete for MCP clients that do
-/// not resolve `$ref`. If any `$ref` could not be inlined (a reference cycle or
-/// a dangling name), `$defs` is retained as a fallback so the schema stays
-/// valid.
+/// Does this schema carry a `$defs` / `definitions` block — i.e. is there
+/// anything for [`inline_schema_refs`] to inline? The predicate `build_router`
+/// uses to skip a no-op rewrite; [`inline_schema_refs`] short-circuits on the
+/// same condition, so the two must agree.
+fn schema_has_defs(schema: &JsonObject) -> bool {
+    schema
+        .get("$defs")
+        .or_else(|| schema.get("definitions"))
+        .and_then(serde_json::Value::as_object)
+        .is_some_and(|defs| !defs.is_empty())
+}
+
+/// Inline a schema's local `$ref`s and drop the now-redundant `$defs`, so
+/// array/object item schemas are concrete for MCP clients that do not resolve
+/// `$ref`. If any `$ref` could not be inlined (a reference cycle or a dangling
+/// name), `$defs` is retained as a fallback so the schema stays valid.
 fn inline_schema_refs(schema: &JsonObject) -> JsonObject {
     let defs = schema
         .get("$defs")
@@ -4516,15 +4887,155 @@ fn inline_schema_refs(schema: &JsonObject) -> JsonObject {
     out
 }
 
+/// One dispatched operation's result, as its handler stated it.
+///
+/// The batch path used to speak `Result<String, String>`: every payload rendered
+/// to text, and the verdict recovered afterwards by inspecting that text. This
+/// carries the three things a batch reply actually needs, from the one place that
+/// knows them.
+pub(crate) struct DispatchedOp {
+    /// Success, partial, or failure — never re-derived downstream.
+    outcome: ToolOutcome,
+    /// The payload as data, when the tool has one.
+    structured: Option<serde_json::Value>,
+    /// The text, when text is what the op has to say: a mutator's sentence, a
+    /// document, or an error. `None` for a typed reader, whose payload is
+    /// `structured` — serializing it into a message too would send it twice, which
+    /// is the cost this branch declines to pay elsewhere (see `PROSE_TOOLS`).
+    message: Option<String>,
+}
+
+impl DispatchedOp {
+    /// A dispatch-level refusal — unknown tool, unparseable params, a panic. The
+    /// operation never reached its handler.
+    fn rejected(message: String) -> Self {
+        Self {
+            outcome: ToolOutcome::Failure,
+            structured: None,
+            message: Some(message),
+        }
+    }
+
+    /// A handler's `Err`: it ran and refused.
+    fn failed(message: String) -> Self {
+        Self::rejected(message)
+    }
+
+    /// A reader's payload: the same value a direct call puts in
+    /// `structuredContent`, and no text, because the payload *is* the answer.
+    fn payload(structured: serde_json::Value) -> Self {
+        Self {
+            // A reader either produced its payload or returned `Err`; only a
+            // mutator can land partially, and `reply_outcome` reads that from the
+            // payload's own per-item results.
+            outcome: reply_outcome(Some(&structured), false),
+            structured: Some(structured),
+            message: None,
+        }
+    }
+
+    /// A document reader's reply: text, and nothing structured to carry.
+    fn text(message: String) -> Self {
+        Self {
+            outcome: ToolOutcome::Success,
+            structured: None,
+            message: Some(message),
+        }
+    }
+
+    /// A mutating tool's reply, which already states its own verdict.
+    fn from_reply(reply: &CallToolResult) -> Self {
+        let structured = reply.structured_content.clone();
+        let text = reply_text(reply);
+        // A mutator's sentence earns its place beside the items — it is the summary
+        // a human reads, not the payload restated. A `typed_reply`'s text *is* the
+        // payload restated, though: those five tools put `to_json(payload)` in
+        // `content`, which is right for a direct call (every typed tool does, and a
+        // text-only client needs it) and pure duplication inside a batch item that
+        // already carries the value. Told apart by asking whether the text parses
+        // back to the same JSON, so no marker has to be kept in step.
+        let restates_payload = structured.as_ref().is_some_and(|value| {
+            serde_json::from_str::<serde_json::Value>(&text).ok() == Some(value.clone())
+        });
+        Self {
+            // What the handler said, when it said anything; the payload predicate
+            // is the fallback for a reply built without our helpers.
+            outcome: stated_outcome(reply).unwrap_or_else(|| {
+                reply_outcome(structured.as_ref(), reply.is_error.unwrap_or(false))
+            }),
+            structured,
+            message: (!restates_payload).then_some(text),
+        }
+    }
+
+    /// What to log for this op — and what the warn-vs-debug split classifies.
+    ///
+    /// A typed tool has no `message`: its answer is data. When such a payload is
+    /// the one recording the failure (an `import_sample` whose every path was bad,
+    /// a `set_parameter` whose every id was unknown), reading `message` alone
+    /// logged `error = ""` and the activity console lost the reason entirely — and
+    /// a bridge "not found" reported that way missed the `warn` it had earned.
+    /// The payload's own summary sentence is that reason; a payload without one
+    /// falls back to its serialized form, capped so a large reader result cannot
+    /// flood the bounded ring.
+    fn log_detail(&self) -> String {
+        if let Some(message) = &self.message {
+            return message.clone();
+        }
+        let Some(value) = &self.structured else {
+            return String::new();
+        };
+        value
+            .get("message")
+            .and_then(serde_json::Value::as_str)
+            .map_or_else(
+                || truncate_chars(&to_json(value), LOG_DETAIL_MAX),
+                str::to_string,
+            )
+    }
+
+    /// This op as its entry in the batch report.
+    fn into_item(self, index: usize, tool: String) -> crate::types::BatchExecItemResult {
+        crate::types::BatchExecItemResult {
+            index,
+            tool,
+            status: self.outcome,
+            structured: self.structured,
+            message: self.message,
+        }
+    }
+
+    /// What this op amounted to.
+    ///
+    /// The batch decides for itself what to do with `Partial`; at the tool layer
+    /// it stays distinct from `Failure`, because a reply that half-applied is not
+    /// an error result.
+    const fn outcome(&self) -> ToolOutcome {
+        self.outcome
+    }
+
+    /// Whether this op failed outright — nothing landed.
+    fn is_failure(&self) -> bool {
+        self.outcome == ToolOutcome::Failure
+    }
+}
+
 /// Macro to generate dispatch arms for `batch_execute`.
 ///
 /// Each arm deserializes the JSON params into the appropriate type and calls
-/// the corresponding tool method, unwrapping the `Parameters` wrapper.
+/// the corresponding tool method, unwrapping the `Parameters` wrapper. The three
+/// lists mirror the three reply shapes a handler can have.
 macro_rules! dispatch_tools {
     ($self:expr, $tool:expr, $params:expr, $validate_only:expr, [
         $( $name:literal => $method:ident ( $ptype:ty ) ),* $(,)?
+    ], typed: [
+        $( $tname:literal => $tmethod:ident ( $tptype:ty ) ),* $(,)?
+    ], action: [
+        $( $aname:literal => $amethod:ident ( $aptype:ty ) ),* $(,)?
     ]) => {
         match $tool {
+            // Tools returning `Result<String, String>` — the two whose whole
+            // result is one document, so there is no structure to expose.
             $(
                 $name => {
                     match serde_json::from_value::<$ptype>($params) {
@@ -4532,22 +5043,85 @@ macro_rules! dispatch_tools {
                         // report the op as valid without invoking the handler —
                         // no state is touched.
                         Ok(p) => if $validate_only {
-                            Ok(format!("dry_run OK: '{}' params valid", $name))
+                            DispatchedOp::text(format!("dry_run OK: '{}' params valid", $name))
                         } else {
-                            Ok($self.$method(Parameters(p)).await)
+                            match $self.$method(Parameters(p)).await {
+                                Ok(text) => DispatchedOp::text(text),
+                                Err(e) => DispatchedOp::failed(e),
+                            }
                         },
-                        Err(e) => Err(format!("Error: invalid params for '{}': {}", $name, e)),
+                        Err(e) => DispatchedOp::rejected(
+                            format!("Error: invalid params for '{}': {}", $name, e)
+                        ),
                     }
                 }
             )*
+            // Tools returning `Result<Json<T>, String>`: the payload crosses the
+            // batch boundary as itself now, with the serialized form beside it for
+            // a caller that wants text.
+            $(
+                $tname => {
+                    match serde_json::from_value::<$tptype>($params) {
+                        Ok(p) => if $validate_only {
+                            DispatchedOp::text(format!("dry_run OK: '{}' params valid", $tname))
+                        } else {
+                            match $self.$tmethod(Parameters(p)).await {
+                                Ok(payload) => match serde_json::to_value(&payload.0) {
+                                    Ok(value) => DispatchedOp::payload(value),
+                                    // A payload that cannot become a `Value` also
+                                    // cannot become JSON text; report it rather
+                                    // than losing the op silently.
+                                    Err(e) => DispatchedOp::failed(format!(
+                                        "Error: could not serialize '{}' result: {}", $tname, e
+                                    )),
+                                },
+                                Err(e) => DispatchedOp::failed(e),
+                            }
+                        },
+                        Err(e) => DispatchedOp::rejected(
+                            format!("Error: invalid params for '{}': {}", $tname, e)
+                        ),
+                    }
+                }
+            )*
+            // Tools returning `CallToolResult` — prose in `content`, a
+            // `MutationResult` beside it. Both halves cross the boundary, so a
+            // batched mutation reports its per-item results like a direct call.
+            $(
+                $aname => {
+                    match serde_json::from_value::<$aptype>($params) {
+                        Ok(p) => if $validate_only {
+                            DispatchedOp::text(format!("dry_run OK: '{}' params valid", $aname))
+                        } else {
+                            DispatchedOp::from_reply(&$self.$amethod(Parameters(p)).await)
+                        },
+                        Err(e) => DispatchedOp::rejected(
+                            format!("Error: invalid params for '{}': {}", $aname, e)
+                        ),
+                    }
+                }
+            )*
+            // Registered with the router, deliberately absent from the lists
+            // above: its reply is a base64 `audio/wav` content block, and a batch
+            // renders each op to one payload value. Answered by name rather than
+            // falling through to "unknown tool", which is untrue of a tool the
+            // catalog lists and leaves the caller guessing at the fix.
+            "preview_note" => DispatchedOp::rejected(
+                "Error: 'preview_note' cannot run inside batch_execute — it answers audio, \
+                 which a batch result cannot carry. Call it directly, or use 'analyze_note' \
+                 for the same render as measurements."
+                    .to_string(),
+            ),
             _ => {
-                let known: &[&str] = &[ $( $name ),* ];
+                // Every list contributes, or a typo of a tool's name would lose
+                // its suggestion the moment that tool was converted.
+                let known: &[&str] = &[ $( $name, )* $( $tname, )* $( $aname, )* ];
                 let hint = synth_core::suggest::did_you_mean(
                     $tool,
                     known.iter().copied(),
                     synth_core::suggest::DEFAULT_MAX_HINTS,
                 );
-                Err(format!("Error: unknown tool '{}'{}", $tool, hint))
+                DispatchedOp::rejected(format!("Error: unknown tool '{}'{}", $tool, hint))
             }
         }
     }
@@ -4562,8 +5136,24 @@ fn is_bridge_error(msg: &str) -> bool {
     msg.contains("not found") || msg.contains("failed to send")
 }
 
+/// Did this `Err` come from the dispatch table itself (unknown tool, params that
+/// don't deserialize, a panic) rather than from a tool that ran and reported a
+/// failure? A tool returning `Result<Json<T>, String>` answers through the same
+/// `Err` channel `dispatch_tools!` uses for a rejection, so only the wording —
+/// which the macro and the panic guard own — tells the two apart.
+fn is_dispatch_rejection(msg: &str) -> bool {
+    msg.starts_with("Error: unknown tool '")
+        || msg.starts_with("Error: invalid params for '")
+        || msg.starts_with("Error: tool '")
+}
+
 /// Character cap for a param summary line.
 const SUMMARY_MAX: usize = 60;
+
+/// Character cap for the log line describing a failed op, when the only thing
+/// there is to describe it with is a serialized payload. Generous enough to carry
+/// a per-item error list, short of a whole reader result.
+const LOG_DETAIL_MAX: usize = 400;
 
 /// Truncate `s` to at most `max` characters, appending an ellipsis when cut.
 fn truncate_chars(s: &str, max: usize) -> String {
@@ -4624,20 +5214,18 @@ fn summarize_value(params: &serde_json::Value) -> String {
 }
 
 impl SynthMcpServer {
-    /// Dispatch a tool call by name with JSON params, returning the result text
-    /// and whether it represents a failure.
+    /// Dispatch a tool call by name with JSON params.
     ///
-    /// Used by `batch_execute`, which needs the failure verdict for its
-    /// success / stop-on-error / rollback accounting. We compute it here — the
-    /// same `result_is_failure` classification that drives the log severity below
-    /// — and hand it back so the caller doesn't re-parse the (possibly JSON)
-    /// result string a second time.
+    /// Used by `batch_execute`, which needs each op's payload *and* its verdict
+    /// for the per-op result and the stop-on-error / rollback accounting. Both
+    /// come from the handler by way of [`DispatchedOp`]; nothing here re-reads a
+    /// serialized result to work out what happened.
     async fn dispatch_tool(
         &self,
         tool: &str,
         params: serde_json::Value,
         validate_only: bool,
-    ) -> (String, bool) {
+    ) -> DispatchedOp {
         let started = Instant::now();
         // Summarize the params before they're moved into the dispatch, so the
         // failure logs below show what the call did — e.g. `12 ops`,
@@ -4646,43 +5234,53 @@ impl SynthMcpServer {
         // Isolate a panicking sub-op (e.g. a panic inside a `block_in_place`
         // bridge call) so one bad op surfaces as an error instead of killing
         // the tokio worker and dropping the session.
-        let result = match run_catching_panic(
+        let op = match run_catching_panic(
             self.session_id,
             tool,
             self.dispatch_tool_inner(tool, params, validate_only),
         )
         .await
         {
-            Ok(r) => r,
-            Err(msg) => Err(format!("Error: tool '{tool}' panicked: {msg}")),
+            Ok(op) => op,
+            // Named and marked as a panic, not handed on bare: `is_dispatch_rejection`
+            // keys the warn-vs-debug log split off this prefix, and the batch item's
+            // `message` is all a caller gets to tell "the op panicked" from "the op
+            // refused an argument".
+            Err(panic_message) => {
+                DispatchedOp::rejected(format!("Error: tool '{tool}' panicked: {panic_message}"))
+            }
         };
         let elapsed_ms = started.elapsed().as_millis();
-        match result {
-            // A hard dispatch rejection (unknown tool, invalid params, panic) is
-            // always a failure and always worth a warn.
-            Err(msg) => {
-                tracing::warn!(
-                    session_id = self.session_id,
-                    tool,
-                    elapsed_ms,
-                    error = %msg,
-                    "MCP batch dispatch rejected tool call"
-                );
-                (msg, true)
-            }
-            // Detect tool-reported failures structurally via `result_is_failure`
-            // (the same gate the rollback/stop path uses), not a raw `"Error:"`
-            // prefix: a `batch_json` tool (create_instrument / import_sample /
-            // duplicate_sample) whose items *all* fail returns
-            // `{ "<noun>": [], "errors": [..] }` — valid JSON with no leading
-            // "Error:", which a prefix check would miss and log at `trace!`.
-            Ok(s) if result_is_failure(&s) => {
-                if is_bridge_error(&s) {
+        // Counted whatever the verdict: a failed mutation may still have written
+        // some of its items, and a rollback comparing sequences wants to err
+        // towards "state moved".
+        if !validate_only {
+            self.note_call(tool);
+        }
+        match op.outcome {
+            // A dispatch rejection (unknown tool, invalid params, panic) is always
+            // worth a warn. A tool's *own* failure gets the warn/debug split:
+            // `is_bridge_error` still warns (a missing pattern or a dead command
+            // channel is worth seeing), but a plain validation refusal —
+            // `"tolerance must be in 0..=1"`, an out-of-range velocity — drops to
+            // debug rather than logging as if the dispatch had refused the call,
+            // which in a large batch would flood the bounded activity-console ring.
+            ToolOutcome::Failure => {
+                let message = &op.log_detail();
+                if is_dispatch_rejection(message) {
                     tracing::warn!(
                         session_id = self.session_id,
                         tool,
                         elapsed_ms,
-                        error = %s,
+                        error = %message,
+                        "MCP batch dispatch rejected tool call"
+                    );
+                } else if is_bridge_error(message) {
+                    tracing::warn!(
+                        session_id = self.session_id,
+                        tool,
+                        elapsed_ms,
+                        error = %message,
                         "MCP tool returned bridge/engine-state error"
                     );
                 } else {
@@ -4690,20 +5288,32 @@ impl SynthMcpServer {
                         session_id = self.session_id,
                         tool,
                         elapsed_ms,
-                        error = %s,
+                        error = %message,
                         "MCP tool returned validation error"
                     );
                 }
-                (s, true)
             }
-            Ok(s) => {
-                // A batch sub-op success. The whole `batch_execute` call is
-                // already logged at info by `call_tool`, so keep the per-op line
-                // at trace: the activity-console capture layer only keeps
-                // `debug`+, so a 1000-op batch's successes don't flood (and evict
-                // the visible history from) the bounded in-memory ring. Sub-op
-                // *failures* below stay at warn/debug and remain captured. Raise
-                // to trace on stderr with `RUST_LOG=synth_mcp=trace` when needed.
+            // Some items landed and some did not. Logged at debug with the
+            // sentence, which names the failures: this is not an error, but a
+            // silently-partial write is the thing a caller most wants to find
+            // afterwards in the console.
+            ToolOutcome::Partial => {
+                tracing::debug!(
+                    session_id = self.session_id,
+                    tool,
+                    elapsed_ms,
+                    params = %param_summary,
+                    detail = %op.log_detail(),
+                    "MCP batch sub-op partially succeeded"
+                );
+            }
+            // A batch sub-op success. The whole `batch_execute` call is already
+            // logged at info by `call_tool`, so keep the per-op line at trace: the
+            // activity-console capture layer only keeps `debug`+, so a 1000-op
+            // batch's successes don't flood (and evict the visible history from)
+            // the bounded in-memory ring. Raise to trace on stderr with
+            // `RUST_LOG=synth_mcp=trace` when needed.
+            ToolOutcome::Success => {
                 tracing::trace!(
                     session_id = self.session_id,
                     tool,
@@ -4711,8 +5321,35 @@ impl SynthMcpServer {
                     params = %param_summary,
                     "MCP batch sub-op succeeded"
                 );
-                (s, false)
             }
+        }
+        op
+    }
+
+    /// Whether `tool` is a read-only tool, from the annotation it publishes.
+    ///
+    /// Derived from the router rather than a list kept by hand: `read_only_hint`
+    /// is already asserted against the read-only families by
+    /// `tool_annotations_tests`, so there is one place to be wrong instead of two.
+    /// An unknown name counts as mutating — a dispatch rejection changes nothing,
+    /// and over-counting a mutation only makes a rollback more cautious.
+    pub(crate) fn is_read_only_tool(&self, tool: &str) -> bool {
+        self.tool_router
+            .map
+            .get(tool)
+            .and_then(|route| route.attr.annotations.as_ref())
+            .and_then(|annotations| annotations.read_only_hint)
+            .unwrap_or(false)
+    }
+
+    /// Count a call against [`SynthBridge::mutation_seq`] unless it only reads.
+    ///
+    /// One chokepoint for both entry points: a direct `call_tool` and a batch
+    /// sub-op. What it buys is that a rollback can tell its own writes from
+    /// another client's — see `batch_execute`.
+    fn note_call(&self, tool: &str) {
+        if !self.is_read_only_tool(tool) {
+            self.bridge.note_mutation();
         }
     }
 
@@ -4743,7 +5380,15 @@ impl SynthMcpServer {
         tool: &str,
         params: serde_json::Value,
     ) -> Result<String, String> {
-        self.dispatch_tool_inner(tool, params, false).await
+        let op = self.dispatch_tool_inner(tool, params, false).await;
+        // A typed op carries its answer as data now, so render it here rather than
+        // on the wire: this is the *test* seam, and every caller of it parses JSON
+        // out of the string.
+        let text = op
+            .message
+            .clone()
+            .unwrap_or_else(|| op.structured.as_ref().map_or_else(String::new, to_json));
+        if op.is_failure() { Err(text) } else { Ok(text) }
     }
 
     /// Run `batch_execute` exactly as a client would, from a JSON param value —
@@ -4751,7 +5396,10 @@ impl SynthMcpServer {
     #[doc(hidden)]
     pub async fn batch_execute_for_test(&self, params: serde_json::Value) -> String {
         match serde_json::from_value::<BatchExecuteParam>(params) {
-            Ok(p) => self.batch_execute(Parameters(p)).await,
+            Ok(p) => match self.batch_execute(Parameters(p)).await {
+                Ok(report) => to_json(&report.0),
+                Err(e) => e,
+            },
             Err(e) => format!("Error: invalid batch params: {e}"),
         }
     }
@@ -4761,56 +5409,157 @@ impl SynthMcpServer {
         tool: &str,
         params: serde_json::Value,
         validate_only: bool,
-    ) -> Result<String, String> {
+    ) -> DispatchedOp {
         dispatch_tools!(self, tool, params, validate_only, [
-            // Read operations
+            // Still prose (`-> Result<String, String>`) — these two are exactly
+            // `output_schema_tests::PROSE_TOOLS`, which holds the whole prose set.
+            // The section headers that used to group this list left with their
+            // tools for `typed:` / `action:` below; only the ones that still
+            // have an entry are kept.
+
+            // Module types & discovery
+            "get_yams_reference" => get_yams_reference(NoParams),
+            "get_project_schema" => get_project_schema(NoParams),
+
+            // Parameters
+
+            // Bake a pattern's bound note graph (or per-note ornaments) into
+            // plain notes.
+
+            // Note Grid (pooled note-processing graphs)
+
+            // Mod Grid
+
+            // Arrangement
+        ], typed: [
+            // Tools returning `Result<Json<T>, String>` — see TODO 6.7. Being
+            // listed here is what keeps them reachable from `batch_execute`;
+            // the dispatch-coverage test fails if a router-registered tool is
+            // in neither list.
+            "get_module_type_info" => get_module_type_info(GetModuleTypeInfoParam),
+            "get_master_volume" => get_master_volume(NoParams),
+            "list_module_types" => list_module_types(NoParams),
+            "search_modules" => search_modules(SearchModulesParam),
+            "get_note_graph" => get_note_graph(GetNoteGraphParam),
+            "get_mod_graph" => get_mod_graph(GetModGraphParam),
+            "analyze_note" => analyze_note(AnalyzeNoteParam),
+            "create_note_graph" => create_note_graph(CreateNoteGraphParam),
+            "duplicate_note_graph" => duplicate_note_graph(NoteGraphIdParam),
+            "create_mod_graph" => create_mod_graph(CreateModGraphParam),
+            "duplicate_mod_graph" => duplicate_mod_graph(DuplicateModGraphParam),
+            "list_port_types" => list_port_types(NoParams),
+            "set_mseg_segments" => set_mseg_segments(SetMsegSegmentsParam),
+            "update_placement" => update_placement(UpdatePlacementsParam),
+            "create_instrument" => create_instrument(CreateInstrumentParam),
+            "import_sample" => import_sample(ImportSampleParam),
+            "duplicate_sample" => duplicate_sample(SampleIdsParam),
+            "validate_instrument_audio" => validate_instrument_audio(ValidateInstrumentAudioParam),
+            "analyze_mix_bus" => analyze_mix_bus(AnalyzeMixBusParam),
+            "render_to_wav" => render_to_wav(RenderToWavParam),
+            "analyze_spectrum" => analyze_spectrum(AnalyzeSpectrumParam),
+            "analyze_spectrogram" => analyze_spectrogram(AnalyzeSpectrogramParam),
+            "analyze_sample_spectrum" => analyze_sample_spectrum(AnalyzeSampleSpectrumParam),
+            "analyze_sample_spectrogram" => analyze_sample_spectrogram(AnalyzeSampleSpectrogramParam),
+            "compare_spectra" => compare_spectra(CompareSpectraParam),
+            "compare_envelopes" => compare_envelopes(CompareEnvelopesParam),
+            "analyze_master_chain" => analyze_master_chain(AnalyzeMasterChainParam),
+            "analyze_return_busses" => analyze_return_busses(AnalyzeReturnBussesParam),
+            "auto_gain_stage" => auto_gain_stage(AutoGainStageParam),
+            "analyze_section" => analyze_section(AnalyzeSectionParam),
+            "analyze_masking_matrix" => analyze_masking_matrix(AnalyzeMaskingMatrixParam),
+            "analyze_instrument_range" => analyze_instrument_range(AnalyzeInstrumentRangeParam),
+            "analyze_velocity_response" => analyze_velocity_response(AnalyzeVelocityResponseParam),
+            "analyze_tension_curve" => analyze_tension_curve(AnalyzeTensionCurveParam),
+            "suggest_music_fixes" => suggest_music_fixes(SuggestMusicFixesParam),
+            "compare_mix_before_after" => compare_mix_before_after(CompareMixBeforeAfterParam),
+            "generate_chord" => generate_chord(GenerateChordParam),
+            "create_chord_progression_pattern" => create_chord_progression_pattern(CreateChordProgressionPatternParam),
+            "transpose_notes" => transpose_notes(TransposeNotesParam),
+            "quantize_notes_to_scale" => quantize_notes_to_scale(QuantizeNotesToScaleParam),
+            "add_automation_points" => add_automation_points(AddAutomationPointsParam),
+            "get_instrument_automation_targets" => get_instrument_automation_targets(InstrumentIdParam),
+            "get_automation_points" => get_automation_points(GetAutomationPointsParam),
+            "remove_automation_points" => remove_automation_points(RemoveAutomationPointsParam),
+            "simplify_automation" => simplify_automation(SimplifyAutomationParam),
+            "get_automation_summary" => get_automation_summary(GetAutomationSummaryParam),
+            "get_module_info" => get_module_info(ModuleParam),
+            "lint_project" => lint_project(NoParams),
+            "check_connection" => check_connection(CheckConnectionParam),
+            "insert_module_between" => insert_module_between(InsertModuleBetweenParam),
+            "set_parameter" => set_parameter(SetParametersParam),
+            "list_samples" => list_samples(ListSamplesParam),
+            "get_sampler_state" => get_sampler_state(SamplerModuleParam),
+            "add_note" => add_note(AddNotesParam),
+            "update_note" => update_note(UpdateNotesParam),
+            "replace_notes" => replace_notes(ReplaceNotesParam),
+            "create_pattern" => create_pattern(CreatePatternsParam),
+            "create_track" => create_track(CreateTracksParam),
+            "place_pattern" => place_pattern(PlacePatternsParam),
+            "analyze_harmony" => analyze_harmony(AnalyzeHarmonyParam),
+            "analyze_pattern" => analyze_pattern(AnalyzePatternParam),
+            "analyze_arrangement" => analyze_arrangement(AnalyzeArrangementParam),
+            "analyze_form_map" => analyze_form_map(AnalyzeFormMapParam),
+            "analyze_hook_strength" => analyze_hook_strength(AnalyzeHookStrengthParam),
+            "quantize_notes_to_grid" => quantize_notes_to_grid(QuantizeNotesToGridParam),
+            "analyze_drum_groove" => analyze_drum_groove(AnalyzeDrumGrooveParam),
+            "analyze_bass_drum_lock" => analyze_bass_drum_lock(AnalyzeBassDrumLockParam),
+            "analyze_harmonic_function" => analyze_harmonic_function(AnalyzeHarmonicFunctionParam),
+            "list_input_devices" => list_input_devices(NoParams),
+            "get_input_state" => get_input_state(NoParams),
+            "stop_recording" => stop_recording(StopRecordingParam),
+            "find_motifs" => find_motifs(FindMotifsParam),
+            "list_example_patches" => list_example_patches(NoParams),
+            "get_ui_snapshot" => get_ui_snapshot(InstrumentIdParam),
+            "list_return_busses" => list_return_busses(NoParams),
+            "list_master_effects" => list_master_effects(NoParams),
+            "optimize_project" => optimize_project(NoParams),
+            "get_sample_info" => get_sample_info(SampleIdParam),
             "list_instruments" => list_instruments(NoParams),
             "get_instrument_profiles" => get_instrument_profiles(NoParams),
             "get_instrument_info" => get_instrument_info(InstrumentIdParam),
             "list_modules" => list_modules(InstrumentIdParam),
-            "get_module_info" => get_module_info(ModuleParam),
             "get_connections" => get_connections(InstrumentIdParam),
             "get_mod_matrix_routings" => get_mod_matrix_routings(InstrumentIdParam),
-            "set_mod_matrix_script" => set_mod_matrix_script(SetModMatrixScriptParam),
             "get_parameter" => get_parameter(GetParameterParam),
             "get_engine_status" => get_engine_status(NoParams),
             "get_version" => get_version(NoParams),
             "get_graph_diagnostics" => get_graph_diagnostics(InstrumentIdParam),
-            "get_project_schema" => get_project_schema(NoParams),
-            "lint_project" => lint_project(NoParams),
-            "get_ui_snapshot" => get_ui_snapshot(InstrumentIdParam),
-
-            // Module types & discovery
-            "list_module_types" => list_module_types(ListModuleTypesParam),
-            "get_module_type_info" => get_module_type_info(GetModuleTypeInfoParam),
-            "search_modules" => search_modules(SearchModulesParam),
-            "list_port_types" => list_port_types(NoParams),
-            "get_yams_reference" => get_yams_reference(NoParams),
-            "check_connection" => check_connection(CheckConnectionParam),
-
-            // Parameters
-            "set_parameter" => set_parameter(SetParametersParam),
-            "set_mseg_segments" => set_mseg_segments(SetMsegSegmentsParam),
-
-            // Notes
+            "list_automation_lanes" => list_automation_lanes(PatternIdParam),
+            "get_song_info" => get_song_info(NoParams),
+            "get_tempo_map" => get_tempo_map(NoParams),
+            "list_patterns" => list_patterns(NoParams),
+            "list_notes" => list_notes(PatternIdParam),
+            "list_note_graphs" => list_note_graphs(NoParams),
+            "list_mod_graphs" => list_mod_graphs(NoParams),
+            "list_mod_targets" => list_mod_targets(ListModTargetsParam),
+            "list_tracks" => list_tracks(NoParams),
+            "list_arrangement" => list_arrangement(NoParams),
+        ], action: [
+            // Typed payloads whose own type says "incomplete" — they answer a
+            // `CallToolResult` so the verdict travels with the reply.
+            "build_instrument" => build_instrument(BuildInstrumentsParam),
+            "apply_example_patch" => apply_example_patch(ApplyExamplePatchParam),
+            "rebuild_instrument_preserve_automation" =>
+                rebuild_instrument_preserve_automation(RebuildInstrumentParam),
+            "freeze_pattern" => freeze_pattern(PatternIdParam),
+            "set_song" => set_song(SetSongParam),
+            // Tools answering with prose plus an `ActionResult` beside it.
+            "set_input_device" => set_input_device(SetInputDeviceParam),
+            "start_monitoring" => start_monitoring(NoParams),
+            "stop_monitoring" => stop_monitoring(NoParams),
+            "start_recording" => start_recording(NoParams),
+            "clear_automation_lane" => clear_automation_lane(ClearAutomationLaneParam),
+            "scale_automation_lane" => scale_automation_lane(ScaleAutomationLaneParam),
+            "offset_automation_lane" => offset_automation_lane(OffsetAutomationLaneParam),
+            "copy_automation_lane" => copy_automation_lane(CopyAutomationLaneParam),
+            "set_mod_matrix_script" => set_mod_matrix_script(SetModMatrixScriptParam),
             "note_on" => note_on(NoteOnParam),
             "note_off" => note_off(NoteOffParam),
-
-            // Example patches
-            "list_example_patches" => list_example_patches(NoParams),
             "load_example_patch" => load_example_patch(LoadExamplePatchParam),
             "auto_layout" => auto_layout(NoParams),
-
-            // Module management
             "add_module" => add_module(AddModulesParam),
             "remove_module" => remove_module(RemoveModulesParam),
-            "connect" => connect(ConnectMultipleParam),
-            "disconnect" => disconnect(ConnectMultipleParam),
             "clear_graph" => clear_graph(InstrumentIdParam),
-            "insert_module_between" => insert_module_between(InsertModuleBetweenParam),
-
-            // Instrument lifecycle
-            "create_instrument" => create_instrument(CreateInstrumentParam),
             "delete_instrument" => delete_instrument(DeleteInstrumentsParam),
             "rename_instrument" => rename_instrument(RenameInstrumentParam),
             "set_instrument_description" => set_instrument_description(SetInstrumentDescriptionParam),
@@ -4818,90 +5567,19 @@ impl SynthMcpServer {
             "set_patch_color" => set_patch_color(SetPatchColorParam),
             "set_patch_description" => set_patch_description(SetPatchDescriptionParam),
             "set_module_description" => set_module_description(SetModuleDescriptionParam),
+            "set_sample_description" => set_sample_description(SetSampleDescriptionParam),
             "set_sidechain_source" => set_sidechain_source(SetSidechainSourceParam),
             "set_instrument_mixer" => set_instrument_mixer(SetInstrumentMixerParam),
             "set_allocator_config" => set_allocator_config(SetAllocatorConfigParam),
             "set_instrument_midi_channel" => set_instrument_midi_channel(SetInstrumentMidiChannelParam),
             "set_instrument_category" => set_instrument_category(SetInstrumentCategoryParam),
-
-            // Song
-            "get_song_info" => get_song_info(NoParams),
-            "set_song_tempo" => set_song_tempo(SetSongTempoParam),
-            "set_tempo_at" => set_tempo_at(SetTempoAtParam),
-            "remove_tempo_at" => remove_tempo_at(RemoveTempoAtParam),
-            "get_tempo_map" => get_tempo_map(NoParams),
-            "set_song_name" => set_song_name(SetSongNameParam),
-            "set_song_author" => set_song_author(SetSongAuthorParam),
-            "set_song_description" => set_song_description(SetSongDescriptionParam),
-            "set_song_time_signature" => set_song_time_signature(SetSongTimeSignatureParam),
-            "set_transport_loop" => set_transport_loop(SetTransportLoopParam),
-            "clear_transport_loop" => clear_transport_loop(NoParams),
-
-            // Patterns
-            "list_patterns" => list_patterns(NoParams),
-            "delete_pattern" => delete_pattern(DeletePatternsParam),
-            "rename_pattern" => rename_pattern(RenamePatternParam),
-            "set_pattern_description" => set_pattern_description(SetPatternDescriptionParam),
-            "set_pattern_length" => set_pattern_length(SetPatternLengthParam),
-            "duplicate_pattern" => duplicate_pattern(DuplicatePatternParam),
-            "create_pattern" => create_pattern(CreatePatternsParam),
-
-            // Notes in patterns
-            "list_notes" => list_notes(PatternIdParam),
-            "remove_note" => remove_note(RemoveNotesParam),
-            "add_note" => add_note(AddNotesParam),
-            "update_note" => update_note(UpdateNotesParam),
-            "replace_notes" => replace_notes(ReplaceNotesParam),
-            "clear_pattern" => clear_pattern(ClearPatternParam),
-
-            // Bake a pattern's bound note graph (or per-note ornaments) into
-            // plain notes.
-            "freeze_pattern" => freeze_pattern(PatternIdParam),
-            "set_note_ornament" => set_note_ornament(SetNoteOrnamentParam),
-
-            // Note Grid (pooled note-processing graphs)
-            "list_note_graphs" => list_note_graphs(NoParams),
-            "get_note_graph" => get_note_graph(GetNoteGraphParam),
-            "create_note_graph" => create_note_graph(CreateNoteGraphParam),
-            "set_note_graph_metadata" => set_note_graph_metadata(SetNoteGraphMetadataParam),
-            "duplicate_note_graph" => duplicate_note_graph(NoteGraphIdParam),
-            "delete_note_graph" => delete_note_graph(DeleteNoteGraphParam),
-            "add_note_graph_module" => add_note_graph_module(AddNoteGraphModuleParam),
-            "set_note_graph_module" => set_note_graph_module(SetNoteGraphModuleParam),
-            "set_note_graph_script" => set_note_graph_script(SetNoteGraphScriptParam),
-            "remove_note_graph_module" => remove_note_graph_module(RemoveNoteGraphModuleParam),
-            "connect_note_graph" => connect_note_graph(ConnectNoteGraphParam),
-            "set_pattern_note_graph" => set_pattern_note_graph(SetPatternNoteGraphParam),
-            "set_note_note_graph" => set_note_note_graph(SetNoteNoteGraphParam),
-
-            // Mod Grid
-            "list_mod_graphs" => list_mod_graphs(NoParams),
-            "get_mod_graph" => get_mod_graph(GetModGraphParam),
-            "create_mod_graph" => create_mod_graph(CreateModGraphParam),
-            "duplicate_mod_graph" => duplicate_mod_graph(DuplicateModGraphParam),
-            "set_mod_graph_metadata" => set_mod_graph_metadata(SetModGraphMetadataParam),
-            "delete_mod_graph" => delete_mod_graph(DeleteModGraphParam),
-            "set_mod_graph_scope" => set_mod_graph_scope(SetModGraphScopeParam),
-            "assign_mod_graph" => assign_mod_graph(AssignModGraphParam),
-            "add_mod_graph_node" => add_mod_graph_node(AddModGraphNodeParam),
-            "remove_mod_graph_node" => remove_mod_graph_node(RemoveModGraphNodeParam),
-            "set_mod_graph_node" => set_mod_graph_node(SetModGraphNodeParam),
-            "connect_mod_graph" => connect_mod_graph(ConnectModGraphParam),
-            "disconnect_mod_graph" => disconnect_mod_graph(DisconnectModGraphParam),
-            "list_mod_targets" => list_mod_targets(ListModTargetsParam),
-
-            // Tracks
-            "list_tracks" => list_tracks(NoParams),
-            "create_track" => create_track(CreateTracksParam),
+            "disconnect" => disconnect(ConnectMultipleParam),
+            "set_track_description" => set_track_description(SetTrackDescriptionParam),
+            "set_track_color" => set_track_color(SetTrackColorParam),
             "set_track_mixer" => set_track_mixer(SetTrackMixerParam),
             "set_track_instrument" => set_track_instrument(SetTrackInstrumentParam),
             "rename_track" => rename_track(RenameTrackParam),
-            "set_track_description" => set_track_description(SetTrackDescriptionParam),
-            "set_track_color" => set_track_color(SetTrackColorParam),
             "delete_track" => delete_track(DeleteTracksParam),
-
-            // Return busses (effect sends)
-            "list_return_busses" => list_return_busses(NoParams),
             "create_return_bus" => create_return_bus(CreateReturnBusParam),
             "delete_return_bus" => delete_return_bus(DeleteReturnBusesParam),
             "set_return_bus_mixer" => set_return_bus_mixer(SetReturnBusMixerParam),
@@ -4917,58 +5595,18 @@ impl SynthMcpServer {
             "set_return_effect_parameter" => set_return_effect_parameter(SetReturnEffectParameterParam),
             "set_return_effect_enabled" => set_return_effect_enabled(SetReturnEffectEnabledParam),
             "reorder_return_effect" => reorder_return_effect(ReorderReturnEffectParam),
-            "get_master_volume" => get_master_volume(NoParams),
             "set_master_volume" => set_master_volume(SetMasterVolumeParam),
-            "list_master_effects" => list_master_effects(NoParams),
             "add_master_effect" => add_master_effect(AddMasterEffectsParam),
             "remove_master_effect" => remove_master_effect(RemoveMasterEffectsParam),
             "set_master_effect_parameter" => set_master_effect_parameter(SetMasterEffectParameterParam),
             "set_master_effect_enabled" => set_master_effect_enabled(SetMasterEffectEnabledParam),
             "reorder_master_effect" => reorder_master_effect(ReorderMasterEffectParam),
-
-            // Arrangement
-            "place_pattern" => place_pattern(PlacePatternsParam),
-            "update_placement" => update_placement(UpdatePlacementsParam),
-            "remove_placement" => remove_placement(RemovePlacementsParam),
-            "list_arrangement" => list_arrangement(NoParams),
-
-            // Automation
-            "add_automation_points" => add_automation_points(AddAutomationPointsParam),
-            "list_automation_lanes" => list_automation_lanes(PatternIdParam),
-            "get_instrument_automation_targets" => get_instrument_automation_targets(InstrumentIdParam),
-            "get_automation_points" => get_automation_points(GetAutomationPointsParam),
-            "remove_automation_points" => remove_automation_points(RemoveAutomationPointsParam),
-            "clear_automation_lane" => clear_automation_lane(ClearAutomationLaneParam),
-            "simplify_automation" => simplify_automation(SimplifyAutomationParam),
-            "scale_automation_lane" => scale_automation_lane(ScaleAutomationLaneParam),
-            "offset_automation_lane" => offset_automation_lane(OffsetAutomationLaneParam),
-            "copy_automation_lane" => copy_automation_lane(CopyAutomationLaneParam),
-            "get_automation_summary" => get_automation_summary(GetAutomationSummaryParam),
-
-            // Transport
-            "seq_play" => seq_play(NoParams),
-            "seq_stop" => seq_stop(NoParams),
-            "seq_seek" => seq_seek(SeqSeekParam),
-
-            // Build instruments
-            "build_instrument" => build_instrument(BuildInstrumentsParam),
-            "rebuild_instrument_preserve_automation" => rebuild_instrument_preserve_automation(RebuildInstrumentParam),
-            "apply_example_patch" => apply_example_patch(ApplyExamplePatchParam),
-            "set_song" => set_song(SetSongParam),
-
-            // Project
             "new_project" => new_project(NoParams),
             "save_project" => save_project(ProjectPathParam),
             "save_patch" => save_patch(SavePatchParam),
             "load_project" => load_project(ProjectPathParam),
-            "optimize_project" => optimize_project(NoParams),
-
-            // Samples
-            "list_samples" => list_samples(ListSamplesParam),
-            "import_sample" => import_sample(ImportSampleParam),
             "delete_sample" => delete_sample(DeleteSamplesParam),
             "rename_sample" => rename_sample(RenameSampleParam),
-            "set_sample_description" => set_sample_description(SetSampleDescriptionParam),
             "set_sample_root_note" => set_sample_root_note(SetSampleRootNoteParam),
             "normalize_sample" => normalize_sample(SampleIdsParam),
             "reverse_sample" => reverse_sample(SampleIdsParam),
@@ -4976,59 +5614,48 @@ impl SynthMcpServer {
             "set_sample_loop" => set_sample_loop(SetSampleLoopParam),
             "set_sample_crop" => set_sample_crop(SetSampleCropParam),
             "export_sample" => export_sample(ExportSampleParam),
-            "get_sample_info" => get_sample_info(SampleIdParam),
-            "duplicate_sample" => duplicate_sample(SampleIdsParam),
-
-            // Sampler module
             "assign_sample_to_module" => assign_sample_to_module(AssignSampleParam),
-            "get_sampler_state" => get_sampler_state(SamplerModuleParam),
             "set_sampler_parameter" => set_sampler_parameter(SetSamplerParameterParam),
-
-            // Audio input
-            "list_input_devices" => list_input_devices(NoParams),
-            "get_input_state" => get_input_state(NoParams),
-            "set_input_device" => set_input_device(SetInputDeviceParam),
-            "start_monitoring" => start_monitoring(NoParams),
-            "stop_monitoring" => stop_monitoring(NoParams),
-            "start_recording" => start_recording(NoParams),
-            "stop_recording" => stop_recording(StopRecordingParam),
-
-            // Music analysis
-            "analyze_harmony" => analyze_harmony(AnalyzeHarmonyParam),
-            "analyze_pattern" => analyze_pattern(AnalyzePatternParam),
-            "analyze_drum_groove" => analyze_drum_groove(AnalyzeDrumGrooveParam),
-            "analyze_bass_drum_lock" => analyze_bass_drum_lock(AnalyzeBassDrumLockParam),
-            "analyze_harmonic_function" => analyze_harmonic_function(AnalyzeHarmonicFunctionParam),
-            "analyze_mix_bus" => analyze_mix_bus(AnalyzeMixBusParam),
-            "render_to_wav" => render_to_wav(RenderToWavParam),
-            "analyze_spectrum" => analyze_spectrum(AnalyzeSpectrumParam),
-            "analyze_spectrogram" => analyze_spectrogram(AnalyzeSpectrogramParam),
-            "analyze_sample_spectrum" => analyze_sample_spectrum(AnalyzeSampleSpectrumParam),
-            "analyze_sample_spectrogram" => analyze_sample_spectrogram(AnalyzeSampleSpectrogramParam),
-            "compare_spectra" => compare_spectra(CompareSpectraParam),
-            "compare_envelopes" => compare_envelopes(CompareEnvelopesParam),
-            "analyze_master_chain" => analyze_master_chain(AnalyzeMasterChainParam),
-            "analyze_return_busses" => analyze_return_busses(AnalyzeReturnBussesParam),
-            "compare_mix_before_after" => compare_mix_before_after(CompareMixBeforeAfterParam),
-            "auto_gain_stage" => auto_gain_stage(AutoGainStageParam),
-            "analyze_section" => analyze_section(AnalyzeSectionParam),
-            "analyze_masking_matrix" => analyze_masking_matrix(AnalyzeMaskingMatrixParam),
-            "analyze_instrument_range" => analyze_instrument_range(AnalyzeInstrumentRangeParam),
-            "analyze_velocity_response" => analyze_velocity_response(AnalyzeVelocityResponseParam),
-            "validate_instrument_audio" => validate_instrument_audio(ValidateInstrumentAudioParam),
-            "analyze_arrangement" => analyze_arrangement(AnalyzeArrangementParam),
-            "analyze_form_map" => analyze_form_map(AnalyzeFormMapParam),
-            "find_motifs" => find_motifs(FindMotifsParam),
-            "analyze_hook_strength" => analyze_hook_strength(AnalyzeHookStrengthParam),
-            "analyze_tension_curve" => analyze_tension_curve(AnalyzeTensionCurveParam),
-            "suggest_music_fixes" => suggest_music_fixes(SuggestMusicFixesParam),
-
-            // Symbolic composition helpers
-            "generate_chord" => generate_chord(GenerateChordParam),
-            "create_chord_progression_pattern" => create_chord_progression_pattern(CreateChordProgressionPatternParam),
-            "transpose_notes" => transpose_notes(TransposeNotesParam),
-            "quantize_notes_to_scale" => quantize_notes_to_scale(QuantizeNotesToScaleParam),
-            "quantize_notes_to_grid" => quantize_notes_to_grid(QuantizeNotesToGridParam),
+            "set_song_description" => set_song_description(SetSongDescriptionParam),
+            "set_pattern_description" => set_pattern_description(SetPatternDescriptionParam),
+            "set_song_tempo" => set_song_tempo(SetSongTempoParam),
+            "set_tempo_at" => set_tempo_at(SetTempoAtParam),
+            "remove_tempo_at" => remove_tempo_at(RemoveTempoAtParam),
+            "set_transport_loop" => set_transport_loop(SetTransportLoopParam),
+            "clear_transport_loop" => clear_transport_loop(NoParams),
+            "set_song_name" => set_song_name(SetSongNameParam),
+            "delete_pattern" => delete_pattern(DeletePatternsParam),
+            "remove_note" => remove_note(RemoveNotesParam),
+            "set_note_ornament" => set_note_ornament(SetNoteOrnamentParam),
+            "set_note_graph_metadata" => set_note_graph_metadata(SetNoteGraphMetadataParam),
+            "delete_note_graph" => delete_note_graph(DeleteNoteGraphParam),
+            "add_note_graph_module" => add_note_graph_module(AddNoteGraphModuleParam),
+            "set_note_graph_module" => set_note_graph_module(SetNoteGraphModuleParam),
+            "set_note_graph_script" => set_note_graph_script(SetNoteGraphScriptParam),
+            "remove_note_graph_module" => remove_note_graph_module(RemoveNoteGraphModuleParam),
+            "connect_note_graph" => connect_note_graph(ConnectNoteGraphParam),
+            "set_pattern_note_graph" => set_pattern_note_graph(SetPatternNoteGraphParam),
+            "set_note_note_graph" => set_note_note_graph(SetNoteNoteGraphParam),
+            "set_mod_graph_metadata" => set_mod_graph_metadata(SetModGraphMetadataParam),
+            "delete_mod_graph" => delete_mod_graph(DeleteModGraphParam),
+            "set_mod_graph_scope" => set_mod_graph_scope(SetModGraphScopeParam),
+            "assign_mod_graph" => assign_mod_graph(AssignModGraphParam),
+            "add_mod_graph_node" => add_mod_graph_node(AddModGraphNodeParam),
+            "remove_mod_graph_node" => remove_mod_graph_node(RemoveModGraphNodeParam),
+            "connect_mod_graph" => connect_mod_graph(ConnectModGraphParam),
+            "disconnect_mod_graph" => disconnect_mod_graph(DisconnectModGraphParam),
+            "set_mod_graph_node" => set_mod_graph_node(SetModGraphNodeParam),
+            "remove_placement" => remove_placement(RemovePlacementsParam),
+            "clear_pattern" => clear_pattern(ClearPatternParam),
+            "rename_pattern" => rename_pattern(RenamePatternParam),
+            "set_pattern_length" => set_pattern_length(SetPatternLengthParam),
+            "duplicate_pattern" => duplicate_pattern(DuplicatePatternParam),
+            "set_song_author" => set_song_author(SetSongAuthorParam),
+            "set_song_time_signature" => set_song_time_signature(SetSongTimeSignatureParam),
+            "seq_play" => seq_play(NoParams),
+            "seq_stop" => seq_stop(NoParams),
+            "seq_seek" => seq_seek(SeqSeekParam),
+            "connect" => connect(ConnectMultipleParam),
         ])
     }
 }
@@ -5084,6 +5711,43 @@ impl SynthMcpServer {
 // silently leaves `tools/list` empty.
 #[tool_handler(router = self.tool_router)]
 impl ServerHandler for SynthMcpServer {
+    /// Override the macro-generated `list_tools` to advertise a cache lifetime.
+    ///
+    /// `#[tool_handler]` fills the SEP-2549 hints as `ttlMs: 0` +
+    /// `cacheScope: public` for clients on `2026-07-28` — "immediately stale, and
+    /// anyone may serve it". Both halves are wrong here. The catalog is built once
+    /// by `build_router` and cannot change while the process runs, and at
+    /// 219 tools it is the largest thing this server ever sends; telling a client
+    /// not to keep it means re-sending it on every reconnect.
+    ///
+    /// `Private` rather than `Public` because the list is *this instance's*: the
+    /// `disabled_tools` argument means two Pertylizer processes can publish
+    /// different catalogs, and a shared intermediary must not serve one to the
+    /// other. The TTL is bounded for the same reason — a restart with a different
+    /// tool set converges instead of being cached forever.
+    ///
+    /// The macro only generates a method the impl does not already define
+    /// (`has_method` in `rmcp-macros`), which is what lets this and `call_tool`
+    /// below coexist with it.
+    async fn list_tools(
+        &self,
+        _request: Option<PaginatedRequestParams>,
+        context: RequestContext<RoleServer>,
+    ) -> Result<rmcp::model::ListToolsResult, ErrorData> {
+        // Absent for older revisions, which have no field for it.
+        let cacheable = context
+            .protocol_version()
+            .is_some_and(|version| version >= rmcp::model::ProtocolVersion::V_2026_07_28);
+        Ok(rmcp::model::ListToolsResult {
+            result_type: Some(rmcp::model::ResultType::COMPLETE),
+            tools: self.tool_router.list_all(),
+            meta: None,
+            next_cursor: None,
+            ttl_ms: cacheable.then_some(TOOL_CATALOG_TTL_MS),
+            cache_scope: cacheable.then_some(rmcp::model::CacheScope::Private),
+        })
+    }
+
     /// Override the macro-generated `call_tool` to isolate panics. A tool body
     /// that panics (e.g. inside a `block_in_place` bridge call) would otherwise
     /// unwind into the tokio worker thread and kill it, taking the whole MCP
@@ -5107,6 +5771,12 @@ impl ServerHandler for SynthMcpServer {
         let tcc = rmcp::handler::server::tool::ToolCallContext::new(self, request, context);
         let outcome =
             run_catching_panic(self.session_id, &tool_name, self.tool_router.call(tcc)).await;
+        // `batch_execute` counts its own sub-ops in `dispatch_tool`, so counting it
+        // again here would make every batch look like one extra external mutation
+        // to a *concurrent* rollback batch.
+        if tool_name != "batch_execute" {
+            self.note_call(&tool_name);
+        }
         let elapsed_ms = started.elapsed().as_millis();
 
         // `call_tool` is the one choke point every top-level tool call passes
@@ -5120,11 +5790,18 @@ impl ServerHandler for SynthMcpServer {
             // has not produced an outcome yet, so there is nothing to judge as
             // failed — pass them through untouched.
             Ok(Ok(CallToolResponse::Complete(mut result))) => {
+                // No inspection of the reply's *text*: `mutation_reply` stamped
+                // `is_error` from the items, and a typed tool's `Err` is rendered
+                // as `is_error` by rmcp.
+                //
+                // A typed tool that answers `Ok` with a payload recording a total
+                // failure is the one case the flag cannot already be right: rmcp
+                // builds those through `CallToolResult::structured`, which
+                // hardcodes `is_error: Some(false)`. So the payload is asked —
+                // by its own type's predicate, not by sniffing its text.
                 let failed = result.is_error.unwrap_or(false)
-                    || result
-                        .content
-                        .iter()
-                        .any(|c| c.as_text().is_some_and(|t| result_is_failure(&t.text)));
+                    || reply_outcome(result.structured_content.as_ref(), false)
+                        == ToolOutcome::Failure;
                 if failed {
                     result.is_error = Some(true);
                     tracing::warn!(
@@ -5216,17 +5893,17 @@ impl ServerHandler for SynthMcpServer {
              `create_instrument` → `add_module` (multiple) → `set_parameter` → `connect`.\n\n\
              ## Discovery tools\n\
              Use these to understand available modules and valid connections before building:\n\
+             - `list_module_types` — compact catalog: type_key, name, category, gui_only for \
+               every type. Cheap; start here to pick a `type_key`.\n\
              - `get_module_type_info` — get ports, parameters (with ranges/units/choices), and \
-               signal flow hints for a single module type by key (e.g. 'osc', 'flt'). \
-               Lighter than `list_module_types` when you know which module you need.\n\
+               signal flow hints for a single module type by key (e.g. 'osc', 'flt').\n\
              - `search_modules` — filter modules by category ('voice'/'effect'), port signal \
                type ('audio'/'control'/'gate'/'midi'), or text query. Use this to find modules \
                with specific capabilities.\n\
              - `list_port_types` — reference of all signal types with descriptions, value ranges, \
                and compatibility rules.\n\
              - `check_connection` — validate a proposed connection before making it. Reports \
-               port direction errors, signal type incompatibilities, and lists available ports.\n\
-             - `list_module_types` — full catalog of all modules (use sparingly, large response).\n\n\
+               port direction errors, signal type incompatibilities, and lists available ports.\n\n\
              ## Sequencer\n\
              Songs have **tracks** and **patterns**. Patterns contain notes and automation. \
              Patterns are placed on tracks in the **arrangement** timeline. \
@@ -5656,3 +6333,7 @@ mod completions_tests;
 #[cfg(test)]
 #[path = "server/tests/schema_enum.rs"]
 mod schema_enum_tests;
+
+#[cfg(test)]
+#[path = "server/tests/output_schema.rs"]
+mod output_schema_tests;

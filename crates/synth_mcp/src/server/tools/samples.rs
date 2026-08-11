@@ -10,74 +10,88 @@ impl SynthMcpServer {
                        name_filter to search by name substring.",
         annotations(read_only_hint = true)
     )]
-    pub(crate) async fn list_samples(&self, params: Parameters<ListSamplesParam>) -> String {
+    pub(crate) async fn list_samples(
+        &self,
+        params: Parameters<ListSamplesParam>,
+    ) -> Result<Json<Listing<SampleInfo>>, String> {
         match self.bridge.list_samples(params.0.name_filter.as_deref()) {
-            Ok(samples) => to_json(&samples),
-            Err(e) => format!("Error: {e}"),
+            Ok(samples) => Ok(Json(samples.into())),
+            Err(e) => Err(format!("Error: {e}")),
         }
     }
 
     #[tool(
-        description = "Import one or more WAV files into the sample library. Returns the array of new \
-                       sample infos with assigned IDs. Each entry may override the name and set the root \
-                       MIDI note (0-127, default 60=C4).",
+        description = "Import one or more WAV files into the sample library. Returns \
+                       `{ message, items: [{ index, value, error }] }` — one entry per requested path, in \
+                       request order: `value` is the imported sample info (with its assigned ID) and `error` \
+                       names the failure. A path that fails does not fail the others. Each entry may override \
+                       the name and set the root MIDI note (0-127, default 60=C4).",
         annotations(destructive_hint = false)
     )]
-    pub(crate) async fn import_sample(&self, params: Parameters<ImportSampleParam>) -> String {
+    pub(crate) async fn import_sample(
+        &self,
+        params: Parameters<ImportSampleParam>,
+    ) -> Result<Json<MutationResult<SampleInfo>>, String> {
         for s in &params.0.samples {
             if let Some(note) = s.root_note
                 && let Err(e) = validate_midi_note(MidiNote::new(note))
             {
-                return format!("Error: {e}");
+                return Err(format!("Error: {e}"));
             }
         }
-        let mut infos = Vec::new();
-        let mut errors = Vec::new();
+        let mut items = Mutations::with_capacity(params.0.samples.len());
         for s in &params.0.samples {
             match self
                 .bridge
                 .import_sample(&s.path, s.name.as_deref(), s.root_note)
             {
-                Ok(info) => infos.push(info),
-                Err(e) => errors.push(format!("'{}': {e}", s.path)),
+                Ok(info) => items.named(info),
+                Err(e) => items.failed(format!("'{}': {e}", s.path)),
             }
         }
-        batch_json("imported", &infos, &errors)
+        Ok(Json(items.into_result("samples imported")))
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Delete one or more samples from the library by ID. Use list_samples to find sample IDs.",
         annotations(destructive_hint = true)
     )]
-    pub(crate) async fn delete_sample(&self, params: Parameters<DeleteSamplesParam>) -> String {
-        let mut ok_count = 0usize;
-        let mut errors = Vec::new();
+    pub(crate) async fn delete_sample(
+        &self,
+        params: Parameters<DeleteSamplesParam>,
+    ) -> CallToolResult {
+        let mut items = Mutations::new();
         for id in &params.0.sample_ids {
             match self.bridge.delete_sample(*id) {
-                Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{id}: {e}")),
+                Ok(()) => items.ok(),
+                Err(e) => items.failed(format!("{id}: {e}")),
             }
         }
-        batch_msg(ok_count, "samples deleted", &[], &errors)
+        items.reply("samples deleted")
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Rename one or more samples in the library.",
         annotations(destructive_hint = false, idempotent_hint = true)
     )]
-    pub(crate) async fn rename_sample(&self, params: Parameters<RenameSampleParam>) -> String {
-        let mut ok_count = 0usize;
-        let mut errors = Vec::new();
+    pub(crate) async fn rename_sample(
+        &self,
+        params: Parameters<RenameSampleParam>,
+    ) -> CallToolResult {
+        let mut items = Mutations::new();
         for it in &params.0.items {
             match self.bridge.rename_sample(it.sample_id, &it.name) {
-                Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{}: {e}", it.sample_id)),
+                Ok(()) => items.ok(),
+                Err(e) => items.failed(format!("{}: {e}", it.sample_id)),
             }
         }
-        batch_msg(ok_count, "samples renamed", &[], &errors)
+        items.reply("samples renamed")
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Set the root MIDI note for one or more samples (determines playback pitch mapping). \
                        Note 60 = C4 (middle C). Range: 0-127.",
         annotations(destructive_hint = false, idempotent_hint = true)
@@ -85,70 +99,78 @@ impl SynthMcpServer {
     pub(crate) async fn set_sample_root_note(
         &self,
         params: Parameters<SetSampleRootNoteParam>,
-    ) -> String {
-        for it in &params.0.items {
+    ) -> CallToolResult {
+        for (index, it) in params.0.items.iter().enumerate() {
             if let Err(e) = validate_midi_note(it.note) {
-                return format!("Error: {e}");
+                return action_rejected_at(index, format!("Error: {e}"));
             }
         }
-        let mut ok_count = 0usize;
-        let mut errors = Vec::new();
+        let mut items = Mutations::new();
         for it in &params.0.items {
             match self.bridge.set_sample_root_note(it.sample_id, it.note) {
-                Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{}: {e}", it.sample_id)),
+                Ok(()) => items.ok(),
+                Err(e) => items.failed(format!("{}: {e}", it.sample_id)),
             }
         }
-        batch_msg(ok_count, "sample root notes set", &[], &errors)
+        items.reply("sample root notes set")
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Normalize peak level to 0 dB (maximum without clipping) for one or more samples.",
         annotations(destructive_hint = true)
     )]
-    pub(crate) async fn normalize_sample(&self, params: Parameters<SampleIdsParam>) -> String {
-        let mut ok_count = 0usize;
-        let mut errors = Vec::new();
+    pub(crate) async fn normalize_sample(
+        &self,
+        params: Parameters<SampleIdsParam>,
+    ) -> CallToolResult {
+        let mut items = Mutations::new();
         for id in &params.0.sample_ids {
             match self.bridge.normalize_sample(*id) {
-                Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{id}: {e}")),
+                Ok(()) => items.ok(),
+                Err(e) => items.failed(format!("{id}: {e}")),
             }
         }
-        batch_msg(ok_count, "samples normalized", &[], &errors)
+        items.reply("samples normalized")
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Reverse the audio data in place for one or more samples.",
         annotations(destructive_hint = true)
     )]
-    pub(crate) async fn reverse_sample(&self, params: Parameters<SampleIdsParam>) -> String {
-        let mut ok_count = 0usize;
-        let mut errors = Vec::new();
+    pub(crate) async fn reverse_sample(
+        &self,
+        params: Parameters<SampleIdsParam>,
+    ) -> CallToolResult {
+        let mut items = Mutations::new();
         for id in &params.0.sample_ids {
             match self.bridge.reverse_sample(*id) {
-                Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{id}: {e}")),
+                Ok(()) => items.ok(),
+                Err(e) => items.failed(format!("{id}: {e}")),
             }
         }
-        batch_msg(ok_count, "samples reversed", &[], &errors)
+        items.reply("samples reversed")
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Auto-trim silence from the start and end of one or more samples. Sets crop markers \
                        at the first and last audible frames (threshold: -40 dB).",
         annotations(destructive_hint = true)
     )]
-    pub(crate) async fn trim_sample_silence(&self, params: Parameters<SampleIdsParam>) -> String {
-        let mut ok_count = 0usize;
-        let mut errors = Vec::new();
+    pub(crate) async fn trim_sample_silence(
+        &self,
+        params: Parameters<SampleIdsParam>,
+    ) -> CallToolResult {
+        let mut items = Mutations::new();
         for id in &params.0.sample_ids {
             match self.bridge.trim_sample_silence(*id) {
-                Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{id}: {e}")),
+                Ok(()) => items.ok(),
+                Err(e) => items.failed(format!("{id}: {e}")),
             }
         }
-        batch_msg(ok_count, "samples trimmed", &[], &errors)
+        items.reply("samples trimmed")
     }
 
     #[tool(
@@ -156,39 +178,49 @@ impl SynthMcpServer {
                        memory usage, and loop/crop regions in seconds.",
         annotations(read_only_hint = true)
     )]
-    pub(crate) async fn get_sample_info(&self, params: Parameters<SampleIdParam>) -> String {
+    pub(crate) async fn get_sample_info(
+        &self,
+        params: Parameters<SampleIdParam>,
+    ) -> Result<Json<DetailedSampleInfo>, String> {
         match self.bridge.get_sample_info(params.0.sample_id) {
-            Ok(info) => to_json(&info),
-            Err(e) => format!("Error: {e}"),
+            Ok(info) => Ok(Json(info)),
+            Err(e) => Err(format!("Error: {e}")),
         }
     }
 
     #[tool(
         description = "Create a copy of one or more samples, each with a new ID. The copy gets \" (copy)\" \
-                       appended to its name. Returns the array of new sample infos.",
+                       appended to its name. Returns \
+                       `{ message, items: [{ index, value, error }] }` — one entry per requested sample id, \
+                       in request order, where `value` is the new sample info.",
         annotations(destructive_hint = false)
     )]
-    pub(crate) async fn duplicate_sample(&self, params: Parameters<SampleIdsParam>) -> String {
-        let mut infos = Vec::new();
-        let mut errors = Vec::new();
+    pub(crate) async fn duplicate_sample(
+        &self,
+        params: Parameters<SampleIdsParam>,
+    ) -> Result<Json<MutationResult<SampleInfo>>, String> {
+        let mut items = Mutations::with_capacity(params.0.sample_ids.len());
         for id in &params.0.sample_ids {
             match self.bridge.duplicate_sample(*id) {
-                Ok(info) => infos.push(info),
-                Err(e) => errors.push(format!("{id}: {e}")),
+                Ok(info) => items.named(info),
+                Err(e) => items.failed(format!("{id}: {e}")),
             }
         }
-        batch_json("duplicated", &infos, &errors)
+        Ok(Json(items.into_result("samples duplicated")))
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Set or disable the loop region for one or more samples. When enabled, provide start \
                        and end times in seconds. Optional crossfade in milliseconds smooths the \
                        loop boundary.",
         annotations(destructive_hint = false, idempotent_hint = true)
     )]
-    pub(crate) async fn set_sample_loop(&self, params: Parameters<SetSampleLoopParam>) -> String {
-        let mut ok_count = 0usize;
-        let mut errors = Vec::new();
+    pub(crate) async fn set_sample_loop(
+        &self,
+        params: Parameters<SetSampleLoopParam>,
+    ) -> CallToolResult {
+        let mut items = Mutations::new();
         for it in &params.0.items {
             match self.bridge.set_sample_loop(
                 it.sample_id,
@@ -197,49 +229,55 @@ impl SynthMcpServer {
                 it.end_seconds,
                 it.crossfade_ms,
             ) {
-                Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{}: {e}", it.sample_id)),
+                Ok(()) => items.ok(),
+                Err(e) => items.failed(format!("{}: {e}", it.sample_id)),
             }
         }
-        batch_msg(ok_count, "sample loops set", &[], &errors)
+        items.reply("sample loops set")
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Set or remove the crop region for one or more samples. Crop defines the audible \
                        portion. Omit start_seconds and end_seconds to remove the crop and use \
                        the full sample.",
         annotations(destructive_hint = true, idempotent_hint = true)
     )]
-    pub(crate) async fn set_sample_crop(&self, params: Parameters<SetSampleCropParam>) -> String {
-        let mut ok_count = 0usize;
-        let mut errors = Vec::new();
+    pub(crate) async fn set_sample_crop(
+        &self,
+        params: Parameters<SetSampleCropParam>,
+    ) -> CallToolResult {
+        let mut items = Mutations::new();
         for it in &params.0.items {
             match self
                 .bridge
                 .set_sample_crop(it.sample_id, it.start_seconds, it.end_seconds)
             {
-                Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{}: {e}", it.sample_id)),
+                Ok(()) => items.ok(),
+                Err(e) => items.failed(format!("{}: {e}", it.sample_id)),
             }
         }
-        batch_msg(ok_count, "sample crops updated", &[], &errors)
+        items.reply("sample crops updated")
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Export one or more samples to WAV files at the given paths. Crop region is applied \
                        if set. Bit depth: 16 (default), 24, or 32 (float).",
         annotations(destructive_hint = true)
     )]
-    pub(crate) async fn export_sample(&self, params: Parameters<ExportSampleParam>) -> String {
-        let mut oks = Vec::new();
-        let mut errors = Vec::new();
+    pub(crate) async fn export_sample(
+        &self,
+        params: Parameters<ExportSampleParam>,
+    ) -> CallToolResult {
+        let mut items = Mutations::new();
         for s in params.0.samples {
             match self.bridge.export_sample(s.sample_id, &s.path, s.bit_depth) {
-                Ok(()) => oks.push(s.path),
-                Err(e) => errors.push(format!("{}: {e}", s.sample_id)),
+                Ok(()) => items.named(s.path),
+                Err(e) => items.failed(format!("{}: {e}", s.sample_id)),
             }
         }
-        batch_msg(oks.len(), "samples exported", &oks, &errors)
+        items.reply("samples exported")
     }
 
     // ========================================================================
@@ -247,6 +285,7 @@ impl SynthMcpServer {
     // ========================================================================
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Assign a sample to a Sampler module in an instrument. The module must be \
                        of type 'sampler' (prefix 'sam'). Use list_samples for sample IDs and \
                        get_instrument_info for module IDs.",
@@ -255,19 +294,18 @@ impl SynthMcpServer {
     pub(crate) async fn assign_sample_to_module(
         &self,
         params: Parameters<AssignSampleParam>,
-    ) -> String {
-        let mut ok_count = 0usize;
-        let mut errors = Vec::new();
+    ) -> CallToolResult {
+        let mut items = Mutations::new();
         for it in &params.0.items {
             match self
                 .bridge
                 .assign_sample_to_module(it.instrument_id, &it.module_id, it.sample_id)
             {
-                Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{}: {e}", it.module_id)),
+                Ok(()) => items.ok(),
+                Err(e) => items.failed(format!("{}: {e}", it.module_id)),
             }
         }
-        batch_msg(ok_count, "samples assigned to modules", &[], &errors)
+        items.reply("samples assigned to modules")
     }
 
     #[tool(
@@ -275,17 +313,21 @@ impl SynthMcpServer {
                        level, play mode, direction, velocity sensitivity, fine tune, start offset.",
         annotations(read_only_hint = true)
     )]
-    pub(crate) async fn get_sampler_state(&self, params: Parameters<SamplerModuleParam>) -> String {
+    pub(crate) async fn get_sampler_state(
+        &self,
+        params: Parameters<SamplerModuleParam>,
+    ) -> Result<Json<SamplerStateInfo>, String> {
         match self
             .bridge
             .get_sampler_state(params.0.instrument_id, &params.0.module_id)
         {
-            Ok(state) => to_json(&state),
-            Err(e) => format!("Error: {e}"),
+            Ok(state) => Ok(Json(state)),
+            Err(e) => Err(format!("Error: {e}")),
         }
     }
 
     #[tool(
+        output_schema = action_output_schema(),
         description = "Set a parameter on a Sampler module. Parameters: pitch_tracking (true/false), \
                        level (0.0-1.0), play_mode (one_shot/sustain/loop), direction \
                        (forward/reverse/ping_pong), velocity_sensitivity (0.0-1.0), \
@@ -295,9 +337,8 @@ impl SynthMcpServer {
     pub(crate) async fn set_sampler_parameter(
         &self,
         params: Parameters<SetSamplerParameterParam>,
-    ) -> String {
-        let mut ok_count = 0usize;
-        let mut errors = Vec::new();
+    ) -> CallToolResult {
+        let mut items = Mutations::new();
         for it in &params.0.params {
             match self.bridge.set_sampler_parameter(
                 it.instrument_id,
@@ -305,11 +346,11 @@ impl SynthMcpServer {
                 &it.param_name,
                 &it.value,
             ) {
-                Ok(()) => ok_count += 1,
-                Err(e) => errors.push(format!("{}/{}: {e}", it.module_id, it.param_name)),
+                Ok(()) => items.ok(),
+                Err(e) => items.failed(format!("{}/{}: {e}", it.module_id, it.param_name)),
             }
         }
-        batch_msg(ok_count, "sampler parameters set", &[], &errors)
+        items.reply("sampler parameters set")
     }
 
     // ========================================================================

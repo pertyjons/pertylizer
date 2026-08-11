@@ -99,7 +99,7 @@ impl Rig {
             .await;
         let infos: serde_json::Value =
             serde_json::from_str(&created).expect("create_instrument returns JSON");
-        let id = infos["created"][0]["id"]
+        let id = infos["items"][0]["value"]["id"]
             .as_u64()
             .expect("created instrument id");
         self.pump();

@@ -58,8 +58,16 @@ pub fn search_module_types(
     };
 
     ModuleSearchResult {
+        // Counted here, over the whole match set. Capping is the MCP tool's job —
+        // it owns the `limit` contract, and truncating here would leave
+        // `total_matched` describing the truncation instead of the search.
+        total_matched: modules.len(),
         modules,
         did_you_mean,
+        // The wording of the "nothing matched, try this" advice belongs to the
+        // MCP tool, which knows what its own filters were called; the bridge
+        // supplies the facts it is built from.
+        hint: None,
     }
 }
 
