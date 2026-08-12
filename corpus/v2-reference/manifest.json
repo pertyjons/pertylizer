@@ -1,0 +1,187 @@
+{
+  "manifest_version": 1,
+  "description": "Reference render corpus for the Pertylizer Sound Core V2 migration (plans/v2, task P00A-T001). Each case names a V1 project, the exact settings that render it, and what V2 must preserve or is intended to change. Regenerate the fixture projects and refresh the digests with `cargo run -p pertylizer --bin gen_corpus`.",
+  "cases": [
+    {
+      "id": "CORPUS-0001",
+      "title": "Basic subtractive voice",
+      "category": "subtractive-voice",
+      "purpose": "The minimal render path: one oscillator through one static low-pass into an envelope-gated amplifier, played as four separated notes so each note-on is an isolated onset and each note-off an isolated release.",
+      "input": "projects/subtractive-voice.ptz",
+      "sha256": "d3fd763fddd3a373d83548d25d89087e864584e9000128497d73f2c7cdbca85d",
+      "render": {
+        "sample_rate": 44100,
+        "bit_depth": "32f",
+        "seconds": 2.0,
+        "tail_seconds": 1.0
+      },
+      "seed": null,
+      "determinism": "bit-exact",
+      "preserve": [
+        {
+          "id": "CORPUS-0001-P1",
+          "behavior": "Each of the four notes sounds at the pitch the pattern declares, with the same fundamental frequency V1 produces.",
+          "class": "exact-parity"
+        },
+        {
+          "id": "CORPUS-0001-P2",
+          "behavior": "The amplitude envelope's attack, decay, sustain and release landmarks stay within measurement tolerance of V1's.",
+          "class": "feature-parity"
+        },
+        {
+          "id": "CORPUS-0001-P3",
+          "behavior": "The static low-pass leaves the same spectral balance: per-band energy tracks V1's across the whole render.",
+          "class": "feature-parity"
+        }
+      ],
+      "change": [
+        {
+          "id": "CORPUS-0001-C1",
+          "behavior": "Note onsets land on the exact sample the tick maps to, not on the first sample of the render block containing it.",
+          "class": "intentional-correction",
+          "rationale": "V1 dispatches sequencer events on block boundaries, so an onset can sit up to one block late and the error depends on the block size. Sample-accurate scheduling is the Phase 3 objective and is one of the corrections the master plan's audio comparison policy names."
+        }
+      ]
+    },
+    {
+      "id": "CORPUS-0002",
+      "title": "Polyphonic pad with voice stealing",
+      "category": "polyphonic-voice-stealing",
+      "purpose": "Eight overlapping sustained notes against a four-voice instrument, so the allocator has to steal four times inside the rendered window and the release tail of each stolen voice is cut short.",
+      "input": "projects/polyphonic-voice-stealing.ptz",
+      "sha256": "539c71be4e7fa74d15f9ffa9a52c40c84499dc24a3d50fc990b1cfefe7681449",
+      "render": {
+        "sample_rate": 44100,
+        "bit_depth": "32f",
+        "seconds": 2.0,
+        "tail_seconds": 2.0
+      },
+      "seed": null,
+      "determinism": "bit-exact",
+      "preserve": [
+        {
+          "id": "CORPUS-0002-P1",
+          "behavior": "At most four voices sound at any instant: the instrument's voice ceiling is never exceeded. Fewer sound during the opening, while the notes are still entering one by one.",
+          "class": "exact-parity"
+        },
+        {
+          "id": "CORPUS-0002-P2",
+          "behavior": "Which note is stolen is a function of the arrangement alone, so two renders of this project choose the same victims in the same order.",
+          "class": "exact-parity"
+        },
+        {
+          "id": "CORPUS-0002-P3",
+          "behavior": "The overall RMS envelope tracks V1's through each steal. This is a claim about matching V1, not about the transition being smooth: V1 resets a stolen voice, so its own envelope steps, and a V2 that removed the step would be changing behaviour rather than preserving it.",
+          "class": "feature-parity"
+        }
+      ]
+    },
+    {
+      "id": "CORPUS-0003",
+      "title": "Mod Matrix routed filter sweep",
+      "category": "mod-matrix-patch",
+      "purpose": "One Mod Matrix slot carrying an LFO to the filter cutoff, with no patch cable to the cutoff CV port, so the sweep can only come through the matrix path.",
+      "input": "projects/mod-matrix.ptz",
+      "sha256": "baeff623168808cbd078ffe3587e87a0687a058acb1f67bb536e45df3b41b5e5",
+      "render": {
+        "sample_rate": 44100,
+        "bit_depth": "32f",
+        "seconds": 2.0,
+        "tail_seconds": 1.0
+      },
+      "seed": null,
+      "determinism": "bit-exact",
+      "preserve": [
+        {
+          "id": "CORPUS-0003-P1",
+          "behavior": "The cutoff sweeps at the LFO's rate and over the depth the slot amount sets; the spectral centroid oscillates with the same period and excursion V1 produces.",
+          "class": "feature-parity"
+        },
+        {
+          "id": "CORPUS-0003-P2",
+          "behavior": "A voice's LFO phase is zeroed when the allocator hands the voice out, so both notes in the render begin their sweep from the same phase.",
+          "class": "exact-parity"
+        }
+      ],
+      "change": [
+        {
+          "id": "CORPUS-0003-C1",
+          "behavior": "Modulation is evaluated at a declared control rate rather than once per render block, so the sweep's step size no longer depends on the block size the host or the offline renderer happens to use.",
+          "class": "intentional-correction",
+          "rationale": "A fixed control rate is one of the corrections the master plan's audio comparison policy names, and ADR-0001 makes the internal render quantum independent of the host block — modulation tied to the block would reintroduce exactly the dependency that decision removes."
+        }
+      ]
+    },
+    {
+      "id": "CORPUS-0004",
+      "title": "Send into a reverb return, with a master compressor",
+      "category": "sends-returns-master",
+      "purpose": "Three paths the voice cases never touch: a post-fader track send, a return bus running its own fully-wet effect chain, and a master chain applied to the summed mix. Short repeated notes make the send's contribution and the compressor's recovery separately visible.",
+      "input": "projects/sends-returns-master.ptz",
+      "sha256": "6e0cba6438a230b5f788fc3a1f4bb0b446e9792ef408e86a2c5f6c0ac090d07d",
+      "render": {
+        "sample_rate": 44100,
+        "bit_depth": "32f",
+        "seconds": 2.0,
+        "tail_seconds": 2.0
+      },
+      "seed": null,
+      "determinism": "bit-exact",
+      "preserve": [
+        {
+          "id": "CORPUS-0004-P1",
+          "behavior": "The dry track and the return both reach the master: muting the return alone changes the render, and so does zeroing the send.",
+          "class": "exact-parity"
+        },
+        {
+          "id": "CORPUS-0004-P2",
+          "behavior": "The reverb tail continues past the last note for the same duration and decays on the same curve.",
+          "class": "feature-parity"
+        },
+        {
+          "id": "CORPUS-0004-P3",
+          "behavior": "The master compressor engages on the same transients and recovers over the same interval, so the peak-to-RMS ratio of the render tracks V1's.",
+          "class": "feature-parity"
+        }
+      ],
+      "change": [
+        {
+          "id": "CORPUS-0004-C1",
+          "behavior": "Bus summing and the master chain run with linear headroom rather than clamping intermediate stages, so a mix that exceeded full scale internally comes back with its shape intact.",
+          "class": "intentional-correction",
+          "rationale": "Linear headroom is one of the corrections the master plan's audio comparison policy names. Where V1 clamped inside the chain, V2 will differ audibly on exactly the material this case renders, and that difference is the point rather than a regression."
+        }
+      ]
+    }
+  ],
+  "planned": [
+    {
+      "category": "stereo-or-spatial-voice",
+      "why_absent": "Needs a decision on which stereo source the case should isolate: the oscillator's own stereo outputs, the Keyboard Panner, or the Spatial Panner. The Spatial Panner's position inputs are not modulatable in V1 (no CV ports), so a case built on it would pin behaviour that is already scheduled to change."
+    },
+    {
+      "category": "sampler-patch",
+      "why_absent": "A sampler case needs a sample asset, which makes the input a bundle rather than a plain project and drags asset identity (ADR-0027, Phase 0B) into a Phase 0A baseline. Add it once the bundle round-trip fixtures exist."
+    },
+    {
+      "category": "yams-control-patch",
+      "why_absent": "The bundled YAMS Script Demo covers this end to end, but a corpus case wants a script small enough that a render difference names one language feature. Waiting on a minimal script whose output is analytically predictable."
+    },
+    {
+      "category": "yams-audio-script-patch",
+      "why_absent": "Same as the control-script case: waiting on a script small enough that a render difference names one language feature. Independent of the ADR-0037 quantum measurement, which is defined over whatever the corpus contains and must not wait for this."
+    },
+    {
+      "category": "instrument-inserts",
+      "why_absent": "Straightforward to build on top of CORPUS-0001; left out of the first pass only to keep the initial corpus reviewable. No open question blocks it."
+    },
+    {
+      "category": "tempo-map-arrangement",
+      "why_absent": "Blocked on nothing technical, but the case must state whether a tempo ramp's event positions are part of the preserved behaviour or fall under the sample-timing correction (CORPUS-0001-C1). That is a decision the case should cite, not make."
+    },
+    {
+      "category": "shared-patch-or-instrument",
+      "why_absent": "Depends on the identity rules ADR-0014 settles: a module's instance number feeds its script PRNG seed (IDN-0029), so a shared instrument's audio depends on how the two references are numbered. Authoring the case before that decision would pin behaviour the decision may change."
+    }
+  ]
+}

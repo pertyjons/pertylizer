@@ -74,6 +74,21 @@ does not have, and the Phase 0A exit gate is not satisfiable.
 
 None yet. This is the record's defining weakness and the reason it is `Proposed`.
 
+**The measurement is no longer blocked.** It was waiting on P00A-T001, which now
+exists: [`corpus/v2-reference/`](../../../corpus/v2-reference/README.md) holds
+four rendered cases and `pertylizer compare` measures differences between
+renders. Four of the master plan's eleven categories are covered, which is a real
+limitation on how representative the result is and belongs in the `EVD` record's
+own *Limitations* — but it does not hold the measurement up, and waiting for the
+remaining seven would leave this record `Proposed` for no gain.
+
+Note what changing `BUFFER_SIZE` does beyond cost: V1 dispatches sequencer events
+on block boundaries, so the renders at 32 and at 256 frames are **not the same
+audio**. Onsets quantize differently. The proxy measures cost, not agreement, and
+the `EVD` record should say so — while noting that the audible difference across
+block sizes is itself the evidence behind the corpus's own `CORPUS-0001-C1`
+claim, which is that V2 fixes exactly this.
+
 ### Why the measurement cannot be taken directly
 
 The quantity that separates the options is per-quantum overhead **in the V2 compiled node model**, and no V2 renderer
@@ -187,7 +202,7 @@ master plan wrote deliberately, and the Phase 0A tracker would have to record it
 
 | Task                                                                                   | Phase | Status      |
 |-----------------------------------------------------------------------------------------|-------|-------------|
-| Render the P00A-T001 corpus at 32/64/128/256 frames and record cost per rendered second | 0A    | Not started |
+| Render the P00A-T001 corpus at 32/64/128/256 frames and record cost per rendered second | 0A    | Not started — unblocked, the corpus and the harness now exist |
 | Record the proxy measurement as an `EVD` record and apply the rule table                | 0A    | Not started |
 | **If rule 1 fires:** add the Phase 2 re-measurement to the Phase 2 exit gate            | 1     | Not started |
 | Re-measure against real V2 nodes and confirm or supersede                               | 2     | Not started |

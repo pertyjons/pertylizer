@@ -65,67 +65,7 @@ impl RenderCommand {
     /// [`RenderError::DurationTooLong`], [`RenderError::InvalidSampleRate`], or
     /// [`RenderError::RenderTooLarge`].
     fn validate(&self) -> Result<(), RenderError> {
-        let seconds = self.seconds.as_f32();
-        if !seconds.is_finite() || seconds <= 0.0 {
-            return Err(RenderError::InvalidDuration {
-                what: "--seconds",
-                bound: "positive",
-                value: seconds,
-            });
-        }
-        // The shared renderer clamps a longer range and warns. Refusing here
-        // instead means a harness that asked for ten minutes finds out, rather
-        // than comparing five minutes of audio against ten and calling it a
-        // regression.
-        if seconds > MAX_RENDER_SECONDS {
-            return Err(RenderError::DurationTooLong {
-                what: "--seconds",
-                requested: seconds,
-                maximum: MAX_RENDER_SECONDS,
-            });
-        }
-        let tail = self.tail.as_f32();
-        if !tail.is_finite() || tail < 0.0 {
-            return Err(RenderError::InvalidDuration {
-                what: "--tail-seconds",
-                bound: "non-negative",
-                value: tail,
-            });
-        }
-        if tail > MAX_TAIL_SECONDS {
-            return Err(RenderError::DurationTooLong {
-                what: "--tail-seconds",
-                requested: tail,
-                maximum: MAX_TAIL_SECONDS,
-            });
-        }
-        if !(MIN_RENDER_SAMPLE_RATE..=MAX_RENDER_SAMPLE_RATE).contains(&self.sample_rate) {
-            return Err(RenderError::InvalidSampleRate(self.sample_rate));
-        }
-        // Each argument above is fine on its own; their product is what the
-        // renderer allocates in one `Vec`, and an over-large allocation aborts
-        // the process instead of returning an error. Every factor is already
-        // bounded by the checks above, so the product cannot overflow.
-        //
-        // Measured against the *render* buffer, which is `f32` whatever
-        // `--bit-depth` writes: the allocation this guards is the one the
-        // renderer makes before any encoding happens. A narrower output format
-        // makes the file smaller, not the buffer.
-        let bytes = (f64::from(seconds + tail)
-            * f64::from(self.sample_rate)
-            * f64::from(RENDER_CHANNELS)
-            * f64::from(RENDER_BUFFER_BYTES_PER_SAMPLE))
-        .ceil() as u64;
-        if bytes > MAX_RENDER_BYTES {
-            return Err(RenderError::RenderTooLarge {
-                seconds,
-                tail,
-                sample_rate: self.sample_rate,
-                bytes,
-                maximum: MAX_RENDER_BYTES,
-            });
-        }
-        Ok(())
+        validate_render_bounds(self.seconds, self.tail, self.sample_rate)
     }
 
     /// The signal chain a render command reconstructs.
@@ -143,6 +83,86 @@ impl RenderCommand {
             render_sample_rate: synth_core::audio::DeviceSampleRate::new(self.sample_rate),
         }
     }
+}
+
+/// Reject a window that is wrong on its own terms, independently of any project.
+///
+/// Split out of [`RenderCommand::validate`] so that anything declaring a render
+/// ahead of time — the reference corpus, above all — is held to exactly the
+/// bounds the command applies, instead of carrying a second copy that drifts. A
+/// corpus case whose settings fail here would otherwise render fine in review
+/// and fail in a batch run hours later.
+///
+/// # Errors
+///
+/// Returns [`RenderError::InvalidDuration`], [`RenderError::DurationTooLong`],
+/// [`RenderError::InvalidSampleRate`], or [`RenderError::RenderTooLarge`].
+pub(crate) fn validate_render_bounds(
+    seconds: Seconds,
+    tail: Seconds,
+    sample_rate: u32,
+) -> Result<(), RenderError> {
+    let seconds = seconds.as_f32();
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return Err(RenderError::InvalidDuration {
+            what: "--seconds",
+            bound: "positive",
+            value: seconds,
+        });
+    }
+    // The shared renderer clamps a longer range and warns. Refusing here
+    // instead means a harness that asked for ten minutes finds out, rather
+    // than comparing five minutes of audio against ten and calling it a
+    // regression.
+    if seconds > MAX_RENDER_SECONDS {
+        return Err(RenderError::DurationTooLong {
+            what: "--seconds",
+            requested: seconds,
+            maximum: MAX_RENDER_SECONDS,
+        });
+    }
+    let tail = tail.as_f32();
+    if !tail.is_finite() || tail < 0.0 {
+        return Err(RenderError::InvalidDuration {
+            what: "--tail-seconds",
+            bound: "non-negative",
+            value: tail,
+        });
+    }
+    if tail > MAX_TAIL_SECONDS {
+        return Err(RenderError::DurationTooLong {
+            what: "--tail-seconds",
+            requested: tail,
+            maximum: MAX_TAIL_SECONDS,
+        });
+    }
+    if !(MIN_RENDER_SAMPLE_RATE..=MAX_RENDER_SAMPLE_RATE).contains(&sample_rate) {
+        return Err(RenderError::InvalidSampleRate(sample_rate));
+    }
+    // Each argument above is fine on its own; their product is what the
+    // renderer allocates in one `Vec`, and an over-large allocation aborts
+    // the process instead of returning an error. Every factor is already
+    // bounded by the checks above, so the product cannot overflow.
+    //
+    // Measured against the *render* buffer, which is `f32` whatever
+    // `--bit-depth` writes: the allocation this guards is the one the
+    // renderer makes before any encoding happens. A narrower output format
+    // makes the file smaller, not the buffer.
+    let bytes = (f64::from(seconds + tail)
+        * f64::from(sample_rate)
+        * f64::from(RENDER_CHANNELS)
+        * f64::from(RENDER_BUFFER_BYTES_PER_SAMPLE))
+    .ceil() as u64;
+    if bytes > MAX_RENDER_BYTES {
+        return Err(RenderError::RenderTooLarge {
+            seconds,
+            tail,
+            sample_rate,
+            bytes,
+            maximum: MAX_RENDER_BYTES,
+        });
+    }
+    Ok(())
 }
 
 /// Run `command` end to end and return the receipt describing what happened.

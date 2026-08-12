@@ -26,7 +26,14 @@ use synth_sequencer::{Song, TrackId};
 /// Display index is deliberately not a selector — it shifts when tracks are
 /// reordered, so the same command would render different audio from the same
 /// file.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// Serialized as the string a caller would type on the command line, via the
+/// same [`FromStr`] and [`fmt::Display`] pair, so a selector written into a
+/// document (the V2 reference corpus manifest) means exactly what the same
+/// characters mean as an argument. A structural encoding would let the two
+/// diverge.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(into = "String", from = "String")]
 pub enum TrackSelector {
     /// The track whose `id` field is this value.
     Id(TrackId),
@@ -44,6 +51,20 @@ impl FromStr for TrackSelector {
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         Ok(s.parse::<u16>()
             .map_or_else(|_| Self::Name(s.to_string()), |id| Self::Id(TrackId(id))))
+    }
+}
+
+impl From<String> for TrackSelector {
+    /// Infallible, exactly as [`FromStr`] is — so serde cannot reject a value
+    /// the command line accepts.
+    fn from(value: String) -> Self {
+        value.parse().unwrap_or(Self::Name(value))
+    }
+}
+
+impl From<TrackSelector> for String {
+    fn from(value: TrackSelector) -> Self {
+        value.to_string()
     }
 }
 

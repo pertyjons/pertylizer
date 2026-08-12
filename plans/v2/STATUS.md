@@ -1,12 +1,14 @@
 # Pertylizer Core V2 Status
 
-| Field                  | Value                                    |
-|------------------------|------------------------------------------|
-| Last updated           | 2026-08-12                               |
-| Documentation stage    | Workflow accepted; inventories at pass 2 |
-| Master plan status     | Proposed and architecture-audited        |
-| Active migration phase | 0A and 0B, both `Active` in parallel     |
-| Decision records       | 3 of 37 drafted, 2 accepted              |
+| Field                  | Value                                            |
+|------------------------|--------------------------------------------------|
+| Last updated           | 2026-08-12                                       |
+| Documentation stage    | Workflow accepted; inventories at pass 2         |
+| Master plan status     | Proposed and architecture-audited                |
+| Active migration phase | 0A and 0B, both `Active` in parallel             |
+| Decision records       | 3 of 37 drafted, 2 accepted                      |
+| Evidence records       | 1 (`EVD-0001`), `Complete`                       |
+| Executable Phase 0A    | Corpus and comparison command exist and are used |
 
 This is a current-state dashboard, not a work log. Replace stale information instead of appending a chronology.
 Historical conclusions belong in ADRs, evidence records, phase reviews, and Git history.
@@ -43,23 +45,40 @@ gate Phase 10, not Phase 1.
   read the enforcing code, which resolved every gate-blocking question and **disproved three pass-1 hypotheses** — those
   are corrected in place rather than appended. Each ledger records both methods and what each is blind to; none is
   `Current`.
-- Phase 0A and 0B implementation and evidence are not claimed complete. No code has been written for V2.
+- **Phase 0A now has something executable.** P00A-T002 is **complete**:
+  `pertylizer compare` measures how two renders differ, with no GUI and no audio device.
+  P00A-T001 is **still `Active`** — its infrastructure is done, its coverage is not.
+  [`corpus/v2-reference/`](../../corpus/v2-reference/README.md) holds a validated manifest, a generator, and four
+  fixture projects, but the master plan asks for eleven categories and four are covered. The other seven are recorded
+  as gaps with reasons, several blocked on decisions rather than on effort. Together the two supply the first half of
+  the Phase 0A exit gate's first bullet: the corpus and the comparison command run headlessly.
+- **[EVD-0001](evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md) is `Complete` and `Supported`.** Every corpus
+  case renders bit-identically across two separate processes, and a two-case control resolves their octave to 3.6 cents
+  — so the zero deltas are a measurement rather than a stub.
+- **Building the corpus found a V1 defect, fixed on `fix/offline-render-fidelity`.** The offline renderer rebuilt instruments without an
+  allocator config and replayed only volume, pan, and solo, so polyphony, allocation mode, transpose, key range,
+  oversampling, velocity sensitivities, and the sidechain source were silently defaulted. It affected every consumer of
+  the offline renderer, not only the corpus — the `analyze_*` tools and the WAV export measured audio the live engine
+  never produced. It is the third instance of an offline reader disagreeing with the live engine while looking healthy.
+- Phase 0A is **not** complete: P00A-T003 still has no CPU, memory, or timing figures, three of six required ADRs have no
+  record, and no exit review exists. No code has been written for V2 itself.
 - V2 implementation status must be established from repository evidence before this dashboard makes code-level
   completion claims.
 
 ## Next actions
 
-The inventories have stopped being search-limited. What each still lacks is either a decision or an executable check, so
-the next actions are those, not a pass 3.
+The corpus and the comparison command now exist, so every measurement Phase 0A was waiting on can actually be run. The
+inventories have stopped being search-limited; what each still lacks is either a decision or an executable check.
 
-1. **Define the reference render corpus** (P00A-T001) and the comparison result format (P00A-T002). Both P00A-T003 and
-   ADR-0037's proxy measurement are defined over that corpus, so nothing measurable starts before it exists.
-2. **Sweep all 74 resource-inventory entries** under accepted ADR-0021, assigning both axes — one of six failure classes
+1. **Run ADR-0037's V1 proxy measurement.** Render the corpus at 32/64/128/256 frames by varying `BUFFER_SIZE` in
+   `arrangement_render.rs`, record it as `EVD-0002`, and apply the record's ordered rule table. An inconclusive result is
+   a real possible outcome. This is the last thing standing between ADR-0037 and acceptance, and it is now unblocked.
+2. **Finish P00A-T003.** [EVD-0001](evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md) covers determinism and
+   level; CPU, memory, and timing at common polyphony and sample rates are still unmeasured, and the task does not close
+   without them.
+3. **Sweep all 74 resource-inventory entries** under accepted ADR-0021, assigning both axes — one of six failure classes
    and one of seven configuration owners — plus the rule and diagnostic. Every `Unknown`-class entry must reach a
    terminal class as part of it.
-3. **Run ADR-0037's V1 proxy measurement** — render the corpus at 32/64/128/256 frames by varying `BUFFER_SIZE` in
-   `arrangement_render.rs:51`, record it as an `EVD` record, and apply the record's ordered rule table. An inconclusive
-   result is a real possible outcome, not a failure of the measurement.
 4. **Open ADR-0032** (`SampleTime` and event timestamps), the remaining record the Phase 0A exit gate requires
    `Accepted`. ADR-0001 now fixes the epoch and the late-event rule, so ADR-0032 refines the representation on top of
    that rather than inventing it.
@@ -68,7 +87,10 @@ the next actions are those, not a pass 3.
    renumbering is audible, not just referential.
 6. **Write the first round-trip fixture (P00B-T005) for `STATE-0004`** — changing the focused instrument changes the
    saved file while no dirty term observes it. It is the cheapest executable check the ledgers produced.
-7. **Record both audit passes as `EVD` records** so the ledgers' claims are reproducible rather than asserted. No value
+7. **Add corpus cases as their blockers clear.** Instrument inserts need nothing and are the cheapest; the sampler case
+   waits on the bundle round-trip fixtures, the shared-instrument case on ADR-0014, and the tempo-map case on whether a
+   ramp's event positions fall under the sample-timing correction.
+8. **Record both audit passes as `EVD` records** so the ledgers' claims are reproducible rather than asserted. No value
    in the resource ledger has been measured; all of them are read from source.
 
 ## Documentation-workflow review notes

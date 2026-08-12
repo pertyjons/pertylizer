@@ -41,9 +41,9 @@ ADR-0037 is not in the master plan's decision list. It carries the frame count s
 
 | ID        | Deliverable                                                 | Status      | Dependencies         | Primary record                                          |
 |-----------|-------------------------------------------------------------|-------------|----------------------|---------------------------------------------------------|
-| P00A-T001 | Define the reference V1 corpus and preserve/change manifest | Not started | None                 | Future `EVD` record                                     |
-| P00A-T002 | Define the comparison result model and headless command     | Not started | P00A-T001            | Future specification/evidence                           |
-| P00A-T003 | Capture V1 CPU, memory, timing, and determinism baselines   | Not started | P00A-T001            | Future `EVD` records                                    |
+| P00A-T001 | Define the reference V1 corpus and preserve/change manifest | Active      | None                 | [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md) |
+| P00A-T002 | Define the comparison result model and headless command     | Complete    | P00A-T001            | [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md) |
+| P00A-T003 | Capture V1 CPU, memory, timing, and determinism baselines   | Active      | P00A-T001            | [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md) covers determinism only |
 | P00A-T004 | Complete the fixed-limit and overflow audit                 | Active      | None                 | [Resource inventory](../inventories/resource-limits.md) |
 | P00A-T005 | Define the initial HostProfile and RenderLimits contract    | Not started | P00A-T004            | Future specification/ADRs                               |
 | P00A-T006 | Satisfy every entry in the required-decisions table         | Active      | P00A-T003/P00A-T004  | [Decision register](../ADR.md)                          |
@@ -57,6 +57,53 @@ gate and ADR-0028 only to the Phase 4 entry gate; either deferral records an own
 deferral satisfies the Phase 0A exit gate.
 
 ## Active tasks
+
+**P00A-T001 — Define the reference V1 corpus and preserve/change manifest.**
+
+- **Scope.** The master plan's [Phase 0A work list](../master-plan.md#work) names eleven categories of representative V1
+  render. The task is complete when all eleven are captured, not when the format that holds them exists.
+- **State.** The manifest, the model, the generator, and the validation are done and in use. Four categories are
+  exercised: `subtractive-voice`, `polyphonic-voice-stealing`, `mod-matrix-patch`, and `sends-returns-master`. Seven are
+  recorded as gaps with reasons.
+- **Why this is `Active` and not `Complete`.** A recorded gap is an honest statement about coverage, but it is not the
+  baseline the plan asks for. Marking the task complete with seven of eleven missing would move the shortfall out of the
+  task list and into a document nobody re-reads, and the Phase 0A exit review would then have to rediscover it. The
+  register is authoritative for what the task is; this tracker does not get to shrink it.
+- **Remaining, in the order the blockers clear.**
+
+  | Category                     | Blocked on                                                                        |
+  |------------------------------|-----------------------------------------------------------------------------------|
+  | `instrument-inserts`         | Nothing. Cheapest of the seven; build it on CORPUS-0001                            |
+  | `stereo-or-spatial-voice`    | Choosing the source. The Spatial Panner's positions are not modulatable in V1, so a case built on it pins behaviour already scheduled to change |
+  | `tempo-map-arrangement`      | Whether a tempo ramp's event positions fall under the sample-timing correction, which the case must cite rather than decide |
+  | `yams-control-patch`         | A script small enough that a render difference names one language feature          |
+  | `yams-audio-script-patch`    | Same, and see the note below                                                       |
+  | `sampler-patch`              | The Phase 0B bundle round-trip fixtures; a sample makes the input a bundle and pulls asset identity (ADR-0027) into a Phase 0A baseline |
+  | `shared-patch-or-instrument` | ADR-0014. A module's script PRNG seed derives from its instance number (`IDN-0029`), so a shared instrument's audio depends on how the two references are numbered |
+
+- **Correction to an earlier note.** The `yams-audio-script-patch` gap said the case "should be authored together with
+  the ADR-0037 measurement". That reads as a dependency and is not one: ADR-0037's proxy is defined over whatever the
+  corpus contains, and waiting for an AudioScript case would block a measurement that is otherwise ready. The two are
+  independent, and the gap entry now says so.
+
+**P00A-T003 — Capture V1 CPU, memory, timing, and determinism baselines.**
+
+- **Scope.** Measured V1 figures for the reference corpus at common polyphony and
+  sample rates, in a reviewable format.
+- **State.** The determinism half is done and recorded in
+  [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md): all
+  four cases render bit-identically across two passes, with level, loudness, and
+  fundamental captured per case. **CPU, memory, and timing are not measured at
+  all**, and this task does not close until they are.
+- **What became possible.** P00A-T002 is complete and P00A-T001's corpus exists
+  with four of eleven categories, so the inputs and the harness both exist. Every
+  remaining measurement in this phase — including ADR-0037's proxy — is defined
+  over them and can now be run against what is covered. Adding the seven missing
+  categories widens that coverage; it does not gate the measurements.
+- **A defect had to be fixed first.** See *What building the corpus found* below.
+  Any timing or CPU figure taken before the `fix/offline-render-fidelity` work
+  describes a renderer that omitted per-instrument settings, and would have to be
+  retaken.
 
 **P00A-T006 — Satisfy every entry in the required-decisions table.**
 
@@ -144,10 +191,50 @@ deferral satisfies the Phase 0A exit gate.
   silent-truncation register. Entries remain `Investigating` until the class sweep records rules and evidence.
 - **Implementation revision.** Documentation only; no code changed.
 
+## What building the corpus found
+
+Producing the first corpus renders surfaced a defect in V1's offline renderer,
+fixed on `fix/offline-render-fidelity` with a thirteen-case regression test.
+
+`OfflineEngineSession` rebuilt each instrument without an `AllocatorConfig` and
+replayed only volume, pan, and solo, so `max_voices`, `allocation_mode`,
+`stealing_strategy`, the unison pair, `transpose`, `key_range`, `oversampling`,
+both velocity sensitivities, and the sidechain source were left at engine
+defaults. Nothing warned: the values were never sent rather than lost. A project
+edited from `max_voices: 4` to `1` rendered byte-identically, and so did one
+edited from `transpose: 0` to `12`.
+
+Three consequences worth recording here rather than only in the commit.
+
+- **It reached further than this phase.** `analyze_mix_bus`, `analyze_section`,
+  the WAV export, and every other consumer of the offline renderer measured audio
+  the live engine never produced. This is the third instance of the same shape —
+  an offline reader disagreeing with the live engine while looking healthy —
+  after the `analyze_*` snapshot bug and the save-barrier one.
+- **It would have made CORPUS-0002 vacuous.** That case exists to force voice
+  stealing; before the fix it rendered with the default eight voices and stole
+  nothing, so a V2 with any allocator at all would have satisfied its preserve
+  claims.
+- **It is an argument for the corpus itself.** The defect had been reachable by
+  every offline render for as long as the offline renderer has existed, and was
+  found within hours of there being fixtures that set a non-default instrument
+  field. The two inventories found two V1 defects by reading; this one needed
+  something executable.
+
+Also noted and **not** fixed: `StealingStrategy::Quietest` is implemented as
+"oldest releasing voice, then oldest active" (its own `For now` comment), so it
+is indistinguishable from `Oldest` on material with nothing in release. That is a
+V1 behaviour gap, not a migration question; it is recorded here because a corpus
+case that varied the stealing strategy would otherwise look like it was testing
+something.
+
 ## Deliverables and verification
 
 | Task      | Output/revision                                                                                                                                                        | Verification/evidence                                                                                                                                                                                                                                    | Result                                       |
 |-----------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------|
+| P00A-T001 | [Corpus manifest](../../../corpus/v2-reference/manifest.json) and four generated fixtures; four of eleven categories covered, seven recorded as gaps | The manifest is loaded and validated by `cargo test -p pertylizer --test corpus_manifest`: category coverage, claim classes, digests, and the fact that each committed project is exactly what its builder produces | Partial — format and validation done, four of eleven categories exercised |
+| P00A-T002 | `pertylizer compare` and the versioned report model                                   | Each metric unit-tested against a synthetic signal with a known deviation (6.02 dB of gain, 100 ms of delay, a semitone of detune, a band-limited change, an inverted channel); end-to-end through render→render→compare in `compare_command.rs` | Complete — runs with no GUI and no audio device |
+| P00A-T003 | [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md)             | Two process-separate renders per case, bit-identical on all four, every comparison delta exactly zero, with a two-case control that resolves their octave to 3.6 cents | Partial — determinism and level only; CPU, memory, and timing not measured |
 | P00A-T004 | [Resource inventory](../inventories/resource-limits.md) passes 1 and 2 at `dd69b657`                                                                                   | Two independent discovery methods with opposite blind spots: pass 1 matched constant names, pass 2 matched documented truncation behavior. Neither executes anything, so a truncation that is both unnamed and undocumented would still be missed        | Partial — source-read only, no measurement   |
 | P00A-T006 | [ADR-0001](../decisions/ADR-0001-internal-render-quantum.md) and [ADR-0021](../decisions/ADR-0021-host-profile-and-admission-policy.md) `Accepted`; [ADR-0037](../decisions/ADR-0037-render-quantum-value.md) `Proposed` | Three review passes resolved the buffering, event, retention, ownership, host-fault, and measurement-boundary defects before acceptance. ADR-0037 remains evidence-gated | Partial — 3 of 6 records, 2 accepted |
 

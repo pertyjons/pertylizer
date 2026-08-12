@@ -25,6 +25,11 @@ use synth_dsp::{Complex, FftProcessor, WindowType, fill_window};
 /// `energy_bands`.
 pub mod spectrum;
 
+/// Gated integrated loudness (ITU-R BS.1770-4). Needs none of this module's FFT
+/// helpers — it is here because it is an analysis primitive, and a caller
+/// looking for "how loud is this buffer" looks in one place.
+pub mod loudness;
+
 /// One spectral peak: frequency in Hz and magnitude in dB relative to the
 /// loudest peak in the spectrum (loudest = 0 dB).
 #[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
@@ -719,6 +724,132 @@ pub fn energy_bands(samples: &[f32], sample_rate: u32) -> EnergyBands {
         mid: out[2],
         high: out[3],
     }
+}
+
+/// Edges of the octave bands [`octave_band_energies`] reports, in Hz: band *i*
+/// runs from `OCTAVE_BAND_EDGES_HZ[i]` up to `OCTAVE_BAND_EDGES_HZ[i + 1]`.
+///
+/// Ten bands from 20 Hz to 20 kHz on roughly octave centres. Four bands
+/// ([`EnergyBands`]) is enough to describe a single note's balance but far too
+/// coarse for a whole-render comparison, where a change confined to one octave
+/// has to be visible as a change in one number rather than smeared across a
+/// quarter of the spectrum.
+pub const OCTAVE_BAND_EDGES_HZ: [f32; 11] = [
+    20.0, 40.0, 80.0, 160.0, 315.0, 630.0, 1_250.0, 2_500.0, 5_000.0, 10_000.0, 20_000.0,
+];
+
+/// FFT frame [`octave_band_energies`] averages over.
+///
+/// 4096 gives ~11 Hz resolution at 44.1 kHz, which resolves the 20-40 Hz band
+/// with a handful of bins rather than one. Frames overlap by half, so no part of
+/// the signal falls only under a window's taper.
+const OCTAVE_BAND_FRAME: usize = 4096;
+
+/// One band's energy.
+#[derive(Debug, Clone, Copy, serde::Serialize, serde::Deserialize)]
+pub struct BandEnergy {
+    /// Lower edge, inclusive.
+    pub low_hz: f32,
+    /// Upper edge, exclusive.
+    pub high_hz: f32,
+    /// RMS energy in the band, on the same scale as a time-domain RMS: the
+    /// bands of a signal sum (in power) to [`rms_overall`].
+    pub rms: f32,
+}
+
+/// Per-octave-band RMS energy, averaged over overlapping frames.
+///
+/// Two things distinguish this from [`energy_bands`], which is the right tool
+/// for a single note and the wrong one for a whole render.
+///
+/// It averages the power spectrum across overlapping frames (a Welch estimate)
+/// rather than taking one transform over the entire buffer. Over several seconds
+/// the single-transform form is dominated by whatever happened to be loudest;
+/// the average describes the whole window, which is what a comparison between
+/// two renders needs.
+///
+/// And a band's value is the *total* energy in it, normalized so the bands sum
+/// in power to the signal's overall RMS — not the mean per-bin magnitude, which
+/// makes a wide band containing one tone read quieter than a narrow one
+/// containing the same tone. Comparing two renders band by band needs a measure
+/// where equal energy reads equal.
+///
+/// Bands above the Nyquist frequency are omitted rather than reported as zero: a
+/// zero would read as "this band is silent" when the truth is "this rate cannot
+/// carry that band". A band the rate covers only partly *is* reported, holding
+/// the energy below Nyquist — which is one reason a band-by-band comparison
+/// between two different sample rates is not meaningful. Returns an empty vector
+/// for a buffer too short to frame.
+#[must_use]
+pub fn octave_band_energies(samples: &[f32], sample_rate: u32) -> Vec<BandEnergy> {
+    if sample_rate == 0 || samples.len() < OCTAVE_BAND_FRAME {
+        return Vec::new();
+    }
+    let sr = sample_rate as f32;
+    let bin_hz = sr / OCTAVE_BAND_FRAME as f32;
+    let nyquist_bin = OCTAVE_BAND_FRAME / 2;
+
+    let mut workspace = MagnitudeWorkspace::new(OCTAVE_BAND_FRAME);
+    let hop = OCTAVE_BAND_FRAME / 2;
+    let band_count = OCTAVE_BAND_EDGES_HZ.len() - 1;
+    let mut sums = vec![0.0_f64; band_count];
+    let mut occupied = vec![false; band_count];
+    let mut frames = 0_usize;
+
+    let mut start = 0_usize;
+    while start + OCTAVE_BAND_FRAME <= samples.len() {
+        let mags = workspace.magnitudes(&samples[start..start + OCTAVE_BAND_FRAME]);
+        for (k, m) in mags.iter().enumerate().skip(1) {
+            let Some(band) = band_of(k as f32 * bin_hz) else {
+                continue;
+            };
+            // Parseval over a real transform: every bin but DC and Nyquist
+            // stands for a conjugate pair, so it carries twice its own power.
+            let weight = if k == nyquist_bin { 1.0 } else { 2.0 };
+            sums[band] += weight * f64::from(*m) * f64::from(*m);
+            occupied[band] = true;
+        }
+        frames += 1;
+        start += hop;
+    }
+    if frames == 0 {
+        return Vec::new();
+    }
+
+    // Two factors bring the accumulated bin power back to a time-domain mean
+    // square. `1/N²` undoes the un-normalized forward DFT (Parseval's `N`, and
+    // one more `N` to go from a sum of squares to a mean). `1/0.375` undoes the
+    // Hann window's power gain — Σw²/N is 3/8 — which is the *power* factor, not
+    // the 0.5 coherent gain `energy_bands` applies to read a peak bin's
+    // amplitude. Using the coherent gain here would report every band 1.15×
+    // high and the bands would no longer sum to the signal's RMS.
+    const HANN_POWER_GAIN: f64 = 0.375;
+    let fsz = OCTAVE_BAND_FRAME as f64;
+    let scale = 1.0 / (fsz * fsz * HANN_POWER_GAIN * frames as f64);
+
+    let mut out = Vec::with_capacity(band_count);
+    for band in 0..band_count {
+        if !occupied[band] {
+            continue;
+        }
+        out.push(BandEnergy {
+            low_hz: OCTAVE_BAND_EDGES_HZ[band],
+            high_hz: OCTAVE_BAND_EDGES_HZ[band + 1],
+            rms: (sums[band] * scale).sqrt() as f32,
+        });
+    }
+    out
+}
+
+/// Index of the band containing `hz`, or `None` below the lowest or above the
+/// highest edge.
+fn band_of(hz: f32) -> Option<usize> {
+    if hz < OCTAVE_BAND_EDGES_HZ[0] {
+        return None;
+    }
+    OCTAVE_BAND_EDGES_HZ
+        .windows(2)
+        .position(|edges| hz >= edges[0] && hz < edges[1])
 }
 
 /// Analyze the harmonic structure of a (presumed-tonal) signal at a known
@@ -1717,5 +1848,109 @@ mod tests {
             "first high-freq window centroid pulled down: {}",
             env[4]
         );
+    }
+
+    /// A pure tone must put essentially all its energy in the one band that
+    /// contains it. A band-edge or bin-mapping mistake shows up here as energy
+    /// in a neighbour, which is exactly the failure that would make a spectral
+    /// comparison blame the wrong octave.
+    #[test]
+    fn octave_bands_place_a_tone_in_its_own_band() {
+        let sr = 44_100_u32;
+        let hz = 1_000.0_f32;
+        let buf: Vec<f32> = (0..sr as usize)
+            .map(|i| (std::f32::consts::TAU * hz * i as f32 / sr as f32).sin())
+            .collect();
+        let bands = octave_band_energies(&buf, sr);
+        assert!(!bands.is_empty(), "one second of audio must yield bands");
+
+        let (loudest, _) = bands
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.rms.total_cmp(&b.1.rms))
+            .expect("non-empty");
+        let band = &bands[loudest];
+        assert!(
+            hz >= band.low_hz && hz < band.high_hz,
+            "1 kHz landed in the {}-{} Hz band",
+            band.low_hz,
+            band.high_hz
+        );
+        let others: f32 = bands
+            .iter()
+            .enumerate()
+            .filter(|(i, _)| *i != loudest)
+            .map(|(_, b)| b.rms)
+            .sum();
+        assert!(
+            others < band.rms * 0.1,
+            "{others} of leakage against {} in band — the bands are not separating",
+            band.rms
+        );
+    }
+
+    /// The bands must sum in power to the signal's overall RMS, so a caller can
+    /// read one band against `rms_overall` without a hidden conversion. This is
+    /// the assertion that pins the Parseval and window-gain factors: getting
+    /// either wrong leaves every band off by a constant, which no
+    /// band-versus-band comparison would ever notice.
+    #[test]
+    fn octave_band_energy_sums_to_the_time_domain_rms() {
+        let sr = 44_100_u32;
+        // Three tones in three different bands, so the test covers the sum and
+        // not just one band carrying everything.
+        let buf: Vec<f32> = (0..sr as usize)
+            .map(|i| {
+                let t = i as f32 / sr as f32;
+                0.5 * (std::f32::consts::TAU * 110.0 * t).sin()
+                    + 0.3 * (std::f32::consts::TAU * 1_000.0 * t).sin()
+                    + 0.2 * (std::f32::consts::TAU * 7_000.0 * t).sin()
+            })
+            .collect();
+        let power: f32 = octave_band_energies(&buf, sr)
+            .iter()
+            .map(|b| b.rms * b.rms)
+            .sum();
+        let total = power.sqrt();
+        let expected = rms_overall(&buf);
+        assert!(
+            (total - expected).abs() < expected * 0.05,
+            "bands summed to {total} against a time-domain RMS of {expected}"
+        );
+    }
+
+    /// A band the sample rate cannot carry is omitted, not reported as zero: a
+    /// zero reads as "silent here" when the truth is "unrepresentable here", and
+    /// a comparison would then score two rates as differing in a band neither
+    /// one has.
+    #[test]
+    fn octave_bands_above_nyquist_are_omitted() {
+        // 16 kHz puts Nyquist at 8 kHz, below the 10-20 kHz band's lower edge,
+        // so that band has no bins at all and must not appear.
+        let sr = 16_000_u32;
+        let buf: Vec<f32> = (0..sr as usize)
+            .map(|i| (std::f32::consts::TAU * 440.0 * i as f32 / sr as f32).sin())
+            .collect();
+        let bands = octave_band_energies(&buf, sr);
+        assert!(!bands.is_empty());
+        assert!(
+            bands.iter().all(|b| b.low_hz < sr as f32 * 0.5),
+            "a band starting above the {} Hz Nyquist was reported",
+            sr / 2
+        );
+        assert_eq!(
+            bands.len(),
+            OCTAVE_BAND_EDGES_HZ.len() - 2,
+            "exactly the 10-20 kHz band should be missing at 16 kHz"
+        );
+    }
+
+    /// A buffer shorter than one analysis frame yields nothing rather than a
+    /// number derived from a single zero-padded window.
+    #[test]
+    fn octave_bands_need_a_full_frame() {
+        assert!(octave_band_energies(&[0.1; 1024], 44_100).is_empty());
+        assert!(octave_band_energies(&[], 44_100).is_empty());
+        assert!(octave_band_energies(&[0.1; 8192], 0).is_empty());
     }
 }

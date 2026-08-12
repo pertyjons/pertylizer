@@ -39,6 +39,13 @@ above have been read.
 | What is the current normative technical contract? | [specs/](specs/README.md)             |
 | Has a phase actually passed its gates?            | [reviews/](reviews/README.md)         |
 | Where is non-authoritative historical material?   | [archive/](archive/README.md)         |
+| What does V1 actually render, and what must survive? | [`corpus/v2-reference/`](../../corpus/v2-reference/README.md) |
+
+The reference corpus is the one authority that does **not** live under
+`plans/v2/`. It holds project files and is executed by tests, so it belongs with
+the repository's fixtures rather than with its planning documents — see the
+artifact policy in [evidence/](evidence/README.md). It is listed here because a
+reader who starts at this file would otherwise never find it.
 
 If two documents disagree, do not silently select the convenient answer. Use the table above to identify the authority,
 report the conflict, and repair or supersede the other document.
@@ -57,6 +64,7 @@ plans/v2/
 ├── glossary.md               # Shared V2 terminology
 ├── master-plan.md            # Master architecture and migration plan
 ├── decisions/                # One durable record per considered decision
+├── diagrams/                 # Explanatory architecture pictures (never normative)
 ├── evidence/                 # Reproducible experiments and analyses
 ├── inventories/              # Exhaustive V1-to-V2 coverage ledgers
 ├── phases/                   # Operational phase trackers

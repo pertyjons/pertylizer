@@ -70,6 +70,8 @@ struct Cli {
 enum Command {
     /// Render a saved project to a WAV file and exit.
     Render(RenderArgs),
+    /// Measure how two rendered WAVs differ, and exit.
+    Compare(CompareArgs),
 }
 
 /// Version-1 arguments of `pertylizer render`.
@@ -122,6 +124,31 @@ struct RenderArgs {
     /// Mute a track, by id or by unique name. Repeatable.
     #[arg(long, value_name = "ID|NAME")]
     mute_track: Vec<pertylizer::render::TrackSelector>,
+}
+
+/// Version-1 arguments of `pertylizer compare`.
+///
+/// Deliberately just the two inputs and where the report goes. There is no
+/// tolerance flag and no pass/fail: the command measures, and whether a
+/// difference is acceptable is decided by the corpus case's preserve/change
+/// claims, not by a number on this command line.
+#[derive(Debug, clap::Args)]
+struct CompareArgs {
+    /// Contract version this invocation speaks.
+    #[arg(long, default_value_t = pertylizer::compare::COMPARE_PROTOCOL_VERSION)]
+    protocol_version: u32,
+
+    /// The render everything is measured against. Never written to.
+    #[arg(long, value_name = "FILE")]
+    reference: PathBuf,
+
+    /// The render being measured. Never written to.
+    #[arg(long, value_name = "FILE")]
+    candidate: PathBuf,
+
+    /// Where to write the JSON report. Omitted prints it on stdout.
+    #[arg(long, value_name = "FILE")]
+    result_json: Option<PathBuf>,
 }
 
 /// Trailing help section. Not a set of flags, so it rides `after_help` rather
@@ -188,11 +215,14 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::process::exit(1);
     }
 
-    if let Some(Command::Render(args)) = &cli.command {
+    if let Some(command) = &cli.command {
         // Nothing here draws or listens; drop the GUI's log clone.
         #[cfg(feature = "gui-egui")]
         drop(activity_log);
-        return run_render(args);
+        return match command {
+            Command::Render(args) => run_render(args),
+            Command::Compare(args) => run_compare(args),
+        };
     }
 
     #[cfg(feature = "mcp")]
@@ -281,6 +311,64 @@ fn render_project(args: &RenderArgs) -> Result<(), Box<dyn std::error::Error>> {
         ),
         None => {
             let json = receipt.to_json()?;
+            std::io::Write::write_all(&mut std::io::stdout(), &json)?;
+        }
+    }
+    Ok(())
+}
+
+/// Compare two renders and exit.
+///
+/// Failures print their message, then exit non-zero, for the same reason
+/// [`run_render`] does: `main`'s error path `Debug`-prints, which turns a
+/// readable message into a struct dump.
+fn run_compare(args: &CompareArgs) -> Result<(), Box<dyn std::error::Error>> {
+    let Err(error) = compare_renders(args) else {
+        return Ok(());
+    };
+    eprintln!("error: {error}");
+    std::process::exit(1);
+}
+
+/// The comparison itself.
+///
+/// Progress and warnings go to stderr so stdout stays a clean JSON channel:
+/// without `--result-json` the report is printed there and nothing else is.
+fn compare_renders(args: &CompareArgs) -> Result<(), Box<dyn std::error::Error>> {
+    use pertylizer::compare::{COMPARE_PROTOCOL_VERSION, CompareCommand, run_compare_command};
+
+    if args.protocol_version != COMPARE_PROTOCOL_VERSION {
+        return Err(std::io::Error::other(format!(
+            "unsupported --protocol-version {}; this build speaks version {COMPARE_PROTOCOL_VERSION}",
+            args.protocol_version,
+        ))
+        .into());
+    }
+
+    let command = CompareCommand {
+        reference: args.reference.clone(),
+        candidate: args.candidate.clone(),
+        result_json: args.result_json.clone(),
+        // `args_os` for the same reason the render command uses it: clap accepts
+        // a non-UTF-8 path that `env::args()` panics on mid-iteration.
+        argv: std::env::args_os()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect(),
+    };
+
+    let report = run_compare_command(&command)?;
+    for warning in &report.warnings {
+        eprintln!("warning: {warning}");
+    }
+    match &args.result_json {
+        Some(path) => eprintln!(
+            "✓ Compared {} against {} (report: {})",
+            report.candidate.path,
+            report.reference.path,
+            path.display()
+        ),
+        None => {
+            let json = report.to_json()?;
             std::io::Write::write_all(&mut std::io::stdout(), &json)?;
         }
     }

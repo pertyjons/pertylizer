@@ -76,6 +76,11 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 schemars = { workspace = true }
 
+# Enum utilities. `EnumIter` makes the V2 reference corpus's category set
+# self-enumerating, so the manifest's coverage check cannot miss a category that
+# was added to the enum but never to the corpus.
+strum = { workspace = true }
+
 # ZIP archive (bundle project format)
 zip = { workspace = true }
 

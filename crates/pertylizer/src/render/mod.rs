@@ -20,6 +20,7 @@ pub mod receipt;
 pub mod wav;
 
 pub use crate::audio::wav_format::WavFormat;
+pub(crate) use command::validate_render_bounds;
 pub use command::{RenderCommand, run_render_command};
 pub use mix::{AppliedMix, MixSelection, MixSelectionError, TrackSelector, apply_mix_selection};
 pub use receipt::{PROTOCOL_VERSION, RenderReceipt};

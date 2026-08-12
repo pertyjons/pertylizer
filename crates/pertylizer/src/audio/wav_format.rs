@@ -17,16 +17,33 @@
 /// The variants are exactly what `hound` can encode. Integer output is signed
 /// little-endian except at 8 bits, which WAV stores unsigned — `hound` applies
 /// that conversion, so quantization produces signed values at every depth.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, clap::ValueEnum)]
+///
+/// The serde spellings are the same strings `--bit-depth` accepts, so a bit
+/// depth written into a document (the V2 reference corpus manifest, above all)
+/// reads back as the command line that would reproduce it.
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Default,
+    clap::ValueEnum,
+    serde::Serialize,
+    serde::Deserialize,
+)]
 pub enum WavFormat {
     /// 8-bit integer. Written unsigned, as WAV requires at this depth.
     #[value(name = "8")]
+    #[serde(rename = "8")]
     Int8,
     /// 16-bit signed integer — CD depth.
     #[value(name = "16")]
+    #[serde(rename = "16")]
     Int16,
     /// 24-bit signed integer.
     #[value(name = "24")]
+    #[serde(rename = "24")]
     Int24,
     /// 32-bit signed integer. A wider container than the renderer's `f32`
     /// output can fill, so it carries no more detail than 24-bit.
@@ -36,11 +53,13 @@ pub enum WavFormat {
     /// wrong encoding to whoever typed the obvious thing. Rejecting it makes
     /// the choice explicit — and `clap` lists both spellings in the error.
     #[value(name = "32i")]
+    #[serde(rename = "32i")]
     Int32,
     /// 32-bit IEEE float. Lossless against the renderer's own `f32` output, and
     /// therefore the default.
     #[default]
     #[value(name = "32f")]
+    #[serde(rename = "32f")]
     Float32,
 }
 
@@ -273,6 +292,33 @@ mod tests {
                 format.label()
             );
             assert_eq!(reader.len(), samples.len() as u32, "{}", format.label());
+        }
+    }
+
+    /// The `#[value(name = …)]` and `#[serde(rename = …)]` spellings are two
+    /// independent attributes making the same promise: a bit depth written into
+    /// a document reads back as the `--bit-depth` argument that reproduces it.
+    /// Nothing but this test stops one from being edited without the other, and
+    /// the drift would be silent — a corpus manifest saying `"32"` for a depth
+    /// the CLI only spells `32f`.
+    #[test]
+    fn the_serde_and_command_line_spellings_are_the_same_strings() {
+        use clap::ValueEnum;
+        for format in WavFormat::ALL {
+            let serialized = serde_json::to_string(&format).expect("serialize");
+            let json_name = serialized.trim_matches('"');
+            let cli_name = format
+                .to_possible_value()
+                .expect("every variant is selectable on the command line");
+            assert_eq!(
+                json_name,
+                cli_name.get_name(),
+                "{} serializes as {json_name:?} but --bit-depth spells it {:?}",
+                format.label(),
+                cli_name.get_name()
+            );
+            let parsed: WavFormat = serde_json::from_str(&serialized).expect("parse");
+            assert_eq!(parsed, format);
         }
     }
 }
