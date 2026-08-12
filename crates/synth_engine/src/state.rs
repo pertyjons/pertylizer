@@ -535,6 +535,14 @@ pub struct EngineState {
     pub transport: TransportState,
     /// Master volume.
     pub master_volume: AtomicF32,
+    /// Global glide/portamento time, in seconds.
+    ///
+    /// Published for the same reason `master_volume` is: the offline renderer
+    /// builds a second engine and has to reproduce what the live one is doing,
+    /// and glide is a per-instrument allocator setting with a *global* source,
+    /// so it appears in no instrument snapshot. Without it here, an offline
+    /// render has no way to learn it and silently uses zero.
+    pub glide_time: AtomicF32,
     /// Active voice count.
     pub voice_count: AtomicU32,
     /// CPU usage (0.0 - 1.0), or zero when `rt-profiling` is disabled.
@@ -586,6 +594,7 @@ impl EngineState {
             return_meters: ChannelMeterBank::new(),
             transport: TransportState::new(),
             master_volume: AtomicF32::new(1.0),
+            glide_time: AtomicF32::new(0.0),
             voice_count: AtomicU32::new(0),
             cpu_usage: AtomicF32::new(0.0),
             cpu_voices: AtomicF32::new(0.0),
@@ -656,6 +665,7 @@ impl Default for EngineState {
             return_meters: ChannelMeterBank::new(),
             transport: TransportState::new(),
             master_volume: AtomicF32::new(1.0),
+            glide_time: AtomicF32::new(0.0),
             voice_count: AtomicU32::new(0),
             cpu_usage: AtomicF32::new(0.0),
             cpu_voices: AtomicF32::new(0.0),

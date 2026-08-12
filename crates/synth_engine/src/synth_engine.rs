@@ -1950,6 +1950,20 @@ impl SynthEngine {
         self.prev_instrument_outputs
             .insert(instrument.id(), instrument.take_sidechain_output());
         self.channel_sends.insert(instrument.id(), ArrayVec::new());
+        // Glide is a global setting applied per instrument, so an instrument
+        // created after `SetGlideTime` has to inherit it — otherwise the engine
+        // holds one glide time in `state` and a different one on this
+        // instrument, and no later event reconciles them.
+        //
+        // Project loading is not what exposed this: it sends the glide after the
+        // instruments, so every instrument gets it. An instrument added later —
+        // from the GUI, from MCP, from any path that creates one during a
+        // session — silently kept zero, while every offline render read the
+        // published global and applied it. That is the live-versus-offline
+        // divergence this closes, from the live side.
+        instrument
+            .allocator_mut()
+            .set_glide_time(Seconds::new(self.state.glide_time.load()));
         self.instruments.push(instrument);
     }
 
@@ -2708,6 +2722,12 @@ impl SynthEngine {
         for instrument in &mut self.instruments {
             instrument.allocator_mut().set_glide_time(time_secs);
         }
+        // Published like the master volume, and for the same reason: glide is
+        // applied per instrument but sourced globally, so it appears in no
+        // instrument snapshot and an offline render has nowhere else to read it.
+        // The clamped value is stored, not the requested one, so a reader
+        // reproduces what the engine actually did.
+        self.state.glide_time.store(time_secs.as_f32());
     }
 
     fn handle_set_focused_instrument(&mut self, instrument_id: Option<InstrumentId>) {

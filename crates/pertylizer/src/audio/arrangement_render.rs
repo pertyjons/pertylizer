@@ -288,7 +288,25 @@ impl OfflineEngineSession {
         // command ring after each instrument so a many-instrument project cannot
         // fill the configured ring — nothing else drains it during setup.
         for inst_snap in &live_instruments {
-            if let Err(e) = tmp_session.add_instrument_with_id(inst_snap.id, &inst_snap.name) {
+            // With the allocator config, not without it. `max_voices`, `mode`,
+            // and `stealing` fix the size and behaviour of a pre-allocated voice
+            // pool, so this constructor is the only place they can be set — an
+            // offline session built without them renders every instrument as a
+            // default 8-voice polyphonic one however the project was
+            // configured, and does it silently.
+            let allocator = synth_engine::voice_allocator::AllocatorConfig {
+                max_voices: inst_snap.max_voices,
+                mode: inst_snap.allocation_mode,
+                stealing: inst_snap.stealing_strategy,
+                unison_detune: inst_snap.unison_detune,
+                unison_spread: inst_snap.unison_spread,
+                ..Default::default()
+            };
+            if let Err(e) = tmp_session.add_instrument_with_id_and_config(
+                inst_snap.id,
+                &inst_snap.name,
+                Some(allocator),
+            ) {
                 setup_warnings.push(format!(
                     "arrangement_render: failed to add instrument {}: {e}",
                     inst_snap.id.as_u64()
@@ -335,9 +353,28 @@ impl OfflineEngineSession {
         // effect on `analyze_mix_bus` / `analyze_section` metrics. Sent once;
         // it persists across `render_range` calls (no Clear command resets it).
         // Drains at the first `render_range` warm-up (one command — no overflow).
-        let _ = handle.send_blocking(EngineCommand::SetMasterVolume(synth_core::Gain::new(
-            engine_state.master_volume.load(),
-        )));
+        let master = synth_core::Gain::new(engine_state.master_volume.load());
+        if let Err(e) = handle.send_blocking(EngineCommand::SetMasterVolume(master)) {
+            setup_warnings.push(format!(
+                "arrangement_render: could not set the master volume to {}: {e} — \
+                 the render is at unity instead",
+                master.as_f32()
+            ));
+        }
+
+        // Glide is global in the project and per-instrument in the engine, so it
+        // reaches no instrument snapshot — which is exactly how it survived the
+        // per-instrument sweep above. A project with a non-zero glide time
+        // rendered here without it plays every interval as a jump. Sent after
+        // the instruments exist, because the engine applies it to the
+        // instruments it has.
+        let glide = synth_core::Seconds::new(engine_state.glide_time.load());
+        if let Err(e) = handle.send_blocking(EngineCommand::SetGlideTime(glide)) {
+            setup_warnings.push(format!(
+                "arrangement_render: could not set the glide time to {glide}: {e} — \
+                 every interval will render as a jump"
+            ));
+        }
 
         Ok((
             Self {
@@ -737,28 +774,94 @@ fn load_instrument_into_offline(
     // muted+enabled live behavior (an instrument muted live is reported as
     // disabled), so we forward it directly. Track-level mutes inside the
     // arrangement are honored by the shared sequencer automatically.
-    let _ = handle.send_blocking(EngineCommand::SetInstrumentEnabled {
+    let enabled = inst_snap.enabled && !inst_snap.muted;
+    if let Err(e) = handle.send_blocking(EngineCommand::SetInstrumentEnabled {
         instrument_id,
-        enabled: inst_snap.enabled && !inst_snap.muted,
-    });
+        enabled,
+    }) {
+        warnings.push(format!(
+            "arrangement_render: instrument {} rendered enabled when it should be {}: {e}",
+            instrument_id.as_u64(),
+            if enabled { "enabled" } else { "muted" }
+        ));
+    }
     // MIDI channel only affects external MIDI input, which an offline render
-    // doesn't have — default to channel 1 for all instruments.
-    let _ = handle.send_blocking(EngineCommand::SetInstrumentMidiChannel {
+    // doesn't have — default to channel 1 for all instruments. A failure here
+    // is reported anyway: the rule is that a dropped command is never silent,
+    // and "this one happens not to matter" is exactly the reasoning that left
+    // the parameter sweep below missing for as long as it was.
+    if let Err(e) = handle.send_blocking(EngineCommand::SetInstrumentMidiChannel {
         instrument_id,
         channel: MidiChannelSelection::CH1,
-    });
-    let _ = handle.send_blocking(EngineCommand::SetInstrumentParameter {
-        instrument_id,
-        param: InstrumentParam::Volume(inst_snap.volume),
-    });
-    let _ = handle.send_blocking(EngineCommand::SetInstrumentParameter {
-        instrument_id,
-        param: InstrumentParam::Pan(inst_snap.pan),
-    });
-    let _ = handle.send_blocking(EngineCommand::SetInstrumentParameter {
-        instrument_id,
-        param: InstrumentParam::Solo(inst_snap.solo),
-    });
+    }) {
+        warnings.push(format!(
+            "arrangement_render: instrument {} kept its live MIDI channel: {e} \
+             (harmless offline — nothing sends it MIDI — but the command was dropped)",
+            instrument_id.as_u64()
+        ));
+    }
+    // Every instrument parameter the snapshot carries, not just the mix three.
+    //
+    // This used to send `Volume`, `Pan`, and `Solo` and stop, which left the
+    // rest at their engine defaults — and every one of them changes the audio.
+    // A four-voice instrument rendered as eight (so a project that steals voices
+    // live never stole one offline), a transposed instrument rendered at concert
+    // pitch, a key-split instrument rendered across the whole keyboard. None of
+    // it warned, because nothing was missing: the values were simply never sent.
+    //
+    // The list mirrors `project_apply::push_instrument_params`, which is what
+    // the live load path sends, plus the velocity sensitivities. The allocator
+    // fields appear both here and in the `AllocatorConfig` the instrument was
+    // constructed with, exactly as they do live.
+    //
+    // A send that fails is reported rather than discarded. Nothing drains this
+    // ring but this thread, so a full ring makes `send_blocking` time out and
+    // return an error — and swallowing it would leave that parameter at the
+    // engine default, which is precisely the silent defaulting this list exists
+    // to end.
+    for param in [
+        InstrumentParam::Volume(inst_snap.volume),
+        InstrumentParam::Pan(inst_snap.pan),
+        InstrumentParam::Solo(inst_snap.solo),
+        InstrumentParam::OversamplingFactor(inst_snap.oversampling),
+        InstrumentParam::KeyRange(inst_snap.key_range),
+        InstrumentParam::Transpose(inst_snap.transpose),
+        InstrumentParam::AllocationMode(inst_snap.allocation_mode),
+        InstrumentParam::StealingStrategy(inst_snap.stealing_strategy),
+        InstrumentParam::UnisonDetune(inst_snap.unison_detune),
+        InstrumentParam::UnisonSpread(inst_snap.unison_spread),
+        InstrumentParam::MaxVoices(inst_snap.max_voices),
+        InstrumentParam::VelocityAmpSensitivity(inst_snap.velocity_amp_sensitivity),
+        InstrumentParam::VelocityFilterSensitivity(inst_snap.velocity_filter_sensitivity),
+    ] {
+        // `param` is `Copy`, so the command below borrows nothing from it and
+        // it is still nameable in the warning.
+        if let Err(e) = handle.send_blocking(EngineCommand::SetInstrumentParameter {
+            instrument_id,
+            param,
+        }) {
+            warnings.push(format!(
+                "arrangement_render: instrument {} kept the engine default for {param:?}: {e}",
+                instrument_id.as_u64()
+            ));
+        }
+    }
+
+    // Sidechain routing is audio, not metadata: a compressor whose source is
+    // unset ducks nothing, so a project built around sidechain compression
+    // renders without any of it.
+    if let Some(source) = inst_snap.sidechain_source_id
+        && let Err(e) = handle.send_blocking(EngineCommand::SetSidechainSource {
+            instrument_id,
+            source: Some(source),
+        })
+    {
+        warnings.push(format!(
+            "arrangement_render: instrument {} rendered without its sidechain source {}: {e}",
+            instrument_id.as_u64(),
+            source.as_u64()
+        ));
+    }
 }
 
 /// Replay the live master effect chain into the offline engine.

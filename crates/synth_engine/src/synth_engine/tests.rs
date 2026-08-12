@@ -1426,3 +1426,60 @@ fn send_routes_channel_signal_into_return_and_back_to_master() {
          wet energy to the master mix (baseline={baseline}, with_send={with_send})"
     );
 }
+
+/// Glide is set globally and applied per instrument, so an instrument created
+/// *after* the global value was set has to inherit it.
+///
+/// It did not. `SetGlideTime` walked the instruments that existed at the time
+/// and stopped there, so an instrument added later kept the zero its allocator
+/// config was built with — while the engine's published global still read the
+/// value the user chose. Nothing reconciled the two, and every offline render
+/// reads the published global, so the same instrument glided offline and jumped
+/// live.
+///
+/// Project loading never showed it: that path sends the glide after the
+/// instruments. It takes an instrument created during a session — from the GUI,
+/// from MCP, from anything that adds one to a running engine.
+#[test]
+fn an_instrument_added_after_a_global_glide_inherits_it() {
+    let (mut engine, mut handle) = SynthEngine::new();
+
+    handle.send(EngineCommand::SetGlideTime(Seconds::new(0.75)));
+    engine.process_commands();
+    add_default_instrument(&mut engine, &mut handle);
+
+    let published = engine.state.glide_time.load();
+    let on_instrument = engine.instruments[0]
+        .allocator()
+        .config()
+        .glide_time
+        .as_f32();
+    assert!(
+        (published - 0.75).abs() < 1e-6,
+        "the engine should publish the glide it was given, got {published}"
+    );
+    assert!(
+        (on_instrument - published).abs() < 1e-6,
+        "an instrument added after the global glide was set holds {on_instrument} \
+         while the engine publishes {published} — the offline renderer reads the \
+         published value, so the two would disagree"
+    );
+}
+
+/// The other order, which already worked, kept as the pair: setting the glide
+/// after the instrument exists must still reach it.
+#[test]
+fn a_global_glide_reaches_an_instrument_that_already_exists() {
+    let (mut engine, mut handle) = SynthEngine::new();
+
+    add_default_instrument(&mut engine, &mut handle);
+    handle.send(EngineCommand::SetGlideTime(Seconds::new(0.4)));
+    engine.process_commands();
+
+    let on_instrument = engine.instruments[0]
+        .allocator()
+        .config()
+        .glide_time
+        .as_f32();
+    assert!((on_instrument - 0.4).abs() < 1e-6, "got {on_instrument}");
+}
