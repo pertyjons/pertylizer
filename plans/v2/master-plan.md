@@ -27,6 +27,49 @@ Core V2** refers to the combined project, application, and sound architecture.
 Do not rename the existing crates or split the new architecture into many crates
 before the dependency boundaries have been demonstrated by working code.
 
+### Authority of this document
+
+This plan is authoritative for scope, phase order, and exit gates. It is not
+authoritative for settled details: an accepted ADR in
+[the decision register](ADR.md) and a current document under [specs/](specs/README.md)
+supersede provisional wording here. When an accepted decision contradicts this
+plan, update the affected sections in the same change instead of leaving two
+live answers. Operational task state belongs in a
+[phase tracker](phases/README.md); the `Work` lists below define the normative
+scope those trackers decompose.
+
+## Contents
+
+- [Part I: Migration Plan](#part-i-migration-plan)
+  - [Migration principles](#migration-principles)
+  - [Coexistence architecture](#coexistence-architecture)
+  - [Phase 0A: Baseline, limits, and render-core contracts](#phase-0a-baseline-limits-and-render-core-contracts)
+  - [Phase 0B: Migration inventories and project contracts](#phase-0b-migration-inventories-and-project-contracts)
+  - [Phase 1: Introduce the experimental Sound Core V2 crate](#phase-1-introduce-the-experimental-sound-core-v2-crate)
+  - [Phase 2: Minimal compiled voice graph](#phase-2-minimal-compiled-voice-graph)
+  - [Phase 3: Sample-accurate scheduler and block-partition invariance](#phase-3-sample-accurate-scheduler-and-block-partition-invariance)
+  - [Phase 4: Current-project lowering and offline A/B path](#phase-4-current-project-lowering-and-offline-ab-path)
+  - [Phase 5: Declarative node and parameter API](#phase-5-declarative-node-and-parameter-api)
+  - [Phase 6: Polyphony and instrument runtime](#phase-6-polyphony-and-instrument-runtime)
+  - [Phase 7: YAMS, Mod Grid, and unified modulation](#phase-7-yams-mod-grid-and-unified-modulation)
+  - [Phase 8: Mixer, channels, buses, effects, and latency](#phase-8-mixer-channels-buses-effects-and-latency)
+  - [Phase 9: Live integration and immutable plan swapping](#phase-9-live-integration-and-immutable-plan-swapping)
+  - [Phase 10: Project Core V2 and Application Core V2 migration](#phase-10-project-core-v2-and-application-core-v2-migration)
+    - [Phase 10A: Canonical project model and stable identity](#phase-10a-canonical-project-model-and-stable-identity)
+    - [Phase 10B: Application operations and transactions](#phase-10b-application-operations-and-transactions)
+    - [Phase 10C: History, dirty state, save, and recovery](#phase-10c-history-dirty-state-save-and-recovery)
+    - [Phase 10D: Project Format V2, assets, and conversion](#phase-10d-project-format-v2-assets-and-conversion)
+    - [Phase 10E: MCP, CLI, import, and service migration](#phase-10e-mcp-cli-import-and-service-migration)
+  - [Phase 11: GUI and workflow migration](#phase-11-gui-and-workflow-migration)
+  - [Phase 12: Default cutover and V1 retirement](#phase-12-default-cutover-and-v1-retirement)
+- [Part II: Target Architecture](#part-ii-target-architecture)
+- [Part III: Verification and Quality Gates](#part-iii-verification-and-quality-gates)
+- [Part IV: Risks and Controls](#part-iv-risks-and-controls)
+- [Part V: Scope and Non-goals](#part-v-scope-and-non-goals)
+- [Part VI: Coordination With Existing Plans](#part-vi-coordination-with-existing-plans)
+- [Part VII: Open Decisions](#part-vii-open-decisions)
+- [Definition of Done](#definition-of-done)
+
 ## Objective
 
 Replace the current collection of project, GUI, session, engine-mirror, and
@@ -181,7 +224,11 @@ same project + same render request
 Once live integration begins, a development setting selects one renderer at
 stream construction. There is one active engine per output stream.
 
-## Phase 0: Baseline, contracts, and decision record
+## Phase 0A: Baseline, limits, and render-core contracts
+
+Phase 0A is the entry condition for Phase 1. It establishes what V2 will be
+measured against and the few contracts the render core needs before it can
+compile or execute anything.
 
 ### Work
 
@@ -210,6 +257,57 @@ stream construction. There is one active engine per output stream.
   - render determinism digest.
 - Measure V1 CPU and memory for the reference corpus at common polyphony and
   sample rates.
+- Complete the fixed-limit and overflow audit: every current hard cap,
+  truncation point, bounded queue, buffer capacity, and script budget, with its
+  enforcement site, overflow behavior, and whether V2 preserves, raises,
+  removes, or exposes it as configurable.
+- Define an initial `HostProfile`/`RenderLimits` contract covering maximum
+  quantum, layouts, voices, nodes, event fan-out, channels, buses, sends,
+  telemetry taps, recording buffers, prepared memory, and script work.
+- Open an architecture decision record under [decisions/](decisions/README.md)
+  for every entry in the [decision register](ADR.md) whose target phase begins
+  with `0A`. Accept the internal render quantum, sample-time/event-timestamp,
+  and host-profile/admission decisions before Phase 0A closes because Phase 1
+  implements those contracts. Hardware time mapping may remain `Deferred` only
+  to the explicit Phase 3 entry gate, and the long-running job contract only to
+  the explicit Phase 4 entry gate. A deferred ADR names that target gate, its
+  owner, and the evidence still required. The register — not this plan — is
+  authoritative for the topic list, identifiers, status, and target phase;
+  [Part VII](#part-vii-open-decisions) explains why each decision is open.
+
+### Exit gate
+
+- [ ] The reference corpus and comparison command can run without a GUI or
+      physical audio device.
+- [ ] Every known intentional V1-to-V2 semantic change has a named comparison
+      category rather than being treated as generic error.
+- [ ] CPU, memory, timing, and determinism baselines are saved in a reviewable
+      format.
+- [ ] ADR-0001 (`RenderQuantum`), ADR-0021 (host profile/admission), and
+      ADR-0032 (`SampleTime` and event timestamps) are `Accepted`.
+- [ ] ADR-0022 (hardware time mapping) and ADR-0028 (long-running jobs) are
+      either `Accepted` or `Deferred` to their named Phase 3 and Phase 4 entry
+      gates with an owner and outstanding evidence recorded.
+- [ ] Every current fixed RT/resource cap appears once in the resource
+      inventory with a proposed V2 admission rule and a user-visible overflow
+      diagnostic; no unexplained silent truncation is accepted as baseline
+      behavior.
+
+## Phase 0B: Migration inventories and project contracts
+
+Phase 0B is the entry condition for Phase 10 and runs in parallel with Phases
+1-4. It establishes what must not be lost in the migration, and the contracts
+the project and application layers need. It is separated from Phase 0A so that
+an exhaustive V1 audit cannot block the render-core evidence the rest of the
+plan depends on.
+
+Some 0B decisions gate an earlier phase, as recorded in the register's target
+phase: ADR-0027 before Phase 5, ADR-0025 before Phase 6, and ADR-0024 and
+ADR-0036 before Phase 9. Accept each by its earlier entry gate even if the
+remaining Phase 0B work continues in parallel.
+
+### Work
+
 - Produce a persisted-state ownership ledger. For every field currently written
   by project, patch, bundle, or recovery save, record:
   - its domain meaning and type;
@@ -218,8 +316,10 @@ stream construction. There is one active engine per output stream.
   - how dirty state observes it;
   - how undo restores it;
   - its intended Project Core V2 owner;
-  - whether it is actually project, session, user-setting, editor-metadata, or
-    telemetry state.
+  - whether it is actually project-authored state (including persisted
+    `EditorMetadata`), runtime session, user settings, frontend-local transient
+    state, host/service configuration, runtime job state, runtime telemetry, or
+    intentionally removed.
 - Produce an exhaustive capability and reachability ledger, including:
   - every current `EngineCommand` and `EngineEvent` variant;
   - all MCP tools and their read/mutate/render/service behavior;
@@ -263,66 +363,37 @@ stream construction. There is one active engine per output stream.
   orthogonal.
 - Define the Project Format V2 envelope and conversion policy at the contract
   level. Implementation waits until Phase 10D.
-- Define an initial `HostProfile`/`RenderLimits` contract covering maximum
-  quantum, layouts, voices, nodes, event fan-out, channels, buses, sends,
-  telemetry taps, recording buffers, prepared memory, and script work. Record
-  every current hard cap and whether V2 preserves, raises, removes, or makes it
-  configurable.
-- Write architecture decision records, either as subsections here or as linked
-  documents, for:
-  - internal render quantum;
-  - event timestamp representation;
-  - planar versus interleaved internal audio;
-  - graph feedback rule;
-  - parameter modulation laws;
-  - state migration policy;
-  - track/source/channel ownership;
-  - initial module ABI;
-  - project/session/settings/telemetry boundaries;
-  - stable identity and duplication/remapping rules;
-  - transaction, history, and optimistic-concurrency semantics;
-  - asset identity and embedded/external policy;
-  - editor metadata persistence policy;
-  - audio-device and audio-input lifecycle, requested versus negotiated stream
-    configuration, hotplug/reconnect, and sample-rate changes;
-  - input/output clock domains, hardware/MIDI timestamp mapping, clock-drift
-    correction, and input/output/round-trip latency;
-  - project operations versus session commands versus performance events;
-  - note and audio recording, count-in, metronome, loop, replace/overdub,
-    latency compensation, and take-commit semantics;
-  - tuning ownership, persisted Scala/KBM representation, reference pitch, and
-    per-note expression identity;
-  - passive signal observation, analyzer nodes, telemetry subscriptions, OSC,
-    and visualizer protocol ownership;
-  - resource admission and overflow policy;
-  - long-running render/analysis job lifecycle, progress, cancellation,
-    streaming, stems, and result receipts;
-  - host/service configuration and remote authorization boundary.
+- Open an architecture decision record for every register entry whose target
+  phase begins with `0B`, and resolve each one before Phase 0B closes. A decision
+  may be deferred while the phase is active, but a deferred decision cannot pass
+  the Phase 0B exit review. These cover
+  project/session/settings/telemetry boundaries, persistent identity and
+  remapping, transaction and concurrency semantics, the format envelope and
+  unknown-field policy, asset identity, editor-metadata scope,
+  track/source/channel ownership, tuning ownership, observation ownership,
+  recording and take semantics, audio-device and input lifecycle, host/service
+  configuration and authorization, and the supported build matrix.
 
 ### Exit gate
 
-- [ ] The reference corpus and comparison command can run without a GUI or
-      physical audio device.
-- [ ] Every known intentional V1-to-V2 semantic change has a named comparison
-      category rather than being treated as generic error.
-- [ ] CPU, memory, timing, and determinism baselines are saved in a reviewable
-      format.
-- [ ] The initial `RenderQuantum` and `SampleTime` decisions are recorded.
 - [ ] Every currently persisted field appears exactly once in the ownership
       ledger and has a proposed V2 owner or an explicit removal decision.
 - [ ] Every capability in the GUI, MCP, CLI, public Rust API, module/preset
       catalog, file/import/export surface, and external protocol appears once in
       the capability ledger with reachability and a migration decision.
-- [ ] Every current fixed RT/resource cap has a proposed V2 admission rule and
-      a user-visible overflow diagnostic; no unexplained silent truncation is
-      accepted as baseline behavior.
+- [ ] Every identity and cross-boundary reference appears once in the identity
+      ledger with a proposed V2 rule.
 - [ ] The current GUI, MCP, CLI, recovery, and rollback save sources are mapped;
       no project field remains supplied by an undocumented overlay or mirror.
+- [ ] Round-trip fixtures cover the omission-prone data above and fail when a
+      field is dropped.
 - [ ] The stable-ID, operation-result, state-classification, and format-envelope
       contracts are recorded before their implementation begins.
-- [ ] Host-I/O clocks/latency, recording/session lanes, tuning, observability,
-      resource profiles, long-running jobs, and external protocol ownership are
-      recorded before dependent runtime work begins.
+- [ ] Recording/session lanes, tuning, observability, external protocol
+      ownership, host/service configuration, and the supported build matrix are
+      recorded before dependent work begins.
+- [ ] Every ADR whose target phase begins with `0B` is `Accepted`; none remains
+      `Proposed` or `Deferred` at the Phase 0B exit review.
 
 ## Phase 1: Introduce the experimental Sound Core V2 crate
 
@@ -363,11 +434,11 @@ pub trait Renderer {
 ### Exit gate
 
 - [ ] An empty plan and a constant/sine source render deterministically.
-- [ ] Rendering accepts varying caller block sizes up to the configured maximum.
+- [ ] Rendering accepts varying caller block sizes up to the configured maximum
+      and splits every such block into the chosen fixed internal quantum.
 - [ ] A plan exceeding its host profile is rejected before rendering with an
       attributable resource diagnostic; the renderer never silently clips the
       graph, event fan-out, voices, sends, or observation set to fit.
-- [ ] The internal renderer splits them into the chosen fixed quantum.
 - [ ] The render loop takes no locks, performs no heap allocation, performs no
       I/O, and emits no logging.
 - [ ] The crate can be deleted without affecting V1 behavior or public APIs.
@@ -430,6 +501,11 @@ NodeState:    oscillator phase/filter history/envelope stage
 
 ## Phase 3: Sample-accurate scheduler and block-partition invariance
 
+ADR-0022 (hardware time mapping and latency ownership) must be `Accepted`
+before Phase 3 implementation begins. Phase 3 may refine it through a
+superseding ADR if simulated-host evidence invalidates an assumption; it may
+not invent timestamp semantics inside implementation tasks.
+
 ### Work
 
 - Introduce absolute `SampleTime` and quantum-local `SampleOffset` newtypes.
@@ -480,9 +556,17 @@ irregular host blocks with the same total frames
       have declared ordering against note/controller/automation events at the
       same sample.
 - [ ] The reference V2 renders are invariant to host block partitioning.
-- [ ] YAMS and Mod Grid work may not begin until this timing contract is stable.
+
+[Phase 7](#phase-7-yams-mod-grid-and-unified-modulation) may not begin before
+this gate passes. Modulation and script timing are meaningless until the event
+timing contract is stable.
 
 ## Phase 4: Current-project lowering and offline A/B path
+
+ADR-0028 (long-running job contract) must be `Accepted` before Phase 4
+implementation begins. The initial contract may deliberately leave frontend
+adapters to Phase 10B, but streaming, progress, cancellation, revision pinning,
+and result ownership must already have one authoritative meaning.
 
 ### Work
 
@@ -526,6 +610,10 @@ irregular host blocks with the same total frames
       changing its deterministic output when allowed to finish.
 
 ## Phase 5: Declarative node and parameter API
+
+ADR-0027 (observation and analyzer ownership) must be `Accepted` before Phase 5
+implementation begins, so the declarative node API does not accidentally make
+GUI buffers or protocol subscriptions part of authored DSP state.
 
 ### Work
 
@@ -600,6 +688,10 @@ stored base
 - [ ] The legacy adapter is not required by the renderer itself.
 
 ## Phase 6: Polyphony and instrument runtime
+
+ADR-0025 (tuning representation and ownership) must be `Accepted` before Phase
+6 implementation begins. Voice pitch and per-note expression must not establish
+a second tuning model while the project representation remains undecided.
 
 ### Work
 
@@ -754,8 +846,8 @@ instrument voice sum
   - mono;
   - stereo;
   - extensible multichannel metadata even if initial output remains stereo.
-- Prefer planar internal processing unless Phase 0 evidence justifies
-  interleaved internal buffers. Convert only at host or format boundaries.
+- Use the internal channel layout selected by ADR-0002 in Phase 2. Planar is the
+  expected outcome; convert only at host or format boundaries.
 - Keep internal floating-point summation linear with headroom. Saturation,
   soft clipping, and limiting are explicit nodes or explicit sink policies, not
   hidden per-channel mixing behavior.
@@ -786,6 +878,11 @@ instrument voice sum
       guard.
 
 ## Phase 9: Live integration and immutable plan swapping
+
+ADR-0024 (recording take and commit semantics) and ADR-0036 (audio-device and
+input lifecycle) must be `Accepted` before Phase 9 implementation begins. Live
+integration may not define either policy implicitly through host-adapter or
+recording code.
 
 ### Work
 
@@ -872,9 +969,11 @@ instrument voice sum
 
 ## Phase 10: Project Core V2 and Application Core V2 migration
 
-Do not begin the broad GUI migration before Sound Core V2 has passed the
-offline and live render gates above. Until then, `LegacyProjectLowerer` remains
-the boundary and the current project format remains the production format.
+Do not begin the broad GUI migration in
+[Phase 11](#phase-11-gui-and-workflow-migration) before Sound Core V2 has passed
+the offline and live render gates above. Until then, `LegacyProjectLowerer`
+remains the boundary and the current project format remains the production
+format.
 
 Phase 10 is deliberately split into five gated migrations. It is not one large
 model replacement hidden behind a single exit gate. The application must be
@@ -944,7 +1043,7 @@ RuntimeTelemetry                         lossy observation only
 `-- observation/OSC subscriber state
 ```
 
-The Phase 0 ownership ledger decides borderline cases. Keyboard octave, preview
+The Phase 0B ownership ledger decides borderline cases. Keyboard octave, preview
 glide, active selection, loop playback state, editor canvas data, render
 settings, and recording state must not remain in a project merely because the
 current save path can reach them.
@@ -1277,7 +1376,7 @@ ThisTrack.Source.Node(NodeId).Param(ParamKey)
   rules.
 - Move project reads, discovery, lint, analysis setup, and save onto immutable
   canonical snapshots plus explicitly revisioned runtime telemetry.
-- Map every MCP tool from the Phase 0 capability ledger to a domain read,
+- Map every MCP tool from the Phase 0B capability ledger to a domain read,
   application operation, runtime-session command, telemetry subscription,
   revision-pinned job, compatibility adapter, or explicit removal. Tool count
   parity alone is insufficient; effect/revision semantics must be classified.
@@ -2365,7 +2464,7 @@ problem; neither re-derives compiler rules.
 
 ## Capability and migration coverage
 
-The Phase 0 ledger is a maintained executable/checkable artifact, not a one-time
+The Phase 0B ledger is a maintained executable/checkable artifact, not a one-time
 document. Before cutover it must show:
 
 - every current MCP tool, CLI command, GUI workflow, `EngineCommand`/
@@ -2464,7 +2563,7 @@ authorize redesigning every Pertylizer feature at once.
 
 Controls:
 
-- use the Phase 0 ownership ledger to define the boundary;
+- use the Phase 0B ownership ledger to define the boundary;
 - implement Project/Application Core only after the offline and live Sound Core
   gates prove the downstream contract;
 - migrate one operation family and one frontend/view at a time;
@@ -2559,7 +2658,8 @@ recording path that edits project state from the wrong thread.
 
 Controls:
 
-- decide host clocks, latency, session lanes, and take semantics in Phase 0;
+- decide host clocks and latency in Phase 0A, and session lanes and take
+  semantics in Phase 0B;
 - simulate negotiation, drift, hotplug, disconnect, overflow, and timestamp
   mapping before relying on physical-device testing;
 - keep device/protocol code outside Sound Core;
@@ -2571,7 +2671,7 @@ Controls:
 Controls:
 
 - one explicit `HostProfile` and compile-time `ResourceReport`;
-- inventory every V1 cap and truncation in Phase 0;
+- inventory every V1 cap and truncation in Phase 0A;
 - reject authored topology/routing/event expansion before activation when it
   cannot fit;
 - reserve lossy behavior for declared telemetry/live queue classes and always
@@ -2690,7 +2790,7 @@ Controls:
   timestamping must leave room for them;
 - generalized remote multi-user collaboration, priority arbitration, or an
   engine-level permission model; a local-only service policy is acceptable
-  unless Phase 0 explicitly promotes remote control to a product requirement.
+  unless Phase 0B explicitly promotes remote control to a product requirement.
 
 ---
 
@@ -2699,8 +2799,9 @@ Controls:
 ## MCP agent API redesign
 
 The application-operation and canonical-project work in
-`plans/mcp-agent-api-redesign.md` aligns with Sound Core V2. It should not
-recreate V1 engine commands as the new application abstraction. Operations
+[`plans/mcp-agent-api-redesign.md`](../mcp-agent-api-redesign.md) aligns with
+Sound Core V2. It should not recreate V1 engine commands as the new application
+abstraction. Operations
 should mutate canonical project state, produce a revision, and let the compiler
 publish the corresponding plan.
 
@@ -2710,8 +2811,9 @@ types or wire schemas.
 
 ## Game runtime library
 
-`plans/game-runtime-library.md` currently assumes `SynthEngine` is the sole
-engine implementation. Preserve its stronger principle rather than its current
+[`plans/game-runtime-library.md`](../game-runtime-library.md) currently assumes
+`SynthEngine` is the sole engine implementation. Preserve its stronger
+principle rather than its current
 type name: Studio, games, CLI, and offline tools must use the same selected
 render core. Do not publish a V1-specific facade contract that makes V2 cutover
 needlessly breaking while this work is active.
@@ -2721,10 +2823,11 @@ are intended to simplify that runtime substantially.
 
 ## Headless render and analysis
 
-The existing headless renderer and analyzers are the first integration and A/B
-harness. They should select an engine internally during development while
-keeping one user-facing render contract. Their deterministic receipts and
-digests are useful V2 evidence.
+The existing headless renderer and analyzers, planned in
+[`plans/headless-render-cli.md`](../headless-render-cli.md), are the first
+integration and A/B harness. They should select an engine internally during
+development while keeping one user-facing render contract. Their deterministic
+receipts and digests are useful V2 evidence.
 
 Replace their differing orchestration with the common revision-pinned streaming
 job contract as V2 becomes usable. Pure symbolic analyzers consume canonical
@@ -2733,8 +2836,9 @@ renderer output. Neither analysis core may depend on MCP DTOs or `EngineState`.
 
 ## Sampling, tuning, and recording backlog
 
-The open sampling work in `plans/TODO.md` correctly warns that multi-sample
-zones should be modeled before voice and GUI assumptions harden. This plan owns
+The open sampling work in [`plans/TODO.md`](../TODO.md) correctly warns that
+multi-sample zones should be modeled before voice and GUI assumptions harden.
+This plan owns
 the architectural prerequisite: `SampleAsset`/`SampleMap`/`SampleZone`, source
 versus prepared data, provenance, retention, and transactional recording import.
 It does not pull full streaming, slicing, timestretch, granular sample sourcing,
@@ -2766,93 +2870,138 @@ safeguards while both architectures coexist.
 
 # Part VII: Open Decisions
 
-Resolve these at the named phase, using measurements rather than preference:
+Resolve these at the named phase, using measurements rather than preference.
+Every topic has a permanent identifier in the [decision register](ADR.md), which
+is authoritative for its status and target phase; the text below states what is
+open and why. A topic is settled only when its record under
+[decisions/](decisions/README.md) is accepted.
 
-1. **Internal quantum** — likely 32 or 64 frames; decide in Phase 0/1.
-2. **Internal channel layout** — planar is preferred; verify against module and
-   conversion cost in Phase 2.
-3. **Event segmentation API** — renderer-level segment split versus event spans
-   consumed by selected nodes; decide in Phase 3.
-4. **Native node representation** — trait objects, enum dispatch, or a hybrid;
-   measure compile time, runtime cost, and module ergonomics in Phase 2/5.
-5. **Buffer liveness sophistication** — begin with correct conservative reuse;
-   optimize only after profiling.
-6. **Parameter ramp representation** — scalar/start-end/piecewise segment;
-   decide with sample-accurate automation in Phase 3/5.
-7. **Modulation laws** — ratify the initial set from real existing parameters in
-   Phase 5.
-8. **YAMS state identity** — named state, semantic compiler identity, or reset
-   policy; decide in Phase 7.
-9. **Plan swap crossfade length and latency** — decide from audible tests in
-   Phase 9.
-10. **Compatible state migration surface** — private engine mechanism versus a
-    node-declared migration hook; decide in Phase 9.
-11. **Shared current instrument conversion** — independent instances versus
-    explicit shared event routing; decide per affected example in Phase 10.
-12. **Automation conflict policy** — error versus explicit priorities; start
-    strict in Phase 10.
-13. **Project/session boundary cases** — keyboard octave, preview glide,
-    transport loop, active selection, render settings, and record-arm state;
-    classify from product semantics in Phase 0/10A rather than current location.
-14. **Persistent ID generation and encoding** — random, monotonic, namespaced,
-    or hybrid; decide in Phase 0/10A from duplication, deterministic fixtures,
-    merge/import, and wire-format needs.
-15. **History representation** — invertible operations, domain `ChangeSet`,
-    structurally shared document snapshots, or a measured hybrid; decide in
-    Phase 10C before migrating views.
-16. **Unknown-field policy** — strict rejection versus retained diagnosed
-    extensions for a known format version; decide in Phase 0/10D. Silent ignore
-    is not an option.
-17. **Asset identity and external reference policy** — content digest, stable
-    asset ID, source versus prepared representation, provenance/privacy,
-    retention/garbage collection, relocation search, and explicit relink
-    behavior; decide in Phase 0/10D before AudioTrack or expanded sampling work.
-18. **Editor metadata scope** — which layout/organization fields are intentional
-    shared project content versus user-local presentation; decide from the
-    ownership ledger in Phase 10A.
-19. **Remote history semantics** — whether MCP/import transactions enter the
-    ordinary undo stack, a labeled shared history, or an explicit non-undoable
-    path requiring caller consent; decide in Phase 10B/10C.
-20. **Final crate boundaries and names** — begin with dependency rules; decide
-    physical crate splits only after working Project/Application/Sound vertical
-    slices demonstrate them and V1 retirement is within reach.
-21. **Host profile and admission policy** — which limits are hard platform
-    capabilities, configurable safety budgets, or warnings; decide in Phase 0/1
-    from the V1 cap inventory and measured resource reports.
-22. **Hardware time mapping** — timestamp epoch, calibration, late-event policy,
-    independent audio clock correction, and latency-compensation ownership;
-    decide in Phase 0/3/9 with simulated-host evidence.
-23. **Session event ordering** — ordering/priority for play, stop, seek, loop,
-    count-in, metronome, record, note/controller, automation, and panic at the
-    same sample; decide in Phase 3 before recording/live integration.
-24. **Recording take semantics** — replace/overdub, quantization, loop flushing,
-    sustain/held-note finalization, partial overflow, stale target, and audio
-    capture commit; decide in Phase 0/9/10B.
-25. **Tuning representation** — resolved authored data versus retained Scala/KBM
-    source/assets, project default versus instance override, reference pitch,
-    and per-note bend composition; decide in Phase 0/6/10A.
-26. **Sample map minimum** — exact `SampleZone` fields and one-zone playback
-    subset needed at V2 cutover without committing to full multisampling;
-    decide in Phase 6/10A/10D.
-27. **Observation ownership** — which analyzers are persisted graph nodes versus
-    passive compiler taps, subscription cost/admission, worker-side FFT/features,
-    and OSC payload/version policy; decide in Phase 0/5/9.
-28. **Long-running job contract** — streaming sink, progress unit, cancellation
-    granularity, stem/channel selection, temporary output atomicity, retention,
-    and stale-result labeling; decide in Phase 0/4/10B.
-29. **Host/service configuration and authorization** — boundary between user
-    preference, deployment config, active runtime state, local-only policy, and
-    any promoted remote authorization requirement; decide in Phase 0/10E.
-30. **Public facade and compatibility surface** — retained Project/Application/
-    Sound/host entry points, external consumers, and intentionally broken V1
-    re-exports; decide before Phase 10E and enforce at Phase 12.
-31. **Supported build matrix** — exact feature combinations, platforms, MSRV,
-    visualizer/protocol consumer, and packaging gates required at each cutover
-    milestone; record in Phase 0 and ratify before Phase 12.
+1. **Internal quantum (ADR-0001)** — likely 32 or 64 frames; decide in Phase
+   0A before Phase 1, then verify the accepted choice while implementing Phase
+   1.
+2. **Internal channel layout (ADR-0002)** — planar is preferred; verify
+   against module and conversion cost in Phase 2.
+3. **Event segmentation API (ADR-0003)** — renderer-level segment split versus
+   event spans consumed by selected nodes; decide in Phase 3.
+4. **Native node representation (ADR-0004)** — trait objects, enum dispatch,
+   or a hybrid; measure compile time, runtime cost, and module ergonomics in
+   Phase 2/5.
+5. **Buffer liveness sophistication (ADR-0005)** — begin with correct
+   conservative reuse; optimize only after profiling.
+6. **Parameter ramp representation (ADR-0006)** — scalar/start-end/piecewise
+   segment; decide with sample-accurate automation in Phase 3/5.
+7. **Modulation laws (ADR-0007)** — ratify the initial set from real existing
+   parameters in Phase 5.
+8. **YAMS state identity (ADR-0008)** — named state, semantic compiler
+   identity, or reset policy; decide in Phase 7.
+9. **Plan swap crossfade length and latency (ADR-0009)** — decide from audible
+   tests in Phase 9.
+10. **Compatible state migration surface (ADR-0010)** — private engine
+    mechanism versus a node-declared migration hook; decide in Phase 9.
+11. **Shared current instrument conversion (ADR-0011)** — independent
+    instances versus explicit shared event routing; decide per affected
+    example in Phase 10.
+12. **Automation conflict policy (ADR-0012)** — error versus explicit
+    priorities; start strict in Phase 10.
+13. **Project/session boundary cases (ADR-0013)** — keyboard octave, preview
+    glide, transport loop, active selection, render settings, and record-arm
+    state; classify from product semantics in Phase 0B/10A rather than current
+    location.
+14. **Persistent ID generation and encoding (ADR-0014)** — random, monotonic,
+    namespaced, or hybrid; decide in Phase 0B/10A from duplication,
+    deterministic fixtures, merge/import, and wire-format needs.
+15. **History representation (ADR-0015)** — invertible operations, domain
+    `ChangeSet`, structurally shared document snapshots, or a measured hybrid;
+    decide in Phase 10C before migrating views.
+16. **Unknown-field policy (ADR-0016)** — strict rejection versus retained
+    diagnosed extensions for a known format version; decide in Phase 0B/10D.
+    Silent ignore is not an option.
+17. **Asset identity and external reference policy (ADR-0017)** — content
+    digest, stable asset ID, source versus prepared representation,
+    provenance/privacy, retention/garbage collection, relocation search, and
+    explicit relink behavior; decide in Phase 0B/10D before AudioTrack or
+    expanded sampling work.
+18. **Editor metadata scope (ADR-0018)** — which layout/organization fields
+    are intentional shared project content versus user-local presentation;
+    establish the persistence boundary from the ownership ledger in Phase
+    0B, then enforce and refine it with the canonical model in Phase 10A.
+19. **Remote history semantics (ADR-0019)** — whether MCP/import transactions
+    enter the ordinary undo stack, a labeled shared history, or an explicit
+    non-undoable path requiring caller consent; decide in Phase 10B/10C.
+20. **Final crate boundaries and names (ADR-0020)** — begin with dependency
+    rules; decide physical crate splits only after working
+    Project/Application/Sound vertical slices demonstrate them and V1
+    retirement is within reach.
+21. **Host profile and admission policy (ADR-0021)** — which limits are hard
+    platform capabilities, configurable safety budgets, or warnings; decide in
+    Phase 0A before Phase 1 from the V1 cap inventory and measured resource
+    reports.
+22. **Hardware time mapping (ADR-0022)** — timestamp epoch, calibration,
+    late-event policy, independent audio clock correction, and
+    latency-compensation ownership; investigate in Phase 0A and accept before
+    Phase 3, then verify and refine through Phase 9 with simulated-host evidence.
+23. **Session event ordering (ADR-0023)** — ordering/priority for play, stop,
+    seek, loop, count-in, metronome, record, note/controller, automation, and
+    panic at the same sample; decide in Phase 3 before recording/live
+    integration.
+24. **Recording take semantics (ADR-0024)** — replace/overdub, quantization,
+    loop flushing, sustain/held-note finalization, partial overflow, stale
+    target, and audio capture commit; decide in Phase 0B before Phase 9 and
+    enforce the commit side in Phase 10B.
+25. **Tuning representation (ADR-0025)** — resolved authored data versus
+    retained Scala/KBM source/assets, project default versus instance
+    override, reference pitch, and per-note bend composition; decide in Phase
+    0B before Phase 6 and enforce the project representation in Phase 10A.
+26. **Sample map minimum (ADR-0026)** — exact `SampleZone` fields and one-zone
+    playback subset needed at V2 cutover without committing to full
+    multisampling; decide in Phase 6/10A/10D.
+27. **Observation ownership (ADR-0027)** — which analyzers are persisted graph
+    nodes versus passive compiler taps, subscription cost/admission,
+    worker-side FFT/features, and OSC payload/version policy; decide in Phase
+    0B before Phase 5 and verify the live subscription contract in Phase 9.
+28. **Long-running job contract (ADR-0028)** — streaming sink, progress unit,
+    cancellation granularity, stem/channel selection, temporary output
+    atomicity, retention, and stale-result labeling; investigate in Phase 0A,
+    accept before Phase 4, and implement the shared service in Phase 10B.
+29. **Host/service configuration and authorization (ADR-0029)** — boundary
+    between user preference, deployment config, active runtime state,
+    local-only policy, and any promoted remote authorization requirement;
+    decide in Phase 0B/10E.
+30. **Public facade and compatibility surface (ADR-0030)** — retained
+    Project/Application/Sound/host entry points, external consumers, and
+    intentionally broken V1 re-exports; decide before Phase 10E and enforce at
+    Phase 12.
+31. **Supported build matrix (ADR-0031)** — exact feature combinations,
+    platforms, MSRV, visualizer/protocol consumer, and packaging gates
+    required at each cutover milestone; record in Phase 0B and ratify before
+    Phase 12.
+32. **Sample-time and event-timestamp representation (ADR-0032)** — width,
+    origin, and overflow behavior of absolute `SampleTime`, quantum-local
+    offsets, and the timestamp carried by live events; decide in Phase 0A
+    together with the quantum and verify its event use in Phase 3.
+33. **Graph feedback rule (ADR-0033)** — required delay boundary, whether
+    strongly connected components may be scheduled, and how effective feedback
+    latency is reported; decide in Phase 2/3.
+34. **Track, source, and channel ownership (ADR-0034)** — the enforced
+    relationship between `InstrumentTrack`, `InstrumentInstance`,
+    `PatchDefinition`, and `ChannelStrip`, and how shared patches and layered
+    sources are expressed; decide in Phase 0B/10A.
+35. **Transaction and concurrency semantics (ADR-0035)** — atomicity of
+    compound operations, permitted partial effects, expected-base-revision
+    conflict handling, and gesture coalescing boundaries; decide in Phase
+    0B/10B.
+36. **Audio device and input lifecycle (ADR-0036)** — requested versus
+    negotiated stream configuration, hotplug/reconnect, sample-rate and layout
+    changes, and the prepare/activate/resume sequence that owns them; decide in
+    Phase 0B before Phase 9.
 
 ---
 
 # Definition of Done
+
+This list restates the phase exit gates in Part I and the gates in Part III; it
+is a final checklist, not a source of new requirements. An item here without a
+corresponding phase gate is a defect in one of the two.
 
 Pertylizer Core V2 is complete when all of the following are true:
 
