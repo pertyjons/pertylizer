@@ -8,19 +8,8 @@
 //! It lives here rather than in `mcp_bridge` so a caller does not have to speak
 //! a protocol to render a file. Nothing in this module's inputs, outputs, or
 //! errors mentions an MCP session, [`crate::mcp_shared::McpSharedState`], or
-//! `McpBridgeError`; the song arrives as a plain `SharedSong` handle and
+//! an MCP error type; the song arrives as a plain `SharedSong` handle and
 //! failures arrive as [`RenderError`].
-//!
-//! Two seams into the existing code are deliberately left alone:
-//!
-//! - [`synth_mcp::AnalysisScope`] is still the scope type. It is plain
-//!   configuration data (which optional signal stages to reconstruct, and at
-//!   what sample rate) with no protocol semantics, and it is what
-//!   [`crate::audio::arrangement_render`] already takes. Relocating it out of
-//!   `synth_mcp` is a separate cleanup, not part of extracting this core.
-//! - The offline renderer still fails with `McpBridgeError`, so
-//!   [`RenderError::Render`] carries its rendered message rather than the value.
-//!   Re-typing all of `arrangement_render` would dwarf this extraction.
 
 use std::path::PathBuf;
 
@@ -203,7 +192,7 @@ pub enum RenderError {
     },
     /// The offline renderer refused the request or failed mid-render.
     #[error("render failed: {0}")]
-    Render(String),
+    Render(#[from] crate::audio::arrangement_render::OfflineRenderError),
     /// The output file's parent directory does not exist and could not be
     /// created.
     #[error("cannot create directory {dir} for the render output: {source}")]
@@ -221,16 +210,4 @@ pub enum RenderError {
         /// The underlying encoder/I/O error.
         source: crate::audio::export::ExportError,
     },
-}
-
-impl From<synth_mcp::error::McpBridgeError> for RenderError {
-    fn from(e: synth_mcp::error::McpBridgeError) -> Self {
-        Self::Render(e.to_string())
-    }
-}
-
-impl From<RenderError> for synth_mcp::error::McpBridgeError {
-    fn from(e: RenderError) -> Self {
-        Self::Other(e.to_string())
-    }
 }

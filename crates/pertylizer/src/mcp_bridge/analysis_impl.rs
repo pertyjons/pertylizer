@@ -2146,7 +2146,7 @@ pub fn analyze_tension_curve_impl(
         match crate::audio::arrangement_render::render_arrangement_to_buffer(
             session,
             sample_library,
-            shared,
+            &shared.song,
             render_start.0,
             render_end,
         ) {
@@ -2602,7 +2602,7 @@ pub fn suggest_music_fixes_impl(
             win.duration_seconds,
             Some(win.start_tick),
             None,
-            synth_mcp::AnalysisScope::default(),
+            synth_core::AnalysisScope::default(),
         ) {
             Ok(r) => Some(r),
             Err(e) => {
@@ -2621,7 +2621,7 @@ pub fn suggest_music_fixes_impl(
             Some(win.start_tick),
             Some(win.end_tick),
             None,
-            synth_mcp::AnalysisScope::default(),
+            synth_core::AnalysisScope::default(),
         ) {
             Ok(r) => Some(r),
             Err(e) => {
@@ -2703,14 +2703,14 @@ fn mix_metrics_from_analysis(
 /// Human-readable description of the signal chain an offline analysis render
 /// measured: the master fader plus which optional stages were included. Makes
 /// `analyze_mix_bus` / `analyze_section` unambiguous about pre- vs post-master.
-fn describe_signal_chain(scope: synth_mcp::AnalysisScope, master_volume: f32) -> String {
+fn describe_signal_chain(scope: synth_core::AnalysisScope, master_volume: f32) -> String {
     let stage = |on: bool| if on { "included" } else { "excluded" };
     format!(
         "instruments + track faders + returns, through master fader {master_volume:.3}x; \
          master effects: {}; return effects: {}; rendered @ {} Hz",
         stage(scope.master_effects),
         stage(scope.return_effects),
-        scope.render_sample_rate,
+        scope.render_sample_rate.as_u32(),
     )
 }
 
@@ -2789,7 +2789,7 @@ pub fn render_to_wav_impl(
     duration_seconds: f32,
     start_tick: Option<Tick>,
     instrument_id: Option<InstrumentId>,
-    scope: synth_mcp::AnalysisScope,
+    scope: synth_core::AnalysisScope,
 ) -> Result<RenderToWavResult, McpBridgeError> {
     render_to_wav_with_tail_impl(
         session,
@@ -2816,7 +2816,7 @@ pub fn render_to_wav_with_tail_impl(
     duration_seconds: f32,
     start_tick: Option<Tick>,
     instrument_id: Option<InstrumentId>,
-    scope: synth_mcp::AnalysisScope,
+    scope: synth_core::AnalysisScope,
     tail: synth_core::Seconds,
 ) -> Result<RenderToWavResult, McpBridgeError> {
     let (start, end) = resolve_duration_window(shared, duration_seconds, start_tick)?;
@@ -2912,7 +2912,7 @@ fn render_analysis_window(
     start: u64,
     end: u64,
     instrument_id: Option<InstrumentId>,
-    scope: synth_mcp::AnalysisScope,
+    scope: synth_core::AnalysisScope,
 ) -> Result<
     (
         crate::audio::arrangement_render::RenderedArrangement,
@@ -2939,7 +2939,7 @@ fn render_analysis_window(
         Arc::clone(&shared.song)
     };
 
-    let mut rendered = crate::audio::arrangement_render::render_arrangement_to_buffer_with_song(
+    let mut rendered = crate::audio::arrangement_render::render_arrangement_to_buffer_with_scope(
         session,
         sample_library,
         &song_handle,
@@ -3016,7 +3016,7 @@ fn render_window_mono(
     duration_seconds: f32,
     start_tick: Option<Tick>,
     instrument_id: Option<InstrumentId>,
-    scope: synth_mcp::AnalysisScope,
+    scope: synth_core::AnalysisScope,
 ) -> Result<
     (
         Vec<f32>,
@@ -3054,7 +3054,7 @@ pub fn analyze_spectrum_impl(
     f0_hint: Option<f32>,
     max_partials: Option<u32>,
     log_bins: Option<u32>,
-    scope: synth_mcp::AnalysisScope,
+    scope: synth_core::AnalysisScope,
 ) -> Result<synth_mcp::types::AnalyzeSpectrumResult, McpBridgeError> {
     let (mono, rendered, warnings) = render_window_mono(
         session,
@@ -3101,7 +3101,7 @@ pub fn analyze_spectrogram_impl(
     log_bins: Option<u32>,
     hop_ms: Option<f32>,
     window_len_ms: Option<f32>,
-    scope: synth_mcp::AnalysisScope,
+    scope: synth_core::AnalysisScope,
 ) -> Result<synth_mcp::types::AnalyzeSpectrogramResult, McpBridgeError> {
     let (mono, rendered, mut warnings) = render_window_mono(
         session,
@@ -3416,7 +3416,7 @@ fn analyze_spectrum_source(
     max_partials: Option<u32>,
     log_bins: Option<u32>,
     mel_bands: Option<u32>,
-    scope: synth_mcp::AnalysisScope,
+    scope: synth_core::AnalysisScope,
 ) -> Result<AnalyzedSource, McpBridgeError> {
     let mut opts = spectrum_opts(f0_hint, max_partials, log_bins);
     if let Some(n) = mel_bands {
@@ -3510,7 +3510,7 @@ pub fn compare_spectra_impl(
     max_partials: Option<u32>,
     log_bins: Option<u32>,
     mel_bands: Option<u32>,
-    scope: synth_mcp::AnalysisScope,
+    scope: synth_core::AnalysisScope,
     time_resolved: synth_mcp::TimeResolvedOptions,
 ) -> Result<synth_mcp::types::CompareSpectraResult, McpBridgeError> {
     use crate::audio::analysis::spectrum;
@@ -3712,7 +3712,7 @@ fn resolve_source_mono(
     sample_library: &crate::audio::preview::SharedSampleLibrary,
     shared: &McpSharedState,
     source: &synth_mcp::SpectrumSource,
-    scope: synth_mcp::AnalysisScope,
+    scope: synth_core::AnalysisScope,
 ) -> Result<(Vec<f32>, u32, Vec<String>), McpBridgeError> {
     if let Some(id_or_path) = &source.sample_id_or_path {
         let src = resolve_sample_source(sample_library, id_or_path)?;
@@ -3764,7 +3764,7 @@ pub fn compare_envelopes_impl(
     envelope_window_ms: Option<f32>,
     note_duration_ms: Option<u32>,
     transient_window_ms: Option<f32>,
-    scope: synth_mcp::AnalysisScope,
+    scope: synth_core::AnalysisScope,
 ) -> Result<synth_mcp::types::CompareEnvelopesResult, McpBridgeError> {
     use crate::audio::analysis;
 
@@ -3845,14 +3845,14 @@ pub fn analyze_mix_bus_impl(
     duration_seconds: f32,
     start_tick: Option<Tick>,
     include_per_track: Option<bool>,
-    scope: synth_mcp::AnalysisScope,
+    scope: synth_core::AnalysisScope,
 ) -> Result<AnalyzeMixBusResult, McpBridgeError> {
     let (start, end) = resolve_duration_window(shared, duration_seconds, start_tick)?;
 
     let rendered = crate::audio::arrangement_render::render_arrangement_to_buffer_with_scope(
         session,
         sample_library,
-        shared,
+        &shared.song,
         start,
         end,
         scope,
@@ -3912,7 +3912,7 @@ pub fn analyze_master_chain_impl(
     shared: &McpSharedState,
     duration_seconds: f32,
     start_tick: Option<Tick>,
-    scope: synth_mcp::AnalysisScope,
+    scope: synth_core::AnalysisScope,
 ) -> Result<AnalyzeMasterChainResult, McpBridgeError> {
     let (start, end) = resolve_duration_window(shared, duration_seconds, start_tick)?;
 
@@ -3924,7 +3924,7 @@ pub fn analyze_master_chain_impl(
     // The master chain must always be reconstructed — it is the subject of the
     // analysis. `scope` only selects the surrounding stages (return wet signal,
     // sample rate).
-    let chain_scope = synth_mcp::AnalysisScope {
+    let chain_scope = synth_core::AnalysisScope {
         master_effects: true,
         return_effects: scope.return_effects,
         render_sample_rate: scope.render_sample_rate,
@@ -4007,7 +4007,7 @@ pub fn analyze_return_busses_impl(
     shared: &McpSharedState,
     duration_seconds: f32,
     start_tick: Option<Tick>,
-    scope: synth_mcp::AnalysisScope,
+    scope: synth_core::AnalysisScope,
 ) -> Result<AnalyzeReturnBussesResult, McpBridgeError> {
     let (start, end) = resolve_duration_window(shared, duration_seconds, start_tick)?;
 
@@ -4030,7 +4030,7 @@ pub fn analyze_return_busses_impl(
 
     // Return-bus effect chains are the subject of the analysis, so always load
     // them. `scope` only selects the surrounding stages.
-    let chain_scope = synth_mcp::AnalysisScope {
+    let chain_scope = synth_core::AnalysisScope {
         master_effects: scope.master_effects,
         return_effects: true,
         render_sample_rate: scope.render_sample_rate,
@@ -4124,7 +4124,7 @@ pub fn compare_mix_before_after_impl(
     duration_seconds: f32,
     start_tick: Option<Tick>,
     label: Option<String>,
-    scope: synth_mcp::AnalysisScope,
+    scope: synth_core::AnalysisScope,
 ) -> Result<CompareMixResult, McpBridgeError> {
     match action {
         "capture" => {
@@ -4246,10 +4246,10 @@ pub(super) fn auto_gain_stage_impl(
     start_tick: Option<Tick>,
 ) -> Result<AutoGainStageResult, McpBridgeError> {
     // Measure the real output: include the master + return effect chains.
-    let scope = synth_mcp::AnalysisScope {
+    let scope = synth_core::AnalysisScope {
         master_effects: true,
         return_effects: true,
-        render_sample_rate: 44_100,
+        ..synth_core::AnalysisScope::default()
     };
     let measured = analyze_mix_bus_impl(
         session,
@@ -4331,12 +4331,12 @@ pub fn analyze_section_impl(
     start_tick: Tick,
     end_tick: Tick,
     include_per_track: Option<bool>,
-    scope: synth_mcp::AnalysisScope,
+    scope: synth_core::AnalysisScope,
 ) -> Result<AnalyzeSectionResult, McpBridgeError> {
     let rendered = crate::audio::arrangement_render::render_arrangement_to_buffer_with_scope(
         session,
         sample_library,
-        shared,
+        &shared.song,
         start_tick.0,
         end_tick.0,
         scope,
@@ -4393,7 +4393,7 @@ fn render_per_track_contributions(
     shared: &McpSharedState,
     start_tick: Tick,
     end_tick: Tick,
-    scope: synth_mcp::AnalysisScope,
+    scope: synth_core::AnalysisScope,
     warnings: &mut Vec<String>,
 ) -> Result<Vec<synth_mcp::types::TrackContribution>, McpBridgeError> {
     use synth_sequencer::TrackId;
@@ -4778,7 +4778,7 @@ pub fn analyze_masking_matrix_impl(
     arrangement_start_tick: Option<Tick>,
     arrangement_end_tick: Option<Tick>,
     top_pairs: Option<u32>,
-    scope: synth_mcp::AnalysisScope,
+    scope: synth_core::AnalysisScope,
 ) -> Result<AnalyzeMaskingMatrixResult, McpBridgeError> {
     let mut warnings: Vec<String> = Vec::new();
     let (start_tick, requested_end_tick, end_tick) = {

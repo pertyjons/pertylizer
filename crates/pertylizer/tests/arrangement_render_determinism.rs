@@ -37,7 +37,7 @@ fn offline_render_is_bit_exact_across_calls() {
     let first = render_arrangement_to_buffer(
         &rig.session,
         &rig.sample_library,
-        &shared,
+        &shared.song,
         start_tick,
         end_tick,
     )
@@ -45,7 +45,7 @@ fn offline_render_is_bit_exact_across_calls() {
     let second = render_arrangement_to_buffer(
         &rig.session,
         &rig.sample_library,
-        &shared,
+        &shared.song,
         start_tick,
         end_tick,
     )
@@ -53,7 +53,7 @@ fn offline_render_is_bit_exact_across_calls() {
     let third = render_arrangement_to_buffer(
         &rig.session,
         &rig.sample_library,
-        &shared,
+        &shared.song,
         start_tick,
         end_tick,
     )
@@ -94,10 +94,12 @@ fn offline_render_is_bit_exact_for_noise_patch() {
     let song = build_arpeggio_song();
     let shared = McpSharedState::with_song(song);
 
-    let first = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
-        .expect("first noise render should succeed");
-    let second = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
-        .expect("second noise render should succeed");
+    let first =
+        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 3840)
+            .expect("first noise render should succeed");
+    let second =
+        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 3840)
+            .expect("second noise render should succeed");
 
     assert_bit_exact(
         "noise render-1 vs render-2",
@@ -154,12 +156,15 @@ fn offline_render_is_bit_exact_for_dual_oscillator_patch() {
     let song = build_arpeggio_song();
     let shared = McpSharedState::with_song(song);
 
-    let first = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
-        .expect("first dual-osc render should succeed");
-    let second = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
-        .expect("second dual-osc render should succeed");
-    let third = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
-        .expect("third dual-osc render should succeed");
+    let first =
+        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 3840)
+            .expect("first dual-osc render should succeed");
+    let second =
+        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 3840)
+            .expect("second dual-osc render should succeed");
+    let third =
+        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 3840)
+            .expect("third dual-osc render should succeed");
 
     assert_bit_exact(
         "dual-osc render-1 vs render-2",
@@ -188,8 +193,9 @@ fn session_reuse_matches_fresh_engine_dual_osc() {
     let song = build_arpeggio_song();
     let shared = McpSharedState::with_song(song);
 
-    let fresh = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
-        .expect("fresh-engine render should succeed");
+    let fresh =
+        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 3840)
+            .expect("fresh-engine render should succeed");
 
     let (mut sess, _setup_warnings) = OfflineEngineSession::new(&rig.session, &rig.sample_library)
         .expect("session::new should succeed");
@@ -309,8 +315,9 @@ fn analyze_mix_metrics_are_stable_across_calls() {
     let mut rms: Vec<f32> = Vec::with_capacity(4);
     let mut clipped: Vec<u32> = Vec::with_capacity(4);
     for _ in 0..4 {
-        let r = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
-            .expect("render should succeed");
+        let r =
+            render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 3840)
+                .expect("render should succeed");
         let a = analyze_mix_buffer(&r.samples, r.sample_rate);
         lufs.push(a.lufs_integrated);
         rms.push(a.rms);
@@ -356,9 +363,9 @@ fn channel_bus_pan_biases_left_channel() {
 
     let shared = McpSharedState::with_song(build_arpeggio_song());
 
-    let a = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
+    let a = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 3840)
         .expect("render a");
-    let b = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
+    let b = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 3840)
         .expect("render b");
 
     // The move must not have introduced non-determinism.
@@ -396,15 +403,17 @@ fn channel_bus_volume_scales_level() {
         .set_instrument_volume(InstrumentId::FIRST, Gain::new(1.0))
         .expect("set unity volume");
     process_block(&mut rig._engine, 8);
-    let unity = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
-        .expect("render unity");
+    let unity =
+        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 3840)
+            .expect("render unity");
 
     rig.session
         .set_instrument_volume(InstrumentId::FIRST, Gain::new(0.5))
         .expect("set half volume");
     process_block(&mut rig._engine, 8);
-    let half = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
-        .expect("render half");
+    let half =
+        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 3840)
+            .expect("render half");
 
     // The test signal sits well below the soft-clip threshold, so halving the
     // channel fader halves the level (roughly) rather than being reshaped.
@@ -433,8 +442,9 @@ fn track_pan_biases_output() {
     // Instrument pan/volume left at default (centre/unity); pan the TRACK left.
     set_first_track_fader(&shared.song, 1.0, -0.7);
 
-    let out = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
-        .expect("render");
+    let out =
+        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 3840)
+            .expect("render");
 
     let l = left_rms(&out.samples);
     let r = right_rms(&out.samples);
@@ -455,12 +465,14 @@ fn track_volume_scales_output() {
 
     // Centre pan throughout; only the TRACK volume fader differs.
     set_first_track_fader(&shared.song, 1.0, 0.0);
-    let unity = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
-        .expect("render unity");
+    let unity =
+        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 3840)
+            .expect("render unity");
 
     set_first_track_fader(&shared.song, 0.5, 0.0);
-    let half = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
-        .expect("render half");
+    let half =
+        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 3840)
+            .expect("render half");
 
     let unity_rms = left_rms(&unity.samples);
     let half_rms = left_rms(&half.samples);
@@ -498,7 +510,7 @@ fn shared_instrument_tracks_keep_independent_voice_faders() {
     let rendered = render_arrangement_to_buffer(
         &rig.session,
         &rig.sample_library,
-        &shared,
+        &shared.song,
         0,
         u64::from(Duration::WHOLE.0),
     )
@@ -532,8 +544,9 @@ fn assert_ramp_down_reaches_audio(
     add_ramp_automation(&song, pattern_id, target_for(track_id), 1.0, 0.0);
     let shared = McpSharedState::with_song(song);
 
-    let out = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
-        .expect("render");
+    let out =
+        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 3840)
+            .expect("render");
 
     let mid = (out.samples.len() / 2) & !1; // keep stereo-frame aligned
     let first = left_rms(&out.samples[..mid]);
@@ -566,13 +579,14 @@ fn track_pitch_automation_repitches_held_voice() {
         0.625,
     );
     let shared = McpSharedState::with_song(song);
-    let up = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
+    let up = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 3840)
         .expect("render up");
 
     let (song, _pattern_id, _track_id) = build_sustained_note_song("TrackPitchRef");
     let shared = McpSharedState::with_song(song);
-    let base = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
-        .expect("render base");
+    let base =
+        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 3840)
+            .expect("render base");
 
     // Compare the steady second halves so the attack transient doesn't bias
     // the crossing count.

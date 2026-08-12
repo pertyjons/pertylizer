@@ -111,7 +111,7 @@ fn track_scope_volume_modulation_changes_the_render() {
     let base_rms = {
         let shared = McpSharedState::with_song(Arc::clone(&song));
         let base =
-            render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 1920)
+            render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 1920)
                 .expect("baseline render");
         left_rms(&base.samples)
     };
@@ -125,7 +125,7 @@ fn track_scope_volume_modulation_changes_the_render() {
     let mod_rms = {
         let shared = McpSharedState::with_song(Arc::clone(&song));
         let modded =
-            render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 1920)
+            render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 1920)
                 .expect("modulated render");
         left_rms(&modded.samples)
     };
@@ -173,7 +173,7 @@ fn module_scope_cutoff_modulation_changes_the_render() {
     let base_rms = {
         let shared = McpSharedState::with_song(Arc::clone(&song));
         let base =
-            render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 1920)
+            render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 1920)
                 .expect("baseline render");
         left_rms(&base.samples)
     };
@@ -223,7 +223,7 @@ fn module_scope_cutoff_modulation_changes_the_render() {
     let mod_rms = {
         let shared = McpSharedState::with_song(Arc::clone(&song));
         let modded =
-            render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 1920)
+            render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 1920)
                 .expect("modulated render");
         left_rms(&modded.samples)
     };
@@ -245,7 +245,7 @@ fn instrument_scope_volume_modulation_changes_the_render() {
 
     let base_rms = {
         let shared = McpSharedState::with_song(Arc::clone(&song));
-        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 1920)
+        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 1920)
             .map(|b| left_rms(&b.samples))
             .expect("baseline render")
     };
@@ -291,7 +291,7 @@ fn instrument_scope_volume_modulation_changes_the_render() {
 
     let mod_rms = {
         let shared = McpSharedState::with_song(Arc::clone(&song));
-        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 1920)
+        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 1920)
             .map(|b| left_rms(&b.samples))
             .expect("modulated render")
     };
@@ -347,7 +347,7 @@ fn cheap_to_module_injection_changes_the_render() {
     };
     let base = {
         let shared = McpSharedState::with_song(Arc::clone(&song));
-        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 1920)
+        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 1920)
             .expect("baseline render")
     };
 
@@ -374,7 +374,7 @@ fn cheap_to_module_injection_changes_the_render() {
     }
     let injected = {
         let shared = McpSharedState::with_song(Arc::clone(&song));
-        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 1920)
+        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 1920)
             .expect("injected render")
     };
 

@@ -7,8 +7,7 @@
 
 use std::path::PathBuf;
 
-use synth_core::Seconds;
-use synth_mcp::AnalysisScope;
+use synth_core::{AnalysisScope, Seconds};
 
 use super::headless::LoadedProject;
 use super::mix::MixSelection;
@@ -141,7 +140,7 @@ impl RenderCommand {
         AnalysisScope {
             master_effects: true,
             return_effects: true,
-            render_sample_rate: self.sample_rate,
+            render_sample_rate: synth_core::audio::DeviceSampleRate::new(self.sample_rate),
         }
     }
 }

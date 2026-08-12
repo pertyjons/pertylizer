@@ -1,4 +1,4 @@
-//! Offline arrangement rendering for MCP analysis tools.
+//! Offline arrangement rendering.
 //!
 //! Renders an arrangement range (a `[start_tick, end_tick)` slice of the
 //! song) to an in-memory stereo f32 buffer, with no real-time playback.
@@ -9,9 +9,10 @@
 //! the sequencer-driven engine forward by exactly the number of frames
 //! that the tick range spans.
 //!
-//! Used by the `analyze_mix_bus` and `analyze_section` MCP tools to obtain
-//! a deterministic, fast (faster-than-real-time) rendering of the master
-//! bus output of a song region.
+//! Used by the `analyze_mix_bus` / `analyze_section` MCP tools and by the
+//! headless render pipeline (`crate::render`, the `pertylizer render`
+//! command) to obtain a deterministic, fast (faster-than-real-time)
+//! rendering of the master bus output of a song region.
 //!
 //! **Limitations (v1):**
 //! - No per-track stems. The output is the master mix only.
@@ -31,11 +32,20 @@ use synth_engine::instrument::MidiChannelSelection;
 use synth_engine::{EngineCommand, SynthEngine};
 use synth_sequencer::{Song, Tick};
 
-use synth_mcp::AnalysisScope;
-use synth_mcp::error::McpBridgeError;
+use synth_core::AnalysisScope;
 
-use crate::mcp_shared::McpSharedState;
 use crate::session::SynthSession;
+
+/// A failed offline arrangement render: the offline engine could not be built
+/// or the requested range could not be rendered.
+///
+/// One rendered message rather than variants: every failure here is reported
+/// to callers as text (the render command's `RenderError::Render`, the MCP
+/// bridge's error string), and the typed problem model planned in
+/// `plans/mcp-agent-api-redesign.md` replaces this wholesale.
+#[derive(Debug, thiserror::Error)]
+#[error("{0}")]
+pub struct OfflineRenderError(pub(crate) String);
 
 /// Block size in frames per `engine.process()` call.
 const BUFFER_SIZE: usize = 256;
@@ -44,8 +54,8 @@ const BUFFER_SIZE: usize = 256;
 const CHANNELS: usize = 2;
 
 /// Hard ceiling on how many seconds an arrangement render may produce, to
-/// keep the MCP request bounded. 5 minutes at 44.1 kHz stereo ≈ 105 MB f32
-/// — comfortably above any reasonable analysis window.
+/// keep an offline render request bounded. 5 minutes at 44.1 kHz stereo
+/// ≈ 105 MB f32 — comfortably above any reasonable analysis window.
 ///
 /// A range longer than this is *clamped* here, with a warning. The `render`
 /// command checks its `--seconds` against this up front instead, because a
@@ -91,7 +101,9 @@ pub struct RenderedArrangement {
     pub duration_seconds: f32,
     /// Channel count (always 2).
     pub channels: u16,
-    /// Tick range that was rendered (echoed back for caller convenience).
+    /// Tick range that was rendered. Matches the requested range, except that
+    /// `end_tick` is pulled in to the tick actually reached when the range was
+    /// clamped to the render budget (see `MAX_RENDER_SECONDS`).
     pub start_tick: u64,
     pub end_tick: u64,
     /// Non-fatal warnings emitted during the render — failed module loads,
@@ -109,14 +121,14 @@ pub struct RenderedArrangement {
 pub fn render_arrangement_to_buffer(
     session: &SynthSession,
     sample_library: &crate::audio::preview::SharedSampleLibrary,
-    shared: &McpSharedState,
+    song: &Arc<synth_sequencer::SharedSong>,
     start_tick: u64,
     end_tick: u64,
-) -> Result<RenderedArrangement, McpBridgeError> {
-    render_arrangement_to_buffer_with_song(
+) -> Result<RenderedArrangement, OfflineRenderError> {
+    render_arrangement_to_buffer_with_scope(
         session,
         sample_library,
-        &shared.song,
+        song,
         start_tick,
         end_tick,
         AnalysisScope::default(),
@@ -127,43 +139,20 @@ pub fn render_arrangement_to_buffer(
 /// stages requested by `scope` (master effects, return-bus effects, …) so the
 /// analysis hears more than the dry instrument sum. `AnalysisScope::default()`
 /// behaves identically to [`render_arrangement_to_buffer`].
-pub fn render_arrangement_to_buffer_with_scope(
-    session: &SynthSession,
-    sample_library: &crate::audio::preview::SharedSampleLibrary,
-    shared: &McpSharedState,
-    start_tick: u64,
-    end_tick: u64,
-    scope: AnalysisScope,
-) -> Result<RenderedArrangement, McpBridgeError> {
-    render_arrangement_to_buffer_with_song(
-        session,
-        sample_library,
-        &shared.song,
-        start_tick,
-        end_tick,
-        scope,
-    )
-}
-
-/// Render an arrangement range against an explicit `Song` handle.
-///
-/// Identical to [`render_arrangement_to_buffer`] except the sequencer source is
-/// supplied directly. Used by `analyze_section` to render per-track soloed
-/// variants from a cloned `Song` without mutating the live shared instance.
 ///
 /// Thin wrapper: builds a single [`OfflineEngineSession`] and renders one range.
 /// Callers that need N renders against the same engine state (per-track loop in
 /// `analyze_section`) should construct an [`OfflineEngineSession`] directly and
 /// call [`OfflineEngineSession::render_range`] N times instead — that amortizes
 /// the engine + instrument-load cost across the loop.
-pub(crate) fn render_arrangement_to_buffer_with_song(
+pub fn render_arrangement_to_buffer_with_scope(
     session: &SynthSession,
     sample_library: &crate::audio::preview::SharedSampleLibrary,
     song: &Arc<synth_sequencer::SharedSong>,
     start_tick: u64,
     end_tick: u64,
     scope: AnalysisScope,
-) -> Result<RenderedArrangement, McpBridgeError> {
+) -> Result<RenderedArrangement, OfflineRenderError> {
     let (mut sess, setup_warnings) =
         OfflineEngineSession::new_with_scope(session, sample_library, scope)?;
     let mut rendered = sess.render_range(song, start_tick, end_tick)?;
@@ -201,8 +190,8 @@ pub struct OfflineEngineSession {
     handle: synth_engine::EngineHandle,
     /// True once the first `render_range` call has finished its warm-up
     /// process. Gates two related behaviors: subsequent calls skip the warm-up
-    /// block AND run the voice-bleed drain instead (a freshly-built engine has
-    /// no prior voices to drain).
+    /// block AND send `ResetDsp` to clear voices/effect state left by the
+    /// previous render (a freshly-built engine has nothing to clear).
     first_call_done: bool,
     /// Which optional signal stages this session reconstructs (master/return
     /// effects). Fixed at construction so every `render_range` call on the
@@ -242,7 +231,7 @@ impl OfflineEngineSession {
     pub fn new(
         session: &SynthSession,
         sample_library: &crate::audio::preview::SharedSampleLibrary,
-    ) -> Result<(Self, Vec<String>), McpBridgeError> {
+    ) -> Result<(Self, Vec<String>), OfflineRenderError> {
         Self::new_with_scope(session, sample_library, AnalysisScope::default())
     }
 
@@ -255,7 +244,7 @@ impl OfflineEngineSession {
         session: &SynthSession,
         sample_library: &crate::audio::preview::SharedSampleLibrary,
         scope: AnalysisScope,
-    ) -> Result<(Self, Vec<String>), McpBridgeError> {
+    ) -> Result<(Self, Vec<String>), OfflineRenderError> {
         let engine_state = session.state();
         let live_instruments: Vec<synth_engine::shared_state::InstrumentSnapshot> = engine_state
             .instrument_snapshots
@@ -264,7 +253,7 @@ impl OfflineEngineSession {
             .cloned()
             .collect();
         if live_instruments.is_empty() {
-            return Err(McpBridgeError::Other(
+            return Err(OfflineRenderError(
                 "No instruments loaded — nothing to render".to_string(),
             ));
         }
@@ -279,7 +268,7 @@ impl OfflineEngineSession {
         // below), and so the render sample rate is stamped onto each instrument's
         // modules at add time — matching the live app, where instruments are
         // always added after the stream has started.
-        let sample_rate = scope.render_sample_rate;
+        let sample_rate = scope.render_sample_rate.as_u32();
         let stream_info = synth_core::StreamInfo {
             sample_rate: DeviceSampleRate::new(sample_rate),
             buffer_size: synth_core::BufferSize::new(BUFFER_SIZE as u32),
@@ -383,7 +372,7 @@ impl OfflineEngineSession {
         song: &Arc<synth_sequencer::SharedSong>,
         start_tick: u64,
         end_tick: u64,
-    ) -> Result<RenderedArrangement, McpBridgeError> {
+    ) -> Result<RenderedArrangement, OfflineRenderError> {
         self.render_range_with_tail(song, start_tick, end_tick, synth_core::Seconds::ZERO)
     }
 
@@ -396,9 +385,9 @@ impl OfflineEngineSession {
         start_tick: u64,
         end_tick: u64,
         tail: synth_core::Seconds,
-    ) -> Result<RenderedArrangement, McpBridgeError> {
+    ) -> Result<RenderedArrangement, OfflineRenderError> {
         if end_tick <= start_tick {
-            return Err(McpBridgeError::Other(format!(
+            return Err(OfflineRenderError(format!(
                 "Arrangement range invalid: end_tick ({end_tick}) must be greater than start_tick ({start_tick})"
             )));
         }
@@ -412,7 +401,7 @@ impl OfflineEngineSession {
 
         let mut warnings: Vec<String> = Vec::new();
 
-        let (visible_seconds, prefix_seconds, effective_start_tick) = {
+        let (visible_seconds, prefix_seconds, effective_start_tick, effective_end_tick) = {
             let song_read = song.read();
             let start_s = song_read.tick_to_seconds(Tick(start_tick));
             let end_s = song_read.tick_to_seconds(Tick(end_tick));
@@ -420,7 +409,7 @@ impl OfflineEngineSession {
                 song_read.tick_to_seconds(earliest_active_note_start(&song_read, Tick(start_tick)));
             let raw_prefix_s = (start_s - raw_effective_s).max(0.0);
 
-            let prefix_s = raw_prefix_s.min(f64::from(MAX_PREROLL_SECONDS));
+            let mut prefix_s = raw_prefix_s.min(f64::from(MAX_PREROLL_SECONDS));
             if raw_prefix_s > f64::from(MAX_PREROLL_SECONDS) {
                 warnings.push(format!(
                     "Pre-roll requested {raw_prefix_s:.1}s; capping at {MAX_PREROLL_SECONDS:.0}s. \
@@ -428,17 +417,30 @@ impl OfflineEngineSession {
                 ));
             }
 
+            // The requested (visible) range gets the whole render budget…
             let raw_visible_s = (end_s - start_s).max(0.0);
-            let max_visible_s = f64::from(MAX_RENDER_SECONDS) - prefix_s;
-            let visible_s = if raw_visible_s > max_visible_s {
+            let visible_s = if raw_visible_s > f64::from(MAX_RENDER_SECONDS) {
                 warnings.push(format!(
-                    "Requested arrangement range is {raw_visible_s:.1}s; clamping to {max_visible_s:.1}s \
-                     (pre-roll uses {prefix_s:.1}s of the {MAX_RENDER_SECONDS:.0}s render budget).",
+                    "Requested arrangement range is {raw_visible_s:.1}s; clamping to the \
+                     {MAX_RENDER_SECONDS:.0}s render budget.",
                 ));
-                max_visible_s.max(0.0)
+                f64::from(MAX_RENDER_SECONDS)
             } else {
                 raw_visible_s
             };
+
+            // …and pre-roll that would push the total past the budget is
+            // shrunk to fit (the caller asked for the visible range; pre-roll
+            // is best-effort seeding), matching the module-doc contract.
+            let budget_prefix_s = (f64::from(MAX_RENDER_SECONDS) - visible_s).max(0.0);
+            if prefix_s > budget_prefix_s {
+                warnings.push(format!(
+                    "Pre-roll shrunk from {prefix_s:.1}s to {budget_prefix_s:.1}s so the render \
+                     fits the {MAX_RENDER_SECONDS:.0}s budget. Notes that began earlier are \
+                     silent in the output."
+                ));
+                prefix_s = budget_prefix_s;
+            }
 
             // `Song::seconds_to_tick` is the exact tempo-aware inverse of
             // `tick_to_seconds`, so the Seek lands on the tick whose wall-clock
@@ -449,11 +451,25 @@ impl OfflineEngineSession {
                 Tick(start_tick)
             };
 
-            (visible_s as f32, prefix_s as f32, effective_tick)
+            // When the visible range was clamped, report the tick actually
+            // reached so `RenderedArrangement` describes the audio it carries
+            // rather than the range that was asked for.
+            let effective_end = if visible_s < raw_visible_s {
+                song_read.seconds_to_tick(start_s + visible_s).0
+            } else {
+                end_tick
+            };
+
+            (
+                visible_s as f32,
+                prefix_s as f32,
+                effective_tick,
+                effective_end,
+            )
         };
 
         if visible_seconds <= 0.0 {
-            return Err(McpBridgeError::Other(
+            return Err(OfflineRenderError(
                 "Arrangement range resolves to zero render duration — check tempo settings"
                     .to_string(),
             ));
@@ -469,7 +485,7 @@ impl OfflineEngineSession {
         let stop_frame = prefix_frames + visible_frames;
         let total_frames = stop_frame.saturating_add(tail_frames);
         if total_frames == 0 {
-            return Err(McpBridgeError::Other(
+            return Err(OfflineRenderError(
                 "Arrangement range too short to produce any samples".to_string(),
             ));
         }
@@ -609,7 +625,7 @@ impl OfflineEngineSession {
             duration_seconds: visible_seconds + tail.as_f32(),
             channels: CHANNELS as u16,
             start_tick,
-            end_tick,
+            end_tick: effective_end_tick,
             warnings,
         })
     }

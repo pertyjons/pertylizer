@@ -691,7 +691,7 @@ fn analyze_section_per_track_breakdown_emits_one_entry_per_track() {
         Tick(0),
         Tick(3840),
         Some(true),
-        synth_mcp::AnalysisScope::default(),
+        synth_core::AnalysisScope::default(),
     )
     .expect("section analysis should succeed");
 
@@ -744,7 +744,7 @@ fn analyze_mix_bus_per_track_breakdown_emits_one_entry_per_track() {
         10.0,
         Some(Tick(0)),
         Some(true),
-        synth_mcp::AnalysisScope::default(),
+        synth_core::AnalysisScope::default(),
     )
     .expect("mix-bus analysis should succeed");
 
@@ -768,7 +768,7 @@ fn analyze_mix_bus_per_track_breakdown_emits_one_entry_per_track() {
         10.0,
         Some(Tick(0)),
         None,
-        synth_mcp::AnalysisScope::default(),
+        synth_core::AnalysisScope::default(),
     )
     .expect("mix-bus analysis should succeed");
     assert!(
@@ -791,7 +791,7 @@ fn analyze_master_chain_empty_chain_has_no_stages() {
         &shared,
         10.0,
         Some(Tick(0)),
-        synth_mcp::AnalysisScope::default(),
+        synth_core::AnalysisScope::default(),
     )
     .expect("master-chain analysis should succeed");
 
@@ -852,7 +852,7 @@ fn analyze_return_busses_reports_per_return_contribution() {
         &shared,
         1.0,
         Some(Tick(0)),
-        synth_mcp::AnalysisScope::default(),
+        synth_core::AnalysisScope::default(),
     )
     .expect("return-bus analysis should succeed");
 
@@ -884,7 +884,7 @@ fn compare_mix_before_after_capture_then_compare_reports_deltas() {
         1.0,
         Some(Tick(0)),
         Some("before".to_string()),
-        synth_mcp::AnalysisScope::default(),
+        synth_core::AnalysisScope::default(),
     )
     .expect("capture should succeed");
     assert_eq!(cap.action, "capture");
@@ -910,7 +910,7 @@ fn compare_mix_before_after_capture_then_compare_reports_deltas() {
         1.0,
         Some(Tick(0)),
         None,
-        synth_mcp::AnalysisScope::default(),
+        synth_core::AnalysisScope::default(),
     )
     .expect("compare should succeed");
     assert_eq!(cmp.action, "compare");
@@ -945,7 +945,7 @@ fn compare_mix_before_after_without_baseline_errors() {
         1.0,
         Some(Tick(0)),
         None,
-        synth_mcp::AnalysisScope::default(),
+        synth_core::AnalysisScope::default(),
     )
     .expect_err("compare without a baseline should error");
     assert!(
@@ -967,7 +967,7 @@ fn analyze_return_busses_without_busses_warns() {
         &shared,
         1.0,
         Some(Tick(0)),
-        synth_mcp::AnalysisScope::default(),
+        synth_core::AnalysisScope::default(),
     )
     .expect("return-bus analysis should succeed");
 
@@ -998,7 +998,7 @@ fn analyze_section_per_track_pre_master_peak_compensates_for_pan_law() {
         Tick(0),
         Tick(3840),
         Some(true),
-        synth_mcp::AnalysisScope::default(),
+        synth_core::AnalysisScope::default(),
     )
     .expect("section analysis should succeed");
 
@@ -1046,7 +1046,7 @@ fn analyze_section_without_per_track_flag_returns_empty_breakdown() {
         Tick(0),
         Tick(3840),
         None,
-        synth_mcp::AnalysisScope::default(),
+        synth_core::AnalysisScope::default(),
     )
     .expect("section analysis should succeed");
     assert!(
@@ -1061,7 +1061,7 @@ fn analyze_section_without_per_track_flag_returns_empty_breakdown() {
         Tick(0),
         Tick(3840),
         Some(false),
-        synth_mcp::AnalysisScope::default(),
+        synth_core::AnalysisScope::default(),
     )
     .expect("section analysis should succeed");
     assert!(opt_off.per_track.is_empty());
@@ -1086,7 +1086,7 @@ fn analyze_section_per_track_is_bit_exact_across_calls() {
         Tick(0),
         Tick(3840),
         Some(true),
-        synth_mcp::AnalysisScope::default(),
+        synth_core::AnalysisScope::default(),
     )
     .expect("first analyze_section");
     let b = analyze_section_impl(
@@ -1096,7 +1096,7 @@ fn analyze_section_per_track_is_bit_exact_across_calls() {
         Tick(0),
         Tick(3840),
         Some(true),
-        synth_mcp::AnalysisScope::default(),
+        synth_core::AnalysisScope::default(),
     )
     .expect("second analyze_section");
 
@@ -1153,7 +1153,7 @@ fn analyze_section_render_quality_controls_sample_rate() {
         Tick(0),
         Tick(3840),
         Some(true),
-        synth_mcp::AnalysisScope::from_flags(None, None, None, synth_mcp::RenderQuality::Full),
+        synth_core::AnalysisScope::from_flags(None, None, None, synth_core::RenderQuality::Full),
     )
     .expect("full-quality section");
     assert_eq!(full.metrics.sample_rate, 44_100);
@@ -1176,7 +1176,7 @@ fn analyze_section_render_quality_controls_sample_rate() {
         Tick(0),
         Tick(3840),
         Some(true),
-        synth_mcp::AnalysisScope::from_flags(None, None, None, synth_mcp::RenderQuality::Draft),
+        synth_core::AnalysisScope::from_flags(None, None, None, synth_core::RenderQuality::Draft),
     )
     .expect("draft-quality section");
     assert_eq!(draft.metrics.sample_rate, 22_050);
@@ -1215,7 +1215,7 @@ fn analyze_masking_matrix_emits_pair_with_well_formed_bands() {
         Some(Tick(0)),
         Some(Tick(3840)),
         None,
-        synth_mcp::AnalysisScope::default(),
+        synth_core::AnalysisScope::default(),
     )
     .expect("masking matrix should succeed");
 
@@ -1283,7 +1283,7 @@ fn analyze_masking_matrix_is_deterministic_across_calls() {
         Some(Tick(0)),
         Some(Tick(3840)),
         None,
-        synth_mcp::AnalysisScope::default(),
+        synth_core::AnalysisScope::default(),
     )
     .expect("first call");
     let b = analyze_masking_matrix_impl(
@@ -1293,7 +1293,7 @@ fn analyze_masking_matrix_is_deterministic_across_calls() {
         Some(Tick(0)),
         Some(Tick(3840)),
         None,
-        synth_mcp::AnalysisScope::default(),
+        synth_core::AnalysisScope::default(),
     )
     .expect("second call");
 
@@ -1339,7 +1339,7 @@ fn analyze_masking_matrix_rejects_inverted_range() {
         Some(Tick(3840)),
         Some(Tick(1920)),
         None,
-        synth_mcp::AnalysisScope::default(),
+        synth_core::AnalysisScope::default(),
     )
     .expect_err("inverted range must error");
     let msg = err.to_string();
@@ -1377,7 +1377,7 @@ fn analyze_masking_matrix_with_single_track_returns_no_pairs() {
         Some(Tick(0)),
         Some(Tick(3840)),
         None,
-        synth_mcp::AnalysisScope::default(),
+        synth_core::AnalysisScope::default(),
     )
     .expect("single-track masking matrix should succeed (just empty)");
     assert_eq!(result.track_count, 1);
@@ -1405,7 +1405,7 @@ fn analyze_masking_matrix_defaults_to_full_arrangement_when_range_omitted() {
         None,
         None,
         None,
-        synth_mcp::AnalysisScope::default(),
+        synth_core::AnalysisScope::default(),
     )
     .expect("default range should succeed");
     // The two-track fixture spans [0, 3840) — explicit and default ranges agree.
@@ -1494,7 +1494,7 @@ fn analyze_section_master_effects_scope_reconstructs_live_master_chain() {
         Tick(0),
         Tick(3840),
         None,
-        synth_mcp::AnalysisScope::default(),
+        synth_core::AnalysisScope::default(),
     )
     .expect("dry section analysis should succeed");
 
@@ -1545,7 +1545,7 @@ fn analyze_section_master_effects_scope_reconstructs_live_master_chain() {
         Tick(0),
         Tick(3840),
         None,
-        synth_mcp::AnalysisScope {
+        synth_core::AnalysisScope {
             master_effects: true,
             ..Default::default()
         },
@@ -1658,7 +1658,7 @@ fn analyze_master_chain_isolates_single_effect_contribution() {
         &shared,
         1.0,
         Some(Tick(0)),
-        synth_mcp::AnalysisScope::default(),
+        synth_core::AnalysisScope::default(),
     )
     .expect("master-chain analysis should succeed");
 

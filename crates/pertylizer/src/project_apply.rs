@@ -444,6 +444,12 @@ fn ensure_parent_dir(path: &std::path::Path) -> Result<(), String> {
 /// - Module positions default to `(0, 0)` (headless has no patch-editor canvas).
 /// - Author metadata is omitted (no settings/UI source).
 /// - `glide_time` and `octave_offset` use defaults.
+///
+/// Test/headless convenience only: the production MCP save goes through
+/// `AppSynthBridge::build_project_for_persistence` (which prefers the GUI's
+/// own build) and then [`save_built_project_to`]. Calling this from a path
+/// with a live GUI would reintroduce the engine-only layout flattening that
+/// build was added to fix.
 pub fn save_project_to(
     path: &std::path::Path,
     session: &SynthSession,
@@ -452,7 +458,17 @@ pub fn save_project_to(
     opts: ProjectBuildOptions,
 ) -> Result<String, String> {
     let project = build_project_from_engine(session, song, sample_library, opts);
+    save_built_project_to(path, &project)
+}
 
+/// Write an already-built `ProjectFile` to `path` as plain JSON. The
+/// build-then-write halves are split so callers that obtained their project
+/// elsewhere — the MCP save preferring the GUI's own build — reuse the same
+/// write and summary.
+pub fn save_built_project_to(
+    path: &std::path::Path,
+    project: &ProjectFile,
+) -> Result<String, String> {
     ensure_parent_dir(path)?;
 
     project.save(path).map_err(|e| e.to_string())?;
@@ -1162,7 +1178,12 @@ pub(crate) fn prune_unused_samples(
 
 /// Bounded window a snapshot-reading save waits for the audio thread to mirror a
 /// just-created instrument (matches `apply_project`'s post-load bridge).
-const SNAPSHOT_SYNC_TIMEOUT_MS: u64 = 2_000;
+///
+/// `pub(crate)` so the MCP bridge's GUI-snapshot request timeout can assert it
+/// is strictly longer than this: the GUI's own project builder may spend this
+/// entire budget inside `build_project_from_engine`, so an equal outer deadline
+/// would produce false fallbacks.
+pub(crate) const SNAPSHOT_SYNC_TIMEOUT_MS: u64 = 2_000;
 
 /// Poll `session` (5 ms tick) until `done` holds or `timeout_ms` elapses.
 /// Bridges the gap between synchronous engine commands and the audio thread

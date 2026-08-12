@@ -434,6 +434,40 @@ impl SynthApp {
         }
     }
 
+    /// Answer queued MCP project-snapshot requests with the project the GUI
+    /// itself would save (`create_project_from_app`, i.e. the engine build
+    /// plus the UI metadata overlay), so an MCP save or rollback snapshot
+    /// carries module positions, groups, canvas size, and visualizers.
+    ///
+    /// Runs at end of frame, but re-drains MCP state and re-reconciles the
+    /// editors right before building: the top-of-frame reconcile is not
+    /// enough, because a request typically arrives *mid*-frame (an MCP batch
+    /// mutates the graph and immediately saves / captures a rollback
+    /// snapshot). Answering from top-of-frame mirrors would combine a fresh
+    /// engine build with a stale editor — resurrecting a just-removed module
+    /// via the `overlay_ui_metadata` append loop, or overlaying a just-loaded
+    /// project with the previous project's editors. The engine's command
+    /// mirror is published synchronously at send time, so after the re-drain
+    /// and re-reconcile the editors match everything the build will capture
+    /// (a request that lands after the pending-check below simply waits one
+    /// frame and gets the same treatment).
+    #[cfg(feature = "mcp")]
+    pub(super) fn service_mcp_project_requests(&mut self, ctx: &egui::Context) {
+        let Some(shared) = self.mcp_shared.as_ref().map(std::sync::Arc::clone) else {
+            return;
+        };
+        shared.attach_gui_once(|| {
+            let ctx = ctx.clone();
+            Box::new(move || ctx.request_repaint())
+        });
+        if !shared.has_pending_gui_project_requests() {
+            return;
+        }
+        self.drain_mcp_state();
+        self.reconcile_with_session();
+        shared.service_gui_project_requests(|| self.create_project_from_app());
+    }
+
     /// Reset the active instrument to a new empty patch.
     /// Clears all modules and adds a default StereoOutput for immediate sound.
     pub(super) fn reset_to_new_patch(&mut self) {
@@ -583,6 +617,11 @@ impl SynthApp {
             // Append visualizer modules that exist in the PatchEditor
             // but not in the engine (apply_project skips visualizers,
             // so build_project_from_engine doesn't emit them either).
+            // Visualizers ONLY — mirroring `reconcile_with_session`'s
+            // GUI-only filter. Any other editor module missing from the
+            // engine build is one the engine has removed but the editor
+            // has not yet reconciled away; appending it would resurrect
+            // a deleted module in the saved file.
             let engine_ids: HashSet<String> = patch.modules.iter().map(|m| m.id.clone()).collect();
             for module_id in ui_inst.patch_editor.module_ids() {
                 let id_str = module_id.to_string();
@@ -594,6 +633,9 @@ impl SynthApp {
                 else {
                     continue;
                 };
+                if descriptor.category != synth_core::ModuleCategory::Visualizer {
+                    continue;
+                }
                 let name_to_type_id: std::collections::HashMap<&str, &str> = descriptor
                     .parameters
                     .iter()

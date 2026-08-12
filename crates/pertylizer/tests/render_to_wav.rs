@@ -9,8 +9,8 @@
 
 mod common;
 
+use synth_core::AnalysisScope;
 use synth_core::{InstrumentId, Seconds};
-use synth_mcp::AnalysisScope;
 
 use pertylizer::mcp_bridge::{render_to_wav_impl, render_to_wav_with_tail_impl};
 use pertylizer::mcp_shared::McpSharedState;

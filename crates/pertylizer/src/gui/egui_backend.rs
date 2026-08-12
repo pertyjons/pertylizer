@@ -206,6 +206,18 @@ impl GuiBackend for EguiBackend {
                 egui_extras::install_image_loaders(&cc.egui_ctx);
                 startup_theme.apply();
                 setup_custom_style(&cc.egui_ctx);
+                // Attach to MCP shared state *before* the first frame. Doing it
+                // in `service_mcp_project_requests` (end of frame) leaves a
+                // startup window in which an MCP save or rollback capture sees
+                // no GUI, silently takes the engine-only fallback, and flattens
+                // module positions/groups/canvas/visualizers — without even the
+                // "GUI did not answer" warning, because that only fires for an
+                // attached GUI.
+                #[cfg(feature = "mcp")]
+                if let Some(shared) = &app.mcp_shared {
+                    let ctx = cc.egui_ctx.clone();
+                    shared.attach_gui_once(move || Box::new(move || ctx.request_repaint()));
+                }
                 Ok(Box::new(app))
             }),
         )
@@ -1485,9 +1497,16 @@ impl eframe::App for SynthApp {
         // Dialogs
         self.show_dialogs(ctx);
 
-        // Write current UI layout to MCP shared state
+        // Write current UI layout to MCP shared state, and answer any queued
+        // MCP project-snapshot requests with the project the GUI would save.
+        // The service call re-drains MCP state and re-reconciles the editors
+        // itself before building, so requests that arrived mid-frame are
+        // answered from mirrors that match the engine graph.
         #[cfg(feature = "mcp")]
-        self.write_mcp_layout(ctx);
+        {
+            self.write_mcp_layout(ctx);
+            self.service_mcp_project_requests(ctx);
+        }
 
         // Update window title to reflect dirty state (only when changed)
         {
@@ -1530,6 +1549,15 @@ impl eframe::App for SynthApp {
     }
 
     fn on_exit(&mut self, _gl: Option<&eframe::glow::Context>) {
+        // No more frames will run: detach from MCP shared state so pending
+        // and future project-snapshot requests fall back to the engine build
+        // immediately instead of burning their full timeout waiting on a GUI
+        // that will never answer.
+        #[cfg(feature = "mcp")]
+        if let Some(shared) = &self.mcp_shared {
+            shared.detach_gui();
+        }
+
         // Save window geometry
         self.settings.save();
 

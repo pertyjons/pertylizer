@@ -3,8 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use synth_core::Seconds;
-use synth_mcp::AnalysisScope;
+use synth_core::{AnalysisScope, Seconds};
 use synth_sequencer::{SharedSong, Tick};
 
 use super::RenderError;

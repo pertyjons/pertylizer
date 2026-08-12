@@ -338,10 +338,10 @@ fn the_mcp_tool_renders_the_same_bytes() {
         // The command always renders the full chain; match it, or the two would
         // differ for the uninteresting reason that they were asked for
         // different signal paths.
-        synth_mcp::AnalysisScope {
+        synth_core::AnalysisScope {
             master_effects: true,
             return_effects: true,
-            render_sample_rate: TEST_SR,
+            render_sample_rate: synth_core::audio::DeviceSampleRate::new(TEST_SR),
         },
         Seconds::ZERO,
     )

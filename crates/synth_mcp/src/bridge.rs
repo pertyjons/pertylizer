@@ -247,78 +247,10 @@ pub struct BridgeInstrumentDef {
     pub connections: Vec<BridgeConnectionDef>,
 }
 
-/// Sample rate at which an offline analysis render runs.
-///
-/// `Full` (44.1 kHz) is the default and the only rate at which every metric is
-/// trustworthy — it covers the full audible band (Nyquist 22 kHz). `Draft`
-/// (22.05 kHz) roughly halves render time per buffer, which compounds across the
-/// per-track renders of `analyze_section`/`analyze_masking_matrix`, but its
-/// Nyquist is only 11 kHz, so the `high` energy band is truncated, `true_peak`
-/// is less reliable, LUFS is biased (its K-weighting filters are tuned for
-/// 44.1 kHz), and distortion-heavy patches alias more. Use `Draft` for quick
-/// level/balance/RMS passes; use `Full` when LUFS accuracy, high-band,
-/// true-peak, or saturation behavior matters.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum RenderQuality {
-    /// 22.05 kHz — ~2× faster per render, full-band metrics unreliable.
-    Draft,
-    /// 44.1 kHz — full audible band, all metrics trustworthy (default).
-    #[default]
-    Full,
-}
-
-impl RenderQuality {
-    /// 22.05 kHz draft rate.
-    pub const DRAFT_SAMPLE_RATE: u32 = 22_050;
-    /// 44.1 kHz full rate (the analysis default).
-    pub const FULL_SAMPLE_RATE: u32 = 44_100;
-
-    /// Render sample rate in Hz for this quality.
-    #[must_use]
-    pub fn sample_rate(self) -> u32 {
-        match self {
-            Self::Draft => Self::DRAFT_SAMPLE_RATE,
-            Self::Full => Self::FULL_SAMPLE_RATE,
-        }
-    }
-
-    /// Parse the MCP string flag. `Some("draft")` → `Draft`; everything else
-    /// (including `None` and unrecognized values) → `Full`, the safe default.
-    #[must_use]
-    pub fn parse(flag: Option<&str>) -> Self {
-        match flag {
-            Some(s) if s.eq_ignore_ascii_case("draft") => Self::Draft,
-            _ => Self::Full,
-        }
-    }
-}
-
-/// Which optional stages of the signal chain an offline analysis render should
-/// reconstruct on top of the dry instrument sum, plus the render sample rate.
-///
-/// The default (`AnalysisScope::default()`) preserves the historical behavior:
-/// instruments and their own effect chains only, return busses summed dry, no
-/// master processing, rendered at the full 44.1 kHz rate. Each effect flag opts
-/// a stage back in; `render_sample_rate` selects the render resolution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct AnalysisScope {
-    /// Load the master effect chain (master-bus limiter/EQ/compressor, …).
-    pub master_effects: bool,
-    /// Load each return bus's effect chain (else returns stay dry).
-    pub return_effects: bool,
-    /// Sample rate the offline render runs at (see [`RenderQuality`]).
-    pub render_sample_rate: u32,
-}
-
-impl Default for AnalysisScope {
-    fn default() -> Self {
-        Self {
-            master_effects: false,
-            return_effects: false,
-            render_sample_rate: RenderQuality::FULL_SAMPLE_RATE,
-        }
-    }
-}
+/// Offline-render scope and quality. Defined in `synth_core::render` so the
+/// application's renderers can take them without depending on MCP types;
+/// re-exported here because they are part of this bridge API's vocabulary.
+pub use synth_core::{AnalysisScope, RenderQuality};
 
 /// One side of a `compare_spectra` comparison: either an offline render
 /// (optionally soloing one instrument over a window) or an imported sample / WAV
@@ -368,27 +300,6 @@ pub struct TimeResolvedOptions {
     /// Maximum alignment search in ms (`None` = 250 ms). Ignored when
     /// `align_envelope` is `false`.
     pub align_max_ms: Option<f32>,
-}
-
-impl AnalysisScope {
-    /// Build a scope from the optional MCP flags. `all` turns on every effect
-    /// stage; the per-stage flags OR in on top of it. Every `None` effect flag
-    /// resolves to `false`, so omitting them yields the dry default. `quality`
-    /// selects the render resolution (`RenderQuality::default()` = full).
-    #[must_use]
-    pub fn from_flags(
-        all: Option<bool>,
-        master_effects: Option<bool>,
-        return_effects: Option<bool>,
-        quality: RenderQuality,
-    ) -> Self {
-        let all = all.unwrap_or(false);
-        Self {
-            master_effects: all || master_effects.unwrap_or(false),
-            return_effects: all || return_effects.unwrap_or(false),
-            render_sample_rate: quality.sample_rate(),
-        }
-    }
 }
 
 /// Where to splice a new module into an instrument's audio signal path.

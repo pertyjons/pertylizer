@@ -651,11 +651,11 @@ domain.
   a *truncated* bundle is covered instead, because it was never established
   whether `load_bundle` errors or merely warns when a referenced sample entry is
   absent. Settle the behaviour first, then test it.
-- [ ] **`AnalysisScope` and `McpBridgeError` still leak into the render core.**
-  The scope type is plain configuration data living in `synth_mcp`, and
-  `arrangement_render` still fails with `McpBridgeError`, which
-  `RenderError::Render` flattens to a string. Relocating the scope to
-  `synth_core` and re-typing `arrangement_render` are each their own cleanup.
+- [x] **`AnalysisScope` and `McpBridgeError` still leak into the render core.**
+  Done (Phase 0 of `mcp-agent-api-redesign`): the scope type moved to
+  `synth_core::render`, `arrangement_render` fails with its own
+  `OfflineRenderError`, and the render entry points take a `SharedSong` handle
+  instead of `&McpSharedState` — the render core no longer names an MCP type.
 - [ ] **`--no-default-features --features gui-egui` does not build.** Pre-dates
   this work (verified on main): `gui/egui_backend.rs`'s `VersionTracker::at` is
   dead without `mcp`, and `-D warnings` rejects it. The `gui-egui,mcp` and
@@ -904,7 +904,21 @@ behaviour that must be re-audited when `rmcp` changes.
   mutation/effect work **M–L**, rather than implementing two smaller designs that
   immediately have to be reconciled.
 
-- [ ] **Let the non-GUI paths build a project with the GUI's layout in it.**
+- [x] **Let the non-GUI paths build a project with the GUI's layout in it.**
+  Done 2026-08-12 (Phase 0 of `mcp-agent-api-redesign`), as the reviewed
+  request-queue design below: `McpSharedState` carries a queue of one-shot
+  reply channels (`request_gui_project` / `service_gui_project_requests`), the
+  GUI answers at end of frame — after `reconcile_with_session` — with
+  `create_project_from_app`, and the MCP save (plain + bundle) and the
+  rollback capture go through `build_project_for_persistence`, which falls
+  back to engine reconstruction when no GUI is attached or none answers
+  within 5 s (> the 2 s engine snapshot barrier). Unit tests cover the
+  responder, two concurrent requesters, timeout + late reply, and the
+  unattached fast path; integration tests pin that a save persists the
+  GUI-answered project and that headless saves still work. The live-app
+  smoke test (move modules → MCP save → reopen) is tracked in the phase
+  verification. Original analysis kept below for the record.
+
   Two symptoms, one cause. `overlay_ui_metadata` (`project_flow.rs:555`) is the only
   thing that puts module positions, group metadata, canvas size, instrument colour
   and visualizer modules into a `ProjectFile`, and it is called from exactly one

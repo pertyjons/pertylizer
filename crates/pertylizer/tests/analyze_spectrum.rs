@@ -30,8 +30,8 @@ use pertylizer::mcp_bridge::{
 use pertylizer::mcp_shared::McpSharedState;
 use pertylizer::patch::{ModuleBuilder, Patch};
 use pertylizer::session::SynthSession;
+use synth_core::AnalysisScope;
 use synth_core::ModuleType;
-use synth_mcp::AnalysisScope;
 
 use common::TEST_SR;
 

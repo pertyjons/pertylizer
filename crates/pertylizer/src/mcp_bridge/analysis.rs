@@ -297,7 +297,7 @@ impl synth_mcp::bridge::AnalysisBridge for AppSynthBridge {
         duration_seconds: f32,
         start_tick: Option<Tick>,
         include_per_track: Option<bool>,
-        scope: synth_mcp::AnalysisScope,
+        scope: synth_core::AnalysisScope,
     ) -> Result<AnalyzeMixBusResult, McpBridgeError> {
         analyze_mix_bus_impl(
             &self.session,
@@ -316,7 +316,7 @@ impl synth_mcp::bridge::AnalysisBridge for AppSynthBridge {
         duration_seconds: f32,
         start_tick: Option<Tick>,
         instrument_id: Option<InstrumentId>,
-        scope: synth_mcp::AnalysisScope,
+        scope: synth_core::AnalysisScope,
         tail: synth_core::Seconds,
     ) -> Result<RenderToWavResult, McpBridgeError> {
         render_to_wav_with_tail_impl(
@@ -340,7 +340,7 @@ impl synth_mcp::bridge::AnalysisBridge for AppSynthBridge {
         f0_hint: Option<f32>,
         max_partials: Option<u32>,
         log_bins: Option<u32>,
-        scope: synth_mcp::AnalysisScope,
+        scope: synth_core::AnalysisScope,
     ) -> Result<synth_mcp::types::AnalyzeSpectrumResult, McpBridgeError> {
         analyze_spectrum_impl(
             &self.session,
@@ -366,7 +366,7 @@ impl synth_mcp::bridge::AnalysisBridge for AppSynthBridge {
         log_bins: Option<u32>,
         hop_ms: Option<f32>,
         window_len_ms: Option<f32>,
-        scope: synth_mcp::AnalysisScope,
+        scope: synth_core::AnalysisScope,
     ) -> Result<synth_mcp::types::AnalyzeSpectrogramResult, McpBridgeError> {
         analyze_spectrogram_impl(
             &self.session,
@@ -432,7 +432,7 @@ impl synth_mcp::bridge::AnalysisBridge for AppSynthBridge {
         max_partials: Option<u32>,
         log_bins: Option<u32>,
         mel_bands: Option<u32>,
-        scope: synth_mcp::AnalysisScope,
+        scope: synth_core::AnalysisScope,
         time_resolved: synth_mcp::TimeResolvedOptions,
     ) -> Result<synth_mcp::types::CompareSpectraResult, McpBridgeError> {
         compare_spectra_impl(
@@ -457,7 +457,7 @@ impl synth_mcp::bridge::AnalysisBridge for AppSynthBridge {
         envelope_window_ms: Option<f32>,
         note_duration_ms: Option<u32>,
         transient_window_ms: Option<f32>,
-        scope: synth_mcp::AnalysisScope,
+        scope: synth_core::AnalysisScope,
     ) -> Result<synth_mcp::types::CompareEnvelopesResult, McpBridgeError> {
         compare_envelopes_impl(
             &self.session,
@@ -476,7 +476,7 @@ impl synth_mcp::bridge::AnalysisBridge for AppSynthBridge {
         &self,
         duration_seconds: f32,
         start_tick: Option<Tick>,
-        scope: synth_mcp::AnalysisScope,
+        scope: synth_core::AnalysisScope,
     ) -> Result<AnalyzeMasterChainResult, McpBridgeError> {
         analyze_master_chain_impl(
             &self.session,
@@ -492,7 +492,7 @@ impl synth_mcp::bridge::AnalysisBridge for AppSynthBridge {
         &self,
         duration_seconds: f32,
         start_tick: Option<Tick>,
-        scope: synth_mcp::AnalysisScope,
+        scope: synth_core::AnalysisScope,
     ) -> Result<AnalyzeReturnBussesResult, McpBridgeError> {
         analyze_return_busses_impl(
             &self.session,
@@ -510,7 +510,7 @@ impl synth_mcp::bridge::AnalysisBridge for AppSynthBridge {
         duration_seconds: f32,
         start_tick: Option<Tick>,
         label: Option<String>,
-        scope: synth_mcp::AnalysisScope,
+        scope: synth_core::AnalysisScope,
     ) -> Result<CompareMixResult, McpBridgeError> {
         compare_mix_before_after_impl(
             &self.session,
@@ -537,29 +537,47 @@ impl synth_mcp::bridge::AnalysisBridge for AppSynthBridge {
     }
 
     fn capture_snapshot(&self) -> Result<(), McpBridgeError> {
-        let mut slot = self.rollback_snapshot.lock();
-        // Refuse rather than overwrite: an occupied slot means another rollback
-        // batch is mid-flight, and overwriting it would let one batch restore
-        // the other's snapshot. Concurrent rollback batches are unsupported.
-        if slot.is_some() {
-            return Err(McpBridgeError::Other(
+        fn batch_in_progress() -> McpBridgeError {
+            McpBridgeError::Other(
                 "a rollback batch is already in progress — concurrent rollback batches are \
                  not supported"
                     .to_string(),
-            ));
+            )
         }
-        let opts = self.build_save_options();
-        let project = crate::project_apply::build_project_from_engine(
-            &self.session,
-            &self.shared.song,
-            &self.sample_library,
-            opts,
-        );
-        *slot = Some(Box::new(project));
+        // Refuse rather than overwrite: an occupied slot means another rollback
+        // batch is mid-flight, and overwriting it would let one batch restore
+        // the other's snapshot. Concurrent rollback batches are unsupported.
+        // Checked *before* the build so a concurrent capture still fails fast,
+        // and the slot mutex is never held across the (possibly seconds-long)
+        // GUI project-snapshot wait — holding it there stalled restore/clear
+        // and turned this fail-fast refusal into a multi-second block.
+        if self.rollback_snapshot.lock().is_some() {
+            return Err(batch_in_progress());
+        }
+        // Serialize with project load/save/new so the snapshot is not built
+        // from a half-applied project.
+        let _guard = self.shared.project_io_lock.lock();
+        // Prefer the GUI's own project build so a rollback restores the
+        // user's module layout instead of a flattened default — see
+        // `build_project_for_persistence`.
+        let project = self.build_project_for_persistence();
+        let mut slot = self.rollback_snapshot.lock();
+        // Re-check: another capture may have won the slot while we built.
+        if slot.is_some() {
+            return Err(batch_in_progress());
+        }
+        *slot = Some(project);
         Ok(())
     }
 
     fn restore_snapshot(&self) -> Result<Vec<String>, McpBridgeError> {
+        // Same serialization — and the same lock order (project I/O first,
+        // then the slot) — as `capture_snapshot`. A restore tears down and
+        // rebuilds every instrument, so running it unguarded lets it land in
+        // the middle of a concurrent `save_project`: that save holds this lock
+        // while it waits seconds for the GUI to build the project, and would
+        // otherwise write a file built from a half-restored engine.
+        let _guard = self.shared.project_io_lock.lock();
         let project =
             self.rollback_snapshot.lock().take().ok_or_else(|| {
                 McpBridgeError::Other("no project snapshot to restore".to_string())
@@ -605,7 +623,7 @@ impl synth_mcp::bridge::AnalysisBridge for AppSynthBridge {
         start_tick: Tick,
         end_tick: Tick,
         include_per_track: Option<bool>,
-        scope: synth_mcp::AnalysisScope,
+        scope: synth_core::AnalysisScope,
     ) -> Result<AnalyzeSectionResult, McpBridgeError> {
         analyze_section_impl(
             &self.session,
@@ -641,7 +659,7 @@ impl synth_mcp::bridge::AnalysisBridge for AppSynthBridge {
         arrangement_start_tick: Option<Tick>,
         arrangement_end_tick: Option<Tick>,
         top_pairs: Option<u32>,
-        scope: synth_mcp::AnalysisScope,
+        scope: synth_core::AnalysisScope,
     ) -> Result<AnalyzeMaskingMatrixResult, McpBridgeError> {
         analyze_masking_matrix_impl(
             &self.session,

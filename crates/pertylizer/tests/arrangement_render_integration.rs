@@ -74,7 +74,7 @@ fn render_scripted_amp_rms(script: &str) -> f32 {
     let song = build_single_pattern_song("Scripted", &[(PatternTick(0), 60, SeqDuration(3840))]);
     let shared = McpSharedState::with_song(song);
     let rendered =
-        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
+        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 3840)
             .expect("scripted-amp render should succeed");
     left_rms(&rendered.samples)
 }
@@ -161,7 +161,7 @@ fn offline_render_preserves_address_based_mod_matrix_destination() {
     let song = build_single_pattern_song("Orbit", &[(PatternTick(0), 60, SeqDuration(3840))]);
     let shared = McpSharedState::with_song(song);
     let rendered =
-        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
+        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 3840)
             .expect("spp address-routed render should succeed");
 
     let l = left_rms(&rendered.samples);
@@ -192,7 +192,7 @@ fn renders_audible_arrangement_from_engine_snapshot() {
     let rendered = render_arrangement_to_buffer(
         &rig.session,
         &rig.sample_library,
-        &shared,
+        &shared.song,
         start_tick,
         end_tick,
     )
@@ -275,7 +275,7 @@ fn master_volume_scales_offline_render() {
     let full = render_arrangement_to_buffer(
         &rig.session,
         &rig.sample_library,
-        &shared,
+        &shared.song,
         start_tick,
         end_tick,
     )
@@ -286,7 +286,7 @@ fn master_volume_scales_offline_render() {
     let half = render_arrangement_to_buffer(
         &rig.session,
         &rig.sample_library,
-        &shared,
+        &shared.song,
         start_tick,
         end_tick,
     )
@@ -313,7 +313,7 @@ fn empty_arrangement_renders_silently_without_error() {
     let shared = McpSharedState::with_song(song);
 
     let rendered =
-        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 0, 3840)
+        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 0, 3840)
             .expect("empty-arrangement render should succeed");
 
     // The buffer should be silent (or very nearly so) — no notes were
@@ -336,10 +336,11 @@ fn render_rejects_inverted_range() {
     // end_tick <= start_tick should return an explicit error instead of
     // panicking or producing a zero-length buffer.
     let result =
-        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 3840, 3840);
+        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 3840, 3840);
     assert!(result.is_err(), "zero-width range should fail");
 
-    let result = render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared, 3840, 0);
+    let result =
+        render_arrangement_to_buffer(&rig.session, &rig.sample_library, &shared.song, 3840, 0);
     assert!(result.is_err(), "inverted range should fail");
 }
 
@@ -365,7 +366,7 @@ fn render_mid_note_pre_rolls_sustained_note() {
     let rendered = render_arrangement_to_buffer(
         &rig.session,
         &rig.sample_library,
-        &shared,
+        &shared.song,
         start_tick,
         end_tick,
     )
@@ -411,7 +412,7 @@ fn render_with_no_overlap_skips_preroll() {
     let rendered = render_arrangement_to_buffer(
         &rig.session,
         &rig.sample_library,
-        &shared,
+        &shared.song,
         start_tick,
         end_tick,
     )
@@ -449,7 +450,7 @@ fn render_fails_when_no_instruments_loaded() {
     let sample_library: pertylizer::audio::preview::SharedSampleLibrary = Arc::new(
         std::sync::RwLock::new(synth_sampler::SampleLibrary::default()),
     );
-    let result = render_arrangement_to_buffer(&session, &sample_library, &shared, 0, 3840);
+    let result = render_arrangement_to_buffer(&session, &sample_library, &shared.song, 0, 3840);
     assert!(
         result.is_err(),
         "render should fail when no instruments are loaded"

@@ -44,10 +44,38 @@ use synth_sequencer::{
 use crate::mcp_shared::McpSharedState;
 use crate::session::SynthSession;
 
+// The offline renderers speak their own error types so application rendering
+// carries no MCP dependency; this bridge is where their failures become MCP
+// errors, so the conversions live here rather than next to the renderers.
+impl From<crate::audio::arrangement_render::OfflineRenderError> for McpBridgeError {
+    fn from(e: crate::audio::arrangement_render::OfflineRenderError) -> Self {
+        Self::Other(e.0)
+    }
+}
+
+impl From<crate::render::RenderError> for McpBridgeError {
+    fn from(e: crate::render::RenderError) -> Self {
+        Self::Other(e.to_string())
+    }
+}
+
 /// Virtual port name surfaced on `ModuleInfo.input_ports` / `output_ports`
 /// to mark a module that is wired only through a Mod Matrix slot rather
 /// than via real audio/CV cables.
 const MATRIX_VIRTUAL_PORT: &str = "matrix";
+
+/// How long an MCP save or rollback capture waits for the GUI to answer a
+/// project-snapshot request before falling back to engine reconstruction.
+///
+/// Strictly longer than `project_apply::SNAPSHOT_SYNC_TIMEOUT_MS`, because the
+/// GUI's own builder runs that command-drain barrier and may legitimately
+/// spend all of it before replying — an equal nested deadline would turn every
+/// such save into a false fallback and double the wait.
+const GUI_PROJECT_SNAPSHOT_TIMEOUT_MS: u64 = 5_000;
+const _: () = assert!(
+    GUI_PROJECT_SNAPSHOT_TIMEOUT_MS > crate::project_apply::SNAPSHOT_SYNC_TIMEOUT_MS,
+    "the GUI reply timeout must exceed the engine snapshot barrier it nests"
+);
 
 /// Hard cap on a per-module-instance description (characters). Long enough for
 /// a paragraph of intent, short enough to stay readable in tooltips. The TODO
@@ -869,38 +897,94 @@ impl AppSynthBridge {
     /// Save the current shared state as a project file (bundle if the
     /// sample library is non-empty, plain JSON otherwise).
     ///
-    /// Module positions, group metadata, canvas size, instrument
-    /// colour, and visualiser modules default to engine-only values
-    /// because this path doesn't have access to a `PatchEditor` —
-    /// re-loading an MCP-saved project into the GUI will collapse
-    /// those fields. Use the GUI File-menu save when canvas fidelity
-    /// matters.
+    /// The project is preferably the GUI's own build (see
+    /// [`Self::build_project_for_persistence`]), so module positions, group
+    /// metadata, canvas size, and visualiser modules survive an MCP save.
+    /// Only when no GUI is attached — or an attached GUI fails to answer in
+    /// time — do those fields fall back to engine-only defaults.
     fn do_save_project(&self, path: std::path::PathBuf) -> Result<String, McpBridgeError> {
         let _guard = self.shared.project_io_lock.lock();
 
-        // The command-drain barrier that keeps a save from reading a stale/truncated
-        // graph (queued add_module/connect not yet mirrored) now lives inside
-        // `build_project_from_engine`, the shared builder both branches below reach
-        // (`save_project_to` and `save_project_as_bundle`), so every save path — GUI
-        // and MCP — is covered by one mechanism.
-        let has_samples = self.sample_library.read().is_ok_and(|lib| !lib.is_empty());
+        let project = self.build_project_for_persistence();
+
+        // Decide bundle-vs-plain from a single library snapshot taken *after*
+        // the project is built: the build can block for the GUI round trip,
+        // and `import_sample` does not take `project_io_lock`, so a sample
+        // imported during that wait must flip the save to a bundle rather
+        // than be silently dropped from a plain-JSON file. The same guard is
+        // handed to the bundle writer so the branch decision, the filename
+        // extension, and the bundled samples all come from one snapshot.
+        let lib = self
+            .sample_library
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
+        let has_samples = !lib.is_empty();
         let path = crate::project::normalize_project_path(&path, has_samples);
-        let opts = self.build_save_options();
 
         let result = if has_samples {
-            self.save_project_as_bundle(&path, opts)
+            Self::save_project_as_bundle(&path, &project, &lib)
         } else {
-            crate::project_apply::save_project_to(
-                &path,
-                &self.session,
-                &self.shared.song,
-                &self.sample_library,
-                opts,
-            )
-            .map_err(McpBridgeError::Other)
+            crate::project_apply::save_built_project_to(&path, &project)
+                .map_err(McpBridgeError::Other)
         };
+        drop(lib);
 
         self.record_io_result(result)
+    }
+
+    /// The project an MCP save or rollback snapshot should persist.
+    ///
+    /// Prefer the project the GUI itself would save: it carries the
+    /// per-instrument UI metadata — module positions, group metadata, canvas
+    /// size, visualizer modules — that lives only in `PatchEditor` state and
+    /// that an engine reconstruction writes as defaults, flattening the
+    /// user's patch layout on every MCP save and rollback restore. Fall back
+    /// to the engine build when no GUI is attached (headless server, render
+    /// CLI, integration tests — where the defaults *are* the truth) or when
+    /// the GUI does not answer within [`GUI_PROJECT_SNAPSHOT_TIMEOUT_MS`].
+    ///
+    /// Both paths run the same command-drain barrier inside
+    /// `build_project_from_engine`, so either project reflects every queued
+    /// graph mutation.
+    fn build_project_for_persistence(&self) -> Box<crate::project::ProjectFile> {
+        // Pre-drain the engine command queue on this (MCP) thread. The
+        // builder — GUI or fallback — runs the same barrier inside
+        // `build_project_from_engine`, so draining here makes that nested
+        // barrier an early-return: the GUI frame is not stalled for up to
+        // `SNAPSHOT_SYNC_TIMEOUT_MS` by a remote save, and the GUI reply
+        // lands well inside `GUI_PROJECT_SNAPSHOT_TIMEOUT_MS`.
+        let _ = self
+            .session
+            .wait_for_pending_commands(crate::project_apply::SNAPSHOT_SYNC_TIMEOUT_MS);
+        if let Some(project) = self
+            .shared
+            .request_gui_project(std::time::Duration::from_millis(
+                GUI_PROJECT_SNAPSHOT_TIMEOUT_MS,
+            ))
+        {
+            return project;
+        }
+        if self.shared.is_gui_attached() {
+            // Not the benign headless fallback: a live GUI failed to answer
+            // in time, so this save/snapshot silently loses the UI metadata
+            // overlay (module positions, groups, canvas size, visualizers).
+            // Leave a trace so a "my layout was flattened" report is
+            // diagnosable.
+            tracing::warn!(
+                target: "pertylizer::mcp",
+                "GUI did not answer the project-snapshot request within {}ms; \
+                 falling back to engine reconstruction (module positions, groups, \
+                 canvas size, and visualizers will be defaults)",
+                GUI_PROJECT_SNAPSHOT_TIMEOUT_MS,
+            );
+        }
+        let opts = self.build_save_options();
+        Box::new(crate::project_apply::build_project_from_engine(
+            &self.session,
+            &self.shared.song,
+            &self.sample_library,
+            opts,
+        ))
     }
 
     fn do_save_patch(
@@ -938,25 +1022,14 @@ impl AppSynthBridge {
         self.record_io_result(result)
     }
 
-    /// Construct a `ProjectFile` from engine state, bundle it with the
-    /// current sample library, and write to disk.
+    /// Bundle an already-built `ProjectFile` with the given sample-library
+    /// snapshot and write it to disk. The caller passes the same snapshot it
+    /// used for the bundle-vs-plain decision, keeping the two consistent.
     fn save_project_as_bundle(
-        &self,
         path: &std::path::Path,
-        opts: crate::project_apply::ProjectBuildOptions,
+        project: &crate::project::ProjectFile,
+        lib: &synth_sampler::SampleLibrary,
     ) -> Result<String, McpBridgeError> {
-        let project = crate::project_apply::build_project_from_engine(
-            &self.session,
-            &self.shared.song,
-            &self.sample_library,
-            opts,
-        );
-
-        let lib = self
-            .sample_library
-            .read()
-            .unwrap_or_else(|e| e.into_inner());
-
         if let Some(parent) = path.parent()
             && !parent.as_os_str().is_empty()
         {
@@ -964,7 +1037,7 @@ impl AppSynthBridge {
                 .map_err(|e| McpBridgeError::Other(format!("create parent dir: {e}")))?;
         }
 
-        crate::bundle::save_bundle(&project, &lib, path)
+        crate::bundle::save_bundle(project, lib, path)
             .map_err(|e| McpBridgeError::Other(e.to_string()))?;
 
         Ok(format!(

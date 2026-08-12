@@ -21,6 +21,7 @@ pub mod display;
 pub mod hash;
 pub mod module_traits;
 pub mod params;
+pub mod render;
 pub mod script;
 pub mod suggest;
 pub mod tuning;
@@ -64,6 +65,7 @@ pub use params::{
     VoiceSynthParam, Waveform, WaveshaperCurve, WaveshaperParam, WavetableParam, WavetableSelect,
     easing_acceleration, easing_position, easing_velocity,
 };
+pub use render::{AnalysisScope, RenderQuality};
 pub use types::{
     AllpassState, Amplitude, BeatDivision, BeatPosition, BipolarDelta, BipolarValue, BitDepth,
     BlockSize, Bpm, BufferIndex, BypassState, CcNumber, Cents, Clampable, ClipMode,
