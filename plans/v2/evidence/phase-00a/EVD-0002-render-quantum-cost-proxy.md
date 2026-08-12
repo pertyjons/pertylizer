@@ -59,9 +59,12 @@ the data was read:
 
 ## Source and environment
 
-- Source revision: `d4b5001c` on `main`, plus the `render_cost` harness added by
-  the change that carries this record, plus one edited line per build (see
-  *Method*). No other source difference exists between the four builds.
+- Source revision: `d4b5001c` on `main`, plus the `render_cost` harness, which
+  landed with this record as `c6fb861c`, plus one edited line per build (see
+  *Method*). No other source difference exists between the four builds. The
+  harness commit is named after the fact for the reason
+  [EVD-0001](EVD-0001-corpus-determinism-baseline.md) records: a squash-merge
+  replaces the hash any pre-merge revision of this file could have cited.
 - Platform and architecture: Linux 7.1.7-200.fc44.x86_64, x86_64,
   13th Gen Intel Core i7-13700H (6 P-cores, 8 E-cores), `performance` governor
 - Rust/tool versions: rustc 1.97.1 (8bab26f4f), cargo 1.97.1 (c980f4866)
