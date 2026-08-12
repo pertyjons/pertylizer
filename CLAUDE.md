@@ -229,6 +229,57 @@ fn set_frequency(freq: Hertz) { ... }
 | `synth_sequencer` | `PatternId`, `TrackId`, `NoteId`, `Tick`, `PatternTick`, `Duration`, `Pitch`, `TrackIndex`, `RowIndex`, `NoteGraphId`, `NoteModuleId`                                                          |
 | `synth_engine`    | `TransactionId`, `ClientId`, `MidiChannelSelection`, `ConnectionCount`, `ModuleId` (instrument ids use `synth_core::InstrumentId`)                                                                                                            |
 
+### Newtype invariants
+
+- Newtype fields are private unless an external representation requires otherwise.
+- Construction validates the domain invariant. Use `Result` or `TryFrom` for
+  fallible external input; do not let an invalid value enter domain logic.
+- Clamp only when clamping is the explicitly documented domain behavior. Do not
+  silently turn invalid persisted, protocol, or user input into a different value.
+- Expose named accessors such as `as_f32()` and only implement arithmetic that is
+  meaningful for the unit. A newtype must protect the concept, not merely rename
+  a primitive.
+
+## State-changing operations and errors
+
+- Never discard a `Result` or boolean success value from I/O, serialization,
+  command sends, state reconstruction, or persistence.
+- Propagate the failure, convert it into a surfaced diagnostic, or document why
+  failure is intentionally harmless. Best-effort behavior must be explicit; it
+  must not silently leave engine or project state at a default or partial value.
+
+## Serialized contracts
+
+- Closed persisted schemas, manifests, receipts, and protocols use
+  `#[serde(deny_unknown_fields)]` so misspelled fields cannot be ignored.
+- Required fields do not use `#[serde(default)]`. Optionality is deliberate; when
+  the distinction matters, preserve the difference between a missing field and
+  an explicit `null`.
+- Removing or changing the meaning of a serialized field requires a format or
+  protocol version change. Add round-trip tests plus rejection tests for unknown,
+  missing, and invalid fields.
+- Persisted output is deterministic: use canonical ordering or sort collections
+  before serialization and digesting.
+
+## Numeric invariants
+
+- Validate external and persisted numeric values at the boundary before wrapping
+  or passing them into DSP/domain logic. Reject non-finite floats and values
+  outside the domain range unless a documented saturating type owns that policy.
+- Prefer `From` for infallible conversions and `TryFrom` for checked conversions.
+  Avoid `as` casts at domain boundaries; keep units typed through calculations.
+- Use `total_cmp` when floats require ordering. Do not use raw floating-point
+  values as identity or map keys without a documented canonical representation.
+
+## Stable identity
+
+- Never use collection position, vector index, display order, name, or module
+  instance number as persistent identity unless the domain explicitly defines it
+  as identity.
+- Keep stable IDs distinct from indices, counts, ordering positions, and sample or
+  tick offsets by using their dedicated newtypes. Reordering a collection must not
+  change what persisted references identify.
+
 ---
 
 ## Code Style
