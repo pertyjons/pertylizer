@@ -1,39 +1,65 @@
 # Pertylizer Core V2 Status
 
-| Field                  | Value                             |
-|------------------------|-----------------------------------|
-| Last updated           | 2026-08-12                        |
-| Documentation stage    | Initial structure                 |
-| Master plan status     | Proposed and architecture-audited |
-| Active migration phase | Pre-Phase 0A preparation          |
+| Field                  | Value                                    |
+|------------------------|------------------------------------------|
+| Last updated           | 2026-08-12                               |
+| Documentation stage    | Workflow accepted; inventories at pass 2 |
+| Master plan status     | Proposed and architecture-audited        |
+| Active migration phase | 0A and 0B, both `Active` in parallel     |
 
 This is a current-state dashboard, not a work log. Replace stale information instead of appending a chronology.
 Historical conclusions belong in ADRs, evidence records, phase reviews, and Git history.
 
 ## Current objective
 
-Establish a reviewable Phase 0A baseline and the contracts required to begin the experimental Sound Core V2 path
-without weakening or silently replacing the V1 production path. Phase 0B's migration inventories run alongside that
-work; they gate Phase 10, not Phase 1.
+Establish a reviewable Phase 0A baseline and the contracts required to begin the experimental Sound Core V2 path without
+weakening or silently replacing the V1 production path. Phase 0B's migration inventories run alongside that work; they
+gate Phase 10, not Phase 1.
 
 ## Current state
 
 - The consolidated [architecture and migration plan](master-plan.md) exists.
-- The V2 documentation responsibilities, registers, and templates are defined.
+- The V2 documentation responsibilities, registers, and templates are defined, reviewed, and **accepted**. All 23
+  documents were checked: every internal Markdown link and heading anchor resolves, both phase trackers conform to
+  [templates/phase.md](templates/phase.md), and the identifier series are consistent across README, registers, and
+  trackers. No authority conflict was found.
 - The 36 open decision topics are registered in [ADR.md](ADR.md), but none is accepted by this documentation setup.
-- Phase 0A and 0B implementation and evidence are not claimed complete.
+- All four [inventories](inventories/README.md) have completed two audit passes against `dd69b657` and are `Active`:
+  74 `LIMIT`, 59 `STATE`, 55 `CAP`, and 31 `IDN` entries. Pass 1 was a census from schemas and constant names; pass 2
+  read the enforcing code, which resolved every gate-blocking question and **disproved three pass-1 hypotheses** — those
+  are corrected in place rather than appended. Each ledger records both methods and what each is blind to; none is
+  `Current`.
+- Phase 0A and 0B implementation and evidence are not claimed complete. No code has been written for V2.
 - V2 implementation status must be established from repository evidence before this dashboard makes code-level
   completion claims.
 
 ## Next actions
 
-1. Review and accept the documentation workflow in this directory.
-2. Begin the resource-limit inventory (Phase 0A) and the three migration inventories (Phase 0B) under
-   [inventories/](inventories/README.md).
-3. Define the reference render corpus and comparison result format as evidence records.
-4. Start individual ADRs only when their decisions are actively investigated.
-5. Select the first bounded task in
-   [phase-00a-baseline-and-render-contracts.md](phases/phase-00a-baseline-and-render-contracts.md).
+The inventories have stopped being search-limited. What each still lacks is either a decision or an executable check, so
+the next actions are those, not a pass 3.
+
+1. **Open ADR-0021 and ADR-0001.** The resource ledger now carries the exact input they need: a silent-truncation
+   register of five sites, of which only the event-drop counters have a diagnostic (`LIMIT-0001`, `LIMIT-0020`,
+   `LIMIT-0056`, `LIMIT-0067`). The Phase 0A exit gate forbids accepting unexplained silent truncation as baseline, so
+   each needs either a diagnostic or an explicit accepted-behavior decision.
+2. **Open ADR-0014.** The identity ledger's central finding is that the module id encodes its type at *runtime*
+   (`IDN-0029`), not merely on disk, and that a module's script PRNG seed is derived from its instance number — so
+   renumbering is audible, not just referential.
+3. **Define the reference render corpus and comparison result format** as evidence records (P00A-T001, P00A-T002).
+4. **Write the first round-trip fixture (P00B-T005) for `STATE-0004`** — changing the focused instrument changes the
+   saved file while no dirty term observes it. It is the cheapest executable check the ledgers produced.
+5. **Record both audit passes as `EVD` records** so the ledgers' claims are reproducible rather than asserted. No value
+   in the resource ledger has been measured; all of them are read from source.
+
+## Documentation-workflow review notes
+
+Two conformance details were noted during the acceptance review and left as they are, because both trackers carry the
+information the template asks for:
+
+- Neither phase tracker uses the template's exact `Required decisions` column set. Phase 0A uses
+  `Required at Phase 0A exit` / `Later acceptance gate`; Phase 0B uses `Topic` / `Earlier deadline, if any` and states
+  the required status in prose above the table rather than in a column.
+- The trackers' task tables use a `Primary record` column where the template has `ADRs/inventories`.
 
 ## Blockers
 
@@ -44,8 +70,8 @@ requires them to be accepted.
 
 | Phase | Name                                     | Status      | Tracker                                                          | Exit review |
 |-------|------------------------------------------|-------------|------------------------------------------------------------------|-------------|
-| 0A    | Baseline, limits, and render contracts   | Not started | [Tracker](phases/phase-00a-baseline-and-render-contracts.md)     | Not created |
-| 0B    | Inventories and project contracts        | Not started | [Tracker](phases/phase-00b-inventories-and-project-contracts.md) | Not created |
+| 0A    | Baseline, limits, and render contracts   | Active      | [Tracker](phases/phase-00a-baseline-and-render-contracts.md)     | Not created |
+| 0B    | Inventories and project contracts        | Active      | [Tracker](phases/phase-00b-inventories-and-project-contracts.md) | Not created |
 | 1     | Experimental Sound Core V2 crate         | Not started | Create when activated                                            | Not created |
 | 2     | Minimal compiled voice graph             | Not started | Create when activated                                            | Not created |
 | 3     | Sample-accurate scheduler                | Not started | Create when activated                                            | Not created |
@@ -63,8 +89,8 @@ requires them to be accepted.
 | 11    | GUI and workflow migration               | Not started | Create when activated                                            | Not created |
 | 12    | Default cutover and V1 retirement        | Not started | Create when activated                                            | Not created |
 
-Phase 0A gates Phase 1; Phase 0B gates Phase 10 and runs in parallel with Phases 1-4. Phase 10 has no gate of its
-own and is complete when 10A–10E are. Every sub-phase has its own tracker, exit gate, and review.
+Phase 0A gates Phase 1; Phase 0B gates Phase 10 and runs in parallel with Phases 1-4. Phase 10 has no gate of its own
+and is complete when 10A–10E are. Every sub-phase has its own tracker, exit gate, and review.
 
 ## Status maintenance
 
