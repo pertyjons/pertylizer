@@ -1,0 +1,80 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
+  <title id="title">Sound Core V2 — real-time boundary and communication lanes</title>
+  <desc id="desc">The audio thread executes an immutable plan. Structural revisions arrive as full plans, while performance, session, parameter, telemetry, and recording use separate bounded lanes.</desc>
+  <defs>
+    <style>
+      .bg{fill:#07101d}.box{fill:#111e31;stroke:#314866;stroke-width:2}.host{fill:#183128;stroke:#68d098;stroke-width:2.5}.off{fill:#192642;stroke:#7d99c8;stroke-width:2.5}.rt{fill:#481d4b;stroke:#f35add;stroke-width:3}.lane{fill:#132237;stroke:#526b8d;stroke-width:2}.critical{fill:#47262a;stroke:#ff756d;stroke-width:2}.lossy{fill:#283242;stroke:#a5b2c4;stroke-width:2;stroke-dasharray:7 5}.title{fill:#f5f8fc;font:700 38px Inter,system-ui,sans-serif}.sub{fill:#9fb1c8;font:500 19px Inter,system-ui,sans-serif}.h{fill:#fff;font:700 22px Inter,system-ui,sans-serif}.body{fill:#d5dfec;font:500 17px Inter,system-ui,sans-serif}.small{fill:#afbed0;font:500 15px Inter,system-ui,sans-serif}.label{fill:#8fa5c0;font:650 14px Inter,system-ui,sans-serif;letter-spacing:1.2px}.arrow{fill:none;stroke:#c0cde0;stroke-width:3;marker-end:url(#a)}.pink{fill:none;stroke:#f35add;stroke-width:2.5;marker-end:url(#p)}.dash{fill:none;stroke:#94a8c2;stroke-width:2.5;stroke-dasharray:7 6;marker-end:url(#a)}
+    </style>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 10 5 0 10z" fill="#c0cde0"/></marker>
+    <marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 10 5 0 10z" fill="#f35add"/></marker>
+  </defs>
+  <rect class="bg" width="1600" height="1000"/>
+  <text class="title" x="70" y="62">Sound Core V2 — the real-time boundary</text>
+  <text class="sub" x="70" y="94">Prepare everything off-thread; the audio thread only executes bounded work</text>
+
+  <rect x="70" y="125" width="1460" height="52" rx="13" fill="#2c1732" stroke="#c94ec0" stroke-width="2"/>
+  <text x="800" y="158" text-anchor="middle" class="body">No locks • no heap allocation • no filesystem/network • no graph validation • no final destruction</text>
+
+  <text class="label" x="70" y="218">OFF-THREAD PREPARATION AND OWNERSHIP</text>
+  <rect class="off" x="70" y="240" width="310" height="130" rx="17"/>
+  <text class="h" x="225" y="279" text-anchor="middle">Application Core</text>
+  <text class="body" x="225" y="313" text-anchor="middle">committed project revision</text>
+  <text class="small" x="225" y="343" text-anchor="middle">complete projection, never deltas</text>
+  <rect class="off" x="430" y="240" width="330" height="130" rx="17"/>
+  <text class="h" x="595" y="279" text-anchor="middle">GraphCompiler V2</text>
+  <text class="body" x="595" y="313" text-anchor="middle">validate • admit • schedule</text>
+  <text class="small" x="595" y="343" text-anchor="middle">allocates buffers and prepared state</text>
+  <rect class="off" x="810" y="240" width="330" height="130" rx="17"/>
+  <text class="h" x="975" y="279" text-anchor="middle">Plan publisher</text>
+  <text class="body" x="975" y="313" text-anchor="middle">latest complete plan wins</text>
+  <text class="small" x="975" y="343" text-anchor="middle">revision-tagged atomic mailbox</text>
+  <rect class="host" x="1190" y="240" width="340" height="130" rx="17"/>
+  <text class="h" x="1360" y="279" text-anchor="middle">Host I/O adapter</text>
+  <text class="body" x="1360" y="313" text-anchor="middle">devices • clocks • resampling</text>
+  <text class="small" x="1360" y="343" text-anchor="middle">callback partitioning stays here</text>
+  <path class="arrow" d="M380 305 H430"/><path class="arrow" d="M760 305 H810"/>
+
+  <text class="label" x="70" y="420">SEPARATE COMMUNICATION LANES — EACH WITH ITS OWN ORDERING AND OVERFLOW POLICY</text>
+  <g>
+    <rect class="lane" x="70" y="444" width="270" height="86" rx="13"/><text class="h" x="205" y="477" text-anchor="middle">Full-plan mailbox</text><text class="small" x="205" y="507" text-anchor="middle">immutable • latest wins</text>
+    <rect class="critical" x="360" y="444" width="270" height="86" rx="13"/><text class="h" x="495" y="477" text-anchor="middle">Performance events</text><text class="small" x="495" y="507" text-anchor="middle">timestamped • note/panic priority</text>
+    <rect class="critical" x="650" y="444" width="270" height="86" rx="13"/><text class="h" x="785" y="477" text-anchor="middle">Session commands</text><text class="small" x="785" y="507" text-anchor="middle">transport • preview • recording</text>
+    <rect class="lane" x="940" y="444" width="270" height="86" rx="13"/><text class="h" x="1075" y="477" text-anchor="middle">Parameter control</text><text class="small" x="1075" y="507" text-anchor="middle">versioned • coalescable</text>
+    <rect class="lossy" x="1230" y="444" width="300" height="86" rx="13"/><text class="h" x="1380" y="477" text-anchor="middle">Telemetry / recording out</text><text class="small" x="1380" y="507" text-anchor="middle">bounded • counted • never blocks</text>
+  </g>
+
+  <path class="pink" d="M205 530 V605"/><path class="pink" d="M495 530 V605"/><path class="pink" d="M785 530 V605"/><path class="pink" d="M1075 530 V605"/>
+  <path class="pink" d="M1360 370 H1550 V570 H1400 V605"/>
+
+  <rect class="rt" x="145" y="605" width="1310" height="238" rx="24"/>
+  <text class="label" x="180" y="640" fill="#ffd7fa">AUDIO THREAD — SOUND CORE RENDERER</text>
+  <rect x="185" y="665" width="280" height="120" rx="15" fill="#311538" stroke="#cf54c5" stroke-width="2"/>
+  <text class="h" x="325" y="703" text-anchor="middle">Quantum boundary</text>
+  <text class="body" x="325" y="737" text-anchor="middle">swap whole plan atomically</text>
+  <text class="small" x="325" y="766" text-anchor="middle">old or new — never partial</text>
+  <rect x="510" y="665" width="360" height="120" rx="15" fill="#311538" stroke="#cf54c5" stroke-width="2"/>
+  <text class="h" x="690" y="703" text-anchor="middle">RenderPlan + RuntimeState</text>
+  <text class="body" x="690" y="737" text-anchor="middle">compact IDs • fixed buffers • exact events</text>
+  <text class="small" x="690" y="766" text-anchor="middle">process whole internal quanta only</text>
+  <rect x="915" y="665" width="300" height="120" rx="15" fill="#311538" stroke="#cf54c5" stroke-width="2"/>
+  <text class="h" x="1065" y="703" text-anchor="middle">Host block adapter</text>
+  <text class="body" x="1065" y="737" text-anchor="middle">input/output carry buffers</text>
+  <text class="small" x="1065" y="766" text-anchor="middle">host size cannot change DSP timing</text>
+  <rect x="1260" y="665" width="155" height="120" rx="15" fill="#311538" stroke="#cf54c5" stroke-width="2"/>
+  <text class="h" x="1337" y="707" text-anchor="middle">Publish</text>
+  <text class="body" x="1337" y="738" text-anchor="middle">audio</text>
+  <text class="small" x="1337" y="766" text-anchor="middle">counters</text>
+  <path class="arrow" d="M465 725 H510"/><path class="arrow" d="M870 725 H915"/><path class="arrow" d="M1215 725 H1260"/>
+
+  <path class="dash" d="M1337 665 V555 H1380 V530"/>
+
+  <path class="dash" d="M1337 785 V878 H1180"/>
+  <path class="dash" d="M325 785 V878 H470"/>
+  <rect class="box" x="70" y="878" width="460" height="84" rx="15"/>
+  <text class="h" x="300" y="913" text-anchor="middle">Retired-plan reclamation worker</text>
+  <text class="small" x="300" y="942" text-anchor="middle">final drop and deallocation happen off-thread</text>
+  <rect class="box" x="1070" y="878" width="460" height="84" rx="15"/>
+  <text class="h" x="1300" y="913" text-anchor="middle">Telemetry / recording consumers</text>
+  <text class="small" x="1300" y="942" text-anchor="middle">meters • FFT • protocol encoding • take commit</text>
+  <text class="small" x="565" y="928">A failed compile leaves the previous plan sounding.</text>
+</svg>

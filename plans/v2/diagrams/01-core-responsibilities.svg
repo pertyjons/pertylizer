@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
+  <title id="title">Pertylizer Core V2 — responsibilities and authority</title>
+  <desc id="desc">Frontends submit operations to Application Core, which owns revisions and projects canonical state into the compiler. Sound Core executes immutable plans and cannot mutate the project.</desc>
+  <defs>
+    <style>
+      .bg { fill:#08111f; }
+      .panel { fill:#101d30; stroke:#2c405d; stroke-width:2; }
+      .front { fill:#16243a; stroke:#60738f; stroke-width:2; }
+      .app { fill:#0d4855; stroke:#35d3e2; stroke-width:3; }
+      .project { fill:#4a3512; stroke:#f3b84b; stroke-width:3; }
+      .compile { fill:#26324c; stroke:#8da5d8; stroke-width:2.5; }
+      .sound { fill:#491b49; stroke:#f15ad7; stroke-width:3; }
+      .host { fill:#25332c; stroke:#71d29a; stroke-width:2.5; }
+      .adjacent { fill:#141f33; stroke:#627899; stroke-width:2; stroke-dasharray:8 7; }
+      .title { fill:#f4f7fb; font:700 38px Inter,system-ui,sans-serif; }
+      .subtitle { fill:#9fb0c7; font:500 19px Inter,system-ui,sans-serif; }
+      .h { fill:#fff; font:700 22px Inter,system-ui,sans-serif; }
+      .body { fill:#d4deeb; font:500 17px Inter,system-ui,sans-serif; }
+      .small { fill:#aebdd0; font:500 15px Inter,system-ui,sans-serif; }
+      .rule { fill:#eef9ff; font:650 18px Inter,system-ui,sans-serif; }
+      .label { fill:#93a8c2; font:650 14px Inter,system-ui,sans-serif; letter-spacing:1.2px; }
+      .arrow { fill:none; stroke:#b8c8dc; stroke-width:3; marker-end:url(#arrow); }
+      .feedback { fill:none; stroke:#35d3e2; stroke-width:2.5; stroke-dasharray:7 6; marker-end:url(#arrowCyan); }
+      .telemetry { fill:none; stroke:#f15ad7; stroke-width:2.5; stroke-dasharray:7 6; marker-end:url(#arrowPink); }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="#b8c8dc"/></marker>
+    <marker id="arrowCyan" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="#35d3e2"/></marker>
+    <marker id="arrowPink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse"><path d="M0 0 10 5 0 10z" fill="#f15ad7"/></marker>
+  </defs>
+  <rect class="bg" width="1600" height="1000"/>
+  <text class="title" x="70" y="62">Pertylizer Core V2 — responsibility and authority</text>
+  <text class="subtitle" x="70" y="94">One canonical document, one mutation boundary, one compiled audio path</text>
+
+  <rect x="70" y="122" width="1460" height="58" rx="14" fill="#122940" stroke="#2e87aa" stroke-width="2"/>
+  <text class="rule" x="800" y="158" text-anchor="middle">Project document is authoritative  •  Frontends request operations  •  Audio thread executes a prepared plan</text>
+
+  <text class="label" x="70" y="218">FRONTEND ADAPTERS — INTENT IN, RESULTS OUT</text>
+  <g>
+    <rect class="front" x="70" y="238" width="150" height="70" rx="13"/><text class="h" x="145" y="281" text-anchor="middle">GUI</text>
+    <rect class="front" x="238" y="238" width="150" height="70" rx="13"/><text class="h" x="313" y="281" text-anchor="middle">MCP</text>
+    <rect class="front" x="406" y="238" width="150" height="70" rx="13"/><text class="h" x="481" y="281" text-anchor="middle">CLI</text>
+    <rect class="front" x="574" y="238" width="170" height="70" rx="13"/><text class="h" x="659" y="281" text-anchor="middle">Importers</text>
+    <rect class="front" x="762" y="238" width="150" height="70" rx="13"/><text class="h" x="837" y="281" text-anchor="middle">Tests</text>
+    <rect class="front" x="930" y="238" width="220" height="70" rx="13"/><text class="h" x="1040" y="281" text-anchor="middle">Runtime facade</text>
+  </g>
+
+  <path class="arrow" d="M610 308 V340 H500 V368"/>
+  <path class="feedback" d="M455 368 V337 H280 V308"/>
+  <text class="small" x="622" y="332">typed operations</text>
+  <text class="small" x="288" y="332">results + diagnostics</text>
+
+  <rect class="app" x="240" y="368" width="620" height="128" rx="18"/>
+  <text class="h" x="550" y="407" text-anchor="middle">Application Core V2</text>
+  <text class="body" x="550" y="440" text-anchor="middle">validation • transactions • history • project revisions</text>
+  <text class="body" x="550" y="468" text-anchor="middle">the only mutation boundary for persisted state</text>
+
+  <rect class="adjacent" x="940" y="350" width="590" height="160" rx="18"/>
+  <text class="label" x="970" y="380">ADJACENT RUNTIME STATE — NOT PROJECT CHILDREN</text>
+  <g>
+    <rect class="panel" x="970" y="397" width="125" height="78" rx="11"/><text class="body" x="1032" y="430" text-anchor="middle">Runtime</text><text class="body" x="1032" y="455" text-anchor="middle">Session</text>
+    <rect class="panel" x="1110" y="397" width="125" height="78" rx="11"/><text class="body" x="1172" y="430" text-anchor="middle">Runtime</text><text class="body" x="1172" y="455" text-anchor="middle">Jobs</text>
+    <rect class="panel" x="1250" y="397" width="125" height="78" rx="11"/><text class="body" x="1312" y="430" text-anchor="middle">Runtime</text><text class="body" x="1312" y="455" text-anchor="middle">Telemetry</text>
+    <rect class="panel" x="1390" y="397" width="110" height="78" rx="11"/><text class="body" x="1445" y="430" text-anchor="middle">Host</text><text class="body" x="1445" y="455" text-anchor="middle">Config</text>
+  </g>
+
+  <path class="arrow" d="M395 496 V546"/>
+  <path class="arrow" d="M705 496 V546"/>
+  <rect class="project" x="120" y="546" width="530" height="138" rx="18"/>
+  <text class="h" x="385" y="587" text-anchor="middle">Project Core V2</text>
+  <text class="body" x="385" y="620" text-anchor="middle">canonical persisted document • assets • stable IDs</text>
+  <text class="body" x="385" y="648" text-anchor="middle">authoring intent, never runtime mirrors or telemetry</text>
+  <rect class="compile" x="690" y="546" width="330" height="138" rx="18"/>
+  <text class="h" x="855" y="587" text-anchor="middle">Compile coordinator</text>
+  <text class="body" x="855" y="620" text-anchor="middle">revision → build → publish</text>
+  <text class="body" x="855" y="648" text-anchor="middle">keeps last good plan</text>
+
+  <rect class="panel" x="120" y="724" width="300" height="94" rx="14"/>
+  <text class="h" x="270" y="761" text-anchor="middle">Project I/O V2</text>
+  <text class="small" x="270" y="790" text-anchor="middle">encode • decode • convert • save</text>
+  <rect class="compile" x="455" y="724" width="280" height="94" rx="14"/>
+  <text class="h" x="595" y="761" text-anchor="middle">ProjectGraphIr</text>
+  <text class="small" x="595" y="790" text-anchor="middle">semantic compiler input</text>
+  <rect class="compile" x="770" y="724" width="330" height="94" rx="14"/>
+  <text class="h" x="935" y="761" text-anchor="middle">GraphCompiler V2</text>
+  <text class="small" x="935" y="790" text-anchor="middle">admission • scheduling • diagnostics</text>
+  <path class="arrow" d="M270 684 V724"/><path class="arrow" d="M500 684 V724"/><path class="arrow" d="M735 771 H770"/><path class="arrow" d="M855 684 V724"/>
+
+  <path class="feedback" d="M935 724 V700 H1080 V530 H860"/>
+  <text class="small" x="1088" y="698">compile diagnostics</text>
+  <path class="arrow" d="M1100 771 H1115"/>
+  <rect class="sound" x="1115" y="650" width="415" height="165" rx="20"/>
+  <text class="h" x="1322" y="692" text-anchor="middle">Sound Core V2</text>
+  <text class="body" x="1322" y="726" text-anchor="middle">immutable RenderPlan + RuntimeState</text>
+  <text class="body" x="1322" y="755" text-anchor="middle">compact index-based real-time execution</text>
+  <text class="small" x="1322" y="786" text-anchor="middle">no project • no GUI/MCP • no devices • no allocation</text>
+
+  <rect class="host" x="1010" y="870" width="520" height="82" rx="15"/>
+  <text class="h" x="1270" y="907" text-anchor="middle">Host audio / MIDI I/O adapters</text>
+  <text class="small" x="1270" y="934" text-anchor="middle">devices • clocks • callbacks • reconnect • files • protocols</text>
+  <path class="arrow" d="M1270 870 V816"/>
+  <path class="telemetry" d="M1450 650 V520 H1312 V475"/>
+  <text class="small" x="1348" y="544">lossy observations + active revision</text>
+
+  <text class="small" x="70" y="974">Dependencies point inward. Engine state is a compiled, disposable projection of one project revision.</text>
+</svg>

@@ -1,0 +1,85 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1600" height="1000" viewBox="0 0 1600 1000" role="img" aria-labelledby="title desc">
+  <title id="title">GUI, MCP and CLI share the same application and runtime contracts</title>
+  <desc id="desc">GUI, MCP and CLI are adapters over shared reads, typed operations, jobs, session commands and telemetry. No frontend owns a second implementation or mutates Sound Core directly.</desc>
+  <defs>
+    <style>
+      .bg{fill:#08111f}.frontend{fill:#18263b;stroke:#7186a4;stroke-width:2.5}.app{fill:#0e4855;stroke:#38d3df;stroke-width:3}.project{fill:#4b3512;stroke:#f4b94b;stroke-width:3}.job{fill:#28324d;stroke:#9daee0;stroke-width:2.5}.session{fill:#263a31;stroke:#70d29b;stroke-width:2.5}.sound{fill:#491c49;stroke:#ef59d7;stroke-width:3}.telemetry{fill:#2a3040;stroke:#aab5c6;stroke-width:2;stroke-dasharray:8 6}.title{fill:#f5f8fc;font:700 38px Inter,system-ui,sans-serif}.sub{fill:#9fb1c8;font:500 19px Inter,system-ui,sans-serif}.h{fill:#fff;font:700 22px Inter,system-ui,sans-serif}.body{fill:#d5dfec;font:500 17px Inter,system-ui,sans-serif}.small{fill:#adbed1;font:500 15px Inter,system-ui,sans-serif}.label{fill:#91a7c2;font:650 14px Inter,system-ui,sans-serif;letter-spacing:1.2px}.arrow{fill:none;stroke:#bdcce0;stroke-width:3;marker-end:url(#a)}.cyan{fill:none;stroke:#38d3df;stroke-width:2.5;marker-end:url(#c)}.pink{fill:none;stroke:#ef59d7;stroke-width:2.5;stroke-dasharray:7 6;marker-end:url(#p)}
+    </style>
+    <marker id="a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 10 5 0 10z" fill="#bdcce0"/></marker>
+    <marker id="c" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 10 5 0 10z" fill="#38d3df"/></marker>
+    <marker id="p" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M0 0 10 5 0 10z" fill="#ef59d7"/></marker>
+  </defs>
+  <rect class="bg" width="1600" height="1000"/>
+  <text class="title" x="70" y="62">GUI, MCP and CLI — adapters, not alternate cores</text>
+  <text class="sub" x="70" y="94">Every frontend shares operations, reads, jobs and diagnostics while preserving one project revision stream</text>
+
+  <text class="label" x="70" y="145">FRONTEND-SPECIFIC PRESENTATION AND PROTOCOL</text>
+  <rect class="frontend" x="70" y="168" width="430" height="150" rx="18"/>
+  <text class="h" x="285" y="209" text-anchor="middle">GUI adapter</text>
+  <text class="body" x="285" y="243" text-anchor="middle">views • dialogs • keyboard intent</text>
+  <text class="small" x="285" y="273" text-anchor="middle">reads immutable snapshots</text>
+  <text class="small" x="285" y="298" text-anchor="middle">frontend-local hover / scroll / popup state</text>
+  <rect class="frontend" x="585" y="168" width="430" height="150" rx="18"/>
+  <text class="h" x="800" y="209" text-anchor="middle">MCP adapter</text>
+  <text class="body" x="800" y="243" text-anchor="middle">typed tools • schema • authorization</text>
+  <text class="small" x="800" y="273" text-anchor="middle">maps tools to domain contracts</text>
+  <text class="small" x="800" y="298" text-anchor="middle">never uses SharedSong::write / EngineCommand</text>
+  <rect class="frontend" x="1100" y="168" width="430" height="150" rx="18"/>
+  <text class="h" x="1315" y="209" text-anchor="middle">CLI / importer adapter</text>
+  <text class="body" x="1315" y="243" text-anchor="middle">arguments • files • conversion policy</text>
+  <text class="small" x="1315" y="273" text-anchor="middle">same effects and diagnostics</text>
+  <text class="small" x="1315" y="298" text-anchor="middle">same operation conformance corpus</text>
+
+  <path class="arrow" d="M285 318 V382 H610"/><path class="arrow" d="M800 318 V382"/><path class="arrow" d="M1315 318 V382 H990"/>
+  <text class="small" x="800" y="360" text-anchor="middle">typed intent • expected revision • job/session requests</text>
+
+  <rect class="app" x="420" y="382" width="760" height="145" rx="20"/>
+  <text class="h" x="800" y="423" text-anchor="middle">Application Core V2</text>
+  <text class="body" x="800" y="457" text-anchor="middle">validate → transact → revise → history → compile impact</text>
+  <text class="small" x="800" y="487" text-anchor="middle">one result vocabulary: complete / partial / none + diagnostics + affected IDs</text>
+  <text class="small" x="800" y="511" text-anchor="middle">optimistic concurrency rejects stale frontend revisions</text>
+
+  <path class="arrow" d="M620 527 V590"/><path class="arrow" d="M800 527 V590"/><path class="arrow" d="M980 527 V590"/>
+  <rect class="project" x="70" y="590" width="460" height="145" rx="18"/>
+  <text class="h" x="300" y="631" text-anchor="middle">Canonical ProjectDocument</text>
+  <text class="body" x="300" y="665" text-anchor="middle">one immutable revision snapshot</text>
+  <text class="small" x="300" y="695" text-anchor="middle">save • autosave • recovery • undo</text>
+  <text class="small" x="300" y="718" text-anchor="middle">persisted EditorMetadata included</text>
+  <rect class="session" x="570" y="590" width="460" height="145" rx="18"/>
+  <text class="h" x="800" y="631" text-anchor="middle">RuntimeSession</text>
+  <text class="body" x="800" y="665" text-anchor="middle">transport • preview • focus • record arm</text>
+  <text class="small" x="800" y="695" text-anchor="middle">device connection • active plan coordination</text>
+  <text class="small" x="800" y="718" text-anchor="middle">not folded into project history</text>
+  <rect class="job" x="1070" y="590" width="460" height="145" rx="18"/>
+  <text class="h" x="1300" y="631" text-anchor="middle">RuntimeJobs</text>
+  <text class="body" x="1300" y="665" text-anchor="middle">render • export • analysis • conversion</text>
+  <text class="small" x="1300" y="695" text-anchor="middle">revision-pinned • cancellable • receipts</text>
+  <text class="small" x="1300" y="718" text-anchor="middle">one shared implementation for all frontends</text>
+
+  <path class="arrow" d="M410 735 V790 H630"/>
+  <path class="arrow" d="M800 735 V790"/>
+  <path class="arrow" d="M1190 735 V790 H970"/>
+  <rect class="sound" x="570" y="790" width="460" height="130" rx="20"/>
+  <text class="h" x="800" y="831" text-anchor="middle">Compile coordinator + Sound Core V2</text>
+  <text class="body" x="800" y="865" text-anchor="middle">immutable plan for one project revision</text>
+  <text class="small" x="800" y="895" text-anchor="middle">same renderer for live, offline, analysis and tests</text>
+
+  <rect class="telemetry" x="70" y="790" width="430" height="130" rx="18"/>
+  <text class="h" x="285" y="831" text-anchor="middle">RuntimeTelemetry</text>
+  <text class="body" x="285" y="865" text-anchor="middle">meters • scopes • CPU • drops</text>
+  <text class="small" x="285" y="895" text-anchor="middle">lossy observation, never persisted truth</text>
+  <path class="pink" d="M570 855 H500"/>
+  <path class="pink" d="M285 790 V550 H145 V318"/>
+  <path class="pink" d="M300 790 V565 H800 V318"/>
+  <path class="pink" d="M315 790 V550 H1455 V318"/>
+
+  <rect class="telemetry" x="1100" y="790" width="430" height="130" rx="18"/>
+  <text class="h" x="1315" y="831" text-anchor="middle">Operation / job results</text>
+  <text class="body" x="1315" y="865" text-anchor="middle">revision • diagnostics • progress</text>
+  <text class="small" x="1315" y="895" text-anchor="middle">frontend adapts presentation only</text>
+  <path class="cyan" d="M1030 855 H1100"/>
+  <path class="cyan" d="M1315 790 V555 H1465 V318"/>
+
+  <rect x="70" y="945" width="1460" height="38" rx="10" fill="#151f30"/>
+  <text class="small" x="800" y="970" text-anchor="middle">Forbidden shortcuts: frontend → audio thread • telemetry → project state • GUI-built save payload • frontend-owned DSP job</text>
+</svg>
