@@ -266,9 +266,9 @@ compile or execute anything.
   telemetry taps, recording buffers, prepared memory, and script work.
 - Open an architecture decision record under [decisions/](decisions/README.md)
   for every entry in the [decision register](ADR.md) whose target phase begins
-  with `0A`. Accept the internal render quantum, sample-time/event-timestamp,
-  and host-profile/admission decisions before Phase 0A closes because Phase 1
-  implements those contracts. Hardware time mapping may remain `Deferred` only
+  with `0A`. Accept the render-quantum semantics, the quantum frame count, the
+  sample-time/event-timestamp, and the host-profile/admission decisions before
+  Phase 0A closes because Phase 1 implements those contracts. Hardware time mapping may remain `Deferred` only
   to the explicit Phase 3 entry gate, and the long-running job contract only to
   the explicit Phase 4 entry gate. A deferred ADR names that target gate, its
   owner, and the evidence still required. The register — not this plan — is
@@ -283,8 +283,12 @@ compile or execute anything.
       category rather than being treated as generic error.
 - [ ] CPU, memory, timing, and determinism baselines are saved in a reviewable
       format.
-- [ ] ADR-0001 (`RenderQuantum`), ADR-0021 (host profile/admission), and
-      ADR-0032 (`SampleTime` and event timestamps) are `Accepted`.
+- [ ] ADR-0001 (render quantum semantics and splitting), ADR-0037 (render
+      quantum frame count), ADR-0021 (host profile/admission), and ADR-0032
+      (`SampleTime` and event timestamps) are `Accepted`. ADR-0001 and ADR-0037
+      together carry what [Part VII](#part-vii-open-decisions) topic 1 states as
+      one decision; both are required here, so the split does not weaken this
+      gate.
 - [ ] ADR-0022 (hardware time mapping) and ADR-0028 (long-running jobs) are
       either `Accepted` or `Deferred` to their named Phase 3 and Phase 4 entry
       gates with an owner and outstanding evidence recorded.
@@ -2876,9 +2880,13 @@ is authoritative for its status and target phase; the text below states what is
 open and why. A topic is settled only when its record under
 [decisions/](decisions/README.md) is accepted.
 
-1. **Internal quantum (ADR-0001)** — likely 32 or 64 frames; decide in Phase
-   0A before Phase 1, then verify the accepted choice while implementing Phase
-   1.
+1. **Internal quantum (ADR-0001, ADR-0037)** — likely 32 or 64 frames; decide in
+   Phase 0A before Phase 1, then verify the accepted choice while implementing
+   Phase 1. This topic is carried by **two** records: ADR-0001 fixes the
+   splitting semantics — one compile-time value everywhere, whole quanta only,
+   input and output carries, control evaluated once per quantum, and the
+   end-of-stream drain — while ADR-0037 fixes the frame count, which is the only
+   part that waits on a measurement. Both must be `Accepted` before Phase 1.
 2. **Internal channel layout (ADR-0002)** — planar is preferred; verify
    against module and conversion cost in Phase 2.
 3. **Event segmentation API (ADR-0003)** — renderer-level segment split versus

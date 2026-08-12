@@ -1,0 +1,281 @@
+# ADR-0021: Host Profile and Admission Policy
+
+| Field         | Value                                               |
+|---------------|-----------------------------------------------------|
+| ID            | ADR-0021                                            |
+| Status        | Proposed                                            |
+| Phase         | 0A                                                  |
+| Created       | 2026-08-12                                          |
+| Last reviewed | 2026-08-12                                          |
+| Related       | P00A-T004, P00A-T005, P00A-T006, ADR-0001, ADR-0022 |
+| Supersedes    | —                                                   |
+| Superseded by | —                                                   |
+
+## Context
+
+The [resource inventory](../inventories/resource-limits.md) records 74 fixed caps, truncation points, bounded queues,
+buffer capacities, and script budgets at `dd69b657`. None has a disposition, because the inventory correctly treats the
+`Proposed V2 rule` column as this ADR's output rather than its input.
+
+The Phase 0A exit gate requires that every cap appear once in the inventory with a proposed V2 admission rule and a
+user-visible overflow diagnostic, and that **no unexplained silent truncation is accepted as baseline behavior**. The
+inventory's second audit pass compiled the register that clause needs: five sites where V1 silently loses something, of
+which only `LIMIT-0013` counts what it dropped.
+
+This ADR decides the classification scheme, the failure semantics for each class, and the disposition of those five
+sites.
+
+**Outside this decision.** The numeric default for any budget — those come from P00A-T005 once P00A-T003 has measured
+the reference corpus, and this ADR deliberately fixes none of them (see *Decision scope* below). Also outside: the
+render quantum's semantics (ADR-0001) and its frame count (ADR-0037), hardware time mapping and latency compensation
+(ADR-0022), observation and analyzer
+ownership as a product question (ADR-0027), and remote authorization (ADR-0029).
+
+### Decision scope, and why it excludes numbers
+
+The register lists this ADR's required basis as "V1 cap inventory and measurements". The inventory is complete; no
+measurement exists. Rather than block the Phase 0A gate on a benchmark, this ADR splits the topic along the line where
+the evidence actually falls:
+
+- **Which class a limit belongs to and what happens when it is exceeded** is determinable from the code that is already
+  read. A compile-time array length is a hard capability whatever a benchmark says; a heuristic ceiling with a comment
+  explaining the author's tradeoff is a budget.
+- **What number to set a budget to** is not determinable without measurement, and is assigned to P00A-T005's
+  `HostProfile`/`RenderLimits` contract, which lists P00A-T003 as a dependency.
+
+This is a scope decision, not an evidence waiver. If the review rejects the split, this ADR must wait for P00A-T003.
+
+## Decision drivers
+
+- The master plan's resource-and-admission section already states the intended principle: exceeding a hard capability is
+  a compile or preparation error; approaching a configurable budget may be a warning or a configured refusal; runtime
+  overflow is reserved for genuinely live bounded queues and is counted and reported; and it never silently changes
+  authored topology, automation, sample mapping, note expansion, routing, or polyphony.
+- A truncation that changes authored data is a correctness defect, not a resource policy. `LIMIT-0056` silently rewrites
+  an authored voice count; `LIMIT-0067` silently discards authored rack stages at load.
+- A diagnostic is only useful if it reaches the user. `LIMIT-0013` has per-priority drop counters published on OSC,
+  which is closer to a telemetry channel than to a user-visible diagnostic.
+- V1 conflates the document with the plan, which is why `LIMIT-0067` faced a false choice between dropping stages and
+  refusing the load. V2 separates them, so the same situation has a third answer.
+- A profile built from hardcoded constants is not a host profile. `LIMIT-0057` hardcodes the advertised buffer range on
+  all three branches, including the one that successfully queried the device.
+
+## Options considered
+
+### Option A: Ratify the master plan principle and resolve each site against it
+
+Classify every limit into the inventory's existing five classes, bind a failure semantic to each class, and dispose of
+the five silent-truncation sites individually. Costs the most decision work up front and forces several V1 behaviors to
+change. Produces exactly the artifact the exit gate asks for.
+
+### Option B: Fail-closed on everything
+
+Any limit exceeded anywhere is a preparation error. Simple, uniformly safe, and unusable: it turns live bounded queues
+into a source of hard failures under load, and would refuse to start a stream rather than drop one low-priority event.
+
+### Option C: Preserve V1 behavior and only add diagnostics
+
+Keep every current clamp and truncation, add a counter and a report to each. Cheapest, and it satisfies a literal
+reading of "no *unexplained* silent truncation". It also permanently blesses silently rewriting an authored voice count
+as correct behavior, which contradicts the master plan invariant that admission never changes authored polyphony.
+
+### Status quo
+
+No V2-specific decision. The inventory keeps 74 entries with no disposition, the Phase 0A exit gate cannot pass, and
+Phase 1 has no rule for what to do when a plan does not fit, which in practice means the V1 answer — clamp and continue.
+
+## Evidence
+
+- The [resource inventory](../inventories/resource-limits.md) at `dd69b657`: 74 entries, the limit-class taxonomy, and
+  the silent-truncation register.
+- Site reads at `5cd24de8` confirming the five register entries: `voice.rs:1139` and `synth_engine.rs:4082-4086`
+  (`LIMIT-0001`), `event_priority.rs:75-78` (`LIMIT-0013`), `state.rs:192,234-245` (`LIMIT-0020`),
+  `types/audio.rs:470` (`LIMIT-0056`), `song.rs:881-887` (`LIMIT-0067`).
+- The master plan's resource-profile and admission section, and the Phase 1 exit gate clause requiring that the renderer
+  never silently clips the graph, event fan-out, voices, sends, or observation set to fit.
+
+**Uncertainty that remains.** No value in the inventory has been measured; all 74 are read from source. Two audit
+methods with opposite blind spots were run, but both are searches — a truncation that is both unnamed and undocumented
+would still be missing from the register, and closing that needs an executable probe rather than a third pass. This ADR
+therefore decides policy over a register that is thorough but not proven complete.
+
+## Decision
+
+Proposed. Class semantics and failure behavior are decided here; every numeric default is assigned to P00A-T005, per
+the scope split above. Four parts.
+
+**Review history.** An earlier revision was marked `Accepted` with a single-axis class model that placed every
+configurable budget in `HostProfile`. Review found that the ledger contains budgets which are not render-preparation
+inputs at all — undo depth and retained audio, the autosave debounce, and the MCP reply caps — so the model could not
+be applied to the inventory it governs, and the accompanying claim that every non-queue limit is known at plan
+preparation was false for them. The acceptance was withdrawn and part 1 now separates failure behavior from
+configuration owner. Three further defects from that review are fixed: the record hardcoded `64` for the quantum while
+ADR-0037 was still `Proposed`; its `HostProfile` field list contained a render quantum that ADR-0001 forbids; and its
+oversized-callback disposition said only "serve what the carry buffer holds", which left part of a real-time output
+buffer unwritten and said nothing about the excess input.
+
+A second review pass then found the owner axis still not exhaustive — node and DSP contracts, representation-level
+bounds, and removed artifacts had no owner — so part 1's owner list is now a closed set of seven.
+
+### 1. Two independent axes
+
+Every entry in the resource inventory is assigned a value on **each** of two axes. Passes 1-2 and the first draft of
+this ADR collapsed them into one, which produced a model that could not be applied to the ledger it was written for:
+undo depth (`LIMIT-0063`), retained undo audio (`LIMIT-0064`), the autosave debounce (`LIMIT-0066`), and the MCP reply
+caps (`LIMIT-0068`..`LIMIT-0071`) are all budgets, and none of them belongs in a render preparation input. The axes are
+orthogonal — a budget owned by application settings still refuses rather than truncates.
+
+**Axis 1 — failure behavior**, which the limit class determines:
+
+| Class                               | Behavior when exceeded                                                        |
+|-------------------------------------|-------------------------------------------------------------------------------|
+| `Platform capability`               | Compile or preparation error with an attributable resource diagnostic         |
+| `Configurable safety budget`        | Configured refusal or warning, per an explicit policy field; never truncation |
+| `Warning threshold`                 | Reported; never blocks                                                        |
+| `Implementation artifact to remove` | Entry closes when the removing change lands                                   |
+| `Unknown`                           | Not terminal; must be resolved before the Phase 0A exit review                |
+
+**Axis 2 — configuration owner**, which says where the value is declared and who may change it:
+
+| Owner                    | Holds                                                              | Example                                  |
+|--------------------------|--------------------------------------------------------------------|------------------------------------------|
+| `HostProfile`            | Render preparation capacity and budgets                            | voices, nodes, taps, buffer bytes        |
+| Node contract            | A capacity intrinsic to one node's DSP, declared by the node        | `LIMIT-0072`, `LIMIT-0073`, `LIMIT-0074` |
+| Domain/format contract   | A bound that is part of a value's representation or identity        | channel layouts, id encodings (ADR-0014) |
+| Job policy               | Bounds of a long-running render or analysis job                    | offline render limits (ADR-0028)         |
+| Application settings     | Editor and session budgets, unrelated to any render plan           | `LIMIT-0063`, `LIMIT-0064`, `LIMIT-0066` |
+| Protocol contract        | Caps on a reply or message, owned by the surface that serializes it | `LIMIT-0068`..`LIMIT-0071`               |
+| `N/A — removed`          | Nothing; the limit ceases to exist in V2                            | every `Implementation artifact to remove` |
+
+The list is closed: every inventory entry must take exactly one of these seven, and an entry that fits none is a
+finding about this table rather than a reason to leave the cell blank. `N/A — removed` is the only owner that pairs
+with the `Implementation artifact to remove` class, and pairing any other class with it is an error.
+
+Only `HostProfile`-owned entries participate in plan admission and appear in the `ResourceReport`. **A node contract
+declares its capacity into that admission** — a node's intrinsic ceiling is reported at compile time and contributes to
+the `ResourceReport`, but it is not a profile field the host may raise. The remaining owners carry the same failure
+semantics within their own boundary: an application setting refuses or warns, it does not silently truncate.
+
+**Runtime overflow** is permitted **only** for genuinely live bounded queues — those fed by external,
+unbounded-in-time input such as MIDI, host callbacks, or user gestures. Every such queue counts its drops and surfaces
+the count in the structured diagnostics report. No `HostProfile`-owned limit may be exceeded at runtime, because plan
+capacity is known at preparation time; limits under the other three owners are bounded at their own admission point,
+which is not plan preparation.
+
+### 2. Admission never rewrites authored data
+
+A limit may refuse a plan. It may never silently change authored topology, automation, sample mapping, note expansion,
+routing, or polyphony to make the plan fit. Where V1 does so today, the V2 behavior is a diagnostic and a refusal, not a
+quieter clamp.
+
+### 3. Disposition of the five silent-truncation sites
+
+- **`LIMIT-0001` — oversized audio block.** `maximum_block_size` becomes a `HostProfile` field established at stream
+  preparation from the queried device capability. Under ADR-0001 the renderer serves caller blocks from carry buffers
+  and only ever processes whole quanta of `Q` frames, so an oversized callback cannot resize a buffer on the audio
+  thread; the reallocation path is removed rather than guarded.
+
+  A callback of `N > maximum_block_size` is a **counted hard fault with a fully specified output**, because a real-time
+  callback may not be left partly unwritten:
+
+    1. **Every sample of the output buffer is written.** The renderer serves what the output carry holds and fills the
+       remainder with silence. There is no path that returns with samples untouched.
+    2. **Input beyond the input carry's free space is dropped and counted**, in frames. The carry is
+       `maximum_block_size + Q`, so the overflow is exactly `N - maximum_block_size` in the steady state.
+    3. **Nothing is allocated and no additional quanta are forced.** The fault path does strictly less work than the
+       normal path, never more.
+    4. **Both counters — dropped input frames and silence-filled output frames — reach the structured diagnostics
+       report.** A stream that faults repeatedly is a configuration error to surface, not a glitch to absorb.
+
+  Processing the oversized callback in bounded chunks was considered and rejected: it would require rendering quanta
+  whose input was never captured, and it puts more work into a callback that has already exceeded its budget. Silence
+  for the whole callback rather than a partial serve was also rejected — the carry holds valid audio, and discarding it
+  makes the fault worse than it needs to be.
+- **`LIMIT-0013` — prioritized event rings.** Correctly classified as a live bounded queue; it keeps runtime dropping.
+  The existing per-priority counters are promoted from an OSC-only publication to a field of the structured diagnostics
+  report, so a dropped event is visible to a user who is not listening on OSC. Ring sizes stay budgets owned by
+  P00A-T005; ADR-0027 continues to own what the taps are *for*.
+- **`LIMIT-0020` — meter slots beyond 128.** Observation taps become a `HostProfile` field. A plan requesting more taps
+  than the profile allows is a **compile error** naming the requested and available tap counts. Silently dropping a
+  meter is withdrawn; the Phase 1 exit gate already forbids clipping the observation set to fit.
+- **`LIMIT-0056` — voice count clamped to `[1, 128]`.** Polyphony is authored data, so clamping is forbidden by part 2.
+  A voice count outside the profile range is a **preparation error**. `VoiceCount` construction becomes fallible rather
+  than clamping, and the `new_unchecked` path that only `debug_assert!`s — and therefore accepts an out-of-range value
+  in a release build — is removed.
+- **`LIMIT-0067` — note-processor rack stages beyond 32, dropped at load.** V1 faced a false choice because the document
+  and the plan are the same thing; the comment records that a hard error was rejected for blocking the load. V2
+  separates them: **Project Format V2 imposes no stage cap and the document loads with every authored stage intact**,
+  while plan compilation refuses a rack that exceeds the node budget with a diagnostic naming the rack and its stage
+  count. The project stays loadable and editable; only rendering it is refused. Silent dropping is withdrawn.
+
+### 4. `HostProfile` field set
+
+The initial contract covers the areas the master plan lists, with one removal: maximum host block; channel layouts and
+sample-rate range; nodes, voices, channels, buses, sends, event fan-out, and delayed events; parameter, control, and
+event slots and observation taps; prepared immutable bytes, mutable state bytes, buffer and scratch bytes, and the
+crossfade/retirement budget; YAMS instructions, state, and emits multiplied by scope and polyphony; and recording-result
+and real-time communication capacities.
+
+**The render quantum is not a `HostProfile` field.** The master plan's list opens with "maximum render quantum and host
+block", but ADR-0001 clause 1 makes the quantum a compile-time constant with no configuration surface — the two cannot
+both hold. This record defers to ADR-0001, which owns the quantum, and drops the field. The master plan's list at
+`master-plan.md:1767` is superseded on the same acceptance that supersedes `RenderConfig::quantum`, and ADR-0001 lists
+both edits as acceptance-gated follow-up.
+
+`HostProfile` is an immutable preparation input, never a set of globals the renderer reads. Capability fields are
+established from queried host and device capability, not from hardcoded constants — `LIMIT-0057`, which discards the
+device's own reported buffer range on the branch that successfully queried it, is the anti-pattern this clause exists to
+forbid. Compilation returns a `ResourceReport` with requested, available, and dominant contributors for every field.
+
+## Consequences
+
+### Positive
+
+- The Phase 0A exit gate's silent-truncation clause becomes satisfiable: each of the five sites has either a diagnostic
+  or an explicit decision, and four of the five change behavior rather than being blessed.
+- Phase 1 gains a rule for what to do when a plan does not fit, which is currently undefined.
+- The inventory's `Proposed V2 rule` column becomes fillable by class rather than one argument per entry.
+- `LIMIT-0067`'s resolution demonstrates the document/plan split paying for itself on a real V1 dilemma.
+
+### Negative
+
+- Four V1 behaviors change, and three of them can refuse work that V1 accepted: an out-of-range voice count, an
+  over-tapped plan, and an over-long note-processor rack. Projects that relied on the clamp will surface errors.
+- Making `VoiceCount` fallible touches every construction site.
+- Deciding policy over an unmeasured register means a budget could be classified correctly and defaulted badly; the cost
+  lands on P00A-T005 rather than being avoided.
+
+### Risks and controls
+
+- **Risk: the register is incomplete**, so an undocumented and unnamed truncation is silently accepted as baseline after
+  all. Control: the executable probe named in the follow-up table — oversized blocks, more than 128 metered channels,
+  more than 32 rack stages — which converts the register's weakest claim into a test.
+- **Risk: "counted hard fault" becomes a counter nobody reads**, repeating `LIMIT-0013`'s OSC-only situation. Control:
+  the counted-drop clause requires the count in the structured diagnostics report, which is the report the exit review
+  inspects.
+- **Risk: refusals appear on real user projects at cutover.** Control: the refusal cases are enumerable from the
+  inventory before Phase 12, and the reference corpus is the place to find out.
+
+## Follow-up work
+
+| Task                                                                                               | Phase | Status      |
+|----------------------------------------------------------------------------------------------------|-------|-------------|
+| Fill failure class, configuration owner, rule, and diagnostic for all 74 inventory entries once this ADR is accepted | 0A | Not started |
+| Add a `Configuration owner` column to the resource inventory, with the seven-value closed set       | 0A    | Not started |
+| Executable truncation probe: oversized blocks, >128 metered channels, >32 rack stages              | 0A    | Not started |
+| Set numeric defaults for every budget field from measured baselines (`HostProfile`/`RenderLimits`) | 0A    | Not started |
+| Resolve every `Unknown`-class entry to a terminal class                                            | 0A    | Not started |
+| Make `VoiceCount` construction fallible and remove the release-build `new_unchecked` hole          | 6     | Not started |
+| Build capability fields from queried device capability, retiring `LIMIT-0057`'s hardcoded range    | 9     | Not started |
+
+Until this ADR is `Accepted`, the inventory's `Proposed V2 rule` column stays blank and no entry may be `Classified`,
+per that ledger's own status rule. The class sweep in the first follow-up row assigns **both** axes to every entry, not
+just the failure class.
+
+## Revisit conditions
+
+- The executable probe finds a silent truncation that is neither in the register nor covered by a class rule, which
+  would mean the class taxonomy is incomplete rather than merely the register.
+- A live bounded queue is found that cannot count its drops without violating real-time safety.
+- Measurement shows that a limit classified here as a configurable budget is in fact a hard platform capability, or the
+  reverse.

@@ -9,7 +9,7 @@ The topics below originate in Part VII of the
 does not accept a decision. All initial entries remain `Proposed` until their individual ADR has been reviewed and
 accepted.
 
-Next free identifier: `ADR-0037`.
+Next free identifier: `ADR-0038`.
 
 ## Status vocabulary
 
@@ -26,7 +26,7 @@ decision.
 
 | ID       | Topic                                       | Status   | Target phase          | Required basis                           |
 |----------|---------------------------------------------|----------|-----------------------|------------------------------------------|
-| ADR-0001 | Internal render quantum                     | Proposed | 0A/1                  | Benchmark                                |
+| ADR-0001 | Render quantum semantics and splitting      | Proposed | 0A/1                  | Partition-invariance requirement         |
 | ADR-0002 | Internal channel layout                     | Proposed | 2                     | Design review and measurement            |
 | ADR-0003 | Event segmentation API                      | Proposed | 3                     | Prototype and timing tests               |
 | ADR-0004 | Native node representation                  | Proposed | 2/5                   | Benchmark and ergonomics review          |
@@ -46,7 +46,7 @@ decision.
 | ADR-0018 | Editor metadata persistence scope           | Proposed | 0B/10A                | State-ownership inventory                |
 | ADR-0019 | Remote mutation history semantics           | Proposed | 10B/10C               | Operation conformance review             |
 | ADR-0020 | Final crate boundaries and names            | Proposed | After vertical slices | Dependency evidence                      |
-| ADR-0021 | Host profile and admission policy           | Proposed | 0A/1                  | V1 cap inventory and measurements        |
+| ADR-0021 | Host profile and admission policy           | Proposed | 0A/1                  | V1 cap inventory                         |
 | ADR-0022 | Hardware time mapping and latency ownership | Proposed | 0A/3/9                | Simulated-host evidence                  |
 | ADR-0023 | Same-sample session event ordering          | Proposed | 3                     | Deterministic scenario tests             |
 | ADR-0024 | Recording take and commit semantics         | Proposed | 0B/9/10B              | Workflow and failure analysis            |
@@ -62,12 +62,31 @@ decision.
 | ADR-0034 | Track, source, and channel ownership        | Proposed | 0B/10A                | Product workflow and V1 track audit      |
 | ADR-0035 | Transaction and concurrency semantics       | Proposed | 0B/10B                | Operation conformance corpus             |
 | ADR-0036 | Audio device and input lifecycle            | Proposed | 0B/9                  | Simulated-host and platform review       |
+| ADR-0037 | Render quantum frame count                  | Proposed | 0A/1                  | Benchmark                                |
 
-`Target phase` lists investigation, implementation, and later verification
-milestones; it is not permission to defer a decision through the last listed
-phase. Explicit entry and exit gates in the master plan define the acceptance
-deadline. In particular, a target beginning with `0A` or `0B` places the ADR in
-that sub-phase tracker even when later phases refine or verify it.
+### Records created
+
+Topics without a link below have no individual record yet; the table above is still authoritative for their status.
+
+- [ADR-0001: Render quantum semantics and splitting contract](decisions/ADR-0001-internal-render-quantum.md) —
+  `Proposed`
+- [ADR-0021: Host profile and admission policy](decisions/ADR-0021-host-profile-and-admission-policy.md) — `Proposed`
+- [ADR-0037: Render quantum frame count](decisions/ADR-0037-render-quantum-value.md) — `Proposed`
+
+ADR-0001 and ADR-0021 were briefly marked `Accepted` and had that withdrawn in review. Each carries a *Review history*
+note stating what was wrong; no record here has ever been accepted, so the immutability rule in
+[decisions/README.md](decisions/README.md) has not yet applied to anything.
+
+### Registered splits
+
+ADR-0037 is not a Part VII topic of its own. It splits the master plan's topic 1 (internal render quantum) so that the
+measurement-dependent frame count does not block the semantics, which are decidable now. Both identifiers are required
+`Accepted` by the Phase 0A exit gate, so the split does not weaken it. The Phase 0A tracker records the deviation.
+
+`Target phase` lists investigation, implementation, and later verification milestones; it is not permission to defer a
+decision through the last listed phase. Explicit entry and exit gates in the master plan define the acceptance deadline.
+In particular, a target beginning with `0A` or `0B` places the ADR in that sub-phase tracker even when later phases
+refine or verify it.
 
 ## Register maintenance
 
