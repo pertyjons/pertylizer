@@ -45,18 +45,17 @@ Fixed before the renders were taken.
 
 ## Source and environment
 
-- Source: branch `feat/v2-reference-corpus`, itself on top of
-  `fix/offline-render-fidelity`. The renders reproduce at every revision of those
-  two from the renderer fix onward; see *Re-verification after a harness change*
-  for what moved and what did not.
-- **Commit hashes are deliberately omitted, and must be filled in at merge.**
-  Both branches are squash-merged, so every commit on them is replaced by one
-  new commit on `main` — a hash written here now is scheduled for deletion by
-  the very merge that lands this record. Two earlier revisions of this document
-  cited hashes that a rebase had already orphaned, which is the failure mode.
-  Whoever merges is to record the two resulting `main` commits here. Until then
-  the branches and the input digests below are the provenance, and the digests
-  are the part that survives anything.
+- Source revision: `b5cdc021` on `main` — the corpus and the harness — on top of
+  `f8867990`, the offline-renderer fix the renders depend on. These are the
+  squash-merge commits; the branches they came from (`feat/v2-reference-corpus`
+  and `fix/offline-render-fidelity`) no longer exist, which is why they are not
+  named as the source.
+- **Why this field was filled in only at merge.** A squash-merge replaces every
+  commit on a branch with one new commit, so any hash written before the merge is
+  scheduled for deletion by the merge that lands the document citing it. Two
+  earlier revisions of this record cited hashes a rebase had already orphaned.
+  The hashes above are stable because they are on `main`. The input digests under
+  *Inputs* remain the provenance that survives even a history rewrite.
 - Corpus revision: `corpus/v2-reference/manifest.json`, `manifest_version` 1,
   four cases, input digests as listed under *Inputs*
 - Platform and architecture: Linux 7.1.7-200.fc44.x86_64, x86_64
