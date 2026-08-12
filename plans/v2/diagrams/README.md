@@ -18,6 +18,7 @@ document wins and the diagram should be updated.
 
 Open the [HTML overview](index.html) to view all three diagrams on one page.
 
-The SVG files are the editable source and should be versioned. `index.html` and
-the PNG files are convenience previews and may be regenerated or omitted from
-the repository.
+The SVG files are the editable source and are versioned. `index.html` is a
+convenience preview and may be regenerated or omitted. There are no exported
+raster copies: an SVG renders everywhere the repository is read, and a PNG beside
+it would be one more thing to keep in step with the source.
