@@ -48,12 +48,12 @@ pub(crate) enum UndoAction {
     /// A note was added to a pattern.
     AddNote {
         pattern_id: PatternId,
-        note: NoteSnapshot,
+        note: synth_sequencer::Note,
     },
     /// A note was removed from a pattern.
     RemoveNote {
         pattern_id: PatternId,
-        note: NoteSnapshot,
+        note: synth_sequencer::Note,
     },
     /// A note was moved to a new start tick.
     MoveNote {
@@ -906,33 +906,15 @@ pub(crate) enum MixerValue {
     Flag(bool),
 }
 
-/// Snapshot of a note for undo/redo purposes.
-///
-/// Captures all fields needed to fully reconstruct a note.
-#[derive(Debug, Clone)]
-pub(crate) struct NoteSnapshot {
-    pub(crate) id: NoteId,
-    pub(crate) start: PatternTick,
-    pub(crate) duration: Option<SeqDuration>,
-    pub(crate) pitch: Pitch,
-    pub(crate) velocity: Velocity,
-    pub(crate) track: Option<synth_sequencer::TrackId>,
-    pub(crate) lane: NoteLane,
-}
-
-impl From<&synth_sequencer::Note> for NoteSnapshot {
-    fn from(note: &synth_sequencer::Note) -> Self {
-        Self {
-            id: note.id,
-            start: note.start,
-            duration: note.duration,
-            pitch: note.pitch,
-            velocity: note.velocity,
-            track: note.track,
-            lane: note.lane,
-        }
-    }
-}
+// A note is captured for undo as the whole `synth_sequencer::Note`, deliberately.
+//
+// This used to be a `NoteSnapshot` struct that re-listed the fields it thought
+// mattered. It listed seven; `Note` has twelve. Every per-note feature added
+// after it was written — `legato`, `glide`, `expression`, `ornament` and
+// `note_graph` — was therefore dropped on the way into the undo entry, so
+// deleting an ornamented note and undoing returned a plain one. A hand-copied
+// subset cannot be kept in step with a struct it does not live next to, so there
+// is no subset any more.
 
 /// Collapses a continuous drag into a single undo entry.
 ///
@@ -2051,16 +2033,15 @@ mod tests {
         PatternId(1)
     }
 
-    fn test_note_snapshot() -> NoteSnapshot {
-        NoteSnapshot {
-            id: NoteId(42),
-            start: PatternTick(0),
-            duration: Some(SeqDuration(960)),
-            pitch: Pitch::MIDDLE_C,
-            velocity: Velocity::MF,
-            track: None,
-            lane: NoteLane::ZERO,
-        }
+    /// A note carrying a value in one of the fields the old `NoteSnapshot` used
+    /// to drop, so a regression to a hand-copied subset shows up here.
+    fn test_note_snapshot() -> synth_sequencer::Note {
+        let mut note =
+            synth_sequencer::Note::new(NoteId(42), PatternTick(0), Pitch::MIDDLE_C, Velocity::MF);
+        note.duration = Some(SeqDuration(960));
+        note.lane = NoteLane::ZERO;
+        note.legato = true;
+        note
     }
 
     #[test]

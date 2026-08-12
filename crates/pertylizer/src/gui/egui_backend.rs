@@ -720,6 +720,10 @@ impl SynthApp {
                 self.glide_time,
             ),
             effect_order: crate::dirty::effect_order_fingerprint(self.session.state()),
+            // Read here rather than reported by the three switch sites, for the
+            // same reason `layout` is derived: a mutation point that has to
+            // remember is a mutation point that eventually does not.
+            focus: self.active_instrument_id,
         }
     }
 

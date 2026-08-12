@@ -1184,7 +1184,7 @@ fn delete_selected_notes(
                 if let Some(note) = pattern.note(*note_id) {
                     composite.push(crate::undo::UndoAction::RemoveNote {
                         pattern_id,
-                        note: note.into(),
+                        note: note.clone(),
                     });
                 }
                 pattern.remove_note(*note_id);
@@ -1271,7 +1271,7 @@ fn paste_clipboard_notes(
                 if let Some(note) = pattern.note(note_id) {
                     composite.push(crate::undo::UndoAction::AddNote {
                         pattern_id,
-                        note: note.into(),
+                        note: note.clone(),
                     });
                 }
                 selected.insert(note_id);

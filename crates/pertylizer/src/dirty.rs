@@ -19,16 +19,19 @@
 //! | [`ProjectRevision::layout`] | patch-canvas layout: module positions, group boxes and their persisted fields |
 //! | [`ProjectRevision::global`] | master volume, keyboard octave, glide, the transport loop region, and the master / return-bus effect chains |
 //! | [`ProjectRevision::effect_order`] | the order of each instrument's effect chain |
+//! | [`ProjectRevision::focus`] | which instrument is focused, saved as `ProjectFile::active_instrument_id` |
 //!
 //! A new editor added to any of those subsystems is covered automatically,
 //! because it has to go through the same shared state to have any effect.
 //!
-//! The last three are fingerprints rather than counters, for the same reason:
-//! the state they watch is reached from too many places for "remember to
-//! report" to hold. The last two had to be added after the fact, and for the
-//! same underlying reason — both watch state that hangs off `EngineState`
-//! rather than off the `SharedGraphState` whose version the `graph` counter
-//! reads, so the graph version never saw either of them.
+//! `layout`, `global` and `effect_order` are fingerprints rather than counters,
+//! for the same reason: the state they watch is reached from too many places for
+//! "remember to report" to hold. The last three of the seven rows had to be added
+//! after the fact, and all for one underlying reason — each watches state the
+//! save path writes that no counter owns. `global` and `effect_order` hang off
+//! `EngineState` rather than off the `SharedGraphState` whose version the `graph`
+//! counter reads; `focus` is GUI state on `SynthApp`, and its three mutation
+//! sites did not report themselves.
 //!
 //! # Undoing back to the saved state
 //!
@@ -111,6 +114,27 @@ pub(crate) struct ProjectRevision {
     ///
     /// [`GlobalProjectState`]: crate::project::GlobalProjectState
     pub effect_order: u64,
+    /// Which instrument is focused, persisted as
+    /// [`ProjectFile::active_instrument_id`].
+    ///
+    /// The value itself, not a fingerprint: it is a single id, and hashing one
+    /// id would only make it harder to read in a debugger.
+    ///
+    /// Its own row rather than a term inside `global` because
+    /// `active_instrument_id` is a top-level field of [`ProjectFile`], *not* part
+    /// of [`GlobalProjectState`] — and `global` is defined as exactly what that
+    /// struct plus the loop mirror persist. Widening a row past its documented
+    /// contents is how the effect chains stayed hidden the first time.
+    ///
+    /// Before this existed, the three sites that switch instruments set the field
+    /// without `mark_dirty()` while every save wrote it, so changing the focused
+    /// instrument changed the file that would be written with no `*`, no autosave
+    /// snapshot and no prompt on close.
+    ///
+    /// [`ProjectFile`]: crate::project::ProjectFile
+    /// [`ProjectFile::active_instrument_id`]: crate::project::ProjectFile::active_instrument_id
+    /// [`GlobalProjectState`]: crate::project::GlobalProjectState
+    pub focus: Option<synth_core::InstrumentId>,
 }
 
 impl ProjectRevision {
@@ -245,6 +269,17 @@ mod tests {
             layout,
             global,
             effect_order,
+            focus: None,
+        }
+    }
+
+    /// The same revision with a different focused instrument. A separate helper
+    /// rather than an eighth positional parameter, which would be both unreadable
+    /// and over clippy's argument limit.
+    fn with_focus(base: ProjectRevision, instrument: u64) -> ProjectRevision {
+        ProjectRevision {
+            focus: Some(synth_core::InstrumentId::new(instrument)),
+            ..base
         }
     }
 
@@ -257,9 +292,10 @@ mod tests {
     /// Each subsystem must be able to make the project dirty on its own — that
     /// is the whole point of tracking them separately. In particular `layout`
     /// covers dragging a module, which reported nothing at all before, `global`
-    /// covers the master fader and the master/return effect chains, and
-    /// `effect_order` covers moving an effect along an instrument's chain —
-    /// none of which reported anything either.
+    /// covers the master fader and the master/return effect chains,
+    /// `effect_order` covers moving an effect along an instrument's chain, and
+    /// `focus` covers switching the focused instrument — none of which reported
+    /// anything either.
     #[test]
     fn a_change_in_any_subsystem_is_dirty() {
         let baseline = revision(3, 7, 1, 0, 99, 42, 11);
@@ -271,12 +307,23 @@ mod tests {
             revision(3, 7, 1, 0, 100, 42, 11),
             revision(3, 7, 1, 0, 99, 43, 11),
             revision(3, 7, 1, 0, 99, 42, 12),
+            with_focus(baseline, 5),
         ] {
             assert!(
                 changed.differs_from(baseline),
                 "{changed:?} must differ from {baseline:?}",
             );
         }
+    }
+
+    /// The real action is switching *between* two instruments, not gaining focus
+    /// from none — a project with instruments always has one focused.
+    #[test]
+    fn switching_the_focused_instrument_is_dirty() {
+        let baseline = with_focus(revision(3, 7, 1, 0, 99, 42, 11), 1);
+        let switched = with_focus(baseline, 2);
+        assert!(switched.differs_from(baseline));
+        assert!(!baseline.differs_from(baseline));
     }
 
     /// Every term of the global fingerprint, one mutation at a time.

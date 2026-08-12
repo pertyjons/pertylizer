@@ -2,10 +2,10 @@
 //!
 //! Dirty state is derived from three edit counters (`SharedSong::revision`,
 //! `SharedGraph::version`, `SampleLibrary::revision`) plus fingerprints of the
-//! patch-canvas layout, of the project's global state, and of each instrument's
-//! effect-chain order. The point of that design is that an editor cannot
-//! silently bypass it — but only as long as each editor really does route its
-//! mutations through the shared state those terms watch.
+//! patch-canvas layout, of the project's global state and of each instrument's
+//! effect-chain order, plus the focused instrument. The point of that design is
+//! that an editor cannot silently bypass it — but only as long as each editor
+//! really does route its mutations through the shared state those terms watch.
 //!
 //! The fingerprints' own terms — master volume, octave, glide, the transport
 //! loop region, the master/return effect chains, and the chain orders — are
@@ -13,6 +13,10 @@
 //! `pub(crate)` fingerprints directly. What those cannot see is whether a
 //! command actually publishes into the state a fingerprint reads, which is what
 //! the chain-reorder test below asserts.
+//!
+//! The `focus` term needs no test here: it is read straight off the field the
+//! switch sites assign, with no shared state or publish step in between, so
+//! `dirty::tests::switching_the_focused_instrument_is_dirty` covers all of it.
 //!
 //! These tests perform one representative mutation per view and assert the
 //! corresponding counter moved. A future editor that starts writing somewhere

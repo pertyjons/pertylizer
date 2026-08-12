@@ -2952,7 +2952,7 @@ fn handle_piano_roll_shortcuts(
             if let Some(note) = pattern.note(note_id) {
                 undo_manager.push(crate::undo::UndoAction::AddNote {
                     pattern_id: data.pattern_id,
-                    note: note.into(),
+                    note: note.clone(),
                 });
             }
             view_state.selected_notes.clear();
@@ -3804,7 +3804,7 @@ fn handle_piano_roll_interaction(
                         if let Some(note) = pattern.note(note_id) {
                             undo_manager.push(crate::undo::UndoAction::AddNote {
                                 pattern_id: data.pattern_id,
-                                note: note.into(),
+                                note: note.clone(),
                             });
                         }
                         view_state.selected_notes.clear();
@@ -4158,7 +4158,7 @@ fn handle_piano_roll_interaction(
                     if let Some(added_note) = pattern.note(note_id) {
                         undo_manager.push(crate::undo::UndoAction::AddNote {
                             pattern_id: data.pattern_id,
-                            note: added_note.into(),
+                            note: added_note.clone(),
                         });
                     }
                     view_state.selected_notes.clear();

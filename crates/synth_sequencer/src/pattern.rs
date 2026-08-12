@@ -230,6 +230,28 @@ impl Pattern {
         id
     }
 
+    /// Re-insert a note under **its own** [`NoteId`], for undoing a deletion.
+    ///
+    /// [`Self::add_note`] and [`Self::insert_note`] both allocate a fresh id, so
+    /// neither can undo a delete: any `NoteId` held across the undo would dangle
+    /// and `next_note_id` would climb once per delete/undo cycle.
+    ///
+    /// `next_note_id` is reconciled with `max()` so a later [`Self::add_note`]
+    /// cannot collide with the restored id — the same reconciliation the
+    /// module-instance counter uses.
+    ///
+    /// Returns `false` and inserts nothing if the id is already present, rather
+    /// than creating two notes that cannot be told apart.
+    pub fn restore_note(&mut self, note: Note) -> bool {
+        if self.notes.iter().any(|n| n.id == note.id) {
+            return false;
+        }
+        self.next_note_id = self.next_note_id.max(note.id.0.saturating_add(1));
+        let pos = self.notes.partition_point(|n| n.start <= note.start);
+        self.notes.insert(pos, note);
+        true
+    }
+
     /// Remove a note by ID.
     pub fn remove_note(&mut self, id: NoteId) -> Option<Note> {
         let pos = self.notes.iter().position(|n| n.id == id)?;
@@ -634,6 +656,77 @@ mod tests {
 
         assert!(pattern.note(id).is_some());
         assert_eq!(pattern.note(id).unwrap().pitch.as_midi(), 60);
+    }
+
+    /// The point of `restore_note` over `insert_note`: undoing a delete has to
+    /// bring the note back as the *same* note, or every id held across the undo
+    /// dangles.
+    #[test]
+    fn restore_note_keeps_the_original_id_and_every_field() {
+        let mut pattern = test_pattern();
+        let id = pattern.add_note(PatternTick(480), Pitch::new(64).unwrap(), Velocity::MF);
+        if let Some(note) = pattern.note_mut(id) {
+            note.legato = true;
+        }
+
+        let removed = pattern.remove_note(id).expect("the note was just added");
+        assert!(pattern.note(id).is_none());
+
+        assert!(pattern.restore_note(removed.clone()));
+        let restored = pattern.note(id).expect("restored under its own id");
+        assert_eq!(
+            restored, &removed,
+            "every field must survive the round trip"
+        );
+    }
+
+    /// Without the `max()` reconciliation a later `add_note` would hand out an id
+    /// that is already in use — the restored one.
+    #[test]
+    fn restore_note_reconciles_the_id_counter() {
+        let mut pattern = test_pattern();
+        let mut note = Note::new(
+            NoteId(99),
+            PatternTick(0),
+            Pitch::new(60).unwrap(),
+            Velocity::MF,
+        );
+        note.lane = crate::ids::NoteLane::ZERO;
+
+        assert!(pattern.restore_note(note));
+        let next = pattern.add_note(PatternTick(0), Pitch::new(62).unwrap(), Velocity::MF);
+        assert!(
+            next.0 > 99,
+            "a fresh id must not collide with the restored one"
+        );
+    }
+
+    /// Restoring twice would leave two notes that cannot be told apart, so the
+    /// second attempt is refused rather than duplicated.
+    #[test]
+    fn restore_note_refuses_an_id_already_present() {
+        let mut pattern = test_pattern();
+        let id = pattern.add_note(PatternTick(0), Pitch::new(60).unwrap(), Velocity::MF);
+        let existing = pattern.note(id).cloned().expect("just added");
+
+        assert!(!pattern.restore_note(existing));
+        assert_eq!(pattern.notes.len(), 1);
+    }
+
+    /// Sort order is by start tick; a restored note must land in position rather
+    /// than at the end, or playback order changes after an undo.
+    #[test]
+    fn restore_note_inserts_in_start_order() {
+        let mut pattern = test_pattern();
+        let _ = pattern.add_note(PatternTick(0), Pitch::new(60).unwrap(), Velocity::MF);
+        let middle = pattern.add_note(PatternTick(480), Pitch::new(62).unwrap(), Velocity::MF);
+        let _ = pattern.add_note(PatternTick(960), Pitch::new(64).unwrap(), Velocity::MF);
+
+        let removed = pattern.remove_note(middle).expect("just added");
+        assert!(pattern.restore_note(removed));
+
+        let starts: Vec<u32> = pattern.notes.iter().map(|n| n.start.0).collect();
+        assert_eq!(starts, vec![0, 480, 960]);
     }
 
     #[test]

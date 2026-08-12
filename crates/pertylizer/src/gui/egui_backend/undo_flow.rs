@@ -361,15 +361,15 @@ impl SynthApp {
                 }
             }
             UndoAction::AddNote { pattern_id, note } => {
-                // Re-add the note to the pattern.
+                // `restore_note`, not `add_note`: the note comes back under its
+                // own id, so a `NoteId` held across the undo still resolves and
+                // `next_note_id` does not climb once per delete/undo cycle. It
+                // also carries every field, including the per-note ornament,
+                // glide, expression, legato flag and note-scope graph that the
+                // old field-by-field re-add dropped.
                 let mut song_w = self.song.write();
                 if let Some(pattern) = song_w.pattern_mut(*pattern_id) {
-                    let nid = pattern.add_note(note.start, note.pitch, note.velocity);
-                    if let Some(n) = pattern.note_mut(nid) {
-                        n.duration = note.duration;
-                        n.track = note.track;
-                        n.lane = note.lane;
-                    }
+                    pattern.restore_note(note.clone());
                 }
             }
             UndoAction::RemoveNote { pattern_id, note } => {

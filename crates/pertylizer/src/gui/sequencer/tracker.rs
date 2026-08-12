@@ -980,7 +980,7 @@ fn edit_voice_cell(
             let note_id = data.notes[idx].note_id;
             let mut song_w = song.write();
             if let Some(pattern) = song_w.pattern_mut(data.pattern_id)
-                && let Some(removed) = pattern.note(note_id).map(Into::into)
+                && let Some(removed) = pattern.note(note_id).cloned()
             {
                 pattern.remove_note(note_id);
                 undo_manager.push(UndoAction::RemoveNote {
@@ -1043,7 +1043,7 @@ fn edit_voice_cell(
     pattern.set_note_lane(note_id, new_lane);
     let add = pattern.note(note_id).map(|n| UndoAction::AddNote {
         pattern_id: data.pattern_id,
-        note: n.into(),
+        note: n.clone(),
     });
     drop(song_w);
 
@@ -2279,7 +2279,7 @@ fn apply_ctx_action(
         Some(CtxAction::DeleteNote(id)) => {
             let mut song_w = song.write();
             if let Some(p) = song_w.pattern_mut(pattern_id)
-                && let Some(removed) = p.note(id).map(Into::into)
+                && let Some(removed) = p.note(id).cloned()
             {
                 p.remove_note(id);
                 undo_manager.push(UndoAction::RemoveNote {

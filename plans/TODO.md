@@ -88,6 +88,27 @@ instrument attribution, length, listing order), and
 covers the part a unit test cannot see: that `ReorderEffect` really does publish
 into the snapshot the fingerprint reads.
 
+**The focused instrument escaped the counters too — fixed 2026-08-12.** Found by
+the Core V2 state-ownership audit as `STATE-0004`, and the fourth instance of the
+class that `layout`, `global` and `effect_order` were each added to close. The
+three instrument-switch sites set `SynthApp::active_instrument_id` without
+`mark_dirty()`, while every save writes it — so changing the focused instrument
+changed the file that would be written with no `*`, no autosave snapshot and no
+prompt on close.
+
+It gets its own `focus` term rather than joining `global`, because
+`active_instrument_id` is a top-level field of `ProjectFile`, not part of
+`GlobalProjectState` — and `global` is defined as exactly what that struct plus
+the loop mirror persist. A plain value compared for equality rather than a
+fingerprint: it is one id, and hashing it would only obscure it.
+
+Consequence worth knowing: selecting another instrument now raises the `*`. That
+follows from the invariant the section is built on — if the bytes on disk would
+differ, the user has to be told — and it is the same property `layout` already
+has for dragging a module. The alternative is to stop persisting focus at all,
+which is **ADR-0018**'s question (editor metadata persistence scope) in
+`plans/v2`; if that decision drops it from the format, this term goes with it.
+
 ### 0.2 Atomic save, autosave, and recovery
 
 **Done** (`c417e404`).
@@ -151,6 +172,29 @@ that did not pass through the undo manager, so it can never produce a false
   those values; what this fixes is state that changed *outside* the undo manager
   (an MCP `set_master_effect_parameter`, a chain reorder) and the half-redone
   state after redoing only the add.
+
+**Undoing a note deletion restored neither the note's identity nor five of its
+fields — fixed 2026-08-12.** Found by the Core V2 identity audit as `IDN-0027`,
+which reported the identity half; reading the handler turned up the larger half.
+
+- **Identity.** Undoing a delete dispatched `AddNote`, whose handler called
+  `Pattern::add_note` and took the freshly allocated `NoteId`. The id in the undo
+  snapshot was carried and never used, so any `NoteId` held across the undo
+  dangled and `next_note_id` climbed once per delete/undo cycle. `Pattern` had no
+  API that could re-insert a note under its own id; `insert_note` reassigns too.
+- **Lost fields, the worse half.** `NoteSnapshot` listed seven fields by hand
+  while `Note` has twelve, so undoing a delete silently dropped `legato`,
+  `glide`, `expression`, `ornament` and `note_graph` — every per-note feature
+  added after the snapshot struct was written. Deleting an ornamented note and
+  pressing undo returned a plain note.
+
+Two changes. `Pattern::restore_note` re-inserts a note under its own id and
+reconciles `next_note_id` with `max()`, the same way the module-instance counter
+is reconciled; it refuses an id already present rather than creating a duplicate.
+And `NoteSnapshot` is gone — the undo actions now carry the whole
+`synth_sequencer::Note`. The field list was not patched, because a hand-copied
+subset is precisely what silently lost five fields as they were added upstream;
+carrying the note means a thirteenth field cannot be forgotten here.
 
 ### 0.4 Focus-safe shortcuts and global transport
 
