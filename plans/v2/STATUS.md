@@ -6,9 +6,9 @@
 | Documentation stage    | Workflow accepted; inventories at pass 2         |
 | Master plan status     | Proposed and architecture-audited                |
 | Active migration phase | 0A and 0B, both `Active` in parallel             |
-| Decision records       | 3 of 37 drafted, 2 accepted                      |
-| Evidence records       | 1 (`EVD-0001`), `Complete`                       |
-| Executable Phase 0A    | Corpus and comparison command exist and are used |
+| Decision records       | 3 of 37 drafted, all 3 accepted                  |
+| Evidence records       | 2 (`EVD-0001`, `EVD-0002`), both `Complete`      |
+| Executable Phase 0A    | Corpus, comparison command, and cost harness are used |
 
 This is a current-state dashboard, not a work log. Replace stale information instead of appending a chronology.
 Historical conclusions belong in ADRs, evidence records, phase reviews, and Git history.
@@ -26,17 +26,25 @@ gate Phase 10, not Phase 1.
   documents were checked: every internal Markdown link and heading anchor resolves, both phase trackers conform to
   [templates/phase.md](templates/phase.md), and the identifier series are consistent across README, registers, and
   trackers. No authority conflict was found.
-- The decision topics are registered in [ADR.md](ADR.md), now 37 after one split. Three have individual records —
-  [ADR-0001](decisions/ADR-0001-internal-render-quantum.md) (render quantum semantics),
-  [ADR-0021](decisions/ADR-0021-host-profile-and-admission-policy.md) (host profile and admission), and
-  [ADR-0037](decisions/ADR-0037-render-quantum-value.md) (quantum frame count). **ADR-0001 and ADR-0021 are `Accepted`**
-  after three review passes; ADR-0037 remains `Proposed` pending measurement. ADR-0037 is a split of the master plan's
+- The decision topics are registered in [ADR.md](ADR.md), now 37 after one split. Three have individual records, and
+  **all three are `Accepted`** — [ADR-0001](decisions/ADR-0001-internal-render-quantum.md) (render quantum semantics)
+  and [ADR-0021](decisions/ADR-0021-host-profile-and-admission-policy.md) (host profile and admission) after three
+  review passes, and [ADR-0037](decisions/ADR-0037-render-quantum-value.md) (quantum frame count) on the strength of
+  [EVD-0002](evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md). ADR-0037 is a split of the master plan's
   topic 1, recorded as a deviation in the Phase 0A tracker; both quantum records are required `Accepted` at the Phase 0A
   exit, so the split does not weaken the gate.
-- **The master plan is synchronized with ADR-0001 and ADR-0021.** Part VII topic 1 and the Phase 0A exit gate name both
-  quantum records. The quantum is no longer configurable, and `maximum_block_size` is owned only by `HostProfile`
-  instead of being duplicated in `RenderConfig`. These changes landed with the ADRs' acceptance, per the same-change
-  rule in [README.md](README.md#sources-of-truth).
+- **`Q` = 64 frames, provisionally.** The V1 proxy landed inside ADR-0037's own inconclusive band — `r(64,256)` is
+  +9.9%, and whether that is within 5 pp of the 15% threshold is decided by the choice of estimator rather than by the
+  data — so the record's rule 1 applied: accept 64, and make re-measuring it against real V2 nodes a **Phase 2
+  exit-gate item**. Until that passes, nothing may tune against the value: no hand-unrolled kernel, no `Q`-specific
+  buffer layout, no test asserting a control rate in Hz. The measurement also produced the first V2-relevant cost
+  model this project has: per-block overhead is about 0.8 µs and scales with active voice and module count.
+- **The master plan is synchronized with all three accepted records.** Part VII topic 1 and the Phase 0A exit gate name
+  both quantum records; the quantum is no longer configurable, and `maximum_block_size` is owned only by `HostProfile`
+  instead of being duplicated in `RenderConfig`. ADR-0037's acceptance added the re-measurement to the **Phase 2 exit
+  gate**, because the plan — not the ADR — is authoritative for gates and a binding obligation recorded only in a
+  decision record would not be enforced by one. Each change landed with the acceptance that caused it, per the
+  same-change rule in [README.md](README.md#sources-of-truth).
 - **The accepted contracts now unblock execution.** ADR-0001 fixes quantum, carry, end-of-stream, event-horizon, and
   latency semantics in terms of `Q`. ADR-0021 fixes admission behavior, seven configuration owners, an explicit lossy
   retention/presentation class, and a terminal `needs_reprepare` policy for an oversized host callback.
@@ -55,42 +63,50 @@ gate Phase 10, not Phase 1.
 - **[EVD-0001](evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md) is `Complete` and `Supported`.** Every corpus
   case renders bit-identically across two separate processes, and a two-case control resolves their octave to 3.6 cents
   — so the zero deltas are a measurement rather than a stub.
+- **[EVD-0002](evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md) is `Complete`, `Supported` for the curve shape
+  and `Inconclusive` at ADR-0037's resolution.** 8 640 timed renders across four interleaved builds, with a committed
+  harness (`crates/pertylizer/src/bin/render_cost.rs`) rather than a one-off script. Its most consequential finding is
+  not the ratio but the spread behind it: per case, `r(64,256)` runs from +2.42% to +17.35% and straddles the threshold
+  that would have selected 128, so the pooled figure is a property of a four-of-eleven corpus as much as of the
+  renderer.
 - **Building the corpus found a V1 defect, fixed on `fix/offline-render-fidelity`.** The offline renderer rebuilt instruments without an
   allocator config and replayed only volume, pan, and solo, so polyphony, allocation mode, transpose, key range,
   oversampling, velocity sensitivities, and the sidechain source were silently defaulted. It affected every consumer of
   the offline renderer, not only the corpus — the `analyze_*` tools and the WAV export measured audio the live engine
   never produced. It is the third instance of an offline reader disagreeing with the live engine while looking healthy.
-- Phase 0A is **not** complete: P00A-T003 still has no CPU, memory, or timing figures, three of six required ADRs have no
-  record, and no exit review exists. No code has been written for V2 itself.
+- Phase 0A is **not** complete: P00A-T003 has CPU figures at one operating point and still no memory or timing figures,
+  three of six required ADRs have no record, and no exit review exists. No code has been written for V2 itself.
 - V2 implementation status must be established from repository evidence before this dashboard makes code-level
   completion claims.
 
 ## Next actions
 
-The corpus and the comparison command now exist, so every measurement Phase 0A was waiting on can actually be run. The
-inventories have stopped being search-limited; what each still lacks is either a decision or an executable check.
+The corpus, the comparison command, and now a timing harness exist, so every measurement Phase 0A was waiting on can
+actually be run — and the quantum measurement has been. The inventories have stopped being search-limited; what each
+still lacks is either a decision or an executable check.
 
-1. **Run ADR-0037's V1 proxy measurement.** Render the corpus at 32/64/128/256 frames by varying `BUFFER_SIZE` in
-   `arrangement_render.rs`, record it as `EVD-0002`, and apply the record's ordered rule table. An inconclusive result is
-   a real possible outcome. This is the last thing standing between ADR-0037 and acceptance, and it is now unblocked.
+1. **Open ADR-0032** (`SampleTime` and event timestamps), the remaining record the Phase 0A exit gate requires
+   `Accepted`. ADR-0001 now fixes the epoch and the late-event rule, so ADR-0032 refines the representation on top of
+   that rather than inventing it. With ADR-0037 accepted, this is the only decision left that can block the gate on its
+   own; ADR-0022 and ADR-0028 may be deferred to Phase 3 and Phase 4 with an owner and an evidence gap.
 2. **Finish P00A-T003.** [EVD-0001](evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md) covers determinism and
-   level; CPU, memory, and timing at common polyphony and sample rates are still unmeasured, and the task does not close
-   without them.
+   level and [EVD-0002](evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md) covers CPU at one polyphony and one
+   sample rate; memory, timing, and CPU across common polyphony and sample rates are still unmeasured, and the task does
+   not close without them. `render_cost` is the harness for the CPU half and takes a corpus directory, so widening it is
+   a matter of cases and operating points rather than of tooling.
 3. **Sweep all 74 resource-inventory entries** under accepted ADR-0021, assigning both axes — one of six failure classes
    and one of seven configuration owners — plus the rule and diagnostic. Every `Unknown`-class entry must reach a
    terminal class as part of it.
-4. **Open ADR-0032** (`SampleTime` and event timestamps), the remaining record the Phase 0A exit gate requires
-   `Accepted`. ADR-0001 now fixes the epoch and the late-event rule, so ADR-0032 refines the representation on top of
-   that rather than inventing it.
-5. **Open ADR-0014.** The identity ledger's central finding is that the module id encodes its type at *runtime*
+4. **Open ADR-0014.** The identity ledger's central finding is that the module id encodes its type at *runtime*
    (`IDN-0029`), not merely on disk, and that a module's script PRNG seed is derived from its instance number — so
    renumbering is audible, not just referential.
-6. **Write the first round-trip fixture (P00B-T005) for `STATE-0004`** — changing the focused instrument changes the
+5. **Write the first round-trip fixture (P00B-T005) for `STATE-0004`** — changing the focused instrument changes the
    saved file while no dirty term observes it. It is the cheapest executable check the ledgers produced.
-7. **Add corpus cases as their blockers clear.** Instrument inserts need nothing and are the cheapest; the sampler case
+6. **Add corpus cases as their blockers clear.** Instrument inserts need nothing and are the cheapest; the sampler case
    waits on the bundle round-trip fixtures, the shared-instrument case on ADR-0014, and the tempo-map case on whether a
-   ramp's event positions fall under the sample-timing correction.
-8. **Record both audit passes as `EVD` records** so the ledgers' claims are reproducible rather than asserted. No value
+   ramp's event positions fall under the sample-timing correction. EVD-0002 raised the stakes on this: the corpus's
+   category mix, not only its size, now demonstrably moves a measured result.
+7. **Record both audit passes as `EVD` records** so the ledgers' claims are reproducible rather than asserted. No value
    in the resource ledger has been measured; all of them are read from source.
 
 ## Documentation-workflow review notes

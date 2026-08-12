@@ -48,7 +48,13 @@ use crate::session::SynthSession;
 pub struct OfflineRenderError(pub(crate) String);
 
 /// Block size in frames per `engine.process()` call.
-const BUFFER_SIZE: usize = 256;
+///
+/// Public so a measurement can report the value it was built with rather than
+/// the value its operator believed it was built with: it is a compile-time
+/// constant, so the only way a harness can label its own data honestly is to
+/// read it. See the `render_cost` binary and ADR-0037's proxy measurement in
+/// `plans/v2/`.
+pub const BUFFER_SIZE: usize = 256;
 
 /// Output channel count — always stereo.
 const CHANNELS: usize = 2;

@@ -3,19 +3,22 @@
 | Field         | Value                                    |
 |---------------|------------------------------------------|
 | ID            | ADR-0037                                 |
-| Status        | Proposed                                 |
+| Status        | Accepted (provisional value, see rule 1) |
 | Phase         | 0A                                       |
 | Created       | 2026-08-12                               |
 | Last reviewed | 2026-08-12                               |
-| Related       | ADR-0001, P00A-T003, P00A-T006           |
+| Related       | ADR-0001, EVD-0002, P00A-T003, P00A-T006 |
 | Supersedes    | —                                        |
 | Superseded by | —                                        |
 
 **Scope note.** [ADR-0001](ADR-0001-internal-render-quantum.md) decides how the quantum behaves; this record decides
-only how many frames it is. ADR-0001 is `Accepted`; this record remains `Proposed` pending its measurement, and both are
-required `Accepted` by the Phase 0A exit gate. The split exists because the frame count is the one part of the quantum
-question that depends on a measurement, and holding the semantics hostage to that measurement would block Phase 1 for
-no gain.
+only how many frames it is. Both are `Accepted`, and both were required `Accepted` by the Phase 0A exit gate. The split
+exists because the frame count is the one part of the quantum question that depends on a measurement, and holding the
+semantics hostage to that measurement would block Phase 1 for no gain.
+
+**Outcome.** The measurement was taken and is recorded as
+[EVD-0002](../evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md). It selected **rule 1**, so `Q` = 64 is accepted
+**provisionally** and the Phase 2 re-measurement below is binding. See *Evidence*.
 
 This ADR is registered as a split of the master plan's Part VII topic 1, which names one decision. The Phase 0A
 tracker records the split as a deviation.
@@ -72,15 +75,42 @@ does not have, and the Phase 0A exit gate is not satisfiable.
 
 ## Evidence
 
-None yet. This is the record's defining weakness and the reason it is `Proposed`.
+[EVD-0002](../evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md), the V1
+proxy measurement defined below. 8 640 recorded renders of the four corpus cases
+across four builds, interleaved so machine drift could not be read as a
+block-size effect.
 
-**The measurement is no longer blocked.** It was waiting on P00A-T001, which now
-exists: [`corpus/v2-reference/`](../../../corpus/v2-reference/README.md) holds
-four rendered cases and `pertylizer compare` measures differences between
-renders. Four of the master plan's eleven categories are covered, which is a real
-limitation on how representative the result is and belongs in the `EVD` record's
-own *Limitations* — but it does not hold the measurement up, and waiting for the
-remaining seven would leave this record `Proposed` for no gain.
+| Estimator | c(32) | c(64) | c(128) | c(256) | r(64,256) | r(128,256) | r(32,64) |
+|-----------|-------|-------|--------|--------|-----------|------------|----------|
+| minimum   | 6.942 | 6.468 | 6.210  | 5.884  | +9.93%    | +5.54%     | +7.34%   |
+| median    | 7.486 | 6.803 | 6.428  | 6.198  | +9.78%    | +3.72%     | +10.04%  |
+| mean      | 7.666 | 6.978 | 6.618  | 6.322  | +10.38%   | +4.69%     | +9.86%   |
+
+Costs are milliseconds of CPU per second of rendered audio, pooled across the
+corpus and weighted by each case's rendered duration.
+
+**Rule 1 applies.** Rules 2, 3, and 4 fire on no estimator. Rule 1 is close, and
+the closeness is the finding: the minimum and the median put `r(64,256)` 5.07 and
+5.22 pp from the 15% threshold — just outside the margin — while the mean puts it
+4.62 pp away, inside it. A bootstrap over rounds puts 30–42% of resampled
+measurements inside the band. Which side of the rule the data falls on is decided
+by the choice of estimator at a margin of a tenth of a percentage point, which is
+the situation the margin exists to catch. EVD-0002 records the alternative
+reading and its outcome (rule 5, confirm 64); both select 64, and the difference
+is only whether the Phase 2 re-measurement binds.
+
+**The corpus composition is doing visible work.** Per case, `r(64,256)` runs from
++2.42% to +17.35%, and the polyphonic case alone is above rule 2's threshold. The
+measurement resolves per-block overhead at about 0.8 µs pooled, and it scales with
+how many voices and modules are active — so a corpus weighted differently would
+move the pooled ratio. Four of the master plan's eleven categories are covered.
+That does not invalidate the result, but it is a second reason not to treat it as
+conclusive, and it is recorded in EVD-0002's *Limitations*.
+
+**What the measurement was waiting on.** P00A-T001's corpus and the `pertylizer
+compare` harness, both of which now exist. The sweep additionally needed a
+harness that times the render call alone; that is
+`crates/pertylizer/src/bin/render_cost.rs`, added with EVD-0002.
 
 Note what changing `BUFFER_SIZE` does beyond cost: V1 dispatches sequencer events
 on block boundaries, so the renders at 32 and at 256 frames are **not the same
@@ -124,7 +154,7 @@ by definition and defers the decision to the Phase 2 re-measurement rather than 
 
 ## Decision
 
-Proposed: **`Q` = 64 frames**, pending the V1 proxy measurement below.
+**`Q` = 64 frames**, provisionally under rule 1 below, on the evidence above.
 
 64 is proposed rather than 32 because it is the more conservative choice against the one unmeasured driver: if the
 overhead is larger than expected, 64 absorbs it, whereas 32 would have to be corrected after Phase 1 has compiled
@@ -194,18 +224,21 @@ master plan wrote deliberately, and the Phase 0A tracker would have to record it
   quanta than V1's per-block work. Control: rule 1's 5-point margin, plus the Phase 2 re-measurement named in the
   follow-up table, run against real V2 nodes while changing `Q` is still cheap.
 - **Risk: the measurement is taken on a corpus too small to be representative.** Control: it is defined over the
-  P00A-T001 corpus, which the master plan already enumerates, rather than over an ad-hoc patch.
-- **Risk: 64 becomes entrenched before it is verified.** Control: this record stays `Proposed`, so it is not an
-  implementation constraint, and the Phase 0A tracker lists it as a gate item.
+  P00A-T001 corpus, which the master plan already enumerates, rather than over an ad-hoc patch. **Materialized.**
+  EVD-0002 measures a per-case `r(64, 256)` spread of +2.42% to +17.35% across the four covered categories, which
+  straddles rule 2's threshold; the pooled figure is therefore a property of the current corpus as well as of the
+  renderer. The control that remains is rule 1, which fired.
+- **Risk: 64 becomes entrenched before it is verified.** Control: the value is accepted *provisionally*, and the last
+  bullet above forbids tuning anything to it until the Phase 2 re-measurement.
 
 ## Follow-up work
 
 | Task                                                                                   | Phase | Status      |
 |-----------------------------------------------------------------------------------------|-------|-------------|
-| Render the P00A-T001 corpus at 32/64/128/256 frames and record cost per rendered second | 0A    | Not started — unblocked, the corpus and the harness now exist |
-| Record the proxy measurement as an `EVD` record and apply the rule table                | 0A    | Not started |
-| **If rule 1 fires:** add the Phase 2 re-measurement to the Phase 2 exit gate            | 1     | Not started |
-| Re-measure against real V2 nodes and confirm or supersede                               | 2     | Not started |
+| Render the P00A-T001 corpus at 32/64/128/256 frames and record cost per rendered second | 0A    | Done — EVD-0002 |
+| Record the proxy measurement as an `EVD` record and apply the rule table                | 0A    | Done — EVD-0002, rule 1 |
+| **If rule 1 fires:** add the Phase 2 re-measurement to the Phase 2 exit gate            | 1     | Done early — rule 1 fired, so the item is in the master plan's Phase 2 exit gate now rather than waiting for Phase 1 to add it |
+| Re-measure against real V2 nodes and confirm or supersede                               | 2     | Not started — binding |
 
 ## Revisit conditions
 

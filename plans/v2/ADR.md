@@ -62,7 +62,7 @@ decision.
 | ADR-0034 | Track, source, and channel ownership        | Proposed | 0B/10A                | Product workflow and V1 track audit      |
 | ADR-0035 | Transaction and concurrency semantics       | Proposed | 0B/10B                | Operation conformance corpus             |
 | ADR-0036 | Audio device and input lifecycle            | Proposed | 0B/9                  | Simulated-host and platform review       |
-| ADR-0037 | Render quantum frame count                  | Proposed | 0A/1                  | Benchmark                                |
+| ADR-0037 | Render quantum frame count                  | Accepted | 0A/1                  | Benchmark                                |
 
 ### Records created
 
@@ -71,10 +71,16 @@ Topics without a link below have no individual record yet; the table above is st
 - [ADR-0001: Render quantum semantics and splitting contract](decisions/ADR-0001-internal-render-quantum.md) —
   `Accepted`
 - [ADR-0021: Host profile and admission policy](decisions/ADR-0021-host-profile-and-admission-policy.md) — `Accepted`
-- [ADR-0037: Render quantum frame count](decisions/ADR-0037-render-quantum-value.md) — `Proposed`
+- [ADR-0037: Render quantum frame count](decisions/ADR-0037-render-quantum-value.md) — `Accepted`, value provisional
 
 ADR-0001 and ADR-0021 were accepted after three review passes. Each carries a *Review history* note recording the
 defects corrected before acceptance; the immutability rule in [decisions/README.md](decisions/README.md) now applies.
+
+ADR-0037 was accepted on [EVD-0002](evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md), which selected the
+record's own rule 1: the V1 proxy could not resolve the comparison to better than its stated margin, so `Q` = 64 is
+authoritative but provisional, and re-measuring it against real V2 nodes is a Phase 2 exit-gate item. `Accepted` is
+still the right status — it is an implementation constraint, and nothing may treat the value as settled enough to tune
+against.
 
 ### Registered splits
 

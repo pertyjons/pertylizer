@@ -29,13 +29,17 @@ Phase 0A `Work` list and add no scope of their own.
 |----------|-------------------------------------------------------|-------------|-----------------------|
 | ADR-0001 | `Accepted`                                            | `Accepted`  | —                     |
 | ADR-0021 | `Accepted`                                            | `Accepted`  | —                     |
-| ADR-0037 | `Accepted`                                            | `Proposed`  | —                     |
+| ADR-0037 | `Accepted`                                            | `Accepted`  | Phase 2 re-measurement |
 | ADR-0032 | `Accepted`                                            | No record   | —                     |
 | ADR-0022 | `Accepted`, or `Deferred` with owner and evidence gap | No record   | Before Phase 3        |
 | ADR-0028 | `Accepted`, or `Deferred` with owner and evidence gap | No record   | Before Phase 4        |
 
 ADR-0037 is not in the master plan's decision list. It carries the frame count split out of ADR-0001 and is required
 `Accepted` here so that the split cannot be used to pass the gate with the quantum's value still open. See *Deviations*.
+
+Its `Later acceptance gate` entry is not a deferral: ADR-0037 is `Accepted` and satisfies this phase. The entry records
+that its measurement selected the record's rule 1, so the value is provisional and re-measuring it against real V2 nodes
+is now a Phase 2 exit-gate item.
 
 ## Tasks
 
@@ -93,8 +97,13 @@ deferral satisfies the Phase 0A exit gate.
 - **State.** The determinism half is done and recorded in
   [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md): all
   four cases render bit-identically across two passes, with level, loudness, and
-  fundamental captured per case. **CPU, memory, and timing are not measured at
-  all**, and this task does not close until they are.
+  fundamental captured per case.
+  [EVD-0002](../evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md) adds
+  offline CPU throughput for the same four cases — 2.7 to 8.4 ms of CPU per
+  rendered second at the production block size — but it was taken for ADR-0037,
+  at one polyphony and one sample rate, and it measures no memory and no
+  real-time timing. **Memory and timing are still not measured at all, and CPU
+  only at a single operating point**, so this task does not close.
 - **What became possible.** P00A-T002 is complete and P00A-T001's corpus exists
   with four of eleven categories, so the inputs and the harness both exist. Every
   remaining measurement in this phase — including ADR-0037's proxy — is defined
@@ -109,10 +118,11 @@ deferral satisfies the Phase 0A exit gate.
 
 - **Scope.** One accepted record under [decisions/](../decisions/README.md) for ADR-0001, ADR-0037, ADR-0021, and
   ADR-0032, plus an accepted-or-deferred ADR-0022 and ADR-0028.
-- **State.** Three of six records exist. [ADR-0001](../decisions/ADR-0001-internal-render-quantum.md) (quantum semantics)
-  and [ADR-0021](../decisions/ADR-0021-host-profile-and-admission-policy.md) (admission policy) are `Accepted`;
-  [ADR-0037](../decisions/ADR-0037-render-quantum-value.md) (quantum frame count) is `Proposed`. ADR-0032, ADR-0022, and
-  ADR-0028 have no record yet.
+- **State.** Three of six records exist and **all three are `Accepted`**:
+  [ADR-0001](../decisions/ADR-0001-internal-render-quantum.md) (quantum semantics),
+  [ADR-0021](../decisions/ADR-0021-host-profile-and-admission-policy.md) (admission policy), and
+  [ADR-0037](../decisions/ADR-0037-render-quantum-value.md) (quantum frame count, `Q` = 64 provisional). ADR-0032,
+  ADR-0022, and ADR-0028 have no record yet.
 - **A review withdrew the acceptance of ADR-0001 and ADR-0021**, which had been marked `Accepted` in the same session
   they were drafted. Four defects made that premature, and each is fixed in the record that carried it:
     - ADR-0001's splitting contract covered only the output side. A callback shorter than `Q` has neither the audio
@@ -135,10 +145,19 @@ deferral satisfies the Phase 0A exit gate.
   is unchanged in strength: both must be `Accepted` at exit, and ADR-0037 is listed in the table above for that reason.
 - **ADR-0037's measurement cannot be taken directly** — the quantity is per-quantum overhead in the V2 node model, and
   no V2 renderer exists. The record names a V1 proxy (render the corpus at 32/64/128/256 by varying
-  `arrangement_render.rs:51`) and fixes its outcome rules before the data is collected. Review also withdrew the claim
-  that the proxy errs in a safe direction: V1's per-block `resize` is not a real cost, because the buffer is
-  preallocated at `MAX_BUFFER_SIZE` (`voice.rs:570`), while V2 adds carry copies and scheduler work V1 never paid. The
-  proxy now shows curve shape only, with an explicit inconclusive band.
+  `arrangement_render.rs`'s `BUFFER_SIZE`) and fixes its outcome rules before the data is collected. Review also
+  withdrew the claim that the proxy errs in a safe direction: V1's per-block `resize` is not a real cost, because the
+  buffer is preallocated at `MAX_BUFFER_SIZE` (`voice.rs:570`), while V2 adds carry copies and scheduler work V1 never
+  paid. The proxy shows curve shape only, with an explicit inconclusive band.
+- **The proxy was run, and it landed in that band.**
+  [EVD-0002](../evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md) records 8 640 timed renders across four
+  interleaved builds. `r(64,256)` is +9.9%, which is 5.07 pp from the 15% threshold on the primary estimator and
+  4.62 pp on the mean — so which side of the 5 pp margin the measurement falls on is decided by the estimator rather
+  than by the data, and rule 1 fires. `Q` = 64 is accepted provisionally, and the Phase 2 re-measurement is now an
+  exit-gate item in the master plan rather than a follow-up note. Two things the measurement established that the
+  record had assumed: per-block overhead is about 0.8 µs and scales with active voice and module count, and the pooled
+  ratio depends visibly on corpus composition — per case it runs from +2.42% to +17.35%, straddling the threshold that
+  would have selected 128.
 - **ADR-0021 deliberately excludes numbers.** Its register basis named measurements; the record splits the topic so
   that class semantics and failure behavior — determinable from code already read — are decided there. P00A-T005 owns
   measured `HostProfile`/render defaults; other defaults stay with their node, domain/format, job, application, or
@@ -151,9 +170,12 @@ deferral satisfies the Phase 0A exit gate.
 - **The master plan is synchronized.** The Phase 0A `HostProfile` work item and field list name the maximum host block,
   not a configurable quantum. `RenderConfig` carries neither the quantum nor a duplicate `maximum_block_size`; all
   capacity comes through `HostProfile`. These edits landed in the acceptance change.
-- **Remaining in this task.** ADR-0032, ADR-0022, and ADR-0028 have no record; ADR-0037 needs its measurement.
-- **Implementation revision.** Documentation only; no code changed. The records cite source reads at `5cd24de8`, one
-  commit later than the inventories' `dd69b657`.
+- **Remaining in this task.** ADR-0032, ADR-0022, and ADR-0028 have no record. Nothing else in the required-decisions
+  table is outstanding.
+- **Implementation revision.** The ADR-0001/ADR-0021 work was documentation only, and its records cite source reads at
+  `5cd24de8`, one commit later than the inventories' `dd69b657`. ADR-0037's acceptance required code: the
+  `render_cost` measurement harness, and making `arrangement_render.rs`'s `BUFFER_SIZE` readable so a run can report
+  the constant it was built with. The constant's value is unchanged.
 
 **P00A-T004 — Complete the fixed-limit and overflow audit.**
 
@@ -234,18 +256,19 @@ something.
 |-----------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------|
 | P00A-T001 | [Corpus manifest](../../../corpus/v2-reference/manifest.json) and four generated fixtures; four of eleven categories covered, seven recorded as gaps | The manifest is loaded and validated by `cargo test -p pertylizer --test corpus_manifest`: category coverage, claim classes, digests, and the fact that each committed project is exactly what its builder produces | Partial — format and validation done, four of eleven categories exercised |
 | P00A-T002 | `pertylizer compare` and the versioned report model                                   | Each metric unit-tested against a synthetic signal with a known deviation (6.02 dB of gain, 100 ms of delay, a semitone of detune, a band-limited change, an inverted channel); end-to-end through render→render→compare in `compare_command.rs` | Complete — runs with no GUI and no audio device |
-| P00A-T003 | [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md)             | Two process-separate renders per case, bit-identical on all four, every comparison delta exactly zero, with a two-case control that resolves their octave to 3.6 cents | Partial — determinism and level only; CPU, memory, and timing not measured |
+| P00A-T003 | [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md) and [EVD-0002](../evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md) | Two process-separate renders per case, bit-identical on all four, every comparison delta exactly zero, with a two-case control that resolves their octave to 3.6 cents; plus 8 640 timed renders giving per-case CPU cost per rendered second | Partial — determinism, level, and single-operating-point CPU; memory and timing not measured |
 | P00A-T004 | [Resource inventory](../inventories/resource-limits.md) passes 1 and 2 at `dd69b657`                                                                                   | Two independent discovery methods with opposite blind spots: pass 1 matched constant names, pass 2 matched documented truncation behavior. Neither executes anything, so a truncation that is both unnamed and undocumented would still be missed        | Partial — source-read only, no measurement   |
-| P00A-T006 | [ADR-0001](../decisions/ADR-0001-internal-render-quantum.md) and [ADR-0021](../decisions/ADR-0021-host-profile-and-admission-policy.md) `Accepted`; [ADR-0037](../decisions/ADR-0037-render-quantum-value.md) `Proposed` | Three review passes resolved the buffering, event, retention, ownership, host-fault, and measurement-boundary defects before acceptance. ADR-0037 remains evidence-gated | Partial — 3 of 6 records, 2 accepted |
+| P00A-T006 | [ADR-0001](../decisions/ADR-0001-internal-render-quantum.md), [ADR-0021](../decisions/ADR-0021-host-profile-and-admission-policy.md), and [ADR-0037](../decisions/ADR-0037-render-quantum-value.md) `Accepted` | Three review passes resolved the buffering, event, retention, ownership, host-fault, and measurement-boundary defects before the first two were accepted. ADR-0037 was accepted on EVD-0002 by applying the rule table it fixed before the data existed; the outcome was rule 1, so its value is provisional and binds Phase 2 | Partial — 3 of 6 records, all 3 accepted |
 
 ## Deviations
 
 **One registered topic split into two identifiers.** The master plan's Part VII topic 1 names a single internal-quantum
 decision, and the Phase 0A exit gate names `ADR-0001 (RenderQuantum)`. That topic is now carried by two records:
-ADR-0001 for the splitting semantics (`Accepted`) and ADR-0037 for the frame count (`Proposed`).
+ADR-0001 for the splitting semantics and ADR-0037 for the frame count, both `Accepted`.
 
 - **Why.** The frame count is the only part depending on a measurement that cannot yet be taken, and Phase 1 needs the
-  semantics to begin. One record could not hold two statuses.
+  semantics to begin. One record could not hold two statuses. Both are now `Accepted`; the split's purpose is served
+  and its cost was one extra identifier.
 - **How the gate is preserved.** ADR-0037 is added to this tracker's required-decisions table as `Accepted`-at-exit, so
   the exit gate still requires the quantum's value to be settled. The split moves where the value is recorded, not
   whether it must be decided.

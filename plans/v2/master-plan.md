@@ -500,6 +500,13 @@ NodeState:    oscillator phase/filter history/envelope stage
       flow.
 - [ ] CPU use is no worse than V1 for the equivalent minimal patch, allowing a
       temporary documented margin for adapters.
+- [ ] The render quantum's frame count is re-measured against real V2 nodes, and
+      ADR-0037 is either confirmed or superseded. Its `Q` = 64 was accepted in
+      Phase 0A on a V1 proxy that came back inconclusive (rule 1, EVD-0002), and
+      the record makes this re-measurement binding rather than advisory: Phase 2
+      is the last point at which changing the constant is still cheap. Until it
+      passes, no hand-unrolled kernel, `Q`-specific buffer layout, or test
+      asserting a control rate in Hz may depend on the value.
 
 ## Phase 3: Sample-accurate scheduler and block-partition invariance
 
@@ -2884,7 +2891,11 @@ open and why. A topic is settled only when its record under
    splitting semantics — one compile-time value everywhere, whole quanta only,
    input and output carries, control evaluated once per quantum, and the
    end-of-stream drain — while ADR-0037 fixes the frame count, which is the only
-   part that waits on a measurement. Both must be `Accepted` before Phase 1.
+   part that waits on a measurement. Both must be `Accepted` before Phase 1, and
+   both now are: `Q` = 64, provisionally, because the V1 proxy measurement
+   (EVD-0002) came back inconclusive at the resolution ADR-0037's own rule table
+   demands. Confirming or superseding that value against real V2 nodes is a
+   [Phase 2 exit-gate item](#phase-2-minimal-compiled-voice-graph).
 2. **Internal channel layout (ADR-0002)** — planar is preferred; verify
    against module and conversion cost in Phase 2.
 3. **Event segmentation API (ADR-0003)** — renderer-level segment split versus
