@@ -27,8 +27,8 @@ Phase 0A `Work` list and add no scope of their own.
 
 | ADR      | Required at Phase 0A exit                             | Status      | Later acceptance gate |
 |----------|-------------------------------------------------------|-------------|-----------------------|
-| ADR-0001 | `Accepted`                                            | `Proposed`  | —                     |
-| ADR-0021 | `Accepted`                                            | `Proposed`  | —                     |
+| ADR-0001 | `Accepted`                                            | `Accepted`  | —                     |
+| ADR-0021 | `Accepted`                                            | `Accepted`  | —                     |
 | ADR-0037 | `Accepted`                                            | `Proposed`  | —                     |
 | ADR-0032 | `Accepted`                                            | No record   | —                     |
 | ADR-0022 | `Accepted`, or `Deferred` with owner and evidence gap | No record   | Before Phase 3        |
@@ -62,11 +62,10 @@ deferral satisfies the Phase 0A exit gate.
 
 - **Scope.** One accepted record under [decisions/](../decisions/README.md) for ADR-0001, ADR-0037, ADR-0021, and
   ADR-0032, plus an accepted-or-deferred ADR-0022 and ADR-0028.
-- **State.** Three of six records exist, all `Proposed`:
-  [ADR-0001](../decisions/ADR-0001-internal-render-quantum.md) (quantum semantics),
-  [ADR-0021](../decisions/ADR-0021-host-profile-and-admission-policy.md) (admission policy), and
-  [ADR-0037](../decisions/ADR-0037-render-quantum-value.md) (quantum frame count). ADR-0032, ADR-0022, and ADR-0028
-  have no record yet. **Nothing in this phase is accepted.**
+- **State.** Three of six records exist. [ADR-0001](../decisions/ADR-0001-internal-render-quantum.md) (quantum semantics)
+  and [ADR-0021](../decisions/ADR-0021-host-profile-and-admission-policy.md) (admission policy) are `Accepted`;
+  [ADR-0037](../decisions/ADR-0037-render-quantum-value.md) (quantum frame count) is `Proposed`. ADR-0032, ADR-0022, and
+  ADR-0028 have no record yet.
 - **A review withdrew the acceptance of ADR-0001 and ADR-0021**, which had been marked `Accepted` in the same session
   they were drafted. Four defects made that premature, and each is fixed in the record that carried it:
     - ADR-0001's splitting contract covered only the output side. A callback shorter than `Q` has neither the audio
@@ -81,8 +80,8 @@ deferral satisfies the Phase 0A exit gate.
     - ADR-0037's outcome rules overlapped — a measurement could satisfy both "select 32" and "select 128" — and never
       used its own 128-frame datapoint. Replaced by an ordered, exhaustive rule table with an explicit inconclusive
       case.
-  The lesson recorded for the remaining records: drafting and accepting in one pass produced four defects that a
-  separate review pass caught immediately.
+  A third, bounded closure review corrected the remaining retention, ownership, measurement, and host-fault issues before
+  ADR-0001 and ADR-0021 were accepted.
 - **Why ADR-0001 was split.** Only the frame count depends on the missing measurement; the splitting semantics follow
   from the partition-invariance requirement and from V1's code as read. Holding the semantics for a benchmark would
   block Phase 1 for no gain, so ADR-0001 states every clause in terms of `Q` and ADR-0037 carries the value. The gate
@@ -94,21 +93,18 @@ deferral satisfies the Phase 0A exit gate.
   preallocated at `MAX_BUFFER_SIZE` (`voice.rs:570`), while V2 adds carry copies and scheduler work V1 never paid. The
   proxy now shows curve shape only, with an explicit inconclusive band.
 - **ADR-0021 deliberately excludes numbers.** Its register basis named measurements; the record splits the topic so
-  that class semantics and failure behavior — determinable from code already read — are decided there, while every
-  numeric default moves to P00A-T005, which already depends on P00A-T003. The scope split still needs an explicit
-  accept or reject at the exit review; the register basis is provisionally updated to `V1 cap inventory` to match.
+  that class semantics and failure behavior — determinable from code already read — are decided there. P00A-T005 owns
+  measured `HostProfile`/render defaults; other defaults stay with their node, domain/format, job, application, or
+  protocol owner. The accepted register basis is `V1 cap inventory`.
 - **What the records changed elsewhere.** Drafting ADR-0021 surfaced a contradiction in the resource ledger: the
   preamble claimed ADR-0021 owned every row of the silent-truncation register while `LIMIT-0013` and `LIMIT-0020`
   carried ADR-0027 alone. Both now carry ADR-0021 for the overflow question and ADR-0027 for tap ownership. That fix
   is independent of acceptance and stands. The five entries' `Proposed V2 rule` cells were filled while ADR-0021 was
   marked accepted and were **reverted** when that was withdrawn, per the ledger's own status rule.
-- **The master plan is deliberately not yet updated.** ADR-0001 forbids `quantum` in both `RenderConfig`
-  (`master-plan.md:411`) and `HostProfile` (`master-plan.md:1767`), and the
-  [authority rule](../README.md#sources-of-truth) requires the plan to change in the same change as the accepted ADR
-  that supersedes it. While the record is `Proposed` the plan is correct as it stands; both edits are listed as
-  acceptance-gated follow-up in ADR-0001.
-- **Remaining in this task.** ADR-0032, ADR-0022, and ADR-0028 have no record; ADR-0001 and ADR-0021 need a second
-  review pass after this revision; ADR-0037 needs its measurement.
+- **The master plan is synchronized.** The Phase 0A `HostProfile` work item and field list name the maximum host block,
+  not a configurable quantum. `RenderConfig` carries neither the quantum nor a duplicate `maximum_block_size`; all
+  capacity comes through `HostProfile`. These edits landed in the acceptance change.
+- **Remaining in this task.** ADR-0032, ADR-0022, and ADR-0028 have no record; ADR-0037 needs its measurement.
 - **Implementation revision.** Documentation only; no code changed. The records cite source reads at `5cd24de8`, one
   commit later than the inventories' `dd69b657`.
 
@@ -135,10 +131,9 @@ deferral satisfies the Phase 0A exit gate.
       and the classic oscillator's unison spread), and both are array lengths, so neither can be exceeded. A
       silent-truncation register is now compiled: five sites, of which only the event-drop counters have a diagnostic.
       That is the specific input this phase's exit gate needs from ADR-0021.
-- **Remaining before the gate.** Two things, neither of which is more searching. First, the class sweep, which is
-  blocked until ADR-0021 is accepted — it is still `Proposed`, so the `Proposed V2 rule` column is blank for all 74
-  entries and nothing has been filled. Once accepted, that ADR assigns each entry a failure class *and* one of seven
-  configuration owners, and every `Unknown`-class entry must reach a terminal class. Second, confirming that no
+- **Remaining before the gate.** Two things, neither of which is more searching. First, accepted ADR-0021 unblocks the
+  class sweep: it assigns each entry one of six failure classes *and* one of seven configuration owners, and every
+  `Unknown`-class entry must reach a terminal class. Second, confirming that no
   *undocumented* silent truncation exists needs an executable probe (oversized blocks, >128 metered channels, >32 rack
   stages) — and no value in this ledger has been measured, only read.
 - **Status-vocabulary correction (review follow-up).** Entries were marked `Classified` once their value, site, and
@@ -146,7 +141,7 @@ deferral satisfies the Phase 0A exit gate.
   required fields *and* disposition filled with supporting evidence, and this ledger's disposition is
   `Proposed V2 rule`, which was blank pending ADR-0021. All such statuses are downgraded to `Investigating`, and the
   ledger now states the rule inline. `LIMIT-0067` also carried two ADR owners; it is now ADR-0021 alone, matching the
-  silent-truncation register. The five filled entries stay `Investigating` too: they have a rule but no `EVD` record.
+  silent-truncation register. Entries remain `Investigating` until the class sweep records rules and evidence.
 - **Implementation revision.** Documentation only; no code changed.
 
 ## Deliverables and verification
@@ -154,13 +149,13 @@ deferral satisfies the Phase 0A exit gate.
 | Task      | Output/revision                                                                                                                                                        | Verification/evidence                                                                                                                                                                                                                                    | Result                                       |
 |-----------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------|
 | P00A-T004 | [Resource inventory](../inventories/resource-limits.md) passes 1 and 2 at `dd69b657`                                                                                   | Two independent discovery methods with opposite blind spots: pass 1 matched constant names, pass 2 matched documented truncation behavior. Neither executes anything, so a truncation that is both unnamed and undocumented would still be missed        | Partial — source-read only, no measurement   |
-| P00A-T006 | [ADR-0001](../decisions/ADR-0001-internal-render-quantum.md), [ADR-0021](../decisions/ADR-0021-host-profile-and-admission-policy.md), and [ADR-0037](../decisions/ADR-0037-render-quantum-value.md), all `Proposed` at `5cd24de8` | Every option and consequence traces to a cited inventory entry or source site. A review pass over the first revision found four defects — an unimplementable buffering contract, a class model inapplicable to its own ledger, a hardcoded quantum contradicting two other records, and overlapping outcome rules — and withdrew the two acceptances. All four are fixed; none of the three records has been reviewed since | Partial — 3 of 6 records, 0 accepted |
+| P00A-T006 | [ADR-0001](../decisions/ADR-0001-internal-render-quantum.md) and [ADR-0021](../decisions/ADR-0021-host-profile-and-admission-policy.md) `Accepted`; [ADR-0037](../decisions/ADR-0037-render-quantum-value.md) `Proposed` | Three review passes resolved the buffering, event, retention, ownership, host-fault, and measurement-boundary defects before acceptance. ADR-0037 remains evidence-gated | Partial — 3 of 6 records, 2 accepted |
 
 ## Deviations
 
 **One registered topic split into two identifiers.** The master plan's Part VII topic 1 names a single internal-quantum
 decision, and the Phase 0A exit gate names `ADR-0001 (RenderQuantum)`. That topic is now carried by two records:
-ADR-0001 for the splitting semantics and ADR-0037 for the frame count, both currently `Proposed`.
+ADR-0001 for the splitting semantics (`Accepted`) and ADR-0037 for the frame count (`Proposed`).
 
 - **Why.** The frame count is the only part depending on a measurement that cannot yet be taken, and Phase 1 needs the
   semantics to begin. One record could not hold two statuses.
@@ -173,10 +168,8 @@ ADR-0001 for the splitting semantics and ADR-0037 for the frame count, both curr
   [Part VII](../master-plan.md#part-vii-open-decisions) topic 1 now names both records and states which fixes what, and
   the [Phase 0A exit gate](../master-plan.md#phase-0a-baseline-limits-and-render-core-contracts) now requires both
   `Accepted`.
-- **Master-plan sync, step 2 — acceptance-gated.** Three references still grant the quantum a configuration surface
-  that ADR-0001 removes: the Phase 0A `HostProfile` work item (`master-plan.md:264`), `RenderConfig::quantum`
-  (`master-plan.md:411`), and the `HostProfile` field list (`master-plan.md:1767`). They are correct as long as
-  ADR-0001 is `Proposed` and must all be removed on acceptance; ADR-0001's follow-up table lists all three.
+- **Master-plan sync, step 2 — done.** The Phase 0A `HostProfile` work item and field list now name the maximum host
+  block rather than a configurable quantum, and `RenderConfig` no longer duplicates the profile field.
 
 Any scope, ordering, or contract change must link to an ADR or an explicit master-plan update. Do not bury architecture
 changes in this tracker.

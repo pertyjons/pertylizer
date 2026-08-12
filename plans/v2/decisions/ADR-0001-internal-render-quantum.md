@@ -3,7 +3,7 @@
 | Field         | Value                                               |
 |---------------|-----------------------------------------------------|
 | ID            | ADR-0001                                            |
-| Status        | Proposed                                            |
+| Status        | Accepted                                            |
 | Phase         | 0A                                                  |
 | Created       | 2026-08-12                                          |
 | Last reviewed | 2026-08-12                                          |
@@ -123,7 +123,7 @@ from the partition-invariance requirement and from V1's observed behavior, not f
 
 ## Decision
 
-Proposed. Let `Q` denote the quantum in frames, fixed by [ADR-0037](ADR-0037-render-quantum-value.md).
+Accepted. Let `Q` denote the quantum in frames, fixed by [ADR-0037](ADR-0037-render-quantum-value.md).
 
 ### Quantum
 
@@ -241,17 +241,18 @@ Proposed. Let `Q` denote the quantum in frames, fixed by [ADR-0037](ADR-0037-ren
   catch and which would silently corrupt every A/B comparison built on it. Control: a test that renders a known impulse
   at plan sample 0 offline and asserts it lands at output sample 0, run on every offline path — the WAV export, the
   headless renderer, and the comparison harness.
-- **Risk: the carry copies show up as real cost at small quanta.** Control: they are inside ADR-0037's measurement,
-  which compares whole-pipeline cost per quantum rather than dispatch count alone.
+- **Risk: the carry copies show up as real cost at small quanta.** Control: ADR-0037's V1 proxy cannot measure this
+  V2-only cost, so its mandatory Phase 2 re-measurement compares the real V2 renderer at every candidate quantum before
+  kernels or buffer layouts may be tuned around the provisional value.
 
 ## Follow-up work
 
 | Task                                                                                          | Phase | Status      |
 |------------------------------------------------------------------------------------------------|-------|-------------|
 | Fix the quantum's frame count (ADR-0037)                                                      | 0A    | Proposed    |
-| **On acceptance:** remove "maximum quantum" from the Phase 0A `HostProfile` work item (`master-plan.md:264`) | 0A | Not started |
-| **On acceptance:** remove `quantum` from `RenderConfig` in the master plan (`master-plan.md:411`) | 0A    | Not started |
-| **On acceptance:** remove "maximum render quantum" from the plan's `HostProfile` list (`master-plan.md:1767`) | 0A | Not started |
+| Remove "maximum quantum" from the Phase 0A `HostProfile` work item                         | 0A    | Complete    |
+| Remove `quantum` from `RenderConfig` in the master plan                                    | 0A    | Complete    |
+| Remove "maximum render quantum" from the plan's `HostProfile` list                         | 0A    | Complete    |
 | Declare the carry latency contributor in the `ResourceReport`                                 | 1     | Not started |
 | Impulse-alignment test on every offline path: plan sample 0 lands at output sample 0          | 1     | Not started |
 | Partition-invariance tests over `1 x 4096`, `16 x 256`, `64 x 64`, and irregular host blocks   | 3     | Not started |
@@ -259,10 +260,8 @@ Proposed. Let `Q` denote the quantum in frames, fixed by [ADR-0037](ADR-0037-ren
 | Remove the `Q - 1` control-response delay via ADR-0003 or ADR-0032                            | 3     | Not started |
 | Decide whether input-free plans may render ahead without the input carry (Option A′)          | 3     | Not started |
 
-The three master-plan edits are listed as acceptance-gated rather than done. The
-[documentation authority rule](../README.md#sources-of-truth) requires the plan to be updated in the same change as the
-accepted ADR that supersedes it — so while this record is `Proposed` the plan is correct as it stands, and the edits
-become mandatory the moment it is accepted.
+The three master-plan edits landed in the same change that accepted this record, as required by the
+[documentation authority rule](../README.md#sources-of-truth).
 
 ## Revisit conditions
 

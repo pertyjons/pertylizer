@@ -12,9 +12,10 @@
 | Superseded by | —                                        |
 
 **Scope note.** [ADR-0001](ADR-0001-internal-render-quantum.md) decides how the quantum behaves; this record decides
-only how many frames it is. Both are currently `Proposed`, and both are required `Accepted` by the Phase 0A exit gate.
-The split exists because the frame count is the one part of the quantum question that depends on a measurement, and
-holding the semantics hostage to that measurement would block Phase 1 for no gain.
+only how many frames it is. ADR-0001 is `Accepted`; this record remains `Proposed` pending its measurement, and both are
+required `Accepted` by the Phase 0A exit gate. The split exists because the frame count is the one part of the quantum
+question that depends on a measurement, and holding the semantics hostage to that measurement would block Phase 1 for
+no gain.
 
 This ADR is registered as a split of the master plan's Part VII topic 1, which names one decision. The Phase 0A
 tracker records the split as a deviation.

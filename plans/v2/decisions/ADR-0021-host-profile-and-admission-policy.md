@@ -3,11 +3,11 @@
 | Field         | Value                                               |
 |---------------|-----------------------------------------------------|
 | ID            | ADR-0021                                            |
-| Status        | Proposed                                            |
+| Status        | Accepted                                            |
 | Phase         | 0A                                                  |
 | Created       | 2026-08-12                                          |
 | Last reviewed | 2026-08-12                                          |
-| Related       | P00A-T004, P00A-T005, P00A-T006, ADR-0001, ADR-0022 |
+| Related       | P00A-T004, P00A-T005, P00A-T006, ADR-0001, ADR-0022, ADR-0037 |
 | Supersedes    | —                                                   |
 | Superseded by | —                                                   |
 
@@ -25,11 +25,12 @@ which only `LIMIT-0013` counts what it dropped.
 This ADR decides the classification scheme, the failure semantics for each class, and the disposition of those five
 sites.
 
-**Outside this decision.** The numeric default for any budget — those come from P00A-T005 once P00A-T003 has measured
-the reference corpus, and this ADR deliberately fixes none of them (see *Decision scope* below). Also outside: the
-render quantum's semantics (ADR-0001) and its frame count (ADR-0037), hardware time mapping and latency compensation
-(ADR-0022), observation and analyzer
-ownership as a product question (ADR-0027), and remote authorization (ADR-0029).
+**Outside this decision.** Numeric defaults: P00A-T005 sets only `HostProfile`/render defaults once P00A-T003 has
+measured the reference corpus; defaults owned by node, domain/format, job, application, or protocol contracts are set by
+their respective specifications or ADRs. This record deliberately fixes none of them (see *Decision scope* below).
+Also outside: the render quantum's semantics (ADR-0001) and its frame count (ADR-0037), hardware time mapping and
+latency compensation (ADR-0022), observation and analyzer ownership as a product question (ADR-0027), and remote
+authorization (ADR-0029).
 
 ### Decision scope, and why it excludes numbers
 
@@ -40,10 +41,11 @@ the evidence actually falls:
 - **Which class a limit belongs to and what happens when it is exceeded** is determinable from the code that is already
   read. A compile-time array length is a hard capability whatever a benchmark says; a heuristic ceiling with a comment
   explaining the author's tradeoff is a budget.
-- **What number to set a budget to** is not determinable without measurement, and is assigned to P00A-T005's
-  `HostProfile`/`RenderLimits` contract, which lists P00A-T003 as a dependency.
+- **What number to set a budget to** is not determinable from the inventory alone. P00A-T005 owns measured
+  `HostProfile`/render defaults; every other number belongs to the specification or ADR for its configuration owner.
 
-This is a scope decision, not an evidence waiver. If the review rejects the split, this ADR must wait for P00A-T003.
+This is a scope decision, not an evidence waiver. Measurement may change owned defaults, but not the ownership and
+failure semantics accepted here.
 
 ## Decision drivers
 
@@ -64,7 +66,7 @@ This is a scope decision, not an evidence waiver. If the review rejects the spli
 
 ### Option A: Ratify the master plan principle and resolve each site against it
 
-Classify every limit into the inventory's existing five classes, bind a failure semantic to each class, and dispose of
+Classify every limit into the decision's six classes, bind a failure semantic to each class, and dispose of
 the five silent-truncation sites individually. Costs the most decision work up front and forces several V1 behaviors to
 change. Produces exactly the artifact the exit gate asks for.
 
@@ -101,8 +103,8 @@ therefore decides policy over a register that is thorough but not proven complet
 
 ## Decision
 
-Proposed. Class semantics and failure behavior are decided here; every numeric default is assigned to P00A-T005, per
-the scope split above. Four parts.
+Accepted. Class semantics, configuration ownership, and failure behavior are decided here; numeric defaults remain with
+the owning contracts identified above. Four parts.
 
 **Review history.** An earlier revision was marked `Accepted` with a single-axis class model that placed every
 configurable budget in `HostProfile`. Review found that the ledger contains budgets which are not render-preparation
@@ -115,7 +117,10 @@ oversized-callback disposition said only "serve what the carry buffer holds", wh
 buffer unwritten and said nothing about the excess input.
 
 A second review pass then found the owner axis still not exhaustive — node and DSP contracts, representation-level
-bounds, and removed artifacts had no owner — so part 1's owner list is now a closed set of seven.
+bounds, and removed artifacts had no owner — so part 1's owner list is now a closed set of seven. The acceptance review
+added the missing failure class for explicitly lossy retention and presentation budgets, assigned numeric defaults to
+their actual owners, and made an oversized callback a terminal stream-contract fault rather than an ambiguous partial
+recovery.
 
 ### 1. Two independent axes
 
@@ -123,7 +128,7 @@ Every entry in the resource inventory is assigned a value on **each** of two axe
 this ADR collapsed them into one, which produced a model that could not be applied to the ledger it was written for:
 undo depth (`LIMIT-0063`), retained undo audio (`LIMIT-0064`), the autosave debounce (`LIMIT-0066`), and the MCP reply
 caps (`LIMIT-0068`..`LIMIT-0071`) are all budgets, and none of them belongs in a render preparation input. The axes are
-orthogonal — a budget owned by application settings still refuses rather than truncates.
+orthogonal: configuration ownership never determines failure behavior.
 
 **Axis 1 — failure behavior**, which the limit class determines:
 
@@ -131,6 +136,7 @@ orthogonal — a budget owned by application settings still refuses rather than 
 |-------------------------------------|-------------------------------------------------------------------------------|
 | `Platform capability`               | Compile or preparation error with an attributable resource diagnostic         |
 | `Configurable safety budget`        | Configured refusal or warning, per an explicit policy field; never truncation |
+| `Lossy retention/presentation budget` | Explicit eviction or omission of non-project-authoritative history, recovery, telemetry, or presentation data; always expose the loss or continuation mechanism |
 | `Warning threshold`                 | Reported; never blocks                                                        |
 | `Implementation artifact to remove` | Entry closes when the removing change lands                                   |
 | `Unknown`                           | Not terminal; must be resolved before the Phase 0A exit review                |
@@ -147,20 +153,26 @@ orthogonal — a budget owned by application settings still refuses rather than 
 | Protocol contract        | Caps on a reply or message, owned by the surface that serializes it | `LIMIT-0068`..`LIMIT-0071`               |
 | `N/A — removed`          | Nothing; the limit ceases to exist in V2                            | every `Implementation artifact to remove` |
 
-The list is closed: every inventory entry must take exactly one of these seven, and an entry that fits none is a
+The owner list is closed: every inventory entry must take exactly one of these seven, and an entry that fits none is a
 finding about this table rather than a reason to leave the cell blank. `N/A — removed` is the only owner that pairs
 with the `Implementation artifact to remove` class, and pairing any other class with it is an error.
+
+The lossy class is deliberately narrow. It may bound undo/history retention, recovery generations, recent-item lists,
+telemetry rings, or summaries whose complete data remains available through pagination or a detail surface. The owner
+must expose an evicted/omitted count, a continuation marker, or an equivalent user-visible diagnostic. It may never be
+used for canonical project data, authored topology, render input, automation, routing, sample mapping, or polyphony.
 
 Only `HostProfile`-owned entries participate in plan admission and appear in the `ResourceReport`. **A node contract
 declares its capacity into that admission** — a node's intrinsic ceiling is reported at compile time and contributes to
 the `ResourceReport`, but it is not a profile field the host may raise. The remaining owners carry the same failure
-semantics within their own boundary: an application setting refuses or warns, it does not silently truncate.
+semantics within their own boundary.
 
 **Runtime overflow** is permitted **only** for genuinely live bounded queues — those fed by external,
-unbounded-in-time input such as MIDI, host callbacks, or user gestures. Every such queue counts its drops and surfaces
-the count in the structured diagnostics report. No `HostProfile`-owned limit may be exceeded at runtime, because plan
-capacity is known at preparation time; limits under the other three owners are bounded at their own admission point,
-which is not plan preparation.
+unbounded-in-time input such as MIDI or user gestures. Every such queue counts its drops and surfaces the count in the
+structured diagnostics report. A prepared plan may not exceed a `HostProfile` limit at runtime. If an external host
+violates its negotiated maximum callback size, that is instead the terminal stream-contract fault defined in part 3;
+the stream does not attempt to continue on a discontinuous timeline. Limits under the other owners are enforced at
+their own admission, retention, or presentation boundary rather than at plan preparation.
 
 ### 2. Admission never rewrites authored data
 
@@ -175,26 +187,27 @@ quieter clamp.
   and only ever processes whole quanta of `Q` frames, so an oversized callback cannot resize a buffer on the audio
   thread; the reallocation path is removed rather than guarded.
 
-  A callback of `N > maximum_block_size` is a **counted hard fault with a fully specified output**, because a real-time
-  callback may not be left partly unwritten:
+  A callback of `N > maximum_block_size` is a **terminal, counted stream-contract fault with fully specified output**,
+  because a real-time callback may not be left partly unwritten and a partially retained input block cannot preserve the
+  engine-input `SampleTime` epoch:
 
-    1. **Every sample of the output buffer is written.** The renderer serves what the output carry holds and fills the
-       remainder with silence. There is no path that returns with samples untouched.
-    2. **Input beyond the input carry's free space is dropped and counted**, in frames. The carry is
-       `maximum_block_size + Q`, so the overflow is exactly `N - maximum_block_size` in the steady state.
-    3. **Nothing is allocated and no additional quanta are forced.** The fault path does strictly less work than the
-       normal path, never more.
-    4. **Both counters — dropped input frames and silence-filled output frames — reach the structured diagnostics
-       report.** A stream that faults repeatedly is a configuration error to surface, not a glitch to absorb.
+    1. **Every sample of this and every subsequent output callback is written as silence** until the stream is prepared
+       again. There is no path that returns with samples untouched or serves stale carry data after the fault.
+    2. **The entire input block is discarded**, both carries are invalidated, and no later callback is concatenated onto
+       a partial earlier block. The engine makes no claim that the old input epoch continues across the fault.
+    3. **An atomic `needs_reprepare` state is published.** Recovery requires host-side stream deactivation and
+       preparation, which establishes fresh carries, capacity, and epoch before rendering resumes.
+    4. **Nothing is allocated and no quantum is rendered.** Atomic counters for oversized callbacks, discarded input
+       frames, and silence-filled output frames reach the structured diagnostics report.
 
-  Processing the oversized callback in bounded chunks was considered and rejected: it would require rendering quanta
-  whose input was never captured, and it puts more work into a callback that has already exceeded its budget. Silence
-  for the whole callback rather than a partial serve was also rejected — the carry holds valid audio, and discarding it
-  makes the fault worse than it needs to be.
+  Processing the oversized callback in bounded chunks or attempting partial recovery was considered and rejected: both
+  risk joining input across a missing interval, and chunking puts more work into a callback that has already exceeded its
+  budget. The terminal fault loses more immediate audio than a partial serve, but it preserves real-time bounds and never
+  presents a discontinuous stream as timeline-correct.
 - **`LIMIT-0013` — prioritized event rings.** Correctly classified as a live bounded queue; it keeps runtime dropping.
   The existing per-priority counters are promoted from an OSC-only publication to a field of the structured diagnostics
-  report, so a dropped event is visible to a user who is not listening on OSC. Ring sizes stay budgets owned by
-  P00A-T005; ADR-0027 continues to own what the taps are *for*.
+  report, so a dropped event is visible to a user who is not listening on OSC. Ring sizes stay `HostProfile` budgets
+  whose measured defaults P00A-T005 owns; ADR-0027 continues to own what the taps are *for*.
 - **`LIMIT-0020` — meter slots beyond 128.** Observation taps become a `HostProfile` field. A plan requesting more taps
   than the profile allows is a **compile error** naming the requested and available tap counts. Silently dropping a
   meter is withdrawn; the Phase 1 exit gate already forbids clipping the observation set to fit.
@@ -210,17 +223,17 @@ quieter clamp.
 
 ### 4. `HostProfile` field set
 
-The initial contract covers the areas the master plan lists, with one removal: maximum host block; channel layouts and
-sample-rate range; nodes, voices, channels, buses, sends, event fan-out, and delayed events; parameter, control, and
-event slots and observation taps; prepared immutable bytes, mutable state bytes, buffer and scratch bytes, and the
-crossfade/retirement budget; YAMS instructions, state, and emits multiplied by scope and polyphony; and recording-result
-and real-time communication capacities.
+The initial contract covers the areas the master plan lists: maximum host block; channel layouts and sample-rate range;
+nodes, voices, channels, buses, sends, event fan-out, and delayed events; parameter, control, and event slots and
+observation taps; prepared immutable bytes, mutable state bytes, buffer and scratch bytes, and the crossfade/retirement
+budget; YAMS instructions, state, and emits multiplied by scope and polyphony; and recording-result and real-time
+communication capacities.
 
-**The render quantum is not a `HostProfile` field.** The master plan's list opens with "maximum render quantum and host
-block", but ADR-0001 clause 1 makes the quantum a compile-time constant with no configuration surface — the two cannot
-both hold. This record defers to ADR-0001, which owns the quantum, and drops the field. The master plan's list at
-`master-plan.md:1767` is superseded on the same acceptance that supersedes `RenderConfig::quantum`, and ADR-0001 lists
-both edits as acceptance-gated follow-up.
+**The render quantum is not a `HostProfile` field.** The earlier master-plan list opened with "maximum render quantum
+and host block", but ADR-0001 clause 1 makes the quantum a compile-time constant with no configuration surface — the two
+could not both hold. This record defers to ADR-0001, which owns the quantum, and drops the field. The Phase 0A work item
+and `HostProfile` field list now name only the maximum host block, and `RenderConfig` no longer duplicates either the
+quantum or `maximum_block_size` outside `HostProfile`.
 
 `HostProfile` is an immutable preparation input, never a set of globals the renderer reads. Capability fields are
 established from queried host and device capability, not from hardcoded constants — `LIMIT-0057`, which discards the
@@ -234,7 +247,8 @@ forbid. Compilation returns a `ResourceReport` with requested, available, and do
 - The Phase 0A exit gate's silent-truncation clause becomes satisfiable: each of the five sites has either a diagnostic
   or an explicit decision, and four of the five change behavior rather than being blessed.
 - Phase 1 gains a rule for what to do when a plan does not fit, which is currently undefined.
-- The inventory's `Proposed V2 rule` column becomes fillable by class rather than one argument per entry.
+- The inventory's `Proposed V2 rule` and configuration-owner columns become fillable from one common policy rather than
+  one argument per entry.
 - `LIMIT-0067`'s resolution demonstrates the document/plan split paying for itself on a real V1 dilemma.
 
 ### Negative
@@ -242,17 +256,17 @@ forbid. Compilation returns a `ResourceReport` with requested, available, and do
 - Four V1 behaviors change, and three of them can refuse work that V1 accepted: an out-of-range voice count, an
   over-tapped plan, and an over-long note-processor rack. Projects that relied on the clamp will surface errors.
 - Making `VoiceCount` fallible touches every construction site.
-- Deciding policy over an unmeasured register means a budget could be classified correctly and defaulted badly; the cost
-  lands on P00A-T005 rather than being avoided.
+- Deciding policy over an unmeasured register means a budget could be classified correctly and defaulted badly; the
+  relevant owning contract must still establish its number from evidence.
 
 ### Risks and controls
 
 - **Risk: the register is incomplete**, so an undocumented and unnamed truncation is silently accepted as baseline after
   all. Control: the executable probe named in the follow-up table — oversized blocks, more than 128 metered channels,
   more than 32 rack stages — which converts the register's weakest claim into a test.
-- **Risk: "counted hard fault" becomes a counter nobody reads**, repeating `LIMIT-0013`'s OSC-only situation. Control:
-  the counted-drop clause requires the count in the structured diagnostics report, which is the report the exit review
-  inspects.
+- **Risk: the terminal host fault becomes a counter nobody reads**, repeating `LIMIT-0013`'s OSC-only situation.
+  Control: the fault counters and `needs_reprepare` state must reach the structured diagnostics report, which is the
+  report the exit review inspects.
 - **Risk: refusals appear on real user projects at cutover.** Control: the refusal cases are enumerable from the
   inventory before Phase 12, and the reference corpus is the place to find out.
 
@@ -260,17 +274,17 @@ forbid. Compilation returns a `ResourceReport` with requested, available, and do
 
 | Task                                                                                               | Phase | Status      |
 |----------------------------------------------------------------------------------------------------|-------|-------------|
-| Fill failure class, configuration owner, rule, and diagnostic for all 74 inventory entries once this ADR is accepted | 0A | Not started |
+| Fill failure class, configuration owner, rule, and diagnostic for all 74 inventory entries              | 0A | Not started |
 | Add a `Configuration owner` column to the resource inventory, with the seven-value closed set       | 0A    | Not started |
 | Executable truncation probe: oversized blocks, >128 metered channels, >32 rack stages              | 0A    | Not started |
-| Set numeric defaults for every budget field from measured baselines (`HostProfile`/`RenderLimits`) | 0A    | Not started |
+| Set measured `HostProfile`/render defaults in P00A-T005; route every other default to its owning contract | 0A | Not started |
 | Resolve every `Unknown`-class entry to a terminal class                                            | 0A    | Not started |
+| Remove the duplicate `maximum_block_size` field from `RenderConfig`                                | 0A    | Complete    |
 | Make `VoiceCount` construction fallible and remove the release-build `new_unchecked` hole          | 6     | Not started |
 | Build capability fields from queried device capability, retiring `LIMIT-0057`'s hardcoded range    | 9     | Not started |
 
-Until this ADR is `Accepted`, the inventory's `Proposed V2 rule` column stays blank and no entry may be `Classified`,
-per that ledger's own status rule. The class sweep in the first follow-up row assigns **both** axes to every entry, not
-just the failure class.
+This ADR is accepted, so the inventory class sweep is unblocked. The first follow-up row assigns **both** axes to every
+entry, not just the failure class; entries remain `Investigating` until their rule and supporting evidence are recorded.
 
 ## Revisit conditions
 

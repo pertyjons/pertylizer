@@ -6,7 +6,7 @@
 | Documentation stage    | Workflow accepted; inventories at pass 2 |
 | Master plan status     | Proposed and architecture-audited        |
 | Active migration phase | 0A and 0B, both `Active` in parallel     |
-| Decision records       | 3 of 37 drafted, 0 accepted              |
+| Decision records       | 3 of 37 drafted, 2 accepted              |
 
 This is a current-state dashboard, not a work log. Replace stale information instead of appending a chronology.
 Historical conclusions belong in ADRs, evidence records, phase reviews, and Git history.
@@ -27,20 +27,17 @@ gate Phase 10, not Phase 1.
 - The decision topics are registered in [ADR.md](ADR.md), now 37 after one split. Three have individual records —
   [ADR-0001](decisions/ADR-0001-internal-render-quantum.md) (render quantum semantics),
   [ADR-0021](decisions/ADR-0021-host-profile-and-admission-policy.md) (host profile and admission), and
-  [ADR-0037](decisions/ADR-0037-render-quantum-value.md) (quantum frame count) — and **all three are `Proposed`.
-  Nothing is accepted, so the project still has no implementation constraint.** ADR-0037 is a split of the master
-  plan's topic 1, recorded as a deviation in the Phase 0A tracker; all three are required `Accepted` at the Phase 0A
+  [ADR-0037](decisions/ADR-0037-render-quantum-value.md) (quantum frame count). **ADR-0001 and ADR-0021 are `Accepted`**
+  after three review passes; ADR-0037 remains `Proposed` pending measurement. ADR-0037 is a split of the master plan's
+  topic 1, recorded as a deviation in the Phase 0A tracker; both quantum records are required `Accepted` at the Phase 0A
   exit, so the split does not weaken the gate.
-- **The master plan is synced in two steps.** Step 1 is done: Part VII topic 1 and the Phase 0A exit gate now name both
-  quantum records, because the plan is authoritative for exit gates and must not lag a registered split. Step 2 waits
-  for ADR-0001's acceptance and then removes the quantum's configuration surface from three places in the plan
-  (`master-plan.md:264`, `:411`, `:1767`), per the same-change rule in [README.md](README.md#sources-of-truth).
-- **ADR-0001 and ADR-0021 were marked `Accepted` and had it withdrawn in review.** Four defects: a buffering contract
-  that covered only the output side and was unimplementable for plans with live audio input; a limit-class model that
-  could not be applied to its own ledger because it placed undo, autosave, and MCP budgets in a render profile; a
-  hardcoded quantum value contradicting two other records; and outcome rules in ADR-0037 that overlapped while ignoring
-  their own 128-frame datapoint. All four are fixed and the records await a second review. The episode is the
-  dashboard's current caution: drafting and accepting in one pass is what produced them.
+- **The master plan is synchronized with ADR-0001 and ADR-0021.** Part VII topic 1 and the Phase 0A exit gate name both
+  quantum records. The quantum is no longer configurable, and `maximum_block_size` is owned only by `HostProfile`
+  instead of being duplicated in `RenderConfig`. These changes landed with the ADRs' acceptance, per the same-change
+  rule in [README.md](README.md#sources-of-truth).
+- **The accepted contracts now unblock execution.** ADR-0001 fixes quantum, carry, end-of-stream, event-horizon, and
+  latency semantics in terms of `Q`. ADR-0021 fixes admission behavior, seven configuration owners, an explicit lossy
+  retention/presentation class, and a terminal `needs_reprepare` policy for an oversized host callback.
 - All four [inventories](inventories/README.md) have completed two audit passes against `dd69b657` and are `Active`:
   74 `LIMIT`, 59 `STATE`, 55 `CAP`, and 31 `IDN` entries. Pass 1 was a census from schemas and constant names; pass 2
   read the enforcing code, which resolved every gate-blocking question and **disproved three pass-1 hypotheses** — those
@@ -55,29 +52,23 @@ gate Phase 10, not Phase 1.
 The inventories have stopped being search-limited. What each still lacks is either a decision or an executable check, so
 the next actions are those, not a pass 3.
 
-1. **Re-review ADR-0001, ADR-0021, and ADR-0037.** Two review passes have run and each found blocking defects; the
-   third revision has not been reviewed at all. Read hardest: ADR-0001's buffering, end-of-stream and event clauses
-   (5-16) — input and output carries, a constant `Q` latency live but latency-compensated offline, causal control
-   evaluation with the `Q - 1` control-response delay it implies, and the late-event counter; ADR-0021's fully
-   specified oversized-callback fault; and ADR-0037's rule 1, which now accepts a provisional 64 rather than deferring
-   to a phase the gate makes unreachable.
-2. **Define the reference render corpus** (P00A-T001) and the comparison result format (P00A-T002). Both P00A-T003 and
+1. **Define the reference render corpus** (P00A-T001) and the comparison result format (P00A-T002). Both P00A-T003 and
    ADR-0037's proxy measurement are defined over that corpus, so nothing measurable starts before it exists.
-3. **Sweep all 74 resource-inventory entries** once ADR-0021 is accepted, assigning both axes — failure class and one
-   of seven configuration owners — plus the rule and diagnostic. The column stays blank until then. Every
-   `Unknown`-class entry must reach a terminal class as part of it.
-4. **Run ADR-0037's V1 proxy measurement** — render the corpus at 32/64/128/256 frames by varying `BUFFER_SIZE` in
+2. **Sweep all 74 resource-inventory entries** under accepted ADR-0021, assigning both axes — one of six failure classes
+   and one of seven configuration owners — plus the rule and diagnostic. Every `Unknown`-class entry must reach a
+   terminal class as part of it.
+3. **Run ADR-0037's V1 proxy measurement** — render the corpus at 32/64/128/256 frames by varying `BUFFER_SIZE` in
    `arrangement_render.rs:51`, record it as an `EVD` record, and apply the record's ordered rule table. An inconclusive
    result is a real possible outcome, not a failure of the measurement.
-5. **Open ADR-0032** (`SampleTime` and event timestamps), the remaining record the Phase 0A exit gate requires
+4. **Open ADR-0032** (`SampleTime` and event timestamps), the remaining record the Phase 0A exit gate requires
    `Accepted`. ADR-0001 now fixes the epoch and the late-event rule, so ADR-0032 refines the representation on top of
    that rather than inventing it.
-6. **Open ADR-0014.** The identity ledger's central finding is that the module id encodes its type at *runtime*
+5. **Open ADR-0014.** The identity ledger's central finding is that the module id encodes its type at *runtime*
    (`IDN-0029`), not merely on disk, and that a module's script PRNG seed is derived from its instance number — so
    renumbering is audible, not just referential.
-7. **Write the first round-trip fixture (P00B-T005) for `STATE-0004`** — changing the focused instrument changes the
+6. **Write the first round-trip fixture (P00B-T005) for `STATE-0004`** — changing the focused instrument changes the
    saved file while no dirty term observes it. It is the cheapest executable check the ledgers produced.
-8. **Record both audit passes as `EVD` records** so the ledgers' claims are reproducible rather than asserted. No value
+7. **Record both audit passes as `EVD` records** so the ledgers' claims are reproducible rather than asserted. No value
    in the resource ledger has been measured; all of them are read from source.
 
 ## Documentation-workflow review notes

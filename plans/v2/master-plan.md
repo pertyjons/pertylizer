@@ -261,8 +261,8 @@ compile or execute anything.
   truncation point, bounded queue, buffer capacity, and script budget, with its
   enforcement site, overflow behavior, and whether V2 preserves, raises,
   removes, or exposes it as configurable.
-- Define an initial `HostProfile`/`RenderLimits` contract covering maximum
-  quantum, layouts, voices, nodes, event fan-out, channels, buses, sends,
+- Define an initial `HostProfile`/`RenderLimits` contract covering maximum host
+  block, layouts, voices, nodes, event fan-out, channels, buses, sends,
   telemetry taps, recording buffers, prepared memory, and script work.
 - Open an architecture decision record under [decisions/](decisions/README.md)
   for every entry in the [decision register](ADR.md) whose target phase begins
@@ -414,8 +414,6 @@ remaining Phase 0B work continues in parallel.
 ```rust,ignore
 pub struct RenderConfig {
     pub sample_rate: SampleRate,
-    pub quantum: RenderQuantum,
-    pub maximum_block_size: BlockSize,
     pub host_profile: HostProfile,
 }
 
@@ -1741,8 +1739,8 @@ not decide which voice wins.
 
 ## Buffer arena and operation plan
 
-- Buffers are allocated off-thread for the configured maximum quantum/channel
-  layout.
+- Buffers are allocated off-thread for the compile-time quantum and admitted
+  channel layout.
 - Port names compile to `BufferSlot` or event/control slot IDs.
 - Liveness analysis reuses storage after the last consumer.
 - In-place processing is used only when the node declares safe aliasing.
@@ -1771,7 +1769,7 @@ Route audio buffer 3 to instrument output
 `HostProfile` is an explicit preparation input describing available/reviewed
 capacity, not a bag of renderer globals. It covers at least:
 
-- maximum render quantum and host block;
+- maximum host block;
 - channel layouts and sample-rate/rate-factor range;
 - nodes, voices, channels, buses, sends, event fan-out, and delayed events;
 - parameter/control/event slots and observation taps;

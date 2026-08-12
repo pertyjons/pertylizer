@@ -13,6 +13,7 @@ must preserve, raise, remove, or expose each as an explicit admission rule with 
 
 - `Platform capability`
 - `Configurable safety budget`
+- `Lossy retention/presentation budget`
 - `Warning threshold`
 - `Implementation artifact to remove`
 - `Unknown`
@@ -24,13 +25,14 @@ Entries use `LIMIT-NNNN` identifiers. Next free identifier: `LIMIT-0075`.
 Pass 1 recorded the resource, its value, and its enforcement site for every constant its method reached. Pass 2 read the
 enforcing code for the entries that gate Phase 0A, ran a second discovery method aimed at truncation sites rather than
 constant names, and allocated identifiers for the two families pass 1 deliberately left unnumbered.
-`Proposed V2 rule` remains blank throughout: it is the output of ADR-0021, not an input to it. A blank elsewhere means
-the field has not been investigated yet, per inventory rule 6.
+`Proposed V2 rule` remained blank throughout passes 1-2 because it is the output of ADR-0021, not an input to it. With
+ADR-0021 accepted, the class-and-owner sweep is unblocked; cells stay blank until that sweep evaluates each entry. A
+blank elsewhere means the field has not been investigated yet, per inventory rule 6.
 
 **Status rule.** The [register vocabulary](README.md) defines `Classified` as required fields *and* disposition filled
-with supporting evidence; for this ledger the disposition is `Proposed V2 rule`. Since that column is blank for every
-entry pending ADR-0021, **no entry here may be `Classified`** — an entry whose value, site, and overflow behavior are
-all established still stays `Investigating` until its V2 admission rule exists.
+with supporting evidence; for this ledger the disposition is `Proposed V2 rule`. Since that column remains blank until
+the accepted ADR-0021 is applied by the class-and-owner sweep, **no entry here may yet be `Classified`** — an entry whose
+value, site, and overflow behavior are all established stays `Investigating` until its V2 admission rule exists.
 
 **ADR ownership.** The *truncation question* for every row in the silent-truncation register below is owned by
 **ADR-0021**, including the ones whose subject matter is not rendering: `LIMIT-0067` truncates at project load, not in
@@ -42,11 +44,10 @@ as what happens when they overflow. No row carries two ADRs for one question.
 Passes 1-2 stated this ownership rule in the preamble but left `LIMIT-0013` and `LIMIT-0020` carrying ADR-0027 alone, so
 two of the register's five rows contradicted it. Both now carry ADR-0021 as well.
 
-**Configuration owner is a second axis, not yet recorded here.** The proposed ADR-0021 separates a limit's failure
+**Configuration owner is a second axis, not yet recorded here.** ADR-0021 separates a limit's failure
 behavior from who owns its configuration, because this ledger contains budgets that are not render-preparation inputs
 at all — `LIMIT-0063`, `LIMIT-0064`, and `LIMIT-0066` belong to application settings and `LIMIT-0068`..`LIMIT-0071` to
-a protocol contract. A `Configuration owner` column is added by the sweep that fills `Proposed V2 rule`, once that ADR
-is accepted.
+a protocol contract. A `Configuration owner` column is added by the sweep that fills `Proposed V2 rule`.
 
 ### Render and host I/O
 
@@ -212,11 +213,10 @@ discovery method found these, each confirmed by reading the site:
 Only `LIMIT-0013` has a diagnostic. The other four are candidates for the gate's "no unexplained silent truncation"
 clause and need either a diagnostic or an explicit accepted-behavior decision in ADR-0021.
 
-All five have a **proposed** disposition in
+All five have an accepted disposition in
 [ADR-0021](../decisions/ADR-0021-host-profile-and-admission-policy.md#3-disposition-of-the-five-silent-truncation-sites)
 — four change behavior and `LIMIT-0013` keeps runtime dropping with its counters promoted out of OSC-only publication.
-That ADR is `Proposed`, so per this ledger's status rule the `Proposed V2 rule` column stays blank; the dispositions
-were briefly filled in while the ADR was marked accepted, and were reverted when the acceptance was withdrawn.
+The ledger cells remain blank until the class-and-owner sweep applies the decision consistently across all 74 entries.
 
 ## Audit passes
 
