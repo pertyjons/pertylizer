@@ -263,9 +263,10 @@ compile or execute anything.
   removes, or exposes it as configurable.
 - Define an initial `HostProfile`/`RenderLimits` contract covering maximum host
   block, layouts, voices, nodes, event fan-out, channels, buses, sends,
-  telemetry taps, recording buffers, prepared memory, script work, and the two
-  event-timestamp horizons ADR-0032 clause 21 requires to be bounded in both
-  directions.
+  telemetry taps, recording buffers, prepared memory, script work, and the
+  forward event-timestamp horizon of ADR-0032 clause 21. There is no backward
+  horizon budget: an event earlier than the current quantum is ADR-0001 clause
+  16's, and clamping it forward is not a configurable behavior.
 - Open an architecture decision record under [decisions/](decisions/README.md)
   for every entry in the [decision register](ADR.md) whose target phase begins
   with `0A`. Accept the render-quantum semantics, the quantum frame count, the
@@ -520,9 +521,12 @@ not invent timestamp semantics inside implementation tasks.
 ### Work
 
 - Introduce the time types fixed by ADR-0032: absolute `SampleTime`,
-  `FrameCount`, `FrameDelta`, quantum-local `QuantumOffset`, and `StreamEpoch`.
-  The offset type is named `QuantumOffset` because `synth_core::SampleOffset` is
-  an unrelated `f32` in V1.
+  `FrameCount`, `FrameDelta`, `PlanPosition`, quantum-local `QuantumOffset`, and
+  `StreamEpoch`. The offset type is named `QuantumOffset` because
+  `synth_core::SampleOffset` is an unrelated `f32` in V1.
+- Anchor `PlanPosition` to `SampleTime` in the session scheduler at play, seek,
+  loop wrap, and offline range start. The tempo map produces plan positions; it
+  never produces engine times.
 - Define distinct fixed-size event families:
   - `PerformanceEvent` for note/controller/expression/panic input;
   - `SessionEvent` for play, stop, seek, loop transition, count-in, metronome,

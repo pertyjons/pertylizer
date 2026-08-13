@@ -3,7 +3,7 @@
 | Field         | Value                                                        |
 |---------------|--------------------------------------------------------------|
 | ID            | ADR-0032                                                     |
-| Status        | Accepted                                                     |
+| Status        | Proposed                                                     |
 | Phase         | 0A                                                           |
 | Created       | 2026-08-13                                                   |
 | Last reviewed | 2026-08-13                                                   |
@@ -31,10 +31,35 @@ plan's Phase 3 gate, and the source cited below. It found five defects, each fix
   become a second late-event policy competing with ADR-0001 clause 16. It now defers to that clause.
 - Two range claims cited monotonicity where they meant the range analysis. Corrected in clauses 3 and 8.
 
-That is one pass by the record's author, not the three independent passes ADR-0001 and ADR-0021 received. The record is
-`Accepted` because the Phase 0A exit gate requires it and because nothing outstanding was found; a later review that
-finds a defect should withdraw the acceptance the same way ADR-0001's was withdrawn, rather than editing an accepted
-record.
+That was one pass by the record's author, not the three independent passes ADR-0001 and ADR-0021 received, and the
+record was accepted on it because the Phase 0A exit gate required it.
+
+**A second, independent pass withdrew that acceptance**, exactly as the first pass's own note said it should. It found
+five defects, two of which made the contract wrong rather than incomplete. Each is fixed in the clause that carried it,
+and the status is back to `Proposed` until a closure review passes:
+
+- **The tempo map cannot produce a `SampleTime`.** Clause 15 had it doing so, while clauses 9-11 keep the render clock
+  monotone across seek and restart it at zero for every offline render — so one musical tick corresponds to *many*
+  engine times, and a precompiled event could not be timestamped at all, let alone reused. Musical time now converts to
+  a `PlanPosition` (clauses 26-27), which the session scheduler anchors to the epoch. This is also the repository's own
+  newtype rule: two different domain quantities may not share one type.
+- **One of the two promised horizons had no semantics.** Clause 21 required two `HostProfile` budgets, but the backward
+  direction is entirely determined by ADR-0001 clause 16 — a moving quantum boundary, never a configurable threshold —
+  so P00A-T005 was told to size a field that controls nothing. There is now one forward horizon, and the master plan is
+  corrected with it.
+- **Clause 22 contradicted the accepted late-event policy.** ADR-0001 clause 16 defines late as *falling in an
+  already-rendered quantum*; clamping a pre-zero calibration timestamp to zero before quantum 0 has rendered produces
+  an event that is on time. Counting it as late would have made the late counter fire on every stream start. The clamp
+  and the lateness test are now separate, with a separate counter and a named test per case.
+- **Exhaustion was undefined**, although "overflow behavior" is the register's own basis for this topic. Clock advance
+  and `SampleTime + FrameCount` are now checked with a defined terminal fault (clause 28), instead of a debug panic on
+  the audio thread or a release wrap that breaks monotonicity.
+- **`StreamEpoch` permitted A → B → A.** Requiring only that an epoch differ from its predecessor let a producer paused
+  across two preparations pass the staleness check of clause 20. Clause 12 now requires strict monotonicity with no
+  reuse, and makes exhausting the identifier a preparation failure rather than a rollover.
+
+The clauses added by this pass are numbered 26-28 and placed in their own sections rather than renumbered into the list
+above; renumbering a reviewed normative list to keep topics adjacent is a worse trade than a forward reference.
 
 **Scope note.** This record fixes **how time is represented and where it starts**.
 [ADR-0001](ADR-0001-internal-render-quantum.md) already fixed *which quantum an event belongs to*, *what happens to a
@@ -189,7 +214,7 @@ section records what would reopen it.
 
 ## Decision
 
-Accepted. `Q` denotes the render quantum in frames, fixed by [ADR-0037](ADR-0037-render-quantum-value.md).
+Proposed. `Q` denotes the render quantum in frames, fixed by [ADR-0037](ADR-0037-render-quantum-value.md).
 
 ### Types
 
@@ -213,12 +238,13 @@ Accepted. `Q` denotes the render quantum in frames, fixed by [ADR-0037](ADR-0037
    meanings one import away from each other. The master plan's Phase 3 work list is updated in the same change as this
    record, per the [documentation authority rule](../README.md#sources-of-truth).
 6. **No time type is a float, and no float is converted to one implicitly.** There is no `From<Seconds>` and no
-   `From<f32>` for `SampleTime`, `FrameCount`, or `QuantumOffset`. `Seconds(f32)` may describe a duration a user typed;
-   it may never carry a position.
+   `From<f32>` for `SampleTime`, `FrameCount`, `PlanPosition`, or `QuantumOffset`. `Seconds(f32)` may describe a
+   duration a user typed; it may never carry a position.
 7. **`SampleTime` is never persisted.** It is meaningful only within one prepared stream, so no project file, patch,
    manifest, or receipt stores one. Persisted musical time stays `Tick`; a recording take's placement is resolved to
    musical time before it is saved, exactly as V1 does today. A protocol or report that publishes a `SampleTime` must
-   publish the epoch identifier of clause 12 with it.
+   publish the epoch identifier of clause 12 with it. `PlanPosition` is not persisted either: it is derived from the
+   tempo map, so storing it would duplicate authored data and go stale the moment a tempo is edited.
 8. **Conversions at the host boundary are checked.** A host's signed 64-bit stream position (VST3, CLAP) converts
    through `TryFrom` after the epoch anchor of clause 13 has been subtracted; a value that cannot be represented is a
    counted ingress fault, not an `as` cast. In the outward direction a `SampleTime` above `i64::MAX` is unreachable by
@@ -236,16 +262,24 @@ Accepted. `Q` denotes the render quantum in frames, fixed by [ADR-0037](ADR-0037
     musical (`Tick` or its V2 successor); where the clock is meant, the type is `SampleTime`. Neither converts to the
     other without the tempo map, which is Phase 3's.
 
-    **Plan position is a third quantity, and offline rendering is where it shows.** ADR-0001 clause 9 defines an
+    **Plan position is a third quantity with its own type — `PlanPosition`, clauses 26-27 — and offline rendering is
+    where the distinction shows.** ADR-0001 clause 9 defines an
     offline request for `N` frames starting at plan sample `S` as returning frames whose first sample *is* plan sample
     `S`, which it achieves by discarding the priming head. An offline render is a prepared stream like any other:
     its `SampleTime` still starts at zero at its own preparation, and the request's `S` is an offset applied by the
     render path, not a starting value for the clock. A harness that treats an engine time as a plan position — or the
     reverse — reintroduces exactly the `Q`-frame shift ADR-0001's impulse-alignment test exists to catch.
-12. **A prepared stream carries a `StreamEpoch(u32)` identifier**, assigned at preparation and different from the
-    previous one. `SampleTime` restarts at zero in each epoch, so a time without its epoch is ambiguous by
-    construction. Sample rate, channel layout, and capacity are fixed for the life of an epoch — changing any of them
-    is a re-preparation — so a `SampleTime` never has to carry the rate it was taken at.
+12. **A prepared stream carries a `StreamEpoch(u32)` identifier**, assigned at preparation. `SampleTime` restarts at
+    zero in each epoch, so a time without its epoch is ambiguous by construction. Sample rate, channel layout, and
+    capacity are fixed for the life of an epoch — changing any of them is a re-preparation — so a `SampleTime` never
+    has to carry the rate it was taken at.
+
+    **Identifiers are strictly increasing and never reused within a process.** "Different from the previous one" is not
+    enough: it permits `A -> B -> A`, and a producer that read epoch `A`, was descheduled, and enqueued after the
+    second `A` was prepared would pass clause 20's check with a timestamp from a dead stream. Preparation therefore
+    increments, and **a preparation that would exhaust the identifier fails** rather than wrapping — 2^32 preparations
+    in one process is unreachable, and turning the unreachable case into a refusal is what keeps the check total.
+    Nothing outside a process compares epochs, so the counter starts at zero for each process.
 13. **Preparation records the epoch anchor.** The mapping from the host's clock to `SampleTime` zero is established
     once, at preparation, and is the ingress mapper's input for the whole epoch. Calibrating and correcting that
     mapping — drift, jitter, and the latency ADR-0001 clause 7 declares — is ADR-0022's, not this record's.
@@ -255,9 +289,9 @@ Accepted. `Q` denotes the render quantum in frames, fixed by [ADR-0037](ADR-0037
 
 ### Rounding and derivation
 
-15. **Musical time is rounded to a frame exactly once.** The tempo map computes in `f64` and produces a `SampleTime` at
-    a single, named conversion point, using round-half-away-from-zero. No later stage re-rounds, and no stage carries
-    a fractional frame position forward.
+15. **Musical time is rounded to a frame exactly once.** The tempo map computes in `f64` and produces a
+    **`PlanPosition`** — not a `SampleTime`; see clauses 26-27 — at a single, named conversion point, using
+    round-half-away-from-zero. No later stage re-rounds, and no stage carries a fractional frame position forward.
     **The law must also be platform-independent.** Phase 3 owns what the conversion *is*, including ramp semantics, but
     it must be expressible in operations whose results are identical on every supported target — the four IEEE-754
     arithmetic operations, comparison, and rounding. A tempo ramp implemented through a transcendental function would
@@ -288,15 +322,23 @@ Accepted. `Q` denotes the render quantum in frames, fixed by [ADR-0037](ADR-0037
     the new epoch. Without this, an event stamped microseconds before a reprepare is applied against a clock that
     restarted at zero, producing a timing error bounded only by how long the previous stream ran. The counter is a
     field of the structured diagnostics report, alongside ADR-0001's late-event counter and ADR-0021's fault counters.
-21. **A timestamp is admitted only inside a bounded horizon.** An event earlier than the current quantum is late and is
-    handled by ADR-0001 clause 16 — clamped forward to the first not-yet-rendered quantum boundary and counted. An
-    event beyond a forward horizon is rejected and counted rather than queued for an unbounded time. The two horizon
-    values are `HostProfile` budgets owned by P00A-T005 under ADR-0021; this record fixes only that they exist, that
-    both directions are bounded, and that neither is silent.
-22. **Underflow at the epoch start is a late event, not a wrap.** A hardware timestamp that maps before `SampleTime`
-    zero — normal in the first callbacks after preparation, when calibration is still settling — produces a negative
-    `FrameDelta` from the anchor. It is clamped to `SampleTime` zero and then treated as any other early event under
-    ADR-0001 clause 16, counted with the same late counter. It never becomes a large positive `u64`.
+21. **The forward direction is the only one with a budget.** An event beyond a forward horizon — a timestamp so far
+    ahead that holding it would pin a queue slot indefinitely — is rejected and counted. That horizon is a single
+    `HostProfile` field owned by P00A-T005 under ADR-0021.
+
+    **The backward direction has no budget, deliberately.** An event earlier than the current quantum is handled
+    entirely by ADR-0001 clause 16: clamped forward to the first not-yet-rendered quantum boundary and counted, never
+    dropped. The boundary is the render clock itself, so there is nothing for a profile to size, and a backward budget
+    could only be implemented by dropping an event ADR-0001 forbids dropping. An earlier revision of this clause
+    required two budgets; that would have handed P00A-T005 a field with no semantics.
+22. **A pre-epoch timestamp is clamped, and is late only if it is actually late.** A hardware timestamp that maps
+    before `SampleTime` zero — normal in the first callbacks after preparation, while calibration is still settling —
+    produces a negative `FrameDelta` from the anchor. It is clamped to `SampleTime` zero and counted as a **pre-epoch
+    ingress clamp**, which is its own counter. Whether it is *also* late is then ADR-0001 clause 16's ordinary
+    question, asked after the clamp: if quantum 0 has not rendered yet the event is on time and the late counter must
+    not fire, and if it has, the event is late like any other and is clamped forward again. It never becomes a large
+    positive `u64`. Two tests are named for this in the follow-up table, one per case, because a single test would pass
+    on the wrong policy.
 23. **A timestamp alone does not define order.** Several events may share one `SampleTime`; their relative order is
     ADR-0023's decision. ADR-0023 may not implement that order by perturbing timestamps — moving an event off its
     declared sample to encode precedence would make the sample position a lie and would break the ingress-equivalence
@@ -313,6 +355,39 @@ Accepted. `Q` denotes the render quantum in frames, fixed by [ADR-0037](ADR-0037
 25. **The tempo map, the ingress calibration, and the same-sample ordering** are Phase 3, ADR-0022, and ADR-0023
     respectively, each of which now has a fixed representation to build on.
 
+### Plan position and anchoring
+
+These two clauses were added by the second review pass, which found that clause 15 had the tempo map producing a
+`SampleTime` directly. It cannot: the render clock is monotone across seek and loop wrap (clause 10) and restarts at
+zero for every offline render (clause 11), so one musical position corresponds to many engine times within one epoch,
+and to a different set in the next one. A conversion that skipped this step would make a precompiled event stream
+un-timestampable and un-reusable.
+
+26. **`PlanPosition(u64)` is musical time resolved to frames, measured from plan sample zero.** It is the output of the
+    tempo map and the type in which a compiled event list is expressed. It is not an engine time: it survives seek,
+    loop wrap, and re-preparation unchanged, because it says *where in the piece* an event is, not *when the renderer
+    reaches it*. It is the third quantity clause 11 names, and it is a distinct newtype for the reason the repository's
+    newtype rule gives — two domain quantities that are both "a count of frames" are still two concepts, and sharing
+    one type is how a seek turns into a timing bug that type-checks.
+27. **Anchoring converts a `PlanPosition` to a `SampleTime`, and only the session scheduler does it.** An anchor is a
+    pair `(SampleTime, PlanPosition)` established when playback starts, when a seek completes, when a loop wraps, and
+    when an offline range begins; from it, `time = anchor.time + (position - anchor.position)`, computed through
+    `FrameDelta` so an earlier position cannot wrap. Anchoring is the *only* place the two vocabularies meet: no node,
+    no ingress adapter, and no analyzer converts between them. A position before the current anchor is not
+    representable as a time in this stream and is a scheduler error rather than a clamp — the loop wrap is precisely
+    what re-anchors instead of producing one.
+
+### Exhaustion
+
+28. **Advancing the clock and adding to it are checked, and exhaustion is a terminal fault.** `SampleTime + FrameCount`
+    and the per-quantum advance both fail rather than wrap; neither may panic, because both run on the audio thread.
+    Exhaustion is reported as a stream-contract fault of the same shape ADR-0021 defines for the oversized callback —
+    output silence, a published `needs_reprepare`, and a counter in the structured diagnostics report — because a clock
+    that cannot advance can no longer place an event, and continuing would break the monotonicity every other clause
+    rests on. The case is unreachable in practice (three million years at 192 kHz), which is exactly why it must be
+    written down: an unreachable case with no defined behavior becomes a debug panic on the audio thread or a silent
+    release wrap, and a boundary test would be free to assert either.
+
 ## Consequences
 
 ### Positive
@@ -321,8 +396,12 @@ Accepted. `Q` denotes the render quantum in frames, fixed by [ADR-0037](ADR-0037
   `(epoch, time)` pairs match, which is a comparison rather than a listening test.
 - Integer time makes event placement independent of rounding, so a render digest measures the plan rather than the
   arithmetic path that produced it.
-- The late, the stale, the out-of-horizon, and the arrival-stamped event are each counted and named. None of the four
-  is silent, which is the property the Phase 0A exit gate demands of every truncation.
+- The late, the stale, the out-of-horizon, the pre-epoch-clamped, and the arrival-stamped event are each counted under
+  their own name. None of the five is silent, which is the property the Phase 0A exit gate demands of every truncation,
+  and keeping the pre-epoch clamp out of the late counter is what stops that counter from firing on every stream start.
+- Anchoring makes seek, loop wrap, and offline range starts one mechanism instead of three special cases, and gives the
+  A/B harness a type it can compare across renders: the same `PlanPosition` in two renders is the same musical moment,
+  which no `SampleTime` pair can promise.
 - Separating the clock from the playhead removes a whole class of V1 confusion in which "position" meant one of four
   different things depending on the reader.
 - Nothing in the representation is sized by `Q`, so the Phase 2 re-measurement can change it without touching an event,
@@ -332,8 +411,10 @@ Accepted. `Q` denotes the render quantum in frames, fixed by [ADR-0037](ADR-0037
 
 - Every queued event grows by the epoch and provenance fields — five bytes on top of the timestamp, eight after
   padding. The queue is fixed-capacity, so that is a real budget cost on a path that carries no timestamp at all today.
-- Four new types where V1 had one loosely used `u64`, and a subtraction that returns a third type. The ergonomics are
-  worse than raw integers, deliberately.
+- Six new types where V1 had one loosely used `u64`, a subtraction that returns a third type, and a conversion between
+  two of them that only one component is allowed to perform. The ergonomics are worse than raw integers, deliberately.
+- Anchoring is a stateful step on the path from a note to its frame, so a scheduler that anchors at the wrong moment
+  shifts a whole passage rather than one event. That is the cost of the alternative being untypeable.
 - Every producer must know the current epoch to stamp an event, which the V1 command path does not, so the ingress
   mapper becomes a required component rather than an optimization.
 - `SamplePosition` and `SampleOffset` keep their V1 meanings while the V2 types exist alongside them, so the workspace
@@ -363,19 +444,33 @@ Accepted. `Q` denotes the render quantum in frames, fixed by [ADR-0037](ADR-0037
   Phase 3's ingress-equivalence gate cannot pass for an adapter that stamps on arrival.
 - **Risk: a `u64` time is subtracted directly** somewhere and wraps. Control: `SampleTime` has no `Sub<SampleTime>`
   returning itself; the only subtraction yields `FrameDelta`, so the wrapping form does not compile.
+- **Risk: a component converts `PlanPosition` to `SampleTime` on its own** — an analyzer, an ingress adapter, or a node
+  that "just needs the frame" — and gets a different answer after a seek. Control: clause 27 gives the conversion one
+  owner, and the anchoring test exercises the same tick across a seek and a loop wrap.
+- **Risk: the pre-epoch clamp is folded back into the late counter** by an implementer who reads the two as one case.
+  Control: two named tests, one per side of the quantum-0 boundary, which a single-counter implementation cannot pass.
+- **Risk: exhaustion is "handled" by a debug assertion**, which is a panic on the audio thread. Control: clause 28
+  requires a checked operation and a published fault; the repository's real-time rules already forbid the panic.
 
 ## Follow-up work
 
 | Task                                                                                        | Phase | Status      |
 |---------------------------------------------------------------------------------------------|-------|-------------|
 | Rename the plan's Phase 3 quantum-local newtype to `QuantumOffset`                          | 0A    | Complete    |
-| Introduce `SampleTime`, `FrameCount`, `FrameDelta`, `QuantumOffset`, `StreamEpoch`          | 1     | Not started |
-| Publish the stale-epoch, out-of-horizon, and arrival-stamp counters in the diagnostics report | 1     | Not started |
-| Fix the late/forward horizon budgets as `HostProfile` fields                                 | 0A/1  | P00A-T005   |
+| Correct the plan's `HostProfile` list to one forward event horizon                          | 0A    | Complete    |
+| Introduce `SampleTime`, `FrameCount`, `FrameDelta`, `PlanPosition`, `QuantumOffset`, `StreamEpoch` | 1 | Not started |
+| Checked clock advance and the exhaustion fault of clause 28                                 | 1     | Not started |
+| Publish the stale-epoch, out-of-horizon, pre-epoch-clamp, and arrival-stamp counters         | 1     | Not started |
+| Fix the forward event horizon as a `HostProfile` field                                      | 0A/1  | P00A-T005   |
+| Session scheduler: anchor `PlanPosition` to `SampleTime` at play, seek, loop wrap, and offline range start | 3 | Not started |
 | Ingress mapper: stamp live events, stop discarding the driver timestamp (`io/midi.rs:247`)   | 3     | Not started |
 | Declare and measure each untimestamped adapter's arrival-time uncertainty                    | 3     | ADR-0022    |
 | Event-placement test: an event one hour in lands on its exact frame                          | 3     | Not started |
+| Anchoring test: the same tick before and after a seek and a loop wrap yields the right times | 3     | Not started |
+| Pre-epoch test A: a pre-zero stamp before quantum 0 renders is clamped, counted, **not** late | 3    | Not started |
+| Pre-epoch test B: a pre-zero stamp after quantum 0 renders is clamped and counted late        | 3    | Not started |
 | Epoch-invalidation test: an event queued before a reprepare is discarded and counted         | 3     | Not started |
+| Epoch-reuse test: a producer paused mid-stamp across a preparation cannot pass the check     | 3     | Not started |
 | Remove the `Q - 1` control-response delay                                                    | 3     | ADR-0003    |
 
 ## Revisit conditions
