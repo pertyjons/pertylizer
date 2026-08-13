@@ -110,7 +110,7 @@ No topic has been swept for reclassification. Judge the class when work begins o
 | ADR-0029 | Host configuration and remote authorization | Proposed | 0B/10E                | Deployment and threat review             |
 | ADR-0030 | Public facade and compatibility surface     | Proposed | Before 10E            | Consumer inventory                       |
 | ADR-0031 | Supported build and release matrix          | Proposed | 0B/12                 | CI and consumer inventory                |
-| ADR-0032 | Sample-time and event-timestamp model       | Proposed | 0A/3                  | Range analysis and timing tests          |
+| ADR-0032 | Sample-time and event-timestamp model       | Accepted | 0A/3                  | Range analysis and timing tests          |
 | ADR-0033 | Graph feedback and delay-boundary rule      | Proposed | 2/3                   | Compiler prototype and cycle cases       |
 | ADR-0034 | Track, source, and channel ownership        | Proposed | 0B/10A                | Product workflow and V1 track audit      |
 | ADR-0035 | Transaction and concurrency semantics       | Proposed | 0B/10B                | Operation conformance corpus             |
@@ -124,10 +124,18 @@ Topics without a link below have no individual record yet; the table above is st
 - [ADR-0001: Render quantum semantics and splitting contract](decisions/ADR-0001-internal-render-quantum.md) —
   `Accepted`
 - [ADR-0021: Host profile and admission policy](decisions/ADR-0021-host-profile-and-admission-policy.md) — `Accepted`
+- [ADR-0032: Sample-time and event-timestamp model](decisions/ADR-0032-sample-time-and-event-timestamps.md) —
+  `Accepted`
 - [ADR-0037: Render quantum frame count](decisions/ADR-0037-render-quantum-value.md) — `Accepted`, value provisional
 
 ADR-0001 and ADR-0021 were accepted after three review passes. Each carries a *Review history* note recording the
 defects corrected before acceptance; the immutability rule in [decisions/README.md](decisions/README.md) now applies.
+
+ADR-0032 was judged `Contract` when work began on it, per the rule below: it defines types, an epoch, an ownership
+boundary, and an error behavior, so tests 1 and 3 of the reversibility test both fail. Its one numeric choice — the
+width of the quantum-local offset — is deliberately made independent of ADR-0037's provisional `Q`. It was accepted
+after **one** review pass by its author, which is weaker than the three passes ADR-0001 and ADR-0021 received; the
+record says so and names the withdrawal path.
 
 ADR-0037 was accepted on [EVD-0002](evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md), which selected the
 record's own rule 1: the V1 proxy could not resolve the comparison to better than its stated margin, so `Q` = 64 is

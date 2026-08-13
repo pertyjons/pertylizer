@@ -2,11 +2,11 @@
 
 | Field                  | Value                                            |
 |------------------------|--------------------------------------------------|
-| Last updated           | 2026-08-12                                       |
+| Last updated           | 2026-08-13                                       |
 | Documentation stage    | Workflow accepted; inventories at pass 2         |
 | Master plan status     | Proposed and architecture-audited                |
 | Active migration phase | 0A and 0B, both `Active` in parallel             |
-| Decision records       | 3 of 37 drafted, all 3 accepted                  |
+| Decision records       | 4 of 37 drafted, all 4 accepted                  |
 | Evidence records       | 2 (`EVD-0001`, `EVD-0002`), both `Complete`      |
 | Executable Phase 0A    | Corpus, comparison command, and cost harness are used |
 
@@ -32,13 +32,27 @@ gate Phase 10, not Phase 1.
   revisit point, with no file, no options survey, and no evidence required before acceptance. ADR-0037 is the case
   that motivated it and would qualify; it is not reclassified, because an accepted record is immutable. No topic has
   been swept, and the class is judged when work begins on an entry.
-- The decision topics are registered in [ADR.md](ADR.md), now 37 after one split. Three have individual records, and
-  **all three are `Accepted`** — [ADR-0001](decisions/ADR-0001-internal-render-quantum.md) (render quantum semantics)
+- The decision topics are registered in [ADR.md](ADR.md), now 37 after one split. Four have individual records, and
+  **all four are `Accepted`** — [ADR-0001](decisions/ADR-0001-internal-render-quantum.md) (render quantum semantics)
   and [ADR-0021](decisions/ADR-0021-host-profile-and-admission-policy.md) (host profile and admission) after three
-  review passes, and [ADR-0037](decisions/ADR-0037-render-quantum-value.md) (quantum frame count) on the strength of
-  [EVD-0002](evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md). ADR-0037 is a split of the master plan's
-  topic 1, recorded as a deviation in the Phase 0A tracker; both quantum records are required `Accepted` at the Phase 0A
-  exit, so the split does not weaken the gate.
+  review passes, [ADR-0037](decisions/ADR-0037-render-quantum-value.md) (quantum frame count) on the strength of
+  [EVD-0002](evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md), and
+  [ADR-0032](decisions/ADR-0032-sample-time-and-event-timestamps.md) (sample time and event timestamps) after one
+  author review pass. ADR-0037 is a split of the master plan's topic 1, recorded as a deviation in the Phase 0A
+  tracker; both quantum records are required `Accepted` at the Phase 0A exit, so the split does not weaken the gate.
+- **No decision blocks the Phase 0A exit gate any more.** ADR-0032 was the last one it required on its own; ADR-0022
+  and ADR-0028 may be `Deferred` to the Phase 3 and Phase 4 entry gates with an owner and a stated evidence gap. What
+  remains between here and the gate is measurement and coverage, not decisions.
+- **`SampleTime` is a `u64` frame index in the engine-input epoch**, with `FrameCount`, `FrameDelta`,
+  `QuantumOffset(u16)`, and a `StreamEpoch` identifier; musical time is rounded to a frame at exactly one point, and
+  every queued event carries `(epoch, time, provenance)` so that a late, stale, out-of-horizon, or arrival-stamped
+  event is counted rather than silent. The range analysis behind it is arithmetic, not measurement: `f32` stops being
+  sample-exact after 349 s at 48 kHz, `u32` after 6.2 h at 192 kHz, `u64` after three million years. Reading V1 to
+  write it produced four findings — the cpal backend computes a `u64` stream position and a measured output latency
+  the engine never reads, two offline paths build a `u64::MAX` sentinel for that unread field, live MIDI discards the
+  driver's timestamp and lands on the next block boundary (up to 21.3 ms, then anchored to a tick by recording), and
+  the plan's intended `SampleOffset` name is already an unrelated `f32` in `synth_core`. The last one renamed the V2
+  type to `QuantumOffset` in the master plan.
 - **`Q` = 64 frames, provisionally.** The V1 proxy landed inside ADR-0037's own inconclusive band — `r(64,256)` is
   +9.9%, and whether that is within 5 pp of the 15% threshold is decided by the choice of estimator rather than by the
   data — so the record's rule 1 applied: accept 64, and make re-measuring it against real V2 nodes a **Phase 2
@@ -81,25 +95,27 @@ gate Phase 10, not Phase 1.
   the offline renderer, not only the corpus — the `analyze_*` tools and the WAV export measured audio the live engine
   never produced. It is the third instance of an offline reader disagreeing with the live engine while looking healthy.
 - Phase 0A is **not** complete: P00A-T003 has CPU figures at one operating point and still no memory or timing figures,
-  three of six required ADRs have no record, and no exit review exists. No code has been written for V2 itself.
+  the two deferrable ADRs (ADR-0022, ADR-0028) have neither a record nor a written deferral, and no exit review exists.
+  No code has been written for V2 itself.
 - V2 implementation status must be established from repository evidence before this dashboard makes code-level
   completion claims.
 
 ## Next actions
 
-The corpus, the comparison command, and now a timing harness exist, so every measurement Phase 0A was waiting on can
-actually be run — and the quantum measurement has been. The inventories have stopped being search-limited; what each
-still lacks is either a decision or an executable check.
+The decision half of Phase 0A is done: every ADR the exit gate requires on its own is accepted. What is left is
+measurement, coverage, and two written deferrals. The corpus, the comparison command, and a timing harness all exist,
+so nothing below is blocked on tooling.
 
-1. **Open ADR-0032** (`SampleTime` and event timestamps), the remaining record the Phase 0A exit gate requires
-   `Accepted`. ADR-0001 now fixes the epoch and the late-event rule, so ADR-0032 refines the representation on top of
-   that rather than inventing it. With ADR-0037 accepted, this is the only decision left that can block the gate on its
-   own; ADR-0022 and ADR-0028 may be deferred to Phase 3 and Phase 4 with an owner and an evidence gap.
-2. **Finish P00A-T003.** [EVD-0001](evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md) covers determinism and
+1. **Finish P00A-T003.** [EVD-0001](evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md) covers determinism and
    level and [EVD-0002](evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md) covers CPU at one polyphony and one
    sample rate; memory, timing, and CPU across common polyphony and sample rates are still unmeasured, and the task does
    not close without them. `render_cost` is the harness for the CPU half and takes a corpus directory, so widening it is
    a matter of cases and operating points rather than of tooling.
+2. **Write the ADR-0022 and ADR-0028 deferrals.** They are the only required-decisions rows left, and the gate accepts
+   a deferral with a named target gate, an owner, and the evidence still missing. Doing it as a written deferral rather
+   than leaving the rows empty is what keeps the exit review from having to rediscover them; ADR-0022 also inherits
+   concrete obligations from ADR-0032 (the epoch anchor's calibration, and the arrival-time uncertainty an
+   untimestamped adapter must declare).
 3. **Sweep all 74 resource-inventory entries** under accepted ADR-0021, assigning both axes — one of six failure classes
    and one of seven configuration owners — plus the rule and diagnostic. Every `Unknown`-class entry must reach a
    terminal class as part of it.
@@ -110,8 +126,9 @@ still lacks is either a decision or an executable check.
    saved file while no dirty term observes it. It is the cheapest executable check the ledgers produced.
 6. **Add corpus cases as their blockers clear.** Instrument inserts need nothing and are the cheapest; the sampler case
    waits on the bundle round-trip fixtures, the shared-instrument case on ADR-0014, and the tempo-map case on whether a
-   ramp's event positions fall under the sample-timing correction. EVD-0002 raised the stakes on this: the corpus's
-   category mix, not only its size, now demonstrably moves a measured result.
+   ramp's event positions fall under the sample-timing correction — still open, since ADR-0032 fixed only that the
+   conversion is rounded once and stays platform-independent, leaving the ramp law itself to Phase 3. EVD-0002 raised
+   the stakes on this: the corpus's category mix, not only its size, now demonstrably moves a measured result.
 7. **Record both audit passes as `EVD` records** so the ledgers' claims are reproducible rather than asserted. No value
    in the resource ledger has been measured; all of them are read from source.
 

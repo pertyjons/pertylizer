@@ -263,7 +263,9 @@ compile or execute anything.
   removes, or exposes it as configurable.
 - Define an initial `HostProfile`/`RenderLimits` contract covering maximum host
   block, layouts, voices, nodes, event fan-out, channels, buses, sends,
-  telemetry taps, recording buffers, prepared memory, and script work.
+  telemetry taps, recording buffers, prepared memory, script work, and the two
+  event-timestamp horizons ADR-0032 clause 21 requires to be bounded in both
+  directions.
 - Open an architecture decision record under [decisions/](decisions/README.md)
   for every entry in the [decision register](ADR.md) whose target phase begins
   with `0A`. Accept the render-quantum semantics, the quantum frame count, the
@@ -517,7 +519,10 @@ not invent timestamp semantics inside implementation tasks.
 
 ### Work
 
-- Introduce absolute `SampleTime` and quantum-local `SampleOffset` newtypes.
+- Introduce the time types fixed by ADR-0032: absolute `SampleTime`,
+  `FrameCount`, `FrameDelta`, quantum-local `QuantumOffset`, and `StreamEpoch`.
+  The offset type is named `QuantumOffset` because `synth_core::SampleOffset` is
+  an unrelated `f32` in V1.
 - Define distinct fixed-size event families:
   - `PerformanceEvent` for note/controller/expression/panic input;
   - `SessionEvent` for play, stop, seek, loop transition, count-in, metronome,

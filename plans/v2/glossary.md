@@ -55,6 +55,21 @@ decision until accepted in an ADR.
 A buffer request made by an audio host or device. V2 output must not change when the same timeline is partitioned into
 different callback sizes.
 
+**Sample time**
+
+Absolute engine time, counted in input frames since the current stream was prepared (ADR-0001 clause 11, ADR-0032). It
+is not the transport playhead, not a plan position, and not a host counter; it is monotone across play, stop, and seek.
+
+**Stream epoch**
+
+The identity of one prepared stream. Sample time restarts at zero in each epoch, so a timestamp is meaningful only
+together with its epoch, and an event stamped in an earlier epoch is discarded rather than reinterpreted.
+
+**Quantum offset**
+
+A position inside one render quantum, in the range `[0, Q)`. It is derived from a sample time when an event is
+scheduled, never stored in one. Named to avoid `synth_core::SampleOffset`, which is an unrelated V1 float.
+
 **Host profile**
 
 Declared platform capabilities and resource budgets used to admit or reject a prepared plan before real-time execution.
