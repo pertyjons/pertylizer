@@ -100,13 +100,13 @@ No topic has been swept for reclassification. Judge the class when work begins o
 | ADR-0019 | Remote mutation history semantics           | Proposed | 10B/10C               | Operation conformance review             |
 | ADR-0020 | Final crate boundaries and names            | Proposed | After vertical slices | Dependency evidence                      |
 | ADR-0021 | Host profile and admission policy           | Accepted | 0A/1                  | V1 cap inventory                         |
-| ADR-0022 | Hardware time mapping and latency ownership | Proposed | 0A/3/9                | Simulated-host evidence                  |
+| ADR-0022 | Hardware time mapping and latency ownership | Deferred | 0A/3/9                | Simulated-host evidence                  |
 | ADR-0023 | Same-sample session event ordering          | Proposed | 3                     | Deterministic scenario tests             |
 | ADR-0024 | Recording take and commit semantics         | Proposed | 0B/9/10B              | Workflow and failure analysis            |
 | ADR-0025 | Tuning representation and ownership         | Proposed | 0B/6/10A              | Format and pitch-path review             |
 | ADR-0026 | Minimum SampleMap and SampleZone model      | Proposed | 6/10A/10D             | Sampler migration analysis               |
 | ADR-0027 | Observation and analyzer ownership          | Proposed | 0B/5/9                | Resource and protocol analysis           |
-| ADR-0028 | Long-running job contract                   | Proposed | 0A/4/10B              | Render/analysis workflow analysis        |
+| ADR-0028 | Long-running job contract                   | Deferred | 0A/4/10B              | Render/analysis workflow analysis        |
 | ADR-0029 | Host configuration and remote authorization | Proposed | 0B/10E                | Deployment and threat review             |
 | ADR-0030 | Public facade and compatibility surface     | Proposed | Before 10E            | Consumer inventory                       |
 | ADR-0031 | Supported build and release matrix          | Proposed | 0B/12                 | CI and consumer inventory                |
@@ -124,6 +124,10 @@ Topics without a link below have no individual record yet; the table above is st
 - [ADR-0001: Render quantum semantics and splitting contract](decisions/ADR-0001-internal-render-quantum.md) —
   `Accepted`
 - [ADR-0021: Host profile and admission policy](decisions/ADR-0021-host-profile-and-admission-policy.md) — `Accepted`
+- [ADR-0022: Hardware time mapping and latency ownership](decisions/ADR-0022-hardware-time-mapping.md) — `Deferred`
+  to the Phase 3 entry gate
+- [ADR-0028: Long-running job contract](decisions/ADR-0028-long-running-job-contract.md) — `Deferred` to the Phase 4
+  entry gate
 - [ADR-0032: Sample-time and event-timestamp model](decisions/ADR-0032-sample-time-and-event-timestamps.md) —
   `Accepted` after three passes
 - [ADR-0037: Render quantum frame count](decisions/ADR-0037-render-quantum-value.md) — `Accepted`, value provisional
@@ -146,6 +150,12 @@ and ADR-0021 took.
 
 That is now two records whose accept-on-first-draft was undone. The lesson is the pattern, not the record: a
 same-session acceptance is provisional until an independent pass has run, whatever the gate pressure.
+
+**ADR-0022 and ADR-0028 are `Deferred`, each to a named entry gate**, which is the second thing the Phase 0A exit gate
+accepts. Each record carries the target gate, an owner, and the evidence still missing, and each states the constraints
+that hold while it is open — a deferral is not permission to improvise the decision in code. ADR-0022 waits on a
+simulated-host harness that Phase 3 builds anyway; ADR-0028 waits on a workflow analysis that is cheap but undone. Both
+are `Contract` class: a deferred decision has a class from the moment work begins on it, and neither is a value.
 
 ADR-0037 was accepted on [EVD-0002](evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md), which selected the
 record's own rule 1: the V1 proxy could not resolve the comparison to better than its stated margin, so `Q` = 64 is

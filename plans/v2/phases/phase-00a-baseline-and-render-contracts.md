@@ -31,8 +31,8 @@ Phase 0A `Work` list and add no scope of their own.
 | ADR-0021 | `Accepted`                                            | `Accepted`  | —                     |
 | ADR-0037 | `Accepted`                                            | `Accepted`  | Phase 2 re-measurement |
 | ADR-0032 | `Accepted`                                            | `Accepted`  | Phase 3 verification  |
-| ADR-0022 | `Accepted`, or `Deferred` with owner and evidence gap | No record   | Before Phase 3        |
-| ADR-0028 | `Accepted`, or `Deferred` with owner and evidence gap | No record   | Before Phase 4        |
+| ADR-0022 | `Accepted`, or `Deferred` with owner and evidence gap | `Deferred`  | Phase 3 entry gate    |
+| ADR-0028 | `Accepted`, or `Deferred` with owner and evidence gap | `Deferred`  | Phase 4 entry gate    |
 
 ADR-0037 is not in the master plan's decision list. It carries the frame count split out of ADR-0001 and is required
 `Accepted` here so that the split cannot be used to pass the gate with the quantum's value still open. See *Deviations*.
@@ -56,15 +56,15 @@ acceptance condition.
 | P00A-T003 | Capture V1 CPU, memory, timing, and determinism baselines   | Active      | P00A-T001            | [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md) covers determinism only |
 | P00A-T004 | Complete the fixed-limit and overflow audit                 | Active      | None                 | [Resource inventory](../inventories/resource-limits.md) |
 | P00A-T005 | Define the initial HostProfile and RenderLimits contract    | Not started | P00A-T004            | Future specification/ADRs                               |
-| P00A-T006 | Satisfy every entry in the required-decisions table         | Active      | P00A-T003/P00A-T004  | [Decision register](../ADR.md)                          |
+| P00A-T006 | Satisfy every entry in the required-decisions table         | Complete    | P00A-T003/P00A-T004  | [Decision register](../ADR.md)                          |
 | P00A-T007 | Prepare the formal Phase 0A exit review                     | Not started | All applicable tasks | Future `REV-P00A`                                       |
 
 Phase 0B runs in parallel and has its own tracker. Do not move its inventory work into this phase to make the gate look
 complete.
 
-P00A-T006 must accept ADR-0001, ADR-0037, ADR-0021, and ADR-0032. ADR-0022 may be deferred only to the Phase 3 entry
-gate and ADR-0028 only to the Phase 4 entry gate; either deferral records an owner and the missing evidence. No other
-deferral satisfies the Phase 0A exit gate.
+P00A-T006 must accept ADR-0001, ADR-0037, ADR-0021, and ADR-0032, and it has. ADR-0022 may be deferred only to the
+Phase 3 entry gate and ADR-0028 only to the Phase 4 entry gate; either deferral records an owner and the missing
+evidence. Both are now written on those terms, so no other deferral is in play.
 
 ## Active tasks
 
@@ -120,17 +120,60 @@ deferral satisfies the Phase 0A exit gate.
   describes a renderer that omitted per-instrument settings, and would have to be
   retaken.
 
+**P00A-T004 — Complete the fixed-limit and overflow audit.**
+
+- **Scope.** Populate the [resource inventory](../inventories/resource-limits.md) with every fixed cap, truncation
+  point, bounded queue, buffer capacity, and script budget in the workspace, each with its enforcement site and — where
+  the enforcing code was read — its overflow behavior.
+- **Non-goals.** Proposing V2 admission rules (that is P00A-T005 and ADR-0021), measuring anything (that is P00A-T003),
+  and changing any current limit.
+- **Related identifiers.** `LIMIT-0001`..`LIMIT-0074`; ADR-0001, ADR-0021, ADR-0008, ADR-0022.
+- **Expected output.** A ledger whose per-entry blanks are honest "not yet investigated" markers, plus a recorded audit
+  method a second pass can rerun and diff.
+- **Verification.** Re-running the recorded search at a later revision must not surface a constant absent from the
+  ledger. Not yet performed.
+- **State after pass 2 (`dd69b657`).** 74 entries. All six required areas pass 1 could not reach are answered, both
+  unnumbered families have identifiers, and the two entries that gate this phase are resolved:
+    - `LIMIT-0001` — a block above `MAX_BLOCK_SIZE` silently drops the audio-input tail *and* reallocates a voice buffer
+      on the audio thread. Not reachable through the app's own configuration, because the requested buffer size is
+      hardcoded to at most 1024 (`LIMIT-0057`) — but the callback's frame count is recomputed from what the host
+      actually delivers, so a host that ignores the request reaches it. The RT-allocation regression test covers up to
+      1024 frames only.
+    - `LIMIT-0028` — **not a conflict.** The two constants bound two unrelated features (the shared choir sub-voice bank
+      and the classic oscillator's unison spread), and both are array lengths, so neither can be exceeded. A
+      silent-truncation register is now compiled: five sites, of which only the event-drop counters have a diagnostic.
+      That is the specific input this phase's exit gate needs from ADR-0021.
+- **Remaining before the gate.** Two things, neither of which is more searching. First, accepted ADR-0021 unblocks the
+  class sweep: it assigns each entry one of six failure classes *and* one of seven configuration owners, and every
+  `Unknown`-class entry must reach a terminal class. Second, confirming that no
+  *undocumented* silent truncation exists needs an executable probe (oversized blocks, >128 metered channels, >32 rack
+  stages) — and no value in this ledger has been measured, only read.
+- **Status-vocabulary correction (review follow-up).** Entries were marked `Classified` once their value, site, and
+  overflow behavior were established. The [register vocabulary](../inventories/README.md) reserves `Classified` for
+  required fields *and* disposition filled with supporting evidence, and this ledger's disposition is
+  `Proposed V2 rule`, which was blank pending ADR-0021. All such statuses are downgraded to `Investigating`, and the
+  ledger now states the rule inline. `LIMIT-0067` also carried two ADR owners; it is now ADR-0021 alone, matching the
+  silent-truncation register. Entries remain `Investigating` until the class sweep records rules and evidence.
+- **Implementation revision.** Documentation only; no code changed.
+
+## Completed tasks
+
+Kept here rather than deleted: the exit review has to be able to see how a completed gate item was satisfied.
+
 **P00A-T006 — Satisfy every entry in the required-decisions table.**
 
 - **Scope.** One accepted record under [decisions/](../decisions/README.md) for ADR-0001, ADR-0037, ADR-0021, and
   ADR-0032, plus an accepted-or-deferred ADR-0022 and ADR-0028.
-- **State.** Four of six records exist and **all four are `Accepted`**:
+- **State.** All six records now exist. **Four are `Accepted`**:
   [ADR-0001](../decisions/ADR-0001-internal-render-quantum.md) (quantum semantics),
   [ADR-0021](../decisions/ADR-0021-host-profile-and-admission-policy.md) (admission policy),
   [ADR-0037](../decisions/ADR-0037-render-quantum-value.md) (quantum frame count, `Q` = 64 provisional), and
   [ADR-0032](../decisions/ADR-0032-sample-time-and-event-timestamps.md) (sample time and event timestamps) after
-  three passes. **Every decision this gate requires on its own is accepted**; ADR-0022 and ADR-0028 have no record yet
-  and may be deferred to their named later gates.
+  three passes. **Every decision this gate requires on its own is accepted.**
+  [ADR-0022](../decisions/ADR-0022-hardware-time-mapping.md) and
+  [ADR-0028](../decisions/ADR-0028-long-running-job-contract.md) are `Deferred` to the Phase 3 and Phase 4 entry gates,
+  each with an owner, the evidence still missing, and the constraints that hold while it is open. **The
+  required-decisions table is now satisfied in full.**
 - **A review withdrew the acceptance of ADR-0001 and ADR-0021**, which had been marked `Accepted` in the same session
   they were drafted. Four defects made that premature, and each is fixed in the record that carried it:
     - ADR-0001's splitting contract covered only the output side. A callback shorter than `Q` has neither the audio
@@ -204,49 +247,21 @@ deferral satisfies the Phase 0A exit gate.
   compile to a plan position, anchor, stamp, enqueue — with the scheduler releasing compiled events as their quanta
   approach. Five smaller fixes came with it, including that a published `(epoch, time)` pair needs session scope
   because epochs restart at zero per process, and that a tempo edit invalidates every compiled plan position.
-- **Remaining in this task.** ADR-0022 and ADR-0028 have no record; both may be `Deferred` with an owner and an
-  evidence gap. Nothing else in the required-decisions table is outstanding.
+- **The two deferrals are written, not merely intended.** Each names its gate, its owner, its missing evidence, and —
+  the part a bare register row could not carry — the constraints that hold while it is open. ADR-0022 forbids any path
+  from consuming `output_latency`, a host timestamp, or `stream_time` before it is accepted, because reading one is
+  what would create an unwritten time mapping; ADR-0028 forbids a second progress or cancellation mechanism beside
+  `ExportProgress`, so a caller that needs one becomes evidence rather than a third bespoke channel. Writing them also
+  produced the finding that V1 has three of the four pieces of a job contract — `ExportProgress`, `RenderReceipt`, and
+  a wall-clock `LOAD_DEADLINE` — in three places, each for one caller.
+- **Remaining in this task.** Nothing. P00A-T006 is **complete**: four accepted records and two written deferrals
+  satisfy every row of the required-decisions table.
 - **Implementation revision.** The ADR-0001/ADR-0021 work was documentation only, and its records cite source reads at
   `5cd24de8`, one commit later than the inventories' `dd69b657`. ADR-0037's acceptance required code: the
   `render_cost` measurement harness, and making `arrangement_render.rs`'s `BUFFER_SIZE` readable so a run can report
   the constant it was built with. The constant's value is unchanged. ADR-0032 was documentation only, with source
-  reads at `7e361271`; it changes no V1 behaviour, including the four V1 findings it records.
-
-**P00A-T004 — Complete the fixed-limit and overflow audit.**
-
-- **Scope.** Populate the [resource inventory](../inventories/resource-limits.md) with every fixed cap, truncation
-  point, bounded queue, buffer capacity, and script budget in the workspace, each with its enforcement site and — where
-  the enforcing code was read — its overflow behavior.
-- **Non-goals.** Proposing V2 admission rules (that is P00A-T005 and ADR-0021), measuring anything (that is P00A-T003),
-  and changing any current limit.
-- **Related identifiers.** `LIMIT-0001`..`LIMIT-0074`; ADR-0001, ADR-0021, ADR-0008, ADR-0022.
-- **Expected output.** A ledger whose per-entry blanks are honest "not yet investigated" markers, plus a recorded audit
-  method a second pass can rerun and diff.
-- **Verification.** Re-running the recorded search at a later revision must not surface a constant absent from the
-  ledger. Not yet performed.
-- **State after pass 2 (`dd69b657`).** 74 entries. All six required areas pass 1 could not reach are answered, both
-  unnumbered families have identifiers, and the two entries that gate this phase are resolved:
-    - `LIMIT-0001` — a block above `MAX_BLOCK_SIZE` silently drops the audio-input tail *and* reallocates a voice buffer
-      on the audio thread. Not reachable through the app's own configuration, because the requested buffer size is
-      hardcoded to at most 1024 (`LIMIT-0057`) — but the callback's frame count is recomputed from what the host
-      actually delivers, so a host that ignores the request reaches it. The RT-allocation regression test covers up to
-      1024 frames only.
-    - `LIMIT-0028` — **not a conflict.** The two constants bound two unrelated features (the shared choir sub-voice bank
-      and the classic oscillator's unison spread), and both are array lengths, so neither can be exceeded. A
-      silent-truncation register is now compiled: five sites, of which only the event-drop counters have a diagnostic.
-      That is the specific input this phase's exit gate needs from ADR-0021.
-- **Remaining before the gate.** Two things, neither of which is more searching. First, accepted ADR-0021 unblocks the
-  class sweep: it assigns each entry one of six failure classes *and* one of seven configuration owners, and every
-  `Unknown`-class entry must reach a terminal class. Second, confirming that no
-  *undocumented* silent truncation exists needs an executable probe (oversized blocks, >128 metered channels, >32 rack
-  stages) — and no value in this ledger has been measured, only read.
-- **Status-vocabulary correction (review follow-up).** Entries were marked `Classified` once their value, site, and
-  overflow behavior were established. The [register vocabulary](../inventories/README.md) reserves `Classified` for
-  required fields *and* disposition filled with supporting evidence, and this ledger's disposition is
-  `Proposed V2 rule`, which was blank pending ADR-0021. All such statuses are downgraded to `Investigating`, and the
-  ledger now states the rule inline. `LIMIT-0067` also carried two ADR owners; it is now ADR-0021 alone, matching the
-  silent-truncation register. Entries remain `Investigating` until the class sweep records rules and evidence.
-- **Implementation revision.** Documentation only; no code changed.
+  reads at `7e361271`; it changes no V1 behaviour, including the four V1 findings it records. The two deferrals are
+  documentation only as well, with source reads at `e4873d0b`.
 
 ## What building the corpus found
 
@@ -293,7 +308,7 @@ something.
 | P00A-T002 | `pertylizer compare` and the versioned report model                                   | Each metric unit-tested against a synthetic signal with a known deviation (6.02 dB of gain, 100 ms of delay, a semitone of detune, a band-limited change, an inverted channel); end-to-end through render→render→compare in `compare_command.rs` | Complete — runs with no GUI and no audio device |
 | P00A-T003 | [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md) and [EVD-0002](../evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md) | Two process-separate renders per case, bit-identical on all four, every comparison delta exactly zero, with a two-case control that resolves their octave to 3.6 cents; plus 8 640 timed renders giving per-case CPU cost per rendered second | Partial — determinism, level, and single-operating-point CPU; memory and timing not measured |
 | P00A-T004 | [Resource inventory](../inventories/resource-limits.md) passes 1 and 2 at `dd69b657`                                                                                   | Two independent discovery methods with opposite blind spots: pass 1 matched constant names, pass 2 matched documented truncation behavior. Neither executes anything, so a truncation that is both unnamed and undocumented would still be missed        | Partial — source-read only, no measurement   |
-| P00A-T006 | [ADR-0001](../decisions/ADR-0001-internal-render-quantum.md), [ADR-0021](../decisions/ADR-0021-host-profile-and-admission-policy.md), [ADR-0037](../decisions/ADR-0037-render-quantum-value.md), and [ADR-0032](../decisions/ADR-0032-sample-time-and-event-timestamps.md) `Accepted` | Three review passes resolved the buffering, event, retention, ownership, host-fault, and measurement-boundary defects before the first two were accepted. ADR-0037 was accepted on EVD-0002 by applying the rule table it fixed before the data existed; the outcome was rule 1, so its value is provisional and binds Phase 2. ADR-0032 took three passes: an author pass, an independent pass that withdrew its acceptance over a tempo map producing engine times, a `HostProfile` horizon with no semantics, a pre-epoch clamp contradicting ADR-0001 clause 16, undefined exhaustion, and a reusable epoch identifier, and a bounded closure pass that caught the forward horizon rejecting a compiled song and fixed the order of the compile-anchor-stamp-enqueue path | Partial — 4 of 6 records, all 4 accepted; the two remaining are deferrable |
+| P00A-T006 | [ADR-0001](../decisions/ADR-0001-internal-render-quantum.md), [ADR-0021](../decisions/ADR-0021-host-profile-and-admission-policy.md), [ADR-0037](../decisions/ADR-0037-render-quantum-value.md), and [ADR-0032](../decisions/ADR-0032-sample-time-and-event-timestamps.md) `Accepted` | Three review passes resolved the buffering, event, retention, ownership, host-fault, and measurement-boundary defects before the first two were accepted. ADR-0037 was accepted on EVD-0002 by applying the rule table it fixed before the data existed; the outcome was rule 1, so its value is provisional and binds Phase 2. ADR-0032 took three passes: an author pass, an independent pass that withdrew its acceptance over a tempo map producing engine times, a `HostProfile` horizon with no semantics, a pre-epoch clamp contradicting ADR-0001 clause 16, undefined exhaustion, and a reusable epoch identifier, and a bounded closure pass that caught the forward horizon rejecting a compiled song and fixed the order of the compile-anchor-stamp-enqueue path. ADR-0022 and ADR-0028 are `Deferred` to the Phase 3 and Phase 4 entry gates, each with an owner, its missing evidence, and constraints that hold while it is open | Complete — four accepted records and two written deferrals satisfy every row |
 
 ## Deviations
 

@@ -6,7 +6,7 @@
 | Documentation stage    | Workflow accepted; inventories at pass 2         |
 | Master plan status     | Proposed and architecture-audited                |
 | Active migration phase | 0A and 0B, both `Active` in parallel             |
-| Decision records       | 4 of 37 drafted, all 4 accepted                  |
+| Decision records       | 6 of 37 drafted: 4 accepted, 2 deferred          |
 | Evidence records       | 2 (`EVD-0001`, `EVD-0002`), both `Complete`      |
 | Executable Phase 0A    | Corpus, comparison command, and cost harness are used |
 
@@ -32,17 +32,25 @@ gate Phase 10, not Phase 1.
   revisit point, with no file, no options survey, and no evidence required before acceptance. ADR-0037 is the case
   that motivated it and would qualify; it is not reclassified, because an accepted record is immutable. No topic has
   been swept, and the class is judged when work begins on an entry.
-- The decision topics are registered in [ADR.md](ADR.md), now 37 after one split. Four have individual records, and
-  **all four are `Accepted`** — [ADR-0001](decisions/ADR-0001-internal-render-quantum.md) (render quantum semantics)
+- The decision topics are registered in [ADR.md](ADR.md), now 37 after one split. Six have individual records, and
+  **four are `Accepted`** — [ADR-0001](decisions/ADR-0001-internal-render-quantum.md) (render quantum semantics)
   and [ADR-0021](decisions/ADR-0021-host-profile-and-admission-policy.md) (host profile and admission) after three
   review passes, [ADR-0037](decisions/ADR-0037-render-quantum-value.md) (quantum frame count) on the strength of
   [EVD-0002](evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md), and
   [ADR-0032](decisions/ADR-0032-sample-time-and-event-timestamps.md) (sample time and event timestamps), also after
   three. ADR-0037 is a split of the master plan's topic 1, recorded as a deviation in the Phase 0A tracker; both
   quantum records are required `Accepted` at the Phase 0A exit, so the split does not weaken the gate.
-- **No decision blocks the Phase 0A exit gate any more.** ADR-0032 was the last one it required on its own; ADR-0022
-  and ADR-0028 may be `Deferred` to the Phase 3 and Phase 4 entry gates with an owner and a stated evidence gap. What
-  remains between here and the gate is measurement and coverage.
+- **The decision half of Phase 0A is finished, and P00A-T006 is `Complete`.** Four records are accepted, and
+  [ADR-0022](decisions/ADR-0022-hardware-time-mapping.md) and
+  [ADR-0028](decisions/ADR-0028-long-running-job-contract.md) are written `Deferred` to the Phase 3 and Phase 4 entry
+  gates — each with an owner, its missing evidence, and the constraints that hold while it is open. A deferral is not
+  permission to improvise the decision in code: ADR-0022 forbids any path from consuming `output_latency`, a host
+  timestamp, or `stream_time` before it is accepted, and ADR-0028 forbids a second progress or cancellation mechanism
+  beside `ExportProgress`. What remains between here and the gate is measurement and coverage.
+- **Writing ADR-0028 found the shape of the job problem.** V1 has three of the four pieces of a job contract and no
+  contract: `ExportProgress` (progress and cancel, GUI only), `RenderReceipt` (a versioned receipt, headless CLI
+  only), and a 300-second wall-clock `LOAD_DEADLINE` (lifecycle, one call site). MCP's renders and analyses are
+  synchronous with no progress, no cancellation, and no way to observe them in flight.
 - **ADR-0032 needed all three passes.** Its first acceptance, given on one author pass, was withdrawn by an independent
   one over five defects: the tempo map had been made to produce an engine `SampleTime`, which is not well defined
   because the render clock is monotone across seek and restarts at zero per offline render; one of two required
@@ -111,41 +119,36 @@ gate Phase 10, not Phase 1.
   the offline renderer, not only the corpus — the `analyze_*` tools and the WAV export measured audio the live engine
   never produced. It is the third instance of an offline reader disagreeing with the live engine while looking healthy.
 - Phase 0A is **not** complete: P00A-T003 has CPU figures at one operating point and still no memory or timing figures,
-  the two deferrable ADRs (ADR-0022, ADR-0028) have neither a record nor a written deferral, and no exit review exists.
+  P00A-T001 covers four of eleven corpus categories, P00A-T004's class sweep is unstarted, and no exit review exists.
   No code has been written for V2 itself.
 - V2 implementation status must be established from repository evidence before this dashboard makes code-level
   completion claims.
 
 ## Next actions
 
-The decision half of Phase 0A is done: every ADR the exit gate requires on its own is accepted. What is left is
-measurement, coverage, and two written deferrals. The corpus, the comparison command, and a timing harness all exist,
-so nothing below is blocked on tooling.
+The decision half of Phase 0A is done — four accepted records, two written deferrals, P00A-T006 `Complete`. What is
+left is measurement and coverage. The corpus, the comparison command, and a timing harness all exist, so nothing
+below is blocked on tooling.
 
 1. **Finish P00A-T003.** [EVD-0001](evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md) covers determinism and
    level and [EVD-0002](evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md) covers CPU at one polyphony and one
    sample rate; memory, timing, and CPU across common polyphony and sample rates are still unmeasured, and the task does
    not close without them. `render_cost` is the harness for the CPU half and takes a corpus directory, so widening it is
    a matter of cases and operating points rather than of tooling.
-2. **Write the ADR-0022 and ADR-0028 deferrals.** They are the only required-decisions rows left, and the gate accepts
-   a deferral with a named target gate, an owner, and the evidence still missing. Doing it as a written deferral rather
-   than leaving the rows empty is what keeps the exit review from having to rediscover them; ADR-0022 also inherits
-   concrete obligations from ADR-0032 (the epoch anchor's calibration, and the arrival-time uncertainty an
-   untimestamped adapter must declare).
-3. **Sweep all 74 resource-inventory entries** under accepted ADR-0021, assigning both axes — one of six failure classes
+2. **Sweep all 74 resource-inventory entries** under accepted ADR-0021, assigning both axes — one of six failure classes
    and one of seven configuration owners — plus the rule and diagnostic. Every `Unknown`-class entry must reach a
    terminal class as part of it.
-4. **Open ADR-0014.** The identity ledger's central finding is that the module id encodes its type at *runtime*
+3. **Open ADR-0014.** The identity ledger's central finding is that the module id encodes its type at *runtime*
    (`IDN-0029`), not merely on disk, and that a module's script PRNG seed is derived from its instance number — so
    renumbering is audible, not just referential.
-5. **Write the first round-trip fixture (P00B-T005) for `STATE-0004`** — changing the focused instrument changes the
+4. **Write the first round-trip fixture (P00B-T005) for `STATE-0004`** — changing the focused instrument changes the
    saved file while no dirty term observes it. It is the cheapest executable check the ledgers produced.
-6. **Add corpus cases as their blockers clear.** Instrument inserts need nothing and are the cheapest; the sampler case
+5. **Add corpus cases as their blockers clear.** Instrument inserts need nothing and are the cheapest; the sampler case
    waits on the bundle round-trip fixtures, the shared-instrument case on ADR-0014, and the tempo-map case on whether a
    ramp's event positions fall under the sample-timing correction — still open, since ADR-0032 fixed only that the
    conversion is rounded once and stays platform-independent, leaving the ramp law itself to Phase 3. EVD-0002 raised
    the stakes on this: the corpus's category mix, not only its size, now demonstrably moves a measured result.
-7. **Record both audit passes as `EVD` records** so the ledgers' claims are reproducible rather than asserted. No value
+6. **Record both audit passes as `EVD` records** so the ledgers' claims are reproducible rather than asserted. No value
    in the resource ledger has been measured; all of them are read from source.
 
 ## Documentation-workflow review notes
