@@ -51,7 +51,7 @@ acceptance condition.
 
 | ID        | Deliverable                                                 | Status      | Dependencies         | Primary record                                          |
 |-----------|-------------------------------------------------------------|-------------|----------------------|---------------------------------------------------------|
-| P00A-T001 | Define the reference V1 corpus and preserve/change manifest | Active      | None                 | [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md) |
+| P00A-T001 | Define the reference V1 corpus and preserve/change manifest | Active      | None                 | [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md), [EVD-0004](../evidence/phase-00a/EVD-0004-corpus-0005-claim-counterfactuals.md) |
 | P00A-T002 | Define the comparison result model and headless command     | Complete    | P00A-T001            | [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md) |
 | P00A-T003 | Capture V1 CPU, memory, timing, and determinism baselines   | Complete    | P00A-T001            | [EVD-0003](../evidence/phase-00a/EVD-0003-cpu-memory-timing-baseline.md), with EVD-0001 and EVD-0002 |
 | P00A-T004 | Complete the fixed-limit and overflow audit                 | Complete    | None                 | [Resource inventory](../inventories/resource-limits.md) |
@@ -142,9 +142,9 @@ evidence. Both are now written on those terms, so no other deferral is in play.
 
 - **Scope.** The master plan's [Phase 0A work list](../master-plan.md#work) names eleven categories of representative V1
   render. The task is complete when all eleven are captured, not when the format that holds them exists.
-- **State.** The manifest, the model, the generator, and the validation are done and in use. Four categories are
-  exercised: `subtractive-voice`, `polyphonic-voice-stealing`, `mod-matrix-patch`, and `sends-returns-master`. Seven are
-  recorded as gaps with reasons.
+- **State.** The manifest, the model, the generator, and the validation are done and in use. **Five categories are
+  exercised**: `subtractive-voice`, `polyphonic-voice-stealing`, `mod-matrix-patch`, `sends-returns-master`, and
+  `instrument-inserts` (CORPUS-0005). Six are recorded as gaps with reasons.
 - **Why this is `Active` and not `Complete`.** A recorded gap is an honest statement about coverage, but it is not the
   baseline the plan asks for. Marking the task complete with seven of eleven missing would move the shortfall out of the
   task list and into a document nobody re-reads, and the Phase 0A exit review would then have to rediscover it. The
@@ -153,7 +153,6 @@ evidence. Both are now written on those terms, so no other deferral is in play.
 
   | Category                     | Blocked on                                                                        |
   |------------------------------|-----------------------------------------------------------------------------------|
-  | `instrument-inserts`         | Nothing. Cheapest of the seven; build it on CORPUS-0001                            |
   | `stereo-or-spatial-voice`    | Choosing the source. The Spatial Panner's positions are not modulatable in V1, so a case built on it pins behaviour already scheduled to change |
   | `tempo-map-arrangement`      | Whether a tempo ramp's event positions fall under the sample-timing correction, which the case must cite rather than decide |
   | `yams-control-patch`         | A script small enough that a render difference names one language feature          |
@@ -161,6 +160,42 @@ evidence. Both are now written on those terms, so no other deferral is in play.
   | `sampler-patch`              | The Phase 0B bundle round-trip fixtures; a sample makes the input a bundle and pulls asset identity (ADR-0027) into a Phase 0A baseline |
   | `shared-patch-or-instrument` | ADR-0014. A module's script PRNG seed derives from its instance number (`IDN-0029`), so a shared instrument's audio depends on how the two references are numbered |
 
+- **What CORPUS-0005 pins, and why it is not a smaller CORPUS-0004.** An insert chain sits *inside* the instrument,
+  between voice summing and the mixer; CORPUS-0004's effects are on a return bus and on the master and only ever see a
+  signal that has already left the instrument. Four claims, each measured against a counterfactual **and a null
+  control** in [EVD-0004](../evidence/phase-00a/EVD-0004-corpus-0005-claim-counterfactuals.md): the chain runs on the
+  **summed** voices (−3.07 dB relative with the clipper isolated), its state is **shared across voices** (−35.21 dB
+  with the delay isolated — two notes can only interact inside a delay line they share), that state **outlives the
+  notes** (a tail 2.3 s past the last note-off against a silent control), and the **authored order** is load-bearing
+  (5.97 dB). The null control — the same construction with an empty chain — sits at −147 dB relative, which is
+  floating-point rounding, so each figure is attributable.
+- **Getting there took three attempts, and the two failures are the useful part.** The first probe guessed a frequency
+  where the clipper's intermodulation would land and found nothing; a probe aimed at a predicted frequency is a guess
+  about the DSP. The second ran the summed-versus-whole construction **without its null control**, produced a
+  plausible +0.67 dB, and — when review found the delay's feedback soft-clip and prompted the isolation runs — the
+  control came out at −1.41 dB, the same size as the effect. That record concluded V1's renders are not additive
+  across polyphony, wrote an intentional-correction claim against a sequencer timing defect, and withdrew two claims.
+- **There was no timing defect.** A second review found the cause: `Oscillator`'s `uni_phase` defaults to 1.0 and
+  `set_voice_index` seeds the generator behind it from the voice index, so a note starts at a different phase
+  depending on which voice took it — voice 0 in a solo render, voice 1 for a chord's second note. That was the whole
+  46.55° phase difference, and it explains why the implied offset was never a constant number of samples: it was not a
+  delay. `CORPUS-0005-C2` is withdrawn; **a migration contract written against an artifact is worse than none**. With
+  `uni_phase` at 0 the control drops to −147 dB and both withdrawn claims come back stronger than they were written.
+- **The finding that survives is about the corpus, not the engine.** The four earlier fixtures still render with
+  note-on phase randomization enabled, so their audio depends on which voice took which note — the variable this
+  module's own header says a fixture avoids. Their determinism is unaffected, since the seed is the voice index. **Whether
+  to regenerate them is this task's decision and is not free**: it changes four committed digests and invalidates the
+  baselines EVD-0001 through EVD-0003 took against them. CORPUS-0005 turns it off for itself and leaves the rest.
+- **The case is the one that would have justified a V1 fallback, so it records the correction instead.** V1 appends any
+  effect missing from `effect_chain_order` with a warning, which means the rendered order is partly V1's choice. Under
+  ADR-0021 part 2 admission may refuse a plan but may never silently change authored topology to make it fit, so
+  CORPUS-0005-C1 records that appending becomes a refusal. The fixture authors a complete order, so the correction
+  changes nothing about this case's audio — it is recorded because this is the case a future reader would otherwise
+  point at to defend the fallback.
+- **Two of the three new tests are general rather than case-specific**, because the failure they catch is silent:
+  `effect_chain_order` matches module ids by string, so a typo drops an entry and V1's append path supplies an order
+  nobody authored — and every other fixture test still passes. One test rejects an entry that names no module or names
+  a non-effect; the other rejects an effect that no entry names.
 - **Correction to an earlier note.** The `yams-audio-script-patch` gap said the case "should be authored together with
   the ADR-0037 measurement". That reads as a dependency and is not one: ADR-0037's proxy is defined over whatever the
   corpus contains, and waiting for an AudioScript case would block a measurement that is otherwise ready. The two are
@@ -204,7 +239,17 @@ Kept here rather than deleted: the exit review has to be able to see how a compl
 
 - **Scope.** Measured V1 figures for the reference corpus at common polyphony and
   sample rates, in a reviewable format.
-- **State.** Complete over the four corpus categories that exist. Determinism and
+- **Scope note added with CORPUS-0005.** All three evidence records were taken
+  over the four cases that existed then. CORPUS-0005 postdates them, so it is
+  measured by EVD-0001's method but is not part of EVD-0002's or EVD-0003's
+  pooled figures — a pooled cost number is a property of the corpus that
+  produced it, which EVD-0002 demonstrated when its per-case ratio ranged from
+  +2.42% to +17.35%. Re-pooling is not required for the gate and would
+  invalidate the cross-check between EVD-0002 and EVD-0003; the honest statement
+  is that the baselines cover four of five cases, and it is recorded here rather
+  than by quietly widening a record's claim.
+- **State.** Complete over the four corpus categories that existed when it was
+  measured. Determinism and
   level are in [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md);
   the block-size cost curve is in [EVD-0002](../evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md);
   and [EVD-0003](../evidence/phase-00a/EVD-0003-cpu-memory-timing-baseline.md) adds
@@ -377,9 +422,9 @@ something.
 
 | Task      | Output/revision                                                                                                                                                        | Verification/evidence                                                                                                                                                                                                                                    | Result                                       |
 |-----------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------|
-| P00A-T001 | [Corpus manifest](../../../corpus/v2-reference/manifest.json) and four generated fixtures; four of eleven categories covered, seven recorded as gaps | The manifest is loaded and validated by `cargo test -p pertylizer --test corpus_manifest`: category coverage, claim classes, digests, and the fact that each committed project is exactly what its builder produces | Partial — format and validation done, four of eleven categories exercised |
+| P00A-T001 | [Corpus manifest](../../../corpus/v2-reference/manifest.json) and five generated fixtures; five of eleven categories covered, six recorded as gaps | The manifest is loaded and validated by `cargo test -p pertylizer --test corpus_manifest`: category coverage, claim classes, digests, and the fact that each committed project is exactly what its builder produces. CORPUS-0005 adds two general fixture tests over `effect_chain_order`, which is matched by string and whose typo would otherwise be absorbed by V1's append path | Partial — format and validation done, five of eleven categories exercised |
 | P00A-T002 | `pertylizer compare` and the versioned report model                                   | Each metric unit-tested against a synthetic signal with a known deviation (6.02 dB of gain, 100 ms of delay, a semitone of detune, a band-limited change, an inverted channel); end-to-end through render→render→compare in `compare_command.rs` | Complete — runs with no GUI and no audio device |
-| P00A-T003 | [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md), [EVD-0002](../evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md), and [EVD-0003](../evidence/phase-00a/EVD-0003-cpu-memory-timing-baseline.md) | Two process-separate renders per case, bit-identical on all four, every comparison delta exactly zero, with a two-case control that resolves their octave to 3.6 cents; 8 640 timed renders giving the cost-versus-block-size curve; and 1 700 renders over four sample rates, seven voice counts, and 15 timing/memory profiles per operating point | Complete for the four categories that exist — CPU, memory, timing, and determinism all measured, with real-time headroom explicitly out of scope |
+| P00A-T003 | [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md), [EVD-0002](../evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md), and [EVD-0003](../evidence/phase-00a/EVD-0003-cpu-memory-timing-baseline.md) | Two process-separate renders per case, bit-identical on all four, every comparison delta exactly zero, with a two-case control that resolves their octave to 3.6 cents; 8 640 timed renders giving the cost-versus-block-size curve; and 1 700 renders over four sample rates, seven voice counts, and 15 timing/memory profiles per operating point | Complete for the four categories that existed when it was measured — CPU, memory, timing, and determinism all measured, with real-time headroom explicitly out of scope |
 | P00A-T004 | [Resource inventory](../inventories/resource-limits.md) passes 1-2 at `dd69b657` and the classification pass at `b435887c` | Two independent discovery methods with opposite blind spots — pass 1 matched constant names, pass 2 matched documented truncation behavior — then a third pass applying accepted ADR-0021 to all 74 entries: terminal class, owner, rule, and diagnostic each citing the clause that supports it. Classifying found a sixth silent-truncation site the searches missed. Neither search executes anything, so a truncation that is both unnamed and undocumented would still be missed | Complete — every entry classified and disposed; no value measured, and the completeness probe remains ADR-0021 follow-up work |
 | P00A-T005 | [Host profile and render limits](../specs/spec-host-profile-and-render-limits.md), `Draft`, invariant prefix `HOST` | Coverage is checkable rather than asserted: the specification maps each of the ledger's 30 `HostProfile`-owned entries to a successor field, lists the seven fields with no V1 antecedent, and answers the master plan's field list item by item. Every default carries one of four stated bases — queried, derived, V1 carry-over, or chosen-and-anchored — and exactly one value is derived from measurement. Each of the 21 invariants has a named conformance test in the phase that builds what it tests; none of those tests can exist before Phase 1. Three passes have run — author, independent (five findings, two High), and bounded closure (four findings, one substantive, in the previous pass's own correction) — with every finding corrected and recorded in the specification's *Review status* | Partial — three passes complete; a confirmation read of the closure pass's own three changes remains before `Current` |
 | P00A-T006 | [ADR-0001](../decisions/ADR-0001-internal-render-quantum.md), [ADR-0021](../decisions/ADR-0021-host-profile-and-admission-policy.md), [ADR-0037](../decisions/ADR-0037-render-quantum-value.md), and [ADR-0032](../decisions/ADR-0032-sample-time-and-event-timestamps.md) `Accepted` | Three review passes resolved the buffering, event, retention, ownership, host-fault, and measurement-boundary defects before the first two were accepted. ADR-0037 was accepted on EVD-0002 by applying the rule table it fixed before the data existed; the outcome was rule 1, so its value is provisional and binds Phase 2. ADR-0032 took three passes: an author pass, an independent pass that withdrew its acceptance over a tempo map producing engine times, a `HostProfile` horizon with no semantics, a pre-epoch clamp contradicting ADR-0001 clause 16, undefined exhaustion, and a reusable epoch identifier, and a bounded closure pass that caught the forward horizon rejecting a compiled song and fixed the order of the compile-anchor-stamp-enqueue path. ADR-0022 and ADR-0028 are `Deferred` to the Phase 3 and Phase 4 entry gates, each with an owner, its missing evidence, and constraints that hold while it is open | Complete — four accepted records and two written deferrals satisfy every row |

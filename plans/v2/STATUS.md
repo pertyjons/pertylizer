@@ -7,7 +7,7 @@
 | Master plan status     | Proposed and architecture-audited                |
 | Active migration phase | 0A and 0B, both `Active` in parallel             |
 | Decision records       | 6 of 37 drafted: 4 accepted, 2 deferred          |
-| Evidence records       | 3 (`EVD-0001`..`EVD-0003`), all `Complete`       |
+| Evidence records       | 4 (`EVD-0001`..`EVD-0004`), all `Complete`       |
 | Executable Phase 0A    | Corpus, comparison command, and cost harness are used |
 
 This is a current-state dashboard, not a work log. Replace stale information instead of appending a chronology.
@@ -192,9 +192,30 @@ gate Phase 10, not Phase 1.
   ADR-0021 left open: the `HostCapabilities`/`RenderLimits` split,
   and a `CapabilitySource` tag with two constructors, which is what makes the queried-capability rule enforceable by
   API shape instead of by a runtime tag that cannot prove a query happened.
-- Phase 0A is **not** complete: P00A-T001 covers four of eleven corpus categories, P00A-T005 is `Active` with a
-  once-reviewed draft, and no exit review exists. **Five of seven tasks are `Complete`**; the two open ones are corpus
-  coverage and the `HostProfile` contract's closure pass. No code has been written for V2 itself.
+- **CORPUS-0005 covers `instrument-inserts`, taking the corpus to five of eleven categories.** Four claims, each
+  measured against a counterfactual **and a null control** in
+  [EVD-0004](evidence/phase-00a/EVD-0004-corpus-0005-claim-counterfactuals.md): the chain runs on the summed voices
+  (−3.07 dB relative), its state is shared across voices (−35.21 dB — two notes can only interact inside a delay line
+  they share), that state outlives the notes (a tail 2.3 s past the last note-off against a silent control), and the
+  authored chain order is load-bearing (5.97 dB). The null control sits at −147 dB relative, which is floating-point
+  rounding, so every figure is attributable.
+- **Three attempts, and the two failures are the transferable part.** The second one ran the counterfactual without a
+  null control, got a plausible +0.67 dB, and then measured −1.41 dB on a project with no effects at all. It concluded
+  that V1's renders are not additive across polyphony and wrote a migration contract against a sequencer timing
+  defect. **There was no defect**: `Oscillator`'s `uni_phase` defaults to full randomization, seeded from the voice
+  index, so a note starts at a different phase depending on which voice took it. With it off the control drops to
+  −147 dB and both withdrawn claims come back stronger. A control that fails is telling you about your fixture.
+- **The finding that survives is about the corpus.** The four earlier fixtures still render with note-on phase
+  randomization on, so their audio depends on which voice took which note — the variable the fixture module's own
+  header says a case avoids. Determinism is unaffected (the seed is the voice index). Regenerating them is
+  P00A-T001's call and costs four digests plus the baselines taken against them.
+- **The three evidence records predate CORPUS-0005 and are not being widened.** EVD-0002's and EVD-0003's pooled
+  figures are properties of the four cases that produced them — EVD-0002 showed exactly that, with a per-case ratio
+  spanning +2.42% to +17.35% — so re-pooling would also break the cross-check between the two records. The baselines
+  cover four of five cases, stated rather than quietly generalised.
+- Phase 0A is **not** complete: P00A-T001 covers five of eleven corpus categories, P00A-T005 is `Active` with a
+  three-times-reviewed draft, and no exit review exists. **Five of seven tasks are `Complete`**; the two open ones are
+  corpus coverage and the `HostProfile` contract's confirmation read. No code has been written for V2 itself.
 - V2 implementation status must be established from repository evidence before this dashboard makes code-level
   completion claims.
 
@@ -217,7 +238,7 @@ coverage, and the exit review.
    renumbering is audible, not just referential.
 3. **Write the first round-trip fixture (P00B-T005) for `STATE-0004`** — changing the focused instrument changes the
    saved file while no dirty term observes it. It is the cheapest executable check the ledgers produced.
-4. **Add corpus cases as their blockers clear.** Instrument inserts need nothing and are the cheapest; the sampler case
+4. **Add corpus cases as their blockers clear.** Instrument inserts are done (CORPUS-0005); the sampler case
    waits on the bundle round-trip fixtures, the shared-instrument case on ADR-0014, and the tempo-map case on whether a
    ramp's event positions fall under the sample-timing correction — still open, since ADR-0032 fixed only that the
    conversion is rounded once and stays platform-independent, leaving the ramp law itself to Phase 3. EVD-0002 raised

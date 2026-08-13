@@ -152,6 +152,52 @@
           "rationale": "Linear headroom is one of the corrections the master plan's audio comparison policy names. Where V1 clamped inside the chain, V2 will differ audibly on exactly the material this case renders, and that difference is the point rather than a regression."
         }
       ]
+    },
+    {
+      "id": "CORPUS-0005",
+      "title": "Instrument insert chain: distortion into delay",
+      "category": "instrument-inserts",
+      "purpose": "An insert chain inside the instrument, between voice summing and the mixer, which is a position no other case exercises: CORPUS-0004's effects sit on a return bus and on the master and only ever see a signal that has already left the instrument. A held fifth makes that position measurable, and one isolated short note near the end leaves the delay ringing into silence. The oscillator's note-on phase randomization is turned off (uni_phase 0, against a shipped default of 1.0) so that the render depends on the insert chain rather than on which voice the allocator handed each note.",
+      "input": "projects/instrument-inserts.ptz",
+      "sha256": "1d55668d424e71cb49d23c5da46f7f35541b8c16669dc1399a8ef28fefe12dbc",
+      "render": {
+        "sample_rate": 44100,
+        "bit_depth": "32f",
+        "seconds": 2.0,
+        "tail_seconds": 2.0
+      },
+      "seed": null,
+      "determinism": "bit-exact",
+      "preserve": [
+        {
+          "id": "CORPUS-0005-P1",
+          "behavior": "The chain processes the summed voices, not each voice. Rendering the dyad through the chain differs from summing two single-note renders of the same chain: with only the soft clipper in the chain the difference has an RMS 3.1 dB below the case's own, against a null control - the same construction with an empty chain - at -147 dB relative, which is floating-point rounding. A V2 that moved insert effects into the voice graph would still sound plausible on a single note and would fail here.",
+          "class": "feature-parity"
+        },
+        {
+          "id": "CORPUS-0005-P2",
+          "behavior": "Chain state is shared across voices rather than owned by one. With only the delay in the chain, the dyad rendered whole still differs from the two single renders summed, by 35 dB below the case's own RMS and 112 dB above the null control. Two notes can only interact inside a delay whose line they share, through the soft clip on its feedback write; per-voice delay lines would land at the control.",
+          "class": "feature-parity"
+        },
+        {
+          "id": "CORPUS-0005-P3",
+          "behavior": "Chain state outlives the notes that produced it. The delay's repeats fill the gap between the dyad and the isolated note, when every voice has already been released, and continue 2.3 s past the final note-off: measured on V1 the tail runs from -14.8 dBFS at 1.2 s to -70.7 dBFS at 3.4 s, against a control with both inserts removed that is digital silence from 1.7 s on.",
+          "class": "feature-parity"
+        },
+        {
+          "id": "CORPUS-0005-P4",
+          "behavior": "The chain runs in the order patch.settings.effect_chain_order declares. Rendering the same two modules in the opposite order is a different signal - clean repeats of a clipped dyad rather than a clipped sum of repeats - and measured on V1 the reversal moves the render's RMS by 5.97 dB. The field is authored data rather than a display hint.",
+          "class": "exact-parity"
+        }
+      ],
+      "change": [
+        {
+          "id": "CORPUS-0005-C1",
+          "behavior": "An insert whose module is absent from the chain order is refused at compilation rather than appended to the end with a warning.",
+          "class": "intentional-correction",
+          "rationale": "V1 recovers from an incomplete effect_chain_order by appending the unnamed modules, so the rendered order is partly V1's choice rather than the project's. Under ADR-0021 part 2 admission may refuse a plan but may never silently change authored topology to make it fit, and an appended insert is exactly that. This case authors a complete order, so the correction changes nothing here - it is recorded because this is the case that would otherwise be used to justify the fallback."
+        }
+      ]
     }
   ],
   "planned": [
@@ -170,10 +216,6 @@
     {
       "category": "yams-audio-script-patch",
       "why_absent": "Same as the control-script case: waiting on a script small enough that a render difference names one language feature. Independent of the ADR-0037 quantum measurement, which is defined over whatever the corpus contains and must not wait for this."
-    },
-    {
-      "category": "instrument-inserts",
-      "why_absent": "Straightforward to build on top of CORPUS-0001; left out of the first pass only to keep the initial corpus reviewable. No open question blocks it."
     },
     {
       "category": "tempo-map-arrangement",

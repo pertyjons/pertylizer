@@ -31,7 +31,7 @@ use synth_sequencer::{
     Velocity,
 };
 
-use crate::patch::{InstrumentState, ModuleBuilder, ModuleState, Patch, PatchError};
+use crate::patch::{InstrumentState, ModuleBuilder, ModuleState, ParamValue, Patch, PatchError};
 use crate::project::{GlobalProjectState, ProjectFile, ReturnBusEffectsState};
 
 use super::CorpusCaseId;
@@ -72,6 +72,11 @@ pub const FIXTURES: &[Fixture] = &[
         case_id: "CORPUS-0004",
         file_name: "sends-returns-master.ptz",
         build: sends_returns_master,
+    },
+    Fixture {
+        case_id: "CORPUS-0005",
+        file_name: "instrument-inserts.ptz",
+        build: instrument_inserts,
     },
 ];
 
@@ -212,6 +217,34 @@ fn add_saw_into_filter(patch: &mut Patch, cutoff_hz: f32, resonance: f32) {
     );
     patch.add_connection("osc-1", "out", "flt-1", "in");
     patch.add_connection("flt-1", "out", "amp-1", "in");
+}
+
+/// Turn off an oscillator's note-on phase randomization.
+///
+/// **The parameter defaults to full randomization** (`uni_phase`, descriptor
+/// default 1.0, and `Oscillator::unison_phase_random` is initialized to
+/// `NormalizedValue::MAX`), and `Oscillator::set_voice_index` seeds the
+/// generator from the voice index. The phase a note starts at is therefore a
+/// function of which voice the allocator handed it, deterministic but
+/// allocation-order dependent — the same class of variable this module's own
+/// header says a fixture avoids by staying away from the random-family modules.
+/// It is on in every oscillator unless a patch says otherwise.
+///
+/// A case that needs its audio to depend only on the behaviour under test calls
+/// this. It is not applied through [`add_saw_into_filter`], because the four
+/// fixtures that predate it are committed with their digests and pinned by
+/// EVD-0001 through EVD-0003; changing them is a decision for P00A-T001 rather
+/// than a side effect of adding a case.
+///
+/// Does nothing if `module_id` is not in the patch. That cannot happen from the
+/// call sites here, which pass an id they just added, and a panicking lookup has
+/// no place in library code.
+fn silence_phase_randomization(patch: &mut Patch, module_id: &str) {
+    if let Some(module) = patch.modules.iter_mut().find(|m| m.id == module_id) {
+        module
+            .parameters
+            .insert("uni_phase".to_string(), ParamValue::Float(0.0));
+    }
 }
 
 /// An instrument carrying `patch`, with every field of
@@ -512,6 +545,150 @@ fn master_compressor() -> ModuleState {
         .build()
 }
 
+// ---------------------------------------------------------------------------
+// CORPUS-0005 — instrument insert effects
+// ---------------------------------------------------------------------------
+
+/// An instrument carrying its own insert chain: distortion into delay.
+///
+/// # What this case pins that CORPUS-0004 does not
+///
+/// CORPUS-0004's effects live on a return bus and on the master, so they see a
+/// signal that has already left the instrument. An insert chain sits *inside*
+/// the instrument, between voice summing and the mixer. Four properties follow
+/// from that position rather than from either effect's DSP, and each is
+/// measured against a counterfactual in `EVD-0004` under
+/// `plans/v2/evidence/phase-00a/` — a repository path rather than a link,
+/// because rustdoc's output cannot reach outside the generated docs:
+///
+/// - **The chain runs on the summed voices, not per voice.** Rendering the dyad
+///   through the chain differs from summing two single-note renders of the same
+///   chain, which is what a per-voice chain would have produced. With only the
+///   clipper in the chain that difference is 3.1 dB below the case's own RMS,
+///   against a null control — the same construction with an empty chain — at
+///   −147 dB relative, which is floating-point rounding.
+/// - **Chain state is shared across voices.** With only the delay in the chain
+///   the difference is still 35 dB below the case's RMS, and 112 dB above the
+///   null control. Two notes can only interact inside a delay whose line they
+///   share, through the soft clip on its feedback write (`effects/delay.rs`);
+///   per-voice delay lines would land at the control.
+/// - **Chain state outlives the notes that produced it.** The delay's repeats
+///   fill the gap between the dyad and the isolated note, when every voice has
+///   been released, and run 2.3 s past the final note-off — from −14.8 dBFS at
+///   1.2 s down to −70.7 dBFS at 3.4 s, against a control with both inserts
+///   removed that is digital silence from 1.7 s on.
+/// - **The authored order is load-bearing.** Distortion into delay gives clean
+///   repeats of a clipped signal; delay into distortion clips the sum of the
+///   repeats. Reversing the two moves the render's RMS by 5.97 dB. The order
+///   lives in `patch.settings.effect_chain_order` rather than in the module
+///   list, so this case is also the one that fails if that field stops being
+///   honoured.
+///
+/// # Why this fixture turns off phase randomization
+///
+/// The first three claims are measured by comparing a chord rendered whole
+/// against its notes rendered separately and summed. That construction is only
+/// valid if the voice path itself is additive, and with the oscillator's shipped
+/// default it is not: `uni_phase` defaults to 1.0 and the generator behind it is
+/// seeded from the voice index, so the same note starts at a different phase
+/// depending on which voice the allocator handed it. A first attempt at these
+/// measurements read that as a sequencer defect and withdrew two claims over it.
+/// The null control is what exposed the mistake, and
+/// [`silence_phase_randomization`] is what removes the variable. With it off,
+/// reversing the two notes in the pattern's note list renders bit-identically.
+///
+/// Each figure above is a V1 measurement taken when the case was authored, not
+/// a tolerance: the manifest's claims are what a comparison is judged against,
+/// and these numbers exist so that a reader can tell a claim with margin from
+/// one that would survive on rounding. The recipe that produced them is in the
+/// corpus README under *Checking that a case tests what it claims*.
+///
+/// # Why the order is written out rather than left to fall out
+///
+/// V1 appends any chain module missing from `effect_chain_order` after the ones
+/// that are listed, with a warning. That recovery is fine for a user's project
+/// and wrong for a reference: the case would then pin whatever order the
+/// append happened to produce, and it would keep passing if the field were
+/// ignored entirely. Both effects are named explicitly so the order is authored
+/// data that a comparison can hold V2 to.
+fn instrument_inserts() -> ProjectFile {
+    let mut patch = Patch::new("Insert Chain");
+    // A fast, fully-decaying envelope: the sustain stage is what would otherwise
+    // mask the delay's repeats under the note that produced them.
+    add_env_amp_out(&mut patch, 0.005, 0.18, 0.0, 0.10);
+    // Brighter than CORPUS-0001's 1.2 kHz, because the clipper needs harmonics
+    // above the filter's corner to have anything to fold back down.
+    add_saw_into_filter(&mut patch, 2_400.0, 0.15);
+    silence_phase_randomization(&mut patch, "osc-1");
+    patch.add_module(distortion_insert());
+    patch.add_module(delay_insert());
+    // Distortion first. See the note above on why this is written out.
+    patch.settings.effect_chain_order = vec!["dst-1".to_string(), "dly-1".to_string()];
+
+    // A fifth held together, then one isolated short note. The dyad is what
+    // makes the chain's position and its shared state measurable — a chord is
+    // the only thing a per-voice chain would process differently — and the
+    // isolated note leaves the delay ringing in silence. With phase
+    // randomization off, the two notes' order in this list does not affect the
+    // render.
+    let notes = [
+        (0, 48, SeqDuration(720)),
+        (0, 55, SeqDuration(720)),
+        (1_920, 60, SeqDuration(240)),
+    ];
+    let (song, _) = one_pattern_song(
+        "Insert Chain",
+        InstrumentId::FIRST,
+        SeqDuration::WHOLE,
+        &notes,
+    );
+    project(
+        vec![instrument(InstrumentId::FIRST, "Insert Chain", patch)],
+        song,
+        unity_global(),
+    )
+}
+
+/// The first insert: a soft clipper at full wet.
+///
+/// Soft clip rather than bitcrush or foldback: it is the one mode whose output
+/// is a continuous function of its input, so a small V2 numeric difference stays
+/// a small audible one instead of landing on the far side of a step and turning
+/// a rounding difference into a waveform difference.
+fn distortion_insert() -> ModuleState {
+    ModuleBuilder::new(1, ModuleType::Distortion)
+        .param_choice("type", "soft_clip")
+        .param_f("drive", 0.7)
+        .param_f("tone", 0.8)
+        .param_f("mix", 1.0)
+        .position(800.0, 32.0)
+        .build()
+}
+
+/// The second insert: a mono delay whose repeats are separately visible.
+///
+/// `time_left` and `time_right` carry the delay time rather than the `time`
+/// macro, which is the parameter the module actually persists and emits — the
+/// macro exists to set both at once and is hidden from the GUI. `tempo_sync` is
+/// written out at its default of off so that the case's repeat interval is a
+/// property of the patch rather than of the song tempo; a tempo-synced delay
+/// would silently make this a tempo-map case as well.
+///
+/// 0.25 s at 120 BPM puts a repeat on every eighth note, so a repeat never lands
+/// on a note onset and the two are never confused in an envelope comparison.
+fn delay_insert() -> ModuleState {
+    ModuleBuilder::new(1, ModuleType::Delay)
+        .param_choice("mode", "mono")
+        .param_f("time_left", 0.25)
+        .param_f("time_right", 0.25)
+        .param_f("feedback", 0.45)
+        .param_f("mix", 0.5)
+        .param_f("tone", 0.4)
+        .param_f("tempo_sync", 0.0)
+        .position(960.0, 32.0)
+        .build()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -612,6 +789,124 @@ mod tests {
                 assert_ne!(a.file_name, b.file_name);
             }
         }
+    }
+
+    /// `effect_chain_order` is matched against module ids by string, and an
+    /// entry that matches nothing is dropped with a warning rather than
+    /// refused. A mistyped id would therefore leave the chain in whatever order
+    /// the append fallback produced, and every other test here would still
+    /// pass.
+    #[test]
+    fn every_fixture_chain_order_entry_names_an_effect_in_the_patch() {
+        for fixture in FIXTURES {
+            let built = (fixture.build)();
+            for instrument in &built.instruments {
+                for entry in &instrument.patch.settings.effect_chain_order {
+                    let module = instrument
+                        .patch
+                        .modules
+                        .iter()
+                        .find(|m| m.id.as_str() == entry.as_str());
+                    let Some(module) = module else {
+                        panic!(
+                            "{}: effect_chain_order names {entry:?}, which is not a module in the patch",
+                            fixture.case_id
+                        );
+                    };
+                    assert!(
+                        module.module_type.is_effect(),
+                        "{}: effect_chain_order names {entry:?}, which is a {:?} rather than an effect",
+                        fixture.case_id,
+                        module.module_type
+                    );
+                }
+            }
+        }
+    }
+
+    /// Every effect in a patch must be named in the chain order. V1 appends the
+    /// unnamed ones, so a fixture that relied on that would pin an order it did
+    /// not author — and would keep passing if `effect_chain_order` were ignored.
+    #[test]
+    fn every_fixture_names_all_of_its_effects_in_chain_order() {
+        for fixture in FIXTURES {
+            let built = (fixture.build)();
+            for instrument in &built.instruments {
+                for module in &instrument.patch.modules {
+                    if !module.module_type.is_effect() {
+                        continue;
+                    }
+                    assert!(
+                        instrument
+                            .patch
+                            .settings
+                            .effect_chain_order
+                            .iter()
+                            .any(|entry| entry.as_str() == module.id.as_str()),
+                        "{}: effect {} is absent from effect_chain_order, so its position \
+                         would come from V1's append fallback rather than from the fixture",
+                        fixture.case_id,
+                        module.id
+                    );
+                }
+            }
+        }
+    }
+
+    /// The insert case's three claims each depend on a property of the fixture
+    /// rather than of the effects: two inserts in an authored order, a dyad to
+    /// make the summing position observable, and an isolated note for the
+    /// delay to ring out after.
+    #[test]
+    fn the_insert_fixture_carries_an_ordered_chain_a_dyad_and_an_isolated_note() {
+        let built = instrument_inserts();
+        let patch = &built.instruments[0].patch;
+
+        assert_eq!(
+            patch.settings.effect_chain_order,
+            vec!["dst-1".to_string(), "dly-1".to_string()],
+            "the chain order is the thing this case pins"
+        );
+
+        let starts: Vec<u32> = built
+            .song
+            .patterns()
+            .flat_map(|pattern| pattern.notes().iter().map(|note| note.start.0))
+            .collect();
+        assert_eq!(
+            starts.iter().filter(|start| **start == 0).count(),
+            2,
+            "the dyad is what makes summing-before-the-chain observable"
+        );
+        let last = starts.iter().copied().max().unwrap_or(0);
+        assert_eq!(
+            starts.iter().filter(|start| **start == last).count(),
+            1,
+            "the final note must be alone for the delay to ring out into silence"
+        );
+    }
+
+    /// Three of CORPUS-0005's four claims are measured by comparing a chord
+    /// rendered whole against its notes rendered separately and summed, and that
+    /// construction is only valid while the voice path is additive. With the
+    /// oscillator's shipped `uni_phase` default it is not, and the null control
+    /// that would catch it lives in an evidence record rather than in CI — so
+    /// dropping this parameter would silently invalidate the claims and every
+    /// other test here would still pass.
+    #[test]
+    fn the_insert_fixture_disables_oscillator_phase_randomization() {
+        let built = instrument_inserts();
+        let osc = built.instruments[0]
+            .patch
+            .modules
+            .iter()
+            .find(|m| m.id == "osc-1")
+            .expect("the insert fixture has an oscillator");
+        assert_eq!(
+            osc.parameters.get("uni_phase"),
+            Some(&ParamValue::Float(0.0)),
+            "uni_phase must be pinned to 0; the shipped default randomizes phase per voice index"
+        );
     }
 
     /// The stealing case only tests stealing if the arrangement actually asks

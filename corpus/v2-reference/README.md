@@ -120,7 +120,52 @@ things.
 2. Add the case to `manifest.json` with a zeroed `sha256`, and remove the
    matching entry from `planned` if the category was listed there.
 3. Run the generator, then `cargo test -p pertylizer --test corpus_manifest`.
+4. Check that the case distinguishes what it claims — see below.
 
 A case that points at an existing project instead of a generated fixture needs
 only steps 2 and 3 — the generator refreshes its digest and leaves the file
 alone.
+
+## Checking that a case tests what it claims
+
+Steps 1 to 3 prove the case is *well formed*. They cannot tell whether it is
+**vacuous**: a fixture that renders plausible audio while exercising none of the
+behaviour its claims name passes every one of them. That is not hypothetical
+here — CORPUS-0002 was written to force voice stealing and, before the offline
+renderer replayed allocator settings, rendered with the default eight voices and
+stole nothing. Every test still passed.
+
+So each `preserve` claim needs a render that would come out differently if the
+behaviour were absent. Build the *counterfactual* as a project variant, render
+both, and compare:
+
+```bash
+# The claim: the insert chain runs in the authored order (CORPUS-0005-P3).
+# The counterfactual: the same two modules, order reversed.
+cargo run --release -- compare \
+  --reference /tmp/authored.wav --candidate /tmp/reversed.wav \
+  --result-json /tmp/order.json
+```
+
+**Run the null control too**, and run it first. A counterfactual is only worth
+its number if the same construction applied to a project with the behaviour
+*absent* measures nothing. EVD-0004 is the cautionary case: it modelled a
+per-voice effect chain by rendering each note alone and summing the results, and
+got a clean-looking figure. The same construction on a project with **no effects
+at all** produced a difference of the same size — so the figure meant nothing,
+and two claims were withdrawn over a defect that was not there.
+
+The cause was a default parameter three modules away: `Oscillator`'s `uni_phase`
+defaults to full randomization and is seeded from the voice index, so a note
+starts at a different phase depending on which voice the allocator hands it. A
+solo render uses voice 0; the second note of a chord does not. With `uni_phase`
+set to 0 the control drops from −1.4 dB to −147 dB, the construction becomes
+valid, and both claims come back stronger. **A control that fails is telling you
+about your fixture, not about the engine.**
+
+Record the resulting figure in the claim. A claim that survives on 0.2 dB is
+worth knowing about before a V2 comparison is judged against it — and a claim
+whose counterfactual measures zero is a claim the case does not actually test.
+
+Two renders of the same input in separate processes must also produce the same
+receipt digest, which is what the case's `determinism` field asserts.
