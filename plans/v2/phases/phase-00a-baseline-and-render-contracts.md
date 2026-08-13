@@ -54,7 +54,7 @@ acceptance condition.
 | P00A-T001 | Define the reference V1 corpus and preserve/change manifest | Active      | None                 | [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md) |
 | P00A-T002 | Define the comparison result model and headless command     | Complete    | P00A-T001            | [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md) |
 | P00A-T003 | Capture V1 CPU, memory, timing, and determinism baselines   | Complete    | P00A-T001            | [EVD-0003](../evidence/phase-00a/EVD-0003-cpu-memory-timing-baseline.md), with EVD-0001 and EVD-0002 |
-| P00A-T004 | Complete the fixed-limit and overflow audit                 | Active      | None                 | [Resource inventory](../inventories/resource-limits.md) |
+| P00A-T004 | Complete the fixed-limit and overflow audit                 | Complete    | None                 | [Resource inventory](../inventories/resource-limits.md) |
 | P00A-T005 | Define the initial HostProfile and RenderLimits contract    | Not started | P00A-T004            | Future specification/ADRs                               |
 | P00A-T006 | Satisfy every entry in the required-decisions table         | Complete    | P00A-T003/P00A-T004  | [Decision register](../ADR.md)                          |
 | P00A-T007 | Prepare the formal Phase 0A exit review                     | Not started | All applicable tasks | Future `REV-P00A`                                       |
@@ -96,45 +96,37 @@ evidence. Both are now written on those terms, so no other deferral is in play.
   corpus contains, and waiting for an AudioScript case would block a measurement that is otherwise ready. The two are
   independent, and the gap entry now says so.
 
-**P00A-T004 — Complete the fixed-limit and overflow audit.**
-
-- **Scope.** Populate the [resource inventory](../inventories/resource-limits.md) with every fixed cap, truncation
-  point, bounded queue, buffer capacity, and script budget in the workspace, each with its enforcement site and — where
-  the enforcing code was read — its overflow behavior.
-- **Non-goals.** Proposing V2 admission rules (that is P00A-T005 and ADR-0021), measuring anything (that is P00A-T003),
-  and changing any current limit.
-- **Related identifiers.** `LIMIT-0001`..`LIMIT-0074`; ADR-0001, ADR-0021, ADR-0008, ADR-0022.
-- **Expected output.** A ledger whose per-entry blanks are honest "not yet investigated" markers, plus a recorded audit
-  method a second pass can rerun and diff.
-- **Verification.** Re-running the recorded search at a later revision must not surface a constant absent from the
-  ledger. Not yet performed.
-- **State after pass 2 (`dd69b657`).** 74 entries. All six required areas pass 1 could not reach are answered, both
-  unnumbered families have identifiers, and the two entries that gate this phase are resolved:
-    - `LIMIT-0001` — a block above `MAX_BLOCK_SIZE` silently drops the audio-input tail *and* reallocates a voice buffer
-      on the audio thread. Not reachable through the app's own configuration, because the requested buffer size is
-      hardcoded to at most 1024 (`LIMIT-0057`) — but the callback's frame count is recomputed from what the host
-      actually delivers, so a host that ignores the request reaches it. The RT-allocation regression test covers up to
-      1024 frames only.
-    - `LIMIT-0028` — **not a conflict.** The two constants bound two unrelated features (the shared choir sub-voice bank
-      and the classic oscillator's unison spread), and both are array lengths, so neither can be exceeded. A
-      silent-truncation register is now compiled: five sites, of which only the event-drop counters have a diagnostic.
-      That is the specific input this phase's exit gate needs from ADR-0021.
-- **Remaining before the gate.** Two things, neither of which is more searching. First, accepted ADR-0021 unblocks the
-  class sweep: it assigns each entry one of six failure classes *and* one of seven configuration owners, and every
-  `Unknown`-class entry must reach a terminal class. Second, confirming that no
-  *undocumented* silent truncation exists needs an executable probe (oversized blocks, >128 metered channels, >32 rack
-  stages) — and no value in this ledger has been measured, only read.
-- **Status-vocabulary correction (review follow-up).** Entries were marked `Classified` once their value, site, and
-  overflow behavior were established. The [register vocabulary](../inventories/README.md) reserves `Classified` for
-  required fields *and* disposition filled with supporting evidence, and this ledger's disposition is
-  `Proposed V2 rule`, which was blank pending ADR-0021. All such statuses are downgraded to `Investigating`, and the
-  ledger now states the rule inline. `LIMIT-0067` also carried two ADR owners; it is now ADR-0021 alone, matching the
-  silent-truncation register. Entries remain `Investigating` until the class sweep records rules and evidence.
-- **Implementation revision.** Documentation only; no code changed.
-
 ## Completed tasks
 
 Kept here rather than deleted: the exit review has to be able to see how a completed gate item was satisfied.
+
+**P00A-T004 — Complete the fixed-limit and overflow audit.**
+
+- **Scope.** Populate the [resource inventory](../inventories/resource-limits.md) with every fixed cap, truncation
+  point, bounded queue, buffer capacity, and script budget in the workspace, each with its enforcement site, its
+  overflow behavior, a proposed V2 rule, and a diagnostic.
+- **State.** Complete. Three passes: two discovery passes with opposite blind spots at `dd69b657`, and a third
+  classification pass at `b435887c` that applied accepted ADR-0021 to all 74 entries. Every entry now carries a terminal
+  failure class, one of the seven configuration owners, a rule, and a diagnostic. **No entry is `Unknown`** — the 19
+  that were are resolved.
+- **What the owner axis showed.** 30 entries are `HostProfile`, and 44 are not: 12 node contracts, 7 protocol, 7
+  application settings, 7 removed outright, 6 domain/format, 5 job policy. A single-axis model — the one the first
+  revision of ADR-0021 was accepted with and then had withdrawn — would have put those 44 into a render-preparation
+  input they have nothing to do with. The split paid for itself on its first application.
+- **Classifying found a sixth silent-truncation site that neither search did.** `LIMIT-0004`: the render command accepts
+  up to 384 kHz while `SampleRate::MAX_SUPPORTED` — the ceiling real-time look-ahead buffers size themselves from — is
+  192 kHz, and `SampleRate::new` validates only positivity. The limiter's ring is sized `0.005 × 192 000` and its
+  request is clamped to it, so a 384 kHz render silently delivers half the look-ahead the parameter advertises. Nothing
+  is unsafe; the audio is simply not what was asked for, with no diagnostic. It does **not** trigger ADR-0021's revisit
+  condition, because a class rule covers it — what was incomplete is the register, not the taxonomy.
+- **What `Classified` does not mean here.** The supporting evidence for every disposition is an accepted decision, not a
+  measurement. **No value in the ledger has been measured.** A classified row says what happens when the limit is
+  exceeded and who owns the number; it does not claim the number is right. That stays with each owner — P00A-T005 for
+  `HostProfile`, the relevant contract or ADR for the other six.
+- **What remains open, and is not this task's.** The executable probe ADR-0021 lists as follow-up — oversized blocks,
+  more than 128 metered channels, more than 32 rack stages — which is the only thing that can close the completeness
+  question all three passes record about themselves. `LIMIT-0004` is now the third argument for it.
+- **Implementation revision.** Documentation only; no code changed. The `LIMIT-0004` finding is recorded, not fixed.
 
 **P00A-T003 — Capture V1 CPU, memory, timing, and determinism baselines.**
 
@@ -316,7 +308,7 @@ something.
 | P00A-T001 | [Corpus manifest](../../../corpus/v2-reference/manifest.json) and four generated fixtures; four of eleven categories covered, seven recorded as gaps | The manifest is loaded and validated by `cargo test -p pertylizer --test corpus_manifest`: category coverage, claim classes, digests, and the fact that each committed project is exactly what its builder produces | Partial — format and validation done, four of eleven categories exercised |
 | P00A-T002 | `pertylizer compare` and the versioned report model                                   | Each metric unit-tested against a synthetic signal with a known deviation (6.02 dB of gain, 100 ms of delay, a semitone of detune, a band-limited change, an inverted channel); end-to-end through render→render→compare in `compare_command.rs` | Complete — runs with no GUI and no audio device |
 | P00A-T003 | [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md), [EVD-0002](../evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md), and [EVD-0003](../evidence/phase-00a/EVD-0003-cpu-memory-timing-baseline.md) | Two process-separate renders per case, bit-identical on all four, every comparison delta exactly zero, with a two-case control that resolves their octave to 3.6 cents; 8 640 timed renders giving the cost-versus-block-size curve; and 1 700 renders over four sample rates, seven voice counts, and 15 timing/memory profiles per operating point | Complete for the four categories that exist — CPU, memory, timing, and determinism all measured, with real-time headroom explicitly out of scope |
-| P00A-T004 | [Resource inventory](../inventories/resource-limits.md) passes 1 and 2 at `dd69b657`                                                                                   | Two independent discovery methods with opposite blind spots: pass 1 matched constant names, pass 2 matched documented truncation behavior. Neither executes anything, so a truncation that is both unnamed and undocumented would still be missed        | Partial — source-read only, no measurement   |
+| P00A-T004 | [Resource inventory](../inventories/resource-limits.md) passes 1-2 at `dd69b657` and the classification pass at `b435887c` | Two independent discovery methods with opposite blind spots — pass 1 matched constant names, pass 2 matched documented truncation behavior — then a third pass applying accepted ADR-0021 to all 74 entries: terminal class, owner, rule, and diagnostic each citing the clause that supports it. Classifying found a sixth silent-truncation site the searches missed. Neither search executes anything, so a truncation that is both unnamed and undocumented would still be missed | Complete — every entry classified and disposed; no value measured, and the completeness probe remains ADR-0021 follow-up work |
 | P00A-T006 | [ADR-0001](../decisions/ADR-0001-internal-render-quantum.md), [ADR-0021](../decisions/ADR-0021-host-profile-and-admission-policy.md), [ADR-0037](../decisions/ADR-0037-render-quantum-value.md), and [ADR-0032](../decisions/ADR-0032-sample-time-and-event-timestamps.md) `Accepted` | Three review passes resolved the buffering, event, retention, ownership, host-fault, and measurement-boundary defects before the first two were accepted. ADR-0037 was accepted on EVD-0002 by applying the rule table it fixed before the data existed; the outcome was rule 1, so its value is provisional and binds Phase 2. ADR-0032 took three passes: an author pass, an independent pass that withdrew its acceptance over a tempo map producing engine times, a `HostProfile` horizon with no semantics, a pre-epoch clamp contradicting ADR-0001 clause 16, undefined exhaustion, and a reusable epoch identifier, and a bounded closure pass that caught the forward horizon rejecting a compiled song and fixed the order of the compile-anchor-stamp-enqueue path. ADR-0022 and ADR-0028 are `Deferred` to the Phase 3 and Phase 4 entry gates, each with an owner, its missing evidence, and constraints that hold while it is open | Complete — four accepted records and two written deferrals satisfy every row |
 
 ## Deviations

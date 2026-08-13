@@ -97,6 +97,20 @@ gate Phase 10, not Phase 1.
   read the enforcing code, which resolved every gate-blocking question and **disproved three pass-1 hypotheses** — those
   are corrected in place rather than appended. Each ledger records both methods and what each is blind to; none is
   `Current`.
+- **The [resource ledger](inventories/resource-limits.md) has had a third pass, and P00A-T004 is `Complete`.** All 74
+  entries carry a terminal failure class, one of ADR-0021's seven configuration owners, a proposed V2 rule, and a
+  diagnostic; no entry is `Unknown`. The owner axis is where the interest is: **30 entries are `HostProfile` and 44 are
+  not** — 12 node contracts, 7 protocol, 7 application settings, 7 removed outright, 6 domain/format, 5 job policy. The
+  single-axis model ADR-0021 was first accepted with, and then had withdrawn, would have put those 44 in a
+  render-preparation input they have nothing to do with.
+- **Classifying found a silent truncation that neither search pass did.** `LIMIT-0004`: the render command accepts up to
+  384 kHz while `SampleRate::MAX_SUPPORTED` — the ceiling real-time look-ahead buffers size themselves from — is
+  192 kHz, and `SampleRate::new` validates only positivity. A 384 kHz render therefore gets half the limiter look-ahead
+  its parameter advertises, silently. It is the sixth entry in the silent-truncation register and does **not** trigger
+  ADR-0021's revisit condition, because a class rule covers it: what was incomplete is the register, not the taxonomy.
+  It is recorded, not fixed.
+- **`Classified` in that ledger means disposed, not measured.** The supporting evidence for every rule is an accepted
+  decision. No value in the ledger has been measured, and setting numbers stays with each owner.
 - **Phase 0A now has something executable.** P00A-T002 is **complete**:
   `pertylizer compare` measures how two renders differ, with no GUI and no audio device.
   P00A-T001 is **still `Active`** — its infrastructure is done, its coverage is not.
@@ -128,36 +142,34 @@ gate Phase 10, not Phase 1.
   oversampling, velocity sensitivities, and the sidechain source were silently defaulted. It affected every consumer of
   the offline renderer, not only the corpus — the `analyze_*` tools and the WAV export measured audio the live engine
   never produced. It is the third instance of an offline reader disagreeing with the live engine while looking healthy.
-- Phase 0A is **not** complete: P00A-T001 covers four of eleven corpus categories, P00A-T004's class sweep is
-  unstarted, P00A-T005 has not begun, and no exit review exists. Four of seven tasks are now `Complete`. No code
-  has been written for V2 itself.
+- Phase 0A is **not** complete: P00A-T001 covers four of eleven corpus categories, P00A-T005 has not begun, and no
+  exit review exists. **Five of seven tasks are `Complete`**; the two open ones are corpus coverage and the
+  `HostProfile` contract. No code has been written for V2 itself.
 - V2 implementation status must be established from repository evidence before this dashboard makes code-level
   completion claims.
 
 ## Next actions
 
-The decision half of Phase 0A is done, and so is its measurement half: P00A-T003 and P00A-T006 are `Complete`.
-What is left is coverage — corpus categories, the resource-limit class sweep, and the `HostProfile` contract
-that now has measured figures to be built on.
+Five of Phase 0A's seven tasks are `Complete`: the contracts, the measurements, and the limit audit. What is left is
+the `HostProfile` contract those three now feed, corpus coverage, and the exit review.
 
-1. **Sweep all 74 resource-inventory entries** under accepted ADR-0021, assigning both axes — one of six failure
-   classes and one of seven configuration owners — plus the rule and diagnostic. Every `Unknown`-class entry must reach
-   a terminal class. It is the last gate item that is pure desk work.
-2. **Start P00A-T005**, the `HostProfile`/`RenderLimits` contract. EVD-0003 hands it three figures it would otherwise
+1. **Start P00A-T005**, the `HostProfile`/`RenderLimits` contract. EVD-0003 hands it three figures it would otherwise
    have guessed: the per-voice slope, per-block cost against budget, and the prepared-memory scale. It also owns
    ADR-0032's forward event horizon.
-3. **Open ADR-0014.** The identity ledger's central finding is that the module id encodes its type at *runtime*
+2. **Open ADR-0014.** The identity ledger's central finding is that the module id encodes its type at *runtime*
    (`IDN-0029`), not merely on disk, and that a module's script PRNG seed is derived from its instance number — so
    renumbering is audible, not just referential.
-4. **Write the first round-trip fixture (P00B-T005) for `STATE-0004`** — changing the focused instrument changes the
+3. **Write the first round-trip fixture (P00B-T005) for `STATE-0004`** — changing the focused instrument changes the
    saved file while no dirty term observes it. It is the cheapest executable check the ledgers produced.
-5. **Add corpus cases as their blockers clear.** Instrument inserts need nothing and are the cheapest; the sampler case
+4. **Add corpus cases as their blockers clear.** Instrument inserts need nothing and are the cheapest; the sampler case
    waits on the bundle round-trip fixtures, the shared-instrument case on ADR-0014, and the tempo-map case on whether a
    ramp's event positions fall under the sample-timing correction — still open, since ADR-0032 fixed only that the
    conversion is rounded once and stays platform-independent, leaving the ramp law itself to Phase 3. EVD-0002 raised
    the stakes on this: the corpus's category mix, not only its size, now demonstrably moves a measured result.
-6. **Record both audit passes as `EVD` records** so the ledgers' claims are reproducible rather than asserted. No value
-   in the resource ledger has been measured; all of them are read from source.
+5. **Record the inventory audit passes as `EVD` records** so the ledgers' claims are reproducible rather than
+   asserted, and run ADR-0021's executable truncation probe — oversized blocks, more than 128 metered channels, more
+   than 32 rack stages. `LIMIT-0004` is the third argument for it: three passes have now each found something the
+   previous method could not see.
 
 ## Documentation-workflow review notes
 
