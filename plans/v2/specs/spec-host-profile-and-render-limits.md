@@ -20,10 +20,10 @@ findings, two High), and a bounded closure pass over those corrections (four fin
 finding is corrected here. [*Review status*](#review-status) keeps the record of what each pass found and what
 correcting it changed; that record is the argument for the remaining step, not decoration.
 
-What remains is a **confirmation read of the three changes the closure pass itself introduced**: a new
-capacity-deferral counter, a derived floor under the forward horizon, and a derived retirement budget. Every pass in
-this phase that reviewed a correction has found something in the correction — four times running now — and these three
-are where new semantics entered last.
+**A fourth pass — the confirmation read of the closure pass's own three changes — has now run and found two more**, and
+they are corrected too. What remains is one **independent** read. Of the four passes so far only one was independent,
+and every pass has found something; the criterion for stopping is therefore not "a pass finds nothing" but "a pass that
+changes no contract clause", which this one does not meet. See [*Review status*](#review-status).
 
 Fields owned by decisions that are still `Proposed` — ADR-0002, ADR-0009, ADR-0024, ADR-0027, and ADR-0034 — are marked
 in the field tables and listed under [*Unresolved questions*](#unresolved-questions). None of them blocks Phase 1. The
@@ -195,6 +195,13 @@ open owner is a starting point recorded honestly, not a rule invented here.
     precedence. Deferral moves an event because a bounded resource is full, which ADR-0001 clause 16 already
     establishes as legitimate, and it never reorders two events to express priority. A reader arriving from clause 23
     should find that stated rather than have to derive it.
+
+    **The two counters count causes, not events, and one event may raise both.** An event that arrives late is clamped
+    forward under clause 16 and raises the late counter; if the quantum it is clamped into is itself full, it is then
+    deferred and raises the deferral counter as well. That is correct — two distinct things happened to it — but it
+    means the counters may not be added to obtain a number of affected events, and a diagnostics consumer that sums
+    them overcounts. Each counter answers one question: *how often was a producer late*, and *how often was the engine
+    full*.
 
 ## Types and ownership
 
@@ -417,11 +424,21 @@ recorded here so the entry's closure has a visible successor.
 |-------|------|---------|-------|----------|---------|
 | `max_events_per_quantum` | `EventCount` | 256 | V1 carry-over (the engine event scratch) | `LIMIT-0014` | Phase 3 |
 | `max_note_expansion_per_tick` | `EventCount` | 128 | V1 carry-over. Admitted against `max_events_per_quantum` where the expansion is statically knowable, and covered by HOST-INV-021 where it is not — see below. Part 2 forbids trimming an expansion to fit | `LIMIT-0043` | Phase 3 |
-| `max_scheduled_events_in_flight` | `EventCount` | 4 096 | Chosen. Bounds the scheduler's release window under ADR-0032 clause 27; V1 has no antecedent because it has no scheduler | — | Phase 3 |
+| `max_scheduled_events_in_flight` | `EventCount` | 4 096 | Chosen. Bounds the scheduler's release window under ADR-0032 clause 27; **self-limiting** — see below. V1 has no antecedent because it has no scheduler | — | Phase 3 |
 | `forward_event_horizon` | `FrameCount` | `max(one second at the prepared rate, maximum_block_size + Q)` | Chosen, with a derived floor — see below | — | Phase 3 entry (ADR-0022) |
 | `command_queue_capacity` | `EventCount` | 16 384 | V1 carry-over. **Live bounded queue** | `LIMIT-0012` | Phase 9 |
 | `event_queue_capacity` (critical / high / normal / low) | `EventCount` x 4 | 256 / 256 / 512 / 2 048 | V1 carry-over. **Live bounded queue** | `LIMIT-0013` | Phase 3 |
 | return scratch capacity | `EventCount` | 256 | V1 carry-over; admitted against the mixing budget | `LIMIT-0015` | Phase 8 |
+
+**The release window is self-limiting, and the confirmation read is why that is written down.** Nothing exceeds
+`max_scheduled_events_in_flight` from outside: the scheduler owns its own release rate and releases at most that many
+compiled events at a time. Reaching it therefore delays a release rather than failing one, and nothing is lost — the
+events are still in the plan. What it degrades into, when a passage genuinely has more events due than the window
+holds, is lateness: the scheduler falls behind, and the events it releases late are counted by ADR-0001 clause 16 like
+any other late event. That is the field's failure behaviour, and the first draft of this section stated none — the
+third field in this specification to be enforced at runtime with no defined behaviour on reaching it, after the
+recording capacities and the retirement budget. The shape recurs often enough to be worth naming: **a field whose
+bound is a runtime quantity needs its behaviour written even when the answer turns out to be "it cannot bind".**
 
 **More events can be due in one quantum than the scratch admits, and that case has a rule now.** The four ingress
 queues hold 3 072 events between them while `max_events_per_quantum` is 256, so the queues alone can present more work
@@ -747,7 +764,7 @@ exist, in the phase that builds the thing it tests.
 | HOST-INV-018 | Every profile field's type has a private field and a fallible constructor; no field is a bare primitive, and `HeldNoteCount` does not convert to or from `VoiceCount` | 1 |
 | HOST-INV-019 | The telemetry ring is overrun and the reader can distinguish a complete window from an overwritten one | 5 |
 | HOST-INV-020 | A take reaching each recording capacity stops, is counted, and keeps every event recorded before the stop; no note is dropped and no earlier note is overwritten | 9 |
-| HOST-INV-021 | A quantum is presented with more due events than it admits: the excess renders one quantum later, no event is lost, and a compiled event is never displaced by an ingress one. **Two counters, asserted separately** — the capacity-deferral counter rises by exactly the deferred count and the late counter does not move at all; and the mirror case, an event that is genuinely late, moves the late counter and not the deferral counter. ADR-0032 clause 22 is the precedent for why one test would pass on the wrong policy | 3 |
+| HOST-INV-021 | A quantum is presented with more due events than it admits: the excess renders one quantum later, no event is lost, and a compiled event is never displaced by an ingress one. **Two counters, asserted separately** — the capacity-deferral counter rises by exactly the deferred count and the late counter does not move at all; and the mirror case, an event that is genuinely late, moves the late counter and not the deferral counter. ADR-0032 clause 22 is the precedent for why one test would pass on the wrong policy. A third case covers an event that is **both** late and deferred, asserting each counter rises exactly once | 3 |
 | HOST-INV-020, and the retirement budget | A plan swap with `max_active_voices` sounding retires every voice with a crossfade and refuses none, so `max_concurrent_retiring_voices` cannot bind at its derived default | 9 |
 
 ## Unresolved questions
@@ -760,7 +777,7 @@ exist, in the phase that builds the thing it tests.
 | Recording take and commit semantics, which may change what a "recorded event" is | No | ADR-0024, Phase 9 |
 | What a send is, which may change whether `max_sends_per_channel` is per channel or per bus | No | ADR-0034, Phase 8 |
 | The script-work aggregate's threshold, which needs a measured per-instruction cost before it can become a `RenderLimits` field rather than a reported quantity | No — the `ResourceReport` carries the quantity meanwhile | Phase 7 |
-| Whether HOST-INV-021's deferral can starve a low-priority event under sustained overrun, and whether a starvation bound is needed beside the capacity-deferral counter. Compiled events take precedence unconditionally, so a dense plan plus steady ingress is the case to reason about | No — nothing is lost, only delayed, and the deferral counter makes the condition visible | ADR-0003, ADR-0023, Phase 3 |
+| Whether HOST-INV-021's deferral can starve a low-priority event under sustained overrun. Compiled events take precedence **unconditionally**, so a plan that saturates `max_events_per_quantum` every quantum defers ingress indefinitely. The confirmation read sharpened this: the fix is probably not a starvation bound but a *reserved ingress allowance* the scheduler leaves free under ADR-0032 clause 27, which turns unbounded starvation into a declared budget — that is new design, and Phase 3 owns it | No — nothing is lost, only delayed, and the deferral counter makes the condition visible | ADR-0003, ADR-0023, Phase 3 |
 | Whether `max_nodes` should be anchored independently rather than computed from `max_active_voices`, which is itself only measurement-anchored | No | Phase 2 exit |
 | Whether `max_mix_channels` and `max_observation_taps` should be coupled so that every mix channel is guaranteed a tap | No — the report names which budget bound the plan | ADR-0027, Phase 8 |
 | Where a profile is stored and who may edit it — application settings, host configuration, or neither | No — Phase 1 constructs it in code | ADR-0013, ADR-0029, Phase 10A |
@@ -805,17 +822,28 @@ script-driven note graph's expansion is not statically knowable — HOST-INV-021
 `::declared`'s `DeclaredSource` was a dangling type name in a normative interface, now declared, with `Device` absent by
 construction so a declared profile cannot claim to have queried a device.
 
-**Status after three passes.** The specification has had an author pass, an independent pass (five findings, two High),
-and this closure pass (four findings, one substantive). It stays `Draft` for one reason only: the closure pass added
-semantics of its own — a new counter, a derived horizon floor, a derived retirement budget — and this project's record
-says that is exactly where the next defect lives. What it needs is not a fourth full pass but a **confirmation read of
-those three changes**, after which it can be promoted to `Current` and P00A-T005 closed. Specifically:
+**A confirmation read of those three changes has now run, and found two more.** Neither is in the three changes
+themselves, which is worth noting — both are things the closure pass's corrections made visible rather than caused.
 
-- that the capacity-deferral counter and ADR-0001 clause 16's late counter partition the cases between them, with no
-  event counted twice and none counted under neither;
-- that HOST-INV-021's deferral cannot starve a low-priority event under sustained overrun — the one question these
-  corrections raised and did not answer, now listed under [*Unresolved questions*](#unresolved-questions);
-- that deriving `max_concurrent_retiring_voices` does not leave ADR-0009 without a field to lower.
+| Finding | Correction |
+|---------|------------|
+| **The two counters were implied to partition the cases, and they do not.** An event that arrives late is clamped forward and raises the late counter; if the quantum it lands in is full it is then deferred and raises the deferral counter as well. Both firings are correct, but a diagnostics consumer that adds them to count affected events overcounts | HOST-INV-021 now states that the counters count *causes*, not events, and that one event may raise both. The conformance row gains a third case asserting each counter rises exactly once for an event that is both |
+| **`max_scheduled_events_in_flight` had no defined behaviour on reaching it** — the third field in this specification enforced at runtime with none, after the recording capacities and the retirement budget | It is self-limiting: the scheduler owns its release rate, so reaching the window delays a release rather than failing one, and a passage with more events due than the window holds degrades into ordinary lateness under ADR-0001 clause 16. Written down, with the recurring shape named: a field whose bound is a runtime quantity needs its behaviour stated even when the answer is "it cannot bind" |
+
+The read also sharpened, without resolving, the one question the closure pass left open. Compiled events take precedence
+**unconditionally**, so a plan that saturates `max_events_per_quantum` every quantum defers ingress forever. The likely
+fix is not a starvation bound but a *reserved ingress allowance* the scheduler leaves free under ADR-0032 clause 27 —
+which is new design, and Phase 3's.
+
+**Status after four passes.** Author, independent (five findings, two High), bounded closure (four, one substantive),
+and confirmation (two). Every finding is corrected here.
+
+**On when to stop.** Each pass has found something, and on this evidence the next one would too — so "a pass finds
+nothing" is not a criterion that will ever be met, and treating it as one would keep this `Draft` forever. The
+criterion used instead: **a pass that changes no contract clause.** The confirmation read does not meet it — defining a
+failure behaviour for `max_scheduled_events_in_flight` is a clause — so this specification stays `Draft` for one more
+independent read, and it should be an *independent* one rather than a fifth pass by its author. Of the four so far,
+only one was.
 
 The standing checks from the previous pass remain, and none was disturbed by these corrections:
 

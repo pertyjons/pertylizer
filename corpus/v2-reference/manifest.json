@@ -8,7 +8,7 @@
       "category": "subtractive-voice",
       "purpose": "The minimal render path: one oscillator through one static low-pass into an envelope-gated amplifier, played as four separated notes so each note-on is an isolated onset and each note-off an isolated release.",
       "input": "projects/subtractive-voice.ptz",
-      "sha256": "d3fd763fddd3a373d83548d25d89087e864584e9000128497d73f2c7cdbca85d",
+      "sha256": "ef5f77d2fb8081563b9cef2a10783bfaf493ca02fbc95d977307e84d9953a7d3",
       "render": {
         "sample_rate": 44100,
         "bit_depth": "32f",
@@ -49,7 +49,7 @@
       "category": "polyphonic-voice-stealing",
       "purpose": "Eight overlapping sustained notes against a four-voice instrument, so the allocator has to steal four times inside the rendered window and the release tail of each stolen voice is cut short.",
       "input": "projects/polyphonic-voice-stealing.ptz",
-      "sha256": "539c71be4e7fa74d15f9ffa9a52c40c84499dc24a3d50fc990b1cfefe7681449",
+      "sha256": "84894bb855d412d7ca2327290f36822910f56e08c304a111ac1a53ce1baec69e",
       "render": {
         "sample_rate": 44100,
         "bit_depth": "32f",
@@ -82,7 +82,7 @@
       "category": "mod-matrix-patch",
       "purpose": "One Mod Matrix slot carrying an LFO to the filter cutoff, with no patch cable to the cutoff CV port, so the sweep can only come through the matrix path.",
       "input": "projects/mod-matrix.ptz",
-      "sha256": "baeff623168808cbd078ffe3587e87a0687a058acb1f67bb536e45df3b41b5e5",
+      "sha256": "8c1aec966220c4d564d6308f9a7448af6fe2dad91f755f3ba2f94e25d6fcdfef",
       "render": {
         "sample_rate": 44100,
         "bit_depth": "32f",
@@ -118,7 +118,7 @@
       "category": "sends-returns-master",
       "purpose": "Three paths the voice cases never touch: a post-fader track send, a return bus running its own fully-wet effect chain, and a master chain applied to the summed mix. Short repeated notes make the send's contribution and the compressor's recovery separately visible.",
       "input": "projects/sends-returns-master.ptz",
-      "sha256": "6e0cba6438a230b5f788fc3a1f4bb0b446e9792ef408e86a2c5f6c0ac090d07d",
+      "sha256": "acc070732534c86d3d7972e3be091f9e7455fa81455b61044ba63726c937c878",
       "render": {
         "sample_rate": 44100,
         "bit_depth": "32f",

@@ -73,6 +73,7 @@
             },
             "parameters": {
               "level": 1.0,
+              "uni_phase": 0.0,
               "waveform": "sawtooth"
             }
           },

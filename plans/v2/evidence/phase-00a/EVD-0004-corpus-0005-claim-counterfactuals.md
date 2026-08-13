@@ -12,9 +12,10 @@
 | Superseded by | —                                          |
 
 Permanent for two reasons. It is the only record that CORPUS-0005 tests what it
-says it tests, and it carries the reason the corpus's four earlier fixtures
-render with a variable none of them intends: the oscillator randomizes phase on
-note-on by default, seeded from the voice index.
+says it tests, and it is where the corpus-wide consequence was found: the
+oscillator randomizes phase on every note-on by default, from a generator seeded
+by the voice index, so every fixture pinned a variable none of them intends.
+P00A-T001 has since turned it off in all five.
 
 ## Question or hypothesis
 
@@ -185,17 +186,23 @@ is not that null controls are prudent — it is that a null control is the only
 thing that distinguishes a measurement from an artifact, and that a default
 parameter three modules away can be the artifact.
 
-**The other four fixtures still render with phase randomization on.** They are
-committed, digested, and pinned by EVD-0001 through EVD-0003, so this record
-does not change them. But the module header in `corpus/fixtures.rs` says
-fixtures avoid the random-family modules precisely because voice-allocation
-order is "one variable too many for a baseline" — and every one of them carries
-that variable through its oscillator. Their determinism is unaffected: the seed
-is the voice index, so a render repeats exactly. What is affected is that their
-audio depends on which voice took which note, which is a property none of them
-means to pin. **Whether to regenerate them is P00A-T001's decision**, and it is
-not free: it changes four digests and invalidates the baselines taken against
-them.
+**The other four fixtures carried the same default, and P00A-T001 has since
+turned it off in all five.** The generator is not only seeded by voice index —
+`next_unit` advances it, so every note-on draws a fresh phase. Each fixture
+therefore pinned a phase *sequence* that depends on which voice took which note
+and on how many note-ons preceded it, which is the variable the module header in
+`corpus/fixtures.rs` says a fixture avoids. A V2 with an equivalent but
+differently-indexed allocator would change it without changing any behaviour a
+case claims.
+
+The change cost four committed digests. EVD-0001 records the superseded input
+digests in full and re-asks its determinism question at `--release` — all five
+cases still render bit-identically across two processes. EVD-0003 records a
+re-measurement at its own 50 draws per case: the pooled minimum moves −4.0%,
+while a first three-round check had reported +2.2%, and resampling puts
+small-sample bias at only +0.14%. Neither figure supports a cost claim about the
+fixture change; what dominates is session-to-session variation on an unquiesced
+machine.
 
 **`CORPUS-0005-C2` is withdrawn.** It claimed that simultaneous note-ons should
 sound at the same sample and that rendered audio should not depend on note-list
@@ -218,9 +225,10 @@ A migration contract written against an artifact is worse than no contract.
 - **The counterfactuals are hand-built variants**, not fixtures, and are not
   committed. Nothing automated re-derives them, so a future change to the
   fixture would not invalidate this record automatically.
-- **The phase-randomization finding is not quantified for the other fixtures.**
-  That they carry the default is read from the code and from this case's
-  behaviour, not measured per case.
+- **The phase-randomization finding was not quantified per fixture.** That the
+  other four carried the default is read from the code and from this case's
+  behaviour; no per-case measurement of what it changed was taken before they
+  were regenerated.
 
 ## Conclusion
 
@@ -237,9 +245,9 @@ that measurably differs, each against a null control at −147 dB relative:
 `determinism: bit-exact` holds across processes, and with phase randomization
 off the render no longer depends on note-list order.
 
-**Carried forward**: the four earlier fixtures render with note-on phase
-randomization enabled, which their own documentation says a fixture should not
-do. Recorded for P00A-T001 rather than fixed here.
+**Acted on**: all five fixtures now render with note-on phase randomization off.
+Four committed digests changed; EVD-0001 re-verified determinism on the new
+bytes and EVD-0003 spot-checked cost.
 
 ## Artifacts
 

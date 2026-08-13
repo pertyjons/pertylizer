@@ -181,11 +181,28 @@ evidence. Both are now written on those terms, so no other deferral is in play.
   46.55° phase difference, and it explains why the implied offset was never a constant number of samples: it was not a
   delay. `CORPUS-0005-C2` is withdrawn; **a migration contract written against an artifact is worse than none**. With
   `uni_phase` at 0 the control drops to −147 dB and both withdrawn claims come back stronger than they were written.
-- **The finding that survives is about the corpus, not the engine.** The four earlier fixtures still render with
-  note-on phase randomization enabled, so their audio depends on which voice took which note — the variable this
-  module's own header says a fixture avoids. Their determinism is unaffected, since the seed is the voice index. **Whether
-  to regenerate them is this task's decision and is not free**: it changes four committed digests and invalidates the
-  baselines EVD-0001 through EVD-0003 took against them. CORPUS-0005 turns it off for itself and leaves the rest.
+- **The finding that survives is about the corpus, not the engine, and P00A-T001 has now acted on it.** `uni_phase`
+  defaults to full note-on phase randomization, drawn from a generator seeded by the voice index **and advanced on
+  every note-on** — so every fixture pinned a phase sequence that depends on which voice took which note and on how
+  many note-ons preceded it. A V2 with an equivalent but differently-indexed allocator would change that without
+  changing any behaviour a case claims, and the corpus would report it as a regression. **It is now off in all five
+  fixtures**, which changed four committed digests.
+- **What that cost, measured rather than waved past.** [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md)
+  gains a revision section: its four input digests are superseded, and the determinism question was **re-asked rather
+  than assumed** — all five cases render bit-identically across two `--release` processes, with the full replacement
+  output digests recorded, because a truncated digest from a `dev` build is a note rather than a baseline and this
+  record's acceptance criteria fix `--release`.
+- **The cost re-measurement is the part worth reading, because it failed twice before it said anything.** A first
+  three-round check reported +2.2% and argued the shift was real because it was *uniform*. Review objected that a
+  minimum over fewer draws is biased upward and that the bias would itself be uniform — so uniformity was never
+  evidence against noise, and that argument is withdrawn. Re-run under
+  [EVD-0003](../evidence/phase-00a/EVD-0003-cpu-memory-timing-baseline.md)'s own protocol at **50 draws per case**, the
+  pooled minimum is **−4.0%**, the opposite sign. Resampling 15-draw minima out of those 50 puts the small-sample bias
+  at **+0.14%**, which does not account for a 6.5% gap between two runs of the same binary on the same fixtures hours
+  apart. **The objection to the reasoning holds; the mechanism it proposed does not.** What dominates is
+  session-to-session variation on an unquiesced machine, which EVD-0003 already lists as a limitation — so **no cost
+  claim about the fixture change is supportable at this resolution**, in either direction, and the 0.5% agreement
+  EVD-0002 and EVD-0003 reached is a weaker guarantee than it reads as.
 - **The case is the one that would have justified a V1 fallback, so it records the correction instead.** V1 appends any
   effect missing from `effect_chain_order` with a warning, which means the rendered order is partly V1's choice. Under
   ADR-0021 part 2 admission may refuse a plan but may never silently change authored topology to make it fit, so

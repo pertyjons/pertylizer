@@ -359,6 +359,7 @@ fn subtractive_voice() -> ProjectFile {
     let mut patch = Patch::new("Subtractive Voice");
     add_env_amp_out(&mut patch, 0.01, 0.20, 0.60, 0.25);
     add_saw_into_filter(&mut patch, 1_200.0, 0.30);
+    silence_phase_randomization(&mut patch, "osc-1");
 
     // Separated rather than legato: a gap between notes makes the release tail
     // and the next attack independently visible in an envelope comparison.
@@ -394,6 +395,7 @@ fn polyphonic_voice_stealing() -> ProjectFile {
     let mut patch = Patch::new("Stealing Pad");
     add_env_amp_out(&mut patch, 0.05, 0.30, 0.70, 1.20);
     add_saw_into_filter(&mut patch, 900.0, 0.20);
+    silence_phase_randomization(&mut patch, "osc-1");
 
     let mut state = instrument(InstrumentId::FIRST, "Stealing Pad", patch);
     state.max_voices = VoiceCount::new(4);
@@ -442,6 +444,7 @@ fn mod_matrix() -> ProjectFile {
     let mut patch = Patch::new("Mod Matrix Sweep");
     add_env_amp_out(&mut patch, 0.01, 0.15, 0.80, 0.30);
     add_saw_into_filter(&mut patch, 800.0, 0.45);
+    silence_phase_randomization(&mut patch, "osc-1");
     patch.add_module(
         ModuleBuilder::new(1, ModuleType::Lfo)
             .waveform("triangle")
@@ -487,6 +490,7 @@ fn sends_returns_master() -> ProjectFile {
     let mut patch = Patch::new("Send Source");
     add_env_amp_out(&mut patch, 0.002, 0.12, 0.0, 0.08);
     add_saw_into_filter(&mut patch, 2_000.0, 0.10);
+    silence_phase_randomization(&mut patch, "osc-1");
 
     let notes = [
         (0, 60, SeqDuration(240)),

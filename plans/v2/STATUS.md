@@ -205,14 +205,22 @@ gate Phase 10, not Phase 1.
   defect. **There was no defect**: `Oscillator`'s `uni_phase` defaults to full randomization, seeded from the voice
   index, so a note starts at a different phase depending on which voice took it. With it off the control drops to
   −147 dB and both withdrawn claims come back stronger. A control that fails is telling you about your fixture.
-- **The finding that survives is about the corpus.** The four earlier fixtures still render with note-on phase
-  randomization on, so their audio depends on which voice took which note — the variable the fixture module's own
-  header says a case avoids. Determinism is unaffected (the seed is the voice index). Regenerating them is
-  P00A-T001's call and costs four digests plus the baselines taken against them.
-- **The three evidence records predate CORPUS-0005 and are not being widened.** EVD-0002's and EVD-0003's pooled
-  figures are properties of the four cases that produced them — EVD-0002 showed exactly that, with a per-case ratio
-  spanning +2.42% to +17.35% — so re-pooling would also break the cross-check between the two records. The baselines
-  cover four of five cases, stated rather than quietly generalised.
+- **The finding that survives is about the corpus, and P00A-T001 has acted on it.** `uni_phase` defaults to full
+  note-on phase randomization, seeded by voice index and advanced on every note-on, so every fixture pinned a phase
+  sequence that depends on which voice took which note. A V2 with an equivalent but differently-indexed allocator would
+  change that without changing any claimed behaviour. **Now off in all five fixtures**; four committed digests changed.
+- **The cost of that took three measurements to say anything.** EVD-0001 gains a revision: its four input digests are
+  superseded and determinism was re-asked — all five cases bit-identical across two `--release` processes, full
+  replacement digests recorded. EVD-0003's first check reported +2.2% and argued the shift was real because it was
+  *uniform*; review objected that a small-sample minimum is biased upward and that the bias is uniform too, so that
+  argument is withdrawn. Re-run at EVD-0003's own 50 draws per case the pooled minimum is **−4.0%** — the opposite
+  sign — while resampling puts the small-sample bias at **+0.14%**. **The objection holds, its proposed mechanism does
+  not**: what dominates is session-to-session variation on an unquiesced machine. No cost claim about the fixture
+  change is supportable at this resolution, in either direction.
+- **EVD-0002's and EVD-0003's pooled figures still cover four of five cases, and are not being widened.** They are
+  properties of the cases that produced them — EVD-0002 showed exactly that, with a per-case ratio spanning +2.42% to
+  +17.35% — so re-pooling would break the cross-check between the two records. Read them for shape rather than as
+  absolute costs; a V2 comparison re-measures V1 in the same session.
 - Phase 0A is **not** complete: P00A-T001 covers five of eleven corpus categories, P00A-T005 is `Active` with a
   three-times-reviewed draft, and no exit review exists. **Five of seven tasks are `Complete`**; the two open ones are
   corpus coverage and the `HostProfile` contract's confirmation read. No code has been written for V2 itself.

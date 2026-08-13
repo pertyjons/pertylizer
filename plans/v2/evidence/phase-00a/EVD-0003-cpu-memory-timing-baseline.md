@@ -271,6 +271,77 @@ cost is the output buffer, which is why it grows with rate and with case length
 and why it sometimes reads as zero: at 192 kHz the buffer is four times larger,
 but by then the allocator has pages to reuse and the kernel sees no new ones.
 
+## Revision: the corpus inputs changed under this record
+
+**Every figure above was measured on four fixture projects that no longer
+exist.** P00A-T001 turned off `Oscillator`'s note-on phase randomization in all
+five corpus fixtures — see
+[EVD-0004](EVD-0004-corpus-0005-claim-counterfactuals.md) for why — which
+changed the four committed inputs this record swept.
+
+A re-measurement at 44.1 kHz was run under this record's own protocol: same
+harness, `--release`, the same core pair, **10 rounds of five recorded renders
+per case**, minimum estimator. That is sweep A's 50 draws per cell, not fewer.
+
+| Case | This record | After the change | Delta |
+|------|------------:|-----------------:|------:|
+| CORPUS-0001 | 2.775 ms/s | 2.705 ms/s | −2.5% |
+| CORPUS-0002 | 8.161 ms/s | 7.829 ms/s | −4.1% |
+| CORPUS-0003 | 3.029 ms/s | 2.921 ms/s | −3.6% |
+| CORPUS-0004 | 7.982 ms/s | 7.618 ms/s | −4.6% |
+| **Pooled**  | **5.856 ms/s** | **5.619 ms/s** | **−4.0%** |
+
+### What this replaces, and why the replacement matters
+
+An earlier version of this section reported **+2.2%** from a three-round check —
+15 draws per cell — and argued that the shift was real because it was *uniform*
+across the four cases. Review objected that a minimum over fewer draws is biased
+upward, since it has fewer chances to observe an uncontaminated run, and that
+the bias would itself be uniform. The objection to the reasoning is correct: a
+uniform offset is exactly what small-sample bias predicts, so uniformity was
+never evidence against noise, and that argument is withdrawn.
+
+**The proposed mechanism, however, is measurably not the cause.** Resampling
+15-draw minima out of the 50 recorded above, 2 000 trials:
+
+| Statistic of a 15-draw pooled minimum | Value |
+|---------------------------------------|------:|
+| Median                                | 5.627 ms/s |
+| 5th – 95th percentile                 | 5.620 – 5.635 ms/s |
+| 50-draw pooled minimum, same data     | 5.619 ms/s |
+| **Upward bias at the median**         | **+0.14%** |
+
+0.14% does not account for a 6.5% gap between two runs of the same binary on the
+same fixtures hours apart (5.983 against 5.619), and the 15-draw distribution
+does not reach 5.983 at its 95th percentile.
+
+**What actually dominates is session-to-session variation on this machine**, and
+this record already names the cause: it was not quiesced, and unrelated
+interactive processes held roughly half a core throughout. The 0.5% agreement
+this record reached with [EVD-0002](EVD-0002-render-quantum-cost-proxy.md) a day
+apart is therefore a weaker guarantee than it reads as — reproducible on that
+pair of runs, not on demand.
+
+### The consequence for this record
+
+**No cost claim about the fixture change is supportable at this resolution.**
+The −4.0% above is not evidence that the new fixtures are cheaper any more than
+the withdrawn +2.2% was evidence that they are dearer; both are within the
+spread this machine produces between sessions. Removing one RNG call per note-on
+cannot plausibly move a render by 4% either way.
+
+No conclusion in this record depends on the absolute level. Cost per frame
+constant across sample rate, cost linear in polyphony, the per-block-against-
+budget finding, and the memory figures are shape claims that a few percent of
+uniform offset does not touch. The polyphony sweep is untouched in any case: it
+runs on `corpus::fixtures::polyphony_probe`, which is not a corpus case and was
+deliberately left unchanged.
+
+What a reader should take from this section is narrower than the tables above:
+**treat these figures as a baseline for shape, not as absolute costs to compare
+a V2 number against directly.** A V2 comparison must re-measure V1 in the same
+session, on the same binary, at matched draw counts.
+
 ## Limitations
 
 - **Offline throughput, not real-time headroom.** There is no host, no device, no

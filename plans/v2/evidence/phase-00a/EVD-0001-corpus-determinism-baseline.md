@@ -187,6 +187,56 @@ explicitly as `null` on every case — but the fixture projects it names did not
 so the input digests in the table above are unchanged and the renders are the
 same bytes.
 
+### Re-verification after the fixtures changed
+
+**Every input digest in the table above is superseded.** Authoring CORPUS-0005
+established that `Oscillator`'s `uni_phase` defaults to full note-on phase
+randomization, drawn from a generator seeded by the voice index and advanced on
+every note-on ([EVD-0004](EVD-0004-corpus-0005-claim-counterfactuals.md)). Every
+fixture therefore pinned a phase sequence that depends on which voice took which
+note and on how many note-ons preceded it — a variable none of the cases means
+to pin, and one that a V2 with an equivalent but differently-indexed allocator
+would change without changing any behaviour a case claims. P00A-T001 turned it
+off in all five fixtures, which changed four committed inputs.
+
+**Replacement input digests** (`corpus/v2-reference/projects/`, SHA-256):
+
+| Case | Input digest |
+|------|--------------|
+| CORPUS-0001 | `ef5f77d2fb8081563b9cef2a10783bfaf493ca02fbc95d977307e84d9953a7d3` |
+| CORPUS-0002 | `84894bb855d412d7ca2327290f36822910f56e08c304a111ac1a53ce1baec69e` |
+| CORPUS-0003 | `8c1aec966220c4d564d6308f9a7448af6fe2dad91f755f3ba2f94e25d6fcdfef` |
+| CORPUS-0004 | `acc070732534c86d3d7972e3be091f9e7455fa81455b61044ba63726c937c878` |
+| CORPUS-0005 | `1d55668d424e71cb49d23c5da46f7f35541b8c16669dc1399a8ef28fefe12dbc` |
+
+**The determinism question was re-asked rather than assumed**, at this record's
+own `--release` profile, each case rendered twice in separate processes at its
+manifest settings. Every pair is bit-identical.
+
+**Replacement output digests** (SHA-256, both passes):
+
+| Case | Output digest |
+|------|---------------|
+| CORPUS-0001 | `ae438c6d03dcc10b4ef831f5fb81baff7829fccce9f8886a303a1bcbc3e2f2df` |
+| CORPUS-0002 | `e5e0a650486228277f54035b959f32b862d21094bb52fe91e1dd888357430708` |
+| CORPUS-0003 | `3d22d3081eca82c86c6fc9586274b0c8e8ada952a17d582dfbe9987ab5d05991` |
+| CORPUS-0004 | `e1700bdde84f8d5f3e46838e21860d2b2e648eb50b466281cb640410953d5110` |
+| CORPUS-0005 | `c4d3671bf47395acd297a70acef7aa2624d8beb22af3930091b6eeef81aaef1b` |
+
+These replace the *Determinism* section's digests for any future comparison. The
+conclusion is unchanged — the corpus is deterministic at the level its cases
+claim — and what changed is the bytes it is deterministic about.
+
+**A first attempt at this section recorded 16-character prefixes from a `dev`
+build and called them replacements.** Review was right to reject that on two
+counts: this record's acceptance criteria fix `--release`, and a truncated digest
+cannot be verified against. Both are corrected above. The re-render also settled
+a question the objection raised in passing: **the `dev` and `--release` output
+digests are identical on all five cases**, so the profile mismatch would not have
+produced a wrong baseline here — but a record whose own criteria name a profile
+has to be measured at it rather than argued out of it, and the agreement is a
+finding rather than an excuse.
+
 ## Interpretation
 
 Both questions are answered.
