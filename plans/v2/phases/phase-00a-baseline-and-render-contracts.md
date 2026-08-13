@@ -30,7 +30,7 @@ Phase 0A `Work` list and add no scope of their own.
 | ADR-0001 | `Accepted`                                            | `Accepted`  | —                     |
 | ADR-0021 | `Accepted`                                            | `Accepted`  | —                     |
 | ADR-0037 | `Accepted`                                            | `Accepted`  | Phase 2 re-measurement |
-| ADR-0032 | `Accepted`                                            | `Proposed`  | Phase 3 verification  |
+| ADR-0032 | `Accepted`                                            | `Accepted`  | Phase 3 verification  |
 | ADR-0022 | `Accepted`, or `Deferred` with owner and evidence gap | No record   | Before Phase 3        |
 | ADR-0028 | `Accepted`, or `Deferred` with owner and evidence gap | No record   | Before Phase 4        |
 
@@ -41,11 +41,11 @@ Its `Later acceptance gate` entry is not a deferral: ADR-0037 is `Accepted` and 
 that its measurement selected the record's rule 1, so the value is provisional and re-measuring it against real V2 nodes
 is now a Phase 2 exit-gate item.
 
-ADR-0032 has a record and **is not accepted**: a second review pass withdrew the acceptance and returned it to
-`Proposed`, so this gate is blocked on it again. Its `Later acceptance gate` entry is not a deferral. The register's
-basis for the topic is `Range analysis and timing tests`; the range analysis is in the record and the timing tests
-cannot exist before there is a scheduler, so those tests verify the contract in Phase 3 rather than being an
-outstanding acceptance condition. What is outstanding is the closure review of the corrections.
+ADR-0032 is `Accepted` after three passes: an author pass, an independent pass that withdrew the first acceptance, and
+a bounded closure pass over the corrections. Its `Later acceptance gate` entry is not a deferral. The register's basis
+for the topic is `Range analysis and timing tests`; the range analysis is in the record and the timing tests cannot
+exist before there is a scheduler, so those tests verify the contract in Phase 3 rather than being an outstanding
+acceptance condition.
 
 ## Tasks
 
@@ -124,13 +124,13 @@ deferral satisfies the Phase 0A exit gate.
 
 - **Scope.** One accepted record under [decisions/](../decisions/README.md) for ADR-0001, ADR-0037, ADR-0021, and
   ADR-0032, plus an accepted-or-deferred ADR-0022 and ADR-0028.
-- **State.** Four of six records exist and **three are `Accepted`**:
+- **State.** Four of six records exist and **all four are `Accepted`**:
   [ADR-0001](../decisions/ADR-0001-internal-render-quantum.md) (quantum semantics),
-  [ADR-0021](../decisions/ADR-0021-host-profile-and-admission-policy.md) (admission policy), and
-  [ADR-0037](../decisions/ADR-0037-render-quantum-value.md) (quantum frame count, `Q` = 64 provisional).
-  [ADR-0032](../decisions/ADR-0032-sample-time-and-event-timestamps.md) (sample time and event timestamps) is
-  `Proposed`: it was accepted on one author review pass, and a second pass withdrew that acceptance. ADR-0022 and
-  ADR-0028 have no record yet and may be deferred to their named later gates.
+  [ADR-0021](../decisions/ADR-0021-host-profile-and-admission-policy.md) (admission policy),
+  [ADR-0037](../decisions/ADR-0037-render-quantum-value.md) (quantum frame count, `Q` = 64 provisional), and
+  [ADR-0032](../decisions/ADR-0032-sample-time-and-event-timestamps.md) (sample time and event timestamps) after
+  three passes. **Every decision this gate requires on its own is accepted**; ADR-0022 and ADR-0028 have no record yet
+  and may be deferred to their named later gates.
 - **A review withdrew the acceptance of ADR-0001 and ADR-0021**, which had been marked `Accepted` in the same session
   they were drafted. Four defects made that premature, and each is fixed in the record that carried it:
     - ADR-0001's splitting contract covered only the output side. A callback shorter than `Q` has neither the audio
@@ -198,8 +198,14 @@ deferral satisfies the Phase 0A exit gate.
   pre-epoch clamp had been made to fire the late counter on every stream start, contradicting ADR-0001 clause 16;
   exhaustion had no defined behavior although "overflow" is the register's own basis for this topic; and `StreamEpoch`
   permitted `A -> B -> A`, which a producer paused across two preparations could ride through the staleness check.
-- **Remaining in this task.** A closure review of ADR-0032's corrections, and then its re-acceptance. ADR-0022 and
-  ADR-0028 have no record; both may be `Deferred` with an owner and an evidence gap.
+- **What the closure pass added.** Reviewing only the corrections found one more substantive defect: clause 17 sends a
+  precompiled event list through the queue, and clause 21's forward horizon would then have rejected most of a song,
+  which spans hours. The horizon now binds ingress provenance only, and clause 27 states the order of the whole path —
+  compile to a plan position, anchor, stamp, enqueue — with the scheduler releasing compiled events as their quanta
+  approach. Five smaller fixes came with it, including that a published `(epoch, time)` pair needs session scope
+  because epochs restart at zero per process, and that a tempo edit invalidates every compiled plan position.
+- **Remaining in this task.** ADR-0022 and ADR-0028 have no record; both may be `Deferred` with an owner and an
+  evidence gap. Nothing else in the required-decisions table is outstanding.
 - **Implementation revision.** The ADR-0001/ADR-0021 work was documentation only, and its records cite source reads at
   `5cd24de8`, one commit later than the inventories' `dd69b657`. ADR-0037's acceptance required code: the
   `render_cost` measurement harness, and making `arrangement_render.rs`'s `BUFFER_SIZE` readable so a run can report
@@ -287,7 +293,7 @@ something.
 | P00A-T002 | `pertylizer compare` and the versioned report model                                   | Each metric unit-tested against a synthetic signal with a known deviation (6.02 dB of gain, 100 ms of delay, a semitone of detune, a band-limited change, an inverted channel); end-to-end through render→render→compare in `compare_command.rs` | Complete — runs with no GUI and no audio device |
 | P00A-T003 | [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md) and [EVD-0002](../evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md) | Two process-separate renders per case, bit-identical on all four, every comparison delta exactly zero, with a two-case control that resolves their octave to 3.6 cents; plus 8 640 timed renders giving per-case CPU cost per rendered second | Partial — determinism, level, and single-operating-point CPU; memory and timing not measured |
 | P00A-T004 | [Resource inventory](../inventories/resource-limits.md) passes 1 and 2 at `dd69b657`                                                                                   | Two independent discovery methods with opposite blind spots: pass 1 matched constant names, pass 2 matched documented truncation behavior. Neither executes anything, so a truncation that is both unnamed and undocumented would still be missed        | Partial — source-read only, no measurement   |
-| P00A-T006 | [ADR-0001](../decisions/ADR-0001-internal-render-quantum.md), [ADR-0021](../decisions/ADR-0021-host-profile-and-admission-policy.md), [ADR-0037](../decisions/ADR-0037-render-quantum-value.md), and [ADR-0032](../decisions/ADR-0032-sample-time-and-event-timestamps.md) `Accepted` | Three review passes resolved the buffering, event, retention, ownership, host-fault, and measurement-boundary defects before the first two were accepted. ADR-0037 was accepted on EVD-0002 by applying the rule table it fixed before the data existed; the outcome was rule 1, so its value is provisional and binds Phase 2. ADR-0032 is `Proposed`: a second review pass withdrew the acceptance it had been given on one author pass, finding a tempo map that produced engine times, a `HostProfile` horizon with no semantics, a pre-epoch clamp contradicting ADR-0001 clause 16, undefined exhaustion, and an epoch identifier that could be reused. All five are corrected and await a closure review | Partial — 4 of 6 records, 3 accepted; ADR-0032 blocked on a closure review, the two remaining deferrable |
+| P00A-T006 | [ADR-0001](../decisions/ADR-0001-internal-render-quantum.md), [ADR-0021](../decisions/ADR-0021-host-profile-and-admission-policy.md), [ADR-0037](../decisions/ADR-0037-render-quantum-value.md), and [ADR-0032](../decisions/ADR-0032-sample-time-and-event-timestamps.md) `Accepted` | Three review passes resolved the buffering, event, retention, ownership, host-fault, and measurement-boundary defects before the first two were accepted. ADR-0037 was accepted on EVD-0002 by applying the rule table it fixed before the data existed; the outcome was rule 1, so its value is provisional and binds Phase 2. ADR-0032 took three passes: an author pass, an independent pass that withdrew its acceptance over a tempo map producing engine times, a `HostProfile` horizon with no semantics, a pre-epoch clamp contradicting ADR-0001 clause 16, undefined exhaustion, and a reusable epoch identifier, and a bounded closure pass that caught the forward horizon rejecting a compiled song and fixed the order of the compile-anchor-stamp-enqueue path | Partial — 4 of 6 records, all 4 accepted; the two remaining are deferrable |
 
 ## Deviations
 
