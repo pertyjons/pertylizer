@@ -13,6 +13,8 @@
 
 use std::path::PathBuf;
 
+use synth_core::audio::DeviceSampleRate;
+
 pub mod command;
 pub mod headless;
 pub mod mix;
@@ -31,8 +33,22 @@ pub use wav::{
 /// Lowest sample rate the render command accepts, below telephone quality.
 pub const MIN_RENDER_SAMPLE_RATE: u32 = 8_000;
 
-/// Highest sample rate the render command accepts.
-pub const MAX_RENDER_SAMPLE_RATE: u32 = 384_000;
+/// Highest sample rate the render command accepts: the engine's own ceiling.
+///
+/// Derived rather than hand-copied, because the two desynced. This was
+/// `384_000` — double [`DeviceSampleRate::MAX_SUPPORTED`], which the engine
+/// documents as "the engine-wide ceiling" and which real-time look-ahead and
+/// scratch buffers size themselves from. `SampleRate::new` validates only
+/// positivity, so nothing rejected the difference, and a render above the
+/// ceiling silently got less DSP than its parameters asked for: the limiter's
+/// look-ahead ring is `0.005 s × 192 kHz = 960` frames and its request is
+/// `clamp(1, MAX_LOOKAHEAD_SAMPLES)`, so at 384 kHz an advertised 5 ms of
+/// look-ahead became 2.5 ms with no diagnostic. Any other module that sizes
+/// from the ceiling had the same shape.
+///
+/// Recorded as `LIMIT-0004` in the V2 resource inventory, where the
+/// classification pass found it.
+pub const MAX_RENDER_SAMPLE_RATE: u32 = DeviceSampleRate::MAX_SUPPORTED.as_u32();
 
 /// Longest tail the render command accepts.
 ///
@@ -47,11 +63,18 @@ pub const MAX_TAIL_SECONDS: f32 = 30.0;
 ///
 /// `--seconds` alone does not bound memory. The renderer sizes one
 /// `Vec::with_capacity((seconds + tail) * sample_rate * channels)` of `f32`,
-/// so the 300-second maximum means 105 MB at 44.1 kHz but 921 MB at the
-/// 384 kHz `--sample-rate` ceiling — and that allocation aborts the process
-/// rather than returning an error, exactly the failure [`MAX_TAIL_SECONDS`]
-/// exists to prevent. The bound is on the product, which is the thing that
-/// actually costs memory.
+/// and that allocation aborts the process rather than returning an error —
+/// exactly the failure [`MAX_TAIL_SECONDS`] exists to prevent. The bound is on
+/// the product, which is the thing that actually costs memory.
+///
+/// **It is currently a backstop rather than a reachable check.** Since
+/// [`MAX_RENDER_SAMPLE_RATE`] became the engine ceiling, the largest legal
+/// request is `(300 + 30) s × 192 kHz × 2 ch × 4 B = 483 MiB`, which is under
+/// this budget — so no combination of the other three bounds can trip it. It
+/// stays because those three bounds are independent of it and may move;
+/// `the_other_bounds_cannot_reach_the_size_budget` in `tests/render_command.rs`
+/// pins the relationship, so raising one fails loudly here rather than quietly
+/// re-arming an allocation abort.
 pub const MAX_RENDER_BYTES: u64 = 512 * 1024 * 1024;
 
 /// A failure somewhere in the load-validate-render-write sequence.

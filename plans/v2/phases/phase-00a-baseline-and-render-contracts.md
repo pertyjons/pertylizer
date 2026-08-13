@@ -118,7 +118,9 @@ Kept here rather than deleted: the exit review has to be able to see how a compl
   192 kHz, and `SampleRate::new` validates only positivity. The limiter's ring is sized `0.005 × 192 000` and its
   request is clamped to it, so a 384 kHz render silently delivers half the look-ahead the parameter advertises. Nothing
   is unsafe; the audio is simply not what was asked for, with no diagnostic. It does **not** trigger ADR-0021's revisit
-  condition, because a class rule covers it — what was incomplete is the register, not the taxonomy.
+  condition, because a class rule covers it — what was incomplete is the register, not the taxonomy. **It is fixed in
+  V1**: the render ceiling now derives from the engine ceiling instead of restating it, three tests pin the result, and
+  both measurement harnesses got the same bound so a future baseline cannot be taken on degraded DSP.
 - **What `Classified` does not mean here.** The supporting evidence for every disposition is an accepted decision, not a
   measurement. **No value in the ledger has been measured.** A classified row says what happens when the limit is
   exceeded and who owns the number; it does not claim the number is right. That stays with each owner — P00A-T005 for
@@ -126,7 +128,7 @@ Kept here rather than deleted: the exit review has to be able to see how a compl
 - **What remains open, and is not this task's.** The executable probe ADR-0021 lists as follow-up — oversized blocks,
   more than 128 metered channels, more than 32 rack stages — which is the only thing that can close the completeness
   question all three passes record about themselves. `LIMIT-0004` is now the third argument for it.
-- **Implementation revision.** Documentation only; no code changed. The `LIMIT-0004` finding is recorded, not fixed.
+- **Implementation revision.** The sweep itself was documentation only. The `LIMIT-0004` finding it produced was then fixed in code: a derived `MAX_RENDER_SAMPLE_RATE`, three tests, and the same ceiling in `render_cost` and `render_profile`.
 
 **P00A-T003 — Capture V1 CPU, memory, timing, and determinism baselines.**
 

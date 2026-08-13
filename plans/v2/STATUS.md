@@ -103,12 +103,15 @@ gate Phase 10, not Phase 1.
   not** — 12 node contracts, 7 protocol, 7 application settings, 7 removed outright, 6 domain/format, 5 job policy. The
   single-axis model ADR-0021 was first accepted with, and then had withdrawn, would have put those 44 in a
   render-preparation input they have nothing to do with.
-- **Classifying found a silent truncation that neither search pass did.** `LIMIT-0004`: the render command accepts up to
-  384 kHz while `SampleRate::MAX_SUPPORTED` — the ceiling real-time look-ahead buffers size themselves from — is
-  192 kHz, and `SampleRate::new` validates only positivity. A 384 kHz render therefore gets half the limiter look-ahead
-  its parameter advertises, silently. It is the sixth entry in the silent-truncation register and does **not** trigger
-  ADR-0021's revisit condition, because a class rule covers it: what was incomplete is the register, not the taxonomy.
-  It is recorded, not fixed.
+- **Classifying found a silent truncation that neither search pass did, and it is now fixed.** `LIMIT-0004`: the render
+  command accepted up to 384 kHz while `SampleRate::MAX_SUPPORTED` — the ceiling real-time look-ahead buffers size
+  themselves from — is 192 kHz, and `SampleRate::new` validates only positivity, so a 384 kHz render silently got half
+  the limiter look-ahead its parameter advertised. `MAX_RENDER_SAMPLE_RATE` now *derives* from the engine ceiling
+  instead of restating it, with tests pinning the derivation, the refusal, and one consequence: with the ceiling halved,
+  no legal request can reach `MAX_RENDER_BYTES` any more, so that guard is now a backstop against the other bounds
+  moving rather than a check that fires. It is the sixth entry in the silent-truncation register and does **not**
+  trigger ADR-0021's revisit condition — a class rule covers it, so what was incomplete is the register, not the
+  taxonomy.
 - **`Classified` in that ledger means disposed, not measured.** The supporting evidence for every rule is an accepted
   decision. No value in the ledger has been measured, and setting numbers stays with each owner.
 - **Phase 0A now has something executable.** P00A-T002 is **complete**:

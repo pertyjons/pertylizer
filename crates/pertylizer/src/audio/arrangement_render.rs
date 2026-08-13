@@ -68,7 +68,10 @@ const CHANNELS: usize = 2;
 /// command checks its `--seconds` against this up front instead, because a
 /// harness that asked for ten minutes and silently got five would compare the
 /// wrong audio.
-pub(crate) const MAX_RENDER_SECONDS: f32 = 300.0;
+/// Public alongside the render command's other bounds: it is one of the four
+/// constants whose product `MAX_RENDER_BYTES` guards, and that relationship is
+/// pinned by a test that has to be able to read all four.
+pub const MAX_RENDER_SECONDS: f32 = 300.0;
 
 /// Maximum amount of pre-roll (audio before the requested `start_tick`) that
 /// the renderer will run to seed sustained notes that started before the

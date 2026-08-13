@@ -18,7 +18,8 @@ use synth_sequencer::{
 
 use pertylizer::project_apply::{ProjectBuildOptions, save_project_to};
 use pertylizer::render::{
-    MixSelection, RenderCommand, RenderError, TrackSelector, WavFormat, run_render_command,
+    MAX_RENDER_BYTES, MAX_RENDER_SAMPLE_RATE, MAX_TAIL_SECONDS, MixSelection, RenderCommand,
+    RenderError, TrackSelector, WavFormat, run_render_command,
 };
 
 use common::{TEST_SR, setup_with_patch, sustain_patch};
@@ -254,34 +255,93 @@ fn an_unclipped_integer_render_does_not_warn_about_clipping() {
     }
 }
 
-/// The render buffer is `f32` whatever the output format is, so the size guard
-/// that protects the allocation must not loosen when a narrower format is
-/// chosen. Otherwise `--bit-depth 8` would let through a request four times
-/// larger than the buffer the renderer can actually allocate.
+/// The render buffer is `f32` whatever the output format is, so validation must
+/// reach the same verdict for a narrow format as for a wide one. Otherwise
+/// `--bit-depth 8` would let through a request larger than the buffer the
+/// renderer can actually allocate.
+///
+/// **This test was weakened when `MAX_RENDER_SAMPLE_RATE` became the engine
+/// ceiling.** It used to drive both formats into `RenderTooLarge` at 384 kHz,
+/// which proved the guard measured the `f32` render buffer rather than the
+/// output format. No legal request can reach that budget any more — see
+/// `the_other_bounds_cannot_reach_the_size_budget` — so what remains testable
+/// is that the two formats agree, at the largest request the bounds allow. A
+/// guard that grew format-dependent in the permissive direction would no longer
+/// be caught here; one that grew format-dependent in the restrictive direction
+/// still would.
 #[test]
-fn the_size_guard_does_not_depend_on_the_output_format() {
+fn validation_does_not_depend_on_the_output_format() {
     let dir = tempfile::tempdir().expect("tempdir");
     let input = dir.path().join("fixture.json");
     write_project(&input, |_| {});
 
-    // Inside the 300-second duration cap, so the *size* guard is what rejects
-    // this and not the duration check ahead of it: 250 s of stereo `f32` at
-    // 384 kHz is ~732 MiB against a 512 MiB budget.
-    let mut request = command(&input, dir.path().join("huge.wav"));
-    request.sample_rate = 384_000;
-    request.seconds = Seconds::new(250.0);
+    let mut request = command(&input, dir.path().join("wide.wav"));
+    request.sample_rate = MAX_RENDER_SAMPLE_RATE;
+    request.seconds = Seconds::new(1.0);
 
     for format in [WavFormat::Float32, WavFormat::Int8] {
         request.format = format;
         assert!(
-            matches!(
+            !matches!(
                 run_render_command(&request),
                 Err(RenderError::RenderTooLarge { .. })
             ),
-            "{} must hit the same size guard",
+            "{} must reach the same size verdict",
             format.label()
         );
     }
+}
+
+/// `LIMIT-0004`: the render command used to accept up to 384 kHz while the
+/// engine ceiling is 192 kHz, and nothing rejected the difference. A render
+/// above the ceiling silently got less DSP than it asked for — the limiter's
+/// look-ahead ring is sized from the ceiling, so an advertised 5 ms became
+/// 2.5 ms.
+#[test]
+fn a_sample_rate_above_the_engine_ceiling_is_refused() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let input = dir.path().join("fixture.json");
+    write_project(&input, |_| {});
+
+    let mut request = command(&input, dir.path().join("too-fast.wav"));
+    request.sample_rate = 384_000;
+    request.seconds = Seconds::new(1.0);
+
+    assert!(matches!(
+        run_render_command(&request),
+        Err(RenderError::InvalidSampleRate(384_000))
+    ));
+}
+
+/// The two ceilings must not desync again: the render command's is *derived*
+/// from the engine's, and this pins that it stays derived rather than being
+/// hand-copied back.
+#[test]
+fn the_render_ceiling_is_the_engine_ceiling() {
+    assert_eq!(
+        MAX_RENDER_SAMPLE_RATE,
+        synth_core::audio::DeviceSampleRate::MAX_SUPPORTED.as_u32()
+    );
+}
+
+/// `MAX_RENDER_BYTES` is a backstop, not a reachable check: the duration, tail,
+/// and rate bounds together cap one render below it. That is a relationship
+/// between four independent constants, so it is pinned rather than assumed —
+/// raising any of them fails here, which is the moment to re-check whether the
+/// allocation guard is armed again.
+#[test]
+fn the_other_bounds_cannot_reach_the_size_budget() {
+    let largest =
+        f64::from(pertylizer::audio::arrangement_render::MAX_RENDER_SECONDS + MAX_TAIL_SECONDS)
+            * f64::from(MAX_RENDER_SAMPLE_RATE)
+            * 2.0
+            * 4.0;
+    assert!(
+        largest <= MAX_RENDER_BYTES as f64,
+        "the bounds now reach {largest} bytes against a {MAX_RENDER_BYTES}-byte budget: \
+         the size guard is reachable again, so `validation_does_not_depend_on_the_output_format` \
+         should go back to driving both formats into `RenderTooLarge`"
+    );
 }
 
 fn receipt_path(command: &RenderCommand) -> PathBuf {
@@ -676,14 +736,15 @@ fn impossible_arguments_are_rejected_up_front() {
         })
     ));
 
-    // Each of these is legal on its own; multiplied out they are a ~920 MB
-    // `Vec`, which aborts the process rather than returning an error.
+    // The rate ceiling is checked before the size guard, and 384 kHz is now
+    // above it (`LIMIT-0004`), so this request is refused for the rate rather
+    // than for the product it would have allocated.
     let mut huge = command(&missing, dir.path().join("huge.wav"));
     huge.seconds = Seconds::new(300.0);
     huge.sample_rate = 384_000;
     assert!(matches!(
         run_render_command(&huge),
-        Err(RenderError::RenderTooLarge { .. })
+        Err(RenderError::InvalidSampleRate(384_000))
     ));
 }
 

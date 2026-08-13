@@ -50,6 +50,7 @@ use pertylizer::corpus::{CORPUS_DIR, CorpusManifest, MANIFEST_FILE};
 use pertylizer::render::headless::load_project_file;
 use pertylizer::render::{MixSelection, apply_mix_selection, tick_window_from_seconds};
 use pertylizer::synth_core::AnalysisScope;
+use pertylizer::synth_core::audio::DeviceSampleRate;
 
 // ---------------------------------------------------------------------------
 // Resident set
@@ -259,6 +260,18 @@ impl Options {
                         .map_err(|e| format!("--sample-rate takes Hz, not {raw:?}: {e}"))?;
                     if rate == 0 {
                         return Err("--sample-rate 0 is not a rate".into());
+                    }
+                    // The engine ceiling, not an arbitrary bound: above it,
+                    // buffers sized from `SampleRate::MAX_SUPPORTED` silently
+                    // deliver less than their parameters advertise, so a
+                    // measurement taken there would describe degraded DSP
+                    // without saying so (`LIMIT-0004`).
+                    let ceiling = DeviceSampleRate::MAX_SUPPORTED.as_u32();
+                    if rate > ceiling {
+                        return Err(format!(
+                            "--sample-rate {rate} is above the engine ceiling of {ceiling} Hz"
+                        )
+                        .into());
                     }
                     options.sample_rate = Some(rate);
                 }
