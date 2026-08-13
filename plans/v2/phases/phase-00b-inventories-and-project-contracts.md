@@ -125,14 +125,20 @@ source revision so their coverage statements are comparable.
 
 - **Scope.** One [identity](../inventories/identities.md) entry per identity or cross-boundary reference in the project
   document.
-- **Non-goals.** Proposing the V2 identity rule — that is ADR-0014.
+- **Non-goals.** Proposing the V2 identity rule — that is
+  [ADR-0014](../decisions/ADR-0014-persistent-id-generation-and-encoding.md), now written and `Proposed` after one
+  author pass. It hands two questions back to this task as **format-review work owed before acceptance**, not as
+  things acceptance would settle: whether a master or return chain's module id can collide with a patch's
+  (`IDN-0021` records the namespaces as different and the overlap as unchecked), and what the closed parameter-name
+  set is (`IDN-0015`).
 - **Related identifiers.** `IDN-0001`..`IDN-0031`; ADR-0014, ADR-0015, ADR-0016, ADR-0017, ADR-0030.
 - **State after pass 2 (`dd69b657`).** 31 entries. Undo, duplication, engine identity, the bundle format, and the one
   name-as-identity path are now covered; two pass-1 hypotheses were disproved by reading the code and are corrected in
   place. What the pass established:
-    - **Undo does not restore a deleted note's identity** (`IDN-0027`). Undoing a delete dispatches `AddNote`, which
-      allocates a fresh `NoteId`; the id in the snapshot is carried but unused. Any `NoteId` held across the undo
-      dangles, and `next_note_id` climbs once per cycle.
+    - **Undo did not restore a deleted note's identity** (`IDN-0027`) — and no longer fails to. Pass 2 found that
+      undoing a delete dispatched `AddNote`, which allocated a fresh `NoteId`. At `e2a05028` that arm calls
+      `restore_note` with the original note instead, so the id survives the cycle and the counter does not climb. The
+      entry is corrected in place; drafting ADR-0014 is what re-read it.
     - **The module id encodes its type at runtime too** (`IDN-0029`) — `ModuleId { module_type, instance }` is the
       engine's own key, so this is not a format-layer problem, and `script_seed_base` derives a PRNG seed from the
       instance number, making renumbering audible.

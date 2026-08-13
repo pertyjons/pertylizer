@@ -6,7 +6,7 @@
 | Documentation stage    | Workflow accepted; first specification at `Draft` |
 | Master plan status     | Proposed and architecture-audited                |
 | Active migration phase | 0A and 0B, both `Active` in parallel             |
-| Decision records       | 6 of 37 drafted: 4 accepted, 2 deferred          |
+| Decision records       | 7 of 37 drafted: 4 accepted, 2 deferred, 1 proposed |
 | Evidence records       | 4 (`EVD-0001`..`EVD-0004`), all `Complete`       |
 | Executable Phase 0A    | Corpus, comparison command, and cost harness are used |
 
@@ -241,9 +241,15 @@ coverage, and the exit review.
    interaction anyone expected. The remaining question these corrections raised and did not answer is whether
    deferral can starve a low-priority event under sustained overrun; it is recorded as an open question rather than
    as a resolved one.
-2. **Open ADR-0014.** The identity ledger's central finding is that the module id encodes its type at *runtime*
-   (`IDN-0029`), not merely on disk, and that a module's script PRNG seed is derived from its instance number — so
-   renumbering is audible, not just referential.
+2. **Review [ADR-0014](decisions/ADR-0014-persistent-id-generation-and-encoding.md) independently.** It is `Proposed`
+   after an author pass and one review pass that found four defects, three of them P1 with a single root: the first
+   revision derived allocation state from surviving content, so deleting the highest-ordinal entity reissued its
+   ordinal, a file copy produced two documents minting from one origin, and nothing said which origin allocates after
+   a merge. The model now carries a **validated allocation record** — one origin and one high-water mark, checked
+   against the document on load — and forking mints a fresh origin while remapping nothing. The two clauses worth
+   attacking next are the ones the fix could not close: a document copied *outside* the application still mints from
+   a shared origin, detected only at merge, and clause 11's ban on deriving audio state from identity is what unblocks
+   the corpus's shared-instrument case.
 3. **Write the first round-trip fixture (P00B-T005) for `STATE-0004`** — changing the focused instrument changes the
    saved file while no dirty term observes it. It is the cheapest executable check the ledgers produced.
 4. **Add corpus cases as their blockers clear.** Instrument inserts are done (CORPUS-0005); the sampler case

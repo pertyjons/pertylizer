@@ -123,6 +123,8 @@ Topics without a link below have no individual record yet; the table above is st
 
 - [ADR-0001: Render quantum semantics and splitting contract](decisions/ADR-0001-internal-render-quantum.md) —
   `Accepted`
+- [ADR-0014: Persistent ID generation and encoding](decisions/ADR-0014-persistent-id-generation-and-encoding.md) —
+  `Proposed`, one author pass and one review pass
 - [ADR-0021: Host profile and admission policy](decisions/ADR-0021-host-profile-and-admission-policy.md) — `Accepted`
 - [ADR-0022: Hardware time mapping and latency ownership](decisions/ADR-0022-hardware-time-mapping.md) — `Deferred`
   to the Phase 3 entry gate
@@ -134,6 +136,17 @@ Topics without a link below have no individual record yet; the table above is st
 
 ADR-0001 and ADR-0021 were accepted after three review passes. Each carries a *Review history* note recording the
 defects corrected before acceptance; the immutability rule in [decisions/README.md](decisions/README.md) now applies.
+
+**ADR-0014 is `Proposed` after an author pass and one review pass**, and is deliberately not accepted. The review
+found four defects, three P1 sharing one root: the first revision derived allocation state from surviving content and
+called the absence of a persisted cursor an improvement on V1. It is not — deleting the highest-ordinal entity lowers
+the derived maximum, so the next allocation reissues a retired ordinal, which the master plan forbids outright. The
+record now carries a validated allocation record and says plainly that seven unvalidated cursors became one checked
+one rather than none. It is `Contract` class: it
+defines types, an encoding, a scope boundary, and an error behavior, so reversibility tests 1 and 3 both fail, and every
+saved file would carry the encoding. Its record cites two questions the identity ledger leaves open — whether a master
+or return chain's module id can collide with a patch's (`IDN-0021`), and what the closed parameter-name set is
+(`IDN-0015`) — as format-review work Phase 0B owes **before** acceptance, rather than as things acceptance would settle.
 
 ADR-0032 was judged `Contract` when work began on it, per the rule below: it defines types, an epoch, an ownership
 boundary, and an error behavior, so tests 1 and 3 of the reversibility test both fail. Its one numeric choice — the
