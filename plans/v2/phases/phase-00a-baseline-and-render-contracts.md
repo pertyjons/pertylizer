@@ -53,7 +53,7 @@ acceptance condition.
 |-----------|-------------------------------------------------------------|-------------|----------------------|---------------------------------------------------------|
 | P00A-T001 | Define the reference V1 corpus and preserve/change manifest | Active      | None                 | [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md) |
 | P00A-T002 | Define the comparison result model and headless command     | Complete    | P00A-T001            | [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md) |
-| P00A-T003 | Capture V1 CPU, memory, timing, and determinism baselines   | Active      | P00A-T001            | [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md) covers determinism only |
+| P00A-T003 | Capture V1 CPU, memory, timing, and determinism baselines   | Complete    | P00A-T001            | [EVD-0003](../evidence/phase-00a/EVD-0003-cpu-memory-timing-baseline.md), with EVD-0001 and EVD-0002 |
 | P00A-T004 | Complete the fixed-limit and overflow audit                 | Active      | None                 | [Resource inventory](../inventories/resource-limits.md) |
 | P00A-T005 | Define the initial HostProfile and RenderLimits contract    | Not started | P00A-T004            | Future specification/ADRs                               |
 | P00A-T006 | Satisfy every entry in the required-decisions table         | Complete    | P00A-T003/P00A-T004  | [Decision register](../ADR.md)                          |
@@ -96,30 +96,6 @@ evidence. Both are now written on those terms, so no other deferral is in play.
   corpus contains, and waiting for an AudioScript case would block a measurement that is otherwise ready. The two are
   independent, and the gap entry now says so.
 
-**P00A-T003 — Capture V1 CPU, memory, timing, and determinism baselines.**
-
-- **Scope.** Measured V1 figures for the reference corpus at common polyphony and
-  sample rates, in a reviewable format.
-- **State.** The determinism half is done and recorded in
-  [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md): all
-  four cases render bit-identically across two passes, with level, loudness, and
-  fundamental captured per case.
-  [EVD-0002](../evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md) adds
-  offline CPU throughput for the same four cases — 2.7 to 8.4 ms of CPU per
-  rendered second at the production block size — but it was taken for ADR-0037,
-  at one polyphony and one sample rate, and it measures no memory and no
-  real-time timing. **Memory and timing are still not measured at all, and CPU
-  only at a single operating point**, so this task does not close.
-- **What became possible.** P00A-T002 is complete and P00A-T001's corpus exists
-  with four of eleven categories, so the inputs and the harness both exist. Every
-  remaining measurement in this phase — including ADR-0037's proxy — is defined
-  over them and can now be run against what is covered. Adding the seven missing
-  categories widens that coverage; it does not gate the measurements.
-- **A defect had to be fixed first.** See *What building the corpus found* below.
-  Any timing or CPU figure taken before the `fix/offline-render-fidelity` work
-  describes a renderer that omitted per-instrument settings, and would have to be
-  retaken.
-
 **P00A-T004 — Complete the fixed-limit and overflow audit.**
 
 - **Scope.** Populate the [resource inventory](../inventories/resource-limits.md) with every fixed cap, truncation
@@ -159,6 +135,39 @@ evidence. Both are now written on those terms, so no other deferral is in play.
 ## Completed tasks
 
 Kept here rather than deleted: the exit review has to be able to see how a completed gate item was satisfied.
+
+**P00A-T003 — Capture V1 CPU, memory, timing, and determinism baselines.**
+
+- **Scope.** Measured V1 figures for the reference corpus at common polyphony and
+  sample rates, in a reviewable format.
+- **State.** Complete over the four corpus categories that exist. Determinism and
+  level are in [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md);
+  the block-size cost curve is in [EVD-0002](../evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md);
+  and [EVD-0003](../evidence/phase-00a/EVD-0003-cpu-memory-timing-baseline.md) adds
+  the three quantities that were missing — cost across sample rates and polyphony,
+  per-block time against the block's real-time budget, and memory.
+- **What the measurements say.** Cost per frame is constant, so cost per rendered
+  second is proportional to sample rate to within 2% and the real-time factor
+  falls from 171x at 44.1 kHz to 40x at 192 kHz. Cost is linear in polyphony at
+  1.173 ms/s per voice plus 0.428 ms/s fixed, with R² = 1.0000 over 1 to 64
+  voices. A 256-frame block costs 19 to 66 µs depending on the case and **does
+  not depend on the sample rate** — but its budget does, so the same block goes
+  from 3.1% of budget at 44.1 kHz to 13.3% at 192 kHz in the worst case observed.
+  Peak RSS is 14 to 30 MiB per case.
+- **What it deliberately does not measure.** Real-time headroom. There is no host,
+  no device, and no callback deadline, so every timing figure is a lower bound on
+  the same work live. That measurement needs the simulated host Phase 3 builds and
+  ADR-0022 is deferred to.
+- **An unplanned cross-check.** EVD-0003 re-measured EVD-0002's operating point a
+  day later on a changed binary and landed 0.5% away (5.856 against 5.884 ms/s),
+  which is evidence the harness measures the renderer rather than the session it
+  ran in.
+- **Implementation revision.** `render_profile` (new), `render_cost`'s
+  `--sample-rate` and `--polyphony` flags, an opt-in per-block timing collector on
+  `OfflineEngineSession`, and `corpus::fixtures::polyphony_probe`. The timing
+  collector is `None` for every production caller, which costs one `Option` check
+  per block; the cross-check above is the evidence that it costs nothing
+  measurable.
 
 **P00A-T006 — Satisfy every entry in the required-decisions table.**
 
@@ -306,7 +315,7 @@ something.
 |-----------|------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|----------------------------------------------|
 | P00A-T001 | [Corpus manifest](../../../corpus/v2-reference/manifest.json) and four generated fixtures; four of eleven categories covered, seven recorded as gaps | The manifest is loaded and validated by `cargo test -p pertylizer --test corpus_manifest`: category coverage, claim classes, digests, and the fact that each committed project is exactly what its builder produces | Partial — format and validation done, four of eleven categories exercised |
 | P00A-T002 | `pertylizer compare` and the versioned report model                                   | Each metric unit-tested against a synthetic signal with a known deviation (6.02 dB of gain, 100 ms of delay, a semitone of detune, a band-limited change, an inverted channel); end-to-end through render→render→compare in `compare_command.rs` | Complete — runs with no GUI and no audio device |
-| P00A-T003 | [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md) and [EVD-0002](../evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md) | Two process-separate renders per case, bit-identical on all four, every comparison delta exactly zero, with a two-case control that resolves their octave to 3.6 cents; plus 8 640 timed renders giving per-case CPU cost per rendered second | Partial — determinism, level, and single-operating-point CPU; memory and timing not measured |
+| P00A-T003 | [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md), [EVD-0002](../evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md), and [EVD-0003](../evidence/phase-00a/EVD-0003-cpu-memory-timing-baseline.md) | Two process-separate renders per case, bit-identical on all four, every comparison delta exactly zero, with a two-case control that resolves their octave to 3.6 cents; 8 640 timed renders giving the cost-versus-block-size curve; and 1 700 renders over four sample rates, seven voice counts, and 15 timing/memory profiles per operating point | Complete for the four categories that exist — CPU, memory, timing, and determinism all measured, with real-time headroom explicitly out of scope |
 | P00A-T004 | [Resource inventory](../inventories/resource-limits.md) passes 1 and 2 at `dd69b657`                                                                                   | Two independent discovery methods with opposite blind spots: pass 1 matched constant names, pass 2 matched documented truncation behavior. Neither executes anything, so a truncation that is both unnamed and undocumented would still be missed        | Partial — source-read only, no measurement   |
 | P00A-T006 | [ADR-0001](../decisions/ADR-0001-internal-render-quantum.md), [ADR-0021](../decisions/ADR-0021-host-profile-and-admission-policy.md), [ADR-0037](../decisions/ADR-0037-render-quantum-value.md), and [ADR-0032](../decisions/ADR-0032-sample-time-and-event-timestamps.md) `Accepted` | Three review passes resolved the buffering, event, retention, ownership, host-fault, and measurement-boundary defects before the first two were accepted. ADR-0037 was accepted on EVD-0002 by applying the rule table it fixed before the data existed; the outcome was rule 1, so its value is provisional and binds Phase 2. ADR-0032 took three passes: an author pass, an independent pass that withdrew its acceptance over a tempo map producing engine times, a `HostProfile` horizon with no semantics, a pre-epoch clamp contradicting ADR-0001 clause 16, undefined exhaustion, and a reusable epoch identifier, and a bounded closure pass that caught the forward horizon rejecting a compiled song and fixed the order of the compile-anchor-stamp-enqueue path. ADR-0022 and ADR-0028 are `Deferred` to the Phase 3 and Phase 4 entry gates, each with an owner, its missing evidence, and constraints that hold while it is open | Complete — four accepted records and two written deferrals satisfy every row |
 

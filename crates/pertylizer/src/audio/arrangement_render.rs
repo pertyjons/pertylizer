@@ -24,6 +24,7 @@
 //!   silent for the duration of the render.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use synth_core::audio::DeviceSampleRate;
 use synth_core::{AudioCallbackContext, AudioProcessor, DenormalGuard};
@@ -221,6 +222,48 @@ pub struct OfflineEngineSession {
     /// Render sample rate (from `scope.render_sample_rate`). Baked into the
     /// engine's stream at construction, so it is fixed for the session's life.
     sample_rate: u32,
+    /// Per-block wall-clock timings, collected only while this is `Some`.
+    ///
+    /// `None` by default, which is what every production caller leaves it at:
+    /// the render loop then pays one `Option` check per block and allocates
+    /// nothing. It exists for the P00A-T003 timing baseline, which needs the
+    /// distribution of per-block processing time — the quantity an admission
+    /// policy reasons about — and cannot get it from a whole-render total.
+    block_timings: Option<BlockTimings>,
+}
+
+/// Wall-clock time spent in `SynthEngine::process` for each block of a render.
+///
+/// Collected by [`OfflineEngineSession`] only when
+/// [`start_block_timings`](OfflineEngineSession::start_block_timings) has been
+/// called. One entry per `process` call, in render order, so a consumer can
+/// compute a distribution rather than an average — a mean block time says
+/// nothing about whether a block would have missed a deadline.
+///
+/// The warm-up and drain blocks are *not* recorded: they process no audio and
+/// would sit in the distribution as unexplained outliers.
+#[derive(Debug, Default, Clone)]
+pub struct BlockTimings {
+    /// Nanoseconds spent in `process`, one per block, in render order.
+    pub nanos: Vec<u64>,
+    /// Frames requested of `process`, one per block, in the same order. The
+    /// last block of a render is usually short, and its time is not comparable
+    /// with a full block's.
+    pub frames: Vec<u32>,
+}
+
+impl BlockTimings {
+    /// Number of blocks recorded.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.nanos.len()
+    }
+
+    /// Whether no block was recorded.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.nanos.is_empty()
+    }
 }
 
 impl OfflineEngineSession {
@@ -392,6 +435,7 @@ impl OfflineEngineSession {
                 return_effect_snapshots,
                 master_effect_prefix: None,
                 sample_rate,
+                block_timings: None,
             },
             setup_warnings,
         ))
@@ -402,6 +446,24 @@ impl OfflineEngineSession {
     /// loads the first `k` effects (clamped to the chain length); `None` (the
     /// default) restores the full chain. No effect unless the session was built
     /// with `scope.master_effects`.
+    /// Begin collecting per-block timings, discarding anything already
+    /// collected.
+    ///
+    /// Off by default. Every render after this call appends to one collection,
+    /// so a caller measuring several renders should take the timings between
+    /// them.
+    pub fn start_block_timings(&mut self) {
+        self.block_timings = Some(BlockTimings::default());
+    }
+
+    /// Take the collected timings, leaving collection enabled and empty.
+    ///
+    /// Returns `None` when collection was never started.
+    #[must_use]
+    pub fn take_block_timings(&mut self) -> Option<BlockTimings> {
+        self.block_timings.replace(BlockTimings::default())
+    }
+
     pub fn set_master_effect_prefix(&mut self, prefix: Option<usize>) {
         self.master_effect_prefix = prefix;
     }
@@ -639,7 +701,20 @@ impl OfflineEngineSession {
                 self.sample_rate,
             );
 
+            // Timed here rather than around the whole render: the quantity a
+            // real-time deadline is measured against is one block's processing
+            // time, and a render total cannot be taken apart into blocks after
+            // the fact. `Instant::now` is only called when collection is on.
+            let block_started = self.block_timings.as_ref().map(|_| Instant::now());
             self.engine.process(&mut block[..sample_count], &context);
+            if let (Some(started), Some(timings)) = (block_started, self.block_timings.as_mut()) {
+                timings
+                    .nanos
+                    .push(started.elapsed().as_nanos().min(u128::from(u64::MAX)) as u64);
+                timings
+                    .frames
+                    .push(u32::try_from(this_buffer).unwrap_or(u32::MAX));
+            }
             samples.extend_from_slice(&block[..sample_count]);
             frames_written += this_buffer as u64;
             if tail_frames > 0 && !tail_started && frames_written >= stop_frame {

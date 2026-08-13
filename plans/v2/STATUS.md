@@ -7,7 +7,7 @@
 | Master plan status     | Proposed and architecture-audited                |
 | Active migration phase | 0A and 0B, both `Active` in parallel             |
 | Decision records       | 6 of 37 drafted: 4 accepted, 2 deferred          |
-| Evidence records       | 2 (`EVD-0001`, `EVD-0002`), both `Complete`      |
+| Evidence records       | 3 (`EVD-0001`..`EVD-0003`), all `Complete`       |
 | Executable Phase 0A    | Corpus, comparison command, and cost harness are used |
 
 This is a current-state dashboard, not a work log. Replace stale information instead of appending a chronology.
@@ -113,31 +113,39 @@ gate Phase 10, not Phase 1.
   not the ratio but the spread behind it: per case, `r(64,256)` runs from +2.42% to +17.35% and straddles the threshold
   that would have selected 128, so the pooled figure is a property of a four-of-eleven corpus as much as of the
   renderer.
+- **[EVD-0003](evidence/phase-00a/EVD-0003-cpu-memory-timing-baseline.md) is `Complete` and `Supported`, and it
+  closes P00A-T003.** 1 700 renders over four sample rates and seven voice counts, plus 15 timing and memory profiles
+  per operating point. Cost per frame is constant, so cost per second is proportional to sample rate to within 2% and
+  the real-time factor falls from 171x to 40x between 44.1 and 192 kHz. Cost is linear in polyphony —
+  `1.173 ms/s per voice + 0.428 ms/s`, R² = 1.0000 over a 64-fold range — so V1 has no per-voice interaction cost in
+  that patch. The finding with consequences is the third: **a 256-frame block costs the same 19-66 µs at every sample
+  rate, while its budget shrinks with the rate**, so the same block goes from 3.1% of budget at 44.1 kHz to 13.3% at
+  192 kHz. An admission policy that reasons in frames rather than in seconds would get that backwards. Peak RSS is
+  14-30 MiB per case. Real-time headroom is explicitly *not* measured: there is no host and no deadline, so every
+  timing figure is a lower bound on the same work live.
 - **Building the corpus found a V1 defect, fixed on `fix/offline-render-fidelity`.** The offline renderer rebuilt instruments without an
   allocator config and replayed only volume, pan, and solo, so polyphony, allocation mode, transpose, key range,
   oversampling, velocity sensitivities, and the sidechain source were silently defaulted. It affected every consumer of
   the offline renderer, not only the corpus — the `analyze_*` tools and the WAV export measured audio the live engine
   never produced. It is the third instance of an offline reader disagreeing with the live engine while looking healthy.
-- Phase 0A is **not** complete: P00A-T003 has CPU figures at one operating point and still no memory or timing figures,
-  P00A-T001 covers four of eleven corpus categories, P00A-T004's class sweep is unstarted, and no exit review exists.
-  No code has been written for V2 itself.
+- Phase 0A is **not** complete: P00A-T001 covers four of eleven corpus categories, P00A-T004's class sweep is
+  unstarted, P00A-T005 has not begun, and no exit review exists. Four of seven tasks are now `Complete`. No code
+  has been written for V2 itself.
 - V2 implementation status must be established from repository evidence before this dashboard makes code-level
   completion claims.
 
 ## Next actions
 
-The decision half of Phase 0A is done — four accepted records, two written deferrals, P00A-T006 `Complete`. What is
-left is measurement and coverage. The corpus, the comparison command, and a timing harness all exist, so nothing
-below is blocked on tooling.
+The decision half of Phase 0A is done, and so is its measurement half: P00A-T003 and P00A-T006 are `Complete`.
+What is left is coverage — corpus categories, the resource-limit class sweep, and the `HostProfile` contract
+that now has measured figures to be built on.
 
-1. **Finish P00A-T003.** [EVD-0001](evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md) covers determinism and
-   level and [EVD-0002](evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md) covers CPU at one polyphony and one
-   sample rate; memory, timing, and CPU across common polyphony and sample rates are still unmeasured, and the task does
-   not close without them. `render_cost` is the harness for the CPU half and takes a corpus directory, so widening it is
-   a matter of cases and operating points rather than of tooling.
-2. **Sweep all 74 resource-inventory entries** under accepted ADR-0021, assigning both axes — one of six failure classes
-   and one of seven configuration owners — plus the rule and diagnostic. Every `Unknown`-class entry must reach a
-   terminal class as part of it.
+1. **Sweep all 74 resource-inventory entries** under accepted ADR-0021, assigning both axes — one of six failure
+   classes and one of seven configuration owners — plus the rule and diagnostic. Every `Unknown`-class entry must reach
+   a terminal class. It is the last gate item that is pure desk work.
+2. **Start P00A-T005**, the `HostProfile`/`RenderLimits` contract. EVD-0003 hands it three figures it would otherwise
+   have guessed: the per-voice slope, per-block cost against budget, and the prepared-memory scale. It also owns
+   ADR-0032's forward event horizon.
 3. **Open ADR-0014.** The identity ledger's central finding is that the module id encodes its type at *runtime*
    (`IDN-0029`), not merely on disk, and that a module's script PRNG seed is derived from its instance number — so
    renumbering is audible, not just referential.

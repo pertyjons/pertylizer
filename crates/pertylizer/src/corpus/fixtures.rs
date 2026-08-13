@@ -83,6 +83,46 @@ impl Fixture {
     }
 }
 
+/// A project that holds exactly `voices` notes at once, for cost measurement.
+///
+/// **This is not a corpus case, and deliberately so.** A corpus case pins a
+/// *behaviour* that V2 must preserve or change; this pins nothing. It exists so
+/// that P00A-T003 can measure cost as a function of polyphony without adding
+/// eleven manifest entries whose behaviour claims nobody would ever check. It is
+/// absent from [`FIXTURES`], so it is never written into the corpus directory
+/// and never digested by the manifest test.
+///
+/// The patch is CORPUS-0001's — one sawtooth into one filter, one envelope —
+/// so a cost difference between two voice counts is the cost of a voice and not
+/// of a different sound. Every note starts at tick 0 and holds for two beats, so
+/// the whole rendered window is spent at full polyphony rather than ramping into
+/// it, and `max_voices` equals the note count so nothing is stolen.
+///
+/// Pitches walk up in semitones from C3. They differ because identical pitches
+/// would let a future voice-deduplication optimization make this measure
+/// something other than what it claims to.
+#[must_use]
+pub fn polyphony_probe(voices: u8) -> ProjectFile {
+    let voices = voices.clamp(1, 128);
+    let mut patch = Patch::new("Polyphony Probe");
+    add_env_amp_out(&mut patch, 0.01, 0.10, 0.90, 0.30);
+    add_saw_into_filter(&mut patch, 1_200.0, 0.10);
+
+    let mut state = instrument(InstrumentId::FIRST, "Polyphony Probe", patch);
+    state.max_voices = VoiceCount::new(voices);
+
+    let notes: Vec<(u32, u8, SeqDuration)> = (0..voices)
+        .map(|i| (0_u32, 48_u8.saturating_add(i), SeqDuration(1_920)))
+        .collect();
+    let (song, _) = one_pattern_song(
+        "Polyphony Probe",
+        InstrumentId::FIRST,
+        SeqDuration::WHOLE,
+        &notes,
+    );
+    project(vec![state], song, unity_global())
+}
+
 /// The fixture belonging to `case_id`.
 #[must_use]
 pub fn fixture(case_id: &CorpusCaseId) -> Option<&'static Fixture> {
