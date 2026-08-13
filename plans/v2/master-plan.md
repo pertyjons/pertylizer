@@ -2881,9 +2881,12 @@ safeguards while both architectures coexist.
 
 Resolve these at the named phase, using measurements rather than preference.
 Every topic has a permanent identifier in the [decision register](ADR.md), which
-is authoritative for its status and target phase; the text below states what is
-open and why. A topic is settled only when its record under
-[decisions/](decisions/README.md) is accepted.
+is authoritative for its status, class, and target phase; the text below states
+what is open and why. A topic is settled only when it is accepted in that
+register — for most topics that means an accepted record under
+[decisions/](decisions/README.md), and for a topic classed `Reversible` it means
+an accepted register row with a value and a named revisit point. Neither class
+is settled by a preference stated here.
 
 1. **Internal quantum (ADR-0001, ADR-0037)** — likely 32 or 64 frames; decide in
    Phase 0A before Phase 1, then verify the accepted choice while implementing

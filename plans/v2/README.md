@@ -121,7 +121,11 @@ guide.
 ## Working rules
 
 1. **Update status, not history.** Keep `STATUS.md` short and current. Git and exit reviews carry history.
-2. **Record decisions explicitly.** A discussion is not a decision until its ADR is accepted in the decision register.
+2. **Record decisions explicitly.** A discussion is not a decision until it is accepted in the decision register. How
+   much apparatus that takes depends on the entry's [class](ADR.md#decision-classes): a `Contract` decision needs an
+   accepted record under [decisions/](decisions/README.md), while a `Reversible` one — a value whose later change costs
+   a rebuild and nothing else — is accepted as a register row. The class is a judgement about reversibility, never
+   about how much work the decision deserves.
 3. **Link claims to evidence.** Performance, correctness, parity, and real-time claims require a reproducible `EVD`
    record or a named automated test.
 4. **Keep the master plan strategic.** Operational task state belongs in a phase tracker; normative details belong in a

@@ -19,8 +19,61 @@ Next free identifier: `ADR-0038`.
 - `Deferred` — intentionally postponed with a named revisit condition;
 - `Superseded` — replaced by another ADR.
 
-Only an accepted ADR is an implementation constraint. A likely choice or text in a discussion is not an accepted
+Only an accepted decision is an implementation constraint. A likely choice or text in a discussion is not an accepted
 decision.
+
+## Decision classes
+
+Every entry in this register is one of two classes. The class decides how much apparatus the decision gets, not how
+binding it is: an accepted decision of either class is authoritative for implementation.
+
+- **`Contract`** — the default. Gets an individual record under [decisions/](decisions/README.md), with options,
+  tradeoffs, evidence, and consequences, and is accepted there.
+- **`Reversible`** — a *value* whose later change costs a rebuild and nothing else. Gets a row in the
+  [reversible-decisions table](#reversible-decisions) and no file.
+
+### The reversibility test
+
+An entry is `Reversible` only when **all four** hold. State each in the entry; an entry that cannot state test 3 in one
+sentence is a `Contract` decision.
+
+1. **Value, not shape.** It picks a number, a default, or a threshold. It does not define a type, a field, a contract
+   clause, an ownership boundary, or an error behavior.
+2. **Nothing persists it.** No serialized field, file-format field, protocol message, or public API signature carries it
+   or is sized by it. A value a saved file records is a migration to change, not a rebuild.
+3. **Reversal is a rebuild.** Changing it later costs recompilation and re-measurement — not a superseding contract, not
+   a data migration, not a re-review of everything that cited it.
+4. **A named revisit point exists.** A phase gate, or a stated condition. Without one, "provisional" means "forgotten",
+   and the entry is a `Contract` decision that has not been made yet.
+
+### What a reversible entry must carry
+
+The chosen value; one or two sentences of why, including what would change it; the revisit point; and this standing
+restriction, which is what keeps the value reversible in practice rather than only on paper:
+
+> Until its revisit point, nothing may be tuned to the value — no hand-unrolled kernel, no layout sized by it, no test
+> asserting it as a constant.
+
+What the fast path removes is the individual file, the options-and-tradeoffs survey, an acceptance rule table fixed
+before measurement, and the requirement that evidence exist *before* acceptance. Evidence moves to the revisit point,
+where it is measured against the thing being built rather than against a proxy for it.
+
+### Guards
+
+- **Reclassification is one-way in practice.** If a reversible value is cited as a reason for another design decision,
+  it has stopped being reversible: promote it to a `Contract` record, keeping its identifier, before that decision is
+  accepted.
+- **A gate may not lean on a reversible entry for a contract question.** Where a gate needs semantics settled, the
+  semantics are a separate `Contract` record. ADR-0001 and ADR-0037 are that split done by hand; this class makes it
+  the default shape rather than a deviation.
+- **`Reversible` is not `unreviewed`.** The value binds implementation the moment it is accepted, and a wrong one is
+  corrected in the register, not ignored.
+
+ADR-0037 (render quantum frame count) is the case that motivated this class, and it would qualify under all four tests.
+It is not reclassified: it is `Accepted` and therefore immutable apart from spelling and links, and rewriting an
+accepted record to match a later workflow would destroy the reasoning the record exists to preserve.
+
+No topic has been swept for reclassification. Judge the class when work begins on an entry, not in bulk.
 
 ## Register
 
@@ -82,6 +135,18 @@ authoritative but provisional, and re-measuring it against real V2 nodes is a Ph
 still the right status — it is an implementation constraint, and nothing may treat the value as settled enough to tune
 against.
 
+### Reversible decisions
+
+The second half of the register. A topic appears in exactly one of the two tables; this one carries the decisions that
+meet the [reversibility test](#the-reversibility-test), and its rows are the record — there is no file behind them.
+
+| ID | Topic | Value | Status | Revisit at | Why reversal is a rebuild |
+|----|-------|-------|--------|------------|---------------------------|
+| —  | —     | —     | —      | —          | *(no entry yet)*          |
+
+Each row's `Why reversal is a rebuild` cell is test 3, stated in one sentence. A row that cannot fill it does not belong
+in this table.
+
 ### Registered splits
 
 ADR-0037 is not a Part VII topic of its own. It splits the master plan's topic 1 (internal render quantum) so that the
@@ -95,7 +160,9 @@ refine or verify it.
 
 ## Register maintenance
 
-When work begins on an entry:
+When work begins on an entry, first decide its [class](#decision-classes).
+
+For a `Contract` entry:
 
 1. copy [templates/adr.md](templates/adr.md) to
    `decisions/ADR-NNNN-short-title.md`;
@@ -103,6 +170,15 @@ When work begins on an entry:
 3. keep the register status synchronized with the individual ADR;
 4. if accepted, update affected specifications and phase tasks;
 5. if superseded, retain the old ADR and link both directions.
+
+For a `Reversible` entry:
+
+1. move its row to the [reversible-decisions table](#reversible-decisions), filling the value, the revisit point, and
+   test 3;
+2. update affected phase tasks, and the master plan when a gate names the revisit point;
+3. if it is later promoted to `Contract`, move the row back and write the record under its existing identifier;
+4. if the revisit point changes the value, edit the row — a reversible decision does not need a superseding record,
+   which is the entire point of the class.
 
 An ADR may cover several tightly coupled register entries only when they cannot be decided independently. If so, retain
 all identifiers as aliases in its metadata and explain the coupling.

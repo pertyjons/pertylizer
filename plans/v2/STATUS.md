@@ -26,6 +26,12 @@ gate Phase 10, not Phase 1.
   documents were checked: every internal Markdown link and heading anchor resolves, both phase trackers conform to
   [templates/phase.md](templates/phase.md), and the identifier series are consistent across README, registers, and
   trackers. No authority conflict was found.
+- **The register now has two decision classes.** A `Contract` decision gets an individual record as before; a
+  `Reversible` one — a value whose later change costs a rebuild and nothing else, meeting all four of
+  [the reversibility test](ADR.md#the-reversibility-test) — is accepted as a register row with a value and a named
+  revisit point, with no file, no options survey, and no evidence required before acceptance. ADR-0037 is the case
+  that motivated it and would qualify; it is not reclassified, because an accepted record is immutable. No topic has
+  been swept, and the class is judged when work begins on an entry.
 - The decision topics are registered in [ADR.md](ADR.md), now 37 after one split. Three have individual records, and
   **all three are `Accepted`** — [ADR-0001](decisions/ADR-0001-internal-render-quantum.md) (render quantum semantics)
   and [ADR-0021](decisions/ADR-0021-host-profile-and-admission-policy.md) (host profile and admission) after three

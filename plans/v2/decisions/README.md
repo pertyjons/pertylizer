@@ -1,7 +1,13 @@
 # V2 Architecture Decision Records
 
-This directory contains one durable record per considered V2 decision. The canonical status and next identifier live
-in [../ADR.md](../ADR.md).
+This directory contains one durable record per considered V2 decision **of the `Contract` class**. The canonical
+status, class, and next identifier live in [../ADR.md](../ADR.md).
+
+A `Reversible` decision — a value whose later change costs a rebuild and nothing else — has no file here. Its row in
+the register's [reversible-decisions table](../ADR.md#reversible-decisions) is the record. Read
+[the reversibility test](../ADR.md#the-reversibility-test) before concluding that a decision is one; the default class
+is `Contract`, and a decision that defines a shape, a contract clause, or anything a saved file carries is never
+reversible.
 
 ## File naming
 
@@ -16,7 +22,8 @@ Copy [../templates/adr.md](../templates/adr.md) when creating a record.
 
 ## Decision lifecycle
 
-1. Add or select a `Proposed` entry in the decision register.
+1. Add or select a `Proposed` entry in the decision register, and decide its class. The rest of this list is the
+   `Contract` path; a `Reversible` entry is finished in the register itself.
 2. Create the individual ADR before implementation depends on the choice.
 3. Link relevant inventory entries, evidence records, prototypes, and plan gates.
 4. Record options fairly, including the status quo.
