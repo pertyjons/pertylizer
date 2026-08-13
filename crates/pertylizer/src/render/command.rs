@@ -355,3 +355,36 @@ fn audible_tracks(project: &LoadedProject, ids: &[synth_sequencer::TrackId]) -> 
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        MAX_RENDER_BYTES, MAX_RENDER_SAMPLE_RATE, MAX_RENDER_SECONDS, MAX_TAIL_SECONDS,
+        RENDER_BUFFER_BYTES_PER_SAMPLE, RENDER_CHANNELS,
+    };
+
+    /// [`MAX_RENDER_BYTES`] is a backstop, not a reachable check: the duration,
+    /// tail, and rate bounds together cap one render below it. That is a
+    /// relationship between four independent constants, so it is pinned rather
+    /// than assumed — raising any of them fails here, which is the moment to
+    /// re-check whether the allocation guard is armed again.
+    ///
+    /// A unit test rather than an integration one, because
+    /// `MAX_RENDER_SECONDS` is an internal renderer bound and publishing it to
+    /// let a test read it would be exposing an implementation detail as
+    /// supported API.
+    #[test]
+    fn the_other_bounds_cannot_reach_the_size_budget() {
+        let largest = f64::from(MAX_RENDER_SECONDS + MAX_TAIL_SECONDS)
+            * f64::from(MAX_RENDER_SAMPLE_RATE)
+            * f64::from(RENDER_CHANNELS)
+            * f64::from(RENDER_BUFFER_BYTES_PER_SAMPLE);
+        assert!(
+            largest <= MAX_RENDER_BYTES as f64,
+            "the bounds now reach {largest} bytes against a {MAX_RENDER_BYTES}-byte budget: \
+             the size guard is reachable again, so \
+             `validation_does_not_depend_on_the_output_format` should go back to driving both \
+             formats into `RenderTooLarge`"
+        );
+    }
+}

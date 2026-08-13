@@ -18,8 +18,8 @@ use synth_sequencer::{
 
 use pertylizer::project_apply::{ProjectBuildOptions, save_project_to};
 use pertylizer::render::{
-    MAX_RENDER_BYTES, MAX_RENDER_SAMPLE_RATE, MAX_TAIL_SECONDS, MixSelection, RenderCommand,
-    RenderError, TrackSelector, WavFormat, run_render_command,
+    MAX_RENDER_SAMPLE_RATE, MixSelection, RenderCommand, RenderError, TrackSelector, WavFormat,
+    run_render_command,
 };
 
 use common::{TEST_SR, setup_with_patch, sustain_patch};
@@ -321,26 +321,6 @@ fn the_render_ceiling_is_the_engine_ceiling() {
     assert_eq!(
         MAX_RENDER_SAMPLE_RATE,
         synth_core::audio::DeviceSampleRate::MAX_SUPPORTED.as_u32()
-    );
-}
-
-/// `MAX_RENDER_BYTES` is a backstop, not a reachable check: the duration, tail,
-/// and rate bounds together cap one render below it. That is a relationship
-/// between four independent constants, so it is pinned rather than assumed —
-/// raising any of them fails here, which is the moment to re-check whether the
-/// allocation guard is armed again.
-#[test]
-fn the_other_bounds_cannot_reach_the_size_budget() {
-    let largest =
-        f64::from(pertylizer::audio::arrangement_render::MAX_RENDER_SECONDS + MAX_TAIL_SECONDS)
-            * f64::from(MAX_RENDER_SAMPLE_RATE)
-            * 2.0
-            * 4.0;
-    assert!(
-        largest <= MAX_RENDER_BYTES as f64,
-        "the bounds now reach {largest} bytes against a {MAX_RENDER_BYTES}-byte budget: \
-         the size guard is reachable again, so `validation_does_not_depend_on_the_output_format` \
-         should go back to driving both formats into `RenderTooLarge`"
     );
 }
 

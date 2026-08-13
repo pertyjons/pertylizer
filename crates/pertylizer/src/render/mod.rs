@@ -72,9 +72,9 @@ pub const MAX_TAIL_SECONDS: f32 = 30.0;
 /// request is `(300 + 30) s × 192 kHz × 2 ch × 4 B = 483 MiB`, which is under
 /// this budget — so no combination of the other three bounds can trip it. It
 /// stays because those three bounds are independent of it and may move;
-/// `the_other_bounds_cannot_reach_the_size_budget` in `tests/render_command.rs`
-/// pins the relationship, so raising one fails loudly here rather than quietly
-/// re-arming an allocation abort.
+/// `command::tests::the_other_bounds_cannot_reach_the_size_budget` pins the
+/// relationship, so raising one fails loudly here rather than quietly re-arming
+/// an allocation abort.
 pub const MAX_RENDER_BYTES: u64 = 512 * 1024 * 1024;
 
 /// A failure somewhere in the load-validate-render-write sequence.
