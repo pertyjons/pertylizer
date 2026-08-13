@@ -73,6 +73,23 @@ scheduled, never stored in one. Named to avoid `synth_core::SampleOffset`, which
 **Host profile**
 
 Declared platform capabilities and resource budgets used to admit or reject a prepared plan before real-time execution.
+It has two halves, which differ in who may set a value: *host capabilities* and *render limits*.
+
+**Host capabilities**
+
+The half of the host profile established by querying the host and device — sample rate, maximum block, channel layout.
+An application discovers a capability; it never raises one, and a hardcoded advertised range is the anti-pattern the
+contract forbids.
+
+**Render limits**
+
+The half of the host profile the operator chooses — how large a plan may be before the renderer refuses it. A render
+limit may be raised, at a memory and CPU cost the resource report accounts for.
+
+**Admission**
+
+Compiling a plan against one host profile, off the audio thread, and either producing a prepared plan or refusing it
+with an attributable diagnostic. Admission never truncates a plan to make it fit.
 
 **Resource report**
 

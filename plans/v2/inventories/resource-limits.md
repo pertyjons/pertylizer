@@ -39,6 +39,14 @@ this ledger has been measured.** A `Classified` row states what happens when the
 number; it does not assert that the number is right. Setting numbers stays with each owner: P00A-T005 for `HostProfile`,
 and the relevant contract or ADR for the other six.
 
+**The `HostProfile` numbers now exist**, in the `Draft`
+[host profile and render limits specification](../specs/spec-host-profile-and-render-limits.md). It maps every one of
+the 30 `HostProfile`-owned entries below to a successor field and gives each a value with a stated basis — queried,
+derived, V1 carry-over, or chosen. Only three of those values are derived from measurement, and the specification
+labels which. It also picks up `LIMIT-0031`, whose owner here is `N/A — removed` but whose disposition creates a
+profile field. This ledger stays authoritative for what exists in V1 and who owns it; the specification is
+authoritative for the value.
+
 **ADR ownership.** The *truncation question* for every row in the silent-truncation register below is owned by
 **ADR-0021**, including the ones whose subject matter is not rendering: `LIMIT-0067` truncates at project load, not in
 the audio callback, but the Phase 0A exit gate is what forbids accepting an undiagnosed silent truncation as baseline,

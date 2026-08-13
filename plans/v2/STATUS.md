@@ -3,7 +3,7 @@
 | Field                  | Value                                            |
 |------------------------|--------------------------------------------------|
 | Last updated           | 2026-08-13                                       |
-| Documentation stage    | Workflow accepted; inventories at pass 2         |
+| Documentation stage    | Workflow accepted; first specification at `Draft` |
 | Master plan status     | Proposed and architecture-audited                |
 | Active migration phase | 0A and 0B, both `Active` in parallel             |
 | Decision records       | 6 of 37 drafted: 4 accepted, 2 deferred          |
@@ -145,20 +145,73 @@ gate Phase 10, not Phase 1.
   oversampling, velocity sensitivities, and the sidechain source were silently defaulted. It affected every consumer of
   the offline renderer, not only the corpus — the `analyze_*` tools and the WAV export measured audio the live engine
   never produced. It is the third instance of an offline reader disagreeing with the live engine while looking healthy.
-- Phase 0A is **not** complete: P00A-T001 covers four of eleven corpus categories, P00A-T005 has not begun, and no
-  exit review exists. **Five of seven tasks are `Complete`**; the two open ones are corpus coverage and the
-  `HostProfile` contract. No code has been written for V2 itself.
+- **The `HostProfile` contract is written and reviewed once, and it is the register's first specification.**
+  [Host profile and render limits](specs/spec-host-profile-and-render-limits.md), invariant prefix `HOST`, is at
+  `Draft` with 21 invariants, a conformance test named for each, and a value for every field the master plan lists plus
+  ADR-0032's forward event horizon. Each of the ledger's 30 `HostProfile`-owned entries has a named successor field;
+  seven fields have no V1 antecedent. **Exactly one value is derived from measurement** — ADR-0021 asked P00A-T005 for
+  measured defaults and EVD-0003 measured cost, not capacity — with two more *chosen and anchored on* it. Every default
+  carries one of those stated bases rather than implying a measurement the record does not have.
+- **The independent review pass found five defects, two of them High, and all are corrected.** The first was a
+  `maximum_block_size >= Q` clause that would have **refused hosts the render model is built for**: ADR-0001 clause 6
+  primes the output carry precisely so that a callback of `N < Q` can be served, and the constraint had no purpose. The
+  second was a runtime contract that permitted loss only at live bounded queues while three fields visibly did
+  something else — the telemetry ring overwrote, a recording take stopped, and an over-full quantum had no defined
+  behaviour at all, although the four ingress queues hold 3 072 events against a 256-event scratch. The specification
+  now names **five distinct runtime behaviours** — admission refuses, a queue drops, a quantum defers, a lossy budget
+  evicts, a session limit stops — with three new invariants carrying them, and each field takes exactly one.
+- **Applying the review found a sixth defect, in the corrections.** `max_held_notes` had been sized to the
+  per-instrument voice ceiling on the reasoning that a held note cannot outnumber a voice. It can — sustain pedal,
+  stealing allocator, MPE or sequencer source — and the allocator tracks a held note precisely so that it can re-sound
+  one. It now carries its own type so the two concepts cannot be assigned to each other.
+- **The bounded closure pass has run: four findings, one substantive, and it is in the previous pass's own
+  correction.** HOST-INV-021 had reused ADR-0001 clause 16's late counter and position rule for a deferred event, and
+  neither fits — a deferred event's producer was on time and the **engine** was full, so counting it as late would
+  publish a capacity shortfall as an external timing fault, and clause 16's "first not-yet-rendered quantum boundary"
+  is circular for a quantum that has itself not rendered. ADR-0032 clause 22 is the precedent: it separated the
+  pre-epoch clamp from the late counter on identical grounds and warned that one test would pass on the wrong policy.
+  The other three: the forward horizon's flat one-second default **could fail its own validation** on a device with a
+  very large block, and now takes a derived floor; `max_concurrent_retiring_voices` = 64 **recreated the defect the
+  previous pass had just fixed** — a runtime-enforced field with no defined behaviour on reaching it — and is now
+  derived from `max_active_voices` so it cannot bind; and HOST-INV-009's four-behaviour partition was false twice over,
+  omitting admission refusal and having no place for a field that is a size rather than a bound.
+- **Four consecutive passes over a correction have each found something in the correction.** ADR-0001, ADR-0021 and
+  ADR-0032 recorded one instance each; P00A-T005 has now produced two of its own. This has stopped being a warning
+  about same-session acceptance and become a measured property of the work: **treat a correction as new material, not
+  as a fix.**
+- **EVD-0003's finding produced a field, not just a number.** A block costs the same absolute time at every sample rate
+  while its real-time budget shrinks with the rate, so the profile carries an advisory cost budget expressed as a
+  *ratio of times* — 0.15 of the quantum's real-time budget, from the observed 2.7x–6.8x max-to-median block spread.
+  It is the only field in the profile that is not a capacity, and it is the reason a count-only profile would admit a
+  512-voice plan identically at 44.1 kHz, where it costs about 60% of one measured core, and at 192 kHz, where the same
+  plan is not real time at all.
+- **The specification stays `Draft` for one step only.** The closure pass introduced three pieces of new semantics of
+  its own — the capacity-deferral counter, the derived horizon floor, the derived retirement budget — and by the
+  pattern above that is where the next defect lives. What it needs is a confirmation read of those three, not a fourth
+  full pass. Its *Review status* section names them, alongside the standing checks and the two structural choices
+  ADR-0021 left open: the `HostCapabilities`/`RenderLimits` split,
+  and a `CapabilitySource` tag with two constructors, which is what makes the queried-capability rule enforceable by
+  API shape instead of by a runtime tag that cannot prove a query happened.
+- Phase 0A is **not** complete: P00A-T001 covers four of eleven corpus categories, P00A-T005 is `Active` with a
+  once-reviewed draft, and no exit review exists. **Five of seven tasks are `Complete`**; the two open ones are corpus
+  coverage and the `HostProfile` contract's closure pass. No code has been written for V2 itself.
 - V2 implementation status must be established from repository evidence before this dashboard makes code-level
   completion claims.
 
 ## Next actions
 
-Five of Phase 0A's seven tasks are `Complete`: the contracts, the measurements, and the limit audit. What is left is
-the `HostProfile` contract those three now feed, corpus coverage, and the exit review.
+Five of Phase 0A's seven tasks are `Complete`: the contracts, the measurements, and the limit audit. The sixth,
+P00A-T005, has a contract that has now had three review passes. What is left is one confirmation read, corpus
+coverage, and the exit review.
 
-1. **Start P00A-T005**, the `HostProfile`/`RenderLimits` contract. EVD-0003 hands it three figures it would otherwise
-   have guessed: the per-voice slope, per-block cost against budget, and the prepared-memory scale. It also owns
-   ADR-0032's forward event horizon.
+1. **Confirmation read of the three changes the closure pass introduced** in the
+   [host profile specification](specs/spec-host-profile-and-render-limits.md) — the capacity-deferral counter, the
+   derived forward-horizon floor, and the derived retirement budget — then promote it to `Current` and close
+   P00A-T005. The target is specific because the pattern is: the closure pass predicted HOST-INV-021 would be where
+   ADR-0001 clause 16 interacted badly, and it was, but the defect was the *counter and the position rule*, not the
+   interaction anyone expected. The remaining question these corrections raised and did not answer is whether
+   deferral can starve a low-priority event under sustained overrun; it is recorded as an open question rather than
+   as a resolved one.
 2. **Open ADR-0014.** The identity ledger's central finding is that the module id encodes its type at *runtime*
    (`IDN-0029`), not merely on disk, and that a module's script PRNG seed is derived from its instance number — so
    renumbering is audible, not just referential.
