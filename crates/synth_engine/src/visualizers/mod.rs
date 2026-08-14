@@ -33,6 +33,14 @@ pub struct VisualizationBuffer {
     samples_r_cons: parking_lot::Mutex<ringbuf::HeapCons<f32>>,
     /// Buffer size.
     pub size: usize,
+    /// Samples the writer could not fit since the reader last drained this.
+    ///
+    /// The ring drops the **newest** samples when full — `push_slice` appends
+    /// what fits and reports the rest — so a reader that takes a non-zero value
+    /// knows the window it is about to show is trimmed rather than continuous.
+    /// Without it the omission is invisible, which is what a lossy presentation
+    /// budget may not do. Drained by [`VisualizationBuffer::take_omitted_samples`].
+    omitted_samples: AtomicU64,
     /// Current peak levels (atomic for lock-free access).
     peak_l: AtomicF32,
     peak_r: AtomicF32,
@@ -95,6 +103,7 @@ impl VisualizationBuffer {
             snapshot_r: parking_lot::Mutex::new(VecDeque::from(vec![0.0; size])),
             // Sweep buffer pre-allocated with generous capacity
             sweep_data: parking_lot::Mutex::new(Vec::with_capacity(8192)),
+            omitted_samples: AtomicU64::new(0),
             sweep_generation: AtomicU32::new(0),
             sweep_last_writer: AtomicU64::new(0),
             // Sample playback visualization defaults
@@ -107,17 +116,51 @@ impl VisualizationBuffer {
 
     /// Write samples to the buffer (called from audio thread).
     /// This is lock-free from the audio thread's perspective - uses try_lock.
+    ///
+    /// Samples that do not fit are dropped and counted; see
+    /// [`Self::take_omitted_samples`]. A contended `try_lock` skips the whole
+    /// write, which is also counted.
     pub fn write_samples(&self, left: &[f32], right: &[f32]) {
         // Try to get the producer - if GUI has it locked, skip this update
         // This is safe because we're just visualization data, not critical audio
+        let len = left.len().min(right.len());
         if let Some(mut prod_l) = self.samples_l_prod.try_lock()
             && let Some(mut prod_r) = self.samples_r_prod.try_lock()
         {
             // Push samples, dropping any that don't fit (buffer full)
-            let len = left.len().min(right.len());
-            prod_l.push_slice(&left[..len]);
-            prod_r.push_slice(&right[..len]);
+            let wrote_l = prod_l.push_slice(&left[..len]);
+            let wrote_r = prod_r.push_slice(&right[..len]);
+            self.note_omitted(len - wrote_l.min(wrote_r));
+        } else {
+            self.note_omitted(len);
         }
+    }
+
+    /// Accumulate omitted visualization samples (audio thread; atomic only).
+    fn note_omitted(&self, n: usize) {
+        if n > 0 {
+            self.omitted_samples.fetch_add(n as u64, Ordering::Relaxed);
+        }
+    }
+
+    /// Take the samples the writer could not fit **since the previous call**,
+    /// resetting the count.
+    ///
+    /// Non-zero means the window this reader is about to display has a gap: the
+    /// ring drops the newest samples when full, so a stalled or contended
+    /// reader loses audio it would otherwise have no way to detect.
+    ///
+    /// It takes rather than peeks deliberately. A counter that only accumulates
+    /// answers "has this ever been trimmed", which is useless after the first
+    /// overrun — every later window, however complete, reads as trimmed forever.
+    /// Draining it pairs the count with one read, so the answer is about the
+    /// window in hand.
+    #[must_use]
+    pub fn take_omitted_samples(&self) -> synth_core::SampleCount {
+        let raw = self.omitted_samples.swap(0, Ordering::Relaxed);
+        // Storage stays a raw atomic — there is no atomic newtype — but the
+        // value crosses the API as the domain type it is.
+        synth_core::SampleCount::new(usize::try_from(raw).unwrap_or(usize::MAX))
     }
 
     /// Write interleaved stereo samples directly (no allocation needed).
@@ -133,15 +176,20 @@ impl VisualizationBuffer {
             let mut left = [0.0_f32; CHUNK_FRAMES];
             let mut right = [0.0_f32; CHUNK_FRAMES];
 
+            let mut omitted = 0_usize;
             for chunk in interleaved.chunks(CHUNK_FRAMES * 2) {
                 let frames = chunk.len() / 2;
                 for (i, frame) in chunk.chunks_exact(2).enumerate() {
                     left[i] = frame[0];
                     right[i] = frame[1];
                 }
-                prod_l.push_slice(&left[..frames]);
-                prod_r.push_slice(&right[..frames]);
+                let wrote_l = prod_l.push_slice(&left[..frames]);
+                let wrote_r = prod_r.push_slice(&right[..frames]);
+                omitted += frames - wrote_l.min(wrote_r);
             }
+            self.note_omitted(omitted);
+        } else {
+            self.note_omitted(interleaved.len() / 2);
         }
     }
 
@@ -224,7 +272,17 @@ impl VisualizationBuffer {
     /// avoiding per-frame heap allocations when the caller reuses the same Vecs.
     /// The internal `VecDeque` snapshots are preserved for other readers
     /// (e.g. [`copy_snapshot_windowed_into`](Self::copy_snapshot_windowed_into)).
-    pub fn read_samples_into(&self, dst_l: &mut Vec<f32>, dst_r: &mut Vec<f32>) {
+    ///
+    /// Returns the samples the writer could not fit since the previous read, so
+    /// the gap is reported to the reader that is about to display the window it
+    /// belongs to. Draining it anywhere else — a telemetry thread, say — pairs
+    /// the count with the wrong window.
+    #[must_use = "a non-zero count means the window just read has a gap"]
+    pub fn read_samples_into(
+        &self,
+        dst_l: &mut Vec<f32>,
+        dst_r: &mut Vec<f32>,
+    ) -> synth_core::SampleCount {
         let mut snapshot_l = self.snapshot_l.lock();
         let mut snapshot_r = self.snapshot_r.lock();
 
@@ -254,11 +312,21 @@ impl VisualizationBuffer {
             }
         }
 
+        // Drain the omission count *after* consuming the ring, not before. The
+        // writer runs concurrently: an overrun that happens while this call is
+        // waiting on the snapshot locks belongs to the window being assembled
+        // here, and an early drain would defer it to the next call — reporting
+        // this window as complete and a later complete one as gapped, which is
+        // the opposite of the pairing this API promises.
+        let omitted = self.take_omitted_samples();
+
         // Copy into caller buffers — no allocation if dst already has capacity
         dst_l.clear();
         dst_l.extend(snapshot_l.iter());
         dst_r.clear();
         dst_r.extend(snapshot_r.iter());
+
+        omitted
     }
 
     /// Copy the left-channel snapshot into `dst` with windowing applied, without
@@ -432,6 +500,65 @@ mod width_bucket_guards {
         assert_eq!(
             LevelMeter::new().descriptor().width,
             ModuleWidth::ExtraSmall
+        );
+    }
+}
+
+#[cfg(test)]
+mod omission_tests {
+    use super::VisualizationBuffer;
+    use synth_core::SampleCount;
+
+    /// A write that fits reports nothing omitted.
+    #[test]
+    fn a_fitting_write_omits_nothing() {
+        let buf = VisualizationBuffer::new(64);
+        let samples = [0.5_f32; 16];
+        buf.write_samples(&samples, &samples);
+        assert_eq!(buf.take_omitted_samples(), SampleCount::ZERO);
+    }
+
+    /// Overrunning the ring counts exactly the samples that did not fit.
+    ///
+    /// The ring drops the newest, so with a capacity of 64 and 100 samples
+    /// pushed, 36 are lost. Before this counter existed the loss was invisible
+    /// to the reader, which is what made it a silent truncation rather than a
+    /// documented eviction.
+    #[test]
+    fn overrun_counts_the_samples_that_did_not_fit() {
+        let buf = VisualizationBuffer::new(64);
+        let samples = [0.5_f32; 100];
+        buf.write_samples(&samples, &samples);
+        assert_eq!(buf.take_omitted_samples(), SampleCount::new(36));
+    }
+
+    /// The interleaved writer — the one `master_scope` actually uses — counts
+    /// the same way. 100 frames into a 64-sample ring omits 36 frames.
+    #[test]
+    fn interleaved_writer_counts_omissions_too() {
+        let buf = VisualizationBuffer::new(64);
+        let interleaved = [0.25_f32; 200];
+        buf.write_interleaved(&interleaved);
+        assert_eq!(buf.take_omitted_samples(), SampleCount::new(36));
+    }
+
+    /// Omissions accumulate between reads, and a read drains them — so a
+    /// complete window after an overrun does not keep reporting a gap.
+    #[test]
+    fn taking_omissions_drains_them() {
+        let buf = VisualizationBuffer::new(16);
+        let samples = [0.5_f32; 20];
+        buf.write_samples(&samples, &samples);
+        buf.write_samples(&samples, &samples);
+        let first = buf.take_omitted_samples();
+        assert!(
+            first > SampleCount::ZERO,
+            "overruns between reads must accumulate"
+        );
+        assert_eq!(
+            buf.take_omitted_samples(),
+            SampleCount::ZERO,
+            "a drained counter must not report the same gap twice, or every              later window reads as trimmed forever"
         );
     }
 }

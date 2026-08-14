@@ -345,6 +345,39 @@ pub(crate) fn run(
             ));
         }
 
+        // Recorded notes the engine could not hand over, and blocks where a
+        // track's sends exceeded the cap. Both are losses the user would
+        // otherwise never learn about; publishing them is the whole reason the
+        // counters exist.
+        //
+        // These publish **cumulative totals**, not deltas, and deliberately do
+        // not reset. OSC is UDP: a swap-to-zero delta that is encoded but never
+        // arrives is gone forever, which recreates the silent loss the counter
+        // exists to prevent. A total is idempotent — a receiver that misses a
+        // datagram simply learns the new figure from the next one.
+        let recorded_note_losses = engine_state
+            .refused_recorded_note_flushes
+            .load(std::sync::atomic::Ordering::Relaxed);
+        // Published unconditionally, including zero. A receiver keeps the last
+        // value it saw, so omitting zeros would leave a restarted engine's HUD
+        // showing the previous session's losses forever.
+        //
+        // `Long`, and `i64::from` rather than `as`: these are cumulative totals
+        // that nothing resets, so an `i32` cast would eventually publish a
+        // negative loss count.
+        messages.push(osc_msg(
+            addresses::ENGINE_RECORDED_NOTE_LOSSES,
+            vec![OscType::Long(i64::from(recorded_note_losses))],
+        ));
+
+        let send_truncations = engine_state
+            .channel_send_truncations
+            .load(std::sync::atomic::Ordering::Relaxed);
+        messages.push(osc_msg(
+            addresses::ENGINE_SEND_TRUNCATIONS,
+            vec![OscType::Long(i64::from(send_truncations))],
+        ));
+
         send_bundle(&socket, target, &mut messages);
     }
 

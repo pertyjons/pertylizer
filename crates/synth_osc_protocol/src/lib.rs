@@ -106,6 +106,17 @@ pub mod addresses {
     /// Event ring buffer drop count since last report.
     pub const ENGINE_EVENT_DROPS: &str = "/synth/engine/event_drops";
 
+    /// Recorded-note **flushes** refused because the retry slot was occupied.
+    ///
+    /// The unit is a flush, not a note and not a take: one flush carries many
+    /// notes, and loop recording emits a partial flush at every loop boundary,
+    /// so one take can produce several. Cumulative total, not a delta.
+    pub const ENGINE_RECORDED_NOTE_LOSSES: &str = "/synth/engine/recorded_flush_losses";
+
+    /// Track-blocks in which a track hit the per-channel send cap with authored
+    /// sends still unexamined. Cumulative total, not a delta.
+    pub const ENGINE_SEND_TRUNCATIONS: &str = "/synth/engine/send_truncations";
+
     /// Ping from sender — included in bundles so visualizer knows sender is alive.
     pub const VIZ_PING: &str = "/viz/ping";
 

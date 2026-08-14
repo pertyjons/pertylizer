@@ -1483,3 +1483,104 @@ fn a_global_glide_reaches_an_instrument_that_already_exists() {
         .as_f32();
     assert!((on_instrument - 0.4).abs() < 1e-6, "got {on_instrument}");
 }
+
+/// Fill the engine-to-GUI event ring so the next `try_push` fails.
+fn fill_event_ring(engine: &mut SynthEngine) {
+    // `EVENT_BUFFER_SIZE` slots; push until the producer refuses.
+    for _ in 0..(EVENT_BUFFER_SIZE + 8) {
+        if engine
+            .event_producer
+            .try_push(EngineEvent::NoteReleased {
+                note: MidiNote::new(60),
+                channel: MidiChannelSelection::CH1,
+            })
+            .is_err()
+        {
+            return;
+        }
+    }
+    panic!("event ring never filled");
+}
+
+fn one_recorded_note() -> Vec<crate::recording::RecordedNote> {
+    vec![crate::recording::RecordedNote {
+        pitch: synth_sequencer::Pitch::MIDDLE_C,
+        velocity: synth_sequencer::Velocity::new(0.8),
+        start: synth_sequencer::PatternTick(0),
+        duration: synth_sequencer::Duration::QUARTER,
+    }]
+}
+
+/// With the event ring full, the first failed flush parks in the retry slot.
+#[test]
+fn a_failed_recorded_note_flush_parks_for_retry() {
+    let (mut engine, _handle) = SynthEngine::new();
+    fill_event_ring(&mut engine);
+
+    engine.flush_recorded_notes(
+        synth_sequencer::PatternId::new(1),
+        one_recorded_note(),
+        false,
+    );
+
+    assert!(
+        engine.pending_recorded_notes.is_some(),
+        "the first failure must be kept for retry, not lost"
+    );
+    assert_eq!(
+        engine
+            .state
+            .refused_recorded_note_flushes
+            .load(std::sync::atomic::Ordering::Relaxed),
+        0
+    );
+}
+
+/// A second failed flush is **refused and counted**, never written over the
+/// first. Overwriting would destroy notes the user already played and drop
+/// their `Vec` on the audio thread; this is the regression test for that.
+#[test]
+fn a_second_failed_flush_is_refused_not_overwritten() {
+    let (mut engine, _handle) = SynthEngine::new();
+    fill_event_ring(&mut engine);
+
+    engine.flush_recorded_notes(
+        synth_sequencer::PatternId::new(1),
+        one_recorded_note(),
+        false,
+    );
+    let first = engine
+        .pending_recorded_notes
+        .as_ref()
+        .map(|(id, notes, _)| (*id, notes.len()))
+        .expect("first flush parked");
+
+    engine.flush_recorded_notes(
+        synth_sequencer::PatternId::new(1),
+        one_recorded_note(),
+        true,
+    );
+
+    let still_there = engine
+        .pending_recorded_notes
+        .as_ref()
+        .map(|(id, notes, overdub)| (*id, notes.len(), *overdub))
+        .expect("the parked flush must survive a second failure");
+    assert_eq!(
+        (still_there.0, still_there.1),
+        first,
+        "the earlier take must be the one kept"
+    );
+    assert!(
+        !still_there.2,
+        "the slot must still hold the FIRST flush, not the second's overdub flag"
+    );
+    assert_eq!(
+        engine
+            .state
+            .refused_recorded_note_flushes
+            .load(std::sync::atomic::Ordering::Relaxed),
+        1,
+        "the refusal must be counted in shared state, where the UI can read it"
+    );
+}

@@ -2920,7 +2920,10 @@ fn draw_visualizer_display(
 
         // Get samples from visualization buffer if available
         let samples = if let Some(buffer) = vis_buffer {
-            buffer.read_samples_into(&mut state.vis_buf_l, &mut state.vis_buf_r);
+            // Per-module scope; see the master-scope reader for why the gap
+            // count is acknowledged rather than drawn.
+            let _scope_gap_samples =
+                buffer.read_samples_into(&mut state.vis_buf_l, &mut state.vis_buf_r);
             // Downsample to 256 points for display
             let step = state.vis_buf_l.len().max(1) / 256;
             if step > 0 {
@@ -2967,7 +2970,10 @@ fn draw_visualizer_display(
         // Get magnitude data from visualization buffer
         let demo_spectrum;
         let magnitudes: &[f32] = if let Some(buffer) = vis_buffer {
-            buffer.read_samples_into(&mut state.vis_buf_l, &mut state.vis_buf_r);
+            // Per-module scope; see the master-scope reader for why the gap
+            // count is acknowledged rather than drawn.
+            let _scope_gap_samples =
+                buffer.read_samples_into(&mut state.vis_buf_l, &mut state.vis_buf_r);
             &state.vis_buf_l
         } else {
             // Demo flat spectrum if no buffer connected

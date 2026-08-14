@@ -86,6 +86,14 @@ pub struct SynthTelemetry {
     pub cpu: f32,
     /// Event ring buffer drops since last report.
     pub event_drops: u32,
+    /// Recorded-note flushes the engine could not hand over.
+    ///
+    /// A flush, not a note and not a take: one flush holds many notes, and loop
+    /// recording emits one per loop boundary.
+    pub recorded_flush_losses: u64,
+    /// Track-blocks where a track hit the per-channel send cap with authored
+    /// sends still unexamined.
+    pub send_truncations: u64,
 }
 
 impl Default for SynthTelemetry {
@@ -116,6 +124,8 @@ impl Default for SynthTelemetry {
             voice_count: 0,
             cpu: 0.0,
             event_drops: 0,
+            recorded_flush_losses: 0,
+            send_truncations: 0,
         }
     }
 }

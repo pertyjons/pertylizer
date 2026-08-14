@@ -727,6 +727,11 @@ pub struct SynthEngine {
     /// Saved loop state before recording started (start, end, enabled).
     pre_record_loop: Option<(synth_sequencer::Tick, synth_sequencer::Tick, bool)>,
     /// Pending recorded notes that failed to send (retry on next process cycle).
+    ///
+    /// One slot. A second flush arriving while it is occupied is **refused**, not
+    /// written over: overwriting would destroy already-captured notes and drop
+    /// their `Vec` on the audio thread. The refusal is counted in
+    /// `EngineState::refused_recorded_note_flushes` so a loss is never silent.
     pending_recorded_notes: Option<(
         synth_sequencer::PatternId,
         Vec<crate::recording::RecordedNote>,
@@ -2395,9 +2400,35 @@ impl SynthEngine {
                 overdub,
             })
         {
-            // Ring buffer full — save for retry on next process cycle
-            // to avoid dropping the Vec on the audio thread.
-            self.pending_recorded_notes = Some((pattern_id, notes, overdub));
+            // Ring buffer full — save for retry on next process cycle to avoid
+            // dropping the Vec on the audio thread.
+            //
+            // The slot holds one flush. If it is still occupied, the *earlier*
+            // notes win. A bare assignment here would destroy them, which loses
+            // a take that has already survived one failed send and that the
+            // retry at the top of `process` would otherwise deliver; refusing
+            // keeps the pipeline monotone — whatever is in the slot always
+            // lands eventually — instead of starvable.
+            //
+            // **This does not remove the real-time violation, and must not be
+            // read as doing so.** One `Vec<RecordedNote>` is dropped on the
+            // audio thread either way; refusing only chooses which. Removing it
+            // needs a bounded queue of pending flushes, or a deferred-drop
+            // channel for the payload, and both need a capacity nobody has
+            // derived yet. What this does fix is that the loss is no longer
+            // silent, and that the note the user played first is the one kept.
+            if self.pending_recorded_notes.is_none() {
+                self.pending_recorded_notes = Some((pattern_id, notes, overdub));
+            } else {
+                // Saturating, not wrapping: nothing drains this when OSC is
+                // off, so `fetch_add` would eventually wrap a loss count back
+                // through zero and report "no losses".
+                let _ = self.state.refused_recorded_note_flushes.fetch_update(
+                    std::sync::atomic::Ordering::Relaxed,
+                    std::sync::atomic::Ordering::Relaxed,
+                    |v| Some(v.saturating_add(1)),
+                );
+            }
         }
     }
 
@@ -3288,10 +3319,33 @@ impl SynthEngine {
             // sends sharing an instrument with one that has sends doesn't inherit
             // them. Sends to a missing return bus, or beyond `MAX_CHANNEL_SENDS`,
             // are dropped.
+            //
+            // The cap is on **resolved** sends: the break is tested before the
+            // enabled and return-bus filters while the push happens after them,
+            // so a disabled or unroutable send earlier in the list does not
+            // consume a slot. Dropping past the cap is counted rather than
+            // silent — see `EngineState::channel_send_truncations`. That counter
+            // records *occurrences*, and one caveat is worth stating: when several
+            // tracks share an instrument the list is cleared and repopulated per
+            // track, so only the last track's routing renders. An earlier
+            // over-budget track still counts, even though its routing was
+            // replaced. Establishing which track wins would need a lookahead this
+            // loop does not have, and the alternative — an exact per-instrument
+            // tally — costs a map on the audio thread for a diagnostic.
+            let mut truncated = false;
             if let Some(list) = self.channel_sends.get_mut(&track.instrument) {
                 list.clear();
                 for send in &track.sends {
+                    // Stop at capacity, before the filters. Two earlier revisions
+                    // got this wrong in opposite directions: one kept scanning to
+                    // count exactly how many sends were lost, and one moved the
+                    // check below the filters so the flag would be exact — both
+                    // leave the loop scanning the authored tail on every audio
+                    // callback, and send lists are not bounded at authoring time.
+                    // The real-time bound wins; the flag is allowed to be
+                    // approximate, and its doc says so.
                     if list.len() >= MAX_CHANNEL_SENDS {
+                        truncated = true;
                         break;
                     }
                     // A disabled send is a non-destructive bypass: skip resolving
@@ -3309,6 +3363,13 @@ impl SynthEngine {
                         pre_fader: send.pre_fader,
                     });
                 }
+            }
+            if truncated {
+                let _ = self.state.channel_send_truncations.fetch_update(
+                    std::sync::atomic::Ordering::Relaxed,
+                    std::sync::atomic::Ordering::Relaxed,
+                    |v| Some(v.saturating_add(1)),
+                );
             }
         }
         // Snapshot the return-bus faders from the song into the runtime

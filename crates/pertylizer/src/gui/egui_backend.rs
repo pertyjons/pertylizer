@@ -1857,7 +1857,14 @@ impl SynthApp {
         // Read samples into reusable buffers, then take ownership for this frame.
         // The buffers are returned to self at the end to preserve capacity.
         if show_scopes {
-            self.handle
+            // Non-zero means this window has a gap — the ring dropped audio the
+            // scope will not draw. Rendering that (a break in the trace, a
+            // marker) is a design question this call site does not decide, so
+            // it is acknowledged and left to the follow-up recorded against
+            // `LIMIT-0021`. Acknowledging is not cosmetic: `#[must_use]` is what
+            // stops a future reader from silently discarding it again.
+            let _scope_gap_samples = self
+                .handle
                 .state
                 .master_scope
                 .read_samples_into(&mut self.scope_buf_l, &mut self.scope_buf_r);

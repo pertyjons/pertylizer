@@ -166,6 +166,7 @@ pub fn update(
          BPM:  {tempo:>6.1}          Beat:  {beat:>5.1}\n\
          Phase:{phase:>5.2}           Voices:{voices:>4}\n\
          CPU:  {cpu:>5.1}%          Drops: {drops:>5}\n\
+         Lost flushes: {lost_flushes:>5}  Send trunc: {send_trunc:>5}\n\
          Stale:{stale:>5.1}s          Seq:   {seq:>8}\n\
          FFT:  {fft_bins:>4} bins       Proto: v{proto}\n\
          -----------------------\n\
@@ -191,6 +192,8 @@ pub fn update(
         voices = telemetry.voice_count,
         cpu = telemetry.cpu,
         drops = telemetry.event_drops,
+        lost_flushes = telemetry.recorded_flush_losses,
+        send_trunc = telemetry.send_truncations,
         stale = telemetry.stale_seconds,
         seq = telemetry.seq,
         fft_bins = telemetry.fft_bin_count,

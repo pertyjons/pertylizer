@@ -72,6 +72,8 @@ struct OscSnapshot {
     voice_count: u32,
     cpu: f32,
     event_drops: u32,
+    recorded_flush_losses: u64,
+    send_truncations: u64,
 
     // -- One-shot requests (cleared after successful send) --
     camera_mode_request: Option<String>,
@@ -103,6 +105,8 @@ impl Default for OscSnapshot {
             voice_count: 0,
             cpu: 0.0,
             event_drops: 0,
+            recorded_flush_losses: 0,
+            send_truncations: 0,
             camera_mode_request: None,
         }
     }
@@ -271,6 +275,8 @@ fn receive_osc(
         telemetry.voice_count = snap.voice_count;
         telemetry.cpu = snap.cpu;
         telemetry.event_drops = snap.event_drops;
+        telemetry.recorded_flush_losses = snap.recorded_flush_losses;
+        telemetry.send_truncations = snap.send_truncations;
     }
 
     let dt = time.delta_secs();
@@ -455,6 +461,35 @@ fn handle_message(msg: &OscMessage, state: &mut OscSnapshot, version_warned: &mu
         addresses::ENGINE_EVENT_DROPS => {
             if let Some(OscType::Int(drops)) = msg.args.first() {
                 state.event_drops = *drops as u32;
+            }
+        }
+
+        // Cumulative totals, so assign rather than accumulate: the sender does
+        // not reset them, and a dropped datagram must not shift the running
+        // figure. The next bundle carries the truth either way.
+        //
+        // A negative value is malformed — the sender only ever writes a count —
+        // so it is rejected and the last valid total kept, rather than defaulted
+        // to zero, which would erase a real loss on one corrupt datagram.
+        //
+        // Monotonicity is deliberately **not** enforced. An out-of-order UDP
+        // datagram can briefly lower a total, which is a transient blip on a
+        // diagnostic; refusing decreases would instead make a restarted engine's
+        // zero unable to clear the previous session's figure, which is a
+        // permanent wrong answer. The transient loses to the permanent.
+        addresses::ENGINE_RECORDED_NOTE_LOSSES => {
+            if let Some(OscType::Long(lost)) = msg.args.first()
+                && let Ok(total) = u64::try_from(*lost)
+            {
+                state.recorded_flush_losses = total;
+            }
+        }
+
+        addresses::ENGINE_SEND_TRUNCATIONS => {
+            if let Some(OscType::Long(count)) = msg.args.first()
+                && let Ok(total) = u64::try_from(*count)
+            {
+                state.send_truncations = total;
             }
         }
 

@@ -583,6 +583,30 @@ pub struct EngineState {
     pub octave_offsets: RwLock<HashMap<InstrumentId, i32>>,
     /// Count of dropped note events (ring buffer overflow).
     pub event_drops: StdAtomicU32,
+    /// Recorded-note **flushes** refused because the single retry slot was
+    /// occupied.
+    ///
+    /// The unit is a flush: one flush holds many notes, and loop recording emits
+    /// one per loop boundary, so it is neither a note count nor a take count.
+    /// The OSC address and the HUD label use the same word deliberately — an
+    /// earlier revision said "takes" here and "flushes" there.
+    /// Non-zero means notes the user played were lost because the event ring
+    /// stayed full across two flushes. Published here rather than kept on the
+    /// engine because the engine is moved into the audio callback and the UI
+    /// only keeps `EngineState`; a counter the UI cannot read is the
+    /// `LIMIT-0013` failure mode.
+    pub refused_recorded_note_flushes: StdAtomicU32,
+    /// **Track-blocks** in which a track hit the per-channel send cap with
+    /// authored sends still unexamined.
+    ///
+    /// Three approximations are deliberate, and all of them buy a bounded audio
+    /// callback. It counts occurrences, not lost sends. It counts once per
+    /// *track* per block, so two over-budget tracks in one block count twice.
+    /// And it fires when the cap is reached with sends remaining, even if every
+    /// remaining send would have been filtered out as disabled or unroutable.
+    /// The signal is "this project is over the send budget", which is true in
+    /// every one of those cases.
+    pub channel_send_truncations: StdAtomicU32,
 }
 
 impl EngineState {
@@ -611,6 +635,8 @@ impl EngineState {
             master_effects: RwLock::new(Vec::new()),
             octave_offsets: RwLock::new(HashMap::new()),
             event_drops: StdAtomicU32::new(0),
+            refused_recorded_note_flushes: StdAtomicU32::new(0),
+            channel_send_truncations: StdAtomicU32::new(0),
         })
     }
 
@@ -682,6 +708,8 @@ impl Default for EngineState {
             master_effects: RwLock::new(Vec::new()),
             octave_offsets: RwLock::new(HashMap::new()),
             event_drops: StdAtomicU32::new(0),
+            refused_recorded_note_flushes: StdAtomicU32::new(0),
+            channel_send_truncations: StdAtomicU32::new(0),
         }
     }
 }
