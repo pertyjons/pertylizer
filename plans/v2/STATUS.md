@@ -94,11 +94,14 @@ gate Phase 10, not Phase 1.
   the types those two are written in, and the path from a note to the frame it sounds on.
 - All four [inventories](inventories/README.md) are `Active`: **75** `LIMIT`, 59 `STATE`, 55 `CAP`, and 31 `IDN`
   entries. The three non-resource ledgers have had two audit passes against `dd69b657`; the resource ledger has had
-  four, the last two being a classification sweep and a partial use-site audit (see below). Pass 1 was a census from schemas and constant names; pass 2
+  five: two discovery passes, a classification sweep, and **two use-site audits** that between them cover all 75
+  entries (see below).
+  **The use-site coverage claim is provisional** — no `EVD` record backs it yet. Pass 1 was a census from schemas and constant names; pass 2
   read the enforcing code, which resolved every gate-blocking question and **disproved three pass-1 hypotheses** — those
   are corrected in place rather than appended. Each ledger records both methods and what each is blind to; none is
   `Current`.
-- **The [resource ledger](inventories/resource-limits.md) has had four passes, and the fourth reopened P00A-T004.** The register is
+- **The [resource ledger](inventories/resource-limits.md) has had five passes; the fourth reopened P00A-T004 and the
+  fifth completed the use-site sweep.** The register is
   **75** entries after pass 4 added `LIMIT-0075`. Each carries a terminal failure class, a proposed V2 rule, and a
   diagnostic, and no entry is `Unknown` — but only **74 of 75 have a settled owner**, `LIMIT-0014` being undecided
   pending a GUI/OSC split. The owner axis is where the interest is: **28 entries are `HostProfile`, 46 are elsewhere, and one (`LIMIT-0014`) has no settled owner pending a split — 74 of 75 assigned. The 46 are
@@ -229,10 +232,9 @@ gate Phase 10, not Phase 1.
   it, plus two more silent-truncation sites external review found while checking the corrections — `EngineEvent` pushes
   discarded with `let _ =`, and a visualization ring that drops the *newest* samples with no omitted count. The
   register is now **nine** entries, four of them found outside any search. **P00A-T004's `Complete` status no longer
-  holds under its own all-limits scope**: the audit reopened it. **31 of 75 entries are now use-site read** — the 28
-  that remain `HostProfile`-owned, plus `LIMIT-0014` (owner now undecided), `LIMIT-0015` (reclassified by the audit),
-  and `LIMIT-0075` (discovered by it) — and **44 have not been read
-  at all**.
+  holds under its own all-limits scope**: the audit reopened it. **Pass 5 has since completed the sweep — all 75
+  entries are use-site read.** What keeps the task open is no longer coverage but the **four** rows that left
+  `Classified` — `LIMIT-0013`, `LIMIT-0014`, `LIMIT-0015`, `LIMIT-0017` — and the citations that need re-pinning.
 - **Eleven passes, six by an author of the document and five external. Every one found something.** Three of the five
   external passes found a defect in the immediately preceding correction; the other two found long-standing misreadings
   no author pass had questioned. Four of the five landed on the same object: **HOST-INV-021**. Deferral cannot be
@@ -291,9 +293,17 @@ gate Phase 10, not Phase 1.
 - Phase 0A is **not** complete: P00A-T001 covers five of eleven corpus categories, P00A-T005 is `Active` with a
   eleven-times-reviewed draft blocked on two accepted-decision conflicts and on defining V2's renderer-ingress streams,
   and no exit review exists. **Three of seven tasks are `Complete`** — T002, T003, T006 — down from four: the pass-4 use-site audit
-  **reopened P00A-T004**. Two things keep it open: **44 of the ledger's 75 entries have never been use-site read** —
-  the hit rate on the 31 that have makes that a real gap rather than a formality — and **three rows have left `Classified`**
-  (`LIMIT-0013`, `LIMIT-0014`, `LIMIT-0015`), so 72 of 75 are classified rather than all 75. The owner split is **28 `HostProfile` / 1 undecided / 46 elsewhere**. The three *active* tasks are corpus coverage, the `HostProfile` contract, and that remaining audit. No code has been written for V2 itself.
+  **reopened P00A-T004**. **The use-site sweep is now complete** — pass 5 read the remaining 44 entries and found the
+  ledger mostly sound there: **36 of 44 accurate**, five citations pointing 7-17 lines off with every value correct,
+  and **two substantive errors** — `LIMIT-0016` naming one ring where its constant sizes two and stating its overflow
+  backwards (a fifth live audio-thread drop), and `LIMIT-0059` claiming no production path constructs
+  `ChannelCount::Multi` when a multichannel device does, into buffers that then ignore it. `LIMIT-0017`'s silent per-client drop was also unrecorded, taking the
+  truncation register to **eleven**, and its row leaves `Classified` for the same egress/class mismatch as `LIMIT-0013`
+  and `LIMIT-0014` — **four rows now sit outside `Classified`**. **The pass overstated its own depth** and review corrected that too. **The contrast is the finding:** pass 4 found five
+  substantive errors in the 30 `HostProfile`-owned entries and pass 5 found two in the other 44 — the entries
+  reasoned about hardest are the ones that were wrong. What keeps the task open is that **four rows have left
+  `Classified`** (`LIMIT-0013`, `LIMIT-0014`, `LIMIT-0015`, `LIMIT-0017`), so 71 of 75 are classified rather than all 75, and that
+  the drifted citations need re-pinning. The owner split is **28 `HostProfile` / 1 undecided / 46 elsewhere**.
 - V2 implementation status must be established from repository evidence before this dashboard makes code-level
   completion claims.
 
@@ -340,9 +350,10 @@ reopened it. What is left is the blockers below, corpus coverage, and the exit r
    ramp's event positions fall under the sample-timing correction — still open, since ADR-0032 fixed only that the
    conversion is rounded once and stays platform-independent, leaving the ramp law itself to Phase 3. EVD-0002 raised
    the stakes on this: the corpus's category mix, not only its size, now demonstrably moves a measured result.
-5. **Finish the ledger's use-site audit — 44 of 75 entries remain**, and decide first whether to sweep all of them or
-   only the ones a phase actually gates. The first 30 produced five corrections, three new silent-truncation sites, one
-   ownership move, and two conflicts with accepted decisions, so the remaining 44 are not a formality. Then **record
+5. **The use-site audit is complete** — passes 4 and 5 covered all 75 entries. Two things remain from it: re-pin the
+   `file:line` citations, which rot as soon as a file changes and did so because of this ledger's own `LIMIT-0004` fix,
+   and resolve the four rows that left `Classified` — `LIMIT-0015`'s overflow analysis is explicitly unfinished, not merely
+   unclassified. Then **record
    the audit passes as `EVD` records** so the ledgers' claims are reproducible rather than asserted, and run ADR-0021's
    executable truncation probe — oversized blocks, more than 128 metered channels, more than 32 rack stages. The probe
    now has four arguments rather than one: `LIMIT-0004`, `LIMIT-0024`, `LIMIT-0014`, and `LIMIT-0021` were each found
@@ -376,7 +387,8 @@ call is the exit review's, and until it is made these block the task rather than
    does not follow from the first: deferring frees the upstream slot, so ingress capacities bound arrival rate, not
    backlog. Without both, HOST-INV-021's "no event is lost" holds only while a store with no declared size has room.
 
-A fourth item is not a blocker but is open: **P00A-T004's remaining 44 entries** have not been use-site read.
+A fourth item is not a blocker but is open: **P00A-T004's four rows outside `Classified`** — `LIMIT-0013`,
+`LIMIT-0014`, `LIMIT-0015`, `LIMIT-0017` — plus the drifted citations. The use-site sweep itself is done.
 
 Open decisions become blockers only when a phase task or exit gate requires them to be accepted.
 

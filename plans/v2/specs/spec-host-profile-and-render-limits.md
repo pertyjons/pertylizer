@@ -1104,7 +1104,7 @@ exist, in the phase that builds the thing it tests.
 
 | Question | Blocking? | ADR or task |
 |----------|-----------|-------------|
-| What a channel layout is beyond mono/stereo, and whether the profile carries a layout set or one layout | No — stereo is V1's only constructed layout (`LIMIT-0059`) | ADR-0002, Phase 2 |
+| What a channel layout is beyond mono/stereo, and whether the profile carries a layout set or one layout. **The premise that made this safe is false**: the pass-5 audit found `ChannelCount::from` returns `Multi(n)` for `n > 2` and the cpal backend feeds it the device's channel count, so a multichannel device constructs a layout the engine's buffers then ignore | **Yes for Phase 9**, which queries a real device; no for Phase 1. `channel_layout` is queried, so a profile can now carry a value nothing honours | ADR-0002, Phase 2 |
 | What an observation tap is and who owns the analyzer surface; the three capacities here may become one registration budget | No — the capacities stand whatever the taps mean | ADR-0027, Phase 5 |
 | The retirement crossfade's value, and whether ADR-0009 wants a concurrent-retirement budget below `max_active_voices` — which it may only take together with a defined behaviour for reaching it | No — V1's 128 frames compiles today, and the derived budget cannot bind | ADR-0009, Phase 9 |
 | Recording take and commit semantics, which may change what a "recorded event" is | No | ADR-0024, Phase 9 |
