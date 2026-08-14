@@ -40,6 +40,18 @@ dependencies of it), but their `#[cfg(test)]` modules, `tests/`, `benches/` and
 to compile, and it kept ~2/3 of the workspace's tests from ever running. `cargo
 build` needs no flag: it already covers all lib code.
 
+Then review the uncommitted work with a reader that has no memory of what you
+meant:
+
+```bash
+codex review --uncommitted
+```
+
+Read the findings and report them before acting on them. This catches a class
+the build gate cannot see — a claim about behaviour nobody verified, a
+contradiction between two clauses written minutes apart, a measurement without a
+control. It has caught all three on this repository.
+
 Then:
 
 ```bash

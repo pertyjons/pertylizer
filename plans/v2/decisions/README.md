@@ -49,3 +49,19 @@ An ADR must state:
 
 Measurements are required when the choice depends on CPU, allocation, latency, audio quality, compile time, capacity, or
 host behavior. Product and domain choices still require explicit scenarios and failure semantics.
+
+### Every claim about current behaviour carries a `file:line` citation
+
+A record that says what V1 does must name where, at a stated revision. This is not bibliographic decoration: it is the
+one rule that separates a behaviour someone read from a behaviour someone assumed, and the two look identical in prose.
+
+Two defects that reached review illustrate the cost of skipping it, and both were in claims written **without** a
+citation while the surrounding record cited its other sources:
+
+- ADR-0014's first revision asserted that a module's phase is deterministic, having read `Oscillator::note_on` and seen
+  the `Phase::ZERO` branch — without reading what `uni_phase` defaults to (`oscillator.rs:149` at `3555c52c`, `NormalizedValue::MAX`).
+  The claim was backwards.
+- EVD-0004's first revision asserted that the delay is linear, so that a difference could be attributed to a clipper.
+  It soft-clips its feedback write (`effects/delay.rs:300` at `3555c52c`), and the attribution was unfounded.
+
+A claim you cannot cite is a claim to go and check, not a claim to soften with "probably".

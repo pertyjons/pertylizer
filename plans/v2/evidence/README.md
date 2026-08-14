@@ -56,6 +56,35 @@ Copy [../templates/evidence.md](../templates/evidence.md). Every record must ide
 An assertion such as "faster", "real-time safe", "equivalent", or "deterministic"
 is incomplete without a metric, threshold, automated test, or explicit review criterion.
 
+### State the falsifier before measuring, and run its control first
+
+Before a measurement is taken, the record states **what the method would report
+if the effect were absent**, and that control is run before the measurement it
+guards. A number produced without one is an artifact until proven otherwise, and
+it will look exactly like a result.
+
+[EVD-0004](phase-00a/EVD-0004-corpus-0005-claim-counterfactuals.md) is the
+worked example, and it failed this twice.
+
+- It modelled a per-voice effect chain by rendering each note alone and summing,
+  and got a clean +0.67 dB. The same construction on a project with **no effects
+  at all** produced a difference of the same size. Two claims were withdrawn and
+  a migration contract was written against a defect that did not exist. With the
+  confounding parameter removed the control sits at −147 dB and the method
+  works.
+- Its cost check compared a 15-draw minimum against a 50-draw baseline and
+  argued the shift was real because it was *uniform across cases*. Small-sample
+  bias in a minimum estimator is uniform too, so uniformity was never evidence.
+  Matching the draw counts reversed the sign.
+
+Two rules follow, and both are cheap:
+
+- **A comparison across sessions is not a measurement** unless the estimator,
+  the draw count, the build profile, and the binary all match. Where they cannot,
+  the record says what it cannot conclude rather than interpreting the number.
+- **A control that fails is telling you about your fixture**, not about the
+  engine. Diagnose it before reporting anything downstream of it.
+
 ## Artifact policy
 
 Small reviewable CSV, JSON, or text results may be committed next to a record. Large audio files, traces, profiler
