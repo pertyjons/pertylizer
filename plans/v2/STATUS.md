@@ -350,9 +350,10 @@ reopened it. What is left is the blockers below, corpus coverage, and the exit r
    ramp's event positions fall under the sample-timing correction — still open, since ADR-0032 fixed only that the
    conversion is rounded once and stays platform-independent, leaving the ramp law itself to Phase 3. EVD-0002 raised
    the stakes on this: the corpus's category mix, not only its size, now demonstrably moves a measured result.
-5. **The use-site audit is complete** — passes 4 and 5 covered all 75 entries. Two things remain from it: re-pin the
-   `file:line` citations, which rot as soon as a file changes and did so because of this ledger's own `LIMIT-0004` fix,
-   and resolve the four rows that left `Classified` — `LIMIT-0015`'s overflow analysis is explicitly unfinished, not merely
+5. **The use-site audit is complete** — passes 4 and 5 covered all 75 entries. Citations are re-pinned as far as the guard and review reach — **drift onto valid code is caught only where a citation names its identifier** — and are **guarded by three tests**
+   (`crates/pertylizer/tests/ledger_citations.rs`), which caught fifteen more the pass had missed. The guard is partial
+   by construction: it catches missing paths, ambiguous file names, out-of-range lines and drift onto punctuation, but
+   drift onto *valid* code only where a citation names the identifier it points at. What remains is to resolve the four rows that left `Classified` — `LIMIT-0015`'s overflow analysis is explicitly unfinished, not merely
    unclassified. Then **record
    the audit passes as `EVD` records** so the ledgers' claims are reproducible rather than asserted, and run ADR-0021's
    executable truncation probe — oversized blocks, more than 128 metered channels, more than 32 rack stages. The probe
