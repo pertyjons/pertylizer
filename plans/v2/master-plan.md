@@ -267,6 +267,14 @@ compile or execute anything.
   forward event-timestamp horizon of ADR-0032 clause 21. There is no backward
   horizon budget: an event earlier than the current quantum is ADR-0001 clause
   16's, and clamping it forward is not a configurable behavior.
+  **The word "initial" is load-bearing, and Phase 0A closes this item on the
+  field list above rather than on a complete runtime contract.** Renderer-ingress
+  capacity and the deferred store are not in that list, are not derivable from
+  anything in it, and have moved to [Phase 3](#phase-3-sample-accurate-scheduler-and-block-partition-invariance)
+  with the ADR-0001 clarification they depend on. `max_events_per_quantum` stays
+  here: it is the successor to V1's unbounded per-block event `Vec`, and only the
+  runtime behaviour for a candidate set exceeding it moves. The reasoning is in
+  [REV-P00A](reviews/phase-00a-exit-review.md).
 - Open an architecture decision record under [decisions/](decisions/README.md)
   for every entry in the [decision register](ADR.md) whose target phase begins
   with `0A`. Accept the render-quantum semantics, the quantum frame count, the
@@ -518,6 +526,22 @@ before Phase 3 implementation begins. Phase 3 may refine it through a
 superseding ADR if simulated-host evidence invalidates an assumption; it may
 not invent timestamp semantics inside implementation tasks.
 
+**An ADR-0001 clarification or successor must also be `Accepted` before
+implementation begins**, covering two questions the host-profile specification
+could not settle from below: when clause 16's late condition is evaluated, and
+whether a quantum may defer an event at all under clauses 12 and 14. A deferred
+event keeps its timestamp, so once the quantum it could not enter has rendered,
+a literal clause 16 counts it late — while the specification's deferral rule
+forbids exactly that. The two cannot both be implemented as written. The
+specification states an interim rule (the condition is asked once, when an event
+first becomes due) and marks it as a narrowing of an accepted decision that it
+may not make; Phase 3 is where that narrowing is decided properly or rejected.
+
+These two obligations arrive here from Phase 0A, which narrowed P00A-T005 rather
+than blocking on them: Phase 1 has no live ingress and no host callback, so the
+capacity a deferral operates against cannot be specified from anything Phase 0A
+can observe. See [REV-P00A](reviews/phase-00a-exit-review.md).
+
 ### Work
 
 - Introduce the time types fixed by ADR-0032: absolute `SampleTime`,
@@ -535,6 +559,20 @@ not invent timestamp semantics inside implementation tasks.
 - Give live events an engine-epoch timestamp contract and an ingress mapper from
   hardware MIDI/audio timestamps. Untimestamped adapters must declare and
   measure their arrival-time fallback rather than pretending it is exact.
+- **Define what V2's renderer-ingress streams are, and what bounds each.** V1
+  has nothing to carry over: `LIMIT-0013`'s prioritized rings are engine egress
+  and are never constructed, and `LIMIT-0012`'s ring carries commands, so there
+  is no timestamped renderer-ingress queue in V1 at all. Until this is defined,
+  the host profile has no field for the capacity an over-full quantum would
+  defer against, and any admission rule written over one is written over a
+  quantity that does not exist.
+- **Bound the deferred store, and define its behaviour on exhaustion.** This
+  does **not** follow from the ingress capacities and is not satisfied by
+  setting them: deferring an event *frees* its upstream slot, so ingress
+  capacity bounds the arrival rate rather than the backlog, and note expansion
+  multiplies one released event into many. A finite store can still exhaust, and
+  the audio thread may not allocate to grow it — so "no event is lost" needs
+  either a proven bound or a defined loss, and currently has neither.
 - Reserve sufficient note/voice identity for polyphonic pressure, per-note bend,
   release velocity, and future MPE/MIDI 2.0 mapping without requiring those
   protocols in the first implementation.
@@ -574,6 +612,13 @@ irregular host blocks with the same total frames
       have declared ordering against note/controller/automation events at the
       same sample.
 - [ ] The reference V2 renders are invariant to host block partitioning.
+- [ ] Every renderer-ingress stream has a declared capacity in the host profile,
+      and the deferred store has a declared bound together with a defined,
+      counted behaviour on exhaustion. Neither may be satisfied by the other.
+- [ ] The ADR-0001 clarification or successor is `Accepted`, and the host-profile
+      specification's interim lateness rule is either ratified by it or replaced.
+      The specification's deferral invariant may not be implemented while the two
+      still contradict each other.
 
 [Phase 7](#phase-7-yams-mod-grid-and-unified-modulation) may not begin before
 this gate passes. Modulation and script timing are meaningless until the event

@@ -5,8 +5,8 @@
 | Status           | Draft                                  |
 | Phase            | 00A                                    |
 | Created          | 2026-08-13                             |
-| Last reviewed    | 2026-08-14                             |
-| Based on         | ADR-0021, ADR-0001, ADR-0032, ADR-0037 |
+| Last reviewed    | 2026-08-15                             |
+| Based on         | ADR-0021, ADR-0001, ADR-0032, ADR-0037, ADR-0038 |
 | Invariant prefix | HOST                                   |
 | Supersedes       | —                                      |
 | Superseded by    | —                                      |
@@ -14,11 +14,26 @@
 Allowed status values are defined in [README.md](README.md).
 Only a `Current` specification constrains implementation.
 
-**Why this is `Draft` and what makes it `Current`.** Every clause below follows from an accepted decision **except
-HOST-INV-021, which proposes two exceptions to ADR-0001 rather than applying them**: that a quantum may defer at all,
-which departs from clauses 12 and 14; and an interim rule for when clause 16's late condition is evaluated. The
-invariant records both as narrowings of an accepted decision that this specification is not entitled to make. The field set is complete against the master plan's list. [*Review status*](#review-status) keeps the record of what each pass
-found and what correcting it changed; that record is the argument for the remaining step, not decoration.
+**Why this is `Draft`, what makes it `Current`, and what has been narrowed out of it.** Every clause below follows from
+an accepted decision **with two exceptions.** The first is `event_egress_capacity`, whose admissibility rests on
+[ADR-0038](../decisions/ADR-0038-engine-egress-queue-classification.md) — a record that is `Proposed`, so ADR-0021's
+original clauses still bind until it is accepted and this specification cannot become `Current` before then. The
+second is **HOST-INV-021, which proposes two exceptions to ADR-0001 rather than applying them**: that
+a quantum may defer at all, which departs from clauses 12 and 14; and an interim rule for when clause 16's late
+condition is evaluated. The invariant records both as narrowings of an accepted decision that this specification is not
+entitled to make.
+
+**HOST-INV-021 is therefore `Deferred` to Phase 3 rather than normative here**, together with the ingress capacities and
+the deferred store it operates over. The identifier is **retained and not reused** — identifiers never change, and a
+withdrawn invariant that came back under a new number would lose the four external passes that landed on this one. What
+that leaves behind is stated positively in [*Deferred to Phase 3*](#deferred-to-phase-3) rather than by deletion: an
+implementation reading this specification at `Current` must find no clause that silently assumes the deferral mechanism.
+The scoping decision is [REV-P00A](../reviews/phase-00a-exit-review.md)'s, and its ground is that
+Phase 1 has no live ingress and no host callback, so the capacity a deferral operates against cannot be specified from
+anything Phase 0A can observe.
+
+The field set is complete against the master plan's list. [*Review status*](#review-status) keeps the record of what
+each pass found and what correcting it changed; that record is the argument for the remaining step, not decoration.
 
 **Eleven passes have now run, and the last five are the first conducted by someone who did not author part of this
 document.** It found five, three of them P1, and the most consequential had stood since the first independent pass:
@@ -31,11 +46,23 @@ both be implemented as written**, that the deferred store has no exhaustion poli
 a class ADR-0021 reserves for something else. Three of those are open questions requiring an accepted-decision
 successor rather than anything this specification may settle. The criterion for stopping is not "a pass finds nothing",
 which on eleven passes' evidence will never happen, but "a pass that changes no contract clause"; no external pass has
-met it. **The sixth pass's recommendation to close P00A-T005 is withdrawn** —
-[*Review status*](#review-status) records why both of its grounds failed, and what closing the task now requires
-instead: an **ADR-0001 clarification or successor** covering both when clause 16's late condition is evaluated and whether a quantum may defer at all under clauses 12 and 14, an **ADR-0021 one**
-on the class its egress rings were given; **`LIMIT-0014`'s GUI/OSC split**, without which `event_egress_capacity` leaves
-HOST-INV-005 unsatisfied; and **V2's ingress streams and deferred store defined and bounded**.
+met it. **The sixth pass's recommendation to close P00A-T005 on the whole contract stays withdrawn** —
+[*Review status*](#review-status) records why both of its grounds failed.
+
+**What has since changed is the task's scope, not the findings.** The four blockers those passes produced are disposed
+in two directions rather than cleared:
+
+- **Two are settled in Phase 0A.** [ADR-0038](../decisions/ADR-0038-engine-egress-queue-classification.md) supplies the
+  engine-egress rule ADR-0021 lacked — the class question its rings were given — and splits `LIMIT-0014`, so
+  `event_egress_capacity` has a settled ledger antecedent and HOST-INV-005 is satisfiable for it. Both were gate-bound
+  through the exit gate's resource-inventory clause and could not have moved.
+- **Two are Phase 3's**, recorded in the master plan's Phase 3 work list and entry gate rather than only here: the
+  ADR-0001 clarification, and V2's ingress streams plus a separate bound and exhaustion policy for the deferred store.
+  They are not one item — deferring an event frees its upstream slot, so an ingress capacity bounds the arrival rate
+  and not the backlog.
+
+This specification closes P00A-T005 on the master plan's field list, which is what that item asks for, and carries
+HOST-INV-021's mechanism forward as a stated deferral rather than as an unstated gap.
 
 Fields owned by decisions that are still `Proposed` — ADR-0002, ADR-0009, ADR-0024, ADR-0027, and ADR-0034 — are marked
 in the field tables and listed under [*Unresolved questions*](#unresolved-questions). None of them blocks Phase 1.
@@ -49,7 +76,7 @@ plan is admitted. It fixes
 - the default value of every field, the basis for that value, and where it is revisited;
 - who may set each field and who may never raise it;
 - what compilation reports, and what happens when a plan does not fit;
-- which V1 limits each field replaces, so that the [resource ledger](../inventories/resource-limits.md)'s 28 settled
+- which V1 limits each field replaces, so that the [resource ledger](../inventories/resource-limits.md)'s 28
   `HostProfile`-owned entries each have a named successor.
 
 It governs plan admission and stream preparation for the V2 renderer. It does not govern V1, which keeps its constants
@@ -63,7 +90,7 @@ until it retires.
 - **Class semantics and configuration ownership.** [ADR-0021](../decisions/ADR-0021-host-profile-and-admission-policy.md)
   decides both axes. This specification sets numbers for the one owner ADR-0021 assigned to P00A-T005 and touches none
   of the other six.
-- **Limits owned elsewhere.** 46 of the ledger's 75 entries, with one more (`LIMIT-0014`) undecided, belong to a node contract, a domain/format contract, job
+- **Limits owned elsewhere.** 48 of the ledger's 76 entries — none undecided, since ADR-0038 split `LIMIT-0014` — belong to a node contract, a domain/format contract, job
   policy, application settings, a protocol contract, or are removed. They are not profile fields and do not appear here
   except where a node declares a capacity *into* admission.
 - **Hardware clock calibration, latency compensation, and drift.**
@@ -144,9 +171,12 @@ open owner is a starting point recorded honestly, not a rule invented here.
       whose ledger entries (`LIMIT-0031`, `LIMIT-0075`) appear in the `Replaces` column as **provenance** — a different
       question from what admits the field. Adding to this list is a change to this specification, reviewable as such.
 
-      **`event_egress_capacity` is deliberately not on it**, and is therefore not yet admissible: its ledger owner is
-      undecided pending the GUI/OSC split, so it satisfies no ground. Its row says so, and closing P00A-T005 requires
-      resolving it.
+      **`event_egress_capacity` is not on this list because it does not need to be — it now satisfies ground 1.**
+      It had no ground while `LIMIT-0014` carried an undecided owner, one constant sizing a GUI ring and an OSC ring
+      where ADR-0021 allows one owner per entry. [ADR-0038](../decisions/ADR-0038-engine-egress-queue-classification.md)
+      part 4 splits them: `LIMIT-0014` keeps the engine-to-GUI ring and is owned `HostProfile`, which is ground 1, and
+      the OSC ring becomes `LIMIT-0076` owned by the protocol contract that serializes it — **so it is not a profile
+      field at all**, and the profile carries one capacity here rather than two.
 
    Grounds 1 and 2 are disjoint by construction, and 3 excludes both, so each field matches exactly one. **"No V1 antecedent" is a different axis and
    does not select a ground**: it answers whether V1 had the thing, not what admits the field, and
@@ -164,7 +194,9 @@ open owner is a starting point recorded honestly, not a rule invented here.
 9. **HOST-INV-009** — **Dropping** at runtime is permitted only for the queues explicitly marked *live bounded queue* in
    the field tables. Every such queue counts its drops, and the count reaches the structured diagnostics report. This
    invariant governs dropping, not every runtime behaviour: explicit eviction is HOST-INV-019's, a session limit that
-   halts an activity is HOST-INV-020's, and a quantum that cannot admit every due event is HOST-INV-021's. Together
+   halts an activity is HOST-INV-020's, and a quantum that cannot admit every due event is HOST-INV-021's — **which
+   is `Deferred to Phase 3` and does not bind here**, so four of the five behaviours are in force and an over-full
+   quantum is a caller contract violation rather than a runtime state. Together
    with HOST-INV-007's admission refusal these are the five behaviours, and
    [*Failure and diagnostics*](#failure-and-diagnostics) assigns each field exactly one — or records it as a **sizing
    field**, which bounds nothing and therefore cannot be exceeded.
@@ -231,7 +263,16 @@ open owner is a starting point recorded honestly, not a rule invented here.
     because the quantity it bounds is not knowable when the plan is compiled. Reaching it **stops the activity with a
     counted diagnostic and keeps everything already produced**; it never drops, trims, or overwrites authored data. The
     recording capacities are the only session limits in this profile.
-21. **HOST-INV-021** — Where more events are due in one quantum than `max_events_per_quantum` admits, the excess is
+21. **HOST-INV-021 — `Deferred to Phase 3`. This invariant is not normative when this specification becomes
+    `Current`, and no Phase 1 or Phase 2 implementation may rely on it.** It is the one clause here that proposes
+    exceptions to an accepted decision rather than applying one, and the capacity it operates against does not exist in
+    V1 to be carried over. The identifier is retained rather than freed: it is what four external review passes are
+    indexed to, and reissuing the mechanism under a new number in Phase 3 would strand that record. The text below
+    stands unchanged because it is the specification *of the deferred work* — the constraints Phase 3 inherits, and the
+    reasons three earlier revisions of it were wrong — not because any part of it binds Phase 1. See
+    [*Deferred to Phase 3*](#deferred-to-phase-3).
+
+    Where more events are due in one quantum than `max_events_per_quantum` admits, the excess is
     **deferred, not dropped — conditionally.** The guarantee holds while the deferred store has room, and no bound for
     that store is derivable from the current field set (see below), so **this invariant is not implementable until
     Phase 3 defines the ingress capacities and the store's size or its exhaustion behaviour.** The clause is written in
@@ -361,7 +402,11 @@ open owner is a starting point recorded honestly, not a rule invented here.
 
     **Defining the V2 ingress streams, their capacities, and the deferred store's derived size is therefore Phase 3's**,
     and it is a blocker rather than a refinement: until it lands, HOST-INV-021's "no event is lost" rests on a store
-    with no size. What binds meanwhile is the constraint above and the admission order itself, both independent of how
+    with no size. **Nothing in this invariant binds meanwhile** — an earlier revision said the admission order did,
+    which contradicts the invariant's own deferral header two paragraphs up and is withdrawn. What survives being
+    deferred is one negative constraint, stated in [*Deferred to Phase 3*](#deferred-to-phase-3): no phase may
+    allocate to absorb an over-full quantum. The admission order is a property of the deferred mechanism and goes
+    with it. It is stated here as Phase 3's inheritance, independent of how
     the streams are arranged.
 
     **Preserving the offset costs a second starvation channel, and the order has no age term.** A deferred event keeps
@@ -400,6 +445,63 @@ open owner is a starting point recorded honestly, not a rule invented here.
     when the delay pushes a timestamp into a quantum that has rendered. All of that is correct — two distinct facts about one event
     — but it means the counters may not be added to obtain a number of affected events, and a diagnostics consumer
     that sums them overcounts.
+
+## Deferred to Phase 3
+
+One invariant and two capacities are deliberately not normative in this specification. This section states what that
+leaves for Phase 1 and Phase 2, because a deferral written only as an absence is indistinguishable from an oversight —
+and because a reader who finds HOST-INV-021's text in the invariant list needs to be told, at the point of use, that it
+does not bind.
+
+| Deferred | Where it goes | What holds meanwhile |
+|----------|---------------|----------------------|
+| **HOST-INV-021** — per-quantum deferral of an over-full event set | Phase 3 work list and entry gate | Nothing in Phase 1 or 2 may implement deferral, and nothing may assume an over-full quantum has a defined runtime behaviour. It does not, and this specification no longer claims one |
+| **V2's renderer-ingress streams and their capacities** | Phase 3 work list | No profile field describes them, and none may be invented at a call site. V1 has none to carry over |
+| **The deferred store's bound and exhaustion policy** | Phase 3 work list | Separate from the above: deferring frees the upstream slot, so an ingress capacity does not bound the backlog |
+| **When ADR-0001 clause 16's condition is evaluated, and whether a quantum may defer at all** | ADR-0001 clarification or successor, `Accepted` before Phase 3 implementation | The interim rule stated under HOST-INV-021 is a narrowing this specification is not entitled to make. It is not in force |
+
+**`max_events_per_quantum` does not move with them, and this is the distinction that matters.** The field stays
+normative here. It is the successor to `LIMIT-0075`, V1's uncapped per-block `Vec::with_capacity(128)` that grows inside
+the audio callback, and it is the only thing in this profile that bounds that growth. What moves to Phase 3 is the
+**runtime behaviour when a candidate set exceeds it** — the deferral mechanism — not the capacity itself. Dropping the
+field along with the mechanism would leave V2's event path with the same unbounded allocation V1 has, which is the
+defect the ledger opened `LIMIT-0075` to record.
+
+**What Phase 1 must therefore say about its own event input.** Phase 1 is not "compiles but does not render": its API
+accepts a `TimedEvents` span, its harness renders caller-selected frame counts, and its exit gate requires
+deterministic rendering with an allocation-free render loop and no silent clipping of event fan-out. With the runtime
+behaviour deferred, that boundary needs a rule or it accepts arbitrary input while defining neither an error nor an
+overflow behaviour — the exact shape of defect the first review pass found in the runtime contract.
+
+The rule is: **Phase 1's event input is a prevalidated bounded span, and the bound is checked where a failure can be
+returned.** Two halves, because they land at different points in the API:
+
+1. **At plan preparation**, which already returns a `ResourceReport` and a `CompileError`: a plan whose statically
+   knowable per-quantum event count exceeds `max_events_per_quantum` is **refused**, naming the requested and
+   available counts and the authored object responsible. This is the existing admission behaviour in the failure
+   table, not a new one, and it needs no API change.
+2. **At `Renderer::render`**, which the master plan defines as returning `()`
+   ([Phase 1 work list](../master-plan.md#phase-1-experimental-sound-core-v2-crate)): the span holding at most
+   `max_events_per_quantum` events per quantum is a **documented precondition of the caller**, not something the
+   renderer can report. A renderer must not defer, drop, clip, or grow to absorb a violation.
+
+**The second half is not enforceable as written, and this specification does not pretend otherwise.** A precondition a
+signature cannot express is a comment, and this document's own history says what happens to a rule that only exists in
+prose. Phase 1 owes **one** of two things, and choosing between them is Phase 1's, not this specification's:
+
+- a fallible render signature, so the violation is returned rather than assumed away; or
+- some other **release-active** failure mechanism the render loop can afford, since every alternative this
+  specification already forbids — dropping, clipping, growing, deferring — is off the table.
+
+A `debug_assert` is **not** one of the two, and an earlier revision of this passage offered it as though it were. It
+compiles out of the release build, which is the build that runs, so it defines nothing where the definition is needed,
+and a conformance test over it would pin only the debug configuration. Add one as a development aid; it closes
+nothing.
+
+Until one of them exists, the honest statement is that Phase 1 has an unchecked precondition here, and it is listed
+under [*Unresolved questions*](#unresolved-questions) rather than presented as settled. What is not in doubt is the
+negative half: **no phase may absorb an over-full quantum by allocating**, which is the constraint the deferral
+mechanism was reaching for and the one part of it that survives being deferred.
 
 ## Types and ownership
 
@@ -633,10 +735,12 @@ recorded here so the entry's closure has a visible successor.
 | `max_scheduled_events_in_flight` | `EventCount` | 4 096 | Chosen. Bounds the scheduler's release window under ADR-0032 clause 27; **self-limiting** — see below. V1 has no antecedent because it has no scheduler | — | Phase 3 |
 | `forward_event_horizon` | `FrameCount` | `max(one second at the prepared rate, maximum_block_size + Q)` | Chosen, with a derived floor — see below | — | Phase 3 entry (ADR-0022) |
 | `command_queue_capacity` | `EventCount` | 16 384 | V1 carry-over. **Live bounded queue** | `LIMIT-0012` | Phase 9 |
-| `event_queue_capacity` (critical / high / normal / low) | `EventCount` x 4 | 256 / 256 / 512 / 2 048 | V1 carry-over. Classified `Live bounded queue` by ADR-0021, **but these are the engine-to-GUI prioritized rings** — engine egress, not renderer ingress, and not fed by external input at all. The class does not fit; see below | `LIMIT-0013` | Phase 3 |
-| `event_egress_capacity` (engine-to-GUI event ring; **OSC note-telemetry ring**) | `EventCount` x 2 | 256 / 256 | **Provisional and blocked.** V1 carry-over of what `LIMIT-0014`'s constant sizes, but the two rings have different destinations and ADR-0021 allows one owner per entry, so the ledger row is `Investigating` pending a split — the OSC ring may be a `Protocol contract`, not a profile field. **HOST-INV-005 is not satisfied for this field until that split lands**, and the same ADR-0021 clarification `LIMIT-0013` needs: engine-produced rings do not meet ADR-0021's definition of a live bounded queue, so HOST-INV-009's dropping licence must not be granted here by default | `LIMIT-0014` | Phase 5 |
+| ~~`event_queue_capacity`~~ (critical / high / normal / low) | — | **Withdrawn** | **This field is removed from the profile, and the removal is the correction rather than a simplification.** It was a V1 carry-over of `LIMIT-0013`'s four prioritized rings, admitted through HOST-INV-005 ground 1 by that ledger entry's `HostProfile` ownership. [ADR-0038](../decisions/ADR-0038-engine-egress-queue-classification.md) part 3 establishes that the prioritized channel is **never constructed outside its own tests** — `prioritized_event_channel` (`crates/synth_engine/src/event_priority.rs:99`) has no production caller — so the entry moves to `N/A — removed` and this field loses its only admissibility ground. Sizing a V2 capacity from four rings that V1 never ran would carry an unvalidated shape forward: nothing has established that four priority tiers, or these four numbers, are right for anything. V2's engine egress is ADR-0038 part 1's rule with a capacity per surviving entry — `event_egress_capacity` for the GUI ring, and the protocol contract's own for `LIMIT-0076`. If V2 wants priority classes on egress it designs them from a requirement | ~~`LIMIT-0013`~~ — none; the entry is `N/A — removed` | Withdrawn |
+| `event_egress_capacity` (engine-to-GUI event ring **only**) | `EventCount` | 256 | V1 carry-over of what `LIMIT-0014`'s constant sizes on the GUI side. **The field is one capacity, not two, and that is a change.** Earlier revisions carried `EventCount x 2` because one V1 constant sizes a GUI ring and an OSC note-telemetry ring; [ADR-0038](../decisions/ADR-0038-engine-egress-queue-classification.md) part 4 splits the ledger entry, and the OSC ring becomes `LIMIT-0076` owned by the protocol contract that serializes it — **not a profile field**. The two may take different sizes from that point on, which is the reason to split them. **Loss semantics are ADR-0038's, not HOST-INV-009's**: this is engine *egress*, which does not meet ADR-0021's definition of a live bounded queue, so dropping is licensed by ADR-0038 part 1 and only under its three conditions — observational payload, counted drop, count in the structured diagnostics report. V1 satisfies none of the three on this ring, which is why the field's conformance work is Phase 5's rather than Phase 1's. **`RecordedNotesFlushed` is custodial under ADR-0038 part 2 and may not share this capacity** | `LIMIT-0014` | Phase 5 |
 
-**The release window is self-limiting, and the confirmation read is why that is written down.** Nothing exceeds
+**The release window is self-limiting, and the confirmation read is why that is written down.** (**Deferred with
+HOST-INV-021** — `max_scheduled_events_in_flight` is the scheduler's field and the scheduler is Phase 3's; the
+paragraph states what Phase 3 inherits, not a Phase 1 obligation.) Nothing exceeds
 `max_scheduled_events_in_flight` from outside: the scheduler owns its own release rate and releases at most that many
 compiled events at a time. Reaching it therefore delays a release rather than failing one, and nothing is lost — the
 events are still in the plan. That is the field's failure behaviour, and the first draft of this section stated none —
@@ -692,13 +796,16 @@ So **V1 has no per-quantum event limit**, 256 is chosen rather than carried over
 **P00A-T004 finding against a task marked `Complete`**: the entry was recorded from a constant's *name* across two
 discovery passes, and pass 3 — which read enforcing code to assign classes — did not reach its use sites either. The
 ledger entry still maps to a successor field, so coverage stands; what fails is its basis. (The count itself moved separately: `LIMIT-0015` left the cohort in the same audit, taking it from 30 to **29**, and
-`LIMIT-0014`'s own owner is now undecided pending a GUI/OSC split, leaving **28** settled.) The no-antecedent count
+`LIMIT-0014` was then undecided pending a GUI/OSC split, which ADR-0038 part 4 has since performed; the count is
+**28**, and every one is settled.) The no-antecedent count
 rose to eight and returned to seven once review registered `max_events_per_quantum`'s real antecedent, `LIMIT-0075`.
 
 **V1 has no timestamped renderer-ingress queue to carry over either.** `LIMIT-0012`'s command ring
 (`crates/synth_engine/src/synth_engine.rs:49`, `CommandCapacity::DEFAULT` = 16 384) is the only in-direction capacity it
 has, and it carries `EngineCommand`s rather than positioned events. Defining V2's ingress streams and their capacities
 is Phase 3's, and is listed as unresolved.
+
+> **Deferred to Phase 3.** Everything from here to the end of this subsection describes HOST-INV-021's deferral mechanism, which is **not normative** — see [*Deferred to Phase 3*](#deferred-to-phase-3). It is retained as the specification of the deferred work and the record of what three earlier revisions of it got wrong. No Phase 1 or Phase 2 implementation may act on it.
 
 HOST-INV-021 fixes it: **the excess is deferred, not dropped.** An event that does not fit has its *render position*
 advanced by exactly `Q` frames — the following quantum, same offset — is re-evaluated there, and is counted under its
@@ -750,7 +857,7 @@ provenance only, because an event held for an unbounded time pins a queue slot. 
 below: a host delivers a block's events stamped within that block (at most `maximum_block_size`), an adapter may stamp
 slightly ahead, and HOST-INV-013 requires at least `maximum_block_size + Q`. Nothing bounds it from above except the
 cost of a pinned slot — **and that cost cannot be quantified yet**. An earlier revision put it at
-`event_queue_capacity` slots times the horizon; that field is the engine's egress rings, so it does not size ingress
+`event_queue_capacity` slots times the horizon; that field sized the engine's egress rings and is now withdrawn entirely, so it never sized ingress
 slots. The quantity is the ingress capacity times the horizon, and the ingress capacity is what Phase 3 must define.
 
 One second is chosen because it is far above every legitimate ingress stamp — a 4 096-frame block is 85 ms at 48 kHz —
@@ -775,7 +882,7 @@ is rejected and counted, which is a diagnostic for exactly that fault.
 | Field | Type | Default | Basis | Replaces | Revisit |
 |-------|------|---------|-------|----------|---------|
 | `max_observation_taps` | `TapCount` | 128 | V1 carry-over; the silent drop becomes a compile error. **ADR-0027 owns what a tap is** | `LIMIT-0020`, `LIMIT-0062` | Phase 5 |
-| `telemetry_ring_frames` | `FrameCount` | 4 096 | V1 carry-over. **Lossy** (HOST-INV-019) — but a **behaviour change**, not a carry-over of behaviour: V1 silently drops the *newest* samples (`visualizers/mod.rs:126-146` at `3555c52c`, the writer `master_scope` actually uses) and exposes no omitted count, so HOST-INV-019's condition is unmet today | `LIMIT-0021` | Phase 5 |
+| `telemetry_ring_frames` | `FrameCount` | 4 096 | V1 carry-over. **Lossy** (HOST-INV-019) — but a **behaviour change**, not a carry-over of behaviour: V1 drops the *newest* samples (`crates/synth_engine/src/visualizers/mod.rs:126-146` at `3555c52c`, the writer `master_scope` actually uses). **Since `bac88c0c` the loss is no longer silent**: `read_samples_into` returns the omitted count under `#[must_use]` (`:280`, taken at `:321`, returned at `:329`), which satisfies ADR-0038 part 1 condition 3 in its data-paired form. What is still missing is presentation — no GUI surface draws the gap — so HOST-INV-019's *expose the loss* condition is met at the API and not yet at the surface | `LIMIT-0021` | Phase 5 |
 | `analyzer_fft_size` | `FrameCount` | 2 048 | V1 carry-over. A resolution budget; the size travels with the payload | `LIMIT-0022` | Phase 5 |
 
 **The class ADR-0021 gave these rings does not fit them, and this specification may not change it.** ADR-0021 part 1
@@ -946,7 +1053,7 @@ being budgeted in the profile.
   threshold, until Phase 7 can justify one. See [*Scripts*](#scripts) for why a field with an unset value was the wrong
   shape for it.
 
-**The ledger's 28 `HostProfile`-owned entries** — 30 before the pass-4 use-site audit moved `LIMIT-0015` out and left `LIMIT-0014`'s owner undecided pending a split — each with its successor field. `LIMIT-0014` is listed below for continuity, but its row is `Investigating`, so coverage is 28 settled plus one pending:
+**The ledger's 28 `HostProfile`-owned entries**, each with its successor field. The count has moved twice and both moves are recorded rather than absorbed: it was 30 before the pass-4 use-site audit found `LIMIT-0015` to be four deferred-drop channels and moved it to `N/A — removed`, and it reached 28 again when ADR-0038 removed `LIMIT-0013` — a channel never constructed outside its own tests — and split `LIMIT-0014`, whose GUI half is `HostProfile`-owned while its OSC half became `LIMIT-0076` under the protocol contract. **The mapping is now total**; every previous revision of this table carried at least one entry with no settled owner:
 
 | Entry | Field |
 |-------|-------|
@@ -954,8 +1061,9 @@ being budgeted in the profile.
 | `LIMIT-0002`, `LIMIT-0003` | `buffer_scratch_bytes`; sized from `maximum_block_size` rather than set independently |
 | `LIMIT-0004` | Accepted rate range |
 | `LIMIT-0012` | `command_queue_capacity` |
-| `LIMIT-0013` | `event_queue_capacity` (four priorities) |
-| `LIMIT-0014` | `event_egress_capacity` — **not** `max_events_per_quantum`, whose antecedent is `LIMIT-0075` |
+| `LIMIT-0013` | **None.** The prioritized channel is `N/A — removed` under ADR-0038 part 3 — it is never constructed outside its own tests — so it has no successor field, and `event_queue_capacity` is withdrawn |
+| `LIMIT-0014` | `event_egress_capacity` (the engine-to-GUI ring only, after ADR-0038 part 4's split) — **not** `max_events_per_quantum`, whose antecedent is `LIMIT-0075` |
+| `LIMIT-0076` | None. The OSC note-telemetry ring split out of `LIMIT-0014` is owned by the protocol contract, so it has no successor field in this profile — listed here so the split is visible from the mapping rather than only from the ledger |
 | `LIMIT-0075` | `max_events_per_quantum` — **provenance, not an admission ground**: the ledger owner is `N/A — removed`, so the field is admitted by HOST-INV-005's residual |
 | `LIMIT-0020`, `LIMIT-0062` | `max_observation_taps` |
 | `LIMIT-0021` | `telemetry_ring_frames` |
@@ -1019,14 +1127,16 @@ showed `LIMIT-0014` is an egress ring, and back to **seven** when review found t
 | A plan exceeds a node's declared intrinsic capacity | `CompileError` naming the node and the capacity; not raisable by any profile setting | `ResourceReport` plus the error |
 | A plan's predicted cost exceeds the advisory budget | `CompileWarning` naming the predicted and permitted ratio; compilation continues | `ResourceReport` |
 | A live bounded queue overflows at runtime | The item is dropped and counted per queue and priority (HOST-INV-009) | Structured diagnostics report |
-| More events are due in one quantum than `max_events_per_quantum` admits | **Conditional until Phase 3 bounds the deferred store** — the guarantee below holds only while that store has room, and its exhaustion behaviour is undefined. The excess is **deferred**: the render position advances by exactly `Q` frames with the offset preserved and the envelope's stamp untouched, counted under the capacity-deferral counter — and not under ADR-0001 clause 16's late counter, whose *condition* does not hold because the quantum has not rendered (see the open question on when that condition is evaluated). What defers is the tail of a defined admission order: compiled before ingress, then ascending render position (HOST-INV-021) | Structured diagnostics report, with the per-event displacement as well as the count |
-| The scheduler's release window `max_scheduled_events_in_flight` is full | The release is delayed, never failed; nothing is lost, since the events are still in the plan. Where the delay makes an event's timestamp fall in an already-rendered quantum, ADR-0001 clause 16 applies in full — clamped forward **and counted late** — and the **capacity-deferral** counter rises as well, attributing the cause to a profile capacity rather than to a producer | Structured diagnostics report |
+| More events are due in one quantum than `max_events_per_quantum` admits | **Deferred to Phase 3 — this row is not normative.** In Phase 1 and Phase 2 the candidate set is a prevalidated bounded span and an over-full quantum cannot arise; the mechanism below is what Phase 3 inherits. **Conditional even then, until Phase 3 bounds the deferred store** — the guarantee below holds only while that store has room, and its exhaustion behaviour is undefined. The excess is **deferred**: the render position advances by exactly `Q` frames with the offset preserved and the envelope's stamp untouched, counted under the capacity-deferral counter — and not under ADR-0001 clause 16's late counter, whose *condition* does not hold because the quantum has not rendered (see the open question on when that condition is evaluated). What defers is the tail of a defined admission order: compiled before ingress, then ascending render position (HOST-INV-021) | Structured diagnostics report, with the per-event displacement as well as the count |
+| The scheduler's release window `max_scheduled_events_in_flight` is full (**deferred with HOST-INV-021**) | The release is delayed, never failed; nothing is lost, since the events are still in the plan. Where the delay makes an event's timestamp fall in an already-rendered quantum, ADR-0001 clause 16 applies in full — clamped forward **and counted late** — and the **capacity-deferral** counter rises as well, attributing the cause to a profile capacity rather than to a producer | Structured diagnostics report |
 | A lossy field's capacity is reached | The oldest data is evicted by design, and the evicted count or continuation marker is exposed (HOST-INV-019) | The surface presenting that data |
 | A session limit is reached | The activity stops with a counted diagnostic; everything already produced is kept, and nothing authored is dropped (HOST-INV-020) | The recording surface, plus the structured diagnostics report |
 | An ingress event is beyond `forward_event_horizon` | Rejected and counted | Structured diagnostics report |
 | A callback exceeds `maximum_block_size` | ADR-0021 part 3's terminal stream-contract fault: silence, both carries invalidated, `needs_reprepare` published, nothing allocated | Structured diagnostics report |
 
-**Five behaviours, plus one category that has none.** Admission refuses, a live queue drops, a quantum defers, a lossy
+**Five behaviours, plus one category that has none — and one of the five is deferred.** Admission refuses, a live
+queue drops, a quantum defers (**HOST-INV-021, not normative until Phase 3**; four behaviours are in force meanwhile),
+a lossy
 budget evicts, and a session limit stops. The first review pass found an earlier draft claiming compile-time refusal for
 every render limit while three fields visibly did something else at runtime — the telemetry ring overwrote, a recording
 take stopped, and an over-full quantum did nothing defined at all. The taxonomy above is what reconciles them, and
@@ -1061,8 +1171,12 @@ existed for years and reached **no consumer at all** — `get_dropped_counts` ha
 - Nothing in the render loop consults a limit to decide whether to allocate. A plan that was admitted fits by
   construction; a plan that does not fit was refused.
 - The runtime-variable quantities are the live bounded queues' occupancy, the number of events due in one quantum, and
-  a take's length. None of the three allocates: the queue drops and counts (HOST-INV-009), the quantum defers and counts
-  (HOST-INV-021), and the take stops and counts (HOST-INV-020).
+  a take's length. None of the three allocates: the queue drops and counts (HOST-INV-009), and the take stops and
+  counts (HOST-INV-020). **The middle one — the number of events due in one quantum — has no runtime behaviour in
+  Phase 1 or Phase 2**, because HOST-INV-021 is
+  deferred: the candidate set is a prevalidated bounded span, so an over-full quantum is a caller contract violation
+  rather than a state the render loop handles. The constraint that survives the deferral is the negative one — nothing
+  in the render loop may allocate to absorb an over-full quantum, in any phase.
 - **Admitting events into a quantum must allocate nothing and do work bounded by declared capacities**, over
   preallocated storage. The real problem today is that the candidate set has no declared bound at all: the ingress
   streams and the deferred store are undefined, so no ordering strategy can be shown to terminate in bounded time.
@@ -1096,14 +1210,15 @@ exist, in the phase that builds the thing it tests.
 | HOST-INV-018 | Every **quantity** field's type has a private field and a fallible constructor; no such field is a bare primitive, and `HeldNoteCount` does not convert to or from `VoiceCount`. The two **kind** fields, `channel_layout` and `source`, are asserted to be closed enums instead — the test enumerates both sets, so a new field must be classified rather than silently escaping the check | 1 |
 | HOST-INV-019 | The telemetry ring is overrun and the reader can distinguish a complete window from an overwritten one | 5 |
 | HOST-INV-020 | A take reaching each recording capacity stops, is counted, and keeps every event recorded before the stop; no note is dropped and no earlier note is overwritten | 9 |
-| HOST-INV-021 | A quantum is presented with more due events than it admits: the excess renders one quantum later **at the same intra-quantum offset**, no event is lost **while the deferred store has room** — the unconditional form cannot be tested until Phase 3 sizes that store, and a separate exhaustion case is owed once it chooses a policy — and a compiled event is never displaced by an ingress one. **Two counters, asserted separately** — the capacity-deferral counter rises by exactly the deferred count and the late counter does not move at all; and the mirror case, an event that is genuinely late, moves the late counter and not the deferral counter. ADR-0032 clause 22 is the precedent for why one test would pass on the wrong policy. A third case covers an event that is **both** late and deferred, asserting each counter rises exactly once. A fourth pins the admission order: a quantum over-full with ingress events alone defers the latest-positioned and not the last-arrived, asserted by presenting them in reverse position order; a fifth over-fills a quantum with **compiled** events alone, through a note expansion the compiler could not predict, and asserts the same tail rule. A sixth asserts the stamp is **immutable**: a deferred event's envelope `time` is unchanged after any number of deferrals, its render position is `clamped_position + Q x deferrals` — the clamped base, so an event that is both late and deferred is not sent back into a rendered quantum — and the diagnostics report carries the displacement — the direct regression test for a rewritten stamp quantizing a recorded performance forward. A seventh drives a repeatedly-deferred ingress event past `forward_event_horizon`'s worth of deferrals and asserts it is still rendered, never rejected | 3 |
-| `max_scheduled_events_in_flight` (HOST-INV-021's counter, no invariant of its own) | The release window is saturated so that an event's timestamp falls in an already-rendered quantum: it is clamped forward and **both** counters rise — late, because ADR-0001 clause 16's condition holds, and capacity-deferral, because a profile capacity caused it. The specification got this field wrong in both directions before settling here, so the test asserts both counters rather than either | 3 |
+| HOST-INV-021 (**deferred — see [*Deferred to Phase 3*](#deferred-to-phase-3); none of these tests may be written against Phase 1**) | A quantum is presented with more due events than it admits: the excess renders one quantum later **at the same intra-quantum offset**, no event is lost **while the deferred store has room** — the unconditional form cannot be tested until Phase 3 sizes that store, and a separate exhaustion case is owed once it chooses a policy — and a compiled event is never displaced by an ingress one. **Two counters, asserted separately** — the capacity-deferral counter rises by exactly the deferred count and the late counter does not move at all; and the mirror case, an event that is genuinely late, moves the late counter and not the deferral counter. ADR-0032 clause 22 is the precedent for why one test would pass on the wrong policy. A third case covers an event that is **both** late and deferred, asserting each counter rises exactly once. A fourth pins the admission order: a quantum over-full with ingress events alone defers the latest-positioned and not the last-arrived, asserted by presenting them in reverse position order; a fifth over-fills a quantum with **compiled** events alone, through a note expansion the compiler could not predict, and asserts the same tail rule. A sixth asserts the stamp is **immutable**: a deferred event's envelope `time` is unchanged after any number of deferrals, its render position is `clamped_position + Q x deferrals` — the clamped base, so an event that is both late and deferred is not sent back into a rendered quantum — and the diagnostics report carries the displacement — the direct regression test for a rewritten stamp quantizing a recorded performance forward. A seventh drives a repeatedly-deferred ingress event past `forward_event_horizon`'s worth of deferrals and asserts it is still rendered, never rejected | 3 |
+| `max_scheduled_events_in_flight` (HOST-INV-021's counter, no invariant of its own; **deferred with it**) | The release window is saturated so that an event's timestamp falls in an already-rendered quantum: it is clamped forward and **both** counters rise — late, because ADR-0001 clause 16's condition holds, and capacity-deferral, because a profile capacity caused it. The specification got this field wrong in both directions before settling here, so the test asserts both counters rather than either | 3 |
 | HOST-INV-020, and the retirement budget | A plan swap with `max_active_voices` sounding retires every voice with a crossfade and refuses none, so `max_concurrent_retiring_voices` cannot bind at its derived default | 9 |
 
 ## Unresolved questions
 
 | Question | Blocking? | ADR or task |
 |----------|-----------|-------------|
+| **How Phase 1 enforces the per-quantum event bound at `Renderer::render`.** With HOST-INV-021 deferred, the span is a caller precondition, and the master plan's `render` returns `()` — so a violation cannot be reported. Phase 1 owes a **release-active** mechanism; a fallible signature is the obvious one, and a `debug_assert` is not one, since it compiles out of the build that runs. **Preparation-time refusal is unaffected** and needs no API change; this is only about the per-call span | **Yes for Phase 1**, which otherwise ships an unchecked precondition where the deferral mechanism used to be. No for Phase 2, which inherits whatever Phase 1 chooses | Phase 1 |
 | What a channel layout is beyond mono/stereo, and whether the profile carries a layout set or one layout. **The premise that made this safe is false**: the pass-5 audit found `ChannelCount::from` returns `Multi(n)` for `n > 2` and the cpal backend feeds it the device's channel count, so a multichannel device constructs a layout the engine's buffers then ignore | **Yes for Phase 9**, which queries a real device; no for Phase 1. `channel_layout` is queried, so a profile can now carry a value nothing honours | ADR-0002, Phase 2 |
 | What an observation tap is and who owns the analyzer surface; the three capacities here may become one registration budget | No — the capacities stand whatever the taps mean | ADR-0027, Phase 5 |
 | The retirement crossfade's value, and whether ADR-0009 wants a concurrent-retirement budget below `max_active_voices` — which it may only take together with a defined behaviour for reaching it | No — V1's 128 frames compiles today, and the derived budget cannot bind | ADR-0009, Phase 9 |
@@ -1113,8 +1228,8 @@ exist, in the phase that builds the thing it tests.
 | Whether HOST-INV-021's deferral can starve an event under sustained overrun. **Two channels, not one.** (a) Compiled events take precedence unconditionally, so a plan saturating `max_events_per_quantum` every quantum defers ingress indefinitely; the likely fix is a *reserved ingress allowance* the scheduler leaves free under ADR-0032 clause 27, turning unbounded starvation into a declared budget. (b) `+Q` preserves the offset and the admission order has no age term, so an event positioned late in its quantum loses to natively-due events positioned early in theirs every round — starvation among ingress events themselves, which only an age term addresses. Both are new design, and Phase 3 owns both | **Conditionally blocking for Phase 3.** "Nothing is lost" holds only while the deferred store has room, and no safe bound for that store exists yet — so this cannot be called non-blocking until the ingress and deferred-store contract lands. Displacement per event is at least reportable, because the stamp is immutable | ADR-0003, ADR-0023, Phase 3 |
 | Whether ingress should have a `Hardware`-before-`Arrival` tier. Rule 1's basis is provenance exactness, and that basis would order the two ingress provenances as well; there is no such tier, because whether the difference is real depends on what the two uncertainties measure | No — the current order is stated and testable | ADR-0022, Phase 3 |
 | **When ADR-0001 clause 16's condition is evaluated.** A deferred event keeps its stamp, so once the quantum it could not enter has rendered, its timestamp does fall in an already-rendered quantum and a literal clause 16 would count it late — which HOST-INV-021 forbids. The interim rule here is that the condition is asked once, when an event first becomes due, and deferral does not re-ask it. **That narrows an accepted decision, which this specification may not do**, so it needs an ADR-0001 clarification or successor | **Yes for Phase 3**, which cannot implement both rules as written. No for Phase 1 | ADR-0001, Phase 3 |
-| **ADR-0021's `LIMIT-0013` evidence.** Its drivers and disposition describe per-priority drop counters "published on OSC"; they are published nowhere, and the OSC counter it names belongs to another ring. The record's conclusion holds a fortiori, but its cited state of the world is false | No — the V2 rule is unaffected, but an accepted record should not carry a false citation | ADR-0021, Phase 3 |
-| **The class ADR-0021 gave `LIMIT-0013`'s rings.** They are engine egress, not "fed by external, unbounded-in-time input", so `Live bounded queue` does not describe them — a classification made while their direction was misread here too. The behaviour the record chose stays defensible; the class does not | No — nothing depends on the label today, but HOST-INV-009's dropping licence must not be read as covering engine state and diagnostics because of it | ADR-0021, Phase 3 |
+| ~~**ADR-0021's `LIMIT-0013` evidence.**~~ **Resolved in Phase 0A, not Phase 3.** Its drivers and disposition describe per-priority drop counters "published on OSC"; they are published nowhere, and the OSC counter it names belongs to another ring. [ADR-0038](../decisions/ADR-0038-engine-egress-queue-classification.md) supersedes both the driver and the disposition on that evidence | Resolved, subject to ADR-0038's acceptance | ADR-0038 |
+| ~~**The class ADR-0021 gave `LIMIT-0013`'s rings.**~~ **Resolved in Phase 0A, not Phase 3.** They are engine egress, not "fed by external, unbounded-in-time input", so `Live bounded queue` never described them. [ADR-0038](../decisions/ADR-0038-engine-egress-queue-classification.md) part 1 supplies the missing rule and part 3 removes the entry outright, since its channel is never constructed outside its own tests | Resolved, subject to ADR-0038's acceptance. Until then HOST-INV-009's dropping licence must still not be read as covering engine state and diagnostics | ADR-0038 |
 | **What V2's renderer-ingress streams are, and what bounds them.** V1 has no timestamped ingress queue to carry over — `LIMIT-0013`'s prioritized rings are engine *egress*, and `LIMIT-0012`'s command ring carries commands rather than positioned events — so the profile currently has no field for the capacity HOST-INV-021's deferral operates against. Bound up with it: the **deferred store**, which needs its own preallocated capacity, since deferral de-orders a FIFO and deferred events must be merged as a stream of their own | No for Phase 1, which compiles rather than renders live. **Yes for Phase 3**, which cannot build admission without them | Phase 3 |
 | Whether ADR-0001 clause 16's clamp preserves or rewrites the event's stamp. HOST-INV-021 decides it for deferral — the stamp is immutable, the render position is derived — and the same question applies to the clamp, where a rewritten stamp would have the same three consequences. It is ADR-0001's to answer, and this specification deliberately does not answer it by implication | No — the two mechanisms are separately counted and separately testable | ADR-0001, Phase 3 |
 | Whether `max_nodes` should be anchored independently rather than computed from `max_active_voices`, which is itself only measurement-anchored | No | Phase 2 exit |
@@ -1270,14 +1385,28 @@ V1 — by checking numbers against the source instead of against the arguments t
 correction is new material — now has a companion: **an author's pass re-reads the reasoning, and a number that supports
 the conclusion you already hold does not get audited.**
 
-**What P00A-T005 needs before it can close** is therefore not another read of the same kind. **Four** items are now
+**What P00A-T005 needed before it could close** was not another read of the same kind. **Four** items were
 substantive rather than editorial: (1) **an ADR-0001 clarification or successor** answering *both* whether a quantum may defer at all under clauses 12
 and 14, and when clause 16's condition is evaluated — resolving only the second would leave deferral unauthorised; (2) **an ADR-0021 one** on the class
 `LIMIT-0013`'s engine-egress rings were given; (3) **`LIMIT-0014`'s GUI/OSC split**, without which
 `event_egress_capacity` leaves HOST-INV-005 unsatisfied; and (4) **V2's renderer-ingress streams, plus a separate bound
 or exhaustion policy for the deferred store**, without which HOST-INV-021's "no event is lost" rests on a store with no
-capacity. All four may belong to Phase 3 with a narrowed P00A-T005 — Phase 1 compiles rather than renders live — and that
-scoping call is the Phase 0A exit review's. What is *not* available is closing the task on the current text.
+capacity.
+
+**[REV-P00A](../reviews/phase-00a-exit-review.md) made the scoping call, and it did not split them
+two-and-two the way this section anticipated.** Items 2 and 3 could *not* move to Phase 3: both are bound by the Phase
+0A exit gate's resource-inventory clause, which requires every fixed cap to carry a proposed V2 rule and a
+user-visible overflow diagnostic, and four ledger rows sat outside `Classified` on exactly those two questions. They
+are settled in Phase 0A by [ADR-0038](../decisions/ADR-0038-engine-egress-queue-classification.md), which supplies the
+engine-egress rule and performs the split. Items 1 and 4 are Phase 3's, recorded in the master plan's Phase 3 work list
+and entry gate — the plan being authoritative for scope and phase order, a note here would not have moved them.
+
+**What made the narrow close defensible is the gate text, not the phrase "Phase 1 compiles rather than renders live"**,
+which is imprecise: Phase 1 does render, offline, and its exit gate requires deterministic rendering and an
+allocation-free loop. The gate contains no bullet requiring this specification to reach any status; what binds
+P00A-T005 is the phase's Work list, which asks for an *initial* contract over a named field list — and renderer-ingress
+capacity and the deferred store are not in it. See [*Deferred to Phase 3*](#deferred-to-phase-3) for what that leaves,
+including the prevalidated-bounded-span rule Phase 1's event boundary needs in the mechanism's absence.
 
 **The five external passes have settled what kind of review this document responds to.** Six author passes each found
 something and each left something. The external ones found a false number that five reads had accepted, then a rule
@@ -1301,7 +1430,7 @@ reader checks the claims**, and only the second kind has caught this document's 
 The standing checks from the previous pass remain, and none was disturbed by these corrections:
 
 - that no default is sized by `Q`'s provisional value, directly or through arithmetic;
-- that every one of the ledger's 28 settled `HostProfile` entries has a successor field, and that `LIMIT-0014`'s pending split is tracked rather than silently counted, and that no field exists without an
+- that every one of the ledger's 28 `HostProfile` entries has a successor field, and that no field exists without an
   entry or a stated no-antecedent reason;
 - that the one derived and two anchored EVD-0003 figures use the evidence as the evidence states it — cost, not
   capacity, and RSS as an upper bound rather than as prepared bytes;

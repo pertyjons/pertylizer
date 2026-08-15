@@ -9,6 +9,7 @@
 | Last reviewed | 2026-08-12                                          |
 | Related       | P00A-T004, P00A-T005, P00A-T006, ADR-0001, ADR-0022, ADR-0037 |
 | Supersedes    | —                                                   |
+| Superseded in part | [ADR-0038](ADR-0038-engine-egress-queue-classification.md) replaces three named clauses: part 1's runtime-overflow paragraph, part 3's `LIMIT-0013` bullet, and the decision driver asserting that `LIMIT-0013` has per-priority drop counters published on OSC. Every other clause of this record still binds, and **so do those three until ADR-0038 is accepted** — it is `Proposed`, and a pointer is not a repeal |
 | Superseded by | —                                                   |
 
 ## Context

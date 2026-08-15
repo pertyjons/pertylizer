@@ -31,9 +31,26 @@ Copy [../templates/adr.md](../templates/adr.md) when creating a record.
 6. Update the register and affected specifications.
 7. If the decision changes later, create a new ADR and mark the old one
    `Superseded`.
+8. A successor may instead supersede **named clauses only**. The old record keeps its status, gains
+   `Superseded in part` in its metadata naming the successor, and the successor's `Supersedes` field lists **every**
+   clause it replaces — no clause is superseded by implication. Anything not named still binds.
+9. **Partial supersession takes effect when the successor is accepted, not when it is written.** Only an accepted
+   decision constrains implementation, so while the successor is `Proposed` the old clauses remain in force — a
+   `Superseded in part` pointer added early is a notice that a replacement exists, never a repeal. Anything that
+   depends on the replacement therefore depends on a `Proposed` record and must say so, which is what keeps the gap
+   visible instead of leaving two records that each look authoritative.
 
 Accepted ADRs are immutable except for spelling, formatting, and repaired links. New evidence may be appended in a
 clearly dated addendum, but changing the decision requires a superseding ADR.
+
+**Why clause-level supersession exists, and when it is the wrong tool.** ADR-0021 is the case that produced it: two of
+its clauses rest on facts a later audit disproved, while the rest of the record — two orthogonal axes, seven
+configuration owners, six failure classes, four of five site dispositions — is unaffected and is cited throughout the
+inventories and the host-profile specification. Superseding the whole record would have required restating all of that
+to change two clauses, and a restatement is where reasoning gets lost. **Use whole-record supersession when the
+decision's shape changes**, and clause-level only when the surviving clauses are genuinely independent of the replaced
+ones. If a reader cannot apply the old record without also reading the successor for most questions, the split is
+wrong and the record should be superseded whole.
 
 ## Decision quality
 

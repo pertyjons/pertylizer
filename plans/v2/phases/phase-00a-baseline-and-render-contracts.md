@@ -4,9 +4,9 @@
 |---------------|----------------------------------------------------------------------------------|
 | Status        | Active                                                                           |
 | Phase         | 00A                                                                              |
-| Last reviewed | 2026-08-13                                                                       |
+| Last reviewed | 2026-08-15                                                                       |
 | Master plan   | [Phase 0A](../master-plan.md#phase-0a-baseline-limits-and-render-core-contracts) |
-| Exit review   | Not created                                                                      |
+| Exit review   | [REV-P00A](../reviews/phase-00a-exit-review.md) — `Draft`; two gates fail        |
 
 ## Objective
 
@@ -54,10 +54,10 @@ acceptance condition.
 | P00A-T001 | Define the reference V1 corpus and preserve/change manifest | Active      | None                 | [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md), [EVD-0004](../evidence/phase-00a/EVD-0004-corpus-0005-claim-counterfactuals.md) |
 | P00A-T002 | Define the comparison result model and headless command     | Complete    | P00A-T001            | [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md) |
 | P00A-T003 | Capture V1 CPU, memory, timing, and determinism baselines   | Complete    | P00A-T001            | [EVD-0003](../evidence/phase-00a/EVD-0003-cpu-memory-timing-baseline.md), with EVD-0001 and EVD-0002 |
-| P00A-T004 | Complete the fixed-limit and overflow audit                 | Active      | None                 | [Resource inventory](../inventories/resource-limits.md) |
-| P00A-T005 | Define the initial HostProfile and RenderLimits contract    | Active      | P00A-T004            | [Host profile specification](../specs/spec-host-profile-and-render-limits.md) |
+| P00A-T004 | Complete the fixed-limit and overflow audit                 | Active      | None                 | [Resource inventory](../inventories/resource-limits.md), [EVD-0005](../evidence/phase-00a/EVD-0005-resource-ledger-use-site-audit.md) |
+| P00A-T005 | Define the initial HostProfile and RenderLimits contract    | Narrowed — closing | P00A-T004     | [Host profile specification](../specs/spec-host-profile-and-render-limits.md), [REV-P00A](../reviews/phase-00a-exit-review.md) |
 | P00A-T006 | Satisfy every entry in the required-decisions table         | Complete    | P00A-T003/P00A-T004  | [Decision register](../ADR.md)                          |
-| P00A-T007 | Prepare the formal Phase 0A exit review                     | Not started | All applicable tasks | Future `REV-P00A`                                       |
+| P00A-T007 | Prepare the formal Phase 0A exit review                     | Active      | All applicable tasks | [REV-P00A](../reviews/phase-00a-exit-review.md)         |
 
 Phase 0B runs in parallel and has its own tracker. Do not move its inventory work into this phase to make the gate look
 complete.
@@ -75,8 +75,10 @@ evidence. Both are now written on those terms, so no other deferral is in play.
   ADR-0032 clause 21's forward event horizon, with a value and a stated basis for every field.
 - **State.** [The specification](../specs/spec-host-profile-and-render-limits.md) exists at `Draft`, invariant prefix
   `HOST`, 21 invariants and a conformance-test row for each. Every field the plan lists has a value; each of the
-  ledger's 28 settled `HostProfile`-owned entries has a named successor field, with `LIMIT-0014` pending a split; seven fields have no V1 antecedent and are
-  listed as such.
+  ledger's 28 `HostProfile`-owned entries has a named successor field — a mapping that is total since ADR-0038 split
+  `LIMIT-0014` and removed `LIMIT-0013`; seven fields have no V1 antecedent and are listed as such. One field,
+  `event_queue_capacity`, was **withdrawn** in the same change: `LIMIT-0013`'s channel is never constructed outside
+  its own tests, so the entry it was admitted through is now `N/A — removed`.
 - **Review history — eleven passes, six by an author of the document and five external, every one of which found
   something.** The bullets below record what each found; the current conclusion is at the end.
 - **The first independent review pass raised five, two of them High**, and the
@@ -172,17 +174,28 @@ evidence. Both are now written on those terms, so no other deferral is in play.
   **a number that supports the conclusion you already hold does not get audited.** An author re-reads the reasoning;
   an external reader checks the claims, and only the second kind has caught this document's factual and cross-record
   errors.
-- **Why this is still `Active`, and the sixth pass's recommendation to close is withdrawn.** That recommendation rested
-  on the pass's findings being contained by its targets and on its additions being preconditions rather than mechanism.
-  The external pass falsified both — the containment was an artefact of the targeting, and the precondition was
-  insufficient for a mechanism built on queues running the wrong way. Closing this task now needs **four substantive
-  things**: an **ADR-0001 clarification or successor** covering both when clause 16's late condition is evaluated and whether a quantum may defer at all under clauses 12 and 14, without which
-  Phase 3 cannot implement deferral and lateness together; an **ADR-0021 one** on the `Live bounded queue` class given
-  to `LIMIT-0013`'s engine-egress rings; **`LIMIT-0014`'s GUI/OSC split**, without which `event_egress_capacity` leaves
-  HOST-INV-005 unsatisfied; and **V2's renderer-ingress streams plus a separate bound or exhaustion policy for the
-  deferred store**, without which HOST-INV-021's "no event is lost" rests on a store with no capacity. **All four may move to Phase 3
-  with a narrowed P00A-T005**, since Phase 1 compiles rather than renders live; that scoping call is the exit review's.
-  Closing on the current text is not available.
+- **The sixth pass's recommendation to close on the whole contract stays withdrawn**, and the four blockers it left
+  are now disposed in two directions by [REV-P00A](../reviews/phase-00a-exit-review.md) rather than cleared. **The
+  two-and-two split is not the one the earlier note anticipated.** The ADR-0001 clarification and V2's ingress
+  streams-plus-deferred-store are Phase 3's, recorded in the master plan's Phase 3 work list and entry gate because
+  the plan is authoritative for scope and phase order. **The other two could not move**: the ADR-0021 class question
+  and `LIMIT-0014`'s split are both bound by the exit gate's resource-inventory clause, so deferring them would have
+  moved a Phase 0A gate obligation into a later phase rather than rescoping a task.
+  [ADR-0038](../decisions/ADR-0038-engine-egress-queue-classification.md) settles both, and the class correction is
+  wider than the blocker stated — `LIMIT-0017` has the same mismatch, so it is the general engine-egress rule.
+- **The usual justification for the narrow close is wrong and is not the one used.** "Phase 1 compiles rather than
+  renders live" is imprecise: Phase 1 renders offline, accepts a `TimedEvents` span, and has an exit gate requiring
+  deterministic rendering with an allocation-free loop. What makes the close defensible is that the Phase 0A exit gate
+  contains **no bullet requiring this specification to reach any status**, and the Work list it does bind asks for an
+  *initial* contract over a field list containing neither renderer-ingress capacity nor a deferred store.
+- **What the narrowing had to keep.** `max_events_per_quantum` stays normative — it is `LIMIT-0075`'s successor, the
+  bound on V1's uncapped per-block `Vec`, and only the runtime behaviour on exceeding it moves. HOST-INV-021 is
+  `Deferred` with its identifier retained rather than deleted and renumbered. And Phase 1's event boundary needed a
+  rule in the mechanism's absence — a prevalidated bounded span, refused at admission — or the renderer would accept
+  arbitrary input while defining neither an error nor an overflow behaviour.
+- **Why this is not yet `Complete`.** The narrowing is a contract change to a document whose last four corrections each
+  contained a defect found by the pass that reviewed them. It closes when an independent pass over the narrowing diff
+  has run and ADR-0038 is accepted, not before.
 - **What the evidence actually supplied, and what it did not.** ADR-0021 assigned P00A-T005 "measured
   `HostProfile`/render defaults", and EVD-0003 measured *cost*, not capacity. **Exactly one field is derived from
   measurement**: `predicted_quantum_cost_ratio` (0.15, where the stated target and the measured 2.7x–6.8x
@@ -300,26 +313,31 @@ Kept here rather than deleted: the exit review has to be able to see how a compl
 **P00A-T004 — Complete the fixed-limit and overflow audit. `Active` again; kept in this section because most of its
 work stands.** Passes 1-3 are unchanged and their conclusions hold. What reopened it is pass 4, the **use-site audit**:
 the first pass to read what a constant is *used for* rather than where it is defined. Over the 30 entries that were `HostProfile`-owned when it started it found `LIMIT-0015` misowned (four deferred-drop channels, not a return-bus scratch — it moves to
-`N/A — removed`; with the audit's other results the split is 28 `HostProfile` / 1 undecided / 46 elsewhere across 75 entries), `LIMIT-0014` misdescribed (V1 has no per-quantum event limit), two
+`N/A — removed`; with the audit's other results the split was 28 `HostProfile` / 1 undecided / 46 elsewhere across 75 entries at that point, and is 28 / 48 across 76 after ADR-0038), `LIMIT-0014` misdescribed (V1 has no per-quantum event limit), two
 citations pointing at unrelated lines, a `<=` floor relation recorded as a 1:1 coupling, and **three further
-silent-truncation sites**, taking the register from six to ten. Four of those nine were found outside any search.
+silent-truncation sites**, taking the register from six to nine at that point, and to eleven after pass 5. Four of
+those nine were found outside any search.
 Pass 4 also made two false findings of its own — an absence asserted from a name search, and a truncation asserted from
 one line without reading the `push` that feeds it — both caught by external review, and both the same failure the pass
-was convened to correct. **Pass 5 completed the sweep over the remaining 44 entries** and found them largely sound: 36 of 44 accurate, five citations drifted 7-17 lines with correct values, and two substantive errors: `LIMIT-0016` naming one ring where its constant sizes two while stating its overflow backwards (a fifth live audio-thread drop), and `LIMIT-0059` claiming nothing constructs `ChannelCount::Multi` when a multichannel device does. The pass also overstated its own depth, which review corrected. Pass 4 found five substantive errors in 30 entries and pass 5 found two in 44 — the entries reasoned about hardest are wrong at roughly three times the rate, and four rows left `Classified` — `LIMIT-0013` (its ADR-0021 disposition rests on two disproved readings), `LIMIT-0014` (one constant, two rings, two owners), and `LIMIT-0015` (overflow only partly read). 72 of 75 are classified. Both facts keep this task open.
+was convened to correct. **Pass 5 completed the sweep over the remaining 44 entries** and found them largely sound: 36 of 44 accurate, five citations drifted 7-17 lines with correct values, and two substantive errors: `LIMIT-0016` naming one ring where its constant sizes two while stating its overflow backwards (a fifth live audio-thread drop), and `LIMIT-0059` claiming nothing constructs `ChannelCount::Multi` when a multichannel device does. The pass also overstated its own depth, which review corrected. Pass 4 found five substantive errors in 30 entries and pass 5 found two in 44 — the entries reasoned about hardest are wrong at roughly three times the rate. **Four** rows left `Classified`: `LIMIT-0013` (its ADR-0021 disposition rests on two disproved readings), `LIMIT-0014` (one constant, two rings, two owners), `LIMIT-0015` (overflow only partly read), and `LIMIT-0017` (the same egress/class mismatch as `LIMIT-0013`) — 71 of 75, not the 72 an earlier revision of this paragraph counted while listing only three of the four.
+
+**All four rows are addressed at `29c22ef4`, though only three of them close.** `LIMIT-0015`'s was a matter of finishing its overflow read — the automation-trash and mod-grid paths, which the pass had left unread. The other three needed a rule ADR-0021 does not contain, because they are bounded queues the *engine* feeds while ADR-0021 permits runtime overflow only for queues fed by external unbounded input; [ADR-0038](../decisions/ADR-0038-engine-egress-queue-classification.md) supplies it, supersedes three named ADR-0021 clauses, and splits `LIMIT-0014` into a `HostProfile`-owned GUI ring and a protocol-owned `LIMIT-0076`. The register is 76 entries with every owner settled for the first time. **It is `Proposed`, so those rows stay `Investigating`** — a disposition's supporting evidence is an accepted decision, and this tracker does not get to relax that. **`LIMIT-0017` stays `Investigating` past that acceptance too, alone among the four**: its producer is off the render path, so ADR-0038's fourth condition applies — a drop there is a choice that must be argued — and no registered decision owns the multi-client hub's delivery contract. Acceptance therefore takes the ledger to 75 of 76, and **this task has two blockers left, not one**. The audit coverage claim now has the `EVD` record it lacked, [EVD-0005](../evidence/phase-00a/EVD-0005-resource-ledger-use-site-audit.md), which reports coverage `Supported` and accuracy `Inconclusive`. The second blocker is neither coverage nor disposition but **completeness**: ADR-0021's executable probe is unbuilt, and no search-based method can close it.
 
 - **Scope.** Populate the [resource inventory](../inventories/resource-limits.md) with every fixed cap, truncation
   point, bounded queue, buffer capacity, and script budget in the workspace, each with its enforcement site, its
   overflow behavior, a proposed V2 rule, and a diagnostic.
-- **State.** **Five passes; the use-site sweep covers all 75 entries.** Two discovery passes with opposite blind spots at `dd69b657`, and a third
-  classification pass at `b435887c` that applied accepted ADR-0021 to the 74 entries that existed then. Every entry
-  carries a terminal failure class, a rule, and a diagnostic, and **74 of 75 have a settled owner** — `LIMIT-0014` is
-  undecided pending a GUI/OSC split, which is one reason this task reopened. **No entry is `Unknown`** — the 19
-  that were are resolved.
-- **What the owner axis showed.** 28 entries are `HostProfile`, one is undecided (`LIMIT-0014`, pending a split), and 46 are not: 12 node contracts, 9 removed outright,
-  7 protocol, 7 application settings, 6 domain/format, 5 job policy. (`LIMIT-0015` moved from `HostProfile` to removed
-  in the pass-4 use-site audit.) A single-axis model — the one the first
-  revision of ADR-0021 was accepted with and then had withdrawn — would have put those 46 into a render-preparation
-  input they have nothing to do with. The split paid for itself on its first application.
+- **State.** **Five passes plus a disposition pass; the use-site sweep covers every entry.** Two discovery passes
+  with opposite blind spots at `dd69b657`, a classification pass at `b435887c` over the 74 entries that existed then,
+  two use-site audits, and the disposition pass at `29c22ef4`. The register is **76** entries. Every entry carries a
+  terminal failure class, a rule, and a diagnostic; **no entry is `Unknown`**; and **every entry has a settled owner**,
+  which was not true until ADR-0038 split `LIMIT-0014`. Four rows are `Investigating` rather than `Classified`: three because
+  that record is `Proposed`, and `LIMIT-0017` because its condition 4 has no owner and so survives its acceptance.
+- **What the owner axis showed.** 28 entries are `HostProfile` and 48 are not: 12 node contracts, 10 removed outright,
+  8 protocol, 7 application settings, 6 domain/format, 5 job policy. Three entries moved to get there — `LIMIT-0015`
+  and `LIMIT-0013` to `N/A — removed` once their use sites were read, and `LIMIT-0014` from undecided to `HostProfile`
+  once ADR-0038 split its OSC half into `LIMIT-0076`. A single-axis model — the one the first revision of ADR-0021 was
+  accepted with and then had withdrawn — would have put those 48 into a render-preparation input they have nothing to
+  do with. The split paid for itself on its first application.
 - **Classifying found a sixth silent-truncation site that neither search did.** `LIMIT-0004`: the render command accepts
   up to 384 kHz while `SampleRate::MAX_SUPPORTED` — the ceiling real-time look-ahead buffers size themselves from — is
   192 kHz, and `SampleRate::new` validates only positivity. The limiter's ring is sized `0.005 × 192 000` and its
@@ -527,8 +545,8 @@ something.
 | P00A-T001 | [Corpus manifest](../../../corpus/v2-reference/manifest.json) and five generated fixtures; five of eleven categories covered, six recorded as gaps | The manifest is loaded and validated by `cargo test -p pertylizer --test corpus_manifest`: category coverage, claim classes, digests, and the fact that each committed project is exactly what its builder produces. CORPUS-0005 adds two general fixture tests over `effect_chain_order`, which is matched by string and whose typo would otherwise be absorbed by V1's append path | Partial — format and validation done, five of eleven categories exercised |
 | P00A-T002 | `pertylizer compare` and the versioned report model                                   | Each metric unit-tested against a synthetic signal with a known deviation (6.02 dB of gain, 100 ms of delay, a semitone of detune, a band-limited change, an inverted channel); end-to-end through render→render→compare in `compare_command.rs` | Complete — runs with no GUI and no audio device |
 | P00A-T003 | [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md), [EVD-0002](../evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md), and [EVD-0003](../evidence/phase-00a/EVD-0003-cpu-memory-timing-baseline.md) | Two process-separate renders per case, bit-identical on all four, every comparison delta exactly zero, with a two-case control that resolves their octave to 3.6 cents; 8 640 timed renders giving the cost-versus-block-size curve; and 1 700 renders over four sample rates, seven voice counts, and 15 timing/memory profiles per operating point | Complete for the four categories that existed when it was measured — CPU, memory, timing, and determinism all measured, with real-time headroom explicitly out of scope |
-| P00A-T004 | [Resource inventory](../inventories/resource-limits.md) passes 1-2 at `dd69b657` and the classification pass at `b435887c` | Two independent discovery methods with opposite blind spots — pass 1 matched constant names, pass 2 matched documented truncation behavior — then a third pass applying accepted ADR-0021 to all 74 entries: terminal class, owner, rule, and diagnostic each citing the clause that supports it. Classifying found a sixth silent-truncation site the searches missed. Neither search executes anything, so a truncation that is both unnamed and undocumented would still be missed | **Reopened by the pass-4 use-site audit.** Passes 1-3 all read definitions; pass 4 read *uses*, and only for the 30 entries that were `HostProfile`-owned when it started. It found `LIMIT-0015` misowned, `LIMIT-0014` misdescribed, two citations pointing at unrelated lines, a `<=` relation recorded as an equality, and three further silent-truncation sites — taking the register from six to ten, with five of the ten found outside any search. It also made two false findings of its own, both caught by external review. **The other 44 entries have since been use-site read by pass 5, so coverage is complete — provisionally, pending an `EVD` record — but **four** rows still sit outside `Classified` — `LIMIT-0013`, `LIMIT-0014`, `LIMIT-0015`, `LIMIT-0017` — so this task no longer meets its own all-limits scope |
-| P00A-T005 | [Host profile and render limits](../specs/spec-host-profile-and-render-limits.md), `Draft`, invariant prefix `HOST` | Coverage is checkable rather than asserted: the specification maps each of the ledger's 28 settled `HostProfile`-owned entries to a successor field, with `LIMIT-0014` pending a split, lists the seven fields with no V1 antecedent, and answers the master plan's field list item by item. Every default carries one of four stated bases — queried, derived, V1 carry-over, or chosen-and-anchored — and exactly one value is derived from measurement. Each of the 21 invariants has a named conformance test in the phase that builds what it tests; none of those tests can exist before Phase 1. Eleven passes have run — author, independent (five, two High), bounded closure (four, one substantive), confirmation (two), independent (seven, two High), targeted (six, three High), and **five external** (five with three P1, five with one P1, six with two P1, four with two P1, three with one P1) — with every finding corrected and recorded in the specification's *Review status*. Six of the eleven were by an author. The five external ones found two long-standing misreadings and three defects in their predecessors' corrections, and four of them landed on HOST-INV-021 | Partial — the sixth pass's recommendation to close is **withdrawn**. Four blockers stand, all from external review: an **ADR-0001** clarification covering both when clause 16's late condition is evaluated **and** whether a quantum may defer at all under clauses 12 and 14; an **ADR-0021** one on the `Live bounded queue` class given to what are engine-egress rings; **`LIMIT-0014`'s GUI/OSC split**, without which `event_egress_capacity` leaves HOST-INV-005 unsatisfied; and **V2's renderer-ingress streams**, plus — separately, since deferral frees the upstream slot — a bound or exhaustion policy for the deferred store. All four may become Phase 3 work with a narrowed P00A-T005 |
+| P00A-T004 | [Resource inventory](../inventories/resource-limits.md) passes 1-2 at `dd69b657` and the classification pass at `b435887c` | Two independent discovery methods with opposite blind spots — pass 1 matched constant names, pass 2 matched documented truncation behavior — then a third pass applying accepted ADR-0021 to all 74 entries: terminal class, owner, rule, and diagnostic each citing the clause that supports it. Classifying found a sixth silent-truncation site the searches missed. Neither search executes anything, so a truncation that is both unnamed and undocumented would still be missed | **Reopened by the pass-4 use-site audit.** Passes 1-3 all read definitions; pass 4 read *uses*, and only for the 30 entries that were `HostProfile`-owned when it started. It found `LIMIT-0015` misowned, `LIMIT-0014` misdescribed, two citations pointing at unrelated lines, a `<=` relation recorded as an equality, and three further silent-truncation sites — taking the register from six to ten, with five of the ten found outside any search. It also made two false findings of its own, both caught by external review. **The other 44 entries have since been use-site read by pass 5, and the coverage claim now has its `EVD` record** ([EVD-0005](../evidence/phase-00a/EVD-0005-resource-ledger-use-site-audit.md), coverage `Supported`, accuracy `Inconclusive`). The four rows that left `Classified` — `LIMIT-0013`, `LIMIT-0014`, `LIMIT-0015`, `LIMIT-0017` — are disposed at `29c22ef4`: `LIMIT-0015` by finishing its overflow read, the other three under ADR-0038. **Two blockers remain, and neither is coverage.** Three of those rows wait on ADR-0038 being accepted; `LIMIT-0017` survives that acceptance because its condition 4 has no registered owner. And completeness is unproven by construction — no search-based method can establish it, which is what ADR-0021's executable probe is for |
+| P00A-T005 | [Host profile and render limits](../specs/spec-host-profile-and-render-limits.md), `Draft`, invariant prefix `HOST` | Coverage is checkable rather than asserted: the specification maps each of the ledger's 28 `HostProfile`-owned entries to a successor field — total since ADR-0038 split `LIMIT-0014` and removed `LIMIT-0013`, which also withdrew the `event_queue_capacity` field — lists the seven fields with no V1 antecedent, and answers the master plan's field list item by item. Every default carries one of four stated bases — queried, derived, V1 carry-over, or chosen-and-anchored — and exactly one value is derived from measurement. Each of the 21 invariants has a named conformance test in the phase that builds what it tests; none of those tests can exist before Phase 1. Eleven passes have run — author, independent (five, two High), bounded closure (four, one substantive), confirmation (two), independent (seven, two High), targeted (six, three High), and **five external** (five with three P1, five with one P1, six with two P1, four with two P1, three with one P1) — with every finding corrected and recorded in the specification's *Review status*. Six of the eleven were by an author. The five external ones found two long-standing misreadings and three defects in their predecessors' corrections, and four of them landed on HOST-INV-021 | Partial — the sixth pass's recommendation to close is **withdrawn**. Four blockers stand, all from external review: an **ADR-0001** clarification covering both when clause 16's late condition is evaluated **and** whether a quantum may defer at all under clauses 12 and 14; an **ADR-0021** one on the `Live bounded queue` class given to what are engine-egress rings; **`LIMIT-0014`'s GUI/OSC split**, without which `event_egress_capacity` leaves HOST-INV-005 unsatisfied; and **V2's renderer-ingress streams**, plus — separately, since deferral frees the upstream slot — a bound or exhaustion policy for the deferred store. All four may become Phase 3 work with a narrowed P00A-T005 |
 | P00A-T006 | [ADR-0001](../decisions/ADR-0001-internal-render-quantum.md), [ADR-0021](../decisions/ADR-0021-host-profile-and-admission-policy.md), [ADR-0037](../decisions/ADR-0037-render-quantum-value.md), and [ADR-0032](../decisions/ADR-0032-sample-time-and-event-timestamps.md) `Accepted` | Three review passes resolved the buffering, event, retention, ownership, host-fault, and measurement-boundary defects before the first two were accepted. ADR-0037 was accepted on EVD-0002 by applying the rule table it fixed before the data existed; the outcome was rule 1, so its value is provisional and binds Phase 2. ADR-0032 took three passes: an author pass, an independent pass that withdrew its acceptance over a tempo map producing engine times, a `HostProfile` horizon with no semantics, a pre-epoch clamp contradicting ADR-0001 clause 16, undefined exhaustion, and a reusable epoch identifier, and a bounded closure pass that caught the forward horizon rejecting a compiled song and fixed the order of the compile-anchor-stamp-enqueue path. ADR-0022 and ADR-0028 are `Deferred` to the Phase 3 and Phase 4 entry gates, each with an owner, its missing evidence, and constraints that hold while it is open | Complete — four accepted records and two written deferrals satisfy every row |
 
 ## Deviations
@@ -557,7 +575,12 @@ changes in this tracker.
 
 ## Exit readiness
 
-Status: Not ready
+Status: Not ready. [REV-P00A](../reviews/phase-00a-exit-review.md) exists and is `Draft`.
 
-The formal review must evaluate every Phase 0A exit gate in the master plan and link direct evidence. Phase 1 may not
-begin until that review is accepted.
+The review evaluates all six master-plan gates and **two fail**: the named-comparison-category gate, on P00A-T001's
+five-of-eleven corpus coverage, and the resource-inventory gate, on ADR-0038 being `Proposed` and on a completeness
+claim that no search-based method can establish. Neither is a condition that could be bounded into a
+`Conditionally accepted`.
+
+It was opened before the phase could pass because the scoping call on P00A-T005 belonged to it and everything else
+queued behind that answer. Phase 1 may not begin until the review is `Accepted`.

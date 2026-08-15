@@ -9,7 +9,7 @@ The topics below originate in Part VII of the
 does not accept a decision. All initial entries remain `Proposed` until their individual ADR has been reviewed and
 accepted.
 
-Next free identifier: `ADR-0038`.
+Next free identifier: `ADR-0039`.
 
 ## Status vocabulary
 
@@ -18,6 +18,13 @@ Next free identifier: `ADR-0038`.
 - `Rejected` — considered and explicitly not selected;
 - `Deferred` — intentionally postponed with a named revisit condition;
 - `Superseded` — replaced by another ADR.
+
+A record may also carry **`Superseded in part`** in its own metadata while keeping its register status. That is not a
+status: it is a pointer to a successor that replaced named clauses, and every replaced clause is listed in the
+successor's `Supersedes` field. The rest of the record still binds, which is why the register status does not change.
+**The replacement itself takes effect only when the successor is accepted** — until then the pointer says a
+replacement exists, and the old clauses are still the authority.
+See [decisions/README.md](decisions/README.md#decision-lifecycle) for when this is the wrong tool.
 
 Only an accepted decision is an implementation constraint. A likely choice or text in a discussion is not an accepted
 decision.
@@ -116,6 +123,7 @@ No topic has been swept for reclassification. Judge the class when work begins o
 | ADR-0035 | Transaction and concurrency semantics       | Proposed | 0B/10B                | Operation conformance corpus             |
 | ADR-0036 | Audio device and input lifecycle            | Proposed | 0B/9                  | Simulated-host and platform review       |
 | ADR-0037 | Render quantum frame count                  | Accepted | 0A/1                  | Benchmark                                |
+| ADR-0038 | Engine-egress queue classification          | Proposed | 0A/1                  | Use-site audit (EVD-0005)                |
 
 ### Records created
 
@@ -133,6 +141,21 @@ Topics without a link below have no individual record yet; the table above is st
 - [ADR-0032: Sample-time and event-timestamp model](decisions/ADR-0032-sample-time-and-event-timestamps.md) —
   `Accepted` after three passes
 - [ADR-0037: Render quantum frame count](decisions/ADR-0037-render-quantum-value.md) — `Accepted`, value provisional
+- [ADR-0038: Engine-egress queue classification](decisions/ADR-0038-engine-egress-queue-classification.md) —
+  `Proposed`, superseding three named ADR-0021 clauses once accepted
+
+**ADR-0038 supersedes clauses, not a record.** ADR-0021 part 1 permits runtime overflow only for queues fed by external
+unbounded input, which leaves three engine-egress rings — `LIMIT-0013`, `LIMIT-0014`, `LIMIT-0017` — with no admissible
+failure behaviour at all, and its part 3 disposition for `LIMIT-0013` rests on two claims the use-site audits disproved:
+that the drop counters are published on OSC, and that the channel is a live bounded queue. It is neither published nor
+constructed outside its own tests. A third clause goes with them: the decision driver asserting the OSC publication, superseded on the same evidence. ADR-0021 stays `Accepted` and authoritative for everything else, and **the replacement takes effect only when ADR-0038 is accepted** — until then all three clauses still bind. The three superseded
+clauses are named in ADR-0038's metadata and linked from ADR-0021. This is the first partial supersession in the
+register, and it is written that way because rewriting an accepted record is forbidden while re-deciding all of
+ADR-0021 would discard reasoning that is still correct.
+
+It is `Contract` class: it defines a queue direction, a payload test, and an error behaviour, so reversibility tests 1
+and 3 both fail. It is deliberately **not** accepted in the session that drafted it — the register has two withdrawn
+same-session acceptances, and the rule they produced applies to this record as much as to theirs.
 
 ADR-0001 and ADR-0021 were accepted after three review passes. Each carries a *Review history* note recording the
 defects corrected before acceptance; the immutability rule in [decisions/README.md](decisions/README.md) now applies.
