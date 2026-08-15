@@ -94,6 +94,11 @@ pub struct SynthTelemetry {
     /// Track-blocks where a track hit the per-channel send cap with authored
     /// sends still unexamined.
     pub send_truncations: u64,
+    /// Deferred-drop handoffs that failed, leaving the `Arc` to drop in the
+    /// audio callback. Not every one frees memory; each means a ring filled.
+    pub rt_arc_drops: u64,
+    /// Blocks where a sequencer working buffer grew on the audio thread.
+    pub seq_buffer_growths: u64,
 }
 
 impl Default for SynthTelemetry {
@@ -126,6 +131,8 @@ impl Default for SynthTelemetry {
             event_drops: 0,
             recorded_flush_losses: 0,
             send_truncations: 0,
+            rt_arc_drops: 0,
+            seq_buffer_growths: 0,
         }
     }
 }

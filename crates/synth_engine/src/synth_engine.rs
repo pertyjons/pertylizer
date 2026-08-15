@@ -2831,6 +2831,11 @@ impl SynthEngine {
         // ship the replaced descriptors to the deferred-drop channel.
         let script_trash = &mut self.script_trash_producer;
         let desc_trash = &mut self.descriptor_trash_producer;
+        // Counted locally so the trash helpers stay free of `self`, then folded
+        // into shared state below. A full ring means the `Arc` drops on the
+        // audio thread — the helpers' doc comments argue that cannot realistically
+        // happen, and this is what turns that argument into an observation.
+        let mut dropped_here: u32 = 0;
         match instrument_id {
             Some(inst_id) => match self.instruments.iter_mut().find(|i| i.id() == inst_id) {
                 Some(instrument) => {
@@ -2838,19 +2843,19 @@ impl SynthEngine {
                         instrument
                             .voice_graph_mut()
                             .set_script(module_id, slot, script.clone());
-                    Self::trash_script(script_trash, replaced);
+                    Self::trash_script(script_trash, replaced, &mut dropped_here);
                     if let Some(d) = &descriptor {
                         let old = instrument
                             .voice_graph_mut()
                             .set_node_descriptor(module_id, Arc::clone(d));
-                        Self::trash_descriptor(desc_trash, old);
+                        Self::trash_descriptor(desc_trash, old, &mut dropped_here);
                     }
                     for voice in instrument.allocator_mut().voices_mut() {
                         let replaced = voice.graph.set_script(module_id, slot, script.clone());
-                        Self::trash_script(script_trash, replaced);
+                        Self::trash_script(script_trash, replaced, &mut dropped_here);
                         if let Some(d) = &descriptor {
                             let old = voice.graph.set_node_descriptor(module_id, Arc::clone(d));
-                            Self::trash_descriptor(desc_trash, old);
+                            Self::trash_descriptor(desc_trash, old, &mut dropped_here);
                         }
                     }
                 }
@@ -2860,16 +2865,24 @@ impl SynthEngine {
                 // inline would free on the audio thread; route it to the trash
                 // channel instead. (The `Some` arm above only ever *clones*
                 // `script`, so its final drop is a non-last refcount decrement.)
-                None => Self::trash_script(script_trash, script),
+                None => Self::trash_script(script_trash, script, &mut dropped_here),
             },
             None => {
                 let replaced = self.module_graph.set_script(module_id, slot, script);
-                Self::trash_script(script_trash, replaced);
+                Self::trash_script(script_trash, replaced, &mut dropped_here);
                 if let Some(d) = descriptor {
                     let old = self.module_graph.set_node_descriptor(module_id, d);
-                    Self::trash_descriptor(desc_trash, old);
+                    Self::trash_descriptor(desc_trash, old, &mut dropped_here);
                 }
             }
+        }
+
+        if dropped_here > 0 {
+            let _ = self.state.deferred_drop_handoff_failures.fetch_update(
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+                |v| Some(v.saturating_add(dropped_here)),
+            );
         }
     }
 
@@ -2879,9 +2892,12 @@ impl SynthEngine {
     fn trash_descriptor(
         producer: &mut ringbuf::HeapProd<Arc<synth_core::ModuleDescriptor>>,
         replaced: Option<Arc<synth_core::ModuleDescriptor>>,
+        dropped_here: &mut u32,
     ) {
-        if let Some(old) = replaced {
-            let _ = producer.try_push(old);
+        if let Some(old) = replaced
+            && producer.try_push(old).is_err()
+        {
+            *dropped_here = dropped_here.saturating_add(1);
         }
     }
 
@@ -2894,9 +2910,12 @@ impl SynthEngine {
     fn trash_script(
         producer: &mut ringbuf::HeapProd<Arc<synth_core::script::BoundScript>>,
         replaced: Option<Arc<synth_core::script::BoundScript>>,
+        dropped_here: &mut u32,
     ) {
-        if let Some(old) = replaced {
-            let _ = producer.try_push(old);
+        if let Some(old) = replaced
+            && producer.try_push(old).is_err()
+        {
+            *dropped_here = dropped_here.saturating_add(1);
         }
     }
 
@@ -4196,10 +4215,25 @@ impl AudioProcessor for SynthEngine {
         let prev_tick = self.sequencer.current_tick();
         let was_playing = self.sequencer.play_state() == PlayState::Playing;
 
-        // Process sequencer events
+        // Process sequencer events.
+        //
+        // The buffer keeps its capacity across `clear()`, so a reallocation here
+        // means this block needed more events than any block before it. That is
+        // an allocation on the audio thread, which is forbidden; it is counted
+        // rather than prevented because preventing it needs prepared storage and
+        // atomic plan activation (see `EngineState::sequencer_buffer_growths`),
+        // and because bounding the buffer would drop authored note-ons.
         self.sequencer_event_buffer.clear();
+        let capacity_before = self.sequencer_event_buffer.capacity();
         self.sequencer
             .process(sample_count, &mut self.sequencer_event_buffer);
+        if self.sequencer_event_buffer.capacity() > capacity_before {
+            let _ = self.state.sequencer_buffer_growths.fetch_update(
+                std::sync::atomic::Ordering::Relaxed,
+                std::sync::atomic::Ordering::Relaxed,
+                |v| Some(v.saturating_add(1)),
+            );
+        }
 
         let curr_tick = self.sequencer.current_tick();
 
@@ -4354,6 +4388,15 @@ impl AudioProcessor for SynthEngine {
             if channels >= 2 {
                 frame[0] = (left * master_volume).clamp(-1.0, 1.0);
                 frame[1] = (right * master_volume).clamp(-1.0, 1.0);
+                // Silence every channel past the second. The mix is stereo, so
+                // a device reporting more channels has frames this loop would
+                // otherwise leave untouched — and cpal does not promise a zeroed
+                // buffer, so "untouched" is whatever was there before. The
+                // not-running path already fills the whole buffer for the same
+                // reason; this is that guarantee extended to the running one.
+                for surplus in &mut frame[2..] {
+                    *surplus = 0.0;
+                }
             } else if channels == 1 {
                 frame[0] = ((left + right) * 0.5 * master_volume).clamp(-1.0, 1.0);
             }

@@ -378,6 +378,26 @@ pub(crate) fn run(
             vec![OscType::Long(i64::from(send_truncations))],
         ));
 
+        // Two real-time violations, published on the same cumulative-total terms.
+        // Neither is a capacity note: a non-zero value means the callback freed
+        // memory or allocated it.
+        messages.push(osc_msg(
+            addresses::ENGINE_RT_ARC_DROPS,
+            vec![OscType::Long(i64::from(
+                engine_state
+                    .deferred_drop_handoff_failures
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            ))],
+        ));
+        messages.push(osc_msg(
+            addresses::ENGINE_SEQ_BUFFER_GROWTHS,
+            vec![OscType::Long(i64::from(
+                engine_state
+                    .sequencer_buffer_growths
+                    .load(std::sync::atomic::Ordering::Relaxed),
+            ))],
+        ));
+
         send_bundle(&socket, target, &mut messages);
     }
 

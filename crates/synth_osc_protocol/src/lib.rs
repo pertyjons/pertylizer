@@ -117,6 +117,14 @@ pub mod addresses {
     /// sends still unexamined. Cumulative total, not a delta.
     pub const ENGINE_SEND_TRUNCATIONS: &str = "/synth/engine/send_truncations";
 
+    /// Handoffs to a deferred-drop channel that failed, leaving the `Arc` to be
+    /// dropped on the audio thread. Not every one frees memory — a non-final
+    /// reference only decrements — but each means the ring filled.
+    pub const ENGINE_RT_ARC_DROPS: &str = "/synth/engine/deferred_drop_failures";
+
+    /// Blocks in which a sequencer working buffer grew on the audio thread.
+    pub const ENGINE_SEQ_BUFFER_GROWTHS: &str = "/synth/engine/seq_buffer_growths";
+
     /// Ping from sender — included in bundles so visualizer knows sender is alive.
     pub const VIZ_PING: &str = "/viz/ping";
 

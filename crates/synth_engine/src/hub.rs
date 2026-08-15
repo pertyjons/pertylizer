@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 use parking_lot::{Mutex, RwLock};
 use ringbuf::HeapRb;
@@ -120,6 +120,13 @@ struct ClientInfo {
     permissions: ClientPermissions,
     /// Event producer for this client.
     event_producer: Mutex<ringbuf::HeapProd<TimestampedEvent>>,
+    /// Events this client's ring could not take.
+    ///
+    /// Dropping is deliberate — a slow client must not stall the broadcast — but
+    /// it was silent, which is the failure mode ADR-0021 records twice: a loss
+    /// nobody can observe. Per client, because the interesting question is
+    /// *which* client is falling behind, not how many events the hub lost.
+    dropped_events: AtomicU32,
     /// Whether client is still connected.
     connected: AtomicBool,
     /// Last activity timestamp (sample position).
@@ -215,6 +222,7 @@ impl EngineHub {
             client_type,
             permissions: permissions.clone(),
             event_producer: Mutex::new(event_prod),
+            dropped_events: AtomicU32::new(0),
             connected: AtomicBool::new(true),
             last_activity: AtomicU64::new(0),
             focused_modules: RwLock::new(Vec::new()),
@@ -261,8 +269,17 @@ impl EngineHub {
 
             if should_receive {
                 let mut producer = client.event_producer.lock();
-                // Best effort - drop if buffer full
-                let _ = producer.try_push(event.clone());
+                // Best effort — drop if the buffer is full, and count it so a
+                // client that is falling behind is visible rather than merely
+                // quiet.
+                if producer.try_push(event.clone()).is_err() {
+                    drop(producer);
+                    let _ = client.dropped_events.fetch_update(
+                        Ordering::Relaxed,
+                        Ordering::Relaxed,
+                        |v| Some(v.saturating_add(1)),
+                    );
+                }
             }
         }
     }
@@ -444,6 +461,19 @@ impl EngineHub {
     /// Update the current timestamp (called from engine).
     pub fn set_timestamp(&self, timestamp: u64) {
         self.current_timestamp.store(timestamp, Ordering::Relaxed);
+    }
+
+    /// Events dropped for a client whose ring was full, since registration.
+    ///
+    /// `None` if the client is not registered. Non-zero means that client is
+    /// draining more slowly than the hub broadcasts, and has an incomplete view
+    /// — which it has no other way to detect.
+    #[must_use]
+    pub fn dropped_events_for(&self, id: ClientId) -> Option<u32> {
+        self.clients
+            .read()
+            .get(&id)
+            .map(|c| c.dropped_events.load(Ordering::Relaxed))
     }
 
     /// Get count of connected clients.

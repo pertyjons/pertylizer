@@ -1584,3 +1584,39 @@ fn a_second_failed_flush_is_refused_not_overwritten() {
         "the refusal must be counted in shared state, where the UI can read it"
     );
 }
+
+/// A device reporting more than two channels gets silence past the second, not
+/// whatever was in the buffer.
+///
+/// The mix is stereo. Before this was fixed the output loop wrote frame[0] and
+/// frame[1] and left the rest of each frame alone — and cpal does not promise a
+/// zeroed buffer, so on a 6-channel device the surplus channels carried
+/// undefined content. The test seeds the buffer with a value no render would
+/// produce, so an untouched channel is unmistakable.
+#[test]
+fn surplus_output_channels_are_silenced() {
+    let (mut engine, _handle) = SynthEngine::new();
+
+    const CHANNELS: usize = 6;
+    const FRAMES: usize = 64;
+    let context = AudioCallbackContext {
+        sample_rate: synth_core::audio::DeviceSampleRate::new(48000),
+        frames: FRAMES,
+        channels: CHANNELS as u16,
+        stream_time: 0.0,
+        sample_position: 0,
+        output_latency: Seconds::ZERO,
+    };
+
+    let mut out = vec![f32::from(-7i8); FRAMES * CHANNELS];
+    engine.process(&mut out, &context);
+
+    for (index, frame) in out.chunks(CHANNELS).enumerate() {
+        for (channel, sample) in frame.iter().enumerate().skip(2) {
+            assert_eq!(
+                *sample, 0.0,
+                "frame {index} channel {channel} was left at {sample}, not silenced"
+            );
+        }
+    }
+}

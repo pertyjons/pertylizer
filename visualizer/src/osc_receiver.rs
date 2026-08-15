@@ -74,6 +74,8 @@ struct OscSnapshot {
     event_drops: u32,
     recorded_flush_losses: u64,
     send_truncations: u64,
+    rt_arc_drops: u64,
+    seq_buffer_growths: u64,
 
     // -- One-shot requests (cleared after successful send) --
     camera_mode_request: Option<String>,
@@ -107,6 +109,8 @@ impl Default for OscSnapshot {
             event_drops: 0,
             recorded_flush_losses: 0,
             send_truncations: 0,
+            rt_arc_drops: 0,
+            seq_buffer_growths: 0,
             camera_mode_request: None,
         }
     }
@@ -277,6 +281,8 @@ fn receive_osc(
         telemetry.event_drops = snap.event_drops;
         telemetry.recorded_flush_losses = snap.recorded_flush_losses;
         telemetry.send_truncations = snap.send_truncations;
+        telemetry.rt_arc_drops = snap.rt_arc_drops;
+        telemetry.seq_buffer_growths = snap.seq_buffer_growths;
     }
 
     let dt = time.delta_secs();
@@ -490,6 +496,22 @@ fn handle_message(msg: &OscMessage, state: &mut OscSnapshot, version_warned: &mu
                 && let Ok(total) = u64::try_from(*count)
             {
                 state.send_truncations = total;
+            }
+        }
+
+        addresses::ENGINE_RT_ARC_DROPS => {
+            if let Some(OscType::Long(count)) = msg.args.first()
+                && let Ok(total) = u64::try_from(*count)
+            {
+                state.rt_arc_drops = total;
+            }
+        }
+
+        addresses::ENGINE_SEQ_BUFFER_GROWTHS => {
+            if let Some(OscType::Long(count)) = msg.args.first()
+                && let Ok(total) = u64::try_from(*count)
+            {
+                state.seq_buffer_growths = total;
             }
         }
 

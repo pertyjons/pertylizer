@@ -167,6 +167,7 @@ pub fn update(
          Phase:{phase:>5.2}           Voices:{voices:>4}\n\
          CPU:  {cpu:>5.1}%          Drops: {drops:>5}\n\
          Lost flushes: {lost_flushes:>5}  Send trunc: {send_trunc:>5}\n\
+         Drop handoffs: {rt_drops:>5}  Seq buf grow: {seq_grow:>5}\n\
          Stale:{stale:>5.1}s          Seq:   {seq:>8}\n\
          FFT:  {fft_bins:>4} bins       Proto: v{proto}\n\
          -----------------------\n\
@@ -194,6 +195,8 @@ pub fn update(
         drops = telemetry.event_drops,
         lost_flushes = telemetry.recorded_flush_losses,
         send_trunc = telemetry.send_truncations,
+        rt_drops = telemetry.rt_arc_drops,
+        seq_grow = telemetry.seq_buffer_growths,
         stale = telemetry.stale_seconds,
         seq = telemetry.seq,
         fft_bins = telemetry.fft_bin_count,

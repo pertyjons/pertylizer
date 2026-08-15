@@ -607,6 +607,37 @@ pub struct EngineState {
     /// The signal is "this project is over the send budget", which is true in
     /// every one of those cases.
     pub channel_send_truncations: StdAtomicU32,
+    /// Handoffs to a deferred-drop channel that failed because the ring was
+    /// full, leaving the `Arc` to be dropped on the **audio thread**.
+    ///
+    /// Not every failure frees memory: dropping a non-final reference only
+    /// decrements the count, and these handoffs carry one shared script across a
+    /// template and its voices, so an earlier reference may already have been
+    /// accepted. The counter is named for what it can observe — a failed handoff
+    /// — rather than for a free it cannot prove.
+    ///
+    /// It is still the right alarm. The rings exist precisely so an `Arc`'s
+    /// *final* drop does not run in the callback, their doc comments argue they
+    /// cannot realistically fill, and nothing measured that. A rise means the
+    /// argument is wrong and a free may have happened.
+    pub deferred_drop_handoff_failures: StdAtomicU32,
+    /// Blocks in which a sequencer working buffer had to grow on the audio
+    /// thread.
+    ///
+    /// `sequencer_event_buffer` and its scratch buffers are `Vec`s that
+    /// `clear()` keeps the capacity of, so growth happens only when a block
+    /// exceeds the previous high-water mark — the allocation is real but
+    /// amortized and self-quiescing. **This counts, it does not prevent.**
+    /// Preventing it needs prepared storage and atomic plan activation, which
+    /// is V2's document/plan split: a capacity derived off the audio thread can
+    /// still arrive a callback late, because `SharedSong` publishes a new
+    /// snapshot the moment its write guard drops.
+    ///
+    /// Bounding these buffers and dropping the excess — the pattern
+    /// `ExpansionBuffer` uses — is **not** an option here: they carry authored
+    /// note-ons, and ADR-0021 part 2 forbids silently changing authored note
+    /// expansion. A rare amortized allocation is the lesser fault.
+    pub sequencer_buffer_growths: StdAtomicU32,
 }
 
 impl EngineState {
@@ -637,6 +668,8 @@ impl EngineState {
             event_drops: StdAtomicU32::new(0),
             refused_recorded_note_flushes: StdAtomicU32::new(0),
             channel_send_truncations: StdAtomicU32::new(0),
+            deferred_drop_handoff_failures: StdAtomicU32::new(0),
+            sequencer_buffer_growths: StdAtomicU32::new(0),
         })
     }
 
@@ -710,6 +743,8 @@ impl Default for EngineState {
             event_drops: StdAtomicU32::new(0),
             refused_recorded_note_flushes: StdAtomicU32::new(0),
             channel_send_truncations: StdAtomicU32::new(0),
+            deferred_drop_handoff_failures: StdAtomicU32::new(0),
+            sequencer_buffer_growths: StdAtomicU32::new(0),
         }
     }
 }
