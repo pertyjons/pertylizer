@@ -35,10 +35,13 @@ pub mod fixtures;
 
 /// Version of the manifest's shape.
 ///
-/// Adding an optional field does not change it; removing or re-meaning anything
-/// does. A loader refuses a manifest that declares any other version rather than
+/// Adding an optional field does not change it; adding a *required* field,
+/// removing anything, or re-meaning anything does — version 2 exists because
+/// `owner` became a required key of a planned category, and an old document
+/// must fail with a version error rather than a puzzling missing-field error.
+/// A loader refuses a manifest that declares any other version rather than
 /// silently reading fields that no longer mean what they did.
-pub const MANIFEST_VERSION: u32 = 1;
+pub const MANIFEST_VERSION: u32 = 2;
 
 /// Repository-relative location of the corpus directory.
 ///
@@ -255,9 +258,20 @@ impl Seed {
 /// to account for every one of them, either with a case or with a recorded gap,
 /// so a category cannot quietly disappear from the corpus as it grows.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, strum::EnumIter,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Serialize,
+    Deserialize,
+    strum::EnumIter,
+    strum::Display,
 )]
 #[serde(rename_all = "kebab-case")]
+#[strum(serialize_all = "kebab-case")]
 pub enum CorpusCategory {
     /// Oscillator into filter into an envelope-gated amplifier — the minimal
     /// path every later category builds on.
@@ -454,6 +468,8 @@ impl CorpusCase {
 pub struct PlannedCategory {
     /// The uncovered category.
     pub category: CorpusCategory,
+    /// The task, phase, or decision that owns making the category reproducible.
+    pub owner: String,
     /// Why there is no case yet, and what adding one needs.
     pub why_absent: String,
 }
@@ -596,7 +612,7 @@ pub enum CorpusError {
     },
     /// A category is neither covered by a case nor recorded as a gap.
     #[error(
-        "category {category:?} is neither covered by a case nor listed as planned — \
+        "category {category} is neither covered by a case nor listed as planned — \
          every category the master plan names must be accounted for"
     )]
     UnaccountedCategory {
@@ -604,12 +620,21 @@ pub enum CorpusError {
         category: CorpusCategory,
     },
     /// A category is both covered and listed as a gap.
-    #[error("category {category:?} is listed as planned but case {case} already covers it")]
+    #[error("category {category} is listed as planned but case {case} already covers it")]
     PlannedButCovered {
         /// The contradictory category.
         category: CorpusCategory,
         /// A case that covers it.
         case: CorpusCaseId,
+    },
+    /// A gap cannot be actionable without both an owner and a reproducibility
+    /// problem.
+    #[error("planned category {category} has an empty {field}")]
+    IncompletePlannedCategory {
+        /// The gap whose metadata is incomplete.
+        category: CorpusCategory,
+        /// The required field that was empty.
+        field: &'static str,
     },
 }
 
@@ -808,10 +833,22 @@ impl CorpusManifest {
         // there are categories left to cover.
         let mut planned_categories = BTreeSet::new();
         for gap in &self.planned {
+            if gap.owner.trim().is_empty() {
+                return Err(CorpusError::IncompletePlannedCategory {
+                    category: gap.category,
+                    field: "owner",
+                });
+            }
+            if gap.why_absent.trim().is_empty() {
+                return Err(CorpusError::IncompletePlannedCategory {
+                    category: gap.category,
+                    field: "why_absent",
+                });
+            }
             if !planned_categories.insert(gap.category) {
                 return Err(CorpusError::DuplicateId {
                     what: "planned category",
-                    id: format!("{:?}", gap.category),
+                    id: gap.category.to_string(),
                 });
             }
         }
@@ -931,6 +968,7 @@ mod tests {
                 .filter(|c| *c != CorpusCategory::SubtractiveVoice)
                 .map(|category| PlannedCategory {
                     category,
+                    owner: "test owner".to_string(),
                     why_absent: "not yet".to_string(),
                 })
                 .collect(),
@@ -963,6 +1001,7 @@ mod tests {
         let mut m = manifest();
         m.planned.push(PlannedCategory {
             category: CorpusCategory::SubtractiveVoice,
+            owner: "test owner".to_string(),
             why_absent: "contradiction".to_string(),
         });
         assert!(matches!(
@@ -979,6 +1018,29 @@ mod tests {
         let duplicate = m.planned[0].clone();
         m.planned.push(duplicate);
         assert!(matches!(m.validate(), Err(CorpusError::DuplicateId { .. })));
+    }
+
+    #[test]
+    fn a_planned_category_requires_an_owner() {
+        let mut m = manifest();
+        m.planned[0].owner.clear();
+        assert!(matches!(
+            m.validate(),
+            Err(CorpusError::IncompletePlannedCategory { field: "owner", .. })
+        ));
+    }
+
+    #[test]
+    fn a_planned_category_requires_a_reproducibility_problem() {
+        let mut m = manifest();
+        m.planned[0].why_absent.clear();
+        assert!(matches!(
+            m.validate(),
+            Err(CorpusError::IncompletePlannedCategory {
+                field: "why_absent",
+                ..
+            })
+        ));
     }
 
     /// An intentional correction listed as preserved reads as reasonable in
@@ -1005,6 +1067,17 @@ mod tests {
             m.validate(),
             Err(CorpusError::MissingRationale { .. })
         ));
+    }
+
+    /// A validation error names a category in the manifest's own kebab-case
+    /// spelling, so the reported name can be searched for in the file it
+    /// describes rather than only in this enum's source.
+    #[test]
+    fn category_display_matches_the_serialized_spelling() {
+        for category in CorpusCategory::all() {
+            let serialized = serde_json::to_value(category).expect("serialize category");
+            assert_eq!(serde_json::Value::String(category.to_string()), serialized);
+        }
     }
 
     /// Two claims sharing an id make a citation ambiguous, which is the one
@@ -1100,6 +1173,21 @@ mod tests {
         let error = serde_json::from_value::<CorpusManifest>(value)
             .expect_err("a missing seed key must not parse");
         assert!(error.to_string().contains("seed"), "{error}");
+    }
+
+    /// A planned category must name its owner in the serialized contract. The
+    /// validation check for an empty owner cannot protect a document where the
+    /// key itself was omitted, because that document must fail during parsing.
+    #[test]
+    fn a_planned_category_owner_key_is_required() {
+        let mut value = serde_json::to_value(manifest()).expect("serialize");
+        value["planned"][0]
+            .as_object_mut()
+            .expect("a planned-category object")
+            .remove("owner");
+        let error = serde_json::from_value::<CorpusManifest>(value)
+            .expect_err("a missing planned-category owner must not parse");
+        assert!(error.to_string().contains("owner"), "{error}");
     }
 
     /// A misspelled optional field is the failure this format exists to prevent:

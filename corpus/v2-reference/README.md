@@ -40,9 +40,18 @@ classes and a `change` claim only one of the other two; the loader refuses a
 manifest that mixes them, because "we preserve this intentional correction"
 reads as reasonable and means nothing.
 
-`planned` lists the categories with no case yet, each with the reason. Every
-category is either covered or listed there — the loader refuses a manifest where
-one is neither, so the corpus cannot quietly lose coverage as it grows.
+`planned` lists the categories with no case yet. Each entry carries two
+required keys: `owner` — the task, phase, or decision that owns making the
+category reproducible — and `why_absent` — the reproducibility problem an
+executable case would need solved. Both must be non-empty; the loader refuses
+an entry missing either. Every category is either covered or listed there —
+the loader refuses a manifest where one is neither, so the corpus cannot
+quietly lose coverage as it grows.
+
+The file's `manifest_version` is currently **2** (version 2 added the required
+`owner` key). Adding an *optional* field does not change the version; adding a
+required field, or removing or re-meaning anything, does — a loader refuses a
+manifest that declares any other version.
 
 ### Why no seeds
 
@@ -134,6 +143,12 @@ behaviour its claims name passes every one of them. That is not hypothetical
 here — CORPUS-0002 was written to force voice stealing and, before the offline
 renderer replayed allocator settings, rendered with the default eight voices and
 stole nothing. Every test still passed.
+
+One known trap of that kind: `StealingStrategy::Quietest` is implemented as
+"oldest releasing voice, then oldest active" (its own `For now` comment), so on
+material with nothing in release it is indistinguishable from `Oldest`. A case
+that varies the stealing strategy would look like it was testing something and
+is not; see `offline_instrument_settings.rs` for the pinning test.
 
 So each `preserve` claim needs a render that would come out differently if the
 behaviour were absent. Build the *counterfactual* as a project variant, render

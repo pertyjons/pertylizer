@@ -780,12 +780,22 @@ mod tests {
         assert_eq!(bank.peak_for(2), 0.0);
     }
 
+    /// Bounded probe for `LIMIT-0020` (EVD-0006): the slot past the meter cap
+    /// is silently omitted. A fix that turns the omission into a refusal must
+    /// update that ledger row and EVD-0006 together with this assertion.
     #[test]
-    fn channel_meter_bank_ignores_out_of_range_index() {
+    fn resource_limit_probe_meter_slots_above_capacity_are_omitted() {
         let bank = ChannelMeterBank::new();
+        let last_valid_index = MAX_METER_SLOTS - 1;
+        bank.publish(last_valid_index, 4, 0.5);
         // Out-of-range publish must not panic and must not become visible.
         bank.publish(MAX_METER_SLOTS, 5, 1.0);
         bank.set_count(MAX_METER_SLOTS);
-        assert_eq!(bank.peak_for(5), 0.0);
+        assert_eq!(bank.peak_for(4), 0.5);
+        assert_eq!(
+            bank.peak_for(5),
+            0.0,
+            "LIMIT-0020: slot 128 must stay invisible"
+        );
     }
 }

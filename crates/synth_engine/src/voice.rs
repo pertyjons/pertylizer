@@ -999,6 +999,14 @@ impl Voice {
         self.state.velocity()
     }
 
+    #[cfg(test)]
+    pub(crate) fn mono_buffer_shape(&self) -> (SampleCount, SampleCount) {
+        (
+            SampleCount::new(self.mono_buffer.len()),
+            self.mono_buffer.capacity(),
+        )
+    }
+
     /// Reset the voice to idle state.
     pub fn reset(&mut self) {
         self.state = VoiceState::Idle;

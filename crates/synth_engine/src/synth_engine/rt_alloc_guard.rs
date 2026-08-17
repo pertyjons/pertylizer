@@ -6,22 +6,21 @@
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
-use std::sync::atomic::{AtomicU64, Ordering};
-
-/// Number of alloc/dealloc/realloc calls seen while the calling thread is
-/// armed. Reset by [`no_alloc`] around each guarded region.
-static EVENTS: AtomicU64 = AtomicU64::new(0);
 
 thread_local! {
     // `const` init keeps the thread-local off the lazy, potentially
     // allocating initialization path — safe to read from inside `alloc`.
     static ARMED: Cell<bool> = const { Cell::new(false) };
+    // Counts only the allocations made by the armed thread. A process-global
+    // counter lets an intentionally allocating test contaminate guards running
+    // concurrently on other test threads.
+    static EVENTS: Cell<u64> = const { Cell::new(0) };
 }
 
 struct CountingAlloc;
 
 // SAFETY: every method forwards verbatim to the system allocator; the only
-// addition is a relaxed atomic increment gated on a thread-local flag,
+// addition is a thread-local counter update gated on a thread-local flag,
 // neither of which allocates or changes allocation semantics.
 unsafe impl GlobalAlloc for CountingAlloc {
     unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
@@ -44,22 +43,44 @@ unsafe impl GlobalAlloc for CountingAlloc {
 
 fn note_event() {
     if ARMED.with(Cell::get) {
-        EVENTS.fetch_add(1, Ordering::Relaxed);
+        EVENTS.with(|events| events.set(events.get().saturating_add(1)));
     }
 }
 
 #[global_allocator]
 static GLOBAL: CountingAlloc = CountingAlloc;
 
+struct AllocationGuard;
+
+impl AllocationGuard {
+    fn arm() -> Self {
+        EVENTS.with(|events| events.set(0));
+        ARMED.with(|armed| {
+            assert!(
+                !armed.replace(true),
+                "allocation counter must not be nested"
+            );
+        });
+        Self
+    }
+
+    fn count(&self) -> u64 {
+        EVENTS.with(Cell::get)
+    }
+}
+
+impl Drop for AllocationGuard {
+    fn drop(&mut self) {
+        ARMED.with(|armed| armed.set(false));
+    }
+}
+
 /// Run `f` with allocation counting armed on this thread and return the
-/// number of alloc/dealloc/realloc events it triggered.
+/// number of alloc/alloc_zeroed/dealloc/realloc events it triggered.
 fn count_allocs(f: impl FnOnce()) -> u64 {
-    ARMED.with(|a| a.set(true));
-    EVENTS.store(0, Ordering::Relaxed);
+    let guard = AllocationGuard::arm();
     f();
-    let count = EVENTS.load(Ordering::Relaxed);
-    ARMED.with(|a| a.set(false));
-    count
+    guard.count()
 }
 
 use super::*;
@@ -158,6 +179,69 @@ fn steady_state_block_sizes_do_not_allocate() {
             "{frames}-frame steady-state processing allocated {allocs} time(s)"
         );
     }
+}
+
+#[test]
+fn resource_limit_probe_oversized_callback_exposes_build_mode_failure() {
+    let (mut engine, _handle, _context, _out) = warmed_engine_with_voice();
+    let boundary_frames = synth_core::MAX_BLOCK_SIZE;
+    let boundary_context = callback_context(boundary_frames);
+    let mut boundary_out = vec![0.0f32; boundary_frames * 2];
+    engine.process(&mut boundary_out, &boundary_context);
+
+    let frames = synth_core::MAX_BLOCK_SIZE + 1;
+    let context = callback_context(frames);
+    let mut out = vec![0.0f32; frames * 2];
+    let buffer_shape = |engine: &SynthEngine| {
+        engine
+            .instruments
+            .iter()
+            .flat_map(|instrument| instrument.allocator().voices())
+            .find(|voice| voice.is_active())
+            .map(crate::voice::Voice::mono_buffer_shape)
+            .expect("the warmed engine should have one active voice")
+    };
+    let before = buffer_shape(&engine);
+    // Length is exact by contract; capacity is only `>= len` (Vec promises no
+    // more), so pinning it exactly would fail on an allocator that over-reserves
+    // even though the engine's behaviour is unchanged.
+    assert_eq!(before.0, SampleCount::new(boundary_frames));
+    assert!(
+        before.1 >= before.0,
+        "capacity below length is impossible: before={before:?}"
+    );
+
+    #[cfg(debug_assertions)]
+    {
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            engine.process(&mut out, &context);
+        }));
+        assert!(
+            result.is_err(),
+            "the debug build should reject the oversized fixed effect buffer"
+        );
+    }
+
+    #[cfg(not(debug_assertions))]
+    {
+        let allocs = count_allocs(|| {
+            engine.process(&mut out, &context);
+        });
+        assert!(
+            allocs > 0,
+            "the release build accepted an oversized callback without the expected audio-thread buffer growth; update LIMIT-0001 and the probe if that behaviour changes"
+        );
+    }
+
+    // Shared by both build modes: the voice buffer grew on the audio thread
+    // before any later fixed-effect failure. In debug this is inspected after
+    // unwinding, independently of allocator events from panic machinery.
+    let after = buffer_shape(&engine);
+    assert_eq!(after.0, SampleCount::new(frames));
+    assert!(
+        after.1 > before.1,
+        "the voice buffer capacity should grow for the oversized callback; update LIMIT-0001 and the probe if that behaviour changes: before={before:?}, after={after:?}"
+    );
 }
 
 #[test]

@@ -117,9 +117,11 @@ source revision so their coverage statements are comparable.
   public facade and the build matrix, **not** general dispositions. That reasoning was wrong and is withdrawn. Pass 3
   generates the enumeration from source as `CAP-0056`..`CAP-0507`; the 14 family rows stay at their identifiers as
   rollups carrying no disposition.
-- **Still open, without an ADR excuse.** No entry has a disposition. That is the remaining substance of this task, not
-  a formality deferred elsewhere, and until it is done the Phase 0B exit gate cannot pass. `CAP-0017` (multi-client
-  hub) is additionally the one surface whose shipped reachability is unknown.
+- **Still open, without an ADR excuse.** CAP-0017 is the one entry with a proposed disposition: it is a public Rust API
+  with no in-workspace caller, and proposed ADR-0039 would remove it from initial V2 pending the Phase 10E
+  service/public-facade decision. It remains `Investigating` until that proposal is accepted. The remaining entries
+  have no disposition. That is the substance of this task, not a formality deferred elsewhere, and until it is done
+  the Phase 0B exit gate cannot pass.
 
 **P00B-T003 — Identity and reference audit.**
 
@@ -145,8 +147,9 @@ source revision so their coverage statements are comparable.
     - **One load-time heuristic repair exists** (`IDN-0028`), in the legacy Mod Matrix address upgrade — but *not* in
       the two places pass 1 suspected: pattern duplication remaps note ids properly, and the module-instance counter is
       reconciled by `max()`.
-- **Deliberately still open.** `TransactionId`/`ClientId` wait on `CAP-0017`'s reachability question; tracker-module
-  import is on an unmerged branch and does not exist at this revision.
+- **Deliberately still open.** `ClientId` waits on ADR-0039's Phase 10E successor, which decides whether a replacement
+  multi-client service exists and what identity it needs. `TransactionId` remains a separate operation-identity
+  question; tracker-module import is on an unmerged branch and does not exist at this revision.
 
 All three tasks stay `Active`.
 

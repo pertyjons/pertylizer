@@ -32,6 +32,11 @@ jobs:
         run: cargo clippy --workspace --all-targets
       - name: Test
         run: cargo test --workspace
+      # The oversized-callback resource probe (LIMIT-0001, EVD-0006) has a
+      # #[cfg(not(debug_assertions))] arm that dev-profile test runs never
+      # compile; without this step no gate would ever execute or type-check it.
+      - name: Release-mode resource probe
+        run: cargo test -p synth_engine --release resource_limit_probe_oversized_callback_exposes_build_mode_failure
       - name: Documentation
         run: cargo doc --workspace --no-deps
       - name: Minimal feature set

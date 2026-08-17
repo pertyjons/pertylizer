@@ -9,7 +9,7 @@ The topics below originate in Part VII of the
 does not accept a decision. All initial entries remain `Proposed` until their individual ADR has been reviewed and
 accepted.
 
-Next free identifier: `ADR-0039`.
+Next free identifier: `ADR-0040`.
 
 ## Status vocabulary
 
@@ -123,7 +123,8 @@ No topic has been swept for reclassification. Judge the class when work begins o
 | ADR-0035 | Transaction and concurrency semantics       | Proposed | 0B/10B                | Operation conformance corpus             |
 | ADR-0036 | Audio device and input lifecycle            | Proposed | 0B/9                  | Simulated-host and platform review       |
 | ADR-0037 | Render quantum frame count                  | Accepted | 0A/1                  | Benchmark                                |
-| ADR-0038 | Engine-egress queue classification          | Proposed | 0A/1                  | Use-site audit (EVD-0005)                |
+| ADR-0038 | Engine-egress queue classification          | Accepted | 0A/1                  | Use-site audit (EVD-0005)                |
+| ADR-0039 | Initial multi-client hub omission             | Proposed | 0A/10E                | Public-surface inventory, bounded use-site evidence, and independent review |
 
 ### Records created
 
@@ -142,20 +143,25 @@ Topics without a link below have no individual record yet; the table above is st
   `Accepted` after three passes
 - [ADR-0037: Render quantum frame count](decisions/ADR-0037-render-quantum-value.md) — `Accepted`, value provisional
 - [ADR-0038: Engine-egress queue classification](decisions/ADR-0038-engine-egress-queue-classification.md) —
-  `Proposed`, superseding three named ADR-0021 clauses once accepted
+  `Accepted`, superseding three named ADR-0021 clauses
+- [ADR-0039: Initial multi-client hub omission](decisions/ADR-0039-multi-client-hub-delivery-contract.md) —
+  `Proposed`; the initial hub is an explicit public-API break and its final contract moves to the Phase 10E entry gate
 
 **ADR-0038 supersedes clauses, not a record.** ADR-0021 part 1 permits runtime overflow only for queues fed by external
 unbounded input, which leaves three engine-egress rings — `LIMIT-0013`, `LIMIT-0014`, `LIMIT-0017` — with no admissible
 failure behaviour at all, and its part 3 disposition for `LIMIT-0013` rests on two claims the use-site audits disproved:
-that the drop counters are published on OSC, and that the channel is a live bounded queue. It is neither published nor
-constructed outside its own tests. A third clause goes with them: the decision driver asserting the OSC publication, superseded on the same evidence. ADR-0021 stays `Accepted` and authoritative for everything else, and **the replacement takes effect only when ADR-0038 is accepted** — until then all three clauses still bind. The three superseded
+that the drop counters are published on OSC, and that the channel is a live bounded queue. It is not published and has
+no in-workspace production constructor or caller; public external use remains unobservable. A third clause goes with
+them: the decision driver asserting the OSC publication,
+superseded on the same evidence. ADR-0021 stays `Accepted` and authoritative for everything else. ADR-0038 is
+accepted, so the three replaced clauses no longer bind. The three superseded
 clauses are named in ADR-0038's metadata and linked from ADR-0021. This is the first partial supersession in the
 register, and it is written that way because rewriting an accepted record is forbidden while re-deciding all of
 ADR-0021 would discard reasoning that is still correct.
 
 It is `Contract` class: it defines a queue direction, a payload test, and an error behaviour, so reversibility tests 1
-and 3 both fail. It is deliberately **not** accepted in the session that drafted it — the register has two withdrawn
-same-session acceptances, and the rule they produced applies to this record as much as to theirs.
+and 3 both fail. It was accepted only after four independent passes over the drafting change reached the repository's
+stopping condition: no remaining finding required a contract-clause change.
 
 ADR-0001 and ADR-0021 were accepted after three review passes. Each carries a *Review history* note recording the
 defects corrected before acceptance; the immutability rule in [decisions/README.md](decisions/README.md) now applies.

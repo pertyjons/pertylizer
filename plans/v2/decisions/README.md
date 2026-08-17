@@ -67,10 +67,16 @@ An ADR must state:
 Measurements are required when the choice depends on CPU, allocation, latency, audio quality, compile time, capacity, or
 host behavior. Product and domain choices still require explicit scenarios and failure semantics.
 
-### Every claim about current behaviour carries a `file:line` citation
+### Every claim about current behaviour links to checked evidence
 
-A record that says what V1 does must name where, at a stated revision. This is not bibliographic decoration: it is the
-one rule that separates a behaviour someone read from a behaviour someone assumed, and the two look identical in prose.
+A record that says what V1 does must link to the authoritative inventory row or evidence record that names the source
+site and revision. If no such authority exists, create or extend one and verify the claim before drafting the decision.
+This is not bibliographic decoration: it is the rule that separates a behaviour someone read from a behaviour someone
+assumed, while keeping the drift-prone current `file:line` citation in one machine-checked place.
+
+An ADR may retain a direct source citation in its evidence or corrections history when the citation is explicitly pinned
+to an immutable source revision. That is a historical audit trail, not a second current authority. Do not copy a bare
+current line citation from an inventory into a decision, because the two copies can drift independently.
 
 Two defects that reached review illustrate the cost of skipping it, and both were in claims written **without** a
 citation while the surrounding record cited its other sources:
@@ -81,4 +87,5 @@ citation while the surrounding record cited its other sources:
 - EVD-0004's first revision asserted that the delay is linear, so that a difference could be attributed to a clipper.
   It soft-clips its feedback write (`effects/delay.rs:300` at `3555c52c`), and the attribution was unfounded.
 
-A claim you cannot cite is a claim to go and check, not a claim to soften with "probably".
+A claim you cannot support through an authoritative evidence link is a claim to go and check, not a claim to soften with
+"probably".

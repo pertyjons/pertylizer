@@ -14,11 +14,12 @@ The V2 effort covers three coupled foundations:
 
 Read these documents in this order before working on V2:
 
-1. [STATUS.md](STATUS.md) — what is active now, what is blocked, and what comes next;
-2. the active file under [phases/](phases/README.md) — executable work and verification for the current phase;
-3. relevant accepted decisions in [ADR.md](ADR.md) and [decisions/](decisions/README.md);
-4. relevant current contracts under [specs/](specs/README.md);
-5. the affected sections of the master
+1. [WORKING-AGREEMENT.md](WORKING-AGREEMENT.md) — how evidence, decisions, gates, and reviews are handled;
+2. [STATUS.md](STATUS.md) — a short index of what is active and blocked;
+3. the active file under [phases/](phases/README.md) — authoritative task status and next actions;
+4. relevant accepted decisions in [ADR.md](ADR.md) and [decisions/](decisions/README.md);
+5. relevant current contracts under [specs/](specs/README.md);
+6. the affected sections of the master
    [architecture and migration plan](master-plan.md).
 
 Read the entire master plan when changing phase boundaries, foundational architecture, migration order, or the
@@ -30,7 +31,8 @@ above have been read.
 | Question                                          | Authoritative location                |
 |---------------------------------------------------|---------------------------------------|
 | What are we building and in what order?           | [master-plan.md](master-plan.md)      |
-| Where are we now?                                 | [STATUS.md](STATUS.md)                |
+| How do we investigate, decide, and review it?     | [WORKING-AGREEMENT.md](WORKING-AGREEMENT.md) |
+| Where are we now?                                 | [phases/](phases/README.md)           |
 | Which decisions are open or settled?              | [ADR.md](ADR.md)                      |
 | Why was a decision made?                          | [decisions/](decisions/README.md)     |
 | What observations support it?                     | [evidence/](evidence/README.md)       |
@@ -59,7 +61,8 @@ same change.
 ```text
 plans/v2/
 ├── README.md                 # This guide
-├── STATUS.md                 # Small current-state dashboard
+├── WORKING-AGREEMENT.md      # Evidence, decision, gate, and review workflow
+├── STATUS.md                 # Small derived current-state index
 ├── ADR.md                    # Canonical decision register
 ├── glossary.md               # Shared V2 terminology
 ├── master-plan.md            # Master architecture and migration plan
@@ -120,42 +123,6 @@ guide.
 
 ## Working rules
 
-1. **Update status, not history.** Keep `STATUS.md` short and current. Git and exit reviews carry history.
-2. **Record decisions explicitly.** A discussion is not a decision until it is accepted in the decision register. How
-   much apparatus that takes depends on the entry's [class](ADR.md#decision-classes): a `Contract` decision needs an
-   accepted record under [decisions/](decisions/README.md), while a `Reversible` one — a value whose later change costs
-   a rebuild and nothing else — is accepted as a register row. The class is a judgement about reversibility, never
-   about how much work the decision deserves.
-3. **Link claims to evidence.** Performance, correctness, parity, and real-time claims require a reproducible `EVD`
-   record or a named automated test.
-4. **Keep the master plan strategic.** Operational task state belongs in a phase tracker; normative details belong in a
-   specification.
-5. **Do not duplicate authorities.** A phase tracker may link to a plan gate but must not quietly redefine that gate.
-6. **Preserve accepted reasoning.** Accepted ADRs remain immutable apart from spelling or link repairs. Replace a
-   changed decision with a superseding ADR.
-7. **Close phases formally.** A completed task list does not complete a phase. Its exit review must demonstrate every
-   applicable gate.
-8. **Archive deliberately.** Move only non-authoritative material after its durable conclusions have been captured
-   elsewhere.
-9. **Keep repository documents reviewable.** Large audio, traces, profiler dumps, and generated artifacts do not belong
-   under `plans/v2/`.
-10. **Use English.** Project documentation, code, UI strings, and commit messages follow the repository language rule.
-
-## Expected update flow
-
-When beginning work:
-
-1. confirm the current phase and task in `STATUS.md`;
-2. read the phase tracker and relevant accepted ADRs/specifications;
-3. create a proposed ADR before making an unresolved architectural choice;
-4. create an evidence record before running a decision-driving experiment.
-
-When finishing work:
-
-1. record verification and relevant commits in the phase task;
-2. update affected inventories and specifications;
-3. update ADR/evidence status where appropriate;
-4. update `STATUS.md` with the next actionable state;
-5. create or update an exit review only when evaluating a phase gate.
-
-Use the files in [templates/](templates/) rather than inventing new document formats.
+The operational rules live in [WORKING-AGREEMENT.md](WORKING-AGREEMENT.md). Use the files in
+[templates/](templates/) rather than inventing new document formats, and keep all project documentation, code, UI
+strings, and commit messages in English.

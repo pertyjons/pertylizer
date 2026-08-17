@@ -6,7 +6,7 @@
 | Status        | Proposed                                                     |
 | Phase         | 0B                                                           |
 | Created       | 2026-08-13                                                   |
-| Last reviewed | 2026-08-13                                                   |
+| Last reviewed | 2026-08-15                                                   |
 | Related       | P00B-T003, P00A-T001, ADR-0008, ADR-0016, ADR-0017, ADR-0034 |
 | Supersedes    | —                                                            |
 | Superseded by | —                                                            |
@@ -72,11 +72,11 @@ and clause 11 states the requirement this record hands it.
 - **Fixtures must be byte-stable.** The reference corpus rebuilds its inputs
   from code and compares them to committed bytes. An identity scheme that draws
   randomly per entity makes every fixture regeneration a diff.
-- **Identity must stop affecting audio.** `IDN-0029` is the reason the corpus's
-  `shared-patch-or-instrument` category is blocked: a shared instrument's sound
-  depends on how its two references are numbered. Until that is severed, a V2
-  that assigns ids differently sounds different, and the corpus reports it as a
-  regression.
+- **Identity must stop affecting audio.** `IDN-0029` shows that a random script's
+  sound can depend on its instance number. A comparison that uses such a script
+  remains blocked until that dependence is severed. It does not block the
+  deterministic shared-instrument fixture, which exercises two track references
+  to one instrument without a random script.
 - **The document must be self-consistent without a cursor.** A saved allocator
   position is state that can disagree with the data it allocates for.
 - **An identity must be inert.** Nothing may parse it, order by it, or infer a
@@ -252,8 +252,8 @@ Proposed, not accepted. Thirteen clauses.
     across renumbering. ADR-0008 owns what that seed is; this record fixes only
     that it may not be the identity. **The V1 conversion must carry the seed, not
     the id** — a converted project whose scripts sound different is a conversion
-    defect, and `IDN-0029` is why the corpus cannot author its
-    `shared-patch-or-instrument` case until this holds.
+    defect. The current shared-instrument corpus case deliberately does not claim
+    to cover this random-stream conversion rule.
 
 ### Encoding and exhaustion
 
@@ -300,7 +300,8 @@ generates, and clause 10 is the backstop if one slips through.
   would, and that claim is what made the never-reuse guarantee unfulfillable.
 - A module can change type without changing identity, and a plan can renumber
   nodes without changing what the project sounds like.
-- The corpus's `shared-patch-or-instrument` category becomes authorable.
+- Corpus comparisons involving random script streams become authorable without
+  conflating identity reassignment with an audio regression.
 - One width and one shape make an identity conversion at any boundary either
   correct or a compile error.
 
@@ -361,7 +362,7 @@ generates, and clause 10 is the backstop if one slips through.
 | Fork-and-merge fixture: same-origin collision is refused, naming both ordinals                | 10A   | Not started |
 | Rejection tests for non-canonical identity spellings, and for ordinal exhaustion              | 10A   | Not started |
 | Persist per-node script seeds so clause 11 can hold (ADR-0008)                                | 7/10A | Not started |
-| Author the corpus's `shared-patch-or-instrument` case, unblocked by clause 11                 | 0A    | Not started |
+| Author the deterministic shared-instrument corpus case; random-script seed conversion remains separate | 0A | Complete |
 
 ## Revisit conditions
 

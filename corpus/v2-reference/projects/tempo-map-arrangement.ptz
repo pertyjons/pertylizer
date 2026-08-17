@@ -1,0 +1,310 @@
+{
+  "file_type": "project",
+  "version": "1.1",
+  "instruments": [
+    {
+      "id": 0,
+      "name": "Tempo Map Arrangement",
+      "channel": 1,
+      "volume": 1.0,
+      "pan": 0.0,
+      "muted": false,
+      "solo": false,
+      "key_range": [
+        0,
+        127
+      ],
+      "transpose": 0.0,
+      "oversampling": 1,
+      "category": 0,
+      "allocation_mode": "Polyphonic",
+      "stealing_strategy": "Oldest",
+      "unison_detune": 10.0,
+      "unison_spread": 0.0,
+      "max_voices": 8,
+      "velocity_amp_sensitivity": 1.0,
+      "velocity_filter_sensitivity": 0.0,
+      "patch": {
+        "name": "Tempo Map Arrangement",
+        "version": "1.0",
+        "modules": [
+          {
+            "id": "env-1",
+            "type": "envelope",
+            "position": {
+              "x": 320.0,
+              "y": 200.0
+            },
+            "parameters": {
+              "attack": 0.002,
+              "decay": 0.08,
+              "release": 0.05,
+              "sustain": 0.0
+            }
+          },
+          {
+            "id": "amp-1",
+            "type": "amplifier",
+            "position": {
+              "x": 480.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "level": 1.0
+            }
+          },
+          {
+            "id": "out-1",
+            "type": "stereo_output",
+            "position": {
+              "x": 640.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "master": 1.0
+            }
+          },
+          {
+            "id": "osc-1",
+            "type": "oscillator",
+            "position": {
+              "x": 32.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "level": 1.0,
+              "uni_phase": 0.0,
+              "waveform": "sawtooth"
+            }
+          },
+          {
+            "id": "flt-1",
+            "type": "filter",
+            "position": {
+              "x": 192.0,
+              "y": 32.0
+            },
+            "parameters": {
+              "cutoff": 2000.0,
+              "env_amt": 0.0,
+              "resonance": 0.1,
+              "type": "lowpass"
+            }
+          }
+        ],
+        "connections": [
+          {
+            "from": [
+              "env-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "cv"
+            ]
+          },
+          {
+            "from": [
+              "amp-1",
+              "out"
+            ],
+            "to": [
+              "out-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "osc-1",
+              "out"
+            ],
+            "to": [
+              "flt-1",
+              "in"
+            ]
+          },
+          {
+            "from": [
+              "flt-1",
+              "out"
+            ],
+            "to": [
+              "amp-1",
+              "in"
+            ]
+          }
+        ],
+        "settings": {
+          "master_volume": 0.8,
+          "bpm": 120.0,
+          "octave_offset": 0,
+          "glide_time": 0.0
+        }
+      }
+    }
+  ],
+  "active_instrument_id": 0,
+  "song": {
+    "name": "Tempo Map Arrangement",
+    "author": "",
+    "description": "",
+    "patterns": [
+      {
+        "id": 0,
+        "name": "",
+        "description": "",
+        "length": 5760,
+        "notes": [
+          {
+            "id": 0,
+            "start": 0,
+            "duration": 240,
+            "pitch": 60,
+            "velocity": 0.7559055,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 1,
+            "start": 960,
+            "duration": 240,
+            "pitch": 62,
+            "velocity": 0.7559055,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 2,
+            "start": 1920,
+            "duration": 240,
+            "pitch": 64,
+            "velocity": 0.7559055,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 3,
+            "start": 2880,
+            "duration": 240,
+            "pitch": 65,
+            "velocity": 0.7559055,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 4,
+            "start": 3840,
+            "duration": 240,
+            "pitch": 67,
+            "velocity": 0.7559055,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          },
+          {
+            "id": 5,
+            "start": 4800,
+            "duration": 240,
+            "pitch": 69,
+            "velocity": 0.7559055,
+            "track": null,
+            "legato": false,
+            "glide": null,
+            "expression": null,
+            "ornament": null,
+            "lane": 0
+          }
+        ],
+        "automation": [],
+        "processors": [],
+        "next_note_id": 6
+      }
+    ],
+    "next_pattern_id": 1,
+    "tracks": [
+      {
+        "id": 0,
+        "name": "T1",
+        "description": "",
+        "instrument": 0,
+        "volume": 1.0,
+        "pan": 0.0,
+        "mute": false,
+        "solo": false,
+        "color": {
+          "r": 100,
+          "g": 100,
+          "b": 255
+        },
+        "mode": "Polyphonic"
+      }
+    ],
+    "next_track_id": 1,
+    "arrangement": [
+      {
+        "pattern_id": 0,
+        "track_id": 0,
+        "start": 0,
+        "transpose": 0.0,
+        "gain": 1.0,
+        "length_override": null,
+        "loop_mode": "repeat"
+      }
+    ],
+    "next_section_id": 0,
+    "tempo_changes": [
+      {
+        "tick": 0,
+        "bpm": 90.0,
+        "ramp": true
+      },
+      {
+        "tick": 1920,
+        "bpm": 180.0,
+        "ramp": false
+      },
+      {
+        "tick": 3840,
+        "bpm": 120.0,
+        "ramp": false
+      }
+    ],
+    "time_signature_changes": [],
+    "default_tempo": 120.0,
+    "default_time_signature": {
+      "numerator": 4,
+      "denominator": 4
+    },
+    "row_resolution": {
+      "rows": 64,
+      "ticks_per_row": 240
+    },
+    "next_return_bus_id": 0,
+    "next_note_graph_id": 0,
+    "next_mod_graph_id": 0
+  },
+  "global": {
+    "master_volume": 1.0,
+    "octave_offset": 0,
+    "glide_time": 0.0
+  }
+}

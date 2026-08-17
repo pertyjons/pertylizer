@@ -3,12 +3,13 @@
 | Field         | Value                                                              |
 |---------------|--------------------------------------------------------------------|
 | ID            | ADR-0038                                                           |
-| Status        | Proposed                                                           |
+| Status        | Accepted                                                           |
 | Phase         | 0A                                                                 |
 | Created       | 2026-08-15                                                         |
 | Last reviewed | 2026-08-15                                                         |
 | Related       | P00A-T004, P00A-T005, LIMIT-0013, LIMIT-0014, LIMIT-0017, LIMIT-0076, EVD-0005 |
 | Supersedes    | **Three named ADR-0021 clauses, and no others**: (a) part 1's runtime-overflow paragraph; (b) part 3's `LIMIT-0013` bullet; (c) the decision driver stating that `LIMIT-0013` "has per-priority drop counters published on OSC". ADR-0021 keeps `Accepted` and carries `Superseded in part` |
+| Proposed successor | [ADR-0039](ADR-0039-multi-client-hub-delivery-contract.md) proposes replacing only the `LIMIT-0017`-specific applications named in its `Supersedes` field. That supersession takes effect only if ADR-0039 is accepted; the general condition 4 and every other clause here remain unchanged |
 | Superseded by | —                                                                  |
 
 ## Context
@@ -38,10 +39,11 @@ and allocating are all forbidden, so dropping is the only move left. `LIMIT-0017
 audio thread. Its drop is a chosen protocol behaviour rather than a forced one. The distinction changes what has to be
 *justified*, not which rule applies, and part 1 below carries it.
 
-**Two of the three are also unreachable in V1 today**, which is why this record disposes of them by removal rather than
-by sizing them. `prioritized_event_channel` is constructed only in its own tests, and `broadcast_event` has no caller
-anywhere in the workspace. A capacity nobody reaches has never been exercised, so nothing about its shape — four
-priority tiers, 1 024 slots per client — is validated by use.
+**Two of the three have no caller in this workspace today.** `prioritized_event_channel` is constructed only in its
+own tests, and `broadcast_event` has no workspace caller. Both are public Rust APIs, however, so source search cannot
+establish whether an external consumer reaches them. Removing either from V2 is therefore an explicit compatibility
+break under this repository's active-development policy, not proof that the V1 path is dead. Their capacities and
+delivery policies have no in-repository production evidence, so V2 does not inherit their shape implicitly.
 
 The same audits disproved the two factual claims ADR-0021's `LIMIT-0013` disposition rests on. Both are recorded in the
 *Evidence* section below.
@@ -118,11 +120,11 @@ Source reads at `29c22ef4`, each re-resolved for this record rather than carried
   ("`LIMIT-0013` has per-priority drop counters published on OSC") and its part 3 disposition ("promoted from an
   OSC-only publication") both describe a publication that does not exist. OSC's `/synth/engine/event_drops` reads
   `EngineState::event_drops` (`crates/synth_engine/src/state.rs:585`), a different counter on a different ring.
-- **`LIMIT-0013`'s channel does not run in production.** `prioritized_event_channel` is defined at
+- **`LIMIT-0013`'s channel has no in-workspace production caller.** `prioritized_event_channel` is defined at
   `crates/synth_engine/src/event_priority.rs:99`; its only callers are `event_priority.rs:296` and `:350`, both inside
-  the module's own `#[cfg(test)]` block (`event_priority.rs:281`). `crates/synth_engine/src/lib.rs:57-60` re-exports it
-  and nothing else references it. ADR-0021 classified as "a genuinely live bounded queue" a channel that is never
-  constructed outside tests.
+  the module's own `#[cfg(test)]` block (`event_priority.rs:281`). `crates/synth_engine/src/lib.rs:57-60` publicly
+  re-exports it, so external reachability is unknown. ADR-0021 classified it as "a genuinely live bounded queue"
+  without evidence of an in-workspace production use.
 - **Critical events are droppable.** `PrioritizedEventProducer::send` uses one-shot `try_push` for every priority
   including `Critical` and increments that priority's counter on failure
   (`crates/synth_engine/src/event_priority.rs:141-150`), while the module documents critical events as never dropped.
@@ -143,7 +145,7 @@ gap the decision closes. The `LIMIT-0014` drop counters this ADR requires will b
 
 ## Decision
 
-Proposed. Four parts, and which of them supersede is stated exactly because an earlier revision got it wrong.
+Accepted. Four parts, and which of them supersede is stated exactly because an earlier revision got it wrong.
 **Part 1 supersedes** ADR-0021 part 1's runtime-overflow paragraph, replacing it with a rule that covers engine
 egress. **Part 3 supersedes** ADR-0021 part 3's `LIMIT-0013` bullet and the decision driver behind it. **Parts 2 and
 4 supersede nothing**: part 2 adds the payload distinction ADR-0021 lacks, and part 4 applies the result to the
@@ -189,7 +191,7 @@ reopens — `LIMIT-0013`, `LIMIT-0014`, `LIMIT-0076`, `LIMIT-0017` — and three
 
 | Entry | Payload kind | Result under this record |
 |-------|--------------|--------------------------|
-| `LIMIT-0013` | Observational | Removed; the channel is never constructed outside its own tests |
+| `LIMIT-0013` | Observational | Removed from V2 as an explicit public-API break; no in-workspace production caller or validated delivery requirement exists |
 | `LIMIT-0014` | Mixed — observational plus custodial `RecordedNotesFlushed` | Classified lossy; part 2 forbids the sharing, so V2 separates the custodial path |
 | `LIMIT-0076` | Observational | Classified lossy; condition 3 unmet in V1, where the count reaches OSC only |
 | `LIMIT-0017` | Observational | **Not classified** — conditions 3 and 4 both unmet, and 4 has no owner |
@@ -244,14 +246,16 @@ appearing to improve the diagnostics.
 
 ### 3. `LIMIT-0013`'s disposition, superseding ADR-0021 part 3
 
-ADR-0021 part 3's `LIMIT-0013` bullet is superseded in full. It rests on two claims this record's evidence disproves:
-that the counters are published on OSC, and that the channel is a live bounded queue. It is neither published nor live —
-it is not constructed outside its own tests.
+ADR-0021 part 3's `LIMIT-0013` bullet is superseded in full. It rests on two claims this record's evidence does not
+support: that the counters are published on OSC, and that the channel is a live bounded queue. The counters are not
+published, and the channel has no in-workspace production caller. Because the API is public, external use remains
+unknown.
 
-The replacement disposition: **the prioritized event channel is dead code and does not carry over.** Its class becomes
-`Implementation artifact to remove` and its owner `N/A — removed`. V2's engine egress is the rule in part 1 with a
-capacity owned by the entry's configuration owner, not a port of V1's four-ring structure — which was never exercised,
-so nothing about it has been validated, including whether four priorities are the right number.
+The replacement disposition: **the prioritized event channel does not carry over.** Its class becomes
+`Implementation artifact to remove` and its owner `N/A — removed`. This is an intentional break of a public V1 API:
+the channel has no in-workspace production caller, but external use is not observable here. V2's engine egress is the
+rule in part 1 with a capacity owned by the entry's configuration owner, not a port of four rings without
+in-repository production evidence. Nothing about the V1 priorities, sizes, or loss semantics is inherited.
 
 ADR-0027 continues to own what the taps are *for*. The decision driver in ADR-0021 that cites "per-priority drop
 counters published on OSC" is superseded by the same evidence; it is stated as a fact, and the fact is false.
@@ -284,16 +288,15 @@ to ADR-0029, whose registered topic is *host configuration and remote authorizat
 not queue loss semantics. The handoff was asserted rather than checked. The multi-client hub's delivery contract has no
 owner in the register, which under ADR-0021's own standard ("an entry that fits none is a finding about this table") is
 a gap to record rather than a cell to fill. **`LIMIT-0017` therefore stays `Investigating` after this record is
-accepted**, alone among the four rows this record reopens, and the follow-up table below carries registering that decision. Nothing
-about this is urgent in V1 — the hub is unreached — but a row that is silently marked `Classified` on a policy nobody
-chose is exactly how `LIMIT-0013` came to rest on two false claims for three passes.
+accepted**, alone among the four rows this record reopens, and the follow-up table below carries registering that
+decision. A row silently marked `Classified` on a policy nobody chose is exactly how `LIMIT-0013` came to rest on two
+false claims for three passes.
 
-**The hub is also unreached in V1**, so none of this is currently a live loss: `broadcast_event`
-(`crates/synth_engine/src/hub.rs:256`) has no caller in the workspace. That does **not** make it
-`Implementation artifact to remove` the way `LIMIT-0013` is — a multi-client hub is a planned capability with an
-`Proposed` decision behind it, whereas the prioritized channel is a mechanism V2 replaces outright. It does mean the
-entry describes a hazard that cannot fire today, and the silent-truncation register says so rather than implying a
-loss users are experiencing.
+**The hub has no workspace caller, but it is a public V1 API.** `broadcast_event`
+(`crates/synth_engine/src/hub.rs:256`) can therefore be reached by an external Rust consumer, and the repository cannot
+establish whether its drop path is a live product loss. Proposed ADR-0039 makes omission of that surface from initial
+V2 an explicit compatibility break and assigns the final public/service decision to Phase 10E. Until that proposal is
+accepted, `LIMIT-0017` remains `Investigating` under this record.
 
 ## Consequences
 
@@ -319,8 +322,9 @@ loss users are experiencing.
 ### Risks and controls
 
 - **Risk: the diagnostics report becomes the new place counters go to die**, repeating `LIMIT-0013` one level up.
-  Control: part 1 condition 3 names the structured diagnostics report specifically because that is the report the exit
-  review inspects; a counter that is not in it does not satisfy the condition.
+  Control: part 1 condition 3 requires a consumer-attributable path. The structured diagnostics report is the default
+  path inspected by an exit review; a count traveling with the affected data is also valid and stronger when it names
+  the incomplete window, as `LIMIT-0021` does. A counter with neither consumer path does not satisfy the condition.
 - **Risk: the observational/custodial test is applied by intent rather than by inspection**, so a payload gets called
   observational because dropping it is convenient — or a variant added later inherits the wrong semantics silently.
   **The test is not decidable from the payload type, and this record does not claim it is.** "Does an authoritative
@@ -339,9 +343,9 @@ loss users are experiencing.
 | Task                                                                                                     | Phase | Status      |
 |----------------------------------------------------------------------------------------------------------|-------|-------------|
 | Classify `LIMIT-0013`, `LIMIT-0014` and `LIMIT-0076` in the resource ledger under this record | 0A | Complete |
-| Register a decision topic for the multi-client hub's delivery contract, which `LIMIT-0017`'s condition 4 needs and no existing ADR owns | 0A | Not started |
+| Register a decision topic for the multi-client hub's initial disposition and eventual delivery contract | 0A/10E | In review — proposed ADR-0039 |
 | Give the `EngineEvent` egress side a drop counter in V1, so the first measurement of it exists            | —     | Not started |
-| Route `LIMIT-0017`'s per-client counter into the structured diagnostics report                            | 9     | Not started |
+| If Phase 10E retains a multi-client successor, expose attributable per-client delivery diagnostics        | 10E   | Not started |
 | Separate `RecordedNotesFlushed` from the observational egress ring, removing the audio-thread `Vec` drop  | 9     | Not started |
 | Define V2's engine-egress capacity fields and their conformance test                                     | 1     | Not started |
 

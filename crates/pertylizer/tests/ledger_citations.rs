@@ -354,3 +354,50 @@ fn named_identifiers_are_on_the_lines_that_cite_them() {
         bad.join("\n  ")
     );
 }
+
+/// Summary and contract documents link to the authoritative evidence instead
+/// of copying source-line citations that can drift independently.
+///
+/// The resource inventory is the one place where V1 enforcement sites are
+/// maintained and checked by this test binary. A copied `path.rs:N` citation in
+/// a dashboard, tracker, or specification creates a second unguarded fact.
+#[test]
+fn derived_documents_do_not_copy_source_line_citations() {
+    let root = repo_root();
+    let documents = [
+        "plans/v2/STATUS.md",
+        "plans/v2/phases/phase-00a-baseline-and-render-contracts.md",
+        "plans/v2/specs/spec-host-profile-and-render-limits.md",
+    ];
+    let mut bad = Vec::new();
+
+    for relative in documents {
+        let path = root.join(relative);
+        let text = std::fs::read_to_string(&path)
+            .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
+
+        for (index, line) in text.lines().enumerate() {
+            // `state.rs:123` and the pasted-from-a-browser `state.rs#L123`
+            // spelling are the same unguarded fact in different clothes.
+            let cites = [".rs:", ".rs#L"].iter().any(|marker| {
+                let mut remainder = line;
+                while let Some((_, after)) = remainder.split_once(marker) {
+                    if after.starts_with(|ch: char| ch.is_ascii_digit()) {
+                        return true;
+                    }
+                    remainder = after;
+                }
+                false
+            });
+            if cites {
+                bad.push(format!("{relative}:{}: {line}", index + 1));
+            }
+        }
+    }
+
+    assert!(
+        bad.is_empty(),
+        "derived documents copy source-line citations instead of linking to the resource inventory:\n  {}",
+        bad.join("\n  ")
+    );
+}

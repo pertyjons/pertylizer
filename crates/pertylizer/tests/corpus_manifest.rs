@@ -9,10 +9,11 @@
 
 use std::path::{Path, PathBuf};
 
+use pertylizer::audio::arrangement_render::render_arrangement_to_buffer;
 use pertylizer::corpus::{CORPUS_DIR, CorpusCategory, CorpusManifest, MANIFEST_FILE, fixtures};
 use pertylizer::project::ProjectFile;
+use pertylizer::render::headless::load_project_file;
 use pertylizer::render::receipt::FileDigest;
-
 /// The corpus directory in the checked-out workspace.
 fn corpus_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -179,4 +180,253 @@ fn regenerating_reproduces_the_recorded_digests() {
             fixture.case_id
         );
     }
+}
+
+/// RMS for one channel over an exact stereo-frame range.
+fn channel_rms(samples: &[f32], frames: std::ops::Range<usize>, channel: usize) -> f64 {
+    let sample_count = u32::try_from(frames.len()).expect("test window fits in u32");
+    let sum = frames
+        .map(|frame| f64::from(samples[frame * 2 + channel]))
+        .map(|sample| sample * sample)
+        .sum::<f64>();
+    (sum / f64::from(sample_count)).sqrt()
+}
+
+/// Locate audible starts after a sustained quiet interval in stereo audio.
+fn audible_onsets(samples: &[f32], threshold: f32, quiet_frames: usize) -> Vec<usize> {
+    let mut quiet = quiet_frames;
+    let mut onsets = Vec::new();
+    for (frame, stereo) in samples.chunks_exact(2).enumerate() {
+        if stereo[0].abs().max(stereo[1].abs()) <= threshold {
+            quiet = quiet.saturating_add(1);
+        } else {
+            if quiet >= quiet_frames {
+                onsets.push(frame);
+            }
+            quiet = 0;
+        }
+    }
+    onsets
+}
+
+#[test]
+fn keyboard_panner_fixture_is_gated_and_moves_across_channels() {
+    let path = corpus_dir().join("projects/keyboard-panner-stereo.ptz");
+    let project = load_project_file(&path).expect("load keyboard-panner fixture");
+    assert!(
+        project.report.is_clean(),
+        "{:?}",
+        project.report.diagnostics
+    );
+    let rendered = render_arrangement_to_buffer(
+        &project.session,
+        &project.sample_library,
+        &project.song,
+        0,
+        2_880,
+    )
+    .expect("render keyboard-panner fixture");
+    assert!(rendered.warnings.is_empty(), "{:?}", rendered.warnings);
+
+    // 120 BPM maps the three note starts to 0.0, 0.5, and 1.0 seconds.
+    // These windows avoid attack, note-off, and the short release tail.
+    let rms_lr = |window: std::ops::Range<usize>| {
+        (
+            channel_rms(&rendered.samples, window.clone(), 0),
+            channel_rms(&rendered.samples, window, 1),
+        )
+    };
+    let (low_l, low_r) = rms_lr(4_410..13_230);
+    let (center_l, center_r) = rms_lr(26_460..35_280);
+    let (high_l, high_r) = rms_lr(48_510..57_330);
+
+    assert!(low_l > low_r * 1.5, "low note: left={low_l}, right={low_r}");
+    assert!(
+        (center_l - center_r).abs() < center_l * 0.01,
+        "center note: left={center_l}, right={center_r}"
+    );
+    assert!(
+        high_r > high_l * 1.5,
+        "high note: left={high_l}, right={high_r}"
+    );
+}
+
+/// CORPUS-0007's Script program is the amplifier's only CV source, so a
+/// build that fails to install or evaluate it renders silence — and silence
+/// is bit-exact deterministic, so every digest test would stay green. This
+/// guards the manifest's audibility claim (CORPUS-0007-P2) with a render.
+#[test]
+fn yams_control_fixture_is_audible_only_through_its_script() {
+    let path = corpus_dir().join("projects/yams-control.ptz");
+    let project = load_project_file(&path).expect("load yams-control fixture");
+    assert!(
+        project.report.is_clean(),
+        "{:?}",
+        project.report.diagnostics
+    );
+    let rendered = render_arrangement_to_buffer(
+        &project.session,
+        &project.sample_library,
+        &project.song,
+        0,
+        2_880,
+    )
+    .expect("render yams-control fixture");
+    assert!(rendered.warnings.is_empty(), "{:?}", rendered.warnings);
+
+    // Steady-state window inside the held note: 0.2..0.9 s at 44.1 kHz.
+    let rms = channel_rms(&rendered.samples, 8_820..39_690, 0);
+    assert!(
+        rms > 1.0e-3,
+        "CORPUS-0007 must be audible through out1 = 0.65; got RMS {rms}"
+    );
+}
+
+/// CORPUS-0008's AudioScript applies +0.75 to the left copy and -0.5 to the
+/// right copy of one sine, so the channel RMS ratio pins audio-rate program
+/// evaluation and both stereo cables at once (CORPUS-0008-P1/P2). Neither
+/// digest tests nor determinism runs can see a silent or mono fallback.
+#[test]
+fn yams_audio_script_fixture_applies_the_authored_signed_gains() {
+    let path = corpus_dir().join("projects/yams-audio-script.ptz");
+    let project = load_project_file(&path).expect("load yams-audio-script fixture");
+    assert!(
+        project.report.is_clean(),
+        "{:?}",
+        project.report.diagnostics
+    );
+    let rendered = render_arrangement_to_buffer(
+        &project.session,
+        &project.sample_library,
+        &project.song,
+        0,
+        2_880,
+    )
+    .expect("render yams-audio-script fixture");
+    assert!(rendered.warnings.is_empty(), "{:?}", rendered.warnings);
+
+    let left = channel_rms(&rendered.samples, 8_820..39_690, 0);
+    let right = channel_rms(&rendered.samples, 8_820..39_690, 1);
+    assert!(
+        right > 1.0e-3,
+        "CORPUS-0008 right channel must be audible; got RMS {right}"
+    );
+    let ratio = left / right;
+    assert!(
+        (1.45..=1.55).contains(&ratio),
+        "authored gains 0.75/-0.5 give |L|/|R| = 1.5; got left={left}, right={right}, ratio={ratio}"
+    );
+}
+
+#[test]
+fn tempo_fixture_has_an_observable_interval_after_the_step() {
+    let path = corpus_dir().join("projects/tempo-map-arrangement.ptz");
+    let project = load_project_file(&path).expect("load tempo-map fixture");
+    assert!(
+        project.report.is_clean(),
+        "{:?}",
+        project.report.diagnostics
+    );
+    let rendered = render_arrangement_to_buffer(
+        &project.session,
+        &project.sample_library,
+        &project.song,
+        0,
+        5_760,
+    )
+    .expect("render tempo-map fixture");
+    assert!(rendered.warnings.is_empty(), "{:?}", rendered.warnings);
+
+    // Every note is short enough to leave a long silent gap. Detect the six
+    // actual attacks rather than trusting the same tick conversion that the
+    // renderer could fail to consume.
+    let onsets = audible_onsets(&rendered.samples, 1.0e-4, 2_000);
+    assert_eq!(onsets.len(), 6, "rendered attacks: {onsets:?}");
+    let intervals: Vec<_> = onsets.windows(2).map(|pair| pair[1] - pair[0]).collect();
+    let first_ramp_interval = intervals[0];
+    let second_ramp_interval = intervals[1];
+    let before_step = intervals[3];
+    let after_step = intervals[4];
+
+    assert!(
+        first_ramp_interval > second_ramp_interval,
+        "the rendered ramp must change equal-tick spacing: {intervals:?}"
+    );
+    assert!(
+        after_step * 10 > before_step * 14,
+        "the rendered 120 BPM segment needs a longer post-step interval: {intervals:?}"
+    );
+}
+
+#[test]
+fn shared_instrument_fixture_preserves_both_track_faders() {
+    let path = corpus_dir().join("projects/shared-instrument-tracks.ptz");
+    let project = load_project_file(&path).expect("load shared-instrument fixture");
+    assert!(
+        project.report.is_clean(),
+        "{:?}",
+        project.report.diagnostics
+    );
+    let track_ids: Vec<_> = project.song.read().tracks().map(|track| track.id).collect();
+    assert_eq!(track_ids.len(), 2);
+
+    let render = || {
+        render_arrangement_to_buffer(
+            &project.session,
+            &project.sample_library,
+            &project.song,
+            0,
+            3_840,
+        )
+        .expect("render shared-instrument fixture")
+    };
+    let render_solo = |track_id| {
+        project.song.write().set_solo_only(track_id);
+        let rendered = render();
+        assert!(rendered.warnings.is_empty(), "{:?}", rendered.warnings);
+        rendered.samples
+    };
+    let unity = render_solo(track_ids[0]);
+    let half = render_solo(track_ids[1]);
+    let unity_rms = channel_rms(&unity, 4_410..35_280, 0);
+    let half_rms = channel_rms(&half, 4_410..35_280, 0);
+    let ratio = half_rms / unity_rms;
+
+    assert!(
+        (0.45..=0.55).contains(&ratio),
+        "shared instrument lost track-local gain: unity={unity_rms}, half={half_rms}, ratio={ratio}"
+    );
+
+    // Re-enable both simultaneous streams. Their full mix must equal the sum
+    // of the independently rendered track contributions; otherwise one track
+    // replaced the other or one fader was applied to both sets of voices.
+    {
+        let mut song = project.song.write();
+        for track_id in &track_ids {
+            if let Some(track) = song.track_mut(*track_id) {
+                track.set_solo(false);
+            }
+        }
+    }
+    let full = render();
+    assert!(full.warnings.is_empty(), "{:?}", full.warnings);
+    assert_eq!(full.samples.len(), unity.len());
+    assert_eq!(full.samples.len(), half.len());
+
+    let (error_energy, expected_energy) = full.samples.iter().zip(&unity).zip(&half).fold(
+        (0.0_f64, 0.0_f64),
+        |(error, expected), ((full, unity), half)| {
+            let expected_sample = f64::from(*unity) + f64::from(*half);
+            let delta = f64::from(*full) - expected_sample;
+            (
+                error + delta * delta,
+                expected + expected_sample * expected_sample,
+            )
+        },
+    );
+    let relative_error = (error_energy / expected_energy).sqrt();
+    assert!(
+        relative_error < 1.0e-5,
+        "simultaneous shared-track mix differs from independent contributions: {relative_error}"
+    );
 }

@@ -3,35 +3,38 @@
 | Field                    | Value                                                                     |
 |--------------------------|----------------------------------------------------------------------------|
 | ID                       | REV-P00A                                                                   |
-| Status                   | Draft                                                                      |
+| Status                   | Accepted                                                                  |
 | Phase                    | 00A                                                                        |
 | Created                  | 2026-08-15                                                                 |
 | Last reviewed            | 2026-08-15                                                                 |
-| Reviewed source revision | `29c22ef4`, plus the uncommitted documentation change this review is part of |
+| Reviewed source revision | V1 boundaries `54cd6d3f` and `29c22ef4`, plus the workflow-reset change that lands this review — the commit introducing EVD-0006, EVD-0007, the three `resource_limit_probe_` tests, and CORPUS-0006..0010 |
 | Related phase tracker    | [Phase 0A tracker](../phases/phase-00a-baseline-and-render-contracts.md)   |
 
-## Why this review exists now, before the phase can pass
+## Current review state
 
-**This review does not close Phase 0A, and its `Draft` status is not a formality.** Two gates fail, and one of them
-fails for reasons no amount of writing fixes: the reference corpus covers five of the master plan's eleven categories.
+The original evaluation below rejected Phase 0A because two gates had been interpreted as open-ended completeness
+claims. The master plan now fixes their source revisions and bounded inputs, EVD-0006 supplies the executable probe,
+and five former corpus gaps are now fixtures. A second independent review found that ADR-0039 confused absence of a
+workspace caller with unreachability, did not enforce its later decision in the authoritative master plan, and mapped
+a constant Control YAMS fixture to a cadence correction it cannot observe. Those findings are now corrected. ADR-0039
+and the last resource row remain open for Phase 10E, not as an added Phase 0A exit condition.
 
-It is opened now because **one scoping decision was blocking work that does not depend on the corpus**, and the phase
-tracker records that the call belongs here rather than to the task it constrains. P00A-T005 had accumulated eleven
-review passes and four substantive blockers, and the open question was whether the task closes narrowly with the
-blockers moved to Phase 3, or stays open until all four are resolved. Everything else in the phase queued behind that
-answer. The decision is recorded in [*Scoping decision*](#scoping-decision) below; the gate evaluation is recorded
-honestly alongside it and says `Fail` where it must.
+The repository quality gate passes. The final independent pass found no actionable defect after two preceding passes'
+authority, citation, publication, and serialized-contract findings were corrected. The historical pass record is
+retained because it is the authority for the corrections that led here; it is not current task status.
 
 ## Review scope
 
 - **Covered.** The Phase 0A exit gates in the
   [master plan](../master-plan.md#phase-0a-baseline-limits-and-render-core-contracts); the phase's seven tasks; the
   decision register entries targeted at 0A; the [resource ledger](../inventories/resource-limits.md); the
-  [host profile specification](../specs/spec-host-profile-and-render-limits.md); evidence records EVD-0001 to EVD-0005.
+  [host profile specification](../specs/spec-host-profile-and-render-limits.md); evidence records EVD-0001 to EVD-0007;
+  the three executable resource-probe tests.
 - **Not covered.** Phase 0B, which has its own tracker and gates and runs in parallel. V1 behaviour outside the audit's
-  reach. Any V2 implementation, of which none exists.
-- **Source reads.** Every source claim newly made in this change was re-resolved at `29c22ef4`. Claims carried over
-  from earlier passes are marked as such where they matter and are not re-attested here.
+  reach. Any V2 implementation, of which none exists yet.
+- **Source reads.** Current source citations remain in the resource inventory and evidence records, where citation
+  guards check them. The dashboard, phase tracker, and host-profile specification link to those authorities instead of
+  maintaining independent source-line copies.
 
 ## Scoping decision
 
@@ -86,21 +89,20 @@ and the Work list, not on Phase 1 being inert.
   grows inside the audio callback — and dropping it with the mechanism would leave V2 with the same unbounded
   allocation. Only the runtime behaviour on exceeding it moves.
 - **Phase 1's event boundary needed a rule in the mechanism's absence**, or the public renderer would accept arbitrary
-  input while defining neither an error nor an overflow behaviour. The specification states one in two halves: a plan
-  whose statically knowable per-quantum count exceeds the field is **refused at preparation**, which the existing
-  `CompileError` path already expresses; and the per-call span is a **caller precondition**, which the master plan's
-  `Renderer::render` — returning `()` — cannot report. **The second half is not enforceable as written**, and the
-  specification says so and lists it as blocking for Phase 1 rather than presenting it as settled. Phase 1 owes either
-  a release-active mechanism — a fallible signature being the obvious one. A `debug_assert` does not qualify: it
-  compiles out of the build that runs.
+  input while defining neither an error nor an overflow behaviour. At the time of this scoping review the master-plan
+  signature returned `()` and left an unchecked caller precondition. The current contract corrects that finding:
+  preparation returns `CompileError`, and `Renderer::render` returns `Result<(), RenderError>` for per-call violations.
+  A `debug_assert` may assist development but does not define release behaviour.
 - **`event_queue_capacity` is withdrawn from the profile entirely.** It was admitted through `LIMIT-0013`'s
-  `HostProfile` ownership, and ADR-0038 moves that entry to `N/A — removed` because its channel is never constructed
-  outside its own tests. Carrying a V2 capacity derived from four rings V1 never ran would have propagated an
-  unvalidated shape.
+  `HostProfile` ownership, and ADR-0038 moves that entry to `N/A — removed` because it has no in-workspace production
+  caller or validated delivery requirement. The API is public, so external use is unknown and removal is an explicit
+  compatibility break. Carrying a V2 capacity derived from four rings without in-repository production evidence would
+  have propagated an unvalidated shape.
 - **The specification edit is a contract change and was reviewed as one.** See
-  [*External review of this change*](#external-review-of-this-change) — the pass found ten defects in it, five P1.
+  [*Historical external review of the scoping change*](#historical-external-review-of-the-scoping-change) — the pass
+  found ten defects in it, five P1.
 
-## External review of this change
+## Historical external review of the scoping change
 
 An independent pass ran over the change this review is part of — scoped to the change, not to the host-profile
 specification, which has had eleven passes and whose recent ones mostly found consequences of their own predecessors'
@@ -221,83 +223,148 @@ narrower than "review corrections too": **when a record changes what a ledger en
 of that entry rather than the ones you remember touching.** Both P1 propagation failures — `event_queue_capacity` and
 the deferral markers — would have been caught by a mechanical search that was never run.
 
+### Final gate review of the workflow reset
+
+The first independent review of the complete workflow-reset change found four P1 defects. They were reported before
+being corrected:
+
+| Finding | Correction |
+|---------|------------|
+| CORPUS-0006 claimed left/center/right panning while prior voices accumulated across notes | An amplitude envelope now gates each note; a render-level test verifies left, centered, and right windows |
+| CORPUS-0009 had no onset after the 120 BPM step it claimed to cover | A sixth onset now follows the step; a timing test verifies the ramp intervals and post-step interval |
+| `shared-patch-or-instrument` was recorded as blocked although V1 can share one deterministic instrument across tracks | CORPUS-0010 exercises two track-local gains through one shared instrument; a render-level test verifies the gain ratio |
+| The ten-case corpus had no matching determinism, CPU, memory, or timing baseline | EVD-0007 records ten-case determinism plus complete 40-cell CPU and timing/RSS matrices |
+
+These corrections subsequently passed the repository gate and independent re-review. This table remains the durable
+correction record; the later result, not the table itself, is what accepts them.
+
+### Second independent review of the workflow reset
+
+The next independent pass found two P1 authority/contract defects and one P2 evidence defect. They were reported before
+correction:
+
+| Finding | Severity | Correction |
+|---------|----------|------------|
+| ADR-0039 treated no workspace caller as proof that the public `EngineHub` path was unreachable | P1 | ADR-0039 and both inventories now distinguish bounded workspace evidence from unknown external use and record initial omission as an explicit compatibility break |
+| ADR-0039 promised a later successor without placing a gate in the authoritative phase plan | P1 | Phase 10E now requires an accepted successor before implementation and names the contract dimensions it must settle |
+| CORPUS-0007's constant `out1 = 0.65` could not observe control-rate cadence | P2 | The unsupported correction claim was removed; Phase 7 instead requires a time-varying partition-invariance test |
+
+These corrections were initially treated as reopening the Phase 0A resource gate because ADR-0039 is `Proposed` and
+`LIMIT-0017` is `Investigating`. A later authority review disproved that conclusion: the master gate requires a
+proposed rule and diagnostic plus the probe, not an accepted disposition. The open lifecycle states remain visible and
+owned by Phase 10E without blocking Phase 1.
+
 ## Required decisions
 
-| ADR      | Required status                                       | Actual status | Result |
-|----------|-------------------------------------------------------|---------------|--------|
-| ADR-0001 | `Accepted`                                            | `Accepted`    | Pass   |
-| ADR-0021 | `Accepted`                                            | `Accepted`    | Pass — three named clauses superseded by ADR-0038, taking effect only when that record is accepted; the record itself is unchanged and remains authoritative for the rest |
-| ADR-0037 | `Accepted`                                            | `Accepted`    | Pass — value provisional, re-measurement bound to the Phase 2 exit gate |
-| ADR-0032 | `Accepted`                                            | `Accepted`    | Pass   |
-| ADR-0022 | `Accepted`, or `Deferred` with owner and evidence gap | `Deferred`    | Pass — Phase 3 entry gate, owner and missing evidence recorded, constraints stated while open |
-| ADR-0028 | `Accepted`, or `Deferred` with owner and evidence gap | `Deferred`    | Pass — Phase 4 entry gate, same shape |
-| ADR-0038 | Not in the required table; created by this review's scoping decision | `Proposed` | **Outstanding.** Three ledger rows carry its disposition and cannot reach `Classified` until it is accepted; a fourth, `LIMIT-0017`, stays open past its acceptance because its condition 4 has no owner. It is deliberately not accepted in the session that drafted it — the register has two withdrawn same-session acceptances |
+| ADR | Required status | Actual status | Result |
+|-----|-----------------|---------------|--------|
+| ADR-0001 | `Accepted` | `Accepted` | Pass |
+| ADR-0021 | `Accepted` | `Accepted` | Pass; ADR-0038 supersedes three named clauses and ADR-0021 remains authoritative elsewhere |
+| ADR-0037 | `Accepted` | `Accepted` | Pass; Phase 2 owns remeasurement |
+| ADR-0032 | `Accepted` | `Accepted` | Pass |
+| ADR-0022 | `Accepted`, or bounded deferral | `Deferred` | Pass; Phase 3 gate, owner, constraints, and missing evidence are recorded |
+| ADR-0028 | `Accepted`, or bounded deferral | `Deferred` | Pass; Phase 4 gate, owner, constraints, and missing evidence are recorded |
+| ADR-0038 | Supporting correction discovered by this review | `Accepted` | Pass; four independent passes reached the semantic stop condition before acceptance |
+| ADR-0039 | Explicit initial omission of the public multi-client hub | `Proposed` | Not required by the Phase 0A gate; Phase 10E owns independent review and the enforced successor decision |
 
 ## Inventory closure
 
-| Inventory/scope   | Unclassified entries | Evidence | Result |
-|-------------------|---------------------:|----------|--------|
-| Resource limits   | 4 of 76 | [EVD-0005](../evidence/phase-00a/EVD-0005-resource-ledger-use-site-audit.md); [ledger](../inventories/resource-limits.md) | **Fail, pending ADR-0038's acceptance.** Four rows carry their disposition at `Investigating` — `LIMIT-0013`, `LIMIT-0014`, `LIMIT-0076` and `LIMIT-0017` — because a disposition's supporting evidence must be an accepted decision, so 72 of 76 are `Classified`. Only `LIMIT-0015` is fully resolved, by completing an overflow read the audit had left partial; it needed no new decision. **`LIMIT-0017` is not disposed even then**: its producer is off the render path, so ADR-0038's fourth condition applies, and **no registered decision owns** whether it may drop — ADR-0029 was named and withdrawn, its topic being host configuration and remote authorization. Registering an owner is ADR-0038 follow-up work. So acceptance takes the ledger to 75 of 76, not 76 |
-| State ownership   | Not assessed | — | N/A — Phase 0B's scope |
-| Capabilities      | Not assessed | — | N/A — Phase 0B's scope |
-| Identities        | Not assessed | — | N/A — Phase 0B's scope |
+| Inventory/scope | Unclassified entries | Evidence | Result |
+|-----------------|---------------------:|----------|--------|
+| Resource limits | 1 of 76 | [Inventory](../inventories/resource-limits.md), [EVD-0005](../evidence/phase-00a/EVD-0005-resource-ledger-use-site-audit.md), [EVD-0006](../evidence/phase-00a/EVD-0006-resource-limit-runtime-probe.md), ADR-0039 | **Pass for Phase 0A.** All 76 rows have the proposed rule and diagnostic the master gate requires, and the probe passes. `LIMIT-0017` remains `Investigating` for its stricter inventory lifecycle and Phase 10E decision |
+| State ownership | Not assessed | — | N/A; Phase 0B owns it |
+| Capabilities | Not assessed | — | N/A; Phase 0B owns it |
+| Identities | Not assessed | — | N/A; Phase 0B owns it |
+
+## Accepted-ADR comparison map
+
+This table evaluates only semantic changes named by ADRs already accepted at the gate's fixed revision. It does not
+claim that every future V2 decision already has a fixture.
+
+| Accepted decision | Named comparison disposition |
+|-------------------|------------------------------|
+| ADR-0001 and ADR-0037 — fixed internal quantum independent of caller blocks | `subtractive-voice` and `mod-matrix-patch`; their `intentional-correction` claims name sample timing and control-rate independence. CORPUS-0007 preserves constant-script loading/routing only and makes no cadence claim |
+| ADR-0021 — refusal instead of silently changing authored topology or overrunning admitted budgets | `instrument-inserts` names the topology refusal; `polyphonic-voice-stealing` covers an admitted voice ceiling; resource-bound differences use these named classes rather than generic comparison failure |
+| ADR-0032 — absolute sample time and positioned events | `subtractive-voice` names the sample-accurate onset correction; the `tempo-map-arrangement` fixture classifies the later ramp-position law as `unsupported-scope` |
 
 ## Exit gates
 
-Gate text copied from the [master plan](../master-plan.md#phase-0a-baseline-limits-and-render-core-contracts).
+Gate text is copied from the current [master plan](../master-plan.md#phase-0a-baseline-limits-and-render-core-contracts).
 
-| Gate | Evidence or named tests | Result |
-|------|-------------------------|--------|
-| The reference corpus and comparison command can run without a GUI or physical audio device. | `pertylizer compare`; `cargo test -p pertylizer --test corpus_manifest`; [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md) | **Pass** |
-| Every known intentional V1-to-V2 semantic change has a named comparison category rather than being treated as generic error. | Corpus manifest claim classes, validated by `corpus_manifest` | **Fail.** The categories exist and are enforced for the five authored corpus cases. The gate is about *every known* change, and six of eleven categories are unauthored — a change that would surface only in `sampler-patch` or `tempo-map-arrangement` has had no opportunity to be named. This cannot pass before P00A-T001 does |
-| CPU, memory, timing, and determinism baselines are saved in a reviewable format. | [EVD-0001](../evidence/phase-00a/EVD-0001-corpus-determinism-baseline.md), [EVD-0002](../evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md), [EVD-0003](../evidence/phase-00a/EVD-0003-cpu-memory-timing-baseline.md) | **Pass**, with the scope note that all three cover four of the five corpus cases and that real-time headroom is explicitly not measured |
-| ADR-0001, ADR-0037, ADR-0021, and ADR-0032 are `Accepted`. | Required-decisions table above | **Pass** |
-| ADR-0022 and ADR-0028 are either `Accepted` or `Deferred` to their named Phase 3 and Phase 4 entry gates with an owner and outstanding evidence recorded. | [ADR-0022](../decisions/ADR-0022-hardware-time-mapping.md), [ADR-0028](../decisions/ADR-0028-long-running-job-contract.md) | **Pass** |
-| Every current fixed RT/resource cap appears once in the resource inventory with a proposed V2 admission rule and a user-visible overflow diagnostic; no unexplained silent truncation is accepted as baseline behavior. | [Ledger](../inventories/resource-limits.md), [EVD-0005](../evidence/phase-00a/EVD-0005-resource-ledger-use-site-audit.md), ADR-0021 §3, ADR-0038 | **Fail**, for two independent reasons. (a) Four rows are `Investigating`. Three wait on ADR-0038's acceptance and are mechanical; `LIMIT-0017` does not resolve with that record, because its producer is off the render path and no registered decision owns whether it may drop. (b) **Completeness is not demonstrated and cannot be by the methods used.** Every pass so far is a search or a read; a truncation that is both unnamed and undocumented is invisible to all of them. Four separate entries were each found by a method the previous one could not see. ADR-0021's executable probe is the only instrument for this, and it has not been built |
+| Gate | Evidence or named test | Result |
+|------|------------------------|--------|
+| The corpus and comparison command run headlessly; every category at `54cd6d3f` is one executable fixture or one explicit reproducibility gap | `pertylizer compare`; `cargo test -p pertylizer --test corpus_manifest`; EVD-0001; manifest case/gap partition | **Pass.** Ten categories have deterministic fixtures; sampler has a required owner and a concrete project-plus-asset reproducibility problem. Behaviour tests guard the corrected panner, tempo-step, and shared-instrument claims |
+| Every intentional change named by an ADR accepted at `54cd6d3f` maps to a comparison category | Accepted-ADR comparison map above; manifest claim classes | **Pass.** The gate requires a named disposition, not a fixture for a later mechanism |
+| CPU, memory, timing, and determinism baselines are reviewable | EVD-0001, EVD-0002, EVD-0003, EVD-0007 | **Pass.** EVD-0007 supplements the historical records with ten-case determinism and complete 40-cell CPU and timing/RSS matrices |
+| ADR-0001, ADR-0037, ADR-0021, and ADR-0032 are accepted | Required-decisions table | **Pass** |
+| ADR-0022 and ADR-0028 are accepted or boundedly deferred | Required-decisions table and both ADRs | **Pass** |
+| At `29c22ef4`, every cap found by the three declared methods appears once with a proposed V2 rule and diagnostic; the three-axis probe passes and later findings follow the bounded reopening policy | Resource inventory; EVD-0005; EVD-0006; debug and release probe commands | **Pass.** All 76 rows contain the required fields, the probe passes in both build modes, and no observation triggers ADR-0021's taxonomy revisit |
 
 ## Quality gates
 
-| Command/check                            | Environment | Result  | Evidence |
-|------------------------------------------|-------------|---------|----------|
-| `cargo fmt --check`                      | Linux x86-64 | **Pass** | Documentation-only change; run to confirm nothing under `crates/` moved |
-| `cargo build`                            | Linux x86-64 | **Pass** | As above |
-| `cargo clippy --workspace --all-targets` | Linux x86-64 | **Pass** | As above |
-| `cargo test --workspace`                 | Linux x86-64 | **Pass** | As above; this is what runs the citation guards below |
-| `cargo doc --workspace --no-deps`        | Linux x86-64 | **Pass** | As above |
-| `cargo test --workspace --test ledger_citations` | Linux x86-64 | **Pass** (3/3) | The three citation guards over the ledger. It **failed first** on eight stale citations introduced by this change and passes after they were corrected, which is what makes the green run informative |
+### Third independent review
+
+| Finding | Severity | Correction |
+|---------|----------|------------|
+| The debug oversized-callback probe observed a panic but did not prove the allocation happened only in release; voice-buffer growth precedes the fixed-effect assertion | P2 | Debug now inspects the voice buffer's length and increased capacity after unwind, independently of allocator events from panic machinery; release also counts the allocation. EVD-0006 and `LIMIT-0001` record the ordered behaviour |
+| EVD-0007 retained aggregates but its reproduction section used placeholder render/compare commands and omitted the exact capture and aggregation procedure | P2 | A permanent standard-library harness now owns every command, raw JSONL capture, matrix check, aggregation, and determinism assertion |
+| ADR-0039 copied a source citation for a normative premise instead of consuming its authoritative inventory rows | P2 | The ADR now links `LIMIT-0017` and `CAP-0017` as the fact authorities and contains no copied source citation |
+
+### Fourth independent review
+
+| Finding | Severity | Correction |
+|---------|----------|------------|
+| ADR-0038 condition 3 permits a data-paired omission count, but its Risks section still said every count outside the structured report fails | P1 | The Risks control now repeats the same consumer-attributable two-path rule and names `LIMIT-0021` as the valid data-paired case |
+| Counting allocations across a caught panic includes panic-runtime allocations and therefore did not prove pre-panic voice-buffer growth | P2 | Debug now records the voice buffer's length and capacity before the call and verifies both after unwind; release additionally counts allocation events |
+
+### Gate-authority and evidence-publication review
+
+| Finding | Severity | Correction |
+|---------|----------|------------|
+| The exit review made ADR-0039 acceptance and a `Classified` inventory state a Phase 0A condition that the master gate does not contain | P1 | The gate is now evaluated verbatim: all 76 rows have proposed rules and diagnostics and the probe passes; ADR-0039 and `LIMIT-0017` remain open for Phase 10E |
+| EVD-0007 published each permanent CSV before later collections and validations completed | P2 | All artifacts are generated in same-filesystem staging and the complete artifact directory is published with one atomic exchange after validation |
+| EVD-0007 wrote non-permanent raw JSONL captures into the checked-in evidence directory | P2 | Raw captures remain in the temporary staging directory and are removed with it on success or failure |
+
+| Command/check | Current result |
+|---------------|----------------|
+| `cargo test --workspace resource_limit_probe_ -- --nocapture` | **Pass** — 3/3 named probe tests |
+| `cargo test -p synth_engine --release resource_limit_probe_oversized_callback_exposes_build_mode_failure -- --nocapture` | **Pass** — release allocation path observed |
+| `cargo test -p pertylizer --test ledger_citations` | **Pass** — 4/4 citation/authority guards |
+| `cargo fmt --check` | **Pass** |
+| `cargo build` | **Pass** |
+| `cargo clippy --workspace --all-targets` | **Pass** |
+| `cargo test --workspace` | **Pass** |
+| `cargo doc --workspace --no-deps` | **Pass** |
+| Independent review of the bounded gate/probe change | **Pass** — final pass found no actionable defect |
+
+### Final independent re-review
+
+The first re-review after the transactional publication correction found one P2 citation drift: the authoritative
+`LIMIT-0001` row still pointed at the pre-probe line for `mono_buffer.resize`. The inventory and its ADR consumer were
+updated, and the citation guard passed 4/4.
+
+The next re-review found one P1 authority error and one P2 serialized-contract gap. The resource-owner totals had
+applied proposed ADR-0039 before acceptance; they now retain ADR-0038's accepted 8/10 distribution and label 7/11 as
+provisional. The newly required planned-category `owner` key now has a parse-level missing-field rejection test.
+
+The final independent pass found **no actionable defect**. It reran the workspace tests, Clippy, formatting, rustdoc,
+targeted corpus and citation tests, and the oversized-callback probe in debug and release. No contract clause changed
+in that pass, so the working agreement's semantic stopping condition is satisfied.
 
 ## Deviations and residual risks
 
-| Item | Impact | Owner/task | Acceptance basis |
-|------|--------|------------|------------------|
-| ADR-0038 is `Proposed`, so three ledger rows cannot be `Classified`; `LIMIT-0017` stays open past its acceptance for a different reason | Blocks gate bullet six's mechanical half | P00A-T004 | Accepted deliberately: same-session acceptance has been withdrawn twice in this register. An independent pass runs before acceptance |
-| ADR-0038 is the register's first **partial** supersession | A reader of ADR-0021 must know three of its clauses are replaced once ADR-0038 is accepted, and still binding until then | ADR register | ADR-0021 is immutable, so the alternative was re-deciding a record that is still right about everything else. Both directions are linked |
-| Blockers 1 and 4 move to Phase 3 | Phase 3 inherits two work items and two gate bullets | Phase 3 entry gate | Recorded in the master plan, which is authoritative for scope and phase order. A note in this review would not have moved them |
-| Citation drift onto valid code is known present and unbounded | The ledger's `file:line` citations may misdirect a future reader | P00A-T004 | Measured rather than assumed: only 10 of 76 rows carry the annotated form the strong test checks, and a four-row re-audit found drift in two. Recorded in EVD-0005 |
-| The ledger's completeness rests on searches and reads | Gate bullet six cannot pass on the current evidence | P00A-T004 | ADR-0021's own follow-up names the executable probe. EVD-0005 is its fourth argument |
-| EVD-0005 is retrospective | Its acceptance criteria were written after the results existed | P00A-T004 | Stated in the record itself rather than glossed. A future ledger pass states its criteria first |
-| P00A-T001 covers five of eleven corpus categories | Two gates fail on it | P00A-T001 | Not accepted — this is why the review is `Draft` |
+| Item | Impact | Owner/control |
+|------|--------|---------------|
+| One corpus category remains a gap | It cannot detect regressions until its input bundle becomes reproducible | Phase 0B bundle fixtures own the sampler project-plus-asset boundary |
+| EVD-0005 is retrospective and cannot prove unnamed behaviour absent | Its conclusion is bounded to its declared methods | EVD-0006 probes three runtime axes; later findings follow the new-finding policy |
+| The oversized-callback probe is topology-specific | A different graph may reach truncation or allocation before the fixed effect buffer | `LIMIT-0001` records all three known outcomes and V2 treats any oversized callback as one terminal stream fault |
+| Source-line citations can drift onto valid neighbouring code | A citation may still misdirect despite shape checks | Current source claims remain in the guarded inventory; derived documents are forbidden from copying them |
+| HOST-INV-021 remains deferred | Phase 3 still must design ingress and deferred storage before live scheduling | The initial Phase 1 renderer may not implement the deferred mechanism |
 
 ## Outcome
 
-Outcome: `Draft`
+Outcome: `Accepted`
 
-**Phase 0A does not pass.** Two of the six exit gates fail: the semantic-change gate and the resource-inventory gate,
-the first on corpus coverage and the second on both ADR-0038's status and an unproven completeness claim. No condition
-would make this a `Conditionally accepted`, because the completeness question is not bounded — it asks for evidence
-that does not exist yet, and the instrument for producing it has not been built.
-
-**What this review does settle** is the scoping question the phase was queued behind, and the record of it is the
-section above rather than this outcome. Three of the phase's seven tasks were `Complete` before it. P00A-T004's two
-open items are still two — its coverage claim now has EVD-0005, but `LIMIT-0017` replaced coverage as the second
-blocker alongside completeness — and P00A-T005 closes on the master plan's field list with its deferred mechanism recorded in
-the plan rather than left as an absence.
-
-**What stands between here and an `Accepted` outcome**, in dependency order:
-
-1. An independent pass over this change, then ADR-0038 accepted, then three ledger rows to `Classified` — 75 of 76, not all 76, because `LIMIT-0017`'s loss policy has no registered owner and ADR-0038 declines to invent one.
-2. ADR-0021's executable truncation probe — oversized blocks, more than 128 metered channels, more than 32 rack
-   stages — which is the only thing that can move gate bullet six's completeness half.
-3. Six more corpus categories, several blocked on decisions rather than effort, which is what gate bullet two waits on.
-
-This review is reopened and re-evaluated when those land. It is not edited to make a gate pass.
+All six bounded Phase 0A evidence gates pass. ADR-0039 and `LIMIT-0017` retain their open lifecycle states for Phase 10E
+without blocking Phase 1. The final independent pass required no contract, authority, safety, or correctness change,
+so Phase 1 may begin.

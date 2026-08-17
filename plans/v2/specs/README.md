@@ -57,7 +57,7 @@ when its display title changes.
 
 | Specification | Invariant prefix | Status | Scope |
 | --- | --- | --- | --- |
-| [Host profile and render limits](spec-host-profile-and-render-limits.md) | `HOST` | Draft | The immutable preparation input a render plan is admitted against: field set, defaults, ownership, admission failure, and the `ResourceReport` |
+| [Host profile and render limits](spec-host-profile-and-render-limits.md) | `HOST` | Current | The immutable preparation input a render plan is admitted against: field set, defaults, ownership, admission failure, and the `ResourceReport` |
 
 Add a row when creating a specification and check that its prefix is unique
 before allocating invariants.

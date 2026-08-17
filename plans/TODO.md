@@ -565,6 +565,34 @@ domain.
 > correctness/RT-safety issues, but architectural enough to be driven by an
 > *actually observed symptom*, not done pre-emptively.
 
+### Known live V1 real-time and resource hazards
+
+These are product defects found by the Core V2 resource audit, not migration
+notes. The [resource-limit inventory](v2/inventories/resource-limits.md) owns the
+source evidence and exact overflow behaviour; this backlog owns whether V1 is
+changed before it is retired.
+
+- [ ] **Handle callbacks above `MAX_BLOCK_SIZE` without panic, truncation, or audio-thread allocation (`LIMIT-0001`).**
+  The Phase 0A probe shows audio-thread buffer growth before a later debug-only
+  fixed-effect assertion. Release removes the assertion but retains the
+  allocation; the input path can also silently discard its tail. Enforce the
+  requested stream contract in V1 or treat this as a terminal stream fault with
+  silence and a surfaced reprepare request.
+- [ ] **Make engine egress loss and recorded-note custody real-time safe (`LIMIT-0014`).**
+  Observational `EngineEvent` loss still lacks a counter, while a refused
+  `RecordedNotesFlushed` handoff still drops one owned `Vec` on the audio thread.
+  Separate observational loss from custodial delivery before changing either
+  behaviour.
+- [ ] **Remove heap destruction from failed deferred-drop handoffs (`LIMIT-0015`, `LIMIT-0016`).**
+  Full return/trash rings can destroy boxes, keys, or final `Arc` owners on the
+  audio thread. Existing counters measure only parts of this family; a fix must
+  provide bounded ownership transfer rather than merely increase ring sizes.
+- [ ] **Remove sequencer collection growth from the audio callback (`LIMIT-0075`).**
+  The event buffer starts at 128 entries but is not capped, and related scratch
+  collections can grow under the same conditions. Fix this as prepared storage
+  with atomic activation; bounding only one `Vec` would leave the wider RT
+  violation intact.
+
 ### Trigger-based hardening (do when the symptom appears)
 
 #### Real-time safety: replace HashMap usage on the audio thread

@@ -2980,6 +2980,36 @@ mod tests {
         assert_eq!(song.migrate_processor_racks_to_graphs(), 0);
     }
 
+    /// Bounded probe for `LIMIT-0067` (EVD-0006): a legacy rack past the graph
+    /// node cap loses its final stage silently. A fix that makes the migration
+    /// refuse instead must update that ledger row and EVD-0006 together with
+    /// these assertions.
+    #[test]
+    fn resource_limit_probe_rack_migration_truncates_above_graph_capacity() {
+        use crate::note_graph::MAX_NOTE_GRID_NODES;
+        use crate::note_processor::ScaleQuantize;
+
+        let mut song = Song::new("probe");
+        let pattern_id = song.create_pattern(Duration(960));
+        let pattern = song.pattern_mut(pattern_id).unwrap();
+        pattern.processors =
+            vec![NoteProcessor::ScaleQuantize(ScaleQuantize::default()); MAX_NOTE_GRID_NODES + 1];
+
+        let graph_id = song
+            .convert_rack_to_graph(pattern_id)
+            .expect("an unbound, non-empty rack converts");
+
+        assert_eq!(
+            song.note_graph(graph_id).unwrap().node_count(),
+            MAX_NOTE_GRID_NODES,
+            "the V1 migration silently stops at the graph node cap"
+        );
+        assert!(
+            song.pattern(pattern_id).unwrap().processors().is_empty(),
+            "the source rack is cleared even though its final stage was omitted"
+        );
+    }
+
     #[test]
     fn freeze_pattern_note_graph_bakes_and_clears_binding() {
         use crate::note_processor::{PitchClass, ScaleMask, ScaleQuantize};

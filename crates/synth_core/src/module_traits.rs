@@ -128,6 +128,12 @@ impl AudioBuffer {
         self.samples.len()
     }
 
+    /// Get the allocated sample capacity without changing the buffer.
+    #[inline]
+    pub fn capacity(&self) -> SampleCount {
+        SampleCount::new(self.samples.capacity())
+    }
+
     /// Check if empty.
     #[inline]
     pub fn is_empty(&self) -> bool {

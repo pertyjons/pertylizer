@@ -232,7 +232,10 @@ compile or execute anything.
 
 ### Work
 
-- Capture representative V1 renders and analysis results for a bounded corpus:
+- Define a closed comparison-category vocabulary and capture representative V1
+  renders where the behaviour is reproducible at the Phase 0A source revision.
+  Every category is represented by either an executable fixture or an explicit
+  gap naming the reproducibility problem and its owner:
   - basic subtractive voice;
   - stereo oscillator or spatial voice;
   - sampler patch;
@@ -257,10 +260,14 @@ compile or execute anything.
   - render determinism digest.
 - Measure V1 CPU and memory for the reference corpus at common polyphony and
   sample rates.
-- Complete the fixed-limit and overflow audit: every current hard cap,
-  truncation point, bounded queue, buffer capacity, and script budget, with its
+- Complete a bounded fixed-limit and overflow audit of V1 at revision
+  `29c22ef4`: every cap found by the declared constant/limit search,
+  truncation/comment search, and use-site read appears once, with its
   enforcement site, overflow behavior, and whether V2 preserves, raises,
-  removes, or exposes it as configurable.
+  removes, or exposes it as configurable. Run the executable resource probe
+  over oversized callbacks, meter slots beyond 128, and rack migration beyond
+  32 stages. Findings after the revision follow the later-finding policy in the
+  [working agreement](WORKING-AGREEMENT.md#phase-gates).
 - Define an initial `HostProfile`/`RenderLimits` contract covering maximum host
   block, layouts, voices, nodes, event fan-out, channels, buses, sends,
   telemetry taps, recording buffers, prepared memory, script work, and the
@@ -288,10 +295,15 @@ compile or execute anything.
 
 ### Exit gate
 
-- [ ] The reference corpus and comparison command can run without a GUI or
-      physical audio device.
-- [ ] Every known intentional V1-to-V2 semantic change has a named comparison
-      category rather than being treated as generic error.
+- [ ] The reference corpus and comparison command run without a GUI or physical
+      audio device. At revision `54cd6d3f`, every category in the closed
+      vocabulary is exactly one of: covered by an executable fixture, or an
+      explicit gap with a reproducibility problem and owner. The manifest test
+      enforces that partition.
+- [ ] Every intentional V1-to-V2 semantic change named by an ADR accepted at
+      revision `54cd6d3f` maps to a comparison category rather than being
+      treated as generic error. A category may remain an explicit gap; the gate
+      requires a named comparison disposition, not a later-phase mechanism.
 - [ ] CPU, memory, timing, and determinism baselines are saved in a reviewable
       format.
 - [ ] ADR-0001 (render quantum semantics and splitting), ADR-0037 (render
@@ -303,10 +315,13 @@ compile or execute anything.
 - [ ] ADR-0022 (hardware time mapping) and ADR-0028 (long-running jobs) are
       either `Accepted` or `Deferred` to their named Phase 3 and Phase 4 entry
       gates with an owner and outstanding evidence recorded.
-- [ ] Every current fixed RT/resource cap appears once in the resource
-      inventory with a proposed V2 admission rule and a user-visible overflow
-      diagnostic; no unexplained silent truncation is accepted as baseline
-      behavior.
+- [ ] For V1 revision `29c22ef4`, every cap found by the three declared audit
+      methods appears once in the resource inventory with a proposed V2 rule
+      and diagnostic, and the executable resource probe passes over its three
+      named axes. A probe observation missing from the inventory triggers
+      ADR-0021's revisit condition. Later findings become inventory entries and
+      tracked defects; they reopen this gate only when they invalidate its
+      evidence or a Phase 1 safety/correctness guarantee.
 
 ## Phase 0B: Migration inventories and project contracts
 
@@ -429,7 +444,11 @@ pub struct RenderConfig {
 }
 
 pub trait Renderer {
-    fn render(&mut self, output: AudioBlockMut<'_>, events: TimedEvents<'_>);
+    fn render(
+        &mut self,
+        output: AudioBlockMut<'_>,
+        events: TimedEvents<'_>,
+    ) -> Result<(), RenderError>;
 }
 ```
 
@@ -439,7 +458,9 @@ pub trait Renderer {
   read by the renderer. Compilation returns a resource report containing
   prepared bytes, scratch bytes, voices, nodes, event capacity, channel/bus
   capacity, observation taps, and the limiting profile field.
-- Define `CompileError`, `CompileWarning`, and a structured diagnostics report.
+- Define `CompileError`, `CompileWarning`, `RenderError`, and a structured
+  diagnostics report. A caller span that violates a render-time precondition
+  returns `RenderError`; a debug-only assertion is not release behaviour.
 - Add an offline harness that constructs IR directly in tests and renders a
   caller-selected number of frames.
 - Do not connect V2 to existing projects yet.
@@ -560,9 +581,11 @@ can observe. See [REV-P00A](reviews/phase-00a-exit-review.md).
   hardware MIDI/audio timestamps. Untimestamped adapters must declare and
   measure their arrival-time fallback rather than pretending it is exact.
 - **Define what V2's renderer-ingress streams are, and what bounds each.** V1
-  has nothing to carry over: `LIMIT-0013`'s prioritized rings are engine egress
-  and are never constructed, and `LIMIT-0012`'s ring carries commands, so there
-  is no timestamped renderer-ingress queue in V1 at all. Until this is defined,
+  has no in-workspace renderer-ingress mechanism to carry over: `LIMIT-0013`'s
+  prioritized rings are engine egress with no in-workspace production caller
+  (the public API leaves external use unknown), and `LIMIT-0012`'s ring carries
+  commands. There is therefore no evidenced V1 timestamped renderer-ingress
+  queue to inherit. Until this is defined,
   the host profile has no field for the capacity an over-full quantum would
   defer against, and any admission rule written over one is written over a
   quantity that does not exist.
@@ -871,7 +894,8 @@ YAMS Audio:   per-sample audio processing
 
 ### Exit gate
 
-- [ ] Control YAMS output is invariant to host callback size.
+- [ ] A time-varying Control YAMS program produces sample-identical output under multiple host-callback partitions;
+      a constant-output fixture alone is not cadence evidence.
 - [ ] Audio YAMS remains bounded and allocation-free at maximum configured block
       size and voice count.
 - [ ] A missing, cyclic, or scope-invalid binding is rejected by the compiler
@@ -1431,6 +1455,12 @@ ThisTrack.Source.Node(NodeId).Param(ParamKey)
 - [ ] `LegacyProjectLowerer` is no longer needed for newly saved projects.
 
 ### Phase 10E: MCP, CLI, import, and service migration
+
+An ADR-0039 successor must be `Accepted` before Phase 10E implementation begins. It decides whether the public V1
+multi-client hub remains an intentional removal under a tested local-only/public-facade policy or is replaced by a
+service-level delivery contract. A replacement must classify payload custody and define capacity, exhaustion, client
+lifecycle, diagnostics, ordering, and transport backpressure; it may not inherit V1's 1,024-entry drop-on-full ring
+implicitly.
 
 #### Work
 

@@ -131,13 +131,13 @@ The available substitute is to measure V1's cost as a function of block size:
 
 - `BUFFER_SIZE` in `crates/pertylizer/src/audio/arrangement_render.rs:51` is a constant. Rendering the P00A-T001 corpus
   offline at 32, 64, 128, and 256 frames yields cost per rendered second at four block sizes.
-- V1 evaluates control scripts once per block (`voice.rs:1088`), so the measurement captures the same per-block control
+- V1 evaluates control scripts once per block (`voice.rs:1096`), so the measurement captures the same per-block control
   cost V2 will pay per quantum.
 
 **The proxy has no established direction of error.** An earlier revision claimed it was conservative, on the grounds
-that V1 pays a per-voice `mono_buffer.resize()` every block (`voice.rs:1139`) that V2 removes. That argument does not
+that V1 pays a per-voice `mono_buffer.resize()` every block (`voice.rs:1147`) that V2 removes. That argument does not
 survive inspection: the buffer is allocated once at `MAX_BUFFER_SIZE` (`voice.rs:570`), and `AudioBuffer::resize` is
-`Vec::resize` (`module_traits.rs:156`), so after the first shrink a same-size resize neither allocates nor fills. The
+`Vec::resize` (`module_traits.rs:162`), so after the first shrink a same-size resize neither allocates nor fills. The
 claim is withdrawn.
 
 The error runs in both directions and the net is unknown:

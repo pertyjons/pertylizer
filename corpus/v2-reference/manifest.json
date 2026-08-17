@@ -1,5 +1,5 @@
 {
-  "manifest_version": 1,
+  "manifest_version": 2,
   "description": "Reference render corpus for the Pertylizer Sound Core V2 migration (plans/v2, task P00A-T001). Each case names a V1 project, the exact settings that render it, and what V2 must preserve or is intended to change. Regenerate the fixture projects and refresh the digests with `cargo run -p pertylizer --bin gen_corpus`.",
   "cases": [
     {
@@ -198,32 +198,161 @@
           "rationale": "V1 recovers from an incomplete effect_chain_order by appending the unnamed modules, so the rendered order is partly V1's choice rather than the project's. Under ADR-0021 part 2 admission may refuse a plan but may never silently change authored topology to make it fit, and an appended insert is exactly that. This case authors a complete order, so the correction changes nothing here - it is recorded because this is the case that would otherwise be used to justify the fallback."
         }
       ]
+    },
+    {
+      "id": "CORPUS-0006",
+      "title": "Keyboard-panned stereo voice",
+      "category": "stereo-or-spatial-voice",
+      "purpose": "One mono oscillator passes through the Keyboard Panner while three separated notes fall below, at, and above its center note. No other stereo mechanism is present, so the channel-energy movement belongs to the panner.",
+      "input": "projects/keyboard-panner-stereo.ptz",
+      "sha256": "3673c69959eb75015ec64880b1e1cd80fa88c201d5412f2601cec232a162fa02",
+      "render": {
+        "sample_rate": 44100,
+        "bit_depth": "32f",
+        "seconds": 2.0,
+        "tail_seconds": 0.5
+      },
+      "seed": null,
+      "determinism": "bit-exact",
+      "preserve": [
+        {
+          "id": "CORPUS-0006-P1",
+          "behavior": "The low note has more energy in the left channel, the center note has equal channel energy, and the high note has more energy in the right channel.",
+          "class": "feature-parity"
+        },
+        {
+          "id": "CORPUS-0006-P2",
+          "behavior": "Changing note pitch changes only the panner position and oscillator frequency; it does not collapse or exchange the two output channels.",
+          "class": "exact-parity"
+        }
+      ]
+    },
+    {
+      "id": "CORPUS-0007",
+      "title": "YAMS control-rate amplifier",
+      "category": "yams-control-patch",
+      "purpose": "A one-line Script program writes a constant to the amplifier's only CV input. The oscillator is audible only if the program is installed, evaluated, and routed through out1.",
+      "input": "projects/yams-control.ptz",
+      "sha256": "bbf14e71f67e8d3a887f4735268accbcc5f9848130c4d5b2317c90786a30389c",
+      "render": {
+        "sample_rate": 44100,
+        "bit_depth": "32f",
+        "seconds": 2.0,
+        "tail_seconds": 0.5
+      },
+      "seed": null,
+      "determinism": "bit-exact",
+      "preserve": [
+        {
+          "id": "CORPUS-0007-P1",
+          "behavior": "The Script program out1 = 0.65 opens the amplifier to the same constant gain V1 produces for the held note.",
+          "class": "feature-parity"
+        },
+        {
+          "id": "CORPUS-0007-P2",
+          "behavior": "The installed program and its out1-to-CV routing survive project loading and offline rendering; the result is audible rather than the silent no-program control.",
+          "class": "exact-parity"
+        }
+      ]
+    },
+    {
+      "id": "CORPUS-0008",
+      "title": "YAMS audio-rate stereo transform",
+      "category": "yams-audio-script-patch",
+      "purpose": "A two-line AudioScript applies +0.75 gain to the left copy and -0.5 gain to the right copy of one sine oscillator. With no state, randomness, or stock effect, every sample tests audio-rate program execution and stereo wiring directly.",
+      "input": "projects/yams-audio-script.ptz",
+      "sha256": "67154f00b7b200fa902fddd233a7bda95562dcbf30ed6a61b5d2524093b32732",
+      "render": {
+        "sample_rate": 44100,
+        "bit_depth": "32f",
+        "seconds": 2.0,
+        "tail_seconds": 0.5
+      },
+      "seed": null,
+      "determinism": "bit-exact",
+      "preserve": [
+        {
+          "id": "CORPUS-0008-P1",
+          "behavior": "The AudioScript runs once per sample and preserves the source waveform while applying the authored signed gains: left is 0.75 times the input and right is -0.5 times the input.",
+          "class": "feature-parity"
+        },
+        {
+          "id": "CORPUS-0008-P2",
+          "behavior": "The installed audio-rate program and both stereo cables survive project loading and offline rendering; neither output silently falls back to zero or mono.",
+          "class": "exact-parity"
+        }
+      ]
+    },
+    {
+      "id": "CORPUS-0009",
+      "title": "Tempo ramp and step arrangement",
+      "category": "tempo-map-arrangement",
+      "purpose": "Six short notes at equal tick intervals cross a 90-to-180 BPM ramp and a later step to 120 BPM. Their unequal sample intervals prove that the renderer consumed the authored tempo map rather than one constant tempo.",
+      "input": "projects/tempo-map-arrangement.ptz",
+      "sha256": "8fde10b1a1044543d3b8d73d3910a08d3e4619145d105949a58457add39a8bba",
+      "render": {
+        "sample_rate": 44100,
+        "bit_depth": "32f",
+        "seconds": 4.0,
+        "tail_seconds": 0.5
+      },
+      "seed": null,
+      "determinism": "bit-exact",
+      "preserve": [
+        {
+          "id": "CORPUS-0009-P1",
+          "behavior": "The authored tempo changes affect note spacing: equal tick intervals render at unequal sample intervals through the ramp and change again after the 120 BPM step.",
+          "class": "feature-parity"
+        },
+        {
+          "id": "CORPUS-0009-P2",
+          "behavior": "Note order, pitch, and the association between each onset and its musical tick are preserved across the tempo changes.",
+          "class": "exact-parity"
+        }
+      ],
+      "change": [
+        {
+          "id": "CORPUS-0009-C1",
+          "behavior": "The exact sample positions inside a tempo ramp remain unsupported until Phase 3 accepts one ramp-position law.",
+          "class": "unsupported-scope",
+          "rationale": "Phase 0A can capture V1's observable output without making the Phase 3 decision. The comparison must report this law as unsupported scope instead of silently treating either V1 parity or a changed position as correct."
+        }
+      ]
+    },
+    {
+      "id": "CORPUS-0010",
+      "title": "Two tracks sharing one instrument",
+      "category": "shared-patch-or-instrument",
+      "purpose": "Two patterns on independent tracks address the same persisted instrument id with the same note at the same time, at unity and half track gain. A deterministic subtractive patch keeps the observation about sharing rather than script-seed identity.",
+      "input": "projects/shared-instrument-tracks.ptz",
+      "sha256": "9f89a955bee104063af9c8d5ba657e4f8e023cb62124b85941ae6e538d1fdca6",
+      "render": {
+        "sample_rate": 44100,
+        "bit_depth": "32f",
+        "seconds": 2.0,
+        "tail_seconds": 0.5
+      },
+      "seed": null,
+      "determinism": "bit-exact",
+      "preserve": [
+        {
+          "id": "CORPUS-0010-P1",
+          "behavior": "Two tracks may reference one InstrumentId and their simultaneous note streams both render through that shared instrument rather than one track replacing the other.",
+          "class": "feature-parity"
+        },
+        {
+          "id": "CORPUS-0010-P2",
+          "behavior": "Each track's gain remains attached to its own voices when both tracks use the same instrument; the half-gain second track does not reduce the unity-gain first track.",
+          "class": "exact-parity"
+        }
+      ]
     }
   ],
   "planned": [
     {
-      "category": "stereo-or-spatial-voice",
-      "why_absent": "Needs a decision on which stereo source the case should isolate: the oscillator's own stereo outputs, the Keyboard Panner, or the Spatial Panner. The Spatial Panner's position inputs are not modulatable in V1 (no CV ports), so a case built on it would pin behaviour that is already scheduled to change."
-    },
-    {
       "category": "sampler-patch",
-      "why_absent": "A sampler case needs a sample asset, which makes the input a bundle rather than a plain project and drags asset identity (ADR-0027, Phase 0B) into a Phase 0A baseline. Add it once the bundle round-trip fixtures exist."
-    },
-    {
-      "category": "yams-control-patch",
-      "why_absent": "The bundled YAMS Script Demo covers this end to end, but a corpus case wants a script small enough that a render difference names one language feature. Waiting on a minimal script whose output is analytically predictable."
-    },
-    {
-      "category": "yams-audio-script-patch",
-      "why_absent": "Same as the control-script case: waiting on a script small enough that a render difference names one language feature. Independent of the ADR-0037 quantum measurement, which is defined over whatever the corpus contains and must not wait for this."
-    },
-    {
-      "category": "tempo-map-arrangement",
-      "why_absent": "Blocked on nothing technical, but the case must state whether a tempo ramp's event positions are part of the preserved behaviour or fall under the sample-timing correction (CORPUS-0001-C1). That is a decision the case should cite, not make."
-    },
-    {
-      "category": "shared-patch-or-instrument",
-      "why_absent": "Depends on the identity rules ADR-0014 settles: a module's instance number feeds its script PRNG seed (IDN-0029), so a shared instrument's audio depends on how the two references are numbered. Authoring the case before that decision would pin behaviour the decision may change."
+      "owner": "Phase 0B bundle fixtures",
+      "why_absent": "A sampler case needs a sample asset, so a plain project cannot reproduce it by itself; the project and asset must travel as one deterministic bundle before this category can be rendered headlessly."
     }
   ]
 }
