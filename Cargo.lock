@@ -4906,6 +4906,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "synth_engine_v2"
+version = "0.1.0"
+dependencies = [
+ "synth_core",
+ "thiserror 2.0.19",
+]
+
+[[package]]
 name = "synth_mcp"
 version = "0.1.0"
 dependencies = [

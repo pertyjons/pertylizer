@@ -5,7 +5,7 @@
 | Status           | Current                                |
 | Phase            | 00A                                    |
 | Created          | 2026-08-13                             |
-| Last reviewed    | 2026-08-15                             |
+| Last reviewed    | 2026-08-17                             |
 | Based on         | ADR-0021, ADR-0001, ADR-0032, ADR-0037, ADR-0038 |
 | Invariant prefix | HOST                                   |
 | Supersedes       | —                                      |
@@ -76,8 +76,14 @@ by a compiled-in constant. The application does not raise a capability; it disco
 
 **Render limits**
 
-The subset of the profile that describes budgets the operator chooses: how large a plan may be before the renderer
-refuses it. A render limit may be raised, at the cost of memory and CPU that the resource report accounts for.
+The subset of the profile that describes budgets the operator chooses: how large a plan may be, **or which streams may be
+prepared at all**, before the renderer refuses it. A render limit may be raised, at the cost of memory and CPU that the
+resource report accounts for — and only within a ceiling the engine owns, where one exists.
+
+The second clause is not padding: `accepted_sample_rates` is a limit that no plan can exceed, because no plan carries a
+rate. An earlier revision defined this class over plan size alone, which left that field outside the category its own
+placement rests on. What unites the class is that the operator sets it and a refusal follows, not the shape of the thing
+refused.
 
 **Admission**
 
@@ -110,18 +116,57 @@ open owner is a starting point recorded honestly, not a rule invented here.
 2. **HOST-INV-002** — Exactly one profile admits a prepared plan, and the renderer reads every capacity from the
    prepared plan rather than from the profile. A capacity that reaches the audio thread without having passed admission
    is a defect, not a fallback.
-3. **HOST-INV-003** — **On the device path**, every field of `HostCapabilities` is established from queried host and
+3. **HOST-INV-003** — **On the device path**, every **queried capability** — the three values `HOST-INV-005` closes over,
+   not `source`, which nothing queries — is established from queried host and
    device capability. A hardcoded advertised range is forbidden, including on a branch that successfully queried the
    device — this is the `LIMIT-0057` anti-pattern ADR-0021 part 4 names. The rule is enforced by construction rather
    than by inspection: `HostCapabilities::from_device` takes every capability as an argument and has no default for
    any of them, so a value that was not queried cannot reach it without a caller writing the constant at the call
-   site, where it is visible. `::declared` is the separate constructor for the offline and harness paths, and it sets
-   `CapabilitySource` itself so the tag cannot disagree with the constructor that produced it.
+   site, where it is visible. The device-less paths have **one constructor each** — `::offline` and `::harness` — and
+   neither takes a source argument, so `Device` is not among the tags they can produce.
+
+   **What that buys, stated exactly.** No runtime tag can prove that a query happened — this specification already
+   records that finding, and it applies to the constructor split too: `::from_device` is public and takes values, so a
+   caller determined to mislabel itself can pass constants and obtain `Device`. Three narrower things do hold, and they
+   are the guarantee: a capability that was not queried must be **written at the call site**, where review sees a literal
+   instead of a defaulted field; there is no `Default` and no `..Default::default()` tail for the shape test to permit;
+   and a path with no device **need not** mislabel itself, because `::offline` and `::harness` exist and their tags are
+   honest. Earlier
+   revisions of this paragraph claimed `Device` was unforgeable and, before that, that the tag could not disagree with
+   the path — both stronger than a public constructor can enforce.
 4. **HOST-INV-004** — The render quantum is not a profile field, is not derived from any profile field, and is not
    configurable. No field below may be defined in terms of `Q`'s numeric value; a field may be defined in terms of the
    symbol `Q`.
-5. **HOST-INV-005** — The profile carries exactly the fields listed in [*The field set*](#the-field-set). A field is
-   admissible on one of three grounds, **applied in this order so that every field takes exactly one**:
+5. **HOST-INV-005** — The profile carries exactly the fields listed in [*The field set*](#the-field-set).
+
+   **The two halves are admitted by different rules, and an earlier revision applied one rule to both.** The
+   `HostCapabilities` half is a **closed enumerated set of three queried values** — `sample_rate`, `maximum_block_size`,
+   and `channel_layout` — fixed by ADR-0021 part 4, which requires a capability to come from queried capability, and by
+   ADR-0032 clause 12, which fixes rate, layout, and capacity for the life of an epoch. A capability is admissible
+   because the device has it and the renderer must be **prepared against** it; a limit is what admission **refuses on**.
+   `LIMIT-0001` and `LIMIT-0059` therefore appear in those rows as **provenance**, on the same footing as
+   `max_held_notes`'s `LIMIT-0031`. Adding a queried capability is a change to this specification, reviewable as such.
+
+   **`source` is the fourth struct member and is not one of the three.** It is not queried from anything — ADR-0021 part
+   4's rule could not admit it — and it is not a capability the renderer prepares against. It records *which
+   constructor* produced the other three, and the rule that admits it is `HOST-INV-003`. There is **one constructor per
+   source** and no source argument anywhere, so no call can pass a tag that disagrees with the constructor it called.
+   What that does not do is prove a caller picked the right constructor — see `HOST-INV-003` for the exact guarantee.
+   Classifying `source` as a queried capability would make `HOST-INV-003` unsatisfiable, because nothing queries it.
+
+   **`LIMIT-0004` is the case that fixed the boundary between the two halves.** Its entry is owned `HostProfile` and its
+   rule refuses an out-of-range job *at admission*, which ground 1 reserves to limits, so `accepted_sample_rates` is a
+   `RenderLimits` field and not the fifth capability two earlier revisions made it.
+
+   That scoping is a correction rather than a simplification. The three grounds below were stated over every profile
+   field while three capability fields — `sample_rate`, `channel_layout`, and `source` — matched none of them, so the
+   named conformance test, which "fails on a field in none", could not have passed; and `maximum_block_size` would have
+   matched ground 1 through `LIMIT-0001` while also being queried, which breaks *exactly one*. This is a document
+   finding, from enumerating the field set against the grounds by hand while preparing that test; the test itself is
+   [P01-T002](../phases/phase-01-experimental-sound-core.md)'s deliverable and does not exist yet.
+
+   A **`RenderLimits`** field is admissible on one of three grounds, **applied in this order so that every such field
+   takes exactly one**:
 
    1. **a ledger entry owned `HostProfile`.** ADR-0021 part 1 is explicit that only these participate in admission and
       that `N/A — removed` holds nothing, so an entry with that owner cannot be a ground however its disposition reads.
@@ -141,7 +186,7 @@ open owner is a starting point recorded honestly, not a rule invented here.
       the OSC ring becomes `LIMIT-0076` owned by the protocol contract that serializes it — **so it is not a profile
       field at all**, and the profile carries one capacity here rather than two.
 
-   Grounds 1 and 2 are disjoint by construction, and 3 excludes both, so each field matches exactly one. **"No V1 antecedent" is a different axis and
+   Grounds 1 and 2 are disjoint by construction, and 3 excludes both, so each limit field matches exactly one. **"No V1 antecedent" is a different axis and
    does not select a ground**: it answers whether V1 had the thing, not what admits the field, and
    `forward_event_horizon` is on both lists precisely because those are different questions. An earlier revision
    defined ground 3 *as* the no-antecedent list, which left `forward_event_horizon` matching two grounds and
@@ -152,6 +197,31 @@ open owner is a starting point recorded honestly, not a rule invented here.
 7. **HOST-INV-007** — A plan exceeding a render limit is refused with a `CompileError` naming the field, the requested
    amount, the available amount, and the authored object responsible. Admission never truncates, clamps, or drops to
    make a plan fit, per ADR-0021 part 2.
+
+   **It binds the limits a plan can exceed, and `accepted_sample_rates` is the one that no plan can.** A plan does not
+   request a sample rate: the profile fixes it for the epoch, so the only way the rate and the range can disagree is
+   inside one profile, which `HOST-INV-016` refuses at construction before any plan is compiled. Requiring a plan-level
+   `CompileError` for this field would require a plan-level rate, which is exactly the duplicate the master plan's
+   `RenderConfig` sketch carried and Phase 1 removed.
+
+   **`accepted_sample_rates` is the clearest case, not the only one.** Phase 1's
+   implementation of this invariant found that **fourteen** of the profile's forty-two
+   reported fields cannot be exceeded by a plan, in four groups: the three queried
+   capabilities, which describe what a plan is *prepared against*; `accepted_sample_rates`;
+   the three sizing fields, which bound nothing; and the capacities a plan does not
+   request — the two queue depths, the two per-voice slot counts, and
+   `max_concurrent_retiring_voices`, which is derived so that it cannot bind. The other
+   twenty-eight each have a refusal case. The two per-voice slot counts move into that set
+   when a phase declares per-voice slot *usage*, which is Phase 7's; until then their rows
+   report the profile's own value.
+
+   **That does not discharge `LIMIT-0004`'s disposition, and an earlier revision claimed it did "in substance".** The
+   ledger requires a *job* outside the range to be refused with a job admission error naming the requested rate and the
+   profile range. A job is not a plan and not a profile: it asks for a rate before either exists, so the check belongs to
+   the job contract — [ADR-0028](../decisions/ADR-0028-long-running-job-contract.md), `Deferred` to the Phase 4 entry
+   gate — and remains **outstanding**, not satisfied by a construction failure one layer down. What construction gives is
+   a floor: no out-of-range stream can be prepared even before the job layer exists. Both enforcement points are real and
+   neither substitutes for the other.
 8. **HOST-INV-008** — A node's intrinsic capacity is declared by the node, reported in the `ResourceReport`, and
    contributes to admission. It is not a profile field, and no operator setting may raise it.
 9. **HOST-INV-009** — **Dropping** at runtime is permitted only for the queues explicitly marked *live bounded queue* in
@@ -491,12 +561,11 @@ pub enum CapabilitySource {
     Harness,
 }
 
-/// The subset `::declared` may set. `Device` is absent by construction, so a
-/// declared profile cannot claim to have queried a device.
-pub enum DeclaredSource {
-    Offline,
-    Harness,
-}
+// There is no `DeclaredSource` argument type. An earlier revision had
+// `::declared(.., source: DeclaredSource)`, which put the tag back in the
+// caller's hands: an offline job could pass `Harness` and a harness `Offline`,
+// so the tag said only what the caller typed. One constructor per source
+// removes the argument instead of qualifying the claim.
 
 impl HostCapabilities {
     /// The device path. Every capability is an argument; there is no default for
@@ -507,19 +576,30 @@ impl HostCapabilities {
         channel_layout: ChannelLayout,
     ) -> Result<Self, ProfileError>;
 
-    /// The offline and harness paths, which have no device to query. Sets the
-    /// source it is given, so the tag cannot disagree with the constructor.
-    pub fn declared(
+    /// An offline render or analysis job (ADR-0028), which has no device to
+    /// query. Sets `Offline`; there is no argument that could say otherwise.
+    pub fn offline(
         sample_rate: SampleRate,
         maximum_block_size: FrameCount,
         channel_layout: ChannelLayout,
-        source: DeclaredSource,
+    ) -> Result<Self, ProfileError>;
+
+    /// A test harness constructing IR directly. Sets `Harness`.
+    pub fn harness(
+        sample_rate: SampleRate,
+        maximum_block_size: FrameCount,
+        channel_layout: ChannelLayout,
     ) -> Result<Self, ProfileError>;
 }
 
 /// What the operator budgets. Raisable, at a cost the `ResourceReport` accounts for.
 #[must_use]
 pub struct RenderLimits {
+    /// `LIMIT-0004`'s successor: the range of sample rates a stream may be
+    /// prepared at. A limit rather than a capability because its ledger entry is
+    /// a configurable budget owned by `HostProfile` whose rule refuses an
+    /// out-of-range job *at admission*, which is what only limits do.
+    stream: StreamLimits,
     graph: GraphLimits,
     voices: VoiceLimits,
     events: EventLimits,
@@ -536,11 +616,12 @@ Each group is a struct of newtypes. The newtypes, one per unit:
 
 | Newtype | Unit | Notes |
 |---------|------|-------|
-| `SampleRate` | Hz | Existing `synth_core` newtype |
+| `SampleRate` | Hz | **The V2 type; V1's clamping `synth_core::SampleRate` is replaced, not reused** — the same ground ADR-0021 part 3 gives for `VoiceCount`. See below |
+| `SampleRateRange` | Hz pair | The `accepted_sample_rates` limit. Two V2 `SampleRate`s, **both endpoints inclusive**, with a fallible constructor that rejects `minimum > maximum` and a `maximum` above `DeviceSampleRate::MAX_SUPPORTED`; each endpoint's own validity is the rate type's. Equal endpoints are legal — a fixed-rate host is one rate wide |
 | `FrameCount` | frames | ADR-0032 clause 2; carries the block size, the horizon, and the crossfade |
 | `NodeCount`, `EdgeCount`, `FanOut` | nodes, edges, edges per port | Graph extents after polyphony expansion |
 | `VoiceCount` | voices | The V2 type; V1's clamping `synth_core::VoiceCount` is replaced, not reused (ADR-0021 part 3) |
-| `BusCount`, `SendCount`, `ChannelCount` | buses, sends, mix channels | |
+| `BusCount`, `SendCount`, `MixChannelCount` | buses, sends, mix channels | The mix-channel count is **not** `ChannelCount`: `synth_core::ChannelCount` already exists in this workspace and means a channel *layout* (`Mono`, `Stereo`, `Multi(n)`). Reusing the name for a count of mix channels is the hazard ADR-0032 clause 5 refused for `SampleOffset` — two unrelated meanings one import away |
 | `EventCount` | events | Per quantum, per tick, and per queue |
 | `HeldNoteCount` | held notes | Distinct from `VoiceCount`: a held note is a source obligation, a voice is a resource, and more notes can be held than sounded |
 | `TapCount` | taps | Observation surface |
@@ -549,6 +630,23 @@ Each group is a struct of newtypes. The newtypes, one per unit:
 | `PreparedBytes` | bytes | Three separate fields; the type carries the unit, the field carries the kind |
 | `CostRatio` | dimensionless | Predicted quantum cost over the quantum's real-time budget |
 
+**The rate type is V2's own, because V1's clamps.** `synth_core::SampleRate::new` turns `NaN`, zero, and negative into
+`1.0`, so a constructor handed one cannot tell invalid input from a genuine 1 Hz endpoint, and `HOST-INV-018` asks every
+quantity field for a *fallible* constructor. Two earlier revisions tried to work around this — reusing the existing type,
+then taking raw `f32` Hz at every V2 constructor — and the second traded a silent clamp for an untyped public argument,
+which the repository's newtype rule forbids outright. The resolution is the one the specification already applies one row
+up: ADR-0021 part 3 replaces V1's clamping `VoiceCount` rather than reusing it, and V1's `SampleRate` clamps for the same
+reason and gets the same treatment. V2's `SampleRate` has a private field and a fallible constructor that rejects a
+non-finite or non-positive rate.
+
+**The conversion is one-way, and the asymmetry is the point.** V2 to `synth_core` is infallible and provided: the value
+has already passed V2's validation, and the permitted `synth_dsp` kernels take `synth_core::SampleRate`, so without it the
+only way to reach a kernel would be to unwrap to `f32` and rebuild — an untyped hop at exactly the boundary this rule
+protects. `synth_core` to V2 does **not** exist. A third revision offered it as fallible and claimed that kept clamped
+values out; it cannot. `SampleRate::new(0.0)`, a negative rate, and `NaN` all arrive as `1.0`, which no conversion can
+tell from a rate of one hertz, so a fallible signature would advertise a guarantee it does not hold. A phase that must
+admit a rate from a V1 surface validates the raw value where it is still available, and constructs V2's type directly.
+
 **Ownership.** The application constructs the profile off the audio thread and hands it to the compiler. The compiler
 reads it and produces a prepared plan plus a `ResourceReport`. The renderer reads the prepared plan and never the
 profile. Nothing else holds a reference: a profile is an argument, not a service.
@@ -556,10 +654,11 @@ profile. Nothing else holds a reference: a profile is an argument, not a service
 **Offline and test rendering.** An offline render has no device to query, so `CapabilitySource::Offline` records that the
 capability half was declared rather than discovered, and a report or receipt that quotes a profile can say which it was.
 HOST-INV-003 is therefore **scoped to the device path** rather than universal: a job that declares its capabilities
-through `::declared` is honest, and a device path that fills one in from a constant is the defect. Review found the
+through `::offline` or `::harness` is honest, and a device path that fills one in from a constant is the defect. Review found the
 earlier unconditional wording unsatisfiable — it forbade the offline path the same model provides, and it asked for a
-conformance test no runtime tag can pass, since a `Device` tag cannot prove that a query happened. The two constructors
-move the guarantee from a claim about values to a property of the API shape.
+conformance test no runtime tag can pass, since a `Device` tag cannot prove that a query happened. One constructor per
+source moves what can be guaranteed from a claim about values to a property of the API shape, and HOST-INV-003 states
+exactly how far that reaches.
 
 ## The field set
 
@@ -585,12 +684,28 @@ as a constant — before its revisit point.
 
 ### Capabilities
 
+**Two closed sets, and the conformance test closes both.** `HostCapabilities` has exactly **four** members. Exactly
+**three** of them are queried capabilities — `sample_rate`, `maximum_block_size`, `channel_layout` — which is the set
+ADR-0021 part 4 admits and the set `HOST-INV-005` closes. The fourth, `source`, is the provenance tag those three are
+stamped with; it is admitted by `HOST-INV-003` instead, because nothing queries it. Stating both numbers is deliberate:
+one number alone made three earlier revisions of this section ambiguous about which rule covers `source`.
+
 | Field | Type | Default | Basis | Replaces | Revisit |
 |-------|------|---------|-------|----------|---------|
 | `sample_rate` | `SampleRate` | Queried | Queried | — | — |
-| accepted rate range | `SampleRate` pair | 8 000 – 192 000 Hz | Derived from `DeviceSampleRate::MAX_SUPPORTED`, which `MAX_RENDER_SAMPLE_RATE` already derives from after pass 3's fix | `LIMIT-0004` | Phase 9 |
 | `maximum_block_size` | `FrameCount` | Queried; no compiled-in ceiling | Queried | `LIMIT-0001`, `LIMIT-0057` | Phase 9 |
 | `channel_layout` | `ChannelLayout` | Queried on the device path; supplied by the caller on the declared paths. No compiled-in default | Queried; **ADR-0002 owns what a layout may be** | `LIMIT-0059` | Phase 2 |
+| `source` | `CapabilitySource` | Set by the constructor path, not passed as a free choice among all three variants | **Derived**, by the stated rule that the constructor sets it — **not queried.** `HOST-INV-003`'s every-capability-is-an-argument rule scopes to the three host values above, and that invariant states exactly what the split buys: an unqueried value must be written at the call site, no `Default` exists, and a device-less path has an honest constructor to use. It is not a forgery-proof tag, and two earlier revisions claimed it was | — | — |
+
+**The accepted rate range is a render limit, and this table used to carry it.** It moved to
+[*Stream*](#stream) below, and two failed attempts are worth recording because each broke something different. An
+earlier revision left it here, in the half defined as *queried, never chosen*, while `LIMIT-0004` classifies it as a
+budget the operator configures. The revision after that demoted it to a constructor constant, which would have changed a
+settled classification without a successor decision and taken the range out of the report. What settles it is the ledger
+entry's own rule — a job outside the range "is refused **at admission**" — together with `HOST-INV-005` ground 1, which
+says only `HostProfile`-owned entries participate in admission. A capability is what the plan is *prepared against*; a
+limit is what admission *refuses on*. The range refuses, so it is a limit, and the closed capability set is the four
+fields above, which is what the types sketch always had.
 
 **On the block ceiling.** V1 has two numbers: an engine-wide `MAX_BLOCK_SIZE` of 4 096 frames and a hardcoded advertised
 request range of 128–1 024. V2 keeps neither as a constant. The queried value sizes the carries (HOST-INV-012), so an
@@ -601,6 +716,34 @@ terminal stream-contract fault.
 **There is no floor either.** A device whose largest block is smaller than one quantum is admitted unchanged; see
 HOST-INV-012 for why the render model already handles it and why an earlier `maximum_block_size >= Q` clause was a
 defect rather than a safety margin.
+
+### Stream
+
+| Field | Type | Default | Basis | Replaces | Revisit |
+|-------|------|---------|-------|----------|---------|
+| `accepted_sample_rates` | `SampleRateRange` | 8 000 – 192 000 Hz | **One basis per endpoint.** Maximum: **Derived** from `DeviceSampleRate::MAX_SUPPORTED`, which `MAX_RENDER_SAMPLE_RATE` already derives from after pass 3's fix — reversing the arithmetic reproduces it. Minimum: **Chosen** — below telephone quality nothing this engine ships is usable, and no rule produces 8 000 | `LIMIT-0004` | Phase 9 |
+
+The one limit that does not bound a plan's size. It bounds which streams may be prepared at all, and `HOST-INV-016`
+validates `sample_rate` against it at construction, so a profile cannot be built at a rate its own range excludes. That
+cross-half relation is exactly what `HOST-INV-017` requires of a relation between capacities: declared once, in the
+constructor.
+
+It is also the one limit **no plan can exceed**, because no plan carries a rate — see `HOST-INV-007`'s narrowing. Its
+refusal is a construction failure naming both fields, not a `CompileError`, and its conformance cases sit with
+`HOST-INV-016`. Both endpoints are inclusive, so a host that supports exactly one rate is expressible.
+
+**`LIMIT-0004`'s job-admission error is not this field's to deliver.** The ledger requires an out-of-range *job* to be
+refused with an error naming the requested rate and the profile range. That check runs where a job's requested rate is
+read, which is ADR-0028's job contract, `Deferred` to the Phase 4 entry gate. This field is what such a check reads; it
+is not the check. The obligation is listed under [*Unresolved questions*](#unresolved-questions) so it is not lost.
+
+**Raisable, but not past the engine ceiling.** This is a render limit, so an operator may widen it — within
+`DeviceSampleRate::MAX_SUPPORTED`, which the constructor enforces. The ceiling is not an operator setting for the same
+reason `HOST-INV-008` keeps a node's intrinsic capacity out of the profile: real-time look-ahead and scratch buffers are
+sized from it, and a stream above it gets less DSP than its parameters advertise with no diagnostic. That is exactly the
+defect `LIMIT-0004` records — V1's render command accepted 384 kHz against a 192 kHz engine and silently halved the
+limiter's look-ahead — so a field replacing it must not be able to re-open it. Moving the ceiling is an engine change,
+not a profile change.
 
 ### Graph
 
@@ -851,7 +994,7 @@ section did.
 
 | Field | Type | Default | Basis | Replaces | Revisit |
 |-------|------|---------|-------|----------|---------|
-| `max_mix_channels` | `ChannelCount` | 256 | Chosen | — | Phase 8 |
+| `max_mix_channels` | `MixChannelCount` | 256 | Chosen | — | Phase 8 |
 | `max_buses` | `BusCount` | 64 | Chosen | — | Phase 8 |
 | `max_sends_per_channel` | `SendCount` | 16 | V1 carry-over. **ADR-0034 owns what a send is** | `LIMIT-0024` | Phase 8 |
 
@@ -991,7 +1134,7 @@ being budgeted in the profile.
 |-------|-------|
 | `LIMIT-0001` | `maximum_block_size` |
 | `LIMIT-0002`, `LIMIT-0003` | `buffer_scratch_bytes`; sized from `maximum_block_size` rather than set independently |
-| `LIMIT-0004` | Accepted rate range |
+| `LIMIT-0004` | `accepted_sample_rates`, a `RenderLimits` field — see [*Stream*](#stream) |
 | `LIMIT-0012` | `command_queue_capacity` |
 | `LIMIT-0013` | **None.** The prioritized channel is `N/A — removed` under ADR-0038 part 3: it has no workspace production caller, public external use remains unknown, and initial V2 intentionally breaks that surface. It therefore has no successor field, and `event_queue_capacity` is withdrawn |
 | `LIMIT-0014` | `event_egress_capacity` (the engine-to-GUI ring only, after ADR-0038 part 4's split) — **not** `max_events_per_quantum`, whose antecedent is `LIMIT-0075` |
@@ -1084,9 +1227,14 @@ that this specification reads rather than reinterprets.
 
 **Sizing fields bound nothing and cannot be exceeded**, so asking which behaviour they take is a category error:
 `analyzer_fft_size` sets a resolution, `telemetry_ring_frames` sets a window length (its *eviction* is the lossy
-behaviour, not an overflow), `retirement_crossfade` sets a duration, and the accepted rate range and `channel_layout`
-describe what a stream *is* rather than how much of it there may be. They cost prepared memory and therefore appear in
-the `ResourceReport`; they have no failure row because they have no failure. The closure pass added this paragraph:
+behaviour, not an overflow), `retirement_crossfade` sets a duration, and `channel_layout`
+describes what a stream *is* rather than how much of it there may be. They cost prepared memory and therefore appear in
+the `ResourceReport`; they have no failure row because they have no failure.
+
+**`accepted_sample_rates` is not one of them**, and an earlier revision of this paragraph listed it here. It bounds no
+size, but it does refuse: a rate outside it fails profile construction, which is the first two rows of the table above.
+`HOST-INV-007`'s narrowing says why it is not the third, and why `LIMIT-0004`'s job-admission error stays outstanding
+with ADR-0028 rather than being discharged here. The closure pass added this paragraph:
 HOST-INV-009 had claimed every profile field falls under one of four runtime behaviours, which was false twice over —
 it omitted admission refusal, the behaviour most fields actually take, and it had no place for a field that is a size.
 
@@ -1126,9 +1274,9 @@ exist, in the phase that builds the thing it tests.
 | HOST-INV-001, HOST-INV-002 | A prepared plan renders after its source profile is dropped; the renderer holds no profile reference | 1 |
 | HOST-INV-003 | Two tests, because no runtime check can see where a value came from. **Shape:** `HostCapabilities::from_device` has no defaulted parameter and no `Default` impl, so a caller cannot omit a capability. **Behaviour:** the cpal adapter is driven with a device reporting a non-default buffer range and the resulting profile carries that range — the direct regression test for `LIMIT-0057`, which discarded it | 9 |
 | HOST-INV-004 | Partly a review check — no automated test can see that a default was *reasoned* from `Q`. The mechanical half is ADR-0032 clause 4's compile-time assertion `Q <= QuantumOffset::MAX`, which fails the build when `Q` changes and something was sized to its old value, plus a test that `HostProfile` exposes no field carrying a quantum | 1 |
-| HOST-INV-005 | A test enumerating profile fields against the invariant's three grounds: a ledger entry owned `HostProfile`; a field an accepted ADR creates; and the **enumerated residual set** the invariant lists, each of whose members carries a stated basis and revisit point. The test compares against that explicit list — not against "everything else", which would admit a protocol- or job-owned capacity by default. It asserts each field matches exactly one and fails on a field in none. **It must not enumerate the no-antecedent list**, which is a different axis, and **must not treat a `Replaces` entry as a ground** — `max_held_notes` and `max_events_per_quantum` name `LIMIT-0031` and `LIMIT-0075` as provenance while being admitted by the residual | 1 |
+| HOST-INV-005 | A test enumerating profile fields against their admitting rule. The capability half is asserted against the invariant's **closed enumerated capability set**, so adding a capability field fails the test rather than passing silently. Each `RenderLimits` field is enumerated against the three grounds: a ledger entry owned `HostProfile`; a field an accepted ADR creates; and the **enumerated residual set** the invariant lists, each of whose members carries a stated basis and revisit point. The test compares against that explicit list — not against "everything else", which would admit a protocol- or job-owned capacity by default. It asserts each field matches exactly one and fails on a field in none. **It must not enumerate the no-antecedent list**, which is a different axis, and **must not treat a `Replaces` entry as a ground** — `max_held_notes` and `max_events_per_quantum` name `LIMIT-0031` and `LIMIT-0075` as provenance while being admitted by the residual | 1 |
 | HOST-INV-006 | Every compile — succeeding and failing — returns a report whose every field has requested, available, and a dominant contributor | 1 |
-| HOST-INV-007 | One refusal case per render limit, asserting the error names the field, both amounts, and the authored object; and asserting the plan is unchanged | 1 |
+| HOST-INV-007 | One refusal case per render limit **a plan can exceed** — twenty-eight of them, and the test asserts that the cases *are* that set rather than merely covering some of it. Each asserts the error names the field, both amounts, and the authored object, and that the plan is unchanged. The fourteen fields no plan can exceed are enumerated in the invariant; `accepted_sample_rates` is covered by HOST-INV-016's rows instead | 1 |
 | HOST-INV-008 | A node whose declared capacity is exceeded is refused, and raising every profile field does not admit it | 2 |
 | HOST-INV-009 | Each live bounded queue is overrun and its drop count is asserted in the diagnostics report | 3 |
 | HOST-INV-010 | A project saved under one profile loads and compiles under another; no serialized field names a profile value | 10D |
@@ -1137,7 +1285,7 @@ exist, in the phase that builds the thing it tests.
 | HOST-INV-013 | An ingress event one frame beyond the horizon is rejected and counted; a compiled event hours ahead is released normally; and an admitted event is never re-checked, asserted by the deferral case above | 3 |
 | HOST-INV-014 | The compiler's aggregate equals the sum of node-declared prepared bytes for a plan built from known nodes | 2 |
 | HOST-INV-015 | A plan over the cost budget compiles and warns; no advisory field can produce a `CompileError` | 1 |
-| HOST-INV-016 | A profile with `forward_event_horizon < maximum_block_size + Q` fails construction naming both fields — **and the default profile satisfies it at every admissible `maximum_block_size`**, including one above a second's worth of frames, which is the case the flat one-second default failed | 1 |
+| HOST-INV-016 | A profile with `forward_event_horizon < maximum_block_size + Q` fails construction naming both fields — **and the default profile satisfies it at every admissible `maximum_block_size`**, including one above a second's worth of frames, which is the case the flat one-second default failed. Plus the `accepted_sample_rates` relation, in four cases: a `sample_rate` below the range and one above it each fail naming both fields, and each **inclusive endpoint** is accepted, since a fixed-rate host is a range one rate wide | 1 |
 | HOST-INV-017 | The profile carries two fields and rejects a construction with `script_host_slots_per_voice < mod_matrix_slots_per_voice`, naming both; raising the host slots alone is accepted, which is what V1's `<=` assertion permits and the single-field model forbade. The assertion in `synth_modules` is gone | 7 |
 | HOST-INV-018 | Every **quantity** field's type has a private field and a fallible constructor; no such field is a bare primitive, and `HeldNoteCount` does not convert to or from `VoiceCount`. The two **kind** fields, `channel_layout` and `source`, are asserted to be closed enums instead — the test enumerates both sets, so a new field must be classified rather than silently escaping the check | 1 |
 | HOST-INV-019 | The telemetry ring is overrun and the reader can distinguish a complete window from an overwritten one | 5 |
@@ -1163,6 +1311,7 @@ exist, in the phase that builds the thing it tests.
 | ~~**The class ADR-0021 gave `LIMIT-0013`'s rings.**~~ **Resolved in Phase 0A, not Phase 3.** They are engine egress, not "fed by external, unbounded-in-time input", so `Live bounded queue` never described them. [ADR-0038](../decisions/ADR-0038-engine-egress-queue-classification.md) part 1 supplies the missing rule and part 3 removes the entry as an explicit compatibility break: there is no workspace production caller, while public external use remains unknown | Resolved by accepted ADR-0038 | ADR-0038 |
 | **What V2's renderer-ingress streams are, and what bounds them.** V1 has no timestamped ingress queue to carry over — `LIMIT-0013`'s prioritized rings are engine *egress*, and `LIMIT-0012`'s command ring carries commands rather than positioned events — so the profile currently has no field for the capacity HOST-INV-021's deferral operates against. Bound up with it: the **deferred store**, which needs its own preallocated capacity, since deferral de-orders a FIFO and deferred events must be merged as a stream of their own | No for Phase 1, which compiles rather than renders live. **Yes for Phase 3**, which cannot build admission without them | Phase 3 |
 | Whether ADR-0001 clause 16's clamp preserves or rewrites the event's stamp. HOST-INV-021 decides it for deferral — the stamp is immutable, the render position is derived — and the same question applies to the clamp, where a rewritten stamp would have the same three consequences. It is ADR-0001's to answer, and this specification deliberately does not answer it by implication | No — the two mechanisms are separately counted and separately testable | ADR-0001, Phase 3 |
+| Where `LIMIT-0004`'s **job-admission error** is delivered. The ledger requires an out-of-range job to be refused with an error naming the requested rate and this field's range. Profile construction refuses an out-of-range *stream*, which is a floor rather than that error: a job asks for a rate before a profile exists | No for Phase 1, which has no job layer. **Yes for Phase 4**, which cannot close with the disposition undelivered | ADR-0028, Phase 4 |
 | Whether `max_nodes` should be anchored independently rather than computed from `max_active_voices`, which is itself only measurement-anchored | No | Phase 2 exit |
 | Whether `max_mix_channels` and `max_observation_taps` should be coupled so that every mix channel is guaranteed a tap | No — the report names which budget bound the plan | ADR-0027, Phase 8 |
 | Where a profile is stored and who may edit it — application settings, host configuration, or neither | No — Phase 1 constructs it in code | ADR-0013, ADR-0029, Phase 10A |
@@ -1186,6 +1335,11 @@ the contract:
 | This specification could refine ADR-0001 lateness | The clarification is a Phase 3 entry-gate decision |
 | All egress payloads could share one lossy policy | Custodial payloads require a separate no-loss path under ADR-0038 |
 | A per-instrument held-note count was a plan-wide capacity | `max_held_notes` is plan-wide; node-local holds remain node contracts |
+| `HOST-INV-005`'s three grounds covered every profile field | They govern the `RenderLimits` half. `HostCapabilities` has four members: **three** queried capabilities admitted by ADR-0021 part 4 and ADR-0032 clause 12, with their ledger entries as provenance, plus `source`, which nothing queries and `HOST-INV-003` admits |
+| The accepted rate range was a capability, or could be demoted to a constructor constant | It is a `RenderLimits` field. `LIMIT-0004` is owned `HostProfile` and refused *at admission*, which ground 1 reserves to limits; a capability is what a plan is prepared against, a limit is what admission refuses on |
+| Profile construction discharged `LIMIT-0004`'s job-admission error | It does not. A job requests a rate before a profile exists, so the job-admission error is ADR-0028's and stays outstanding; construction is a floor beneath it |
+| `HostCapabilities` held four queried capabilities | It has four members and **three** queried capabilities — rate, block size, layout — plus `source`, which the constructor derives and `HOST-INV-003` admits. ADR-0021 part 4 could not admit a field nothing queries |
+| V1's `SampleRate` could be reused, or bypassed with raw `f32` Hz | V2 defines its own checked `SampleRate`, on ADR-0021 part 3's `VoiceCount` ground: V1's clamps `NaN`, zero, and negative to `1.0`, and an untyped `f32` argument trades that for a broken newtype rule |
 | Every default informed by EVD-0003 was measurement-derived | One value is derived; two are chosen and anchored; the remainder are queried, carried over, or chosen |
 
 The final independent pass required no contract-clause change. Editorial improvements did not keep the specification

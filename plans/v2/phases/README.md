@@ -60,3 +60,4 @@ adds, drops, or reinterprets scope requires a plan change or an ADR and belongs 
 
 - [Phase 0A: Baseline, limits, and render-core contracts](phase-00a-baseline-and-render-contracts.md)
 - [Phase 0B: Migration inventories and project contracts](phase-00b-inventories-and-project-contracts.md)
+- [Phase 1: Introduce the experimental Sound Core V2 crate](phase-01-experimental-sound-core.md)

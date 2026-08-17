@@ -1,0 +1,19 @@
+[package]
+name = "synth_engine_v2"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+description = "Experimental Sound Core V2 render core for Pertylizer (Phase 1)"
+authors.workspace = true
+license.workspace = true
+
+[lints]
+workspace = true
+
+# The Phase 1 work list fixes this dependency surface: `synth_core` for existing
+# domain newtypes, selected DSP kernels, and nothing else. No GUI, MCP, OSC,
+# CPAL, filesystem, or project-loading dependency may appear here — a test in
+# `tests/crate_boundary.rs` reads this manifest and fails if one does.
+[dependencies]
+synth_core = { path = "../synth_core" }
+thiserror = { workspace = true }

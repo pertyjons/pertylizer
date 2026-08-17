@@ -367,6 +367,7 @@ fn derived_documents_do_not_copy_source_line_citations() {
     let documents = [
         "plans/v2/STATUS.md",
         "plans/v2/phases/phase-00a-baseline-and-render-contracts.md",
+        "plans/v2/phases/phase-01-experimental-sound-core.md",
         "plans/v2/specs/spec-host-profile-and-render-limits.md",
     ];
     let mut bad = Vec::new();

@@ -438,8 +438,12 @@ remaining Phase 0B work continues in parallel.
 - Define the host-driven renderer boundary:
 
 ```rust,ignore
+/// The preparation input. It carries the profile and nothing the profile
+/// already owns: the sample rate is a `HostCapabilities` field under the
+/// `Current` host-profile specification, and a second copy here would give one
+/// stream two rates. This edit lands with Phase 1, on the same footing as
+/// ADR-0001's removal of `quantum` from this struct.
 pub struct RenderConfig {
-    pub sample_rate: SampleRate,
     pub host_profile: HostProfile,
 }
 

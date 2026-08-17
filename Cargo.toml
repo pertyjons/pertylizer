@@ -9,6 +9,9 @@ members = [
     "crates/synth_script",
     "crates/synth_sampler",
     "crates/synth_engine",
+    # Experimental Sound Core V2 (Core V2 Phase 1). Nothing depends on it; it can be
+    # removed by deleting the directory and this line.
+    "crates/synth_engine_v2",
     "crates/synth_mcp",
     "crates/synth_osc",
     "crates/synth_osc_protocol",
