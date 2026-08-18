@@ -22,11 +22,12 @@ use synth_engine_v2::profile::{
 };
 use synth_engine_v2::quantities::{
     Amplitude, BusCount, ChannelLayout, CostRatio, EdgeCount, EventCount, FanOut, Frequency,
-    HeldNoteCount, InstructionCount, MixChannelCount, NodeCount, PreparedBytes, SendCount,
-    SlotCount, TapCount, VoiceCount,
+    GainFactor, HeldNoteCount, InstructionCount, MixChannelCount, NodeCount, PreparedBytes,
+    SendCount, SlotCount, TapCount, VoiceCount,
 };
 use synth_engine_v2::report::{ResourceField, ResourceReport};
 use synth_engine_v2::time::FrameCount;
+use synth_engine_v2::validate::PortDirection;
 
 /// Rebuild a profile's limits with one group replaced.
 struct Groups {
@@ -182,8 +183,20 @@ fn refusal_cases(host: &HostProfile) -> Vec<(ResourceField, GraphIr, HostProfile
         frequency: Frequency::new(440.0).expect("finite"),
         amplitude: Amplitude::new(0.5).expect("finite"),
     });
-    let two_edges = GraphIr::builder()
+    // Two edges leaving one output port, which is what the fan-out row measures. Both
+    // land on real input ports: since P02-T004 put structural validation ahead of the
+    // limit checks — the arena's size is a function of the assignment, so the report
+    // cannot be built before lowering — a fixture with an invalid cable would now be
+    // refused for its cable rather than for the limit it was built to exceed.
+    let fan_out = GraphIr::builder()
         .node(SOURCE, IrNodeKind::Silence, ExecutionScope::Global)
+        .node(
+            NodeId::new(20),
+            IrNodeKind::Gain {
+                factor: GainFactor::new(0.5).expect("finite"),
+            },
+            ExecutionScope::Global,
+        )
         .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
         .connect(
             (SOURCE, PortId::FIRST),
@@ -192,7 +205,7 @@ fn refusal_cases(host: &HostProfile) -> Vec<(ResourceField, GraphIr, HostProfile
         )
         .connect(
             (SOURCE, PortId::FIRST),
-            (OUTPUT, PortId::new(1)),
+            (NodeId::new(20), PortId::FIRST),
             SignalDomain::Audio,
         )
         .build()
@@ -300,12 +313,12 @@ fn refusal_cases(host: &HostProfile) -> Vec<(ResourceField, GraphIr, HostProfile
         ),
         (
             ResourceField::MaxEdges,
-            two_edges.clone(),
+            fan_out.clone(),
             graph(64, 1, 64, 32, 32),
         ),
         (
             ResourceField::MaxFanOutPerPort,
-            two_edges,
+            fan_out,
             graph(64, 64, 1, 32, 32),
         ),
         (
@@ -516,8 +529,9 @@ fn the_advisory_cost_budget_warns_and_never_refuses() {
     );
     let warning = outcome
         .warnings()
-        .first()
+        .iter()
         .copied()
+        .find(|warning| matches!(warning, CompileWarning::AdvisoryBudgetExceeded { .. }))
         .expect("the cost budget must warn");
     match warning {
         CompileWarning::AdvisoryBudgetExceeded {
@@ -531,6 +545,7 @@ fn the_advisory_cost_budget_warns_and_never_refuses() {
             assert!(rendered.contains(&predicted.to_string()));
             assert!(rendered.contains(&permitted.to_string()));
         }
+        other => panic!("expected the advisory budget warning, got {other:?}"),
     }
 }
 
@@ -809,8 +824,9 @@ fn the_scratch_budget_counts_what_preparation_actually_allocates() {
 
 #[test]
 fn an_output_port_this_phase_does_not_render_is_refused_rather_than_dropped() {
-    // Lowering reads the first output port only, so an edge into any other one used to
-    // compile and render silence with nothing said.
+    // Lowering reads the first port only, so an edge into any other one used to compile
+    // and render silence with nothing said. Phase 2 checks it against the node's
+    // declared port table instead, which is why the refusal now names a direction.
     let host = profile(256, ChannelLayout::Mono);
     let ir = GraphIr::builder()
         .node(SOURCE, IrNodeKind::Silence, ExecutionScope::Global)
@@ -824,11 +840,14 @@ fn an_output_port_this_phase_does_not_render_is_refused_rather_than_dropped() {
         .expect("readable plan");
 
     match compile(&ir, &RenderConfig::new(host)).plan() {
-        Err(CompileError::UnsupportedOutputPort { node, port }) => {
+        Err(CompileError::UnknownPort {
+            node, port, needed, ..
+        }) => {
             assert_eq!(*node, OUTPUT);
             assert_eq!(*port, PortId::new(3));
+            assert_eq!(*needed, PortDirection::Input);
         }
-        other => panic!("expected an unsupported-port refusal, got {other:?}"),
+        other => panic!("expected an unknown-port refusal, got {other:?}"),
     }
 }
 
@@ -840,10 +859,10 @@ fn a_second_output_node_is_refused_rather_than_ignored() {
         .node(NodeId::new(9), IrNodeKind::Output, ExecutionScope::Global)
         .build()
         .expect("readable plan");
-    assert!(matches!(
-        compile(&ir, &RenderConfig::new(host)).plan(),
-        Err(CompileError::MultipleOutputs { outputs: 2 })
-    ));
+    match compile(&ir, &RenderConfig::new(host)).plan() {
+        Err(CompileError::MultipleOutputs { outputs }) => assert_eq!(outputs.get(), 2),
+        other => panic!("expected a multiple-output refusal, got {other:?}"),
+    }
 }
 
 #[test]

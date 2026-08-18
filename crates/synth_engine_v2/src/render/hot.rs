@@ -15,8 +15,8 @@ use super::{
     AudioBlockMut, DueEvent, EventPayload, PendingCounts, PreparedRenderer, Renderer, TimedEvents,
 };
 use crate::diagnostics::RenderError;
-use crate::plan::{ParameterTarget, PlanOp, StateSlot};
-use crate::render::SineState;
+use crate::node::kernels;
+use crate::plan::PlanOp;
 use crate::time::{FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, TimeSource};
 
 impl PreparedRenderer {
@@ -89,6 +89,19 @@ impl PreparedRenderer {
             if envelope.epoch() != self.epoch {
                 pending.stale_epoch = pending.stale_epoch.saturating_add(1);
                 continue;
+            }
+
+            // A slot from another plan is the same class of thing as a stale epoch, and
+            // is filtered here for the same reason: after a plan swap, in-flight events
+            // are *ordinary*. Recognising them later, in `apply`, would let five of them
+            // in one quantum fail the call against a capacity of four — turning the
+            // documented post-swap case into a render failure.
+            match event.payload() {
+                EventPayload::SetParameter { slot, .. } if slot.plan() != self.plan.id() => {
+                    pending.foreign_slot = pending.foreign_slot.saturating_add(1);
+                    continue;
+                }
+                EventPayload::SetParameter { .. } => {}
             }
 
             // ADR-0032 clause 21: the forward horizon binds ingress provenance only.
@@ -199,40 +212,29 @@ impl PreparedRenderer {
 
     fn apply(&mut self, payload: EventPayload) {
         match payload {
-            EventPayload::SetParameter {
-                node,
-                parameter,
-                value,
-            } => {
-                let target = self
-                    .plan
-                    .parameter_routes()
-                    .iter()
-                    .find(|route| route.node == node && route.parameter == parameter)
-                    .map(|route| route.target);
-                // An event addressing a parameter this plan does not have changes
-                // nothing. It is not an error: a plan swap can legitimately remove a
-                // node while a stream of events for it is still in flight, and the
-                // epoch check is what catches the case that actually matters.
-                match target {
-                    // A `ParameterValue` is finite by construction, so these assignments
-                    // cannot poison the phase — which is why the type exists rather than a
-                    // check here, where no diagnostic could be produced.
-                    Some(ParameterTarget::SineFrequency(slot)) => {
-                        self.set_sine(slot, |state| state.frequency = value.into_frequency());
-                    }
-                    Some(ParameterTarget::SineAmplitude(slot)) => {
-                        self.set_sine(slot, |state| state.amplitude = value.into_amplitude());
-                    }
-                    None => {}
+            EventPayload::SetParameter { slot, value } => {
+                // A slot indexes **one** plan's target table, and one from another plan
+                // was already refused and counted during resolution — before it could
+                // reach a capacity check. Nothing that arrives here belongs to another
+                // plan.
+                let Some(target) = self.plan.parameter_targets().get(slot.index()).copied() else {
+                    return;
+                };
+                // A `ParameterValue` is finite by construction, so this assignment cannot
+                // poison a phase accumulator — which is why the type exists rather than a
+                // check here, where no diagnostic could be produced. What the control
+                // *means* is the node state's, which is the last place it is known.
+                // Both records, because a control change is a node operation like a
+                // render is: what a value *means* can depend on the prepared data, and an
+                // envelope's release derives its motion from the duration it was
+                // prepared with.
+                let Some(prepared) = self.plan.prepared_nodes().get(target.node.index()) else {
+                    return;
+                };
+                if let Some(state) = self.node_states.get_mut(target.node.index()) {
+                    state.set_control(prepared, target.control, value);
                 }
             }
-        }
-    }
-
-    fn set_sine(&mut self, slot: StateSlot, apply: impl FnOnce(&mut SineState)) {
-        if let Some(state) = self.sine_states.get_mut(slot.index()) {
-            apply(state);
         }
     }
 
@@ -240,92 +242,49 @@ impl PreparedRenderer {
     fn render_quantum(&mut self) -> Result<(), RenderError> {
         let quantum = QUANTUM_FRAMES as usize;
         let quantum_start = self.clock;
-        let rate = f64::from(self.plan.sample_rate().as_f32());
 
         // The plan position of this quantum's first sample. Anchoring is the only
         // place engine time and plan time meet.
         let plan_start = self.plan_position_of(quantum_start);
 
         for index in 0..self.plan.ops().len() {
-            let Some(op) = self.plan.ops().get(index).copied() else {
+            // Borrowed, not copied. A step is the widest thing the schedule holds and a
+            // prepared record is the widest variant of its enum; copying either per node
+            // per quantum would be work proportional to the representation rather than to
+            // the audio. The three fields below are disjoint, which is what lets one loop
+            // hold a shared borrow of the plan while it writes state and buffers.
+            let Some(op) = self.plan.ops().get(index) else {
                 break;
             };
             match op {
-                PlanOp::Silence { out } => {
-                    let base = out.index() * quantum;
-                    for sample in 0..quantum {
-                        if let Some(slot) = self.buffers.get_mut(base + sample) {
-                            *slot = 0.0;
-                        }
-                    }
-                }
-                PlanOp::Constant { out, level } => {
-                    let base = out.index() * quantum;
-                    let level = level.as_f32();
-                    for sample in 0..quantum {
-                        if let Some(slot) = self.buffers.get_mut(base + sample) {
-                            *slot = level;
-                        }
-                    }
-                }
-                PlanOp::Impulse { out, position } => {
-                    let base = out.index() * quantum;
-                    for sample in 0..quantum {
-                        if let Some(slot) = self.buffers.get_mut(base + sample) {
-                            *slot = 0.0;
-                        }
-                    }
-                    if let Some(plan_start) = plan_start {
-                        let offset = position.as_u64().checked_sub(plan_start.as_u64());
-                        if let Some(offset) = offset
-                            && offset < u64::from(QUANTUM_FRAMES)
-                            && let Some(slot) = self.buffers.get_mut(base + offset as usize)
-                        {
-                            *slot = 1.0;
-                        }
-                    }
-                }
-                PlanOp::Sine { out, state } => {
-                    let base = out.index() * quantum;
-                    let Some(current) = self.sine_states.get(state.index()).copied() else {
+                // The whole schedule walk, for every node kind there will ever be. What
+                // runs is a function pointer the compiler resolved; this loop does not
+                // know what kind of node it just ran, which is ADR-0004 clause 2 — adding
+                // a node adds a kernel and a registry entry, and adds nothing here.
+                PlanOp::Node(step) => {
+                    let Some(prepared) = self.plan.prepared_nodes().get(step.node().index()) else {
                         continue;
                     };
-                    // Control values are read once per quantum: a parameter event
-                    // inside a quantum takes effect at the next boundary, which is
-                    // ADR-0001 clause 13's causality made concrete.
-                    let increment = f64::from(current.frequency.as_f32()) / rate;
-                    let amplitude = f64::from(current.amplitude.as_f32());
-                    let mut phase = current.phase;
-                    for sample in 0..quantum {
-                        if let Some(slot) = self.buffers.get_mut(base + sample) {
-                            *slot = (amplitude * (std::f64::consts::TAU * phase).sin()) as f32;
-                        }
-                        phase += increment;
-                        // Both directions. A negative frequency is legal and means the
-                        // phase runs backwards, so wrapping only at 1.0 would let the
-                        // phase fall below zero and grow without bound — feeding `sin`
-                        // ever-larger arguments, which loses precision to range reduction
-                        // instead of staying periodic.
-                        if !(0.0..1.0).contains(&phase) {
-                            phase -= phase.floor();
-                        }
-                    }
-                    if let Some(state) = self.sine_states.get_mut(state.index()) {
-                        state.phase = phase;
-                    }
+                    let Some(state) = self.node_states.get_mut(step.node().index()) else {
+                        continue;
+                    };
+                    let Some(mut io) = kernels::bind(&mut self.buffers, quantum, step, plan_start)
+                    else {
+                        continue;
+                    };
+                    (step.kernel())(prepared, state, &mut io);
                 }
-                PlanOp::OutputMono { source } => {
+                PlanOp::OutputChannel { source, channel } => {
                     let base = source.index() * quantum;
                     let start = self.carry_frames * self.channels;
+                    let channel = channel.get();
                     for frame in 0..quantum {
                         let value = self.buffers.get(base + frame).copied().unwrap_or(0.0);
-                        for channel in 0..self.channels {
-                            if let Some(slot) = self
-                                .output_carry
-                                .get_mut(start + frame * self.channels + channel)
-                            {
-                                *slot = value;
-                            }
+                        if let Some(slot) = self
+                            .output_carry
+                            .get_mut(start + frame * self.channels + channel)
+                        {
+                            *slot = value;
                         }
                     }
                 }
@@ -406,6 +365,9 @@ impl Renderer for PreparedRenderer {
         // Committed only now that the call cannot be rejected.
         for _ in 0..pending.stale_epoch {
             self.diagnostics.count_stale_epoch_event();
+        }
+        for _ in 0..pending.foreign_slot {
+            self.diagnostics.count_foreign_slot_event();
         }
         for _ in 0..pending.out_of_horizon {
             self.diagnostics.count_out_of_horizon_event();

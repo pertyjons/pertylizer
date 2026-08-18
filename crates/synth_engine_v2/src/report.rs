@@ -611,6 +611,7 @@ pub struct ResourceReport {
     latency: LatencyAccounting,
     reported: ReportedQuantities,
     capability_source: crate::profile::CapabilitySource,
+    arena_estimated: bool,
 }
 
 impl ResourceReport {
@@ -626,7 +627,27 @@ impl ResourceReport {
             latency,
             reported,
             capability_source,
+            arena_estimated: false,
         }
+    }
+
+    /// Mark the arena row as an upper bound rather than a measurement.
+    ///
+    /// The arena's size is a function of the *assignment*, and a report produced before
+    /// one exists can only state one buffer per signal. A plan refused before lowering
+    /// therefore carries a scratch row that may be far above what it would have taken —
+    /// a chain of gains collapses to a single buffer — and a reader has no way to tell
+    /// unless the report says so.
+    pub(crate) const fn with_estimated_arena(mut self) -> Self {
+        self.arena_estimated = true;
+        self
+    }
+
+    /// Whether the arena row is an upper bound rather than what preparation would take.
+    ///
+    /// True only on a report that accompanies a refusal made before lowering.
+    pub const fn arena_is_estimated(&self) -> bool {
+        self.arena_estimated
     }
 
     /// Every row.

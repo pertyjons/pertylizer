@@ -1,10 +1,11 @@
 //! Experimental Sound Core V2 render core.
 //!
-//! This crate is Phase 1 of the Core V2 migration. It owns the render-core contracts
-//! Phase 0A accepted — the time and quantum types, the host profile and its admission,
-//! a minimal compiler IR, and a renderer that splits any caller block into the fixed
-//! internal quantum — and **nothing else**. It does not connect to projects, does not
-//! compile V1 patches, and does not schedule live events.
+//! This crate started as Phase 1 of the Core V2 migration and owns the render-core
+//! contracts Phase 0A accepted — the time and quantum types, the host profile and its
+//! admission, a compiler IR, and a renderer that splits any caller block into the fixed
+//! internal quantum. Phase 2 adds graph validation over a declared port table. It does
+//! not connect to projects, does not compile V1 patches, and does not schedule live
+//! events.
 //!
 //! # It can be deleted
 //!
@@ -22,10 +23,13 @@
 //! | Typed quantities | [`quantities`] | `HOST-INV-018` |
 //! | The profile | [`profile`] | Host-profile specification |
 //! | The IR | [`ir`] | Master plan, Phase 1 work list |
+//! | The node registry | [`node`] | ADR-0004 |
 //! | Admission | [`compile`] | `HOST-INV-006`, `HOST-INV-007`, `HOST-INV-015` |
 //! | The report | [`report`] | `HOST-INV-006` |
 //! | Diagnostics | [`diagnostics`] | ADR-0001 clause 16, ADR-0032 clauses 19-21 |
 //! | The prepared plan | [`plan`] | Master plan, layer boundaries |
+//! | Graph validation | [`validate`] | Master plan, Phase 2 work list; ADR-0002, ADR-0033 |
+//! | The buffer arena | `arena` (private) | ADR-0005 |
 //! | Rendering | [`render`] | ADR-0001 clauses 4-9, 11-14, 16 |
 //! | Offline rendering | [`offline`] | ADR-0001 clauses 9-10 |
 //!
@@ -75,9 +79,11 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+mod arena;
 pub mod compile;
 pub mod diagnostics;
 pub mod ir;
+pub mod node;
 pub mod offline;
 pub mod plan;
 pub mod profile;
@@ -85,7 +91,16 @@ pub mod quantities;
 pub mod render;
 pub mod report;
 pub mod time;
+pub mod validate;
 
 #[cfg(test)]
 #[path = "tests/render_allocation.rs"]
 mod render_allocation;
+
+#[cfg(test)]
+#[path = "tests/arena_reuse.rs"]
+mod arena_reuse;
+
+#[cfg(test)]
+#[path = "tests/kernels.rs"]
+mod kernel_tests;

@@ -937,8 +937,14 @@ instrument voice sum
   - mono;
   - stereo;
   - extensible multichannel metadata even if initial output remains stereo.
-- Use the internal channel layout selected by ADR-0002 in Phase 2. Planar is the
-  expected outcome; convert only at host or format boundaries.
+- Use the internal channel layout selected in Phase 2, converting only at host
+  or format boundaries. Planar was the expected outcome and is not what was
+  chosen: ADR-0002 selected it against its own measurement, on a shared-kernel
+  premise ADR-0040 then withdrew. **On ADR-0041's acceptance** the layout
+  becomes **interleaved** — one signal is one buffer of `Q` frames of `c`
+  channels, with a mono signal unchanged. Until that record is accepted ADR-0002
+  is still the standing authority, and this bullet says so rather than running
+  ahead of it.
 - Keep internal floating-point summation linear with headroom. Saturation,
   soft clipping, and limiting are explicit nodes or explicit sink policies, not
   hidden per-channel mixing behavior.
@@ -2987,8 +2993,12 @@ is settled by a preference stated here.
    (EVD-0002) came back inconclusive at the resolution ADR-0037's own rule table
    demands. Confirming or superseding that value against real V2 nodes is a
    [Phase 2 exit-gate item](#phase-2-minimal-compiled-voice-graph).
-2. **Internal channel layout (ADR-0002)** — planar is preferred; verify
-   against module and conversion cost in Phase 2.
+2. **Internal channel layout (ADR-0002; ADR-0041 on its acceptance)** — planar
+   was preferred and was verified against module and conversion cost in Phase 2,
+   by EVD-0008 and then by EVD-0010 against the real voice path. Both
+   measurements selected interleaved, and once the shared-kernel premise was
+   withdrawn ADR-0041 took it — `Proposed` at the time of writing, with ADR-0002
+   standing until it is accepted.
 3. **Event segmentation API (ADR-0003)** — renderer-level segment split versus
    event spans consumed by selected nodes; decide in Phase 3.
 4. **Native node representation (ADR-0004)** — trait objects, enum dispatch,

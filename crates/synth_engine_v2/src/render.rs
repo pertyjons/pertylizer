@@ -16,9 +16,9 @@
 //! compiles out of the build that runs.
 
 use crate::diagnostics::{CompileError, DiagnosticsReport, RenderError};
-use crate::ir::{NodeId, ParameterId};
+use crate::node::kernels::NodeState;
 use crate::plan::{CompiledPlan, PlanOp};
-use crate::quantities::{Amplitude, ChannelLayout, EventCount, Frequency, ParameterValue};
+use crate::quantities::{ChannelLayout, EventCount, ParameterValue};
 use crate::time::{
     FrameCount, QUANTUM_FRAMES, SampleTime, StreamAnchor, StreamEpoch, TimeSource, issue_epoch,
 };
@@ -145,12 +145,15 @@ impl EventEnvelope {
 /// boundary. Lookahead would make a value depend on the future.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum EventPayload {
-    /// Set one parameter of one node.
+    /// Set one compiled parameter slot.
+    ///
+    /// The slot, not the `(node, parameter)` pair: [`CompiledPlan::resolve_parameter`]
+    /// turns an address into one **off the audio thread**, so the render loop indexes
+    /// instead of searching, and an address the plan does not have is caught where a
+    /// caller can still be told about it.
     SetParameter {
-        /// The node addressed.
-        node: NodeId,
-        /// The parameter on it.
-        parameter: ParameterId,
+        /// Which compiled parameter.
+        slot: crate::plan::ParameterSlot,
         /// The new value, validated where it was built.
         value: ParameterValue,
     },
@@ -224,15 +227,6 @@ pub trait Renderer {
     ) -> Result<(), RenderError>;
 }
 
-/// A sine's mutable state.
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub(crate) struct SineState {
-    /// Normalized phase in `[0, 1)`.
-    pub(crate) phase: f64,
-    pub(crate) frequency: Frequency,
-    pub(crate) amplitude: Amplitude,
-}
-
 /// One event, resolved to a render position.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub(crate) struct DueEvent {
@@ -252,8 +246,10 @@ impl DueEvent {
         position: SampleTime::ZERO,
         arrival: 0,
         payload: EventPayload::SetParameter {
-            node: NodeId::FIRST,
-            parameter: ParameterId::FIRST,
+            // Never read: `scratch_len` bounds every read of the scratch. The identity
+            // is the first a process can issue, so even if it were read it would name a
+            // plan this renderer does not hold.
+            slot: crate::plan::ParameterSlot::new(crate::plan::PlanId::FILL, 0),
             value: ParameterValue::ZERO,
         },
     };
@@ -268,6 +264,7 @@ impl DueEvent {
 struct PendingCounts {
     late: u32,
     stale_epoch: u32,
+    foreign_slot: u32,
     out_of_horizon: u32,
     arrival_stamped: u32,
 }
@@ -296,7 +293,7 @@ pub struct PreparedRenderer {
     /// that starts reading it. Preparing it here is what keeps that phase from
     /// discovering it needs an allocation on the audio thread.
     input_carry: Vec<f32>,
-    sine_states: Vec<SineState>,
+    node_states: Vec<NodeState>,
     /// Whether the plan writes the carry at all, decided once at preparation so the
     /// loop does not re-derive a topology fact per quantum.
     has_output: bool,
@@ -330,14 +327,12 @@ impl PreparedRenderer {
                 })?;
         let carry_frames_capacity = max_block.saturating_add(quantum);
 
-        let sine_states = plan
-            .sine_templates()
+        // One state per prepared node, built from the prepared record so the two tables
+        // are parallel by construction rather than by two counters agreeing.
+        let node_states: Vec<NodeState> = plan
+            .prepared_nodes()
             .iter()
-            .map(|template| SineState {
-                phase: 0.0,
-                frequency: template.frequency,
-                amplitude: template.amplitude,
-            })
+            .map(NodeState::initial)
             .collect();
 
         // A call renders at most one quantum more than its frame count spans, so this
@@ -351,7 +346,7 @@ impl PreparedRenderer {
         let has_output = plan
             .ops()
             .iter()
-            .any(|op| matches!(op, PlanOp::OutputMono { .. }));
+            .any(|op| matches!(op, PlanOp::OutputChannel { .. }));
 
         Ok(Self {
             buffers: vec![0.0; plan.buffer_count().saturating_mul(quantum)],
@@ -359,7 +354,7 @@ impl PreparedRenderer {
             // Primed: `Q` frames of silence are already available to serve.
             carry_frames: quantum,
             input_carry: vec![0.0; carry_frames_capacity.saturating_mul(channels)],
-            sine_states,
+            node_states,
             has_output,
             event_scratch: vec![DueEvent::FILL; events_per_quantum.saturating_mul(quanta_per_call)],
             scratch_len: 0,

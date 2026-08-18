@@ -56,6 +56,21 @@ pub enum QuantityError {
         /// The rejected value.
         value: f32,
     },
+    /// A float outside the closed range its domain admits.
+    ///
+    /// Distinct from [`Self::OutOfRange`], which is an *index* outside a set: this is a
+    /// continuous value outside an interval, and the two carry different numbers.
+    #[error("{quantity} must be within {minimum} to {maximum}, and {value} is not")]
+    OutsideInterval {
+        /// The type that refused.
+        quantity: &'static str,
+        /// The rejected value.
+        value: f32,
+        /// The lowest admissible value.
+        minimum: f32,
+        /// The highest admissible value.
+        maximum: f32,
+    },
     /// A range whose endpoints are the wrong way round.
     #[error("sample-rate range {minimum} Hz to {maximum} Hz is inverted")]
     InvertedRange {
@@ -76,6 +91,16 @@ pub enum QuantityError {
         maximum: f32,
         /// The engine-wide ceiling.
         ceiling: f32,
+    },
+    /// An index outside the set it indexes.
+    #[error("{quantity} {value} is outside a set of {maximum}")]
+    OutOfRange {
+        /// The type that refused.
+        quantity: &'static str,
+        /// The rejected index.
+        value: u64,
+        /// How many elements the set has.
+        maximum: u64,
     },
 }
 
@@ -308,6 +333,17 @@ impl SampleRate {
     }
 }
 
+impl SampleRate {
+    /// Half this rate: the highest frequency a stream at it can represent.
+    ///
+    /// Typed, because it is what a node's frequency is *compared against* and a bare
+    /// `f32` there would let a diagnostic carry a negative or non-finite bound. The rate
+    /// is validated positive and finite, so half of it is too.
+    pub fn nyquist(self) -> Frequency {
+        Frequency::new(self.0 / 2.0).unwrap_or(Frequency::ZERO)
+    }
+}
+
 impl std::fmt::Display for SampleRate {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} Hz", self.0)
@@ -479,9 +515,275 @@ impl Amplitude {
     }
 }
 
+/// A linear gain factor: what a signal is multiplied *by*.
+///
+/// Separate from [`Amplitude`], which is how loud a signal *is*. They share a
+/// representation and nothing else: unity is the identity here and a peak there,
+/// values above one are ordinary here and clipping there, and no arithmetic converts
+/// one into the other. Keeping them apart is what stops a node's output level being
+/// passed where its multiplier belongs.
+///
+/// Non-finite is refused, for the same reason [`Frequency`] refuses it. Negative is
+/// legal and inverts the signal.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[must_use]
+pub struct GainFactor(f32);
+
+impl GainFactor {
+    /// Silence: everything multiplied to zero.
+    pub const SILENT: Self = Self(0.0);
+
+    /// The identity.
+    pub const UNITY: Self = Self(1.0);
+
+    /// A gain factor. Must be finite.
+    pub fn new(linear: f32) -> Result<Self, QuantityError> {
+        if linear.is_finite() {
+            Ok(Self(linear))
+        } else {
+            Err(QuantityError::NotFinite {
+                quantity: "GainFactor",
+                value: linear,
+            })
+        }
+    }
+
+    /// The raw factor.
+    pub const fn as_f32(self) -> f32 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for GainFactor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "x{}", self.0)
+    }
+}
+
 impl std::fmt::Display for Amplitude {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
+    }
+}
+
+/// How many frames one envelope segment lasts.
+///
+/// A count of frames, not a position on the stream: [`crate::time::FrameCount`] is that,
+/// and it is a `u64` because a stream outlives any segment. This is bounded at
+/// `u32::MAX` — a little over a day at 48 kHz — and the bound is enforced where a
+/// duration becomes a count, because that is the only place a diagnostic can be produced.
+/// Zero is legal and means instantaneous.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[must_use]
+pub struct SegmentFrames(u32);
+
+impl SegmentFrames {
+    /// Instantaneous.
+    pub const NONE: Self = Self(0);
+
+    /// A count of frames.
+    pub const fn new(frames: u32) -> Self {
+        Self(frames)
+    }
+
+    /// The count.
+    pub const fn get(self) -> u32 {
+        self.0
+    }
+
+    /// One frame fewer, stopping at zero.
+    pub const fn spent(self) -> Self {
+        Self(self.0.saturating_sub(1))
+    }
+
+    /// Whether the segment has no frames left.
+    pub const fn is_finished(self) -> bool {
+        self.0 == 0
+    }
+}
+
+impl std::fmt::Display for SegmentFrames {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} frames", self.0)
+    }
+}
+
+/// A level in `[0, 1]`.
+///
+/// Separate from [`Amplitude`], which deliberately admits negative values — an inverted
+/// signal is an ordinary thing — and values above one, which are ordinary too. A
+/// *level* is neither: an envelope's sustain outside `[0, 1]` would invert or amplify
+/// whatever reads it, and a negative one would make the segment that falls towards it
+/// rise instead.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[must_use]
+pub struct NormalizedLevel(f32);
+
+impl NormalizedLevel {
+    /// The bottom of the range.
+    pub const ZERO: Self = Self(0.0);
+
+    /// The top of the range.
+    pub const FULL: Self = Self(1.0);
+
+    /// A level. Must be finite and within `[0, 1]`.
+    pub fn new(level: f32) -> Result<Self, QuantityError> {
+        if !level.is_finite() {
+            return Err(QuantityError::NotFinite {
+                quantity: "NormalizedLevel",
+                value: level,
+            });
+        }
+        if !(0.0..=1.0).contains(&level) {
+            return Err(QuantityError::OutsideInterval {
+                quantity: "NormalizedLevel",
+                value: level,
+                minimum: 0.0,
+                maximum: 1.0,
+            });
+        }
+        Ok(Self(level))
+    }
+
+    /// The raw level.
+    pub const fn as_f32(self) -> f32 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for NormalizedLevel {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.0)
+    }
+}
+
+/// A duration in seconds.
+///
+/// The unit an authored envelope segment is written in. It is **not** a position: this
+/// crate's positions and spans in frames are [`crate::time::FrameCount`] and
+/// [`crate::time::PlanPosition`], and the two kinds of time meet exactly once, where a
+/// segment's duration becomes a per-sample increment against a rate.
+///
+/// Zero is legal and means instantaneous. Negative is not: a segment that runs backwards
+/// has no meaning, and admitting one would put a negative increment into an envelope.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[must_use]
+pub struct Seconds(f32);
+
+impl Seconds {
+    /// Instantaneous.
+    pub const ZERO: Self = Self(0.0);
+
+    /// A duration. Must be finite and not negative.
+    pub fn new(seconds: f32) -> Result<Self, QuantityError> {
+        if !seconds.is_finite() {
+            return Err(QuantityError::NotFinite {
+                quantity: "Seconds",
+                value: seconds,
+            });
+        }
+        if seconds < 0.0 {
+            return Err(QuantityError::Negative {
+                quantity: "Seconds",
+                value: seconds,
+            });
+        }
+        Ok(Self(seconds))
+    }
+
+    /// The raw duration.
+    pub const fn as_f32(self) -> f32 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for Seconds {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} s", self.0)
+    }
+}
+
+/// A filter's corner frequency.
+///
+/// Separate from [`Frequency`], which a phase accumulator turns into a waveform and which
+/// is legally negative — a sine running backwards is an ordinary thing. A corner
+/// frequency is not: zero or negative has no filter, and the coefficient formula that
+/// consumes it divides by a sine of it. The type refuses both, and the *upper* bound is
+/// refused where the stream is known, because Nyquist is a property of the rate rather
+/// than of the value.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[must_use]
+pub struct CutoffFrequency(f32);
+
+impl CutoffFrequency {
+    /// A corner frequency. Must be finite and above zero.
+    pub fn new(hz: f32) -> Result<Self, QuantityError> {
+        if !hz.is_finite() {
+            return Err(QuantityError::NotFinite {
+                quantity: "CutoffFrequency",
+                value: hz,
+            });
+        }
+        if hz <= 0.0 {
+            return Err(QuantityError::NotPositive {
+                quantity: "CutoffFrequency",
+                value: hz,
+            });
+        }
+        Ok(Self(hz))
+    }
+
+    /// The raw frequency.
+    pub const fn as_f32(self) -> f32 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for CutoffFrequency {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} Hz", self.0)
+    }
+}
+
+/// A filter's quality factor.
+///
+/// Must be finite and above zero: the coefficient formula divides by twice this value, so
+/// zero is not a flat filter but a division. Values below `0.5` are overdamped and legal;
+/// values well above it resonate, which is the point.
+#[derive(Debug, Clone, Copy, PartialEq, PartialOrd)]
+#[must_use]
+pub struct Resonance(f32);
+
+impl Resonance {
+    /// The neutral, maximally flat value.
+    pub const BUTTERWORTH: Self = Self(std::f32::consts::FRAC_1_SQRT_2);
+
+    /// A quality factor. Must be finite and above zero.
+    pub fn new(q: f32) -> Result<Self, QuantityError> {
+        if !q.is_finite() {
+            return Err(QuantityError::NotFinite {
+                quantity: "Resonance",
+                value: q,
+            });
+        }
+        if q <= 0.0 {
+            return Err(QuantityError::NotPositive {
+                quantity: "Resonance",
+                value: q,
+            });
+        }
+        Ok(Self(q))
+    }
+
+    /// The raw quality factor.
+    pub const fn as_f32(self) -> f32 {
+        self.0
+    }
+}
+
+impl std::fmt::Display for Resonance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Q {}", self.0)
     }
 }
 
@@ -558,6 +860,44 @@ impl ChannelLayout {
             Self::Mono => 1,
             Self::Stereo => 2,
         }
+    }
+}
+
+/// One channel's position within a layout.
+///
+/// Validated against the layout it indexes, so a channel a stream does not have is
+/// unrepresentable rather than silently dropped by a bounds-checked write. ADR-0002
+/// clause 4 makes ordering part of the layout — channel 0 of a stereo signal is the
+/// left channel — which is why this is an index into an ordered set and not a count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[must_use]
+pub struct ChannelIndex(u16);
+
+impl ChannelIndex {
+    /// The first channel, which every layout has.
+    pub const FIRST: Self = Self(0);
+
+    /// A channel of `layout`.
+    pub fn in_layout(index: usize, layout: ChannelLayout) -> Result<Self, QuantityError> {
+        let raw = u16::try_from(index)
+            .ok()
+            .filter(|_| index < layout.channels());
+        raw.map(Self).ok_or(QuantityError::OutOfRange {
+            quantity: "ChannelIndex",
+            value: index as u64,
+            maximum: layout.channels() as u64,
+        })
+    }
+
+    /// The index.
+    pub const fn get(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl std::fmt::Display for ChannelIndex {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "channel {}", self.0)
     }
 }
 

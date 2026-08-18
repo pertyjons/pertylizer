@@ -6,20 +6,27 @@
 //! limit may not rewrite authored data — and it returns a resource report either
 //! way, because a refusal is a report plus an error and never an error alone.
 
+use std::collections::HashMap;
+
+use crate::arena::{self, ArenaPolicy};
 use crate::diagnostics::{CompileError, CompileWarning};
-use crate::ir::{ExecutionScope, GraphIr, IrNodeKind, IrObject, NodeId, PortId, parameters};
+use crate::ir::{GraphIr, IrNodeKind, IrObject, NodeId, PortId};
+use crate::node::kernels::{MAX_INPUTS, PreparedNode};
+use crate::node::{self, NodeDescriptor};
 use crate::plan::{
-    BufferSlot, CompiledPlan, ParameterRoute, ParameterTarget, PlanOp, SineTemplate, StateSlot,
+    BufferSlot, CompiledPlan, NodeSlot, NodeStep, ParameterAddress, ParameterSlot, ParameterTarget,
+    PlanOp, issue_plan_id,
 };
 use crate::profile::HostProfile;
 use crate::quantities::{
-    EdgeCount, InstructionCount, NodeCount, PreparedBytes, SlotCount, TapCount,
+    ChannelIndex, EdgeCount, InstructionCount, NodeCount, PreparedBytes, SlotCount, TapCount,
 };
 use crate::report::{
     Fit, LatencyAccounting, LatencyContributor, ReportedQuantities, ResourceAmount, ResourceField,
     ResourceReport, ResourceRow,
 };
 use crate::time::{FrameCount, QUANTUM_FRAMES};
+use crate::validate::{Validated, validate};
 
 /// The preparation input.
 ///
@@ -84,38 +91,145 @@ impl CompileOutcome {
 
 /// Compile `ir` against `config`.
 ///
-/// The order is deliberate: the report is built first, because it is what a refusal
-/// carries; then the admission-checked rows are examined in field order, so a plan
-/// over two limits is refused on the first rather than on whichever check happened
-/// to run first.
+/// The order is deliberate, and P02-T004 changed it. It is, exactly:
+///
+/// 1. build a **preflight** report over an arena size that can be known without an
+///    assignment — one buffer per signal, an upper bound, and the report says so;
+/// 2. **validate the structure**, because an invalid cable is the actionable diagnostic
+///    and refusing a malformed graph on a limit instead would hide it;
+/// 3. refuse on any admission-checked field **before** the arena row, so a graph the
+///    profile refuses outright never reaches lowering or liveness analysis;
+/// 4. lower, assign the arena, and rebuild the report over what it actually takes;
+/// 5. refuse on any remaining field.
+///
+/// Field order decides which refusal a plan gets, so step 3 stops at the arena row: a
+/// later field must not be reported ahead of a scratch overrun the exact figure would
+/// have found. Structure moved ahead of the limits because the arena's size is a
+/// function of the assignment — reuse means a plan allocates fewer buffers than it has
+/// signals — and a report built before lowering can only state an upper bound, which
+/// refuses plans that fit. Every refusal still carries a report, which `HOST-INV-006`
+/// admits no exception to; a refusal from step 2 or 3 carries the preflight one, marked
+/// as estimated.
 pub fn compile(ir: &GraphIr, config: &RenderConfig) -> CompileOutcome {
+    compile_with(ir, config, ArenaPolicy::Reuse)
+}
+
+/// Compile under a chosen arena policy.
+///
+/// Crate-private, and [`ArenaPolicy::NoReuse`] exists for ADR-0005 clause 8's
+/// behavioural check alone: the same plan compiled both ways must render bit-identical
+/// audio. It is not reachable from a host profile and is not a supported configuration.
+pub(crate) fn compile_with(
+    ir: &GraphIr,
+    config: &RenderConfig,
+    policy: ArenaPolicy,
+) -> CompileOutcome {
     let profile = config.host_profile();
-    let rows = build_rows(ir, profile);
-    let (script_work, script_contributor) = ir.script_instructions_per_quantum();
-    let report = ResourceReport::new(
-        rows,
-        LatencyAccounting::default().with(
-            // ADR-0001 clause 7 requires this to be a *named* contributor: a latency
-            // that is implicit is a latency nobody compensates, and its own risk
-            // control is that it must appear in the report ADR-0022 consumes.
-            LatencyContributor::RenderQuantumCarry,
-            FrameCount::QUANTUM,
-        ),
-        ReportedQuantities::new(script_work, script_contributor),
-        profile.capabilities().source(),
-    );
-
     let mut warnings = Vec::new();
-    let mut refusal = None;
 
+    // The report a refused plan carries, over the arena size that can be known before an
+    // assignment exists. Advisory findings are collected from it on both refusal paths,
+    // so a report showing an overrun is never returned with no warning to match.
+    let preflight = build_report(
+        ir,
+        profile,
+        arena_upper_bound(ir, profile),
+        inserted_records_upper_bound(ir, profile),
+    )
+    .with_estimated_arena();
+
+    // **Structure first**, whatever else is wrong: an invalid cable is the actionable
+    // diagnostic, and refusing a malformed graph on a limit instead would hide it. The
+    // walk is proportional to a graph the caller has already built, and it is the cheap
+    // half — lowering and liveness analysis are what the preflight below protects.
+    let validated = match validate(ir, profile.capabilities().channel_layout()) {
+        Ok(validated) => validated,
+        Err(error) => {
+            first_refusal(&preflight, &mut warnings, RefuseUpTo::Arena);
+            return CompileOutcome {
+                report: preflight,
+                warnings,
+                plan: Err(error),
+            };
+        }
+    };
+
+    // Then the limits that do not depend on the arena, so an oversized graph is refused
+    // before anything is lowered. Only fields *before* the arena row can be decided
+    // here: a later field must not be reported ahead of a scratch overrun the exact
+    // figure would have found, because a plan over two limits is refused on the first.
+    if let Some(error) = first_refusal(&preflight, &mut warnings, RefuseUpTo::Arena) {
+        return CompileOutcome {
+            report: preflight,
+            warnings,
+            plan: Err(error),
+        };
+    }
+
+    warnings.clear();
+    warnings.extend_from_slice(validated.warnings());
+
+    let lowered = lower(ir, profile, &validated, &mut warnings, policy);
+    let report = build_report(ir, profile, lowered.buffers as u64, lowered.inserted as u64);
+
+    // The field scan runs **whatever else is wrong**, because it is also what collects
+    // the advisory warnings, and a report whose warnings describe a different plan than
+    // its rows is the one thing this contract cannot produce. Which refusal is *returned*
+    // is the separate question: a node the stream cannot carry wins, because it is the
+    // actionable diagnostic in the same way an invalid cable is — reporting a resource
+    // field instead would send a reader to the profile for a plan whose corner frequency
+    // is simply above its rate.
+    let over_limit = first_refusal(&report, &mut warnings, RefuseUpTo::EveryField);
+    let refusal = lowered.fault.or(over_limit);
+
+    let plan = match refusal {
+        Some(error) => Err(error),
+        None => Ok(lowered.into_plan(profile)),
+    };
+
+    CompileOutcome {
+        report,
+        warnings,
+        plan,
+    }
+}
+
+/// How far through the field order a pass may refuse.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RefuseUpTo {
+    /// Only the fields before the arena's, whose exact size needs an assignment.
+    Arena,
+    /// Every field.
+    EveryField,
+}
+
+/// The first field the plan exceeds, in field order, collecting advisory warnings.
+///
+/// Field order, not check order: a plan over two limits is refused on the first rather
+/// than on whichever check happened to run first. Warnings are collected over **every**
+/// field regardless of how far refusal may reach, so a report and its warnings always
+/// describe the same plan.
+fn first_refusal(
+    report: &ResourceReport,
+    warnings: &mut Vec<CompileWarning>,
+    scope: RefuseUpTo,
+) -> Option<CompileError> {
+    let mut refusal = None;
+    let mut reached_arena = false;
     for field in ResourceField::ALL {
+        if field == ResourceField::BufferScratchBytes {
+            reached_arena = true;
+        }
+        let may_refuse = scope == RefuseUpTo::EveryField || !reached_arena;
         let Some(row) = report.row(field) else {
             continue;
         };
         match row.fit() {
             Fit::Within => {}
             Fit::UnitMismatch => {
-                refusal = refusal.or(Some(CompileError::ReportUnitMismatch { field }));
+                if may_refuse {
+                    refusal = refusal.or(Some(CompileError::ReportUnitMismatch { field }));
+                }
             }
             Fit::Exceeds => {
                 if field.is_advisory() {
@@ -125,7 +239,7 @@ pub fn compile(ir: &GraphIr, config: &RenderConfig) -> CompileOutcome {
                         permitted: row.available(),
                         contributor: row.contributor(),
                     });
-                } else if field.is_admission_checked() {
+                } else if field.is_admission_checked() && may_refuse {
                     refusal = refusal.or(Some(CompileError::LimitExceeded {
                         field,
                         requested: row.requested(),
@@ -136,29 +250,80 @@ pub fn compile(ir: &GraphIr, config: &RenderConfig) -> CompileOutcome {
             }
         }
     }
+    refusal
+}
 
-    let plan = match refusal {
-        Some(error) => Err(error),
-        None => lower(ir, profile),
-    };
+/// The report, over an arena size and a record count the caller has established.
+fn build_report(
+    ir: &GraphIr,
+    profile: &HostProfile,
+    arena_buffers: u64,
+    inserted_records: u64,
+) -> ResourceReport {
+    let (script_work, script_contributor) = ir.script_instructions_per_quantum();
+    ResourceReport::new(
+        build_rows(ir, profile, arena_buffers, inserted_records),
+        LatencyAccounting::default().with(
+            // ADR-0001 clause 7 requires this to be a *named* contributor: a latency
+            // that is implicit is a latency nobody compensates, and its own risk
+            // control is that it must appear in the report ADR-0022 consumes.
+            LatencyContributor::RenderQuantumCarry,
+            FrameCount::QUANTUM,
+        ),
+        ReportedQuantities::new(script_work, script_contributor),
+        profile.capabilities().source(),
+    )
+}
 
-    CompileOutcome {
-        report,
-        warnings,
-        plan,
+/// How many quantum-sized buffers the arena will hold.
+///
+/// Counted here and used by lowering, so admission and preparation cannot disagree:
+/// one buffer per producing node, plus one per channel a mono signal is widened into
+/// at the output. An earlier revision counted only the producing nodes, so a stereo
+/// plan was admitted against a scratch budget and then allocated past it — the same
+/// defect the event scratch had in Phase 1, in a different place.
+fn arena_upper_bound(ir: &GraphIr, profile: &HostProfile) -> u64 {
+    let producers = ir.nodes().iter().filter(|n| n.kind().is_source()).count() as u64;
+    producers.saturating_add(inserted_records_upper_bound(ir, profile))
+}
+
+/// How many operations the **compiler** adds beyond the authored nodes, at most.
+///
+/// One per channel a mono signal is widened into at the output, and each of them is both
+/// a buffer and a prepared record — ADR-0002 clause 7 makes the widening a scheduled
+/// operation with an identity, so it costs what an operation costs. Only an output
+/// something reaches is widened: lowering skips one with no incoming edge, so charging it
+/// would refuse a plan that fits. An unreached output is admitted with a warning rather
+/// than refused, which is exactly the case that would otherwise be measured against
+/// memory it never takes.
+fn inserted_records_upper_bound(ir: &GraphIr, profile: &HostProfile) -> u64 {
+    let reached_output = ir
+        .nodes()
+        .iter()
+        .filter(|node| matches!(node.kind(), IrNodeKind::Output))
+        .any(|output| ir.edges().iter().any(|edge| edge.to().0 == output.id()));
+    if reached_output {
+        profile.capabilities().channel_layout().channels() as u64 - 1
+    } else {
+        0
     }
 }
 
 /// One row per field that carries an amount, in field order.
-fn build_rows(ir: &GraphIr, profile: &HostProfile) -> Vec<ResourceRow> {
+fn build_rows(
+    ir: &GraphIr,
+    profile: &HostProfile,
+    arena_buffers: u64,
+    inserted_records: u64,
+) -> Vec<ResourceRow> {
     let capabilities = profile.capabilities();
     let limits = profile.limits();
     let declarations = ir.declarations();
 
-    let (prepared_bytes, prepared_contributor) = ir.prepared_bytes();
-    let (mutable_bytes, mutable_contributor) = ir.mutable_bytes();
+    let (prepared_bytes, prepared_contributor) = ir.prepared_bytes(inserted_records);
+    let (mutable_bytes, mutable_contributor) = ir.mutable_bytes(inserted_records);
     let (peak_fan_out, fan_out_contributor) = ir.peak_fan_out();
-    let scratch_bytes = scratch_bytes(ir, profile);
+    let scratch_bytes = scratch_bytes(profile, arena_buffers);
 
     let node_count = NodeCount::measured(u32::try_from(ir.nodes().len()).unwrap_or(u32::MAX));
     let edge_count = EdgeCount::measured(u32::try_from(ir.edges().len()).unwrap_or(u32::MAX));
@@ -505,7 +670,7 @@ fn push_script_rows(rows: &mut Vec<ResourceRow>, ir: &GraphIr, profile: &HostPro
 /// The carries are the one part that computes exactly: ADR-0001 clause 5 sizes both
 /// at `maximum_block_size + Q` frames, and clause 6 primes the output one. Everything
 /// else is one quantum-sized buffer per source, which is Phase 1's arena.
-fn scratch_bytes(ir: &GraphIr, profile: &HostProfile) -> PreparedBytes {
+fn scratch_bytes(profile: &HostProfile, arena_buffers: u64) -> PreparedBytes {
     let channels = profile.capabilities().channel_layout().channels() as u64;
     let carry_frames = profile
         .capabilities()
@@ -514,8 +679,7 @@ fn scratch_bytes(ir: &GraphIr, profile: &HostProfile) -> PreparedBytes {
         .saturating_add(u64::from(QUANTUM_FRAMES));
     let sample = size_of::<f32>() as u64;
 
-    let sources = ir.nodes().iter().filter(|n| n.kind().is_source()).count() as u64;
-    let buffers = sources.saturating_mul(u64::from(QUANTUM_FRAMES));
+    let buffers = arena_buffers.saturating_mul(u64::from(QUANTUM_FRAMES));
     // Two carries, per ADR-0001 clause 5. Phase 1 has no node that consumes live
     // input, so the input carry is prepared and not read — the memory is reserved
     // because the contract sizes it, and the phase that adds an input-consuming node
@@ -548,237 +712,263 @@ fn output_object(ir: &GraphIr) -> IrObject {
         .map_or(IrObject::Plan, |node| IrObject::Node(node.id()))
 }
 
-/// Turn an admitted IR into the operations the renderer executes.
-fn lower(ir: &GraphIr, profile: &HostProfile) -> Result<CompiledPlan, CompileError> {
-    let mut ops = Vec::new();
-    let mut sine_templates = Vec::new();
-    let mut parameter_routes = Vec::new();
-    // Source node -> its buffer, in declaration order. A linear scan over a handful
-    // of entries at *compile* time; nothing here runs on the audio thread.
-    let mut buffers: Vec<(NodeId, BufferSlot)> = Vec::new();
+/// Turn a validated IR into the operations the renderer executes.
+///
+/// Lowering makes no structural decisions: [`crate::validate`] has already refused
+/// every graph this could not express, and the execution order it produced is what
+/// this walks. A check here would be a second authority on the same question.
+///
+/// It makes no *node* decisions either. What a kind declares — its ports, its controls,
+/// its prepared data, its kernel, whether it may run in place — comes from
+/// [`crate::node`], so this function is the same code for a plan of sines and a plan of
+/// filters. That is ADR-0004 clause 2 one layer below the render loop.
+struct Lowered {
+    id: crate::plan::PlanId,
+    ops: Vec<PlanOp>,
+    buffers: usize,
+    /// Records the compiler added beyond the authored nodes, for the exact report.
+    inserted: usize,
+    /// The first node that could not be prepared for this stream, if any.
+    ///
+    /// Carried out rather than returned early, because a refusal owes a report and the
+    /// report is exact only once the schedule and the arena exist. `HOST-INV-006` admits
+    /// no plan-shaped exception to that.
+    fault: Option<CompileError>,
+    prepared_nodes: Vec<PreparedNode>,
+    parameter_targets: Vec<ParameterTarget>,
+    parameter_addresses: Vec<ParameterAddress>,
+}
 
-    for node in ir.nodes() {
-        if !node.kind().is_source() {
+impl Lowered {
+    /// Attach the capacities admission copied in.
+    fn into_plan(self, profile: &HostProfile) -> CompiledPlan {
+        let capabilities = profile.capabilities();
+        CompiledPlan::new(
+            self.id,
+            self.ops,
+            self.buffers,
+            self.prepared_nodes,
+            self.parameter_targets,
+            self.parameter_addresses,
+            capabilities.channel_layout(),
+            capabilities.sample_rate(),
+            capabilities.maximum_block_size(),
+            profile.limits().events().max_events_per_quantum(),
+            profile.limits().events().forward_event_horizon(),
+            FrameCount::QUANTUM,
+        )
+    }
+}
+
+/// What lowering accumulates while it walks the schedule.
+struct Lowering {
+    ops: Vec<PlanOp>,
+    prepared_nodes: Vec<PreparedNode>,
+    buffer_count: usize,
+    inserted: usize,
+}
+
+impl Lowering {
+    /// Schedule one node: its prepared record, its output buffer, its step.
+    ///
+    /// The one place a step is built, so an authored node and a compiler-inserted
+    /// operation are scheduled by the same code and the arena cannot tell them apart.
+    fn schedule(
+        &mut self,
+        descriptor: &NodeDescriptor,
+        prepared: PreparedNode,
+        inputs: [Option<BufferSlot>; MAX_INPUTS],
+    ) -> (NodeSlot, BufferSlot) {
+        let node = NodeSlot::new(self.prepared_nodes.len());
+        self.prepared_nodes.push(prepared);
+        let out = BufferSlot::new(self.buffer_count);
+        self.buffer_count += 1;
+        self.ops.push(PlanOp::Node(NodeStep::new(
+            descriptor.kernel,
+            node,
+            out,
+            inputs,
+            descriptor.in_place_safe,
+        )));
+        (node, out)
+    }
+}
+
+fn lower(
+    ir: &GraphIr,
+    profile: &HostProfile,
+    validated: &Validated,
+    warnings: &mut Vec<CompileWarning>,
+    policy: ArenaPolicy,
+) -> Lowered {
+    let plan_id = issue_plan_id();
+    let rate = profile.capabilities().sample_rate();
+    let mut state = Lowering {
+        ops: Vec::new(),
+        prepared_nodes: Vec::new(),
+        buffer_count: 0,
+        inserted: 0,
+    };
+    let mut fault = None;
+    let mut parameter_targets = Vec::new();
+    let mut parameter_addresses = Vec::new();
+
+    // Indexed once, because the naive form is quadratic: a plan near `max_nodes` would
+    // otherwise scan every edge for every node. Hashing off the audio thread is fine;
+    // a compile that takes a billion steps for an admitted plan is not. Keyed by
+    // **port**, not by node: a node with two inputs has two of them, and validation has
+    // already refused a second edge into either.
+    let mut source_of: HashMap<(NodeId, PortId), NodeId> = HashMap::with_capacity(ir.edges().len());
+    for edge in ir.edges() {
+        source_of.entry(edge.to()).or_insert(edge.from().0);
+    }
+    let mut slots: HashMap<NodeId, BufferSlot> = HashMap::with_capacity(ir.nodes().len());
+
+    let kinds: HashMap<NodeId, IrNodeKind> = ir
+        .nodes()
+        .iter()
+        .map(|node| (node.id(), node.kind()))
+        .collect();
+
+    for id in validated.order() {
+        let Some(kind) = kinds.get(id).copied() else {
             continue;
-        }
-        let out = BufferSlot::new(buffers.len());
-        buffers.push((node.id(), out));
-        match node.kind() {
-            IrNodeKind::Silence => ops.push(PlanOp::Silence { out }),
-            IrNodeKind::Constant { level } => ops.push(PlanOp::Constant { out, level }),
-            IrNodeKind::Impulse { position } => ops.push(PlanOp::Impulse { out, position }),
-            IrNodeKind::Sine {
-                frequency,
-                amplitude,
-            } => {
-                let state = StateSlot::new(sine_templates.len());
-                sine_templates.push(SineTemplate {
-                    frequency,
-                    amplitude,
-                });
-                parameter_routes.push(ParameterRoute {
-                    node: node.id(),
-                    parameter: parameters::SINE_FREQUENCY,
-                    target: ParameterTarget::SineFrequency(state),
-                });
-                parameter_routes.push(ParameterRoute {
-                    node: node.id(),
-                    parameter: parameters::SINE_AMPLITUDE,
-                    target: ParameterTarget::SineAmplitude(state),
-                });
-                ops.push(PlanOp::Sine { out, state });
+        };
+        let Some(descriptor) = node::descriptor(kind) else {
+            // The output node: emitted last by construction, because the order puts a
+            // node after everything that feeds it and the output is fed by everything.
+            lower_output(
+                ir, profile, validated, warnings, &mut state, &slots, &source_of, *id,
+            );
+            continue;
+        };
+
+        // Inputs in the order the node declares them, so port identity — not edge
+        // order, and not declaration order — decides which slot a kernel reads first.
+        let mut inputs = [None; MAX_INPUTS];
+        let declared = descriptor
+            .ports
+            .iter()
+            .filter(|port| port.direction() == crate::validate::PortDirection::Input);
+        for (index, port) in declared.enumerate() {
+            let source = source_of
+                .get(&(*id, port.id()))
+                .and_then(|from| slots.get(from).copied());
+            if let Some(entry) = inputs.get_mut(index) {
+                *entry = source;
             }
-            IrNodeKind::Output => {}
+        }
+
+        let prepared = match node::prepare(*id, kind, rate) {
+            Ok(prepared) => prepared,
+            Err(error) => {
+                // The schedule is still built, with silence where the node would have
+                // been, so the arena and the report describe a plan of the right shape.
+                // Nothing renders it: the outcome carries the refusal.
+                fault = fault.or(Some(error));
+                PreparedNode::Silence
+            }
+        };
+        let (node_slot, out) = state.schedule(&descriptor, prepared, inputs);
+        slots.insert(*id, out);
+
+        for spec in &descriptor.controls {
+            let slot = ParameterSlot::new(plan_id, parameter_targets.len());
+            parameter_targets.push(ParameterTarget {
+                node: node_slot,
+                control: spec.control,
+            });
+            parameter_addresses.push(ParameterAddress {
+                node: *id,
+                parameter: spec.parameter,
+                slot,
+            });
         }
     }
 
-    let outputs = ir
-        .nodes()
+    // ADR-0005: lowering emits one buffer per value; the arena decides which of them
+    // share storage, once, here. The render loop reads slot indices and learns nothing
+    // about it.
+    let assignment = arena::assign(&state.ops, state.buffer_count, policy);
+    arena::rewrite(&mut state.ops, &assignment.mapping);
+
+    Lowered {
+        id: plan_id,
+        ops: state.ops,
+        buffers: assignment.physical,
+        inserted: state.inserted,
+        fault,
+        prepared_nodes: state.prepared_nodes,
+        parameter_targets,
+        parameter_addresses,
+    }
+}
+
+/// Schedule the plan's output: the widening it needs, then one write per channel.
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the output is lowered against the whole lowering context; bundling the arguments \
+              would hide which of them it reads"
+)]
+fn lower_output(
+    ir: &GraphIr,
+    profile: &HostProfile,
+    validated: &Validated,
+    warnings: &mut Vec<CompileWarning>,
+    state: &mut Lowering,
+    slots: &HashMap<NodeId, BufferSlot>,
+    source_of: &HashMap<(NodeId, PortId), NodeId>,
+    id: NodeId,
+) {
+    let Some(source) = source_of
+        .get(&(id, PortId::FIRST))
+        .and_then(|from| slots.get(from).copied())
+    else {
+        return;
+    };
+    let layout = profile.capabilities().channel_layout();
+    // The **validator's** record decides this, not the layout: validation is the one
+    // authority on what an edge needs, and re-deriving it here would make lowering a
+    // second one that could disagree.
+    let widening = ir
+        .edges()
         .iter()
-        .filter(|node| matches!(node.kind(), IrNodeKind::Output))
-        .count();
-    if outputs > 1 {
-        // Rendering the first and ignoring the rest would be a silent choice about which
-        // output a plan has. Refusing says so instead; what a second output *means* is a
-        // question for the phase that has buses.
-        return Err(CompileError::MultipleOutputs {
-            outputs: u32::try_from(outputs).unwrap_or(u32::MAX),
+        .find(|edge| edge.to().0 == id)
+        .and_then(|edge| {
+            validated
+                .conversions()
+                .iter()
+                .find(|conversion| conversion.edge == edge.id())
+        })
+        .copied();
+
+    // ADR-0002 clause 2: an `n`-channel signal occupies `n` buffers, so a mono signal
+    // reaching a wider port is **widened by a scheduled operation** that gives each
+    // further channel its own buffer — clause 7. Channel 0 keeps the source's buffer,
+    // because a duplication's first channel is its input.
+    let mut channels = vec![source];
+    if let Some(widening) = widening {
+        let copy = node::copy_descriptor();
+        for _ in 1..layout.channels() {
+            let (_, out) = state.schedule(&copy, node::prepare_copy(), [Some(source), None]);
+            state.inserted += 1;
+            channels.push(out);
+        }
+        // Clause 7's third requirement. The schedule and the buffer count carry the
+        // conversion; without this a reader of the outcome would have to infer from the
+        // operation list that the compiler widened their signal.
+        warnings.push(CompileWarning::ConversionInserted {
+            edge: widening.edge,
+            conversion: widening.conversion,
         });
     }
-
-    if let Some(output) = ir
-        .nodes()
-        .iter()
-        .find(|node| matches!(node.kind(), IrNodeKind::Output))
-    {
-        // An edge into any other port of the output builds and compiles, and lowering
-        // would then simply not see it — silence with no diagnostic. This phase has one
-        // output port, so anything else is refused rather than dropped.
-        if let Some(edge) = ir.edges().iter().find(|edge| {
-            let (node, port) = edge.to();
-            node == output.id() && port != PortId::FIRST
-        }) {
-            let (node, port) = edge.to();
-            return Err(CompileError::UnsupportedOutputPort { node, port });
-        }
-
-        let incoming: Vec<_> = ir
-            .edges()
-            .iter()
-            .filter(|edge| edge.to() == (output.id(), PortId::FIRST))
-            .collect();
-        match incoming.as_slice() {
-            [] => {
-                // An output with nothing patched into it renders silence, which is
-                // what the empty plan does too. There is nothing to refuse here: a
-                // plan under construction is allowed to be quiet.
-            }
-            [edge] => {
-                let (source, _) = edge.from();
-                let slot = buffers
-                    .iter()
-                    .find(|(id, _)| *id == source)
-                    .map(|(_, slot)| *slot);
-                if let Some(source) = slot {
-                    ops.push(PlanOp::OutputMono { source });
-                }
-            }
-            many => {
-                // Summing several signals into one input is a fan-in policy, and
-                // choosing one belongs to Phase 2's graph validation. Refusing is the
-                // honest move: silently taking the first would be the kind of quiet
-                // reduction this contract exists to remove.
-                return Err(CompileError::UnsupportedFanIn {
-                    node: output.id(),
-                    port: PortId::FIRST,
-                    edges: u32::try_from(many.len()).unwrap_or(u32::MAX),
-                });
-            }
-        }
-    }
-
-    let capabilities = profile.capabilities();
-    Ok(CompiledPlan::new(
-        ops,
-        buffers.len(),
-        sine_templates,
-        parameter_routes,
-        capabilities.channel_layout(),
-        capabilities.sample_rate(),
-        capabilities.maximum_block_size(),
-        profile.limits().events().max_events_per_quantum(),
-        profile.limits().events().forward_event_horizon(),
-        FrameCount::QUANTUM,
-    ))
-}
-
-/// Scope is carried by the IR and not yet used to place work.
-///
-/// Phase 1 renders one global scope. Keeping the enum readable from here rather than
-/// quietly dropping it is the difference between a phase that has not needed a
-/// feature and a phase that lost it.
-#[must_use]
-pub fn declared_scopes(ir: &GraphIr) -> Vec<ExecutionScope> {
-    let mut scopes = Vec::new();
-    for node in ir.nodes() {
-        if !scopes.contains(&node.scope()) {
-            scopes.push(node.scope());
-        }
-    }
-    scopes
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::ir::{IrNodeKind, NodeId, PortId, SignalDomain};
-    use crate::quantities::{Amplitude, ChannelLayout, SampleRate};
-
-    fn profile() -> HostProfile {
-        HostProfile::harness(
-            SampleRate::new(48_000.0).expect("valid rate"),
-            FrameCount::new(1_024),
-            ChannelLayout::Stereo,
-        )
-        .expect("valid harness profile")
-    }
-
-    #[test]
-    fn every_field_has_a_row_whether_admission_succeeds_or_fails() {
-        let config = RenderConfig::new(profile());
-        let outcome = compile(&GraphIr::empty(), &config);
-        assert!(outcome.plan().is_ok());
-        for field in ResourceField::ALL {
-            let row = outcome
-                .report()
-                .row(field)
-                .unwrap_or_else(|| panic!("{field} has no row"));
-            assert_eq!(row.field(), field);
-        }
-        assert_eq!(outcome.report().rows().len(), ResourceField::COUNT);
-    }
-
-    #[test]
-    fn no_row_compares_mismatched_units() {
-        let config = RenderConfig::new(profile());
-        let outcome = compile(&GraphIr::empty(), &config);
-        for row in outcome.report().rows() {
-            assert_ne!(
-                row.fit(),
-                Fit::UnitMismatch,
-                "the row for {} compares two different units",
-                row.field()
-            );
-        }
-    }
-
-    #[test]
-    fn the_report_names_the_carry_latency() {
-        let config = RenderConfig::new(profile());
-        let outcome = compile(&GraphIr::empty(), &config);
-        assert_eq!(
-            outcome
-                .report()
-                .latency()
-                .frames_of(LatencyContributor::RenderQuantumCarry),
-            Some(FrameCount::QUANTUM)
-        );
-    }
-
-    #[test]
-    fn fan_in_to_one_input_is_refused_rather_than_silently_reduced() {
-        let a = NodeId::new(1);
-        let b = NodeId::new(2);
-        let out = NodeId::new(3);
-        let ir = GraphIr::builder()
-            .node(a, IrNodeKind::Silence, ExecutionScope::Global)
-            .node(
-                b,
-                IrNodeKind::Constant {
-                    level: Amplitude::new(0.5).expect("finite"),
-                },
-                ExecutionScope::Global,
-            )
-            .node(out, IrNodeKind::Output, ExecutionScope::Global)
-            .connect(
-                (a, PortId::FIRST),
-                (out, PortId::FIRST),
-                SignalDomain::Audio,
-            )
-            .connect(
-                (b, PortId::FIRST),
-                (out, PortId::FIRST),
-                SignalDomain::Audio,
-            )
-            .build()
-            .expect("readable plan");
-
-        let outcome = compile(&ir, &RenderConfig::new(profile()));
-        assert!(matches!(
-            outcome.plan(),
-            Err(CompileError::UnsupportedFanIn { edges: 2, .. })
-        ));
-        // The report is still there: a refusal is a report plus an error.
-        assert_eq!(outcome.report().rows().len(), ResourceField::COUNT);
+    for (index, slot) in channels.into_iter().enumerate() {
+        let Ok(channel) = ChannelIndex::in_layout(index, layout) else {
+            continue;
+        };
+        state.ops.push(PlanOp::OutputChannel {
+            source: slot,
+            channel,
+        });
     }
 }

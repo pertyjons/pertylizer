@@ -26,6 +26,7 @@ ownership, save/load, the engine, or the mutation path should be checked against
 | [sample-view-expansion.md](sample-view-expansion.md)     | Draft. Sample workstation view                          |
 | [egui-theme-architecture.md](egui-theme-architecture.md) | Planned. Unified GUI theming                            |
 | [headless-render-cli.md](headless-render-cli.md)         | Implemented and merged; kept as the design record       |
+| [perty-developer-analysis-tool.md](perty-developer-analysis-tool.md) | Proposed. Change-impact and real-time safety analysis |
 
 Status here is a pointer, not the authority — the document's own header is. When a plan is fully delivered and has no
 remaining rationale worth keeping, delete it rather than leaving a stale document; Git keeps the history.

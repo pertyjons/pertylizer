@@ -8,7 +8,7 @@ use synth_engine_v2::compile::{RenderConfig, compile};
 use synth_engine_v2::diagnostics::RenderError;
 use synth_engine_v2::ir::{GraphIr, IrNodeKind, parameters};
 use synth_engine_v2::offline::{OfflineEvent, render_offline};
-use synth_engine_v2::plan::CompiledPlan;
+use synth_engine_v2::plan::{CompiledPlan, ParameterSlot};
 use synth_engine_v2::profile::HostProfile;
 use synth_engine_v2::quantities::{Amplitude, ChannelLayout, Frequency, ParameterValue};
 use synth_engine_v2::render::{
@@ -359,12 +359,28 @@ fn sine_renderer(block: u64) -> (PreparedRenderer, StreamEpoch) {
     (renderer, epoch)
 }
 
-fn set_frequency(epoch: StreamEpoch, at: u64, value: f32, source: TimeSource) -> TimedEvent {
+/// The compiled slot for the source sine's frequency.
+///
+/// Resolved from the plan rather than assumed: an address becomes a slot off the audio
+/// thread, and a test that hard-coded the index would stop testing the resolution.
+fn frequency_slot(renderer: &PreparedRenderer) -> ParameterSlot {
+    renderer
+        .plan()
+        .resolve_parameter(SOURCE, parameters::SINE_FREQUENCY)
+        .expect("the sine declares a frequency parameter")
+}
+
+fn set_frequency(
+    slot: ParameterSlot,
+    epoch: StreamEpoch,
+    at: u64,
+    value: f32,
+    source: TimeSource,
+) -> TimedEvent {
     TimedEvent::new(
         EventEnvelope::new(epoch, SampleTime::new(at), source),
         EventPayload::SetParameter {
-            node: SOURCE,
-            parameter: parameters::SINE_FREQUENCY,
+            slot,
             value: ParameterValue::new(value).expect("a finite test value"),
         },
     )
@@ -376,7 +392,13 @@ fn an_event_from_another_epoch_is_discarded_and_counted() {
     // re-preparation is applied against a clock that restarted at zero.
     let (mut renderer, epoch) = sine_renderer(256);
     let stale = StreamEpoch::from_raw(epoch.as_u32().wrapping_sub(1));
-    let events = [set_frequency(stale, 0, 100.0, TimeSource::Compiled)];
+    let events = [set_frequency(
+        frequency_slot(&renderer),
+        stale,
+        0,
+        100.0,
+        TimeSource::Compiled,
+    )];
 
     let mut samples = vec![0.0_f32; 256];
     let output = AudioBlockMut::new(&mut samples, 256, ChannelLayout::Mono).expect("shaped block");
@@ -392,6 +414,7 @@ fn an_ingress_event_beyond_the_forward_horizon_is_rejected_and_counted() {
     let (mut renderer, epoch) = sine_renderer(256);
     let horizon = renderer.plan().forward_event_horizon().as_u64();
     let events = [set_frequency(
+        frequency_slot(&renderer),
         epoch,
         horizon + 1,
         100.0,
@@ -411,7 +434,13 @@ fn an_arrival_stamped_event_is_counted_as_such() {
     // ADR-0032 clause 19: an adapter with no hardware timestamp declares its fallback,
     // and the declaration reaches the diagnostics report.
     let (mut renderer, epoch) = sine_renderer(256);
-    let events = [set_frequency(epoch, 0, 200.0, TimeSource::Arrival)];
+    let events = [set_frequency(
+        frequency_slot(&renderer),
+        epoch,
+        0,
+        200.0,
+        TimeSource::Arrival,
+    )];
 
     let mut samples = vec![0.0_f32; 256];
     let output = AudioBlockMut::new(&mut samples, 256, ChannelLayout::Mono).expect("shaped block");
@@ -440,7 +469,13 @@ fn a_late_event_is_clamped_forward_and_counted() {
         .expect("the first call renders");
     assert!(renderer.clock().as_u64() > 0);
 
-    let events = [set_frequency(epoch, 0, 110.0, TimeSource::Compiled)];
+    let events = [set_frequency(
+        frequency_slot(&renderer),
+        epoch,
+        0,
+        110.0,
+        TimeSource::Compiled,
+    )];
     let output = AudioBlockMut::new(&mut samples, 256, ChannelLayout::Mono).expect("shaped block");
     renderer
         .render(output, TimedEvents::new(&events))
@@ -497,10 +532,11 @@ fn a_quantum_over_its_event_capacity_is_rejected_before_anything_is_mutated() {
     )
     .expect("preparation succeeds");
     let epoch = renderer.epoch();
+    let slot = frequency_slot(&renderer);
 
     // Five events in one quantum against a capacity of four.
     let events: Vec<TimedEvent> = (0..=capacity)
-        .map(|index| set_frequency(epoch, u64::from(index), 300.0, TimeSource::Compiled))
+        .map(|index| set_frequency(slot, epoch, u64::from(index), 300.0, TimeSource::Compiled))
         .collect();
 
     let mut samples = vec![9.0_f32; 128];
@@ -561,8 +597,10 @@ fn a_parameter_change_takes_effect_at_the_next_quantum_boundary() {
             TimeSource::Compiled,
         ),
         EventPayload::SetParameter {
-            node: SOURCE,
-            parameter: parameters::SINE_AMPLITUDE,
+            slot: renderer
+                .plan()
+                .resolve_parameter(SOURCE, parameters::SINE_AMPLITUDE)
+                .expect("the sine declares an amplitude parameter"),
             value: ParameterValue::new(0.9).expect("finite"),
         },
     );
@@ -601,7 +639,13 @@ fn an_event_outside_the_quanta_a_call_renders_is_refused() {
     // ADR-0001 clause 16 forbids — so the contract is enforced rather than bent.
     let (mut renderer, epoch) = sine_renderer(256);
     let far = renderer.plan().forward_event_horizon().as_u64() - 1;
-    let events = [set_frequency(epoch, far, 100.0, TimeSource::Compiled)];
+    let events = [set_frequency(
+        frequency_slot(&renderer),
+        epoch,
+        far,
+        100.0,
+        TimeSource::Compiled,
+    )];
 
     let mut samples = vec![0.0_f32; 128];
     let output = AudioBlockMut::new(&mut samples, 128, ChannelLayout::Mono).expect("shaped block");
@@ -637,8 +681,10 @@ fn an_event_inside_a_calls_final_quantum_takes_effect_in_the_next_call() {
     let raise = TimedEvent::new(
         EventEnvelope::new(epoch, SampleTime::new(5), TimeSource::Compiled),
         EventPayload::SetParameter {
-            node: SOURCE,
-            parameter: parameters::SINE_AMPLITUDE,
+            slot: renderer
+                .plan()
+                .resolve_parameter(SOURCE, parameters::SINE_AMPLITUDE)
+                .expect("the sine declares an amplitude parameter"),
             value: ParameterValue::new(0.9).expect("finite"),
         },
     );
@@ -678,9 +724,10 @@ fn a_span_larger_than_any_call_can_admit_is_refused_before_it_is_scanned() {
     // would be a function of what the producer sent rather than of a declared capacity: a
     // million stale events would each be examined.
     let (mut renderer, _) = sine_renderer(256);
+    let slot = frequency_slot(&renderer);
     let stale = StreamEpoch::from_raw(u32::MAX);
     let huge: Vec<TimedEvent> = (0..100_000)
-        .map(|index| set_frequency(stale, index, 100.0, TimeSource::Compiled))
+        .map(|index| set_frequency(slot, stale, index, 100.0, TimeSource::Compiled))
         .collect();
 
     let mut samples = vec![0.0_f32; 128];
@@ -715,21 +762,20 @@ fn an_offline_event_is_stamped_with_the_epoch_preparation_issued() {
     });
     let quantum = QUANTUM_FRAMES as u64;
 
+    // The address is resolved against the plan before the render, which is where a
+    // caller can still be told that a parameter does not exist.
+    let plan = admit(&ir, host);
     let raise = OfflineEvent::new(
         SampleTime::ZERO,
         EventPayload::SetParameter {
-            node: SOURCE,
-            parameter: parameters::SINE_AMPLITUDE,
+            slot: plan
+                .resolve_parameter(SOURCE, parameters::SINE_AMPLITUDE)
+                .expect("the sine declares an amplitude parameter"),
             value: ParameterValue::new(0.8).expect("finite"),
         },
     );
-    let rendered = render_offline(
-        admit(&ir, host),
-        FrameCount::new(512),
-        PlanPosition::ZERO,
-        &[raise],
-    )
-    .expect("the offline path renders");
+    let rendered = render_offline(plan, FrameCount::new(512), PlanPosition::ZERO, &[raise])
+        .expect("the offline path renders");
 
     // The event is at sample 0, so its control response begins at the next boundary.
     let after = usize::try_from(quantum).expect("Q fits usize");

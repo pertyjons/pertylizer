@@ -194,6 +194,10 @@ fn resolving_and_applying_events_allocates_nothing() {
     )
     .expect("preparation succeeds");
     let epoch = renderer.epoch();
+    let slot = renderer
+        .plan()
+        .resolve_parameter(SOURCE, parameters::SINE_FREQUENCY)
+        .expect("the sine declares a frequency parameter");
     let mut samples = vec![0.0_f32; BLOCK * 2];
 
     // Presented in descending position order, so the in-place sort has work to do —
@@ -204,8 +208,7 @@ fn resolving_and_applying_events_allocates_nothing() {
             TimedEvent::new(
                 EventEnvelope::new(epoch, SampleTime::new(index * 8), TimeSource::Compiled),
                 EventPayload::SetParameter {
-                    node: SOURCE,
-                    parameter: parameters::SINE_FREQUENCY,
+                    slot,
                     value: ParameterValue::new(220.0 + index as f32).expect("finite"),
                 },
             )

@@ -12,9 +12,9 @@
 //! anticipate them.
 
 use crate::quantities::{
-    Amplitude, BusCount, CostRatio, EventCount, Frequency, HeldNoteCount, InstructionCount,
-    MixChannelCount, NodeCount, PreparedBytes, ScriptWorkPerQuantum, SendCount, SlotCount,
-    VoiceCount,
+    Amplitude, BusCount, CostRatio, CutoffFrequency, EventCount, Frequency, GainFactor,
+    HeldNoteCount, InstructionCount, MixChannelCount, NodeCount, NormalizedLevel, PreparedBytes,
+    Resonance, ScriptWorkPerQuantum, Seconds, SendCount, SlotCount, VoiceCount,
 };
 use crate::time::PlanPosition;
 use thiserror::Error;
@@ -82,6 +82,17 @@ pub enum SignalDomain {
     Gate,
     /// Timed note, controller, or transport events.
     Event,
+}
+
+impl std::fmt::Display for SignalDomain {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Audio => f.write_str("audio"),
+            Self::Control => f.write_str("control"),
+            Self::Gate => f.write_str("gate"),
+            Self::Event => f.write_str("event"),
+        }
+    }
 }
 
 /// Where in the scope hierarchy a node runs.
@@ -167,6 +178,71 @@ pub enum IrNodeKind {
         /// Where in the plan the click is.
         position: PlanPosition,
     },
+    /// A constant gain applied to one mono input.
+    ///
+    /// The first kind with an **input** port, which is what makes Phase 2's
+    /// validation rules testable at all: without one, no plan can have a fan-in, a
+    /// cycle, a layout mismatch, or a path from a source to an output through
+    /// anything. It stays inside the existing operation enum on purpose —
+    /// ADR-0004 owns the node-representation question and is `Proposed`, so this
+    /// phase's validation work may not pre-empt it.
+    Gain {
+        /// The factor applied to every sample.
+        factor: GainFactor,
+    },
+    /// A four-segment envelope, gated by a control.
+    ///
+    /// It produces a **control** signal rather than audio, and it produces one value per
+    /// *sample* rather than one per quantum. That is not a contradiction of ADR-0001
+    /// clause 13: the clause governs when a node observes an event, and this node
+    /// observes its gate once per quantum like every other control. What it does between
+    /// those observations is its own, and an envelope that only moved at quantum
+    /// boundaries would step in 1.3 ms stairs at 48 kHz — audible on every note, and a
+    /// difference from V1 that no record asks for.
+    ///
+    /// The gate is a control in this phase and a sample-accurate note edge in P02-T007.
+    /// ADR-0001 clause 14 puts a note edge at its declared sample, and honouring that
+    /// needs the event path the next task builds; what would be wrong is to *claim* it
+    /// here by quantizing the edge to a boundary and calling it done.
+    Envelope {
+        /// How long silence takes to reach full level.
+        attack: Seconds,
+        /// How long full level takes to reach the sustain level.
+        decay: Seconds,
+        /// The level a held gate settles at.
+        sustain: NormalizedLevel,
+        /// How long the level takes to reach silence once the gate falls.
+        release: Seconds,
+    },
+    /// A two-pole low-pass over one mono input.
+    ///
+    /// The first kind whose prepared data is *derived* rather than copied: its
+    /// coefficients are a function of the corner frequency, the quality factor **and
+    /// the stream's sample rate**, which is why admission is where they are computed and
+    /// why a corner frequency above the stream's Nyquist frequency is refused there
+    /// rather than clamped here.
+    ///
+    /// It has no controls, and that is a consequence of the split rather than an
+    /// omission: a kernel is handed `&PreparedNode`, so a parameter that moves the
+    /// coefficients would have to move data the kernel cannot write. Where recomputation
+    /// belongs — the state, a ramp, a control-rate law — is Phase 5's, and inventing it
+    /// here would be deciding it in an implementation task.
+    Filter {
+        /// The corner frequency.
+        cutoff: CutoffFrequency,
+        /// The quality factor.
+        resonance: Resonance,
+    },
+    /// One audio input scaled, sample by sample, by one control input.
+    ///
+    /// Distinct from [`Self::Gain`], which multiplies by a constant the plan carries.
+    /// This one has no value of its own: what it does is decided by whatever is patched
+    /// into its control port, which is how an envelope becomes an amplitude.
+    ///
+    /// Either input unpatched makes it silent. That is the same rule as everywhere else
+    /// in this crate — an unpatched input is silence — and the alternative would be to
+    /// invent a level nobody asked for.
+    Amplifier,
     /// The plan's output. Takes one mono signal and writes every output channel.
     ///
     /// Writing a mono source to both channels is a **declared duplication** rather
@@ -176,33 +252,6 @@ pub enum IrNodeKind {
 }
 
 impl IrNodeKind {
-    /// The immutable prepared bytes this kind declares.
-    ///
-    /// Declared by the node and aggregated by the compiler, which is what
-    /// `HOST-INV-014` asks for: V1 computes no such aggregate anywhere
-    /// (`LIMIT-0073`), and producing one is part of what admission is.
-    #[must_use]
-    pub const fn prepared_bytes(self) -> u64 {
-        match self {
-            // A source's prepared data is its compiled operation.
-            Self::Silence | Self::Output => size_of::<f32>() as u64,
-            Self::Constant { .. } => size_of::<f32>() as u64,
-            Self::Sine { .. } => (size_of::<f64>() + size_of::<f32>()) as u64,
-            Self::Impulse { .. } => size_of::<u64>() as u64,
-        }
-    }
-
-    /// The mutable state bytes this kind declares.
-    #[must_use]
-    pub const fn mutable_bytes(self) -> u64 {
-        match self {
-            // Only the sine carries state between quanta: its phase, plus the
-            // control values an event may change at a quantum boundary.
-            Self::Sine { .. } => (size_of::<f64>() + 2 * size_of::<f32>()) as u64,
-            Self::Silence | Self::Constant { .. } | Self::Impulse { .. } | Self::Output => 0,
-        }
-    }
-
     /// Whether this kind produces a signal.
     #[must_use]
     pub const fn is_source(self) -> bool {
@@ -222,6 +271,8 @@ pub mod parameters {
     pub const SINE_FREQUENCY: ParameterId = ParameterId::new(0);
     /// A sine's peak amplitude.
     pub const SINE_AMPLITUDE: ParameterId = ParameterId::new(1);
+    /// An envelope's gate: above zero is held, zero or below is released.
+    pub const ENVELOPE_GATE: ParameterId = ParameterId::new(2);
 }
 
 /// One node in the IR.
@@ -553,24 +604,55 @@ impl GraphIr {
         self.nodes.iter().find(|node| node.id() == id)
     }
 
-    /// The aggregate of every node's declared immutable prepared bytes, with the
-    /// node that contributes most.
-    pub fn prepared_bytes(&self) -> (PreparedBytes, IrObject) {
-        self.aggregate_bytes(IrNodeKind::prepared_bytes)
+    /// The immutable prepared bytes this plan's nodes occupy, with the node responsible.
+    ///
+    /// Counted over the nodes that are **scheduled**, which is not every node: the output
+    /// has no kernel and no prepared data — it is the renderer's boundary — so lowering
+    /// builds no record for it and neither does this. Counting it would overstate both
+    /// memory rows and could refuse a plan whose limit falls between the two figures.
+    ///
+    /// `inserted` is how many records the **compiler** adds beyond the authored nodes —
+    /// a mono-to-stereo widening is a scheduled operation with prepared data of its own,
+    /// and a report that counted only what the caller wrote would understate the table
+    /// that is actually allocated. Admission passes the exact figure once lowering has
+    /// produced it, and an upper bound before that, exactly as it does for the arena.
+    ///
+    /// The amount is measured from the representation ADR-0004 selected: every node gets
+    /// one record of the widest variant. The **contributor** is therefore the node that
+    /// sets that width, not one that carries more records than the others.
+    pub fn prepared_bytes(&self, inserted: u64) -> (PreparedBytes, IrObject) {
+        self.aggregate_bytes(
+            crate::node::prepared_bytes_per_node(),
+            crate::node::prepared_payload_bytes,
+            inserted,
+        )
     }
 
-    /// The aggregate of every node's declared mutable state bytes, with the node
-    /// that contributes most.
-    pub fn mutable_bytes(&self) -> (PreparedBytes, IrObject) {
-        self.aggregate_bytes(IrNodeKind::mutable_bytes)
+    /// The mutable state bytes this plan's nodes occupy, with the node responsible.
+    pub fn mutable_bytes(&self, inserted: u64) -> (PreparedBytes, IrObject) {
+        self.aggregate_bytes(
+            crate::node::state_bytes_per_node(),
+            crate::node::state_payload_bytes,
+            inserted,
+        )
     }
 
-    fn aggregate_bytes(&self, of: fn(IrNodeKind) -> u64) -> (PreparedBytes, IrObject) {
-        let mut total = 0_u64;
+    fn aggregate_bytes(
+        &self,
+        per_node: u64,
+        payload: fn(IrNodeKind) -> u64,
+        inserted: u64,
+    ) -> (PreparedBytes, IrObject) {
+        let scheduled = self
+            .nodes
+            .iter()
+            .filter(|node| node.kind().is_source())
+            .count() as u64;
+        let records = scheduled.saturating_add(inserted);
+        let total = records.saturating_mul(per_node);
         let mut dominant = (0_u64, IrObject::Plan);
         for node in &self.nodes {
-            let bytes = of(node.kind());
-            total = total.saturating_add(bytes);
+            let bytes = payload(node.kind());
             if bytes > dominant.0 {
                 dominant = (bytes, IrObject::Node(node.id()));
             }
@@ -702,33 +784,33 @@ impl GraphIrBuilder {
     }
 
     /// Finish, or say why the plan cannot be read.
+    ///
+    /// Indexed rather than scanned: the obvious form compares every node against every
+    /// earlier one and every edge against every node, which is quadratic in a plan the
+    /// profile admits. Hashing here is free of consequence — nothing in this function
+    /// runs on the audio thread — and the map is dropped before the IR is returned.
     pub fn build(self) -> Result<GraphIr, IrError> {
-        for (index, node) in self.nodes.iter().enumerate() {
-            if self.nodes[..index]
-                .iter()
-                .any(|earlier| earlier.id() == node.id())
-            {
+        let mut kinds: std::collections::HashMap<NodeId, IrNodeKind> =
+            std::collections::HashMap::with_capacity(self.nodes.len());
+        for node in &self.nodes {
+            if kinds.insert(node.id(), node.kind()).is_some() {
                 return Err(IrError::DuplicateNode { id: node.id() });
             }
         }
         for edge in &self.edges {
             let (source_id, _) = edge.from();
             let (target_id, _) = edge.to();
-            let source = self
-                .nodes
-                .iter()
-                .find(|node| node.id() == source_id)
-                .ok_or(IrError::UnknownNode {
-                    edge: edge.id(),
-                    node: source_id,
-                })?;
-            if !self.nodes.iter().any(|node| node.id() == target_id) {
+            let source = kinds.get(&source_id).ok_or(IrError::UnknownNode {
+                edge: edge.id(),
+                node: source_id,
+            })?;
+            if !kinds.contains_key(&target_id) {
                 return Err(IrError::UnknownNode {
                     edge: edge.id(),
                     node: target_id,
                 });
             }
-            if !source.kind().is_source() {
+            if !source.is_source() {
                 return Err(IrError::NotASource {
                     edge: edge.id(),
                     node: source_id,
@@ -829,7 +911,7 @@ mod tests {
     #[test]
     fn memory_aggregates_name_the_node_that_dominates_them() {
         let ir = sine_plan();
-        let (mutable, dominant) = ir.mutable_bytes();
+        let (mutable, dominant) = ir.mutable_bytes(0);
         assert!(mutable.get() > 0, "the sine carries phase between quanta");
         assert_eq!(
             dominant,

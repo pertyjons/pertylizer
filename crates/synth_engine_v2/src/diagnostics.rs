@@ -45,10 +45,15 @@ pub enum CompileError {
 
     /// Several signals are patched into one input.
     ///
-    /// Summing them is a fan-in policy, and choosing one belongs to Phase 2's graph
-    /// validation. Refusing is the honest move: silently taking the first would be
-    /// exactly the quiet reduction this contract exists to remove.
-    #[error("{edges} edges reach {node} {port}; a fan-in policy is Phase 2's, so this is refused")]
+    /// Summing them is a fan-in policy, and no accepted decision defines one. Refusing
+    /// is the honest move: silently taking the first would be exactly the quiet
+    /// reduction this contract exists to remove. The diagnostic names the two edges
+    /// that collide, because "this input has three sources" is not something a reader
+    /// can act on without knowing which.
+    #[error(
+        "{edges} edges reach {node} {port}, including {first} and {second}; one input takes one \
+         source"
+    )]
     UnsupportedFanIn {
         /// The node whose input is over-subscribed.
         node: crate::ir::NodeId,
@@ -56,28 +61,148 @@ pub enum CompileError {
         port: crate::ir::PortId,
         /// How many edges reach it.
         edges: u32,
+        /// The first edge into it.
+        first: crate::ir::EdgeId,
+        /// The next edge into it.
+        second: crate::ir::EdgeId,
+    },
+
+    /// A node cannot be prepared for the stream this plan is admitted against.
+    ///
+    /// Distinct from a limit and from a cable error: the graph is well formed, it fits,
+    /// and the node's own values are legal — they are just not legal *here*. Only a
+    /// property of the stream can produce it, which is why it names the node and both
+    /// values rather than a resource field.
+    #[error("{node} cannot be prepared for this stream: {fault}")]
+    NodeNotPreparable {
+        /// The node that could not be prepared.
+        node: crate::ir::NodeId,
+        /// Why.
+        fault: PreparationFault,
+    },
+
+    /// An edge names a port the node does not declare.
+    #[error("{edge} names {node} {port}, which is not an {needed} port it declares")]
+    UnknownPort {
+        /// The offending edge.
+        edge: crate::ir::EdgeId,
+        /// The node it names.
+        node: crate::ir::NodeId,
+        /// The port it names.
+        port: crate::ir::PortId,
+        /// The direction the edge needed it in.
+        needed: crate::validate::PortDirection,
+    },
+
+    /// An edge uses a port that exists in the other direction.
+    ///
+    /// Separate from [`Self::UnknownPort`] because it is a different mistake: the port
+    /// is real and the cable is backwards, which is worth saying rather than making a
+    /// reader wonder whether the node has the port at all.
+    #[error(
+        "{edge} uses {node} {port} as an {needed}, but it is declared in the other direction; the \
+         cable's other end is {other_node} {other_port}"
+    )]
+    PortDirection {
+        /// The offending edge.
+        edge: crate::ir::EdgeId,
+        /// The node.
+        node: crate::ir::NodeId,
+        /// The port.
+        port: crate::ir::PortId,
+        /// The direction the edge needed.
+        needed: crate::validate::PortDirection,
+        /// The node at the cable's other end.
+        other_node: crate::ir::NodeId,
+        /// The port at the cable's other end.
+        other_port: crate::ir::PortId,
+    },
+
+    /// An edge crosses two signal domains, or declares a third.
+    #[error(
+        "{edge} carries {declared} from {source_node} {source_port} ({source_domain}) into \
+         {target_node} {target_port} ({target_domain}); all three must agree"
+    )]
+    DomainMismatch {
+        /// The offending edge.
+        edge: crate::ir::EdgeId,
+        /// The source node.
+        source_node: crate::ir::NodeId,
+        /// The source port.
+        source_port: crate::ir::PortId,
+        /// What the source produces.
+        source_domain: crate::ir::SignalDomain,
+        /// The target node.
+        target_node: crate::ir::NodeId,
+        /// The target port.
+        target_port: crate::ir::PortId,
+        /// What the target consumes.
+        target_domain: crate::ir::SignalDomain,
+        /// What the edge says it carries.
+        declared: crate::ir::SignalDomain,
+    },
+
+    /// An edge crosses two channel layouts with no conversion that resolves it.
+    ///
+    /// ADR-0002 clause 6: mono into stereo is duplicated, and the reverse is refused
+    /// rather than down-mixed, because choosing a summing law is a product decision
+    /// with no caller in this phase.
+    #[error(
+        "{edge} carries {source_layout} from {source_node} {source_port} into {target_node} \
+         {target_port}, which takes {target_layout}"
+    )]
+    LayoutMismatch {
+        /// The offending edge.
+        edge: crate::ir::EdgeId,
+        /// The source node.
+        source_node: crate::ir::NodeId,
+        /// The source port.
+        source_port: crate::ir::PortId,
+        /// What the source produces.
+        source_layout: ChannelLayout,
+        /// The target node.
+        target_node: crate::ir::NodeId,
+        /// The target port.
+        target_port: crate::ir::PortId,
+        /// What the target consumes.
+        target_layout: ChannelLayout,
+    },
+
+    /// The graph has a cycle.
+    ///
+    /// Phase 2 refuses every cycle rather than scheduling one. ADR-0033 owns the
+    /// delay-boundary rule that would relax this and is `Proposed`, so the message
+    /// deliberately promises no way to break the cycle: there is not one yet.
+    ///
+    /// It names the edge that closes the cycle and the node re-entered rather than
+    /// listing the whole cycle, because this error is `Copy` and a list would put an
+    /// allocation in a type that admission returns by value. The closing edge is also
+    /// the actionable half — it is the cable to remove.
+    #[error("{edge} closes a cycle back into {node}, through {nodes}; a cycle is refused")]
+    Cycle {
+        /// The edge that closes the cycle.
+        edge: crate::ir::EdgeId,
+        /// The node it re-enters.
+        node: crate::ir::NodeId,
+        /// How many nodes were on the walk when it closed.
+        nodes: crate::quantities::NodeCount,
+    },
+
+    /// The plan has sources but nowhere for them to go.
+    #[error("the plan declares {sources} of sources and no output node")]
+    MissingOutput {
+        /// How many sources are stranded.
+        sources: crate::quantities::NodeCount,
     },
 
     /// A plan declares more than one output.
     ///
     /// Phase 1 renders one. Taking the first and ignoring the rest would be a silent
     /// choice about which output the plan has.
-    #[error("the plan declares {outputs} output nodes; this phase renders one")]
+    #[error("the plan declares {outputs} of outputs; this phase renders one")]
     MultipleOutputs {
         /// How many outputs the plan declares.
-        outputs: u32,
-    },
-
-    /// An edge reaches an output port this phase does not have.
-    ///
-    /// The alternative is worse than a refusal: lowering only reads the first port, so
-    /// such an edge would compile and render silence with nothing said.
-    #[error("{node} {port} is not an output port this phase renders")]
-    UnsupportedOutputPort {
-        /// The output node.
-        node: crate::ir::NodeId,
-        /// The port the edge reached.
-        port: crate::ir::PortId,
+        outputs: crate::quantities::NodeCount,
     },
 
     /// The IR could not be read.
@@ -103,9 +228,105 @@ pub enum CompileError {
     Profile(#[from] ProfileError),
 }
 
+/// Why a node's prepared data could not be built.
+///
+/// Its own enum rather than a string, because a caller that wants to fix the plan needs
+/// the numbers: which value was too high, and what it was measured against.
+#[derive(Debug, Clone, Copy, PartialEq, Error)]
+pub enum PreparationFault {
+    /// A filter's corner frequency is at or above the stream's Nyquist frequency.
+    ///
+    /// Refused rather than clamped. Clamping would render a filter the caller did not
+    /// ask for, and the difference is audible.
+    #[error(
+        "its corner frequency {cutoff} is at or above the stream's Nyquist frequency of \
+         {nyquist} Hz"
+    )]
+    CutoffAboveNyquist {
+        /// The corner frequency the node declared.
+        cutoff: crate::quantities::CutoffFrequency,
+        /// Half this stream's sample rate.
+        nyquist: crate::quantities::Frequency,
+    },
+
+    /// A node's authored values are each legal and the filter they imply is not.
+    ///
+    /// The class a range check on the inputs cannot replace: a denormal quality factor
+    /// passes every test one could write for it on its own, and the coefficients it
+    /// implies leave the representation — after which the node admits, renders, and is
+    /// silent forever with nothing in the plan or the report saying so. The derived
+    /// values are therefore checked rather than the inputs guessed at, because the
+    /// formula is what decides which pairs are usable.
+    #[error(
+        "its corner frequency {cutoff} and {resonance} produce coefficients this stream \
+         cannot represent"
+    )]
+    CoefficientsUnusable {
+        /// The corner frequency the node declared.
+        cutoff: crate::quantities::CutoffFrequency,
+        /// The quality factor the node declared.
+        resonance: crate::quantities::Resonance,
+    },
+
+    /// A node's coefficients are representable and the filter they make is not stable.
+    ///
+    /// Separate from [`Self::CoefficientsUnusable`] because it is the opposite failure:
+    /// nothing underflowed, and rounding moved a pole *outside* the unit circle instead.
+    /// The audible result is a filter whose output climbs for as long as the stream runs,
+    /// which is worth its own diagnostic — a reader told only "unusable" would look for
+    /// a value that had vanished.
+    #[error(
+        "its corner frequency {cutoff} and {resonance} produce a filter that is not stable \
+         at this rate"
+    )]
+    CoefficientsUnstable {
+        /// The corner frequency the node declared.
+        cutoff: crate::quantities::CutoffFrequency,
+        /// The quality factor the node declared.
+        resonance: crate::quantities::Resonance,
+    },
+
+    /// A segment lasts more frames than a frame counter can hold.
+    ///
+    /// Refused where the duration becomes a frame count, because that is where it stops
+    /// being a legal quantity and becomes a number this node cannot use. Left to run, it
+    /// would prepare a segment that never advances — a note that never finishes starting.
+    #[error("a segment of {duration} is more than the {limit} frames a segment can last")]
+    SegmentTooLong {
+        /// The duration the node declared.
+        duration: crate::quantities::Seconds,
+        /// The most frames a segment may last.
+        limit: u32,
+    },
+}
+
 /// Something worth saying about a plan that was nevertheless admitted.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum CompileWarning {
+    /// The compiler inserted an implicit conversion on an edge.
+    ///
+    /// ADR-0002 clause 7 requires a conversion to appear in the schedule, in the
+    /// resource report's buffer count, **and** in a diagnostic. The first two say what
+    /// the plan costs; this one says what the compiler decided on the author's behalf,
+    /// which is the part a reader cannot recover from an operation list.
+    ConversionInserted {
+        /// The edge that needed it.
+        edge: crate::ir::EdgeId,
+        /// What was inserted.
+        conversion: crate::validate::Conversion,
+    },
+
+    /// The plan has an output node that nothing reaches.
+    ///
+    /// A **warning** rather than a refusal, deliberately: such a plan renders silence,
+    /// which is a legitimate intermediate state for a patch under construction — and
+    /// once plans can be swapped live, refusing it would mean the engine rejects a plan
+    /// the moment a cable is unplugged. What it must not do is stay quiet about it.
+    OutputNotReached {
+        /// The output node nothing feeds.
+        output: crate::ir::NodeId,
+    },
+
     /// An advisory budget was exceeded.
     ///
     /// `HOST-INV-015`: compilation continues. The predicted and permitted values
@@ -126,6 +347,13 @@ pub enum CompileWarning {
 impl std::fmt::Display for CompileWarning {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
+            Self::ConversionInserted { edge, conversion } => {
+                write!(f, "{edge} carries an inserted {conversion}")
+            }
+            Self::OutputNotReached { output } => write!(
+                f,
+                "{output} is the plan's output and nothing reaches it; this plan renders silence"
+            ),
             Self::AdvisoryBudgetExceeded {
                 field,
                 predicted,
@@ -266,6 +494,7 @@ pub struct DiagnosticsReport {
     out_of_horizon_events: u64,
     pre_epoch_clamps: u64,
     arrival_stamped_events: u64,
+    foreign_slot_events: u64,
     oversized_callback_faults: u64,
     clock_exhaustion_faults: u64,
     needs_reprepare: bool,
@@ -322,6 +551,16 @@ impl DiagnosticsReport {
         self.arrival_stamped_events
     }
 
+    /// Events whose parameter slot belongs to another compiled plan.
+    ///
+    /// A slot is an index into one plan's target table. After a plan swap, events
+    /// resolved against the old plan are still in flight, and applying one here would
+    /// write whatever occupies that index now — a wrong parameter, silently. Refusing
+    /// by identity and counting is the same shape ADR-0032 gives a stale epoch.
+    pub const fn foreign_slot_events(&self) -> u64 {
+        self.foreign_slot_events
+    }
+
     /// Callbacks larger than the profile's maximum block.
     pub const fn oversized_callback_faults(&self) -> u64 {
         self.oversized_callback_faults
@@ -351,6 +590,10 @@ impl DiagnosticsReport {
 
     pub(crate) fn count_arrival_stamped_event(&mut self) {
         self.arrival_stamped_events = self.arrival_stamped_events.saturating_add(1);
+    }
+
+    pub(crate) fn count_foreign_slot_event(&mut self) {
+        self.foreign_slot_events = self.foreign_slot_events.saturating_add(1);
     }
 
     pub(crate) fn count_oversized_callback(&mut self) {

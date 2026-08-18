@@ -1,44 +1,68 @@
 # Project Instructions for Pertylizer
 
-## Language
+## Scope and priority
 
-All code, comments, UI strings, documentation, and commit messages in **English**.
+These instructions apply to the entire repository. More specific instructions in
+a nested `AGENTS.md` take precedence for files below that directory.
 
-## Project Phase
+### Language
 
-Active development — **no backward compatibility required**. Break APIs freely.
+All code, comments, UI strings, documentation, and commit messages are in
+**English**.
 
-## Commands
+### Project phase and compatibility
 
-### `git commit`
+Pertylizer is in active development. Backward compatibility is **not promised**,
+but breaking an existing API, persisted format, manifest, wire contract, or
+protocol requires the user's **explicit approval for that break**.
 
-Before committing, ensure the working tree is clean:
+After approval, make the break cleanly; compatibility shims and migrations are
+not required unless the user asks for them. For persisted and wire contracts,
+prefer a format or protocol version change. Never silently give an existing
+version or serialized field a different meaning. If an approved break remains
+unversioned, document that decision and make old input fail clearly rather than
+being misinterpreted.
+
+---
+
+## Required delivery workflow
+
+### Before committing
+
+First inspect `git status --short` and the relevant diffs. Preserve unrelated
+changes already in the worktree, and do not stage them. "Clean" below means that
+the checks report no warnings or errors and that the intended change contains no
+unexplained files; it does not mean that the worktree has no uncommitted change.
+
+Run the complete local gate:
 
 ```bash
 cargo fmt --check
-cargo build
+cargo build --workspace
 cargo clippy --workspace --all-targets
 cargo test --workspace
+cargo test -p synth_engine --release resource_limit_probe_oversized_callback_exposes_build_mode_failure
 cargo doc --workspace --no-deps
+cargo check --workspace --all-targets --no-default-features
+cargo check --workspace --all-targets --all-features
+cargo +1.97.0 check --workspace
 ```
 
-`cargo doc` is part of the gate because `.cargo/config.toml`'s
-`[build] warnings = "deny"` covers rustdoc too, and `.github/workflows/quality.yml`
-runs it on every push to `main` — so a broken intra-doc link fails CI while
-passing `build`, `clippy`, and `test` in silence. It stayed broken upstream for
-a long time exactly because the checklist did not run it. That workflow also
-runs `cargo check --workspace --all-targets` with `--no-default-features` and
-with `--all-features`, plus a `cargo check --workspace` at MSRV 1.97; those are
-cheap and worth running by hand before a push that touches features or
-dependencies.
+`--workspace` is required. The workspace has
+`default-members = ["crates/pertylizer"]`, and the standalone
+`synth_engine_v2` crate is not a dependency of that package. A bare Cargo command
+therefore does not cover every workspace target. The explicit release-mode test
+is also required because its `#[cfg(not(debug_assertions))]` branch is not
+compiled by the ordinary development-profile test run.
 
-`--workspace` is required, not optional. `default-members = ["crates/pertylizer"]`
-means a bare `cargo test` / `cargo clippy --all-targets` selects only the
-`pertylizer` package. Every other crate's *lib* still compiles (they are all
-dependencies of it), but their `#[cfg(test)]` modules, `tests/`, `benches/` and
-`examples/` do not — that blind spot once hid a whole crate's test module failing
-to compile, and it kept ~2/3 of the workspace's tests from ever running. `cargo
-build` needs no flag: it already covers all lib code.
+The gate mirrors `.github/workflows/quality.yml`, with
+`cargo build --workspace` deliberately stronger than CI's bare `cargo build`.
+The MSRV command requires the Rust 1.97 toolchain.
+
+The only pre-approved Clippy exceptions are `too_many_lines` for large
+`process()` functions, `cast_precision_loss` for `usize` to `f32` conversion in
+audio code, and `cast_possible_truncation` when the value is proven to fit.
+Every exception still needs a narrowly scoped allowance at the relevant site.
 
 Then review the uncommitted work with a reader that has no memory of what you
 meant:
@@ -47,288 +71,318 @@ meant:
 codex review --uncommitted
 ```
 
-Read the findings and report them before acting on them. This catches a class
-the build gate cannot see — a claim about behaviour nobody verified, a
-contradiction between two clauses written minutes apart, a measurement without a
-control. It has caught all three on this repository.
+Read and report the findings before acting on them. Follow the
+[review and design protocol](#review-and-design-protocol), including its
+self-audit after every repair. Re-run every gate command affected by a repair;
+run the complete gate again when the repair changes behavior, public contracts,
+features, or dependencies.
 
-Then:
+Before the commit, inspect `git status --short`, `git diff`, and
+`git diff --cached`. Stage only the intended paths:
 
 ```bash
-git add --all
+git add -- <path>...
+git diff --cached --check
+git diff --cached
 git commit -m "<short description of changes>"
 ```
 
+Use `git add --all` only after verifying that every worktree change belongs in
+the same commit.
+
+### Review and design protocol
+
+Reviews are load-bearing: they catch false behavioral claims, contradictions,
+uncontrolled measurements, and contract holes that compilation cannot find.
+They must remain independent and bounded.
+
+1. **Review the design before building.** For a measurement, decision record,
+   or anything carrying acceptance criteria, write the criteria first and ask:
+   *what would make this wrong?*
+2. **Do not ask the reviewer to author the frames.** A reader who wrote the
+   constraints cannot independently review them.
+   `plans/v2/WORKING-AGREEMENT.md` requires a reader who did not author the
+   change.
+3. **A criterion must be falsifiable.** State the observable symmetry,
+   threshold, artifact, or failure that can violate it.
+4. **Verify factual claims while drafting.** Check them against the code or the
+   command's actual output; do not infer facts that are cheap to inspect.
+5. **Self-audit every repair before another read.** Search for renamed or
+   renumbered references, recount changed totals, and reread for contradictions
+   introduced by the repair.
+6. **Scope rereads to the changed claim or clauses.** Do not trigger a broad
+   reaudit when a focused independent read can settle the repair.
+7. **State the stopping rule.** A false claim, internal contradiction, or
+   contract hole that an implementer cannot fill blocks acceptance. A request
+   for optional implementation detail does not.
+
+Do not diagnose a `codex` process as hung from zero CPU usage alone: a healthy
+client may sleep while waiting for network work. Over a bounded observation
+period, inspect process state, elapsed time, wait channel, output progress, and
+the `rchar` delta in `/proc/<pid>/io`. Interrupt or retry only when the process
+has exceeded a reasonable deadline and the combined evidence shows no progress.
+
 ### Merging a branch to `main`
 
-When work was done on a branch, **always squash-merge** it into `main` so each
-feature lands as a single clean commit (the branch's incremental commits are not
-kept in `main`'s history):
+Work completed on a branch is always squash-merged so the feature lands on
+`main` as one commit. Before switching branches, ensure all intended branch work
+is committed and unrelated worktree changes are safe.
 
 ```bash
-git checkout main
+git switch main
 git merge --squash <branch>
+```
+
+Inspect the staged squash, run the required gate and uncommitted review, then:
+
+```bash
 git commit -m "<summary of the whole branch>"
 git branch -D <branch>
 ```
 
-Never fold a working branch into `main` with a plain/ff merge — squash by
-default. (`git merge` without `--squash` does a ff/merge-commit, so `--squash`
-must be explicit.)
+Delete the branch only after the squash commit succeeds. Never use a plain or
+fast-forward merge for completed branch work.
 
-### `new version`
+### Creating a new version
 
-1. **HARD REQUIREMENT — document every change since the last version.**
-   `docs/history.md` MUST contain an entry covering **every commit made since the
-   previous version's entry**. No commit may be left undocumented. The boundary is
-   the most recent release commit, **not** a git tag (versions are tagged only at
-   actual releases, so tags lag behind `docs/history.md`). Enumerate the commits
-   with `git log "$(git log --grep='^Release v' --format=%H -n 1)"..HEAD --oneline`
-   and fold each into the new entry. Cutting a version without doing this is not
-   allowed.
-2. Add the new version entry to `docs/history.md` (newest on top,
-   `## [x.y.z] - YYYY-MM-DD`).
+1. **Document every commit since the previous version.** The boundary is the
+   most recent release commit, not a tag. Enumerate the range with:
+   ```bash
+   git log "$(git log --grep='^Release v' --format=%H -n 1)"..HEAD --oneline
+   ```
+   Fold every listed commit into the new history entry; no commit may be omitted.
+2. Add the newest entry at the top of `docs/history.md` as
+   `## [x.y.z] - YYYY-MM-DD`.
 3. Review `plans/TODO.md` and mark completed tasks.
-4. Update the version number in `crates/pertylizer/Cargo.toml`, then run
-   `cargo build` so `Cargo.lock` is synced.
-5. **If dependencies changed since the last release, refresh the third-party
-   license attribution** so `THIRD-PARTY-LICENSES.md` stays accurate:
+4. Update `crates/pertylizer/Cargo.toml`, then run `cargo build --workspace` so
+   `Cargo.lock` is synchronized.
+5. If dependencies changed since the last release, regenerate attribution:
    ```bash
    cargo about generate --manifest-path crates/pertylizer/Cargo.toml \
      about.hbs -o THIRD-PARTY-LICENSES.md
    ```
-   Needs `cargo-about` (`cargo install cargo-about --locked --features cli`).
-   If it fails on an unaccepted license, that is the gate working — add the
-   license to `about.toml`'s `accepted` list only after confirming it is
-   redistributable. Include the regenerated file in the release commit.
-6. Commit the bump to `main` as `Release vX.Y.Z: <summary>` (follow the
-   `git commit` checklist above).
-7. **Tag and push — this is what publishes the release:**
+   This requires `cargo-about` (`cargo install cargo-about --locked --features
+   cli`). If generation rejects a license, add it to `about.toml` only after
+   confirming it is redistributable. Commit the regenerated file.
+6. Follow the full commit workflow and commit on `main` as
+   `Release vX.Y.Z: <summary>`.
+7. Verify that the Cargo version and `docs/history.md` section both equal the tag
+   version. Create the tag and atomically push `main` and the tag:
    ```bash
    git tag vX.Y.Z
-   git push origin vX.Y.Z
+   git push --atomic origin main vX.Y.Z
    ```
 
-### Releases (GitHub Actions)
-
-`.github/workflows/build.yml` triggers **only on pushed `v*` git tags** — never
-on plain commits. So you can push as many small version-less commits to `main`
-as you like without triggering anything; a release happens **only** when you push
-a tag.
-
-When a `v*` tag is pushed the workflow builds Linux/macOS/Windows, then the
-`release` job publishes a GitHub release. Key facts:
-
-- **The tag name is the source of truth for the version.** The release version is
-  derived from the tag (`v0.313.0` → `0.313.0`), *not* from `Cargo.toml`. Always
-  tag with the exact version you bumped `Cargo.toml` to.
-- **The tag must point at a commit that already contains** the bumped
-  `Cargo.toml` and the matching `## [x.y.z]` entry in `docs/history.md` — the
-  release notes are extracted from that section. Tag *after* the `new version`
-  commit is on `main`.
-- There is no manual (`workflow_dispatch`) trigger; the only way to run a build or
-  release is to push a tag.
+Pushing a `v*` tag is the only release trigger in
+`.github/workflows/build.yml`; ordinary commits and manual dispatch do not start
+a release. The tag name is the release version's source of truth
+(`v0.313.0` becomes `0.313.0`), and the workflow extracts release notes from the
+matching `docs/history.md` section. The tag must therefore point at a commit
+that already contains both the matching Cargo version and history entry.
 
 ### `docs/history.md` style
 
-Keep each fix / change description to **one or two sentences** — what was
-broken (or added) and the one-line essence of the fix. No multi-paragraph
-explanations, no full design rationale, no test-list enumerations. The
-commit and the code carry the detail; history.md is the index.
+Keep each fix or change description to one or two sentences: what was broken or
+added, followed by the essence of the fix. Do not include multi-paragraph design
+rationale or test-list enumerations; the commit and code carry the detail.
+
+---
+
+## Engineering invariants
+
+### Newtypes for domain concepts (critical)
+
+Never use a raw primitive for a domain concept. Search the codebase first; a
+suitable newtype likely exists.
+
+```rust
+// Wrong: raw primitive for a domain value.
+fn set_frequency(hz: f32) { ... }
+
+// Right: the unit and invariant are explicit.
+fn set_frequency(freq: Hertz) { ... }
+```
+
+Raw primitives are acceptable for loop counters, intermediate arithmetic, and
+FFI or serialization internals.
+
+| Crate | Examples |
+|---|---|
+| `synth_core` | `Hertz`, `SampleRate`, `DeviceSampleRate`, `Cents`, `Semitones`, `MidiNote`, `MidiChannel`, `Velocity`, `Gain`, `Decibels`, `Seconds`, `Milliseconds`, `Bpm`, `NormalizedValue`, `NormalizedDelta`, `BipolarValue`, `BipolarDelta`, `Phase`, `SampleCount`, `BlockSize`, `PortName`, `Meters`, `MetersPerSecond`, `SampleOffset`, `Position3`, `InstrumentId`, `SampleId` |
+| `synth_sequencer` | `PatternId`, `TrackId`, `NoteId`, `Tick`, `PatternTick`, `Duration`, `Pitch`, `TrackIndex`, `RowIndex`, `NoteGraphId`, `NoteModuleId` |
+| `synth_engine` | `TransactionId`, `ClientId`, `MidiChannelSelection`, `ConnectionCount`, `ModuleId`; instrument IDs use `synth_core::InstrumentId` |
+
+Newtype invariants:
+
+- Fields are private unless an external representation requires otherwise.
+- Construction validates the domain invariant. Use `Result` or `TryFrom` for
+  fallible external input; invalid values must not enter domain logic.
+- Clamp only when clamping is explicitly documented domain behavior. Do not
+  silently replace invalid persisted, protocol, or user input with another
+  value.
+- Expose named accessors such as `as_f32()`. Implement only arithmetic meaningful
+  for the unit; a newtype protects a concept rather than merely renaming a
+  primitive.
+
+### State changes and errors
+
+- Never discard a `Result` or boolean success value from I/O, serialization,
+  command sends, state reconstruction, or persistence.
+- Propagate failure, surface a diagnostic, or explicitly document why failure is
+  harmless. Best-effort behavior must not silently leave engine or project state
+  at a default or partial value.
+
+### Serialized contracts
+
+- Breaking a serialized or protocol contract requires the explicit approval
+  described under [project phase and compatibility](#project-phase-and-compatibility).
+- Prefer a format or protocol version change for every approved semantic break.
+  No backward reader or migration is required unless explicitly requested, but
+  old data must never be silently reinterpreted as the new contract.
+- Closed persisted schemas, manifests, receipts, and protocols use
+  `#[serde(deny_unknown_fields)]` so misspelled fields cannot be ignored.
+- Required fields do not use `#[serde(default)]`. Optionality is deliberate; when
+  it matters, preserve missing versus explicit `null`.
+- Add round-trip tests and rejection tests for unknown, missing, and invalid
+  fields, including old-version rejection when an approved break has no
+  migration.
+- Persisted output is deterministic: use canonical ordering or sort collections
+  before serialization and digesting.
+
+### Numeric invariants
+
+- Validate external and persisted numeric values at the boundary. Reject
+  non-finite floats and out-of-domain values unless a documented saturating type
+  owns that policy.
+- Prefer `From` for infallible conversions and `TryFrom` for checked conversions.
+  Avoid `as` casts at domain boundaries and keep units typed through calculations.
+- Use `total_cmp` when floats require ordering. Do not use raw floating-point
+  values as identity or map keys without a documented canonical representation.
+
+### Stable identity
+
+- Do not use collection position, vector index, display order, name, or module
+  instance number as persistent identity unless the domain explicitly defines it
+  that way.
+- Keep stable IDs distinct from indices, counts, ordering positions, and sample
+  or tick offsets through their dedicated newtypes. Reordering a collection must
+  not change what persisted references identify.
+
+### Code style
+
+- Use `Self` in impl blocks, not the type name.
+- Use `thiserror` for error types; do not manually implement both `Display` and
+  `Error`.
+- Do not use `.unwrap()` or `.expect()` in production code. Use `?`, `if let`, or
+  an explicit safe default such as `unwrap_or` where the fallback is correct.
+- Use `pub(crate)` for internal types and minimize public API surface.
+- Add `#[must_use]` to newtypes and builder methods.
+- Do not add `unsafe` code without discussing it with the user first.
+
+### Real-time safety
+
+In `process()` functions and other real-time-critical code:
+
+- Do not allocate on the heap. This includes operations that may allocate even
+  if capacity often happens to be available, such as `Vec::push`, plus
+  `Box::new` and `String::clone`.
+- Do not acquire blocking locks, including any `Mutex` or `RwLock` read/write
+  guard.
+- Do not panic. Avoid `unwrap`, `expect`, unchecked assumptions about indices,
+  and indexing that has not been proven in bounds.
+- Do not perform system calls, file I/O, or logging.
+- Use preallocated buffers, atomics, and lock-free structures. An explicit safe
+  fallback such as `unwrap_or(0.0)` is allowed when zero is the correct domain
+  behavior.
+- Use `for` loops for DSP sample processing. Keep iterator-based traversal
+  outside the hot path.
 
 ---
 
 ## Architecture
 
-### Thread Model
+### Thread model
 
-- **Audio thread** — real-time, lock-free. Runs `SynthEngine::process()`. Communicates via `EngineCommand` (in) and
-  `EngineEvent` (out) ring buffers.
-- **UI thread** — egui rendering. Holds `EngineHandle` for sending commands and reading shared atomic state.
-- **Shared state** — `Arc<SharedSong>` keeps editable sequencer data behind an `RwLock` and publishes immutable
-  `Arc<Song>` snapshots through `ArcSwap`. The audio thread reads snapshots lock-free; the UI thread uses `write()`
-  for mutations. Collect snapshots before rendering, release locks, then draw.
+- **Audio thread:** real-time and lock-free. Runs `SynthEngine::process()` and
+  communicates through `EngineCommand` and `EngineEvent` ring buffers.
+- **UI thread:** renders egui and holds `EngineHandle` for commands and shared
+  atomic state.
+- **Shared state:** `Arc<SharedSong>` keeps editable sequencer data behind an
+  `RwLock` and publishes immutable `Arc<Song>` snapshots through `ArcSwap`. The
+  audio thread reads snapshots lock-free. The UI thread uses `write()` for
+  mutations. Collect snapshots before rendering, release locks, and then draw.
 
-### GUI Architecture (egui)
+### GUI architecture
 
-- Icons: `egui_remixicon::icons as ri` (Remix Icon font)
-- Panel order: TopPanel → SidePanel → TopBottomPanel::bottom → CentralPanel (last)
-- Patch editor modules use `egui::Area` at `Order::Background`. Keyboard panel renders at `Order::Middle` for input
-  priority.
-- Pattern data collected as snapshots (`collect_arrangement_data`, `collect_piano_roll_data`) before rendering to
-  minimize lock hold time.
+- Import icons as `egui_remixicon::icons as ri`.
+- Panel order is TopPanel, SidePanel, `TopBottomPanel::bottom`, then CentralPanel.
+- Patch-editor modules use `egui::Area` at `Order::Background`. The keyboard
+  panel renders at `Order::Middle` for input priority.
+- Collect pattern snapshots with `collect_arrangement_data` and
+  `collect_piano_roll_data` before drawing to minimize lock hold time.
 
-### Shared widgets (`widgets/controls.rs`)
+### Shared widgets
 
-- **Small reusable widgets and composite controls live in
-  `crates/pertylizer/src/gui/widgets/controls.rs`** (themed labels, icon buttons,
-  toggles, drag/slider presets, layout idioms like `right_aligned_row`, …). Don't
-  hand-roll the same `egui::Button`/`Label`/layout primitive inline at a call
-  site when it's a repeatable idiom — add a helper there and call it.
-- **Add it even when there's a single caller today.** Putting it in `controls.rs`
-  keeps the widget surface easy to consolidate: a later second user reuses it
-  instead of diverging, and related helpers can be merged in one place.
-- **Scope: small widgets only — not larger composites.** Big, view-specific
-  composites (whole panels, the `ModuleFrame` chrome / `draw_module_header` /
-  `draw_module_footer` painters in `widgets/frame.rs`, etc.) stay with their view
-  or chrome module; those *call* the small `controls.rs` helpers, they don't move
-  into `controls.rs`.
+Small reusable widgets and composite controls belong in
+`crates/pertylizer/src/gui/widgets/controls.rs`: themed labels, icon buttons,
+toggles, drag/slider presets, and layout idioms such as `right_aligned_row`.
+
+Add a helper even for a single current caller when the primitive is a reusable
+idiom. Large view-specific composites remain with their view or chrome module;
+for example, `ModuleFrame`, `draw_module_header`, and `draw_module_footer` stay
+in `widgets/frame.rs` and call small controls helpers.
 
 ---
 
-## MCP Integration
+## Repository tools
 
-This project includes an MCP (Model Context Protocol) server for external control and inspection.
+### Search and structural rewrites
 
-### Connection
+Use `rg` for file discovery, literal text, and regular-expression searches. Use
+`ast-grep` when the question concerns a syntax shape such as calls, expressions,
+fields, or Rust items independent of formatting.
 
-- **HTTP Endpoint:** `http://127.0.0.1:9850/mcp`
-- **Gemini CLI Configuration:** Local settings are stored in `.gemini/settings.json`.
-- **Claude Code Configuration:** Configuration is in `.mcp.json`.
-
-### Available Tools
-
-The `synth` MCP server provides a wide range of tools:
-- **Discovery:** `list_module_types`, `get_module_type_info`, `search_modules`, `list_port_types`.
-- **Instruments:** `create_instrument`, `build_instrument`, `list_instruments`, `set_parameter`.
-- **Sequencer:** `create_pattern`, `add_note`, `create_track`, `place_pattern`.
-- **Analysis:** `analyze_harmony`, `analyze_mix_bus`, `analyze_section`.
-
-### Batch Operations
-
-Use `batch_execute` to run multiple operations in a single request for better performance.
-
-### MCP feedback (ALWAYS)
-
-**Scope: this applies ONLY to the `synth` MCP server (Pertylizer's own server,
-`http://127.0.0.1:9850/mcp`).** Do not apply it to any other MCP server (e.g. the
-`egui` inspection MCP or any unrelated tools) — gaps there are not ours to harden.
-
-We are actively hardening Pertylizer's MCP, so **every time you use a `synth` MCP tool,
-watch for gaps and report them.** Whenever a `synth` call errors, returns something
-unexpected, is awkward to use, lacks a tool you needed, or has a confusing/incomplete
-schema or description — **stop and report it to the user**, then investigate what could
-be better:
-
-- What failed or was missing (the exact tool, args, and error/response).
-- Why it got in the way (workaround you had to use, or task you couldn't finish).
-- A concrete improvement (new tool, better validation, clearer description, missing
-  field, array variant, etc.).
-
-Don't silently work around MCP shortcomings — surfacing them is part of the task.
-
----
-
-## Newtype Pattern (CRITICAL)
-
-**NEVER use raw primitives** for domain concepts. ALWAYS wrap in a newtype.
-
-```rust
-// WRONG — raw primitives for domain values
-fn set_frequency(hz: f32) { ... }
-
-// RIGHT — newtypes
-fn set_frequency(freq: Hertz) { ... }
-```
-
-**Raw primitives OK for:** loop counters, intermediate arithmetic, FFI/serialization internals.
-
-**Search the codebase first** — a suitable newtype likely exists:
-
-| Crate             | Examples                                                                                                                                                                                                      | 
-|-------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|
-| `synth_core`      | `Hertz`, `SampleRate`, `DeviceSampleRate`, `Cents`, `Semitones`, `MidiNote`, `MidiChannel`, `Velocity`, `Gain`, `Decibels`, `Seconds`, `Milliseconds`, `Bpm`, `NormalizedValue`, `NormalizedDelta`, `BipolarValue`, `BipolarDelta`, `Phase`, `SampleCount`, `BlockSize`, `PortName`, `Meters`, `MetersPerSecond`, `SampleOffset`, `Position3`, `InstrumentId`, `SampleId` |
-| `synth_sequencer` | `PatternId`, `TrackId`, `NoteId`, `Tick`, `PatternTick`, `Duration`, `Pitch`, `TrackIndex`, `RowIndex`, `NoteGraphId`, `NoteModuleId`                                                          |
-| `synth_engine`    | `TransactionId`, `ClientId`, `MidiChannelSelection`, `ConnectionCount`, `ModuleId` (instrument ids use `synth_core::InstrumentId`)                                                                                                            |
-
-### Newtype invariants
-
-- Newtype fields are private unless an external representation requires otherwise.
-- Construction validates the domain invariant. Use `Result` or `TryFrom` for
-  fallible external input; do not let an invalid value enter domain logic.
-- Clamp only when clamping is the explicitly documented domain behavior. Do not
-  silently turn invalid persisted, protocol, or user input into a different value.
-- Expose named accessors such as `as_f32()` and only implement arithmetic that is
-  meaningful for the unit. A newtype must protect the concept, not merely rename
-  a primitive.
-
-## State-changing operations and errors
-
-- Never discard a `Result` or boolean success value from I/O, serialization,
-  command sends, state reconstruction, or persistence.
-- Propagate the failure, convert it into a surfaced diagnostic, or document why
-  failure is intentionally harmless. Best-effort behavior must be explicit; it
-  must not silently leave engine or project state at a default or partial value.
-
-## Serialized contracts
-
-- Closed persisted schemas, manifests, receipts, and protocols use
-  `#[serde(deny_unknown_fields)]` so misspelled fields cannot be ignored.
-- Required fields do not use `#[serde(default)]`. Optionality is deliberate; when
-  the distinction matters, preserve the difference between a missing field and
-  an explicit `null`.
-- Removing or changing the meaning of a serialized field requires a format or
-  protocol version change. Add round-trip tests plus rejection tests for unknown,
-  missing, and invalid fields.
-- Persisted output is deterministic: use canonical ordering or sort collections
-  before serialization and digesting.
-
-## Numeric invariants
-
-- Validate external and persisted numeric values at the boundary before wrapping
-  or passing them into DSP/domain logic. Reject non-finite floats and values
-  outside the domain range unless a documented saturating type owns that policy.
-- Prefer `From` for infallible conversions and `TryFrom` for checked conversions.
-  Avoid `as` casts at domain boundaries; keep units typed through calculations.
-- Use `total_cmp` when floats require ordering. Do not use raw floating-point
-  values as identity or map keys without a documented canonical representation.
-
-## Stable identity
-
-- Never use collection position, vector index, display order, name, or module
-  instance number as persistent identity unless the domain explicitly defines it
-  as identity.
-- Keep stable IDs distinct from indices, counts, ordering positions, and sample or
-  tick offsets by using their dedicated newtypes. Reordering a collection must not
-  change what persisted references identify.
-
----
-
-## Code Style
-
-- Use `Self` in impl blocks, not the type name
-- `thiserror` for error types — no manual `Display + Error` impls
-- No `.unwrap()` / `.expect()` in production code — use `unwrap_or`, `?`, or `if let`
-- `pub(crate)` for internal types — minimize public API surface
-- `#[must_use]` on newtypes and builder methods
-- No `unsafe` code without discussion
-
----
-
-## Build & Code Quality
-
-ALL must pass with **zero warnings or errors**:
+Quote metavariables so the shell does not expand them:
 
 ```bash
-cargo build                            # `[build] warnings = "deny"` in .cargo/config.toml
-cargo clippy --workspace --all-targets # Lints configured in Cargo.toml
-cargo test --workspace                 # `--workspace` is required — see `git commit` above
-cargo fmt --check
-cargo doc --workspace --no-deps        # `warnings = "deny"` covers rustdoc; CI runs it
+ast-grep run --lang rust --pattern '$EXPR.unwrap()' crates
 ```
 
-Allowed clippy exceptions: `too_many_lines` (large `process()` functions), `cast_precision_loss` (usize → f32 in audio),
-`cast_possible_truncation` (value guaranteed to fit).
+Use the full `ast-grep` name; its `sg` alias is deprecated and may collide with
+`shadow-utils`. After a structural rewrite, inspect the complete diff. A
+syntactic match does not establish domain correctness or real-time safety.
 
----
+### Pertylizer MCP server
 
-## Real-Time Safety (audio thread)
+The repository's `synth` MCP server is available at
+`http://127.0.0.1:9850/mcp`. Gemini CLI configuration is in
+`.gemini/settings.json`; Claude Code configuration is in `.mcp.json`.
 
-In `process()` functions and real-time-critical code:
+Representative tools:
 
-**Forbidden:** heap allocations (`Vec::push`, `Box::new`, `String::clone`), blocking locks (`Mutex::lock`,
-`RwLock::write`), panics (`unwrap()`, `expect()`, out-of-bounds indexing), system calls (file I/O, logging).
+- Discovery: `list_module_types`, `get_module_type_info`, `search_modules`,
+  `list_port_types`.
+- Instruments: `create_instrument`, `build_instrument`, `list_instruments`,
+  `set_parameter`.
+- Sequencer: `create_pattern`, `add_note`, `create_track`, `place_pattern`.
+- Analysis: `analyze_harmony`, `analyze_mix_bus`, `analyze_section`.
 
-**Allowed:** `unwrap_or(0.0)` for safe defaults, pre-allocated buffers, atomics, lock-free structures.
+Use `batch_execute` for independent operations that can safely be issued
+together.
 
-**For-loops** for DSP sample processing. **Iterators** outside the hot path.
+#### MCP feedback is mandatory
+
+This feedback rule applies only to Pertylizer's own `synth` MCP server at the
+endpoint above, not to egui inspection or unrelated MCP servers.
+
+Whenever a `synth` call errors, returns an unexpected result, is awkward to use,
+lacks a needed tool, or has a confusing or incomplete schema or description,
+stop and report:
+
+- the exact tool, arguments, and error or response;
+- why it obstructed the task and any workaround required;
+- a concrete improvement such as validation, clearer documentation, a missing
+  field, an array variant, or a new tool.
+
+Do not silently work around a `synth` MCP shortcoming; identifying these gaps is
+part of the task.
