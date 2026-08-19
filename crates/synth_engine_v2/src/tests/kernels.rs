@@ -11,9 +11,10 @@
 //! assertions themselves, which is the other reason these live in their own file.
 
 use crate::node::kernels::{
-    InputBuffer, MAX_INPUTS, NodeIo, NodeState, PreparedNode, Segment, envelope,
+    InputBuffer, MAX_INPUTS, NodeIo, NodeState, PreparedNode, Segment, TimedControl, envelope,
 };
 use crate::quantities::{NormalizedLevel, ParameterValue, SegmentFrames};
+use crate::time::QuantumOffset;
 
 /// Run a kernel over one quantum-sized buffer and return what it wrote.
 fn run(
@@ -22,12 +23,24 @@ fn run(
     state: &mut NodeState,
     frames: usize,
 ) -> Vec<f32> {
+    run_with(kernel, prepared, state, frames, &[])
+}
+
+/// The same, with sample-positioned control changes due inside the buffer.
+fn run_with(
+    kernel: fn(&PreparedNode, &mut NodeState, &mut NodeIo<'_>),
+    prepared: &PreparedNode,
+    state: &mut NodeState,
+    frames: usize,
+    controls: &[TimedControl],
+) -> Vec<f32> {
     let mut out = vec![0.0; frames];
     let mut io = NodeIo {
         out: &mut out,
         channels: crate::quantities::ChannelLayout::Mono,
         inputs: [InputBuffer::Unpatched; MAX_INPUTS],
         position: None,
+        controls,
     };
     kernel(prepared, state, &mut io);
     out
@@ -43,12 +56,18 @@ fn adsr(frames: u32, sustain: f32) -> PreparedNode {
     }
 }
 
-fn gate(prepared: &PreparedNode, state: &mut NodeState, held: bool) {
-    state.set_control(
-        prepared,
-        crate::node::kernels::ENVELOPE_GATE,
-        ParameterValue::new(if held { 1.0 } else { 0.0 }).expect("finite"),
-    );
+/// A gate edge at an offset inside the quantum about to be rendered.
+///
+/// Since P02-T007 a gate is sample-positioned (ADR-0001 clause 14), so it reaches the
+/// kernel with the buffer rather than being set on the state beforehand. An edge at
+/// offset 0 is what the old boundary-applied gate was, and every test below that only
+/// cares about *whether* the gate is held uses that offset.
+fn gate_at(offset: u16, held: bool) -> TimedControl {
+    TimedControl {
+        offset: QuantumOffset::new(offset).expect("an offset inside the quantum"),
+        control: crate::node::kernels::ENVELOPE_GATE,
+        value: ParameterValue::new(if held { 1.0 } else { 0.0 }).expect("finite"),
+    }
 }
 
 #[test]
@@ -66,13 +85,11 @@ fn an_ungated_envelope_is_silent() {
 fn a_held_gate_rises_then_settles_at_the_sustain_level() {
     let prepared = adsr(64, 0.5);
     let mut state = NodeState::initial(&prepared);
-    gate(&prepared, &mut state, true);
-
     // A segment of `n` frames writes `n` values, starting at the level it inherited and
     // ending one step short of its target: the target itself is the first value of the
     // segment that follows. That is what makes a chain continuous, and it is why the peak
     // lands on frame 65 rather than 64.
-    let attack = run(envelope, &prepared, &mut state, 65);
+    let attack = run_with(envelope, &prepared, &mut state, 65, &[gate_at(0, true)]);
     let peak = attack.last().copied().unwrap_or(0.0);
     assert!(
         (peak - 1.0).abs() < 1e-6,
@@ -117,11 +134,9 @@ fn a_held_gate_rises_then_settles_at_the_sustain_level() {
 fn a_released_gate_falls_to_silence_and_stops() {
     let prepared = adsr(64, 0.5);
     let mut state = NodeState::initial(&prepared);
-    gate(&prepared, &mut state, true);
-    run(envelope, &prepared, &mut state, 128);
-    gate(&prepared, &mut state, false);
+    run_with(envelope, &prepared, &mut state, 128, &[gate_at(0, true)]);
 
-    let release = run(envelope, &prepared, &mut state, 65);
+    let release = run_with(envelope, &prepared, &mut state, 65, &[gate_at(0, false)]);
     let last = release.last().copied().unwrap_or(1.0);
     assert!(
         last == 0.0,
@@ -149,12 +164,10 @@ fn a_note_let_go_early_still_reaches_silence() {
     // and obvious in isolation.
     let prepared = adsr(64, 0.0);
     let mut state = NodeState::initial(&prepared);
-    gate(&prepared, &mut state, true);
     // Let go a quarter of the way up the attack.
-    run(envelope, &prepared, &mut state, 16);
-    gate(&prepared, &mut state, false);
+    run_with(envelope, &prepared, &mut state, 16, &[gate_at(0, true)]);
 
-    let release = run(envelope, &prepared, &mut state, 65);
+    let release = run_with(envelope, &prepared, &mut state, 65, &[gate_at(0, false)]);
     assert_eq!(
         release.last().copied(),
         Some(0.0),
@@ -181,15 +194,13 @@ fn a_gate_edge_on_a_quantum_boundary_continues_from_where_the_ramp_is() {
     // every boundary a note happens to end on.
     let prepared = adsr(64, 0.5);
     let mut state = NodeState::initial(&prepared);
-    gate(&prepared, &mut state, true);
-    let attack = run(envelope, &prepared, &mut state, 32);
+    let attack = run_with(envelope, &prepared, &mut state, 32, &[gate_at(0, true)]);
     let after_boundary = match state {
         NodeState::Envelope { level, .. } => level,
         other => panic!("an envelope's state is an envelope: {other:?}"),
     };
 
-    gate(&prepared, &mut state, false);
-    let release = run(envelope, &prepared, &mut state, 32);
+    let release = run_with(envelope, &prepared, &mut state, 32, &[gate_at(0, false)]);
     let first = release.first().copied().unwrap_or(0.0);
     assert!(
         (first - after_boundary).abs() < 1e-6,
@@ -211,17 +222,32 @@ fn a_gate_re_asserted_does_not_restart_the_note() {
     // Attack begins on the **edge**.
     let prepared = adsr(64, 0.5);
     let mut state = NodeState::initial(&prepared);
-    gate(&prepared, &mut state, true);
-    run(envelope, &prepared, &mut state, 128);
-
+    run_with(envelope, &prepared, &mut state, 128, &[gate_at(0, true)]);
     let settled = state;
-    gate(&prepared, &mut state, true);
+
+    // Two runs from the same settled state: one told the gate is high again, one told
+    // nothing. A retrigger would make them differ, and comparing against a control is
+    // what turns "it stayed at sustain" into a check a wrong envelope can fail — an
+    // envelope that restarted its attack from full level would also sit near 0.5.
+    let mut reasserted = settled;
+    let held = run_with(
+        envelope,
+        &prepared,
+        &mut reasserted,
+        64,
+        &[gate_at(0, true)],
+    );
+    let mut untouched = settled;
+    let control = run(envelope, &prepared, &mut untouched, 64);
+
     assert_eq!(
-        state, settled,
+        held, control,
+        "re-asserting a gate that is already held changed what the envelope wrote"
+    );
+    assert_eq!(
+        reasserted, untouched,
         "re-asserting a gate that is already held changed the envelope's state"
     );
-
-    let held = run(envelope, &prepared, &mut state, 64);
     assert!(
         held.iter().all(|value| (*value - 0.5).abs() < 1e-6),
         "and it stays at the sustain level rather than climbing again"
@@ -237,8 +263,13 @@ fn an_authored_duration_is_the_duration_it_takes() {
     for frames in [1_u32, 7, 64, 1_000, 48_000] {
         let prepared = adsr(frames, 0.5);
         let mut state = NodeState::initial(&prepared);
-        gate(&prepared, &mut state, true);
-        let rendered = run(envelope, &prepared, &mut state, frames as usize + 1);
+        let rendered = run_with(
+            envelope,
+            &prepared,
+            &mut state,
+            frames as usize + 1,
+            &[gate_at(0, true)],
+        );
         let arrival = rendered.last().copied().unwrap_or(0.0);
         assert!(
             (arrival - 1.0).abs() < 1e-6,
@@ -266,8 +297,7 @@ fn a_zero_length_attack_is_instantaneous_rather_than_infinite() {
         sustain: NormalizedLevel::new(0.5).expect("a level within the range"),
     };
     let mut state = NodeState::initial(&prepared);
-    gate(&prepared, &mut state, true);
-    let rendered = run(envelope, &prepared, &mut state, 4);
+    let rendered = run_with(envelope, &prepared, &mut state, 4, &[gate_at(0, true)]);
     assert!(
         (rendered.first().copied().unwrap_or(0.0) - 1.0).abs() < f32::EPSILON,
         "the first sample of an instant attack is already at full level"
@@ -280,10 +310,17 @@ fn a_control_index_the_state_does_not_have_changes_nothing() {
     // a constant in scope would silently become a binding that matches everything — which
     // would make every parameter of a node move every one of its controls. This is what
     // that failure would look like from outside.
-    let prepared = adsr(64, 0.5);
+    //
+    // Over the sine, which is the state with quantum-rate controls to confuse: an
+    // envelope has none since P02-T007 moved its gate to the sample-positioned path, so
+    // the pattern-binding failure would be invisible there.
+    let prepared = PreparedNode::Sine {
+        seconds_per_frame: 1.0 / 48_000.0,
+        frequency: crate::quantities::Frequency::new(440.0).expect("finite"),
+        amplitude: crate::quantities::Amplitude::UNITY,
+    };
     let mut state = NodeState::initial(&prepared);
     state.set_control(
-        &prepared,
         crate::node::kernels::ControlIndex::new(7),
         ParameterValue::new(1.0).expect("finite"),
     );
@@ -292,6 +329,71 @@ fn a_control_index_the_state_does_not_have_changes_nothing() {
         NodeState::initial(&prepared),
         "an index this state does not have moved something"
     );
+}
+
+#[test]
+fn a_gate_edge_inside_a_quantum_takes_effect_at_its_own_sample() {
+    // ADR-0001 clause 14 at the kernel: an edge at offset `k` is applied before frame `k`
+    // is written and after frame `k - 1` was. With instantaneous segments the envelope is
+    // at the sustain level from frame `k` onward and at zero before it, so the boundary is
+    // one sample wide and a gate applied to the whole quantum — the behaviour before this
+    // task — puts it at frame 0 instead.
+    const OFFSET: u16 = 37;
+    let prepared = PreparedNode::Envelope {
+        attack_frames: SegmentFrames::NONE,
+        decay_frames: SegmentFrames::NONE,
+        release_frames: SegmentFrames::NONE,
+        sustain: NormalizedLevel::new(0.5).expect("a level within the range"),
+    };
+    let mut state = NodeState::initial(&prepared);
+    let rendered = run_with(
+        envelope,
+        &prepared,
+        &mut state,
+        64,
+        &[gate_at(OFFSET, true)],
+    );
+
+    for (frame, value) in rendered.iter().enumerate() {
+        let expected = if frame < OFFSET as usize { 0.0 } else { 0.5 };
+        assert!(
+            (*value - expected).abs() < 1e-6,
+            "frame {frame} of a gate at offset {OFFSET} is {value} rather than {expected}"
+        );
+    }
+}
+
+#[test]
+fn two_edges_in_one_quantum_each_take_effect_at_their_own_sample() {
+    // A note let go and retriggered inside 1.33 ms. Both edges are separate edges at
+    // separate samples, so an implementation that keeps one pending edge per node loses
+    // the first and one that collapses them onto a boundary loses both positions.
+    const OFF: u16 = 20;
+    const ON: u16 = 23;
+    let prepared = PreparedNode::Envelope {
+        attack_frames: SegmentFrames::NONE,
+        decay_frames: SegmentFrames::NONE,
+        release_frames: SegmentFrames::NONE,
+        sustain: NormalizedLevel::new(0.5).expect("a level within the range"),
+    };
+    let mut state = NodeState::initial(&prepared);
+    run_with(envelope, &prepared, &mut state, 64, &[gate_at(0, true)]);
+
+    let rendered = run_with(
+        envelope,
+        &prepared,
+        &mut state,
+        64,
+        &[gate_at(OFF, false), gate_at(ON, true)],
+    );
+    for (frame, value) in rendered.iter().enumerate() {
+        let silent = (OFF as usize..ON as usize).contains(&frame);
+        let expected = if silent { 0.0 } else { 0.5 };
+        assert!(
+            (*value - expected).abs() < 1e-6,
+            "frame {frame} between edges at {OFF} and {ON} is {value} rather than {expected}"
+        );
+    }
 }
 
 /// The widening kernel, at **every** channel count its port admits.
@@ -322,6 +424,7 @@ fn the_widening_writes_every_channel_of_every_frame() {
             channels: layout,
             inputs,
             position: None,
+            controls: &[],
         };
         copy(
             &PreparedNode::Copy,

@@ -56,7 +56,8 @@ use synth_engine_v2::ir::{
     ExecutionScope, GraphIr, IrNodeKind, NodeId, PortId, SignalDomain, parameters,
 };
 use synth_engine_v2::node::kernels::{
-    InputBuffer, MAX_INPUTS, NodeIo, NodeState, PreparedNode, amplifier, envelope, filter, sine,
+    ENVELOPE_GATE, InputBuffer, MAX_INPUTS, NodeIo, NodeState, PreparedNode, TimedControl,
+    amplifier, envelope, filter, sine,
 };
 use synth_engine_v2::plan::{BufferSlot, CompiledPlan, NodeStep, PlanOp};
 use synth_engine_v2::profile::HostProfile;
@@ -68,8 +69,17 @@ use synth_engine_v2::render::{
     AudioBlockMut, EventEnvelope, EventPayload, PreparedRenderer, Renderer, TimedEvent, TimedEvents,
 };
 use synth_engine_v2::time::{
-    FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor, TimeSource,
+    FrameCount, PlanPosition, QUANTUM_FRAMES, QuantumOffset, SampleTime, StreamAnchor, TimeSource,
 };
+
+/// A raised gate at the first sample of the quantum about to be rendered.
+fn held_gate() -> TimedControl {
+    TimedControl {
+        offset: QuantumOffset::ZERO,
+        control: ENVELOPE_GATE,
+        value: ParameterValue::ONE,
+    }
+}
 
 /// Frames in one render quantum, from the crate rather than restated here.
 const Q: usize = QUANTUM_FRAMES as usize;
@@ -226,11 +236,22 @@ impl Hand {
     }
 
     /// Hold the gate.
+    ///
+    /// A gate is sample-positioned since P02-T007, so it reaches the envelope with a
+    /// buffer rather than being set on the state beforehand: one quantum rendered with
+    /// the edge at offset 0, which is where the boundary-applied gate used to land. The
+    /// control buffer it writes is overwritten by the first timed quantum.
     fn open_gate(&mut self) {
-        self.envelope_state.set_control(
+        envelope(
             &self.envelope,
-            synth_engine_v2::node::kernels::ENVELOPE_GATE,
-            ParameterValue::new(1.0).expect("finite"),
+            &mut self.envelope_state,
+            &mut NodeIo {
+                out: &mut self.control,
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
+                inputs: [InputBuffer::Unpatched; MAX_INPUTS],
+                position: None,
+                controls: &[held_gate()],
+            },
         );
     }
 
@@ -251,6 +272,7 @@ impl Hand {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
+                controls: &[],
             },
         );
         filter(
@@ -261,6 +283,7 @@ impl Hand {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
                 position: None,
+                controls: &[],
             },
         );
         envelope(
@@ -271,6 +294,7 @@ impl Hand {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
+                controls: &[],
             },
         );
         amplifier(
@@ -281,6 +305,7 @@ impl Hand {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Patched(&self.control)],
                 position: None,
+                controls: &[],
             },
         );
         // The plan's last operation, which the renderer performs and which a hand-written
@@ -377,16 +402,25 @@ impl Table {
     }
 
     /// Hold the gate on whichever node is the envelope.
+    ///
+    /// One quantum through the envelope kernel with the edge at offset 0, for the reason
+    /// given on the hand-written arm's `open_gate`.
     fn open_gate(&mut self) {
-        let held = ParameterValue::new(1.0).expect("finite");
+        let mut scratch = vec![0.0_f32; Q];
         for (index, prepared) in self.prepared.clone().iter().enumerate() {
             if let (PreparedNode::Envelope { .. }, Some(state)) =
                 (prepared, self.states.get_mut(index))
             {
-                state.set_control(
+                envelope(
                     prepared,
-                    synth_engine_v2::node::kernels::ENVELOPE_GATE,
-                    held,
+                    state,
+                    &mut NodeIo {
+                        out: &mut scratch,
+                        channels: synth_engine_v2::quantities::ChannelLayout::Mono,
+                        inputs: [InputBuffer::Unpatched; MAX_INPUTS],
+                        position: None,
+                        controls: &[held_gate()],
+                    },
                 );
             }
         }
@@ -410,8 +444,13 @@ impl Table {
     /// only the total would send a reader to the wrong one.
     fn bind_only(&mut self) {
         for step in &self.steps {
-            let io =
-                synth_engine_v2::node::kernels::bind(&mut self.arena, &self.regions, step, None);
+            let io = synth_engine_v2::node::kernels::bind(
+                &mut self.arena,
+                &self.regions,
+                step,
+                None,
+                &[],
+            );
             black_box(&io);
         }
     }
@@ -430,9 +469,13 @@ impl Table {
             let Some(state) = self.states.get_mut(step.node().index()) else {
                 continue;
             };
-            let Some(mut io) =
-                synth_engine_v2::node::kernels::bind(&mut self.arena, &self.regions, step, None)
-            else {
+            let Some(mut io) = synth_engine_v2::node::kernels::bind(
+                &mut self.arena,
+                &self.regions,
+                step,
+                None,
+                &[],
+            ) else {
                 continue;
             };
             match kind {
@@ -472,9 +515,13 @@ impl Table {
             let Some(state) = self.states.get_mut(step.node().index()) else {
                 continue;
             };
-            let Some(mut io) =
-                synth_engine_v2::node::kernels::bind(&mut self.arena, &self.regions, step, None)
-            else {
+            let Some(mut io) = synth_engine_v2::node::kernels::bind(
+                &mut self.arena,
+                &self.regions,
+                step,
+                None,
+                &[],
+            ) else {
                 continue;
             };
             match kind {
@@ -495,9 +542,13 @@ impl Table {
             let Some(state) = self.states.get_mut(step.node().index()) else {
                 continue;
             };
-            let Some(mut io) =
-                synth_engine_v2::node::kernels::bind(&mut self.arena, &self.regions, step, None)
-            else {
+            let Some(mut io) = synth_engine_v2::node::kernels::bind(
+                &mut self.arena,
+                &self.regions,
+                step,
+                None,
+                &[],
+            ) else {
                 continue;
             };
             (step.kernel())(prepared, state, &mut io);

@@ -19,6 +19,7 @@ pub mod kernels;
 
 use crate::diagnostics::{CompileError, PreparationFault};
 use crate::ir::{IrNodeKind, NodeId, ParameterId, SignalDomain, parameters};
+use crate::plan::ControlRate;
 use crate::quantities::{
     ChannelLayout, CutoffFrequency, NormalizedLevel, Resonance, SampleRate, Seconds, SegmentFrames,
 };
@@ -33,6 +34,11 @@ pub(crate) struct ControlSpec {
     pub(crate) parameter: ParameterId,
     /// What the node's state calls it.
     pub(crate) control: ControlIndex,
+    /// When moving it takes effect, per ADR-0001 clause 14.
+    ///
+    /// Declared by the kind rather than chosen by the caller: the clause splits on the
+    /// *effect*, so a gate is sample-positioned whichever payload addressed it.
+    pub(crate) rate: ControlRate,
 }
 
 /// Everything the compiler needs to know about a node kind.
@@ -53,6 +59,12 @@ pub(crate) struct NodeDescriptor {
     /// ADR-0005 clause 5's *first* condition. The arena's second condition — that the
     /// input is not read again — is not a property of the node and stays there.
     pub(crate) in_place_safe: bool,
+    /// The control a note edge moves, where the kind can be played at all.
+    ///
+    /// `None` for every kind that is not playable, which is what makes
+    /// [`crate::plan::CompiledPlan::resolve_note`] able to refuse a node a caller cannot
+    /// send a note to instead of accepting an event that would do nothing.
+    pub(crate) note_control: Option<ControlIndex>,
 }
 
 /// An amplifier's control port, which is its second input.
@@ -92,18 +104,21 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
             ports: vec![audio_out()],
             controls: Vec::new(),
             in_place_safe: false,
+            note_control: None,
         },
         IrNodeKind::Constant { .. } => NodeDescriptor {
             kernel: kernels::constant,
             ports: vec![audio_out()],
             controls: Vec::new(),
             in_place_safe: false,
+            note_control: None,
         },
         IrNodeKind::Impulse { .. } => NodeDescriptor {
             kernel: kernels::impulse,
             ports: vec![audio_out()],
             controls: Vec::new(),
             in_place_safe: false,
+            note_control: None,
         },
         IrNodeKind::Sine { .. } => NodeDescriptor {
             kernel: kernels::sine,
@@ -112,13 +127,16 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
                 ControlSpec {
                     parameter: parameters::SINE_FREQUENCY,
                     control: kernels::SINE_FREQUENCY,
+                    rate: ControlRate::Quantum,
                 },
                 ControlSpec {
                     parameter: parameters::SINE_AMPLITUDE,
                     control: kernels::SINE_AMPLITUDE,
+                    rate: ControlRate::Quantum,
                 },
             ],
             in_place_safe: false,
+            note_control: None,
         },
         IrNodeKind::Amplifier => NodeDescriptor {
             kernel: kernels::amplifier,
@@ -136,6 +154,7 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
             // Each output sample depends on its own input sample and nothing else, so
             // writing the result over the audio input changes nothing about it.
             in_place_safe: true,
+            note_control: None,
         },
         IrNodeKind::Envelope { .. } => NodeDescriptor {
             kernel: kernels::envelope,
@@ -145,11 +164,17 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
                 SignalDomain::Control,
                 ChannelLayout::Mono,
             )],
+            // The gate is **sample-positioned** (ADR-0001 clause 14), and it says so here
+            // rather than at the payload, so addressing it as a parameter and playing the
+            // node as a note reach the same control under the same timing law. An earlier
+            // revision left this at quantum rate, which is the defect P02-T007 closes.
             controls: vec![ControlSpec {
                 parameter: parameters::ENVELOPE_GATE,
                 control: kernels::ENVELOPE_GATE,
+                rate: ControlRate::Sample,
             }],
             in_place_safe: false,
+            note_control: Some(kernels::ENVELOPE_GATE),
         },
         IrNodeKind::Filter { .. } => NodeDescriptor {
             kernel: kernels::filter,
@@ -159,6 +184,7 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
             // the history it needs is in its state rather than in the buffer, so writing
             // over its input changes nothing about its result.
             in_place_safe: true,
+            note_control: None,
         },
         IrNodeKind::Gain { .. } => NodeDescriptor {
             kernel: kernels::gain,
@@ -167,6 +193,7 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
             // A gain scales each sample independently, so reading and writing one buffer
             // changes nothing about its result.
             in_place_safe: true,
+            note_control: None,
         },
     };
     Some(descriptor)
@@ -202,6 +229,7 @@ pub(crate) fn copy_descriptor() -> NodeDescriptor {
         // A copy exists to produce a second buffer. Writing it over its own input would
         // leave one buffer where the plan needs two.
         in_place_safe: false,
+        note_control: None,
     }
 }
 

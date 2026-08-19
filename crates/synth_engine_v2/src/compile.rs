@@ -14,12 +14,13 @@ use crate::ir::{GraphIr, IrNodeKind, IrObject, NodeId, PortId};
 use crate::node::kernels::{MAX_INPUTS, PreparedNode};
 use crate::node::{self, NodeDescriptor};
 use crate::plan::{
-    BufferSlot, CompiledPlan, NodeSlot, NodeStep, ParameterAddress, ParameterSlot, ParameterTarget,
-    PlanOp, issue_plan_id,
+    BufferSlot, CompiledPlan, NodeSlot, NodeStep, NoteAddress, NoteSlot, NoteTarget,
+    ParameterAddress, ParameterSlot, ParameterTarget, PlanOp, issue_plan_id,
 };
 use crate::profile::HostProfile;
 use crate::quantities::{
-    ChannelLayout, EdgeCount, InstructionCount, NodeCount, PreparedBytes, SlotCount, TapCount,
+    ChannelLayout, EdgeCount, InstructionCount, NodeCount, PreparedBytes, RecordCount, SlotCount,
+    TapCount,
 };
 use crate::report::{
     Fit, LatencyAccounting, LatencyContributor, ReportedQuantities, ResourceAmount, ResourceField,
@@ -341,7 +342,14 @@ fn build_rows(
     let (prepared_bytes, prepared_contributor) = ir.prepared_bytes(inserted_records);
     let (mutable_bytes, mutable_contributor) = ir.mutable_bytes(inserted_records);
     let (peak_fan_out, fan_out_contributor) = ir.peak_fan_out();
-    let scratch_bytes = scratch_bytes(profile, arena_samples);
+    // The same count the prepared and mutable rows are over: a node with a kernel, plus
+    // whatever the compiler inserted. The renderer allocates one state — and one control
+    // range — per one of these, so a second formula here could disagree with preparation.
+    let scratch_bytes = scratch_bytes(
+        profile,
+        arena_samples,
+        ir.scheduled_records(inserted_records),
+    );
 
     let node_count = NodeCount::measured(u32::try_from(ir.nodes().len()).unwrap_or(u32::MAX));
     let edge_count = EdgeCount::measured(u32::try_from(ir.edges().len()).unwrap_or(u32::MAX));
@@ -689,7 +697,11 @@ fn push_script_rows(rows: &mut Vec<ResourceRow>, ir: &GraphIr, profile: &HostPro
 /// at `maximum_block_size + Q` frames, and clause 6 primes the output one. The arena is
 /// its **extent** in samples — ADR-0041 clause 13 — rather than a buffer count times the
 /// quantum, because since that record its regions differ in width.
-fn scratch_bytes(profile: &HostProfile, arena_samples: u64) -> PreparedBytes {
+fn scratch_bytes(
+    profile: &HostProfile,
+    arena_samples: u64,
+    scheduled_records: RecordCount,
+) -> PreparedBytes {
     let channels = profile.capabilities().channel_layout().channels() as u64;
     let carry_frames = profile
         .capabilities()
@@ -715,11 +727,20 @@ fn scratch_bytes(profile: &HostProfile, arena_samples: u64) -> PreparedBytes {
         profile.capabilities().maximum_block_size(),
     );
 
+    // And the sample-positioned control scratch, for the same reason and from the same
+    // module: it is sized by the per-quantum event capacity and by how many nodes the plan
+    // schedules, neither of which this function is the authority on.
+    let controls = crate::render::timed_control_scratch_bytes(
+        profile.limits().events().max_events_per_quantum(),
+        scheduled_records,
+    );
+
     PreparedBytes::measured(
         buffers
             .saturating_add(carries)
             .saturating_mul(sample)
-            .saturating_add(events),
+            .saturating_add(events)
+            .saturating_add(controls),
     )
 }
 
@@ -757,6 +778,8 @@ struct Lowered {
     prepared_nodes: Vec<PreparedNode>,
     parameter_targets: Vec<ParameterTarget>,
     parameter_addresses: Vec<ParameterAddress>,
+    note_targets: Vec<NoteTarget>,
+    note_addresses: Vec<NoteAddress>,
 }
 
 impl Lowered {
@@ -779,6 +802,8 @@ impl Lowered {
             self.prepared_nodes,
             self.parameter_targets,
             self.parameter_addresses,
+            self.note_targets,
+            self.note_addresses,
             capabilities.channel_layout(),
             capabilities.sample_rate(),
             capabilities.maximum_block_size(),
@@ -852,6 +877,8 @@ fn lower(
     let mut fault = None;
     let mut parameter_targets = Vec::new();
     let mut parameter_addresses = Vec::new();
+    let mut note_targets = Vec::new();
+    let mut note_addresses = Vec::new();
 
     // Indexed once, because the naive form is quadratic: a plan near `max_nodes` would
     // otherwise scan every edge for every node. Hashing off the audio thread is fine;
@@ -926,12 +953,25 @@ fn lower(
             parameter_targets.push(ParameterTarget {
                 node: node_slot,
                 control: spec.control,
+                rate: spec.rate,
             });
             parameter_addresses.push(ParameterAddress {
                 node: *id,
                 parameter: spec.parameter,
                 slot,
             });
+        }
+
+        // A playable node gets one note slot. The control it names is the kind's, so a
+        // caller plays the node and never learns which control being played moves — which
+        // is what lets Phase 6's voice pool address a voice without knowing its graph.
+        if let Some(control) = descriptor.note_control {
+            let slot = NoteSlot::new(plan_id, note_targets.len());
+            note_targets.push(NoteTarget {
+                node: node_slot,
+                control,
+            });
+            note_addresses.push(NoteAddress { node: *id, slot });
         }
     }
 
@@ -950,6 +990,8 @@ fn lower(
         prepared_nodes: state.prepared_nodes,
         parameter_targets,
         parameter_addresses,
+        note_targets,
+        note_addresses,
     }
 }
 

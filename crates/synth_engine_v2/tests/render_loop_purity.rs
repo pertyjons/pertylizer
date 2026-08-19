@@ -358,6 +358,9 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         "split_at_mut_checked",
         "sort_unstable",
         "size_of",
+        // `Option::map` over a `Copy` payload, in the three helpers that turn an event
+        // payload into the node, control and value a sample-positioned change moves.
+        "map",
     ];
 
     // This crate's own `const fn` accessors and `Copy` constructors: field reads on the
@@ -434,6 +437,13 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         // The binding a step resolved at admission, read rather than recomputed.
         "order",
         "bindings",
+        // P02-T007's additions, all field reads on `Copy` types: the plan's note address
+        // table, a position's offset inside its quantum — a remainder — and the control
+        // value a note edge names, which is a match over two variants returning a
+        // constant.
+        "note_targets",
+        "quantum_offset",
+        "value",
     ];
 
     let mut unresolved: Vec<String> = Vec::new();

@@ -159,6 +159,18 @@ macro_rules! counted_quantity {
 }
 
 counted_quantity!(NodeCount, u32, "nodes", "A number of graph nodes.");
+counted_quantity!(
+    RecordCount,
+    u32,
+    "records",
+    "How many node records a plan schedules.
+
+Not the node count, and the difference is what makes it its own quantity: the output node
+has no kernel and no prepared data, so it schedules no record, while every operation the
+compiler inserts does. It is therefore the length of the prepared, state and
+control-range tables, and the figure every *per scheduled record* row and allocation is
+over."
+);
 counted_quantity!(EdgeCount, u32, "edges", "A number of graph edges.");
 counted_quantity!(
     FanOut,
@@ -801,6 +813,14 @@ pub struct ParameterValue(f32);
 impl ParameterValue {
     /// Zero.
     pub const ZERO: Self = Self(0.0);
+
+    /// One.
+    ///
+    /// Named because a gate edge has to become a value somewhere, and a literal `1.0`
+    /// built through the fallible constructor on the audio thread would need a fallback
+    /// nobody could justify. A raised gate is any value above zero; this is the one the
+    /// note payload chooses.
+    pub const ONE: Self = Self(1.0);
 
     /// This value as a frequency. Infallible: both types admit exactly the finite floats.
     pub const fn into_frequency(self) -> Frequency {

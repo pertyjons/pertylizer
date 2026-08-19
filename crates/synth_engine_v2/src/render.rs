@@ -16,9 +16,9 @@
 //! compiles out of the build that runs.
 
 use crate::diagnostics::{CompileError, DiagnosticsReport, RenderError};
-use crate::node::kernels::NodeState;
+use crate::node::kernels::{NodeState, TimedControl};
 use crate::plan::{CompiledPlan, PlanOp};
-use crate::quantities::{ChannelLayout, EventCount, ParameterValue};
+use crate::quantities::{ChannelLayout, EventCount, ParameterValue, RecordCount};
 use crate::time::{
     FrameCount, QUANTUM_FRAMES, SampleTime, StreamAnchor, StreamEpoch, TimeSource, issue_epoch,
 };
@@ -44,6 +44,28 @@ pub fn event_scratch_bytes(
     events
         .saturating_mul(size_of::<DueEvent>() as u64)
         .saturating_add(quanta_per_call.saturating_mul(size_of::<u32>() as u64))
+}
+
+/// How many bytes [`PreparedRenderer::prepare`] will allocate for the sample-positioned
+/// control scratch, given a plan's per-quantum event capacity and how many records it
+/// schedules.
+///
+/// Beside the allocation for the same reason [`event_scratch_bytes`] is: admission has to
+/// state what preparation takes, and two formulas for one allocation drift. One quantum's
+/// events bound how many sample-positioned changes that quantum can carry, and the two
+/// index tables are one entry per scheduled record plus a terminator.
+#[must_use]
+pub fn timed_control_scratch_bytes(
+    max_events_per_quantum: EventCount,
+    scheduled_records: RecordCount,
+) -> u64 {
+    let controls =
+        u64::from(max_events_per_quantum.get()).saturating_mul(size_of::<TimedControl>() as u64);
+    let index = u64::from(scheduled_records.get())
+        .saturating_mul(2)
+        .saturating_add(1)
+        .saturating_mul(size_of::<u32>() as u64);
+    controls.saturating_add(index)
 }
 
 /// A caller's output block: interleaved samples the renderer writes.
@@ -137,12 +159,48 @@ impl EventEnvelope {
     }
 }
 
+/// Which way a note edge goes.
+///
+/// An **edge**, not a level: a note is played or let go, and ADR-0001 clause 14 names both
+/// as sample-positioned effects. Carrying a float here instead would invite the question
+/// of what a gate of `0.5` means, which no caller has ever needed to ask.
+///
+/// It carries no pitch, velocity or note identity. Nothing in this phase reads any of
+/// them — the envelope has no velocity input and a sine's frequency is an ordinary
+/// control — and a field nothing reads is a contract the phase has not earned. Phase 3's
+/// ingress and Phase 6's voice pool are where they arrive.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub enum NoteEdge {
+    /// The note is played.
+    On,
+    /// The note is let go.
+    Off,
+}
+
+impl NoteEdge {
+    /// The control value this edge sets.
+    ///
+    /// Any value above zero raises a gate and zero lowers it, so an edge is one of exactly
+    /// two values. Named constants rather than a fallible conversion, because the audio
+    /// thread has no way to report a failure and no fallback here would be honest.
+    pub const fn value(self) -> ParameterValue {
+        match self {
+            Self::On => ParameterValue::ONE,
+            Self::Off => ParameterValue::ZERO,
+        }
+    }
+}
+
 /// What an event does.
 ///
-/// Phase 1 has one payload. It is a **control-rate** change, so ADR-0001 clause 13
-/// applies: the evaluation at a quantum's start may observe only events at or before
-/// that quantum's first sample, and an event inside a quantum takes effect at the next
-/// boundary. Lookahead would make a value depend on the future.
+/// **When** it takes effect is not this enum's to say. ADR-0001 clause 14 splits on the
+/// *effect*: a sample-positioned one — note-on, note-off, gate, retrigger — occurs at its
+/// declared sample, while a control-rate response begins at the next quantum boundary
+/// under clause 13's causality rule. The node kind declares which of the two each of its
+/// controls is, admission compiles that into the target, and the renderer reads it. So
+/// addressing a gate as a parameter and playing its node as a note reach the same control
+/// under the same timing law, and neither payload can be used to escape the other's.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum EventPayload {
     /// Set one compiled parameter slot.
@@ -156,6 +214,18 @@ pub enum EventPayload {
         slot: crate::plan::ParameterSlot,
         /// The new value, validated where it was built.
         value: ParameterValue,
+    },
+    /// Play or let go of one compiled node.
+    ///
+    /// The note-side twin of [`Self::SetParameter`], resolved by
+    /// [`CompiledPlan::resolve_note`] under the same rule. It names the node rather than
+    /// one of its controls: what being played *means* belongs to the node kind, which is
+    /// what lets a caller play a voice without knowing the graph inside it.
+    Note {
+        /// Which compiled node is played.
+        slot: crate::plan::NoteSlot,
+        /// Which way the edge goes.
+        edge: NoteEdge,
     },
 }
 
@@ -304,6 +374,20 @@ pub struct PreparedRenderer {
     event_scratch: Vec<DueEvent>,
     scratch_len: usize,
     quantum_counts: Vec<u32>,
+    /// One quantum's sample-positioned control changes, grouped by the node they move.
+    ///
+    /// Rebuilt before each quantum renders and never grown: one quantum's declared event
+    /// capacity bounds how many of these it can carry, so the length admission approved is
+    /// the length this holds for the life of the stream.
+    timed_controls: Vec<TimedControl>,
+    /// Where each node's run of [`Self::timed_controls`] starts, plus a terminator.
+    ///
+    /// `control_starts[n] .. control_starts[n + 1]` is node `n`'s slice, which is what
+    /// lets the schedule walk hand a kernel its own edges by indexing rather than by
+    /// searching or by relying on the order node slots appear in.
+    control_starts: Vec<u32>,
+    /// How far each node's run has been filled, while it is being built.
+    control_fill: Vec<u32>,
     diagnostics: DiagnosticsReport,
 }
 
@@ -339,6 +423,9 @@ impl PreparedRenderer {
         // bounds both the per-quantum tally and the event scratch.
         let quanta_per_call = max_block.div_ceil(quantum).saturating_add(1);
         let events_per_quantum = plan.max_events_per_quantum().as_usize().unwrap_or(0);
+        // One index entry per scheduled record, from the table the renderer already keeps
+        // one state per — so the two cannot be counted differently.
+        let records = node_states.len();
 
         let mut output_carry = vec![0.0; carry_frames_capacity.saturating_mul(channels)];
         output_carry.fill(0.0);
@@ -362,6 +449,11 @@ impl PreparedRenderer {
             event_scratch: vec![DueEvent::FILL; events_per_quantum.saturating_mul(quanta_per_call)],
             scratch_len: 0,
             quantum_counts: vec![0; quanta_per_call],
+            // ADR-0001 clause 14's storage. One quantum at a time, because an edge is
+            // applied inside the quantum it falls in and nothing outlives that.
+            timed_controls: vec![TimedControl::FILL; events_per_quantum],
+            control_starts: vec![0; records.saturating_add(1)],
+            control_fill: vec![0; records],
             plan,
             epoch,
             anchor,

@@ -192,6 +192,55 @@ impl ParameterSlot {
     }
 }
 
+/// One node that accepts note edges, by index.
+///
+/// The note-side twin of [`ParameterSlot`], and it exists for the same reason: an event
+/// carries the slot, resolved once off the audio thread by
+/// [`CompiledPlan::resolve_note`], and the renderer indexes rather than searching. It is
+/// a separate address space because a note is not a parameter write — it names a node
+/// that can be played, and the control it moves is the node kind's business rather than
+/// the caller's.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[must_use]
+pub struct NoteSlot {
+    plan: PlanId,
+    index: usize,
+}
+
+impl NoteSlot {
+    /// A slot. Crate-private for the same reason [`ParameterSlot::new`] is.
+    pub(crate) const fn new(plan: PlanId, index: usize) -> Self {
+        Self { plan, index }
+    }
+
+    /// Which plan this slot indexes.
+    pub const fn plan(self) -> PlanId {
+        self.plan
+    }
+
+    /// The index into that plan's note-target table.
+    pub const fn index(self) -> usize {
+        self.index
+    }
+}
+
+/// When a control a caller moves takes effect.
+///
+/// ADR-0001 splits this deliberately, in clause 14: *sample-positioned* effects — note-on,
+/// note-off, gate, retrigger — occur at their declared sample within the quantum, while
+/// the *control-rate* response to a mid-quantum event begins at the next quantum
+/// boundary. The split is a property of the **effect**, not of the message that carried
+/// it, so it is declared by the node kind and compiled into the target rather than being
+/// chosen by whichever payload a caller happened to send.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub enum ControlRate {
+    /// Evaluated once per quantum, at the boundary at or after the event (clause 13).
+    Quantum,
+    /// Applied at the event's declared sample inside the quantum (clause 14).
+    Sample,
+}
+
 /// One node instance, by index.
 ///
 /// It indexes **both** tables: the plan's prepared data and the renderer's mutable
@@ -497,6 +546,37 @@ pub struct ParameterTarget {
     pub node: NodeSlot,
     /// Which of its controls.
     pub control: ControlIndex,
+    /// When moving it takes effect.
+    ///
+    /// Compiled from what the node kind declares, so the renderer reads it rather than
+    /// deciding it. A gate is [`ControlRate::Sample`] however it was addressed, which is
+    /// what keeps ADR-0001 clause 14 from being violable by choosing another payload.
+    pub rate: ControlRate,
+}
+
+/// What a note event addresses, resolved to numeric slots at admission.
+///
+/// The node, and the control on it that a note edge moves. Which control that is belongs
+/// to the node kind: a caller plays a node, and the kind decides what being played means.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub struct NoteTarget {
+    /// Which node instance.
+    pub node: NodeSlot,
+    /// The control a note edge moves, always at [`ControlRate::Sample`].
+    pub control: ControlIndex,
+}
+
+/// One row of the plan's note address table.
+///
+/// Read **off the audio thread only**, by [`CompiledPlan::resolve_note`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub struct NoteAddress {
+    /// The node the caller plays.
+    pub node: NodeId,
+    /// The slot it compiles to.
+    pub slot: NoteSlot,
 }
 
 /// One row of the plan's address table.
@@ -528,6 +608,8 @@ pub struct CompiledPlan {
     prepared_nodes: Vec<PreparedNode>,
     parameter_targets: Vec<ParameterTarget>,
     parameter_addresses: Vec<ParameterAddress>,
+    note_targets: Vec<NoteTarget>,
+    note_addresses: Vec<NoteAddress>,
     channel_layout: ChannelLayout,
     sample_rate: SampleRate,
     maximum_block_size: FrameCount,
@@ -550,6 +632,8 @@ impl CompiledPlan {
         prepared_nodes: Vec<PreparedNode>,
         parameter_targets: Vec<ParameterTarget>,
         parameter_addresses: Vec<ParameterAddress>,
+        note_targets: Vec<NoteTarget>,
+        note_addresses: Vec<NoteAddress>,
         channel_layout: ChannelLayout,
         sample_rate: SampleRate,
         maximum_block_size: FrameCount,
@@ -564,6 +648,8 @@ impl CompiledPlan {
             prepared_nodes,
             parameter_targets,
             parameter_addresses,
+            note_targets,
+            note_addresses,
             channel_layout,
             sample_rate,
             maximum_block_size,
@@ -652,6 +738,32 @@ impl CompiledPlan {
     /// Every addressable parameter, for a caller building a binding table.
     pub fn parameter_addresses(&self) -> &[ParameterAddress] {
         &self.parameter_addresses
+    }
+
+    /// Where each note slot lands.
+    ///
+    /// Indexed by [`NoteSlot`] on the audio thread; never searched.
+    pub fn note_targets(&self) -> &[NoteTarget] {
+        &self.note_targets
+    }
+
+    /// The slot a playable node compiles to, or `None` if the plan has no such node.
+    ///
+    /// **Off the audio thread**, and for the same reason [`Self::resolve_parameter`] is:
+    /// a caller resolves once and sends slots thereafter, so a node that cannot be played
+    /// is refused where a caller can still be told about it rather than being an event
+    /// the renderer silently does nothing with.
+    #[must_use]
+    pub fn resolve_note(&self, node: NodeId) -> Option<NoteSlot> {
+        self.note_addresses
+            .iter()
+            .find(|address| address.node == node)
+            .map(|address| address.slot)
+    }
+
+    /// Every playable node, for a caller building a binding table.
+    pub fn note_addresses(&self) -> &[NoteAddress] {
+        &self.note_addresses
     }
 
     /// The stream's channel layout.

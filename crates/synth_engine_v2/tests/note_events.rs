@@ -1,0 +1,479 @@
+//! P02-T007's conformance check: a note edge at its declared sample, and the complete
+//! voice rendered from it.
+//!
+//! [ADR-0001](../../plans/v2/decisions/ADR-0001-internal-render-quantum.md) clause 14 is
+//! what this file proves. A sample-positioned effect — note-on, note-off, gate,
+//! retrigger — occurs at *its declared sample within the quantum*, while a control-rate
+//! response begins at the next quantum boundary. Before this task the envelope's gate was
+//! an ordinary control and landed on the boundary that followed it, so a note-on could be
+//! up to `Q - 1` frames late and the lateness depended on nothing a caller could see.
+//!
+//! Every check below states the value it expects at a named frame rather than a property
+//! of the signal, because the defect this task closes moves an edge by fewer than 64
+//! frames and any weaker assertion passes with the edge in the wrong place.
+
+mod common;
+
+use common::{OUTPUT, SOURCE, profile};
+use synth_engine_v2::ir::{
+    ExecutionScope, GraphIr, IrNodeKind, NodeId, PortId, SignalDomain, parameters,
+};
+use synth_engine_v2::offline::{OfflineEvent, render_offline};
+use synth_engine_v2::plan::CompiledPlan;
+use synth_engine_v2::quantities::{
+    Amplitude, ChannelLayout, CutoffFrequency, Frequency, NormalizedLevel, ParameterValue,
+    Resonance, Seconds,
+};
+use synth_engine_v2::render::{EventPayload, NoteEdge};
+use synth_engine_v2::time::{FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime};
+
+const ENVELOPE: NodeId = NodeId::new(11);
+const AMPLIFIER: NodeId = NodeId::new(12);
+const FILTER: NodeId = NodeId::new(13);
+
+/// A quantum, as a frame index, so an offset can be written as `Q + k`.
+const Q: u64 = QUANTUM_FRAMES as u64;
+
+/// A gated constant: the sharpest instrument this phase has for *where* an edge landed.
+///
+/// Every segment is instantaneous and the sustain level is exactly one, so the rendered
+/// signal is `0.0` before the note and `1.0` from the note's own sample onward — with no
+/// ramp to hide a one-frame error inside and no rounding to force a tolerance. A gate
+/// applied at a quantum boundary instead of at its sample changes up to 63 exact values.
+fn gated_constant() -> GraphIr {
+    GraphIr::builder()
+        .node(
+            SOURCE,
+            IrNodeKind::Constant {
+                level: Amplitude::new(1.0).expect("finite"),
+            },
+            ExecutionScope::Voice,
+        )
+        .node(
+            ENVELOPE,
+            IrNodeKind::Envelope {
+                attack: Seconds::new(0.0).expect("not negative"),
+                decay: Seconds::new(0.0).expect("not negative"),
+                sustain: NormalizedLevel::FULL,
+                release: Seconds::new(0.0).expect("not negative"),
+            },
+            ExecutionScope::Voice,
+        )
+        .node(AMPLIFIER, IrNodeKind::Amplifier, ExecutionScope::Voice)
+        .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (SOURCE, PortId::FIRST),
+            (AMPLIFIER, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (ENVELOPE, PortId::FIRST),
+            (AMPLIFIER, synth_engine_v2::node::AMPLIFIER_CONTROL),
+            SignalDomain::Control,
+        )
+        .connect(
+            (AMPLIFIER, PortId::FIRST),
+            (OUTPUT, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .build()
+        .expect("a readable plan")
+}
+
+/// The complete Phase 2 voice: a sine through a low-pass into an amplifier the envelope
+/// drives, into the output.
+///
+/// This is the path the phase exists to render — the master plan's "note events, an
+/// envelope, an oscillator, a filter, an amplifier, an output" with every node the crate
+/// has, and with the note as the only thing that starts it.
+fn voice() -> GraphIr {
+    GraphIr::builder()
+        .node(
+            SOURCE,
+            IrNodeKind::Sine {
+                frequency: Frequency::new(220.0).expect("finite"),
+                amplitude: Amplitude::new(0.8).expect("finite"),
+            },
+            ExecutionScope::Voice,
+        )
+        .node(
+            FILTER,
+            IrNodeKind::Filter {
+                cutoff: CutoffFrequency::new(2_000.0).expect("positive"),
+                resonance: Resonance::BUTTERWORTH,
+            },
+            ExecutionScope::Voice,
+        )
+        .node(
+            ENVELOPE,
+            IrNodeKind::Envelope {
+                attack: Seconds::new(0.002).expect("not negative"),
+                decay: Seconds::new(0.010).expect("not negative"),
+                sustain: NormalizedLevel::new(0.6).expect("within range"),
+                release: Seconds::new(0.020).expect("not negative"),
+            },
+            ExecutionScope::Voice,
+        )
+        .node(AMPLIFIER, IrNodeKind::Amplifier, ExecutionScope::Voice)
+        .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (SOURCE, PortId::FIRST),
+            (FILTER, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (FILTER, PortId::FIRST),
+            (AMPLIFIER, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (ENVELOPE, PortId::FIRST),
+            (AMPLIFIER, synth_engine_v2::node::AMPLIFIER_CONTROL),
+            SignalDomain::Control,
+        )
+        .connect(
+            (AMPLIFIER, PortId::FIRST),
+            (OUTPUT, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .build()
+        .expect("a readable plan")
+}
+
+/// A note edge on the plan's one playable node.
+fn note(plan: &CompiledPlan, at: u64, edge: NoteEdge) -> OfflineEvent {
+    let slot = plan
+        .resolve_note(ENVELOPE)
+        .expect("an envelope is a node a note can be sent to");
+    OfflineEvent::new(SampleTime::new(at), EventPayload::Note { slot, edge })
+}
+
+/// The first frame whose value is not exactly zero, if any.
+fn first_sounding(rendered: &[f32]) -> Option<usize> {
+    rendered.iter().position(|sample| *sample != 0.0)
+}
+
+#[test]
+fn a_note_on_takes_effect_at_its_declared_sample() {
+    // Deliberately not a multiple of `Q`: the whole defect is that a mid-quantum edge used
+    // to be rounded up to the boundary that follows it, and an edge at offset 0 cannot
+    // tell the two behaviours apart. 36 frames into quantum 2.
+    const AT: u64 = 2 * Q + 36;
+
+    let plan = common::admit(&gated_constant(), profile(256, ChannelLayout::Mono));
+    let events = [note(&plan, AT, NoteEdge::On)];
+    let rendered =
+        render_offline(plan, FrameCount::new(512), PlanPosition::ZERO, &events).expect("renders");
+
+    for (frame, sample) in rendered.iter().enumerate() {
+        let expected = if (frame as u64) < AT { 0.0 } else { 1.0 };
+        assert_eq!(
+            *sample, expected,
+            "frame {frame} of a note at sample {AT} is {sample} rather than {expected}"
+        );
+    }
+    assert_eq!(
+        first_sounding(&rendered),
+        Some(AT as usize),
+        "the note has to start on the sample it named, not on a quantum boundary"
+    );
+}
+
+#[test]
+fn a_note_off_takes_effect_at_its_declared_sample() {
+    const ON: u64 = Q + 5;
+    const OFF: u64 = 4 * Q + 51;
+
+    let plan = common::admit(&gated_constant(), profile(256, ChannelLayout::Mono));
+    let events = [
+        note(&plan, ON, NoteEdge::On),
+        note(&plan, OFF, NoteEdge::Off),
+    ];
+    let rendered =
+        render_offline(plan, FrameCount::new(512), PlanPosition::ZERO, &events).expect("renders");
+
+    for (frame, sample) in rendered.iter().enumerate() {
+        let held = (ON..OFF).contains(&(frame as u64));
+        let expected = if held { 1.0 } else { 0.0 };
+        assert_eq!(
+            *sample, expected,
+            "frame {frame} between a note at {ON} and its release at {OFF} is {sample} \
+             rather than {expected}"
+        );
+    }
+}
+
+#[test]
+fn two_note_edges_in_one_quantum_both_take_effect() {
+    // A note let go and played again inside 1.33 ms at 48 kHz. Both are edges at their own
+    // samples: an implementation that keeps one pending edge per node loses the first, and
+    // one that collapses a quantum's edges onto its boundary loses both positions.
+    const ON: u64 = Q;
+    const OFF: u64 = 3 * Q + 20;
+    const AGAIN: u64 = 3 * Q + 27;
+
+    let plan = common::admit(&gated_constant(), profile(256, ChannelLayout::Mono));
+    let events = [
+        note(&plan, ON, NoteEdge::On),
+        note(&plan, OFF, NoteEdge::Off),
+        note(&plan, AGAIN, NoteEdge::On),
+    ];
+    let rendered =
+        render_offline(plan, FrameCount::new(512), PlanPosition::ZERO, &events).expect("renders");
+
+    for (frame, sample) in rendered.iter().enumerate() {
+        let frame = frame as u64;
+        let silent = frame < ON || (OFF..AGAIN).contains(&frame);
+        let expected = if silent { 0.0 } else { 1.0 };
+        assert_eq!(
+            *sample, expected,
+            "frame {frame} of a retrigger between {OFF} and {AGAIN} is {sample} rather \
+             than {expected}"
+        );
+    }
+}
+
+#[test]
+fn an_edge_mid_ramp_starts_from_the_level_that_frame_would_have_had() {
+    // The other half of "at its declared sample": the edge has to be applied to the level
+    // the signal is **at**, not to the one it was at a frame ago. During a ramp those
+    // differ by one step, because the level a quantum stores is the one its next sample
+    // will have — the counter has already moved past the sample last written.
+    //
+    // Every other check in this file uses instantaneous segments, where the level is
+    // exactly 0 or exactly the sustain level and the two readings agree. So does every
+    // fixture in `layout_baseline`, whose edges are all on quantum boundaries where they
+    // agree by construction. This is the case that separates them.
+    //
+    // A 256-frame attack from silence writes `f / 256` at frame `f`, so the release
+    // beginning at frame `AT` has to start from exactly `AT / 256` — a value the release's
+    // own first sample carries, since a segment's first frame is the level it inherited.
+    const ATTACK: u64 = 256;
+    const AT: u64 = 2 * Q + 36;
+
+    let ir = GraphIr::builder()
+        .node(
+            SOURCE,
+            IrNodeKind::Constant {
+                level: Amplitude::new(1.0).expect("finite"),
+            },
+            ExecutionScope::Voice,
+        )
+        .node(
+            ENVELOPE,
+            IrNodeKind::Envelope {
+                attack: Seconds::new(ATTACK as f32 / 48_000.0).expect("not negative"),
+                decay: Seconds::new(0.0).expect("not negative"),
+                sustain: NormalizedLevel::FULL,
+                release: Seconds::new(ATTACK as f32 / 48_000.0).expect("not negative"),
+            },
+            ExecutionScope::Voice,
+        )
+        .node(AMPLIFIER, IrNodeKind::Amplifier, ExecutionScope::Voice)
+        .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (SOURCE, PortId::FIRST),
+            (AMPLIFIER, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (ENVELOPE, PortId::FIRST),
+            (AMPLIFIER, synth_engine_v2::node::AMPLIFIER_CONTROL),
+            SignalDomain::Control,
+        )
+        .connect(
+            (AMPLIFIER, PortId::FIRST),
+            (OUTPUT, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .build()
+        .expect("a readable plan");
+
+    let plan = common::admit(&ir, profile(256, ChannelLayout::Mono));
+    let events = [note(&plan, 0, NoteEdge::On), note(&plan, AT, NoteEdge::Off)];
+    let rendered =
+        render_offline(plan, FrameCount::new(512), PlanPosition::ZERO, &events).expect("renders");
+
+    // The attack itself, so the expected level at the edge is read off a checked ramp
+    // rather than asserted twice.
+    for frame in 0..AT {
+        let expected = frame as f32 / ATTACK as f32;
+        let sample = rendered.get(frame as usize).copied().unwrap_or(-1.0);
+        assert!(
+            (sample - expected).abs() < 1e-6,
+            "frame {frame} of the attack is {sample} rather than {expected}"
+        );
+    }
+
+    let at_edge = rendered.get(AT as usize).copied().unwrap_or(-1.0);
+    let expected = AT as f32 / ATTACK as f32;
+    assert!(
+        (at_edge - expected).abs() < 1e-6,
+        "the release starts at {at_edge} rather than at the level frame {AT} would have          had, {expected}; one step back is {}",
+        (AT - 1) as f32 / ATTACK as f32
+    );
+    assert!(
+        rendered
+            .get(AT as usize..)
+            .expect("the render reaches the release")
+            .windows(2)
+            .all(|pair| pair[1] <= pair[0]),
+        "and it falls from there without a step back up"
+    );
+}
+
+#[test]
+fn a_note_edge_survives_any_host_block_partition() {
+    // ADR-0001's reason for a fixed quantum, applied to the thing this task placed: an
+    // edge at its declared sample is only *at* that sample if the caller's block pattern
+    // cannot move it. Three partitions of the same render — whole quanta, several quanta
+    // at a time, and a size that is not a multiple of `Q` at all, so every block boundary
+    // falls somewhere different.
+    const ON: u64 = 2 * Q + 17;
+    const OFF: u64 = 6 * Q + 3;
+
+    let mut renders = Vec::new();
+    for block in [64_u64, 256, 250] {
+        let plan = common::admit(&gated_constant(), profile(block, ChannelLayout::Mono));
+        let events = [
+            note(&plan, ON, NoteEdge::On),
+            note(&plan, OFF, NoteEdge::Off),
+        ];
+        renders.push(
+            render_offline(plan, FrameCount::new(1_024), PlanPosition::ZERO, &events)
+                .expect("renders"),
+        );
+    }
+
+    let reference = renders.first().expect("three renders").clone();
+    for (index, rendered) in renders.iter().enumerate().skip(1) {
+        assert_eq!(
+            *rendered, reference,
+            "partition {index} rendered a different signal from the whole-quantum one"
+        );
+    }
+    assert_eq!(
+        first_sounding(&reference),
+        Some(ON as usize),
+        "and all three put the note on the sample it named"
+    );
+}
+
+#[test]
+fn a_gate_addressed_as_a_parameter_lands_on_the_same_sample_as_a_note() {
+    // ADR-0001 clause 14 splits on the **effect**, not on the message. A gate is
+    // sample-positioned, so addressing it as a parameter must not be a way to get the
+    // boundary behaviour back — otherwise the clause is satisfiable by choosing a payload,
+    // which is not a contract at all.
+    const AT: u64 = 3 * Q + 41;
+
+    let plan = common::admit(&gated_constant(), profile(256, ChannelLayout::Mono));
+    let as_note = [note(&plan, AT, NoteEdge::On)];
+    let slot = plan
+        .resolve_parameter(ENVELOPE, parameters::ENVELOPE_GATE)
+        .expect("the envelope still declares an addressable gate");
+    let as_parameter = [OfflineEvent::new(
+        SampleTime::new(AT),
+        EventPayload::SetParameter {
+            slot,
+            value: ParameterValue::new(1.0).expect("finite"),
+        },
+    )];
+
+    let played = render_offline(
+        plan.clone(),
+        FrameCount::new(512),
+        PlanPosition::ZERO,
+        &as_note,
+    )
+    .expect("renders");
+    let automated = render_offline(
+        plan,
+        FrameCount::new(512),
+        PlanPosition::ZERO,
+        &as_parameter,
+    )
+    .expect("renders");
+
+    assert_eq!(
+        played, automated,
+        "the same gate reached by two payloads rendered two different signals"
+    );
+    assert_eq!(
+        first_sounding(&played),
+        Some(AT as usize),
+        "and both put the edge on the sample it named"
+    );
+}
+
+#[test]
+fn the_complete_voice_renders_from_a_note_edge() {
+    // The phase's deliverable: an oscillator, a filter, an envelope, an amplifier and an
+    // output, silent until a note arrives and started by nothing else.
+    //
+    // The exact-value checks are the two this path can make honestly. **Before** the note
+    // the amplifier is multiplying by an envelope at exactly zero, so every frame is
+    // exactly zero however the filter is ringing — that is the assertion the sample
+    // position rests on. **After** it, the first sounding frame is not pinned to `ON`,
+    // because the attack's first frame is the level it started from and the oscillator's
+    // own sample at that instant may be near a zero crossing; what is checked instead is
+    // that the voice sounds within a bounded window and that nothing sounds before it.
+    const ON: u64 = 2 * Q + 29;
+    const OFF: u64 = 20 * Q + 11;
+    /// The attack is 2 ms — 96 frames at 48 kHz — and 220 Hz has a zero crossing every
+    /// 109. One period past the attack is a window the voice cannot stay silent through
+    /// unless the note never started.
+    const WINDOW: u64 = 320;
+
+    let plan = common::admit(&voice(), profile(256, ChannelLayout::Mono));
+    let events = [
+        note(&plan, ON, NoteEdge::On),
+        note(&plan, OFF, NoteEdge::Off),
+    ];
+    let rendered = render_offline(plan, FrameCount::new(64 * Q), PlanPosition::ZERO, &events)
+        .expect("renders");
+
+    for (frame, sample) in rendered.iter().enumerate().take(ON as usize) {
+        assert_eq!(
+            *sample, 0.0,
+            "frame {frame} sounds before the note at {ON}, at {sample}"
+        );
+    }
+    let sounded = first_sounding(&rendered).expect("the voice has to sound at all");
+    assert!(
+        (ON as usize..(ON + WINDOW) as usize).contains(&sounded),
+        "the voice first sounds at frame {sounded}, which is not inside the {WINDOW}-frame \
+         window after the note at {ON}"
+    );
+
+    // And it stops: the release is 20 ms — 960 frames — so a full second past the note-off
+    // is far beyond it. A voice that kept sounding would mean the note-off never arrived.
+    let tail = rendered
+        .get((OFF as usize).saturating_add(2_000)..)
+        .expect("the render is longer than the release");
+    assert!(
+        tail.iter().all(|sample| *sample == 0.0),
+        "the voice is still sounding well past its release"
+    );
+}
+
+#[test]
+fn a_note_addressed_to_a_node_that_cannot_be_played_does_not_resolve() {
+    // The refusal happens where a caller can be told about it. A node with no note control
+    // has no slot, so an event that would have done nothing cannot be built at all —
+    // which is the same rule `resolve_parameter` follows for an address the plan lacks.
+    let plan = common::admit(&gated_constant(), profile(256, ChannelLayout::Mono));
+    assert!(
+        plan.resolve_note(SOURCE).is_none(),
+        "a constant is not a node a note means anything to"
+    );
+    assert!(
+        plan.resolve_note(AMPLIFIER).is_none(),
+        "neither is an amplifier"
+    );
+    assert_eq!(
+        plan.note_addresses().len(),
+        1,
+        "and the one playable node in this plan is its envelope"
+    );
+}

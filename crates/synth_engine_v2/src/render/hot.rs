@@ -16,7 +16,8 @@ use super::{
 };
 use crate::diagnostics::RenderError;
 use crate::node::kernels;
-use crate::plan::PlanOp;
+use crate::node::kernels::TimedControl;
+use crate::plan::{ControlRate, PlanOp};
 use crate::time::{FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, TimeSource};
 
 impl PreparedRenderer {
@@ -96,12 +97,13 @@ impl PreparedRenderer {
             // are *ordinary*. Recognising them later, in `apply`, would let five of them
             // in one quantum fail the call against a capacity of four — turning the
             // documented post-swap case into a render failure.
-            match event.payload() {
-                EventPayload::SetParameter { slot, .. } if slot.plan() != self.plan.id() => {
-                    pending.foreign_slot = pending.foreign_slot.saturating_add(1);
-                    continue;
-                }
-                EventPayload::SetParameter { .. } => {}
+            let foreign = match event.payload() {
+                EventPayload::SetParameter { slot, .. } => slot.plan() != self.plan.id(),
+                EventPayload::Note { slot, .. } => slot.plan() != self.plan.id(),
+            };
+            if foreign {
+                pending.foreign_slot = pending.foreign_slot.saturating_add(1);
+                continue;
             }
 
             // ADR-0032 clause 21: the forward horizon binds ingress provenance only.
@@ -210,8 +212,17 @@ impl PreparedRenderer {
         next
     }
 
+    /// Apply one event's **quantum-rate** effect, if it has one.
+    ///
+    /// A sample-positioned target is skipped here and collected by
+    /// [`Self::collect_timed_controls`] instead, which is what keeps ADR-0001 clause 14's
+    /// split a property of the target rather than of the payload: a gate addressed as a
+    /// parameter lands on its sample exactly as a note does.
     fn apply(&mut self, payload: EventPayload) {
         match payload {
+            // A note has no quantum-rate effect at all. Every edge it carries is
+            // sample-positioned, so the whole payload is the other pass's.
+            EventPayload::Note { .. } => {}
             EventPayload::SetParameter { slot, value } => {
                 // A slot indexes **one** plan's target table, and one from another plan
                 // was already refused and counted during resolution — before it could
@@ -220,21 +231,151 @@ impl PreparedRenderer {
                 let Some(target) = self.plan.parameter_targets().get(slot.index()).copied() else {
                     return;
                 };
+                if matches!(target.rate, ControlRate::Sample) {
+                    return;
+                }
                 // A `ParameterValue` is finite by construction, so this assignment cannot
                 // poison a phase accumulator — which is why the type exists rather than a
                 // check here, where no diagnostic could be produced. What the control
                 // *means* is the node state's, which is the last place it is known.
-                // Both records, because a control change is a node operation like a
-                // render is: what a value *means* can depend on the prepared data, and an
-                // envelope's release derives its motion from the duration it was
-                // prepared with.
-                let Some(prepared) = self.plan.prepared_nodes().get(target.node.index()) else {
-                    return;
-                };
                 if let Some(state) = self.node_states.get_mut(target.node.index()) {
-                    state.set_control(prepared, target.control, value);
+                    state.set_control(target.control, value);
                 }
             }
+        }
+    }
+
+    /// Group this quantum's sample-positioned control changes by the node they move.
+    ///
+    /// ADR-0001 clause 14 in one pass. `cursor` walks [`Self::event_scratch`] — which
+    /// [`Self::resolve_events`] left sorted by `(position, arrival)` — and advances
+    /// monotonically across the quanta of one call, so the total work is linear in the
+    /// span rather than quadratic in it. Every admitted position is at or after the call's
+    /// first quantum boundary, because a late one was already clamped forward to the
+    /// clock, and the clock only ever stands on a boundary.
+    ///
+    /// A counting sort rather than a second sort of the scratch: the events arrive in
+    /// position order and are needed in node order, and counting is what turns one into
+    /// the other by index alone. It also removes any dependence on the order node slots
+    /// appear in the schedule, which is an invariant of lowering rather than of the plan.
+    fn collect_timed_controls(&mut self, cursor: &mut usize) {
+        for start in &mut self.control_starts {
+            *start = 0;
+        }
+        for fill in &mut self.control_fill {
+            *fill = 0;
+        }
+
+        let Ok(end) = self.clock.checked_add(FrameCount::QUANTUM) else {
+            // The clock is one quantum from exhausting, so this call is about to fail on
+            // the advance. Nothing is collected, and the refusal happens where it can be
+            // reported.
+            return;
+        };
+
+        // Pass one: how many changes each node is due. The window is the same in both
+        // passes, so the second cannot see an event the first did not count.
+        let window = *cursor;
+        let mut last = window;
+        while let Some(event) = self.event_scratch.get(last) {
+            if last >= self.scratch_len || event.position >= end {
+                break;
+            }
+            last += 1;
+            if let Some(node) = self.timed_target(event.payload) {
+                // Counted at `node + 1`, so the prefix sum below turns the counts into
+                // starts in place: entry `n` becomes where node `n`'s run begins.
+                if let Some(count) = self.control_starts.get_mut(node + 1) {
+                    *count = count.saturating_add(1);
+                }
+            }
+        }
+        *cursor = last;
+
+        let mut running = 0_u32;
+        for start in &mut self.control_starts {
+            running = running.saturating_add(*start);
+            *start = running;
+        }
+
+        // Pass two: each change written where its node's run has room. Within a node the
+        // writes happen in the order the scratch holds them, which is ascending position,
+        // so each run comes out ascending by offset without a second sort.
+        let mut index = window;
+        while index < last {
+            let Some(event) = self.event_scratch.get(index).copied() else {
+                break;
+            };
+            index += 1;
+            let (Some(node), Some(control), Some(value)) = (
+                self.timed_target(event.payload),
+                self.timed_control_index(event.payload),
+                self.timed_value(event.payload),
+            ) else {
+                continue;
+            };
+            let (Some(base), Some(filled)) = (
+                self.control_starts.get(node).copied(),
+                self.control_fill.get(node).copied(),
+            ) else {
+                continue;
+            };
+            let Some(slot) = self
+                .timed_controls
+                .get_mut(base.saturating_add(filled) as usize)
+            else {
+                continue;
+            };
+            *slot = TimedControl {
+                offset: event.position.quantum_offset(),
+                control,
+                value,
+            };
+            if let Some(fill) = self.control_fill.get_mut(node) {
+                *fill = fill.saturating_add(1);
+            }
+        }
+    }
+
+    /// Which node a payload's sample-positioned effect moves, if it has one.
+    fn timed_target(&self, payload: EventPayload) -> Option<usize> {
+        match payload {
+            EventPayload::Note { slot, .. } => self
+                .plan
+                .note_targets()
+                .get(slot.index())
+                .map(|target| target.node.index()),
+            EventPayload::SetParameter { slot, .. } => self
+                .plan
+                .parameter_targets()
+                .get(slot.index())
+                .filter(|target| matches!(target.rate, ControlRate::Sample))
+                .map(|target| target.node.index()),
+        }
+    }
+
+    /// Which of that node's controls it moves.
+    fn timed_control_index(&self, payload: EventPayload) -> Option<kernels::ControlIndex> {
+        match payload {
+            EventPayload::Note { slot, .. } => self
+                .plan
+                .note_targets()
+                .get(slot.index())
+                .map(|target| target.control),
+            EventPayload::SetParameter { slot, .. } => self
+                .plan
+                .parameter_targets()
+                .get(slot.index())
+                .filter(|target| matches!(target.rate, ControlRate::Sample))
+                .map(|target| target.control),
+        }
+    }
+
+    /// What it moves it to.
+    fn timed_value(&self, payload: EventPayload) -> Option<crate::quantities::ParameterValue> {
+        match payload {
+            EventPayload::Note { edge, .. } => Some(edge.value()),
+            EventPayload::SetParameter { value, .. } => Some(value),
         }
     }
 
@@ -268,9 +409,26 @@ impl PreparedRenderer {
                     let Some(state) = self.node_states.get_mut(step.node().index()) else {
                         continue;
                     };
-                    let Some(mut io) =
-                        kernels::bind(&mut self.buffers, self.plan.regions(), step, plan_start)
-                    else {
+                    // Resolved before the arena is borrowed mutably: these are two
+                    // disjoint fields of one renderer, and taking the slice first is what
+                    // lets the borrow checker see that.
+                    let (Some(start), Some(end)) = (
+                        self.control_starts.get(step.node().index()).copied(),
+                        self.control_starts.get(step.node().index() + 1).copied(),
+                    ) else {
+                        continue;
+                    };
+                    let gates = self
+                        .timed_controls
+                        .get(start as usize..end as usize)
+                        .unwrap_or(&[]);
+                    let Some(mut io) = kernels::bind(
+                        &mut self.buffers,
+                        self.plan.regions(),
+                        step,
+                        plan_start,
+                        gates,
+                    ) else {
                         continue;
                     };
                     (step.kernel())(prepared, state, &mut io);
@@ -387,9 +545,14 @@ impl Renderer for PreparedRenderer {
         }
 
         let mut cursor = 0;
+        let mut timed = 0;
         for _ in 0..quanta {
             let boundary = self.clock;
             cursor = self.apply_control_events(boundary, cursor);
+            // After the boundary controls and before the quantum: the edges are a property
+            // of the samples about to be written, and the kernel that writes them is what
+            // places each one.
+            self.collect_timed_controls(&mut timed);
             if let Err(error) = self.render_quantum() {
                 if matches!(error, RenderError::ClockExhausted(_)) {
                     self.diagnostics.count_clock_exhaustion();

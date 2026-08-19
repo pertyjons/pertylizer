@@ -71,8 +71,8 @@ storage assigned to compiled signal lifetimes.
 6. **SOUND-INV-006 — Typed event time.** An event crossing into the renderer
    retains its `StreamEpoch` and absolute `SampleTime`. Its quantum index and
    quantum-local offset are derived only after epoch validation; neither is
-   stored in the event envelope. The currently admitted control event is
-   evaluated at quantum rate as permitted by ADR-0001.
+   stored in the event envelope. When an event takes effect is decided by what
+   it moves rather than by which payload carried it, per SOUND-INV-016.
 7. **SOUND-INV-007 — Graph validation.** Compilation refuses unknown nodes or
    ports, wrong directions/domains, illegal fan-in, cycles, missing required
    output structure, and any channel-layout mismatch no permitted conversion
@@ -135,6 +135,22 @@ storage assigned to compiled signal lifetimes.
     tests at every channel count its own ports admit. A kernel whose ports admit
     only one channel is tested at one, with a test asserting that its port table
     admits only one, so the exemption is checked rather than assumed.
+16. **SOUND-INV-016 — Sample-positioned effects.** ADR-0001 splits when an event
+    takes effect, and the split is a property of the **effect**: a note-on,
+    note-off, gate or retrigger occurs at its declared sample within the quantum
+    (clause 14), while a control-rate response begins at the next quantum boundary
+    under clause 13's causality rule. A node kind declares which of the two each of
+    its controls is, admission compiles that declaration into the control's target,
+    and the renderer reads it there. A caller therefore cannot obtain the other
+    timing by choosing another payload: addressing a gate as a parameter and playing
+    its node as a note reach one control under one law, and the two render
+    bit-identically. A note event names a **node**, not one of its controls — which
+    control being played moves belongs to the node kind, and a node that declares
+    none cannot be addressed by a note at all. The schedule is still walked exactly
+    once per quantum, so this is neither a second control evaluation (clause 4) nor
+    the event-boundary quantum split clause 15 reserves for a later phase: the edges
+    due in a quantum are resolved before it renders and handed to the node that owns
+    them.
 
 ## Types and ownership
 
@@ -174,20 +190,16 @@ excess is a preparation refusal rather than runtime truncation.
 | SOUND-INV-002 | `render_allocation`, `render_loop_purity` |
 | SOUND-INV-003, 012 | `node_representation` |
 | SOUND-INV-005, 006 | `render_contract` |
-| SOUND-INV-007 | `graph_validation`, except its layout half, which the pending row below covers |
+| SOUND-INV-007 | `graph_validation` |
 | SOUND-INV-008 | `lowering` |
 | SOUND-INV-011 | `arena_reuse` |
+| SOUND-INV-016 | `note_events`, over the compiled path, and the envelope kernel's own edge tests in `kernels`. `note_events` places each edge at an offset that is **not** a multiple of `Q` and asserts an exact value per frame, so an edge quantized to a boundary fails it; it renders the same edge through three host-block partitions and through both payloads and requires all of them bit-identical; and `an_edge_mid_ramp_starts_from_the_level_that_frame_would_have_had` covers the case the instantaneous-segment fixtures cannot see, where the level a frame starts from and the sample before it differ by one step. `layout_baseline` cannot cover any of this — every edge in its fixtures is on a boundary — so it is a regression control here rather than a placement check |
 | SOUND-INV-013 | `render_loop_purity`, partially: the kernel registry is closed and every registered kernel is defined inside the checked region. It cannot see a descriptor that points at a function outside it — see *Unresolved questions* |
-| SOUND-INV-009, 010, 014, 015 | **pending P02-T013.** Today's checks verify the planar contract these invariants replace: `lowering` requires one output operation per channel, `arena_reuse` compares slot identity rather than physical ranges and has no observation-tap case, and `graph_validation`'s layout premise enumerates node kinds by hand and omits three that exist. The conversion brings its own checks, including ADR-0041 clause 16's baseline comparison |
+| SOUND-INV-009, 010, 014 | `layout_baseline` for ADR-0041 clause 16's per-quantum digest comparison over its five fixtures, `arena_reuse` for the structural check over physical sample ranges and for `reuse_renders_bit_identically_to_no_reuse`, and `lowering`'s `a_mono_source_into_a_stereo_stream_widens_into_one_wider_region`, `a_mono_stream_compiles_exactly_one_output_operation` and `an_inserted_conversion_is_reported_and_not_only_scheduled` |
+| SOUND-INV-015 | `graph_validation`'s `every_kernel_admits_exactly_one_channel_on_every_port` over the macro-generated catalog, and `kernels`' `the_widening_writes_every_channel_of_every_frame` for the one kernel with two admitted counts |
 | Node arithmetic and preparation | `voice_nodes`, internal kernel tests |
 
 ## Unresolved questions
-
-**The crate does not yet meet SOUND-INV-009, SOUND-INV-010's region rules, or
-SOUND-INV-014's contiguous output copy.** Its arena is still planar with uniform
-slots; P02-T013 is the conversion that brings it to this contract, and its
-acceptance check is ADR-0041 clause 16's per-quantum digest comparison against
-baselines generated from the planar build in the commit before the conversion.
 
 **SOUND-INV-013's falsifier is partial, and the gap is named rather than
 assumed closed.** `render_loop_purity` requires the kernel registry to be closed
@@ -198,12 +210,8 @@ that either, because its allowlist admits `synth_dsp` and `synth_modules`, which
 ADR-0040 clause 1 permits for a non-kernel value or table. Closing or replacing
 that check is open work.
 
-**SOUND-INV-015 has no closed check.** `graph_validation` asserts mono output
-layouts for a hand-written subset of node kinds, which is a partial form of the
-port-table assertion, and the kernel tests exercise the mono kernels that exist.
-What is missing is the obligation over the whole catalog at every admitted count;
-it arrives with P02-T013, since no node kind produces a stereo signal before it.
-
-P02-T007 must add the note-event payload, sample-offset behavior, and named
-conformance check before this specification can claim that a note edge is
-preserved at its declared sample across host-block partitions.
+**Four pre-existing conformance rows name a check that does not carry the
+invariant.** An independent read of the rows this phase inherited found
+SOUND-INV-001/004, 003/012, 007 and 008 each paired with a check narrower than
+the invariant it is listed against. The finding predates this phase's work and is
+not a defect in the code; closing it is open work tracked in `NOW.md`.

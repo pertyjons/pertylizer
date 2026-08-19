@@ -14,7 +14,7 @@
 use crate::quantities::{
     Amplitude, BusCount, CostRatio, CutoffFrequency, EventCount, Frequency, GainFactor,
     HeldNoteCount, InstructionCount, MixChannelCount, NodeCount, NormalizedLevel, PreparedBytes,
-    Resonance, ScriptWorkPerQuantum, Seconds, SendCount, SlotCount, VoiceCount,
+    RecordCount, Resonance, ScriptWorkPerQuantum, Seconds, SendCount, SlotCount, VoiceCount,
 };
 use crate::time::PlanPosition;
 use thiserror::Error;
@@ -190,20 +190,19 @@ pub enum IrNodeKind {
         /// The factor applied to every sample.
         factor: GainFactor,
     },
-    /// A four-segment envelope, gated by a control.
+    /// A four-segment envelope, gated by a note edge.
     ///
     /// It produces a **control** signal rather than audio, and it produces one value per
-    /// *sample* rather than one per quantum. That is not a contradiction of ADR-0001
-    /// clause 13: the clause governs when a node observes an event, and this node
-    /// observes its gate once per quantum like every other control. What it does between
-    /// those observations is its own, and an envelope that only moved at quantum
+    /// *sample* rather than one per quantum. An envelope that only moved at quantum
     /// boundaries would step in 1.3 ms stairs at 48 kHz — audible on every note, and a
     /// difference from V1 that no record asks for.
     ///
-    /// The gate is a control in this phase and a sample-accurate note edge in P02-T007.
-    /// ADR-0001 clause 14 puts a note edge at its declared sample, and honouring that
-    /// needs the event path the next task builds; what would be wrong is to *claim* it
-    /// here by quantizing the edge to a boundary and calling it done.
+    /// Its gate is the phase's one **sample-positioned** control: ADR-0001 clause 14 puts
+    /// a note-on, note-off, gate or retrigger at its declared sample within the quantum,
+    /// and since P02-T007 that is where it lands. The split is a property of the effect
+    /// rather than of the message, so the gate behaves the same whether it is played as a
+    /// note or addressed as a parameter; clause 13's causality still governs every
+    /// *control-rate* change, which takes effect at the next boundary.
     Envelope {
         /// How long silence takes to reach full level.
         attack: Seconds,
@@ -261,17 +260,23 @@ impl IrNodeKind {
 
 /// Parameter identities a node kind exposes.
 ///
-/// Phase 1 has two, both on the sine, and both **control-rate**: ADR-0001 clause
-/// 13 makes control evaluation causal, so a parameter change inside a quantum
-/// takes effect at the next quantum boundary rather than mid-quantum.
+/// **When** moving one takes effect is the node kind's declaration rather than
+/// this module's: ADR-0001 clause 13 makes control evaluation causal, so a
+/// control-rate change inside a quantum takes effect at the next boundary, while
+/// clause 14 puts a sample-positioned one — a gate — at its declared sample.
+/// [`crate::plan::ControlRate`] is where that is compiled, and the renderer reads
+/// it there rather than inferring it from the payload a caller chose.
 pub mod parameters {
     use super::ParameterId;
 
-    /// A sine's frequency in hertz.
+    /// A sine's frequency in hertz. Control-rate.
     pub const SINE_FREQUENCY: ParameterId = ParameterId::new(0);
-    /// A sine's peak amplitude.
+    /// A sine's peak amplitude. Control-rate.
     pub const SINE_AMPLITUDE: ParameterId = ParameterId::new(1);
     /// An envelope's gate: above zero is held, zero or below is released.
+    ///
+    /// **Sample-positioned.** It is the same control a note edge moves, so
+    /// automating a gate and playing a note reach it under one timing law.
     pub const ENVELOPE_GATE: ParameterId = ParameterId::new(2);
 }
 
@@ -637,18 +642,30 @@ impl GraphIr {
         )
     }
 
+    /// How many records the plan schedules: a node with a kernel, plus what the compiler
+    /// inserted.
+    ///
+    /// Every row and allocation that is *per scheduled record* is over this one figure,
+    /// so a caller that counted nodes instead would over-report by exactly the outputs.
+    pub fn scheduled_records(&self, inserted: u64) -> RecordCount {
+        let scheduled = self
+            .nodes
+            .iter()
+            .filter(|node| node.kind().is_source())
+            .count() as u64;
+        // Saturating rather than checked: a plan with more than four billion records is
+        // refused by `max_nodes` long before this, and the report's job at that point is
+        // to state an amount that is certainly over the limit rather than to fail.
+        RecordCount::measured(u32::try_from(scheduled.saturating_add(inserted)).unwrap_or(u32::MAX))
+    }
+
     fn aggregate_bytes(
         &self,
         per_node: u64,
         payload: fn(IrNodeKind) -> u64,
         inserted: u64,
     ) -> (PreparedBytes, IrObject) {
-        let scheduled = self
-            .nodes
-            .iter()
-            .filter(|node| node.kind().is_source())
-            .count() as u64;
-        let records = scheduled.saturating_add(inserted);
+        let records = u64::from(self.scheduled_records(inserted).get());
         let total = records.saturating_mul(per_node);
         let mut dominant = (0_u64, IrObject::Plan);
         for node in &self.nodes {

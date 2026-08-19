@@ -25,7 +25,7 @@ use crate::plan::{BufferRegion, InputBinding, NodeStep};
 use crate::quantities::{
     Amplitude, ChannelLayout, Frequency, GainFactor, NormalizedLevel, ParameterValue, SegmentFrames,
 };
-use crate::time::PlanPosition;
+use crate::time::{PlanPosition, QuantumOffset};
 
 /// How many inputs one kernel may be handed.
 ///
@@ -240,17 +240,16 @@ impl NodeState {
         }
     }
 
-    /// Move one of this node's controls.
+    /// Move one of this node's **quantum-rate** controls.
     ///
     /// The index is the node kind's own, resolved at admission from the parameter
     /// identity a caller addressed. An index this state does not have does nothing: the
     /// pairing is the compiler's, and the audio thread cannot report a defect in it.
-    pub fn set_control(
-        &mut self,
-        prepared: &PreparedNode,
-        control: ControlIndex,
-        value: ParameterValue,
-    ) {
+    ///
+    /// Sample-positioned controls do not come through here. ADR-0001 clause 14 puts them
+    /// at their declared sample, which is inside a kernel's own loop, so the renderer
+    /// hands them to the kernel as [`NodeIo::controls`] instead.
+    pub fn set_control(&mut self, control: ControlIndex, value: ParameterValue) {
         match self {
             Self::Sine {
                 frequency,
@@ -261,48 +260,11 @@ impl NodeState {
                 SINE_AMPLITUDE => *amplitude = value.into_amplitude(),
                 _ => {}
             },
-            // A gate is a control like any other in this phase: it is observed once per
-            // quantum. P02-T007 is where a note edge lands at its declared sample.
-            Self::Envelope {
-                segment,
-                level,
-                target,
-                step,
-                remaining,
-                held,
-            } => {
-                let PreparedNode::Envelope {
-                    attack_frames,
-                    release_frames,
-                    ..
-                } = prepared
-                else {
-                    return;
-                };
-                if !matches!(control, ENVELOPE_GATE) {
-                    return;
-                }
-                let raised = value.as_f32() > 0.0;
-                if raised == *held {
-                    // Not an edge. A held gate re-asserted is the same note, and
-                    // restarting its attack would be a retrigger nobody asked for.
-                    return;
-                }
-                *held = raised;
-                let (destination, frames) = if raised {
-                    (1.0, *attack_frames)
-                } else {
-                    (0.0, *release_frames)
-                };
-                *segment = match (raised, *level > 0.0) {
-                    (true, _) => Segment::Attack,
-                    (false, true) => Segment::Release,
-                    (false, false) => Segment::Idle,
-                };
-                *target = destination;
-                (*step, *remaining) = ramp(*level, destination, frames);
-            }
-            Self::Filter { .. } | Self::Stateless => {}
+            // An envelope has no quantum-rate control. Its gate is sample-positioned
+            // (ADR-0001 clause 14), so the edge law lives in the kernel — the one place
+            // that knows which sample it is — and reaches it through [`NodeIo::controls`]
+            // rather than through here. Two authorities on one edge would be one too many.
+            Self::Envelope { .. } | Self::Filter { .. } | Self::Stateless => {}
         }
     }
 }
@@ -374,6 +336,47 @@ pub struct NodeIo<'a> {
     pub inputs: [InputBuffer<'a>; MAX_INPUTS],
     /// The plan position of this quantum's first frame, where the anchor reaches it.
     pub position: Option<PlanPosition>,
+    /// This node's sample-positioned control changes, due inside this quantum.
+    ///
+    /// ADR-0001 clause 14: a note-on, note-off, gate or retrigger occurs at its declared
+    /// sample rather than at the boundary that follows it, and a kernel is the only place
+    /// that knows where its samples are. Ascending by offset, and empty for every quantum
+    /// and every node kind that has none — which is all of them but the envelope today.
+    ///
+    /// The renderer resolves these once per quantum, so this is not a control-rate
+    /// evaluation happening more than once (ADR-0001 clause 4) and it is not the
+    /// event-boundary quantum split clause 15 reserves for Phase 3: the schedule is still
+    /// walked exactly once, and only the node the edge names sees it.
+    pub controls: &'a [TimedControl],
+}
+
+/// One control change at a declared sample inside the quantum.
+///
+/// The sample-positioned twin of [`NodeState::set_control`]: the same node-local control
+/// index and the same value, plus the offset the change happens at. The renderer builds
+/// these from the events a quantum is due; a kernel applies them as it reaches each frame.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[must_use]
+pub struct TimedControl {
+    /// Where inside the quantum it happens.
+    pub offset: QuantumOffset,
+    /// Which of the node's controls it moves.
+    pub control: ControlIndex,
+    /// The value it moves it to.
+    pub value: ParameterValue,
+}
+
+impl TimedControl {
+    /// The value the scratch is filled with at preparation.
+    ///
+    /// Never read: a node's slice is bounded by the index table, and the fill exists so
+    /// the buffer can be allocated to its full length once. That is what makes growth
+    /// *impossible* in the loop rather than merely unlikely.
+    pub(crate) const FILL: Self = Self {
+        offset: QuantumOffset::ZERO,
+        control: ControlIndex::new(u8::MAX),
+        value: ParameterValue::ZERO,
+    };
 }
 
 /// Borrow the arena regions one step names.
@@ -394,6 +397,7 @@ pub fn bind<'a>(
     regions: &[BufferRegion],
     step: &NodeStep,
     position: Option<PlanPosition>,
+    controls: &'a [TimedControl],
 ) -> Option<NodeIo<'a>> {
     let mut out: Option<&'a mut [f32]> = None;
     let mut inputs = [InputBuffer::Unpatched; MAX_INPUTS];
@@ -453,6 +457,7 @@ pub fn bind<'a>(
         channels: step.out_layout(),
         inputs,
         position,
+        controls,
     })
 }
 
@@ -565,11 +570,17 @@ const fn ramp(from: f32, to: f32, frames: SegmentFrames) -> (f32, SegmentFrames)
 }
 
 /// A four-segment envelope, one value per sample.
+///
+/// Its gate is the phase's one sample-positioned control (ADR-0001 clause 14), so this is
+/// where a note edge takes effect: an edge at offset `k` is applied before frame `k` is
+/// written and after frame `k - 1` was, which is what makes the note start on the sample
+/// it named rather than on the quantum boundary that follows it.
 pub fn envelope(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>) {
     let PreparedNode::Envelope {
+        attack_frames,
         decay_frames,
+        release_frames,
         sustain,
-        ..
     } = prepared
     else {
         return;
@@ -580,7 +591,7 @@ pub fn envelope(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<
         target,
         step,
         remaining,
-        ..
+        held,
     } = state
     else {
         return;
@@ -591,10 +602,29 @@ pub fn envelope(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<
         target: *target,
         step: *step,
         remaining: *remaining,
+        held: *held,
     };
 
     let sustain = sustain.as_f32();
-    for sample in io.out.iter_mut() {
+    // The envelope's own port table admits one channel, so a frame is a sample and an
+    // offset indexes `out` directly. Deriving the frame from the channel count anyway
+    // would be arithmetic defending against a layout this kind cannot be given.
+    let mut due = 0_usize;
+    for (frame, sample) in io.out.iter_mut().enumerate() {
+        // Before `hand_over` and before the write, which is exactly where the boundary
+        // path put a gate when it was an ordinary control: the edge is applied to the
+        // level the frame was going to start from. `while` rather than `if` because two
+        // edges may share a quantum — a note released and retriggered inside 1.33 ms —
+        // and each of them is a separate edge at its own sample.
+        while let Some(control) = io.controls.get(due) {
+            if control.offset.as_usize() != frame {
+                break;
+            }
+            due += 1;
+            if matches!(control.control, ENVELOPE_GATE) {
+                run.gate(control.value, sustain, *attack_frames, *release_frames);
+            }
+        }
         run.hand_over(sustain, *decay_frames);
         *sample = match run.stage {
             Segment::Idle => 0.0,
@@ -620,8 +650,14 @@ pub fn envelope(prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<
     // instead would put a step in the signal that nothing in the plan asked for.
     run.level = run.boundary_level(sustain);
 
-    (*segment, *level, *target, *step, *remaining) =
-        (run.stage, run.level, run.target, run.step, run.remaining);
+    (*segment, *level, *target, *step, *remaining, *held) = (
+        run.stage,
+        run.level,
+        run.target,
+        run.step,
+        run.remaining,
+        run.held,
+    );
 }
 
 /// An envelope's ramp, while a quantum is being written.
@@ -631,9 +667,52 @@ struct Run {
     target: f32,
     step: f32,
     remaining: SegmentFrames,
+    held: bool,
 }
 
 impl Run {
+    /// Apply a gate edge at the frame the run has reached.
+    ///
+    /// The **one** authority on what a gate does. It reads `self.level`, which is the
+    /// level the frame about to be written would otherwise have started from, so a note
+    /// let go during its attack releases from where it had actually reached rather than
+    /// from the sustain level it never got to.
+    fn gate(
+        &mut self,
+        value: ParameterValue,
+        sustain: f32,
+        attack: SegmentFrames,
+        release: SegmentFrames,
+    ) {
+        let raised = value.as_f32() > 0.0;
+        if raised == self.held {
+            // Not an edge. A held gate re-asserted is the same note, and restarting its
+            // attack would be a retrigger nobody asked for.
+            return;
+        }
+        self.held = raised;
+        // The level **this** frame starts from, which after frame 0 is one step further
+        // along the ramp than the sample written at the frame before: the counter has
+        // already moved past it. Reading `self.level` directly would compute the new
+        // segment from a level the signal has left, so a note let go mid-attack would
+        // repeat one sample and ramp from the wrong amplitude. At a quantum boundary the
+        // two agree, because the epilogue stores exactly this value — which is why the
+        // committed layout baselines, whose every edge is on a boundary, cannot see it.
+        self.level = self.boundary_level(sustain);
+        let (destination, frames) = if raised {
+            (1.0, attack)
+        } else {
+            (0.0, release)
+        };
+        self.stage = match (raised, self.level > 0.0) {
+            (true, _) => Segment::Attack,
+            (false, true) => Segment::Release,
+            (false, false) => Segment::Idle,
+        };
+        self.target = destination;
+        (self.step, self.remaining) = ramp(self.level, destination, frames);
+    }
+
     /// The level the next sample of this segment will have.
     fn boundary_level(&self, sustain: f32) -> f32 {
         match self.stage {

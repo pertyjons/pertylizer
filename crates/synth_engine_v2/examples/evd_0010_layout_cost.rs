@@ -84,8 +84,8 @@ use synth_engine_v2::ir::{
     ExecutionScope, GraphIr, IrNodeKind, NodeId, PortId, SignalDomain, parameters,
 };
 use synth_engine_v2::node::kernels::{
-    ENVELOPE_GATE, InputBuffer, MAX_INPUTS, NodeIo, NodeState, PreparedNode, amplifier, copy,
-    envelope, filter, sine,
+    ENVELOPE_GATE, InputBuffer, MAX_INPUTS, NodeIo, NodeState, PreparedNode, TimedControl,
+    amplifier, copy, envelope, filter, sine,
 };
 use synth_engine_v2::plan::{CompiledPlan, NodeStep, PlanOp};
 use synth_engine_v2::profile::HostProfile;
@@ -97,8 +97,21 @@ use synth_engine_v2::render::{
     AudioBlockMut, EventEnvelope, EventPayload, PreparedRenderer, Renderer, TimedEvent, TimedEvents,
 };
 use synth_engine_v2::time::{
-    FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor, TimeSource,
+    FrameCount, PlanPosition, QUANTUM_FRAMES, QuantumOffset, SampleTime, StreamAnchor, TimeSource,
 };
+
+/// A raised gate at the first sample of the quantum about to be rendered.
+///
+/// A gate is sample-positioned since P02-T007, so it reaches the envelope with a buffer
+/// rather than being set on the state beforehand. Offset 0 is where the boundary-applied
+/// gate this harness used to set landed.
+fn held_gate() -> TimedControl {
+    TimedControl {
+        offset: QuantumOffset::ZERO,
+        control: ENVELOPE_GATE,
+        value: ParameterValue::ONE,
+    }
+}
 
 /// Frames in one render quantum, from the crate rather than restated here.
 const Q: usize = QUANTUM_FRAMES as usize;
@@ -572,6 +585,9 @@ struct Planar {
     right: Region,
     control_left: Region,
     control_right: Region,
+    /// A gate edge queued by `open_gate`, due at offset 0 of the next quantum this arm
+    /// renders and cleared there, so only that quantum carries it.
+    pending_gate: Vec<TimedControl>,
 }
 
 impl Planar {
@@ -599,16 +615,20 @@ impl Planar {
             right: Region::new(right * Q, Q),
             control_left: Region::new(controls.0 * Q, Q),
             control_right: Region::new(controls.1 * Q, Q),
+            pending_gate: Vec::new(),
         }
     }
 
     /// Hold the gate on both envelopes.
     fn open_gate(&mut self) {
-        let held = ParameterValue::new(1.0).expect("finite");
-        self.envelope_left_state
-            .set_control(&self.envelope_left, ENVELOPE_GATE, held);
-        self.envelope_right_state
-            .set_control(&self.envelope_right, ENVELOPE_GATE, held);
+        // The edge is **queued**, not rendered. A gate is sample-positioned since
+        // P02-T007, so it reaches the envelope with the buffer of the quantum it falls
+        // in — and rendering one here to apply it would advance this arm's envelope by a
+        // quantum the renderer arm has not rendered, which the per-quantum comparison
+        // below catches as a disagreement at quantum 0. The queued edge is consumed by
+        // the first quantum this arm renders and cleared there, which is where the
+        // renderer arm's gate event lands too.
+        self.pending_gate = vec![held_gate()];
     }
 
     /// **Shape A**: the schedule the compiler produced for a stereo profile.
@@ -637,6 +657,7 @@ impl Planar {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
+                controls: &[],
             },
         );
         call_filter(
@@ -647,6 +668,7 @@ impl Planar {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
                 position: None,
+                controls: &[],
             },
         );
         call_envelope(
@@ -657,6 +679,7 @@ impl Planar {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
+                controls: &self.pending_gate,
             },
         );
         let (out, control) = two(&mut self.arena, self.left, self.control_left);
@@ -668,6 +691,7 @@ impl Planar {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
                 position: None,
+                controls: &[],
             },
         );
         // The widening, into the slot the envelope has finished with.
@@ -680,8 +704,12 @@ impl Planar {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Patched(source), InputBuffer::Unpatched],
                 position: None,
+                controls: &[],
             },
         );
+        // The queued gate edge is consumed by this quantum and by no later one, which is
+        // what makes it one edge rather than a gate re-asserted every quantum.
+        self.pending_gate.clear();
     }
 
     /// **Shape B**: the widening upstream, so the filter and the amplifier run per channel.
@@ -694,6 +722,7 @@ impl Planar {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
+                controls: &[],
             },
         );
         let (out, source) = two(&mut self.arena, self.right, self.left);
@@ -705,6 +734,7 @@ impl Planar {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Patched(source), InputBuffer::Unpatched],
                 position: None,
+                controls: &[],
             },
         );
         call_filter(
@@ -715,6 +745,7 @@ impl Planar {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
                 position: None,
+                controls: &[],
             },
         );
         call_filter(
@@ -725,6 +756,7 @@ impl Planar {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
                 position: None,
+                controls: &[],
             },
         );
         call_envelope(
@@ -735,6 +767,7 @@ impl Planar {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
+                controls: &self.pending_gate,
             },
         );
         let (out, control) = two(&mut self.arena, self.left, self.control_left);
@@ -746,6 +779,7 @@ impl Planar {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
                 position: None,
+                controls: &[],
             },
         );
         let (out, control) = two(&mut self.arena, self.right, self.control_left);
@@ -757,9 +791,13 @@ impl Planar {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
                 position: None,
+                controls: &[],
             },
         );
         self.write_carry();
+        // The queued gate edge is consumed by this quantum and by no later one, which is
+        // what makes it one edge rather than a gate re-asserted every quantum.
+        self.pending_gate.clear();
     }
 
     /// **Shape C**: shape B with a filter and an envelope of its own per channel.
@@ -777,6 +815,7 @@ impl Planar {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
+                controls: &[],
             },
         );
         let (out, source) = two(&mut self.arena, self.right, self.left);
@@ -788,6 +827,7 @@ impl Planar {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Patched(source), InputBuffer::Unpatched],
                 position: None,
+                controls: &[],
             },
         );
         call_filter(
@@ -798,6 +838,7 @@ impl Planar {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
                 position: None,
+                controls: &[],
             },
         );
         call_filter(
@@ -808,6 +849,7 @@ impl Planar {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
                 position: None,
+                controls: &[],
             },
         );
         call_envelope(
@@ -818,6 +860,7 @@ impl Planar {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
+                controls: &self.pending_gate,
             },
         );
         let (out, control) = two(&mut self.arena, self.left, self.control_left);
@@ -829,6 +872,7 @@ impl Planar {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
                 position: None,
+                controls: &[],
             },
         );
         call_envelope(
@@ -839,6 +883,7 @@ impl Planar {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
+                controls: &self.pending_gate,
             },
         );
         let (out, control) = two(&mut self.arena, self.right, self.control_right);
@@ -850,9 +895,13 @@ impl Planar {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
                 position: None,
+                controls: &[],
             },
         );
         self.write_carry();
+        // The queued gate edge is consumed by this quantum and by no later one, which is
+        // what makes it one edge rather than a gate re-asserted every quantum.
+        self.pending_gate.clear();
     }
 
     /// The plan's output operations: one strided write per channel.
@@ -921,6 +970,9 @@ struct Interleaved {
     mono: Region,
     control_left: Region,
     control_right: Region,
+    /// A gate edge queued by `open_gate`, due at offset 0 of the next quantum this arm
+    /// renders and cleared there, so only that quantum carries it.
+    pending_gate: Vec<TimedControl>,
 }
 
 impl Interleaved {
@@ -979,6 +1031,7 @@ impl Interleaved {
             // which the widening has finished with.
             control_left: Region::new(0, Q),
             control_right: Region::new((CHANNELS + 1) * Q, Q),
+            pending_gate: Vec::new(),
         }
     }
 
@@ -989,11 +1042,14 @@ impl Interleaved {
     }
 
     fn open_gate(&mut self) {
-        let held = ParameterValue::new(1.0).expect("finite");
-        self.envelope_left_state
-            .set_control(&self.envelope_left, ENVELOPE_GATE, held);
-        self.envelope_right_state
-            .set_control(&self.envelope_right, ENVELOPE_GATE, held);
+        // The edge is **queued**, not rendered. A gate is sample-positioned since
+        // P02-T007, so it reaches the envelope with the buffer of the quantum it falls
+        // in — and rendering one here to apply it would advance this arm's envelope by a
+        // quantum the renderer arm has not rendered, which the per-quantum comparison
+        // below catches as a disagreement at quantum 0. The queued edge is consumed by
+        // the first quantum this arm renders and cleared there, which is where the
+        // renderer arm's gate event lands too.
+        self.pending_gate = vec![held_gate()];
     }
 
     /// **Shape A**: the mono chain contiguous, widened once, copied to the carry.
@@ -1010,6 +1066,7 @@ impl Interleaved {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
+                controls: &[],
             },
         );
         call_filter(
@@ -1020,6 +1077,7 @@ impl Interleaved {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
                 position: None,
+                controls: &[],
             },
         );
         call_envelope(
@@ -1030,6 +1088,7 @@ impl Interleaved {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
+                controls: &self.pending_gate,
             },
         );
         let (out, control) = two(&mut self.arena, self.mono, self.control_left);
@@ -1041,6 +1100,7 @@ impl Interleaved {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
                 position: None,
+                controls: &[],
             },
         );
         let (out, source) = two(&mut self.arena, self.stereo, self.mono);
@@ -1052,9 +1112,13 @@ impl Interleaved {
                 channels: synth_engine_v2::quantities::ChannelLayout::Stereo,
                 inputs: [InputBuffer::Patched(source), InputBuffer::Unpatched],
                 position: None,
+                controls: &[],
             },
         );
         self.write_carry();
+        // The queued gate edge is consumed by this quantum and by no later one, which is
+        // what makes it one edge rather than a gate re-asserted every quantum.
+        self.pending_gate.clear();
     }
 
     /// **Shape B**: widened upstream, then a filter and an amplifier over frames.
@@ -1067,6 +1131,7 @@ impl Interleaved {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
+                controls: &[],
             },
         );
         let (out, source) = two(&mut self.arena, self.stereo, self.mono);
@@ -1078,6 +1143,7 @@ impl Interleaved {
                 channels: synth_engine_v2::quantities::ChannelLayout::Stereo,
                 inputs: [InputBuffer::Patched(source), InputBuffer::Unpatched],
                 position: None,
+                controls: &[],
             },
         );
         filter_interleaved(
@@ -1088,6 +1154,7 @@ impl Interleaved {
                 channels: synth_engine_v2::quantities::ChannelLayout::Stereo,
                 inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
                 position: None,
+                controls: &[],
             },
         );
         call_envelope(
@@ -1098,6 +1165,7 @@ impl Interleaved {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
+                controls: &self.pending_gate,
             },
         );
         let (out, control) = two(&mut self.arena, self.stereo, self.control_left);
@@ -1109,9 +1177,13 @@ impl Interleaved {
                 channels: synth_engine_v2::quantities::ChannelLayout::Stereo,
                 inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
                 position: None,
+                controls: &[],
             },
         );
         self.write_carry();
+        // The queued gate edge is consumed by this quantum and by no later one, which is
+        // what makes it one edge rather than a gate re-asserted every quantum.
+        self.pending_gate.clear();
     }
 
     /// **Shape C**: the same, with a control signal per channel — two reads per frame.
@@ -1124,6 +1196,7 @@ impl Interleaved {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
+                controls: &[],
             },
         );
         let (out, source) = two(&mut self.arena, self.stereo, self.mono);
@@ -1135,6 +1208,7 @@ impl Interleaved {
                 channels: synth_engine_v2::quantities::ChannelLayout::Stereo,
                 inputs: [InputBuffer::Patched(source), InputBuffer::Unpatched],
                 position: None,
+                controls: &[],
             },
         );
         filter_interleaved_split(
@@ -1145,6 +1219,7 @@ impl Interleaved {
                 channels: synth_engine_v2::quantities::ChannelLayout::Stereo,
                 inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
                 position: None,
+                controls: &[],
             },
         );
         call_envelope(
@@ -1155,6 +1230,7 @@ impl Interleaved {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
+                controls: &self.pending_gate,
             },
         );
         call_envelope(
@@ -1165,6 +1241,7 @@ impl Interleaved {
                 channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
+                controls: &self.pending_gate,
             },
         );
         let (out, left, right) = three(
@@ -1181,9 +1258,13 @@ impl Interleaved {
                 channels: synth_engine_v2::quantities::ChannelLayout::Stereo,
                 inputs: [InputBuffer::Patched(left), InputBuffer::Patched(right)],
                 position: None,
+                controls: &[],
             },
         );
         self.write_carry();
+        // The queued gate edge is consumed by this quantum and by no later one, which is
+        // what makes it one edge rather than a gate re-asserted every quantum.
+        self.pending_gate.clear();
     }
 
     /// The plan's output operation: one contiguous copy.
@@ -1242,8 +1323,13 @@ impl Steps {
     /// The schedule walked and every step's slots bound — and nothing called.
     fn bind_only(&mut self) {
         for step in &self.steps {
-            let io =
-                synth_engine_v2::node::kernels::bind(&mut self.arena, &self.regions, step, None);
+            let io = synth_engine_v2::node::kernels::bind(
+                &mut self.arena,
+                &self.regions,
+                step,
+                None,
+                &[],
+            );
             black_box(&io);
         }
     }
