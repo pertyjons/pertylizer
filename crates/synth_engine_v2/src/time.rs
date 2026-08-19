@@ -18,11 +18,17 @@ use std::sync::atomic::{AtomicU32, Ordering};
 
 /// The internal render quantum in frames — ADR-0001's `Q`.
 ///
-/// ADR-0037 fixes the value at 64 **provisionally**, under its rule 1: the V1
-/// proxy measurement came back inconclusive, and the Phase 2 exit gate
-/// re-measures against real V2 nodes and either confirms or supersedes it.
-/// Until then nothing may be tuned to this number — no hand-unrolled kernel, no
-/// `Q`-specific buffer layout, and no test asserting a control rate in Hz.
+/// ADR-0037 fixes the value at 64, and it is **final**: its V1 proxy was
+/// inconclusive so the value was provisional until Phase 2, and EVD-0012
+/// re-measured the real renderer. That measurement was itself inconclusive —
+/// the answer depended on the graph — so it escalated, and ADR-0037 now fixes
+/// 64 finally on the user's decision. The restriction the provisional value
+/// carried — no hand-unrolled kernel, no `Q`-specific buffer
+/// layout, and no test asserting a control rate in Hz — is discharged.
+///
+/// What still holds is the reason a limit is expressed in `Q` rather than in
+/// frames: a value that is final is not a value that can never change, and the
+/// host-profile specification keeps sizing its fields in `Q` for that reason.
 ///
 /// It is a `u32` while [`QuantumOffset`] is a `u16`, deliberately: a frame count is
 /// naturally the wider type, and the width difference is what makes the assertion
@@ -195,7 +201,9 @@ impl std::fmt::Display for FrameDelta {
 ///
 /// ADR-0032 clause 4. Construction from an out-of-range value **fails rather
 /// than clamping**, and the width is `u16` rather than `u8` so that the type is
-/// not sized to ADR-0037's provisional `Q`.
+/// not sized to ADR-0037's `Q`. That was written while the value was
+/// provisional and it still holds now that it is not: a type sized to the
+/// current quantum could not survive a later one.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[must_use]
 pub struct QuantumOffset(u16);

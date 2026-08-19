@@ -46,7 +46,7 @@ storage assigned to compiled signal lifetimes.
 | [ADR-0005](../decisions/ADR-0005-buffer-liveness-strategy.md) | Conservative deterministic liveness reuse with declared safe in-place processing, over physical regions per ADR-0041 |
 | [ADR-0021](../decisions/ADR-0021-host-profile-and-admission-policy.md) | Resource limits are preparation inputs and excess plans are refused before render |
 | [ADR-0032](../decisions/ADR-0032-sample-time-and-event-timestamps.md) | Engine time, plan position, epoch, and quantum-local offsets remain distinct |
-| [ADR-0037](../decisions/ADR-0037-render-quantum-value.md) | `Q` is currently 64 frames and must be re-measured before Phase 2 exits |
+| [ADR-0037](../decisions/ADR-0037-render-quantum-value.md) | `Q` is 64 frames, and ADR-0037 fixes it finally rather than provisionally |
 | [ADR-0040](../decisions/ADR-0040-v2-owns-its-dsp.md) | V2 owns the DSP it renders; no kernel is shared with V1 and no kernel carries a two-engine policy |
 | [ADR-0041](../decisions/ADR-0041-interleaved-internal-channel-layout.md) | One signal is one interleaved arena region of `Q` frames of `c` channels, at a recorded offset and length |
 

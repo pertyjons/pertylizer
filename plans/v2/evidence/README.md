@@ -20,7 +20,7 @@ evidence/
 Create phase directories only when they contain evidence. Allocate `EVD`
 identifiers globally rather than restarting numbering in each phase.
 
-Next free identifier: `EVD-0012`. Update this line when you allocate one.
+Next free identifier: `EVD-0013`. Update this line when you allocate one.
 
 ## Status and retention vocabulary
 

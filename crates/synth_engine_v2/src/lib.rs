@@ -33,12 +33,15 @@
 //! | Rendering | [`render`] | ADR-0001 clauses 4-9, 11-14, 16 |
 //! | Offline rendering | [`offline`] | ADR-0001 clauses 9-10 |
 //!
-//! # The quantum is provisional
+//! # The quantum
 //!
-//! [`time::QUANTUM_FRAMES`] is 64 under ADR-0037's rule 1: the V1 proxy measurement was
-//! inconclusive, and the Phase 2 exit gate re-measures against real V2 nodes and either
-//! confirms or supersedes it. Nothing here may be tuned to the value — no hand-unrolled
-//! kernel, no `Q`-specific buffer layout, no test asserting a control rate in hertz.
+//! [`time::QUANTUM_FRAMES`] is 64, and since P02-T010 that is final rather than
+//! provisional: ADR-0037's V1 proxy was inconclusive, and EVD-0012 re-measured the real
+//! renderer at 32, 64, 128 and 256 frames across five builds that render bit-identical
+//! audio. On the voice path this crate compiles, 64 costs 6% over 256 against a 15%
+//! threshold and 32 costs 5.5% against a 2% one. The restriction that came with the
+//! provisional value — no hand-unrolled kernel, no `Q`-specific buffer layout, no test
+//! asserting a control rate in hertz — is discharged with it.
 //!
 //! # A worked example
 //!

@@ -12,40 +12,35 @@ equivalence, CPU, and quantum gates.
 
 ### Active slice
 
-**Execute P02-T010: re-measure `Q` against the real voice path.**
+**Execute P02-T008 and P02-T009: the phase's two evidence records.**
 
-P02-T007 landed the note edge and the complete voice, so the crate now renders the thing the phase exists for: a note
-event at its declared sample driving an oscillator, a filter, an envelope and an amplifier into the output. That is
-also the plan every remaining Phase 2 measurement has to be taken over.
+P02-T010 closed the last thing that gated them: `Q` is final at 64, so ADR-0001 clause 17 no longer threatens to
+invalidate evidence collected now. Both records are measured against the voice path P02-T007 completed, and they are
+one slice because they share a fixture and a harness:
 
-ADR-0037 fixed `Q` at 64 from a V1 proxy and requires a re-measurement against the real V2 renderer before Phase 2
-exits. It runs now because ADR-0001 clause 17 makes a render digest comparable only within one quantum value: an
-equivalence or CPU record collected at 64 is invalidated rather than reinterpreted if the re-measurement supersedes it.
+- **P02-T008** — musical equivalence to V1 for the equivalent minimal patch, or a documented intentional difference.
+- **P02-T009** — CPU against V1 for that same patch.
 
-The task is complete when the measurement's falsifier and acceptance rule are written before any data is collected, the
-candidate quanta are compared on the voice path the crate now compiles, and ADR-0037 is either confirmed or superseded
-by a record that states its method, its limitations and its conclusion.
-
-Two things it inherits, both stated so they are not rediscovered:
-
-- **The instrument has five known traps**, all found by review of EVD-0010 and EVD-0011 rather than by the data:
-  per-call timing measures the clock rather than the renderer, the acceptance threshold must be chosen before the
-  numbers are seen, a two-build A/B measures a net effect and cannot attribute it, the order of the arms must be
-  counterbalanced against their identity, and the estimator (minimum over rounds, median over runs) is part of the
-  method rather than a presentation choice.
-- **The first `render` call renders no quantum.** It returns the carry `prepare` primed with `Q` frames of silence and
-  refuses any event presented with it, so a harness opens its gate on the second call.
+Each is a decision-driving measurement, so `PROCESS.md` requires the falsifier and acceptance rule to be written before
+collection and the method to be reviewed before any data exists. That review is not a formality here; EVD-0012's
+*History* records what it caught.
 
 Blockers: none.
 
+Two things they inherit, both stated so they are not rediscovered:
+
+- **The instrument, its traps and this machine's behaviour are EVD-0012's**, which reuses EVD-0010's estimator and
+  records what went wrong with it. Read that record's *Method*, *History* and *Limitations* before building a harness;
+  do not re-derive them here.
+- **V2's node vocabulary is six kinds.** What "the equivalent minimal patch" means in V1 is the first thing P02-T008
+  has to define, and defining it after seeing a comparison would be choosing the fixture to fit the answer.
+
 References:
 
-- [ADR-0037: the render quantum's value](decisions/ADR-0037-render-quantum-value.md), whose Phase 2 re-measurement this
-  is
-- [ADR-0001: render quantum semantics](decisions/ADR-0001-internal-render-quantum.md), clause 17 for why this runs
-  before the two evidence tasks
-- [EVD-0011: the mono path after the conversion](evidence/phase-02/EVD-0011-mono-path-cost.md), whose method and
-  reproduction recipe this measurement reuses
+- [EVD-0012: what the render quantum costs on the real V2 path](evidence/phase-02/EVD-0012-render-quantum-real-path.md),
+  whose method and harness these two reuse
+- [ADR-0001: render quantum semantics](decisions/ADR-0001-internal-render-quantum.md), clause 17 for why these run
+  after P02-T010 rather than beside it
 - [Current Sound Core render contract](specs/spec-sound-core-render-contract.md)
 - [Historical Phase 2 execution record](phases/phase-02-minimal-compiled-voice-graph.md)
 
@@ -58,13 +53,13 @@ References:
 | P02-T012          | Complete                         | EVD-0010              |
 | P02-T013          | Complete                         | EVD-0011              |
 | P02-T007          | Complete                         | `note_events`         |
-| P02-T010          | **Active**                       | —                     |
-| P02-T008/P02-T009 | Waiting                          | P02-T007 and P02-T010 |
+| P02-T010          | Complete                         | EVD-0012              |
+| P02-T008/P02-T009 | **Active**                       | —                     |
 | P02-T011          | Waiting                          | All Phase 2 outcomes  |
 
 ### Next actions
 
-1. Re-measure `Q` in P02-T010 before equivalence and CPU evidence.
+1. Complete P02-T008 and P02-T009, the phase's two evidence records.
 2. Close P02-T006 as not-happening and record the dropped extraction as a deviation, per ADR-0040 clause 5.
 3. Close `render_loop_purity`'s provenance gap for SOUND-INV-013: it proves every *registered* kernel is
    defined in the checked region, but not that a descriptor's function pointer resolves inside it.
@@ -73,7 +68,7 @@ References:
    defect in the code, and recorded in the specification's unresolved questions.
 5. Decide where a note's **pitch and velocity** live. P02-T007 deliberately gave `NoteEdge` neither, because
    nothing in Phase 2 reads either; Phase 3's ingress is the first task that has to.
-6. Complete P02-T008, P02-T009, and the Phase 2 exit review.
+6. Complete the Phase 2 exit review.
 
 ## Paused parallel stream: Phase 0B
 

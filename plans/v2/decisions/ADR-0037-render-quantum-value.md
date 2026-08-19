@@ -3,11 +3,11 @@
 | Field         | Value                                    |
 |---------------|------------------------------------------|
 | ID            | ADR-0037                                 |
-| Status        | Accepted (provisional value, see rule 1) |
+| Status        | Accepted                                 |
 | Phase         | 0A                                       |
 | Created       | 2026-08-12                               |
-| Last reviewed | 2026-08-12                               |
-| Related       | ADR-0001, EVD-0002, P00A-T003, P00A-T006 |
+| Last reviewed | 2026-08-19                               |
+| Related       | ADR-0001, EVD-0002, EVD-0012, P00A-T003, P00A-T006, P02-T010 |
 | Supersedes    | —                                        |
 | Superseded by | —                                        |
 
@@ -16,9 +16,18 @@ only how many frames it is. Both are `Accepted`, and both were required `Accepte
 exists because the frame count is the one part of the quantum question that depends on a measurement, and holding the
 semantics hostage to that measurement would block Phase 1 for no gain.
 
-**Outcome.** The measurement was taken and is recorded as
-[EVD-0002](../evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md). It selected **rule 1**, so `Q` = 64 is accepted
-**provisionally** and the Phase 2 re-measurement below is binding. See *Evidence*.
+**Outcome.** The Phase 0A measurement was taken and is recorded as
+[EVD-0002](../evidence/phase-00a/EVD-0002-render-quantum-cost-proxy.md). It selected **rule 1**, so `Q` = 64 was
+accepted **provisionally** and the Phase 2 re-measurement was binding.
+
+**That re-measurement is now done, and `Q` = 64 is final.**
+[EVD-0012](../evidence/phase-02/EVD-0012-render-quantum-real-path.md) measured the real V2 renderer at 32, 64, 128 and
+256 frames — five separate builds differing in this constant alone, checked to render bit-identical audio before any
+timing was read. On the Phase 2 voice path the rule table selects **rule 5, confirm 64**: `r(64, 256)` is +6.1% against
+a 15% threshold and `r(32, 64)` is +5.5% against a 2% one, under both measured variants and all four estimators tried.
+A deliberately dispatch-heavy shape selected rule 2 instead, so the record's own resolution rule escalated the
+disagreement rather than picking a shape, and **the user confirmed 64 on 2026-08-19**. The restriction below on
+treating 64 as settled is lifted with this paragraph. See *Evidence*.
 
 This ADR is registered as a split of the master plan's Part VII topic 1, which names one decision. The Phase 0A
 tracker records the split as a deviation.
@@ -193,7 +202,8 @@ and carries a binding obligation:
   the deadline precisely because a constant is still cheap to change there — before Phase 5's declarative node API and
   before any kernel is tuned around a specific `Q`.
 - Until then, no work may treat 64 as settled: no hand-unrolled kernel, no `Q`-specific buffer layout, no test
-  asserting a control rate in Hz.
+  asserting a control rate in Hz. **This restriction is discharged**: EVD-0012 confirmed the value, and the three
+  things it forbade are now ordinary work.
 
 The alternatives were considered and rejected. Building a Phase 0A prototype good enough to measure V2 dispatch is
 Phase 1 and 2 work done early under another name. Marking the ADR `Deferred` to a later gate weakens the exit gate the
@@ -238,11 +248,17 @@ master plan wrote deliberately, and the Phase 0A tracker would have to record it
 | Render the P00A-T001 corpus at 32/64/128/256 frames and record cost per rendered second | 0A    | Done — EVD-0002 |
 | Record the proxy measurement as an `EVD` record and apply the rule table                | 0A    | Done — EVD-0002, rule 1 |
 | **If rule 1 fires:** add the Phase 2 re-measurement to the Phase 2 exit gate            | 1     | Done early — rule 1 fired, so the item is in the master plan's Phase 2 exit gate now rather than waiting for Phase 1 to add it |
-| Re-measure against real V2 nodes and confirm or supersede                               | 2     | Not started — binding |
+| Re-measure against real V2 nodes and confirm or supersede                               | 2     | Done — EVD-0012, rule 5 on the governing shape; confirmed by the user after its rule 1′(c) escalation |
 
 ## Revisit conditions
 
-- The Phase 2 re-measurement contradicts the proxy's cost-curve shape.
+- ~~The Phase 2 re-measurement contradicts the proxy's cost-curve shape.~~ **Discharged.** It did not: EVD-0002's
+  proxy put `r(64, 256)` at +9.8% to +10.4% and EVD-0012 measures +6.1% on the voice path, the same modest slope in
+  the same direction. The proxy ranked the options correctly despite having no established direction of error.
+- **A node catalog whose kernels do materially less arithmetic per sample than this phase's.** EVD-0012 locates the
+  point where 64 stops being cheap at roughly 2.5 cycles of work per sample per scheduled operation, and every kind
+  the crate has today is far above it. Phase 5's declarative node API is where kinds nobody has measured arrive, and
+  a catalog that drifts below that line is the condition that reopens this record.
 - A confirmed requirement for control-rate modulation faster than `sample_rate / Q` that cannot be met by moving the
   affected signal to audio rate.
 - A host integration whose latency budget cannot absorb `Q` frames, where reducing `Q` is cheaper than compensating

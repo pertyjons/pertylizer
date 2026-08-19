@@ -540,13 +540,16 @@ NodeState:    oscillator phase/filter history/envelope stage
       flow.
 - [ ] CPU use is no worse than V1 for the equivalent minimal patch, allowing a
       temporary documented margin for adapters.
-- [ ] The render quantum's frame count is re-measured against real V2 nodes, and
+- [x] The render quantum's frame count is re-measured against real V2 nodes, and
       ADR-0037 is either confirmed or superseded. Its `Q` = 64 was accepted in
       Phase 0A on a V1 proxy that came back inconclusive (rule 1, EVD-0002), and
       the record makes this re-measurement binding rather than advisory: Phase 2
-      is the last point at which changing the constant is still cheap. Until it
-      passes, no hand-unrolled kernel, `Q`-specific buffer layout, or test
-      asserting a control rate in Hz may depend on the value.
+      is the last point at which changing the constant is still cheap.
+      **Done — EVD-0012 (P02-T010).** The rule table selects rule 5 on the voice
+      path the phase renders; a dispatch-heavy shape selected rule 2, so the
+      record escalated the disagreement rather than choosing a shape, and the
+      user confirmed 64. The restriction on hand-unrolled kernels, `Q`-specific
+      buffer layouts and tests asserting a control rate in Hz is discharged.
 
 ## Phase 3: Sample-accurate scheduler and block-partition invariance
 

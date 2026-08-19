@@ -82,7 +82,7 @@ the durable-decision test in `PROCESS.md` and normally do not need an ADR.
 | ADR-0034 | Track, source, and channel ownership        | Proposed | 0B/10A                | —                                                                  | —                                        |
 | ADR-0035 | Transaction and concurrency semantics       | Proposed | 0B/10B                | —                                                                  | —                                        |
 | ADR-0036 | Audio device and input lifecycle            | Proposed | 0B/9                  | —                                                                  | —                                        |
-| ADR-0037 | Render quantum frame count                  | Accepted | 0A/1                  | [ADR](decisions/ADR-0037-render-quantum-value.md)                  | Provisional to Phase 2 exit              |
+| ADR-0037 | Render quantum frame count                  | Accepted | 0A/1                  | [ADR](decisions/ADR-0037-render-quantum-value.md)                  | `Q` = 64, final after EVD-0012's escalation |
 | ADR-0038 | Engine-egress queue classification          | Accepted | 0A/1                  | [ADR](decisions/ADR-0038-engine-egress-queue-classification.md)    | —                                        |
 | ADR-0039 | Initial multi-client hub omission           | Proposed | 0A/10E                | [ADR](decisions/ADR-0039-multi-client-hub-delivery-contract.md)    | —                                        |
 | ADR-0040 | V2 owns its DSP                             | Accepted | 2                     | [ADR](decisions/ADR-0040-v2-owns-its-dsp.md)                       | Accepted with ADR-0041 as its clause 7 requires |
