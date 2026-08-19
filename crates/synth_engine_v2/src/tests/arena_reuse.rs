@@ -7,7 +7,7 @@
 //! the same test decides it.
 
 use crate::arena::{ArenaPolicy, assign, overlapping_chains};
-use crate::compile::{RenderConfig, compile_with};
+use crate::compile::{RenderConfig, compile, compile_with};
 use crate::ir::{ExecutionScope, GraphIr, IrNodeKind, NodeId, PortId, SignalDomain};
 use crate::offline::render_offline;
 use crate::plan::PlanOp;
@@ -93,19 +93,32 @@ fn no_two_overlapping_lives_share_a_slot() {
             // compiler made, which is the thing clause 8 asks to be checked. Running it
             // over already-rewritten operations would check a fresh identity mapping
             // against itself and could never fail.
-            let assignment = assign(
-                virtual_ops.ops(),
-                virtual_ops.buffer_count(),
-                ArenaPolicy::Reuse,
-            );
+            // Every region in the `NoReuse` plan is one signal's own, so its widths are
+            // the widths the reuse assignment is over.
+            let widths: Vec<usize> = virtual_ops
+                .regions()
+                .iter()
+                .map(|region| region.length())
+                .collect();
+            let assignment = assign(virtual_ops.ops(), &widths, ArenaPolicy::Reuse);
             assert_eq!(
-                assignment.physical,
+                assignment.regions.len(),
                 plan.buffer_count(),
                 "the re-derived assignment must be the one the compiler used for {name}"
             );
+            assert_eq!(
+                assignment
+                    .regions
+                    .iter()
+                    .map(|region| region.end())
+                    .max()
+                    .unwrap_or(0),
+                plan.arena_samples(),
+                "and it must reach the same extent for {name}"
+            );
             assert!(
                 overlapping_chains(&assignment).is_none(),
-                "the {name} plan in {layout} assigned two live values to one slot"
+                "the {name} plan in {layout} gave two live values regions that intersect"
             );
         }
     }
@@ -363,7 +376,7 @@ fn in_place_is_declined_where_the_input_is_read_again() {
                 .copied()
                 .flatten()
                 .map(|source| (step.out().index(), source.index())),
-            PlanOp::OutputChannel { .. } => None,
+            PlanOp::Output { .. } => None,
         })
         .expect("the plan has a gain");
     assert_ne!(
@@ -393,8 +406,10 @@ fn the_structural_check_can_fail() {
     // The control. An assertion that never fires reads exactly like one that always
     // passes, and this one guards a defect that produces plausible audio rather than a
     // crash — so it has to be shown catching the thing it is looking for.
+    let quantum = crate::time::QUANTUM_FRAMES as usize;
+    let whole = crate::plan::BufferRegion::raw(0, quantum);
     let overlapping = crate::arena::Assignment {
-        physical: 1,
+        regions: vec![whole],
         mapping: vec![
             crate::plan::BufferSlot::new(0),
             crate::plan::BufferSlot::new(0),
@@ -404,19 +419,55 @@ fn the_structural_check_can_fail() {
                 first: 0,
                 last: 5,
                 slot: crate::plan::BufferSlot::new(0),
+                region: whole,
                 members: vec![0],
             },
             crate::arena::Chain {
                 first: 3,
                 last: 7,
                 slot: crate::plan::BufferSlot::new(0),
+                region: whole,
                 members: vec![1],
             },
         ],
     };
     assert!(
         overlapping_chains(&overlapping).is_some(),
-        "two lives sharing one slot while both are live is what this check exists for"
+        "two lives sharing one region while both are live is what this check exists for"
+    );
+
+    // ADR-0041 clause 14: identity is no longer the question. Two **distinct** regions
+    // that overlap in samples are the defect variable widths make possible, and equal
+    // slots made unrepresentable — so the check has to catch a partial overlap too.
+    let low = crate::plan::BufferRegion::raw(0, quantum * 2);
+    let high = crate::plan::BufferRegion::raw(quantum, quantum * 2);
+    let partial = crate::arena::Assignment {
+        regions: vec![low, high],
+        mapping: vec![
+            crate::plan::BufferSlot::new(0),
+            crate::plan::BufferSlot::new(1),
+        ],
+        chains: vec![
+            crate::arena::Chain {
+                first: 0,
+                last: 5,
+                slot: crate::plan::BufferSlot::new(0),
+                region: low,
+                members: vec![0],
+            },
+            crate::arena::Chain {
+                first: 3,
+                last: 7,
+                slot: crate::plan::BufferSlot::new(1),
+                region: high,
+                members: vec![1],
+            },
+        ],
+    };
+    assert!(
+        overlapping_chains(&partial).is_some(),
+        "two live values in different slots whose samples overlap is the defect mixed \
+         widths introduce"
     );
 }
 
@@ -494,5 +545,87 @@ fn a_report_says_when_its_arena_row_is_an_upper_bound() {
     assert!(
         refused.report().arena_is_estimated(),
         "a report produced before lowering must say that its arena row is a bound"
+    );
+}
+
+/// ADR-0005 clause 6 has nothing to extend in this phase, and this is what says so.
+///
+/// The clause makes an observation tap a **reader**: a signal whose only remaining reader
+/// is a tap is still live, and its region may not be handed to a later chain. A test of
+/// that needs a tap attached to a signal — and the IR has no way to express one. A
+/// [`crate::ir::TapId`] is an identity in [`crate::ir::PlanDeclarations`], nothing pairs
+/// it with a node or a port, and liveness is computed from the operations, of which a
+/// declaration produces none.
+///
+/// So what is asserted is the premise, in the two halves that would have to change before
+/// a real case could exist: the declaration **is** carried into the resource report, so it
+/// is not inert, and it changes neither the schedule nor the assignment, so there is no
+/// reader for clause 6 to extend a live range through. The day a tap becomes a scheduled
+/// reader, the second half fails and the case it stands in for has to be written.
+#[test]
+fn an_observation_tap_is_a_declaration_and_extends_no_live_range() {
+    use crate::ir::{PlanDeclarations, TapId};
+    use crate::report::ResourceField;
+
+    let with_tap = |taps: &[TapId]| {
+        let mut declarations = PlanDeclarations::default();
+        declarations.taps.extend_from_slice(taps);
+        GraphIr::builder()
+            .declaring(declarations)
+            .node(
+                SOURCE,
+                IrNodeKind::Sine {
+                    frequency: Frequency::new(440.0).expect("finite"),
+                    amplitude: Amplitude::new(0.5).expect("finite"),
+                },
+                ExecutionScope::Voice,
+            )
+            .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
+            .connect(
+                (SOURCE, PortId::FIRST),
+                (OUTPUT, PortId::FIRST),
+                SignalDomain::Audio,
+            )
+            .build()
+            .expect("a source into an output is a readable plan")
+    };
+
+    let tapped = compile(
+        &with_tap(&[TapId::new(1)]),
+        &RenderConfig::new(profile(ChannelLayout::Mono)),
+    );
+    let plain = compile(
+        &with_tap(&[]),
+        &RenderConfig::new(profile(ChannelLayout::Mono)),
+    );
+
+    // The declaration is not inert: it is what the report counts against the profile's
+    // observation budget. Without this the equalities below would also hold for a
+    // declaration the compiler ignored entirely, and the test would be of nothing.
+    let counted = |outcome: &crate::compile::CompileOutcome| {
+        outcome
+            .report()
+            .row(ResourceField::MaxObservationTaps)
+            .map(|row| row.requested())
+    };
+    assert_ne!(
+        counted(&tapped),
+        counted(&plain),
+        "a declared tap must reach the resource report; if it does not, this test is \
+         comparing two plans that differ in nothing"
+    );
+
+    let tapped = tapped.into_plan().expect("admissible");
+    let plain = plain.into_plan().expect("admissible");
+    assert_eq!(
+        tapped.ops(),
+        plain.ops(),
+        "a declared tap schedules no operation, so there is no reader for clause 6 to \
+         extend a live range through"
+    );
+    assert_eq!(
+        tapped.regions(),
+        plain.regions(),
+        "and the assignment is the same one, tap or no tap"
     );
 }

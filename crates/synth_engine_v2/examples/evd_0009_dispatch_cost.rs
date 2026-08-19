@@ -248,6 +248,7 @@ impl Hand {
             &mut self.oscillator_state,
             &mut NodeIo {
                 out: &mut self.audio,
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
             },
@@ -257,6 +258,7 @@ impl Hand {
             &mut self.filter_state,
             &mut NodeIo {
                 out: &mut self.audio,
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
                 position: None,
             },
@@ -266,6 +268,7 @@ impl Hand {
             &mut self.envelope_state,
             &mut NodeIo {
                 out: &mut self.control,
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
             },
@@ -275,6 +278,7 @@ impl Hand {
             &mut self.amplifier_state,
             &mut NodeIo {
                 out: &mut self.audio,
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Patched(&self.control)],
                 position: None,
             },
@@ -296,6 +300,8 @@ struct Table {
     /// The plan's output operations: which buffer goes to which channel.
     outputs: Vec<(BufferSlot, usize)>,
     arena: Vec<f32>,
+    /// Where each slot's samples live, which `bind` resolves rather than computing.
+    regions: Vec<synth_engine_v2::plan::BufferRegion>,
     /// The interleaved carry the output operations write into.
     carry: Vec<f32>,
 }
@@ -316,7 +322,7 @@ impl Table {
             .iter()
             .filter_map(|op| match op {
                 PlanOp::Node(step) => Some(*step),
-                PlanOp::OutputChannel { .. } => None,
+                PlanOp::Output { .. } => None,
             })
             .collect();
         // The plan's output operations, executed by every arm: the acceptance rule's
@@ -325,7 +331,7 @@ impl Table {
             .ops()
             .iter()
             .filter_map(|op| match op {
-                PlanOp::OutputChannel { source, channel } => Some((*source, channel.get())),
+                PlanOp::Output { source } => Some((*source, 0)),
                 PlanOp::Node(_) => None,
             })
             .collect();
@@ -356,6 +362,16 @@ impl Table {
                 .map(NodeState::initial)
                 .collect(),
             steps,
+            // ADR-0041 clause 2: `bind` reads the regions the plan records. This harness
+            // allocates the same uniform slots it always did, so its table is the planar
+            // arithmetic written down rather than derived — the arms it times are
+            // unchanged.
+            regions: (0..plan.buffer_count())
+                .map(|slot| {
+                    synth_engine_v2::plan::BufferRegion::new(slot * Q, Q)
+                        .expect("a quantum-wide slot is a region")
+                })
+                .collect(),
             arena: vec![0.0; plan.buffer_count() * Q],
         }
     }
@@ -394,7 +410,8 @@ impl Table {
     /// only the total would send a reader to the wrong one.
     fn bind_only(&mut self) {
         for step in &self.steps {
-            let io = synth_engine_v2::node::kernels::bind(&mut self.arena, Q, step, None);
+            let io =
+                synth_engine_v2::node::kernels::bind(&mut self.arena, &self.regions, step, None);
             black_box(&io);
         }
     }
@@ -413,7 +430,8 @@ impl Table {
             let Some(state) = self.states.get_mut(step.node().index()) else {
                 continue;
             };
-            let Some(mut io) = synth_engine_v2::node::kernels::bind(&mut self.arena, Q, step, None)
+            let Some(mut io) =
+                synth_engine_v2::node::kernels::bind(&mut self.arena, &self.regions, step, None)
             else {
                 continue;
             };
@@ -454,7 +472,8 @@ impl Table {
             let Some(state) = self.states.get_mut(step.node().index()) else {
                 continue;
             };
-            let Some(mut io) = synth_engine_v2::node::kernels::bind(&mut self.arena, Q, step, None)
+            let Some(mut io) =
+                synth_engine_v2::node::kernels::bind(&mut self.arena, &self.regions, step, None)
             else {
                 continue;
             };
@@ -476,7 +495,8 @@ impl Table {
             let Some(state) = self.states.get_mut(step.node().index()) else {
                 continue;
             };
-            let Some(mut io) = synth_engine_v2::node::kernels::bind(&mut self.arena, Q, step, None)
+            let Some(mut io) =
+                synth_engine_v2::node::kernels::bind(&mut self.arena, &self.regions, step, None)
             else {
                 continue;
             };

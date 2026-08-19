@@ -634,6 +634,7 @@ impl Planar {
             &mut self.sine_state,
             &mut NodeIo {
                 out: one(&mut self.arena, self.left),
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
             },
@@ -643,6 +644,7 @@ impl Planar {
             &mut self.filter_left_state,
             &mut NodeIo {
                 out: one(&mut self.arena, self.left),
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
                 position: None,
             },
@@ -652,6 +654,7 @@ impl Planar {
             &mut self.envelope_left_state,
             &mut NodeIo {
                 out: one(&mut self.arena, self.control_left),
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
             },
@@ -662,6 +665,7 @@ impl Planar {
             &mut self.amplifier_state,
             &mut NodeIo {
                 out,
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
                 position: None,
             },
@@ -673,6 +677,7 @@ impl Planar {
             &mut self.copy_state,
             &mut NodeIo {
                 out,
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Patched(source), InputBuffer::Unpatched],
                 position: None,
             },
@@ -686,6 +691,7 @@ impl Planar {
             &mut self.sine_state,
             &mut NodeIo {
                 out: one(&mut self.arena, self.left),
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
             },
@@ -696,6 +702,7 @@ impl Planar {
             &mut self.copy_state,
             &mut NodeIo {
                 out,
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Patched(source), InputBuffer::Unpatched],
                 position: None,
             },
@@ -705,6 +712,7 @@ impl Planar {
             &mut self.filter_left_state,
             &mut NodeIo {
                 out: one(&mut self.arena, self.left),
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
                 position: None,
             },
@@ -714,6 +722,7 @@ impl Planar {
             &mut self.filter_right_state,
             &mut NodeIo {
                 out: one(&mut self.arena, self.right),
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
                 position: None,
             },
@@ -723,6 +732,7 @@ impl Planar {
             &mut self.envelope_left_state,
             &mut NodeIo {
                 out: one(&mut self.arena, self.control_left),
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
             },
@@ -733,6 +743,7 @@ impl Planar {
             &mut self.amplifier_state,
             &mut NodeIo {
                 out,
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
                 position: None,
             },
@@ -743,6 +754,7 @@ impl Planar {
             &mut self.amplifier_state,
             &mut NodeIo {
                 out,
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
                 position: None,
             },
@@ -762,6 +774,7 @@ impl Planar {
             &mut self.sine_state,
             &mut NodeIo {
                 out: one(&mut self.arena, self.left),
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
             },
@@ -772,6 +785,7 @@ impl Planar {
             &mut self.copy_state,
             &mut NodeIo {
                 out,
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Patched(source), InputBuffer::Unpatched],
                 position: None,
             },
@@ -781,6 +795,7 @@ impl Planar {
             &mut self.filter_left_state,
             &mut NodeIo {
                 out: one(&mut self.arena, self.left),
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
                 position: None,
             },
@@ -790,6 +805,7 @@ impl Planar {
             &mut self.filter_right_state,
             &mut NodeIo {
                 out: one(&mut self.arena, self.right),
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
                 position: None,
             },
@@ -799,6 +815,7 @@ impl Planar {
             &mut self.envelope_left_state,
             &mut NodeIo {
                 out: one(&mut self.arena, self.control_left),
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
             },
@@ -809,6 +826,7 @@ impl Planar {
             &mut self.amplifier_state,
             &mut NodeIo {
                 out,
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
                 position: None,
             },
@@ -818,6 +836,7 @@ impl Planar {
             &mut self.envelope_right_state,
             &mut NodeIo {
                 out: one(&mut self.arena, self.control_right),
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
             },
@@ -828,6 +847,7 @@ impl Planar {
             &mut self.amplifier_state,
             &mut NodeIo {
                 out,
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
                 position: None,
             },
@@ -987,6 +1007,7 @@ impl Interleaved {
             &mut self.sine_state,
             &mut NodeIo {
                 out: one(&mut self.arena, self.mono),
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
             },
@@ -996,6 +1017,7 @@ impl Interleaved {
             &mut self.filter_mono_state,
             &mut NodeIo {
                 out: one(&mut self.arena, self.mono),
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
                 position: None,
             },
@@ -1005,6 +1027,7 @@ impl Interleaved {
             &mut self.envelope_left_state,
             &mut NodeIo {
                 out: one(&mut self.arena, self.control_left),
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
             },
@@ -1015,6 +1038,7 @@ impl Interleaved {
             &mut self.amplifier_state,
             &mut NodeIo {
                 out,
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
                 position: None,
             },
@@ -1025,6 +1049,7 @@ impl Interleaved {
             &mut self.stateless,
             &mut NodeIo {
                 out,
+                channels: synth_engine_v2::quantities::ChannelLayout::Stereo,
                 inputs: [InputBuffer::Patched(source), InputBuffer::Unpatched],
                 position: None,
             },
@@ -1039,6 +1064,7 @@ impl Interleaved {
             &mut self.sine_state,
             &mut NodeIo {
                 out: one(&mut self.arena, self.mono),
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
             },
@@ -1049,6 +1075,7 @@ impl Interleaved {
             &mut self.stateless,
             &mut NodeIo {
                 out,
+                channels: synth_engine_v2::quantities::ChannelLayout::Stereo,
                 inputs: [InputBuffer::Patched(source), InputBuffer::Unpatched],
                 position: None,
             },
@@ -1058,6 +1085,7 @@ impl Interleaved {
             &mut self.filter_stereo_state,
             &mut NodeIo {
                 out: one(&mut self.arena, self.stereo),
+                channels: synth_engine_v2::quantities::ChannelLayout::Stereo,
                 inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
                 position: None,
             },
@@ -1067,6 +1095,7 @@ impl Interleaved {
             &mut self.envelope_left_state,
             &mut NodeIo {
                 out: one(&mut self.arena, self.control_left),
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
             },
@@ -1077,6 +1106,7 @@ impl Interleaved {
             &mut self.stateless,
             &mut NodeIo {
                 out,
+                channels: synth_engine_v2::quantities::ChannelLayout::Stereo,
                 inputs: [InputBuffer::InPlace, InputBuffer::Patched(control)],
                 position: None,
             },
@@ -1091,6 +1121,7 @@ impl Interleaved {
             &mut self.sine_state,
             &mut NodeIo {
                 out: one(&mut self.arena, self.mono),
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
             },
@@ -1101,6 +1132,7 @@ impl Interleaved {
             &mut self.stateless,
             &mut NodeIo {
                 out,
+                channels: synth_engine_v2::quantities::ChannelLayout::Stereo,
                 inputs: [InputBuffer::Patched(source), InputBuffer::Unpatched],
                 position: None,
             },
@@ -1110,6 +1142,7 @@ impl Interleaved {
             &mut self.filter_stereo_state,
             &mut NodeIo {
                 out: one(&mut self.arena, self.stereo),
+                channels: synth_engine_v2::quantities::ChannelLayout::Stereo,
                 inputs: [InputBuffer::InPlace, InputBuffer::Unpatched],
                 position: None,
             },
@@ -1119,6 +1152,7 @@ impl Interleaved {
             &mut self.envelope_left_state,
             &mut NodeIo {
                 out: one(&mut self.arena, self.control_left),
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
             },
@@ -1128,6 +1162,7 @@ impl Interleaved {
             &mut self.envelope_right_state,
             &mut NodeIo {
                 out: one(&mut self.arena, self.control_right),
+                channels: synth_engine_v2::quantities::ChannelLayout::Mono,
                 inputs: [InputBuffer::Unpatched; MAX_INPUTS],
                 position: None,
             },
@@ -1143,6 +1178,7 @@ impl Interleaved {
             &mut self.stateless,
             &mut NodeIo {
                 out,
+                channels: synth_engine_v2::quantities::ChannelLayout::Stereo,
                 inputs: [InputBuffer::Patched(left), InputBuffer::Patched(right)],
                 position: None,
             },
@@ -1173,6 +1209,8 @@ struct Records {
 struct Steps {
     steps: Vec<NodeStep>,
     arena: Vec<f32>,
+    /// Where each slot's samples live, which `bind` resolves rather than computing.
+    regions: Vec<synth_engine_v2::plan::BufferRegion>,
 }
 
 impl Steps {
@@ -1183,10 +1221,14 @@ impl Steps {
                 .iter()
                 .filter_map(|op| match op {
                     PlanOp::Node(step) => Some(*step),
-                    PlanOp::OutputChannel { .. } => None,
+                    PlanOp::Output { .. } => None,
                 })
                 .collect(),
-            arena: vec![0.0; plan.buffer_count() * Q],
+            // ADR-0041 clause 2: `bind` reads the regions the plan records, and since
+            // the widening writes `c * Q` they are no longer uniform. Fabricating them
+            // as `slot * Q` would bind this arm to a layout the plan does not have.
+            regions: plan.regions().to_vec(),
+            arena: vec![0.0; plan.arena_samples()],
         }
     }
 
@@ -1200,7 +1242,8 @@ impl Steps {
     /// The schedule walked and every step's slots bound — and nothing called.
     fn bind_only(&mut self) {
         for step in &self.steps {
-            let io = synth_engine_v2::node::kernels::bind(&mut self.arena, Q, step, None);
+            let io =
+                synth_engine_v2::node::kernels::bind(&mut self.arena, &self.regions, step, None);
             black_box(&io);
         }
     }
@@ -1244,9 +1287,9 @@ fn peak(carry: &[f32]) -> f32 {
 fn assert_shape_a_is_the_compiled_plan(plan: &CompiledPlan) {
     let buffers = plan.buffer_count();
     assert!(
-        buffers == 2,
-        "shape A's planar arm mirrors a two-buffer assignment and the compiler produced \
-         {buffers}"
+        buffers == 3,
+        "shape A mirrors a three-region assignment since the widening takes `c * Q` of \
+         its own, and the compiler produced {buffers}"
     );
     // Kind, written slot, and the binding of each input — in schedule order.
     let expected: [(&str, usize, [Option<&str>; MAX_INPUTS]); 5] = [
@@ -1254,7 +1297,10 @@ fn assert_shape_a_is_the_compiled_plan(plan: &CompiledPlan) {
         ("Filter", 0, [Some("InPlace"), None]),
         ("Envelope", 1, [None, None]),
         ("Amplifier", 0, [Some("InPlace"), Some("Distinct")]),
-        ("Copy", 1, [Some("Distinct"), None]),
+        // The widening cannot reuse the envelope's freed region: that one is `Q` and
+        // this one needs `2Q`, which is ADR-0041 clause 14's in-place rule seen from the
+        // allocator's side.
+        ("Copy", 2, [Some("Distinct"), None]),
     ];
     let mut seen = 0;
     let mut channels = Vec::new();
@@ -1291,8 +1337,12 @@ fn assert_shape_a_is_the_compiled_plan(plan: &CompiledPlan) {
                 }
                 seen += 1;
             }
-            PlanOp::OutputChannel { source, channel } => {
-                channels.push((source.index(), channel.get()));
+            PlanOp::Output { source } => {
+                // Since ADR-0041 the boundary is one operation over one interleaved
+                // region, so what there is to check is which region it reads — not a
+                // write per channel, which is the planar shape this harness's *planar*
+                // arm models by hand.
+                channels.push((source.index(), 0));
             }
         }
     }
@@ -1302,9 +1352,9 @@ fn assert_shape_a_is_the_compiled_plan(plan: &CompiledPlan) {
         expected.len()
     );
     assert!(
-        channels == vec![(0, 0), (1, 1)],
-        "shape A writes slot 0 to channel 0 and slot 1 to channel 1; the compiler produced \
-         {channels:?}"
+        channels.len() == 1,
+        "shape A ends in one output operation over one interleaved region; the compiler \
+         produced {channels:?}"
     );
 }
 

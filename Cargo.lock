@@ -4909,6 +4909,7 @@ dependencies = [
 name = "synth_engine_v2"
 version = "0.1.0"
 dependencies = [
+ "sha2",
  "synth_core",
  "thiserror 2.0.19",
 ]

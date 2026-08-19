@@ -346,10 +346,13 @@ impl PreparedRenderer {
         let has_output = plan
             .ops()
             .iter()
-            .any(|op| matches!(op, PlanOp::OutputChannel { .. }));
+            .any(|op| matches!(op, PlanOp::Output { .. }));
 
         Ok(Self {
-            buffers: vec![0.0; plan.buffer_count().saturating_mul(quantum)],
+            // ADR-0041 clause 13: the arena is one allocation of variable-width regions,
+            // sized by the extent the assignment reached rather than by a count of
+            // uniform slots.
+            buffers: vec![0.0; plan.arena_samples()],
             output_carry,
             // Primed: `Q` frames of silence are already available to serve.
             carry_frames: quantum,

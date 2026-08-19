@@ -268,25 +268,32 @@ impl PreparedRenderer {
                     let Some(state) = self.node_states.get_mut(step.node().index()) else {
                         continue;
                     };
-                    let Some(mut io) = kernels::bind(&mut self.buffers, quantum, step, plan_start)
+                    let Some(mut io) =
+                        kernels::bind(&mut self.buffers, self.plan.regions(), step, plan_start)
                     else {
                         continue;
                     };
                     (step.kernel())(prepared, state, &mut io);
                 }
-                PlanOp::OutputChannel { source, channel } => {
-                    let base = source.index() * quantum;
+                PlanOp::Output { source } => {
+                    // ADR-0041 clause 11: the plan's output signal already has the
+                    // stream's layout and its arrangement, so the boundary is **one
+                    // contiguous copy** rather than a channel-strided write per channel.
+                    // The transpose the planar renderer performed here is what the
+                    // conversion removes, and EVD-0010 measured that loop's index
+                    // arithmetic at 45.8 ns per quantum over a frame-strided form.
+                    let Some(region) = self.plan.region(*source) else {
+                        continue;
+                    };
                     let start = self.carry_frames * self.channels;
-                    let channel = channel.get();
-                    for frame in 0..quantum {
-                        let value = self.buffers.get(base + frame).copied().unwrap_or(0.0);
-                        if let Some(slot) = self
-                            .output_carry
-                            .get_mut(start + frame * self.channels + channel)
-                        {
-                            *slot = value;
-                        }
-                    }
+                    let samples = quantum * self.channels;
+                    let (Some(from), Some(into)) = (
+                        self.buffers.get(region.offset()..region.offset() + samples),
+                        self.output_carry.get_mut(start..start + samples),
+                    ) else {
+                        continue;
+                    };
+                    into.copy_from_slice(from);
                 }
             }
         }

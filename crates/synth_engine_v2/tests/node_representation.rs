@@ -240,7 +240,7 @@ fn a_gain_reading_its_own_slot_scales_rather_than_silences() {
             .copied()
             .flatten()
             .is_some_and(|input| input == step.out()),
-        PlanOp::OutputChannel { .. } => false,
+        PlanOp::Output { .. } => false,
     });
     assert!(
         merged,

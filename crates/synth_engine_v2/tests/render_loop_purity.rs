@@ -371,6 +371,17 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         "max_events_per_quantum",
         "maximum_block_size",
         "ops",
+        // ADR-0041 clause 2: the plan **records** where each slot's samples live, so the
+        // loop reads a region's offset and length where it used to multiply a slot index
+        // by the quantum. Clause 4 adds the other two: a step carries the layout of the
+        // signal it writes, and the binding hands the kernel its channel count. All are
+        // field reads on `Copy` types.
+        "regions",
+        "region",
+        "offset",
+        "length",
+        "out_layout",
+        "channels",
         "parameter_targets",
         "sample_rate",
         "id",

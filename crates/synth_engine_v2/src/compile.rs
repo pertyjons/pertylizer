@@ -19,7 +19,7 @@ use crate::plan::{
 };
 use crate::profile::HostProfile;
 use crate::quantities::{
-    ChannelIndex, EdgeCount, InstructionCount, NodeCount, PreparedBytes, SlotCount, TapCount,
+    ChannelLayout, EdgeCount, InstructionCount, NodeCount, PreparedBytes, SlotCount, TapCount,
 };
 use crate::report::{
     Fit, LatencyAccounting, LatencyContributor, ReportedQuantities, ResourceAmount, ResourceField,
@@ -170,7 +170,12 @@ pub(crate) fn compile_with(
     warnings.extend_from_slice(validated.warnings());
 
     let lowered = lower(ir, profile, &validated, &mut warnings, policy);
-    let report = build_report(ir, profile, lowered.buffers as u64, lowered.inserted as u64);
+    let report = build_report(
+        ir,
+        profile,
+        lowered.arena_samples() as u64,
+        lowered.inserted as u64,
+    );
 
     // The field scan runs **whatever else is wrong**, because it is also what collects
     // the advisory warnings, and a report whose warnings describe a different plan than
@@ -257,12 +262,12 @@ fn first_refusal(
 fn build_report(
     ir: &GraphIr,
     profile: &HostProfile,
-    arena_buffers: u64,
+    arena_samples: u64,
     inserted_records: u64,
 ) -> ResourceReport {
     let (script_work, script_contributor) = ir.script_instructions_per_quantum();
     ResourceReport::new(
-        build_rows(ir, profile, arena_buffers, inserted_records),
+        build_rows(ir, profile, arena_samples, inserted_records),
         LatencyAccounting::default().with(
             // ADR-0001 clause 7 requires this to be a *named* contributor: a latency
             // that is implicit is a latency nobody compensates, and its own risk
@@ -275,45 +280,58 @@ fn build_report(
     )
 }
 
-/// How many quantum-sized buffers the arena will hold.
+/// How many **samples** the arena will hold at most, for a report built before lowering.
 ///
-/// Counted here and used by lowering, so admission and preparation cannot disagree:
-/// one buffer per producing node, plus one per channel a mono signal is widened into
-/// at the output. An earlier revision counted only the producing nodes, so a stereo
-/// plan was admitted against a scratch budget and then allocated past it — the same
-/// defect the event scratch had in Phase 1, in a different place.
+/// The only caller is the preflight report — a plan refused on structure or on an earlier
+/// field never reaches an assignment, and still owes a scratch row. Once lowering has run,
+/// the exact figure is the assignment's own extent and this bound is not consulted.
+///
+/// Samples rather than buffers since ADR-0041 clause 2: `Q` per producing node, plus
+/// `c * Q` for the widening a mono signal reaching a wider output needs — one operation,
+/// not one per channel, which is clause 8. Two earlier revisions of this bound were wrong
+/// in the same direction: one counted only the producing nodes, so a stereo plan was
+/// admitted against a budget it then allocated past, and one kept counting buffers after
+/// the report started reading samples, which understated a refused plan's scratch row by
+/// a factor of the quantum.
 fn arena_upper_bound(ir: &GraphIr, profile: &HostProfile) -> u64 {
+    let quantum = u64::from(QUANTUM_FRAMES);
+    let channels = profile.capabilities().channel_layout().channels() as u64;
     let producers = ir.nodes().iter().filter(|n| n.kind().is_source()).count() as u64;
-    producers.saturating_add(inserted_records_upper_bound(ir, profile))
+    // **Samples**, not buffers, since ADR-0041 clause 2: an authored node writes `Q` and
+    // the widening writes `c * Q`, so a count of regions no longer describes an amount of
+    // memory. Reporting one where the other is expected is what makes a refused plan's
+    // scratch row wrong by a factor of the quantum.
+    producers.saturating_mul(quantum).saturating_add(
+        inserted_records_upper_bound(ir, profile)
+            .saturating_mul(channels)
+            .saturating_mul(quantum),
+    )
 }
 
 /// How many operations the **compiler** adds beyond the authored nodes, at most.
 ///
-/// One per channel a mono signal is widened into at the output, and each of them is both
-/// a buffer and a prepared record — ADR-0002 clause 7 makes the widening a scheduled
-/// operation with an identity, so it costs what an operation costs. Only an output
-/// something reaches is widened: lowering skips one with no incoming edge, so charging it
-/// would refuse a plan that fits. An unreached output is admitted with a warning rather
-/// than refused, which is exactly the case that would otherwise be measured against
-/// memory it never takes.
+/// **One**, where a mono signal is widened at the output — ADR-0041 clause 8 makes the
+/// widening a single operation writing one `c * Q` region, where ADR-0002 clause 7 gave
+/// each further channel its own. It is both a buffer and a prepared record, so it costs
+/// what an operation costs. Only an output something reaches is widened: lowering skips
+/// one with no incoming edge, so charging it would refuse a plan that fits. An unreached
+/// output is admitted with a warning rather than refused, which is exactly the case that
+/// would otherwise be measured against memory it never takes.
 fn inserted_records_upper_bound(ir: &GraphIr, profile: &HostProfile) -> u64 {
+    let widened = profile.capabilities().channel_layout().channels() > 1;
     let reached_output = ir
         .nodes()
         .iter()
         .filter(|node| matches!(node.kind(), IrNodeKind::Output))
         .any(|output| ir.edges().iter().any(|edge| edge.to().0 == output.id()));
-    if reached_output {
-        profile.capabilities().channel_layout().channels() as u64 - 1
-    } else {
-        0
-    }
+    u64::from(reached_output && widened)
 }
 
 /// One row per field that carries an amount, in field order.
 fn build_rows(
     ir: &GraphIr,
     profile: &HostProfile,
-    arena_buffers: u64,
+    arena_samples: u64,
     inserted_records: u64,
 ) -> Vec<ResourceRow> {
     let capabilities = profile.capabilities();
@@ -323,7 +341,7 @@ fn build_rows(
     let (prepared_bytes, prepared_contributor) = ir.prepared_bytes(inserted_records);
     let (mutable_bytes, mutable_contributor) = ir.mutable_bytes(inserted_records);
     let (peak_fan_out, fan_out_contributor) = ir.peak_fan_out();
-    let scratch_bytes = scratch_bytes(profile, arena_buffers);
+    let scratch_bytes = scratch_bytes(profile, arena_samples);
 
     let node_count = NodeCount::measured(u32::try_from(ir.nodes().len()).unwrap_or(u32::MAX));
     let edge_count = EdgeCount::measured(u32::try_from(ir.edges().len()).unwrap_or(u32::MAX));
@@ -665,12 +683,13 @@ fn push_script_rows(rows: &mut Vec<ResourceRow>, ir: &GraphIr, profile: &HostPro
     ));
 }
 
-/// The buffers and carries this plan needs, in bytes.
+/// The arena and the carries this plan needs, in bytes.
 ///
 /// The carries are the one part that computes exactly: ADR-0001 clause 5 sizes both
-/// at `maximum_block_size + Q` frames, and clause 6 primes the output one. Everything
-/// else is one quantum-sized buffer per source, which is Phase 1's arena.
-fn scratch_bytes(profile: &HostProfile, arena_buffers: u64) -> PreparedBytes {
+/// at `maximum_block_size + Q` frames, and clause 6 primes the output one. The arena is
+/// its **extent** in samples — ADR-0041 clause 13 — rather than a buffer count times the
+/// quantum, because since that record its regions differ in width.
+fn scratch_bytes(profile: &HostProfile, arena_samples: u64) -> PreparedBytes {
     let channels = profile.capabilities().channel_layout().channels() as u64;
     let carry_frames = profile
         .capabilities()
@@ -679,7 +698,7 @@ fn scratch_bytes(profile: &HostProfile, arena_buffers: u64) -> PreparedBytes {
         .saturating_add(u64::from(QUANTUM_FRAMES));
     let sample = size_of::<f32>() as u64;
 
-    let buffers = arena_buffers.saturating_mul(u64::from(QUANTUM_FRAMES));
+    let buffers = arena_samples;
     // Two carries, per ADR-0001 clause 5. Phase 1 has no node that consumes live
     // input, so the input carry is prepared and not read — the memory is reserved
     // because the contract sizes it, and the phase that adds an input-consuming node
@@ -725,7 +744,8 @@ fn output_object(ir: &GraphIr) -> IrObject {
 struct Lowered {
     id: crate::plan::PlanId,
     ops: Vec<PlanOp>,
-    buffers: usize,
+    /// Where each physical slot's samples live, indexed by `BufferSlot`.
+    regions: Vec<crate::plan::BufferRegion>,
     /// Records the compiler added beyond the authored nodes, for the exact report.
     inserted: usize,
     /// The first node that could not be prepared for this stream, if any.
@@ -740,13 +760,22 @@ struct Lowered {
 }
 
 impl Lowered {
+    /// How many samples the arena holds, which is what the report's scratch row is over.
+    fn arena_samples(&self) -> usize {
+        self.regions
+            .iter()
+            .map(|region| region.end())
+            .max()
+            .unwrap_or(0)
+    }
+
     /// Attach the capacities admission copied in.
     fn into_plan(self, profile: &HostProfile) -> CompiledPlan {
         let capabilities = profile.capabilities();
         CompiledPlan::new(
             self.id,
             self.ops,
-            self.buffers,
+            self.regions,
             self.prepared_nodes,
             self.parameter_targets,
             self.parameter_addresses,
@@ -764,7 +793,12 @@ impl Lowered {
 struct Lowering {
     ops: Vec<PlanOp>,
     prepared_nodes: Vec<PreparedNode>,
-    buffer_count: usize,
+    /// One width per virtual buffer, in samples: `c * Q` for a signal of `c` channels.
+    ///
+    /// ADR-0041 clause 2. Lowering is where a signal's channel count is known — it comes
+    /// from the port and its edge — and the arena is handed the widths rather than
+    /// deriving them, because deriving them would make it a second authority on layout.
+    widths: Vec<usize>,
     inserted: usize,
 }
 
@@ -778,15 +812,21 @@ impl Lowering {
         descriptor: &NodeDescriptor,
         prepared: PreparedNode,
         inputs: [Option<BufferSlot>; MAX_INPUTS],
+        layout: ChannelLayout,
     ) -> (NodeSlot, BufferSlot) {
         let node = NodeSlot::new(self.prepared_nodes.len());
         self.prepared_nodes.push(prepared);
-        let out = BufferSlot::new(self.buffer_count);
-        self.buffer_count += 1;
+        let out = BufferSlot::new(self.widths.len());
+        // The layout rather than a count: a raw number here would admit zero, or a count
+        // no layout has, and the width of a region is the one place that would turn into
+        // storage nobody can address.
+        self.widths
+            .push(layout.channels().saturating_mul(QUANTUM_FRAMES as usize));
         self.ops.push(PlanOp::Node(NodeStep::new(
             descriptor.kernel,
             node,
             out,
+            layout,
             inputs,
             descriptor.in_place_safe,
         )));
@@ -806,7 +846,7 @@ fn lower(
     let mut state = Lowering {
         ops: Vec::new(),
         prepared_nodes: Vec::new(),
-        buffer_count: 0,
+        widths: Vec::new(),
         inserted: 0,
     };
     let mut fault = None;
@@ -869,7 +909,16 @@ fn lower(
                 PreparedNode::Silence
             }
         };
-        let (node_slot, out) = state.schedule(&descriptor, prepared, inputs);
+        // ADR-0041 clause 5: the channel count is a property of the port, so the width of
+        // the region the node writes comes from the port table rather than from the
+        // stream. Every authored kind declares a mono output today; asking the port is
+        // what makes that a fact about the node rather than an assumption here.
+        let out_layout = descriptor
+            .ports
+            .iter()
+            .find(|port| port.direction() == crate::validate::PortDirection::Output)
+            .map_or(ChannelLayout::Mono, |port| port.layout());
+        let (node_slot, out) = state.schedule(&descriptor, prepared, inputs, out_layout);
         slots.insert(*id, out);
 
         for spec in &descriptor.controls {
@@ -889,13 +938,13 @@ fn lower(
     // ADR-0005: lowering emits one buffer per value; the arena decides which of them
     // share storage, once, here. The render loop reads slot indices and learns nothing
     // about it.
-    let assignment = arena::assign(&state.ops, state.buffer_count, policy);
-    arena::rewrite(&mut state.ops, &assignment.mapping);
+    let assignment = arena::assign(&state.ops, &state.widths, policy);
+    arena::rewrite(&mut state.ops, &assignment.mapping, &assignment.regions);
 
     Lowered {
         id: plan_id,
         ops: state.ops,
-        buffers: assignment.physical,
+        regions: assignment.regions,
         inserted: state.inserted,
         fault,
         prepared_nodes: state.prepared_nodes,
@@ -942,33 +991,28 @@ fn lower_output(
         })
         .copied();
 
-    // ADR-0002 clause 2: an `n`-channel signal occupies `n` buffers, so a mono signal
-    // reaching a wider port is **widened by a scheduled operation** that gives each
-    // further channel its own buffer — clause 7. Channel 0 keeps the source's buffer,
-    // because a duplication's first channel is its input.
-    let mut channels = vec![source];
-    if let Some(widening) = widening {
-        let copy = node::copy_descriptor();
-        for _ in 1..layout.channels() {
-            let (_, out) = state.schedule(&copy, node::prepare_copy(), [Some(source), None]);
+    // ADR-0041 clauses 2 and 8: a signal of `c` channels occupies **one** region of
+    // `c * Q` samples, so a mono signal reaching a wider port is widened by one scheduled
+    // operation that duplicates each sample into both channels of one wider region —
+    // not, as ADR-0002 clause 2 had it, by one buffer and one operation per channel.
+    let out = match widening {
+        Some(widening) => {
+            let copy = node::copy_descriptor();
+            let (_, out) =
+                state.schedule(&copy, node::prepare_copy(), [Some(source), None], layout);
             state.inserted += 1;
-            channels.push(out);
+            // Clause 9's third requirement. The schedule and the buffer count carry the
+            // conversion; without this a reader of the outcome would have to infer from
+            // the operation list that the compiler widened their signal.
+            warnings.push(CompileWarning::ConversionInserted {
+                edge: widening.edge,
+                conversion: widening.conversion,
+            });
+            out
         }
-        // Clause 7's third requirement. The schedule and the buffer count carry the
-        // conversion; without this a reader of the outcome would have to infer from the
-        // operation list that the compiler widened their signal.
-        warnings.push(CompileWarning::ConversionInserted {
-            edge: widening.edge,
-            conversion: widening.conversion,
-        });
-    }
-    for (index, slot) in channels.into_iter().enumerate() {
-        let Ok(channel) = ChannelIndex::in_layout(index, layout) else {
-            continue;
-        };
-        state.ops.push(PlanOp::OutputChannel {
-            source: slot,
-            channel,
-        });
-    }
+        // The signal already has the stream's layout, so the boundary is a copy and the
+        // schedule holds no conversion at all.
+        None => source,
+    };
+    state.ops.push(PlanOp::Output { source: out });
 }

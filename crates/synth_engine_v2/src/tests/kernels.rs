@@ -25,6 +25,7 @@ fn run(
     let mut out = vec![0.0; frames];
     let mut io = NodeIo {
         out: &mut out,
+        channels: crate::quantities::ChannelLayout::Mono,
         inputs: [InputBuffer::Unpatched; MAX_INPUTS],
         position: None,
     };
@@ -291,4 +292,52 @@ fn a_control_index_the_state_does_not_have_changes_nothing() {
         NodeState::initial(&prepared),
         "an index this state does not have moved something"
     );
+}
+
+/// The widening kernel, at **every** channel count its port admits.
+///
+/// ADR-0041 clause 12: an audio kernel is tested at every count its own ports admit, and
+/// the compiler's copy is the one whose port follows the stream — so it is the one kernel
+/// in this phase that has two counts to be right at. At one channel it is a plain copy;
+/// at two it must write each source sample into both channels of a frame, which is
+/// clause 8's duplication.
+#[test]
+fn the_widening_writes_every_channel_of_every_frame() {
+    use crate::node::kernels::{InputBuffer, MAX_INPUTS, NodeIo, PreparedNode, copy};
+    use crate::quantities::ChannelLayout;
+
+    let frames = 4;
+    let source: Vec<f32> = (0..frames).map(|frame| frame as f32 + 1.0).collect();
+
+    for layout in [ChannelLayout::Mono, ChannelLayout::Stereo] {
+        let channels = layout.channels();
+        // Seeded with a value no copy produces, so a sample the kernel fails to write is
+        // visible rather than indistinguishable from silence — which is the defect a
+        // widening that treats a `c * Q` region as mono produces.
+        let mut out = vec![-1.0_f32; frames * channels];
+        let mut inputs = [InputBuffer::Unpatched; MAX_INPUTS];
+        inputs[0] = InputBuffer::Patched(&source);
+        let mut io = NodeIo {
+            out: &mut out,
+            channels: layout,
+            inputs,
+            position: None,
+        };
+        copy(
+            &PreparedNode::Copy,
+            &mut crate::node::kernels::NodeState::Stateless,
+            &mut io,
+        );
+
+        for (frame, expected) in source.iter().enumerate() {
+            for channel in 0..channels {
+                assert_eq!(
+                    out.get(frame * channels + channel).copied(),
+                    Some(*expected),
+                    "at {layout:?}, frame {frame} channel {channel} must carry the source \
+                     sample"
+                );
+            }
+        }
+    }
 }

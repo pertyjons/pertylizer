@@ -17,7 +17,9 @@ use synth_engine_v2::ir::{
     EdgeId, ExecutionScope, GraphIr, IrNodeKind, NodeId, PortId, SignalDomain,
 };
 use synth_engine_v2::offline::render_offline;
-use synth_engine_v2::quantities::{Amplitude, ChannelLayout, GainFactor};
+use synth_engine_v2::quantities::{
+    Amplitude, ChannelLayout, CutoffFrequency, GainFactor, NormalizedLevel, Resonance, Seconds,
+};
 use synth_engine_v2::time::{FrameCount, PlanPosition};
 use synth_engine_v2::validate::PortDirection;
 
@@ -386,28 +388,103 @@ fn a_mono_source_into_a_stereo_output_is_converted_rather_than_refused() {
     }
 }
 
+/// Every node kind there is, and its pattern, from **one** definition.
+///
+/// A premise stated over "the catalog" is worth nothing if the catalog is a hand-written
+/// list: an earlier form of this held six of the nine kinds and would have kept passing
+/// while `Filter`, `Envelope` or `Amplifier` declared whatever they liked. Pairing the
+/// value with its pattern here is what closes that. Adding a variant makes `is_covered`'s
+/// match non-exhaustive, and the only way to make it compile again is another
+/// `value => pattern` pair — which *is* the catalog entry, so the routine fix cannot
+/// restore compilation while leaving the new kind untested.
+macro_rules! catalog {
+    ($($value:expr => $pattern:pat),+ $(,)?) => {
+        /// Every `IrNodeKind`, with a representative value for each.
+        fn catalog() -> Vec<IrNodeKind> {
+            vec![$($value),+]
+        }
+
+        /// Exhaustive by construction: one arm per pair above.
+        #[expect(dead_code, reason = "its exhaustiveness is the check, not its callers")]
+        fn is_covered(kind: IrNodeKind) -> bool {
+            match kind {
+                $($pattern => true),+
+            }
+        }
+    };
+}
+
+catalog! {
+    IrNodeKind::Silence => IrNodeKind::Silence,
+    constant(0.5) => IrNodeKind::Constant { .. },
+    IrNodeKind::Sine {
+        frequency: synth_engine_v2::quantities::Frequency::new(440.0).expect("finite"),
+        amplitude: level(0.5),
+    } => IrNodeKind::Sine { .. },
+    IrNodeKind::Impulse { position: PlanPosition::ZERO } => IrNodeKind::Impulse { .. },
+    IrNodeKind::Gain { factor: factor(0.5) } => IrNodeKind::Gain { .. },
+    IrNodeKind::Envelope {
+        attack: Seconds::new(0.01).expect("finite"),
+        decay: Seconds::new(0.1).expect("finite"),
+        sustain: NormalizedLevel::new(0.7).expect("in range"),
+        release: Seconds::new(0.2).expect("finite"),
+    } => IrNodeKind::Envelope { .. },
+    IrNodeKind::Filter {
+        cutoff: CutoffFrequency::new(1_000.0).expect("positive"),
+        resonance: Resonance::BUTTERWORTH,
+    } => IrNodeKind::Filter { .. },
+    IrNodeKind::Amplifier => IrNodeKind::Amplifier,
+    IrNodeKind::Output => IrNodeKind::Output,
+}
+
+#[test]
+fn every_kernel_admits_exactly_one_channel_on_every_port() {
+    // ADR-0041 clause 12's exemption, **checked** rather than assumed: a kernel whose
+    // ports admit only one channel is tested at one, with a test asserting that its port
+    // table admits only one. Today that is every authored kind — the compiler's own
+    // widening is the one operation that writes more — so the obligation to test at two
+    // channels does not yet reach any of them, and this is what says so.
+    for kind in catalog() {
+        // The output node has no kernel: it declares one input port carrying the
+        // **stream's** layout, and what reads that region is the boundary copy rather
+        // than a kernel that would have to step frames. Clause 12 is an obligation on
+        // kernels, so this is the one kind it does not reach.
+        if matches!(kind, IrNodeKind::Output) {
+            continue;
+        }
+        for layout in [ChannelLayout::Mono, ChannelLayout::Stereo] {
+            for port in synth_engine_v2::node::ports(kind, layout) {
+                assert_eq!(
+                    port.layout(),
+                    ChannelLayout::Mono,
+                    "{kind:?} declares a {:?} port in a {layout:?} stream; it now admits a \
+                     second channel and owes a test at every count its ports admit",
+                    port.layout()
+                );
+            }
+        }
+    }
+
+    // And the output node's own premise, stated rather than skipped: its port follows
+    // the stream, which is the signal the widening produces.
+    for layout in [ChannelLayout::Mono, ChannelLayout::Stereo] {
+        let ports = synth_engine_v2::node::ports(IrNodeKind::Output, layout);
+        assert_eq!(ports.len(), 1, "the output declares one input port");
+        assert_eq!(
+            ports.first().map(|port| port.layout()),
+            Some(layout),
+            "and it carries the stream's layout"
+        );
+    }
+}
+
 #[test]
 fn the_layout_refusal_has_no_constructible_case_in_this_phase() {
-    // Every node kind here produces mono, so the *refusing* direction of the layout
-    // rule — anything into a narrower port — cannot be built. This test asserts that
-    // premise rather than leaving the rule looking untested: the day a node declares a
-    // stereo output, this fails, and the refusal case has to be written with it.
-    let kinds = [
-        IrNodeKind::Silence,
-        constant(0.5),
-        IrNodeKind::Sine {
-            frequency: synth_engine_v2::quantities::Frequency::new(440.0).expect("finite"),
-            amplitude: level(0.5),
-        },
-        IrNodeKind::Impulse {
-            position: PlanPosition::ZERO,
-        },
-        IrNodeKind::Gain {
-            factor: factor(0.5),
-        },
-        IrNodeKind::Output,
-    ];
-    for kind in kinds {
+    // Every node kind produces mono, so the *refusing* direction of the layout rule —
+    // anything into a narrower port — cannot be built. This test asserts that premise
+    // rather than leaving the rule looking untested: the day a node declares a stereo
+    // output, this fails, and the refusal case has to be written with it.
+    for kind in catalog() {
         for port in synth_engine_v2::node::ports(kind, ChannelLayout::Stereo) {
             if port.direction() == PortDirection::Output {
                 assert_eq!(

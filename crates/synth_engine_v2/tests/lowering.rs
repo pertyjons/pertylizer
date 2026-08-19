@@ -16,12 +16,14 @@ use synth_engine_v2::ir::{
     ExecutionScope, GraphIr, IrNodeKind, NodeId, ParameterId, PortId, SignalDomain, parameters,
 };
 use synth_engine_v2::offline::{OfflineEvent, render_offline};
-use synth_engine_v2::plan::{ParameterSlot, PlanOp};
+use synth_engine_v2::plan::{BufferSlot, ParameterSlot, PlanOp};
 use synth_engine_v2::quantities::{Amplitude, ChannelLayout, Frequency, ParameterValue};
 use synth_engine_v2::render::{
     AudioBlockMut, EventEnvelope, EventPayload, PreparedRenderer, Renderer, TimedEvent, TimedEvents,
 };
-use synth_engine_v2::time::{FrameCount, PlanPosition, SampleTime, StreamAnchor, TimeSource};
+use synth_engine_v2::time::{
+    FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor, TimeSource,
+};
 
 fn sine() -> IrNodeKind {
     IrNodeKind::Sine {
@@ -120,23 +122,22 @@ fn a_slot_from_another_plan_is_refused_by_identity_rather_than_applied() {
 }
 
 #[test]
-fn a_mono_source_into_a_stereo_stream_compiles_one_operation_per_channel() {
-    // ADR-0002 clause 7: every conversion is a scheduled operation with an identity.
-    // Phase 1 hid the duplication inside an output operation that wrote "every
-    // channel", which is the same audio and a different claim.
+fn a_mono_source_into_a_stereo_stream_widens_into_one_wider_region() {
+    // ADR-0041 clauses 8 and 11. The widening is still a scheduled operation with an
+    // identity — that was ADR-0002 clause 7 and it survives — but what it writes is now
+    // **one** region of `c * Q` rather than one further buffer per channel, and the
+    // boundary is one contiguous copy rather than a write per channel.
     let plan = admit(&source_plan(sine()), profile(256, ChannelLayout::Stereo));
+    let quantum = QUANTUM_FRAMES as usize;
 
-    let outputs: Vec<(usize, usize)> = plan
+    let outputs: Vec<usize> = plan
         .ops()
         .iter()
         .filter_map(|op| match op {
-            PlanOp::OutputChannel { source, channel } => Some((source.index(), channel.get())),
-            _ => None,
+            PlanOp::Output { source } => Some(source.index()),
+            PlanOp::Node(_) => None,
         })
         .collect();
-    // The widening is a node step like any other: the schedule holds one operation that
-    // reads the mono buffer and writes a second one, and nothing about it says "copy" to
-    // the renderer beyond the kernel the compiler resolved.
     let duplications: Vec<(usize, usize)> = plan
         .ops()
         .iter()
@@ -147,34 +148,72 @@ fn a_mono_source_into_a_stereo_stream_compiles_one_operation_per_channel() {
                 .copied()
                 .flatten()
                 .map(|source| (source.index(), step.out().index())),
-            PlanOp::OutputChannel { .. } => None,
+            PlanOp::Output { .. } => None,
         })
         .collect();
 
     assert_eq!(
         outputs.len(),
-        2,
-        "a stereo stream is two output operations, one per channel"
+        1,
+        "a stereo stream is one output operation over one interleaved region"
     );
-    assert_eq!(outputs[0].1, 0);
-    assert_eq!(outputs[1].1, 1);
     assert_eq!(
         duplications.len(),
         1,
         "widening mono to stereo is one scheduled operation, not something the output \
          operation does quietly"
     );
+    let (read, written) = duplications[0];
     assert_eq!(
-        duplications[0].0, outputs[0].0,
-        "the duplication reads the mono signal that reached the port"
+        written, outputs[0],
+        "the output reads the region the widening wrote"
+    );
+    assert_ne!(read, written, "and the widening produces a second region");
+
+    let source = plan
+        .region(BufferSlot::new(read))
+        .expect("the mono signal has a region");
+    let widened = plan
+        .region(BufferSlot::new(written))
+        .expect("the widened signal has a region");
+    assert_eq!(
+        source.length(),
+        quantum,
+        "the mono signal is `Q` contiguous samples, which is clause 3"
     );
     assert_eq!(
-        duplications[0].1, outputs[1].0,
-        "and writes the buffer the second channel is served from"
+        widened.length(),
+        quantum * 2,
+        "and the stereo signal is one region of `c * Q`, which is clause 2"
     );
-    assert_ne!(
-        outputs[0].0, outputs[1].0,
-        "ADR-0002 clause 2: two channels are two buffers"
+    assert!(
+        !source.intersects(widened),
+        "both are live at the widening, so they cannot share samples"
+    );
+}
+
+#[test]
+fn a_widened_signal_holds_the_same_sample_in_both_channels() {
+    // Clause 8's duplication, read off the arena rather than off the boundary: the
+    // widening writes each source sample into both channels of one frame, so a reader
+    // that treated the interleaved region as mono would see every sample twice and the
+    // second half of the region unwritten.
+    let plan = admit(
+        &source_plan(IrNodeKind::Constant {
+            level: Amplitude::new(0.25).expect("finite"),
+        }),
+        profile(64, ChannelLayout::Stereo),
+    );
+    let rendered = render_offline(
+        plan,
+        FrameCount::new(u64::from(QUANTUM_FRAMES)),
+        PlanPosition::ZERO,
+        &[] as &[OfflineEvent],
+    )
+    .expect("renders");
+    assert!(
+        rendered.chunks_exact(2).all(|frame| frame == [0.25, 0.25]),
+        "every frame carries the source sample in both channels"
     );
 }
 
@@ -184,7 +223,7 @@ fn a_mono_stream_compiles_exactly_one_output_operation() {
     let outputs = plan
         .ops()
         .iter()
-        .filter(|op| matches!(op, PlanOp::OutputChannel { .. }))
+        .filter(|op| matches!(op, PlanOp::Output { .. }))
         .count();
     assert_eq!(outputs, 1);
 }
@@ -238,7 +277,7 @@ fn buffer_slots_are_dense_and_every_operation_indexes_inside_the_arena() {
                 slots.extend(step.inputs().iter().flatten().map(|slot| slot.index()));
                 slots
             }
-            PlanOp::OutputChannel { source, .. } => vec![source.index()],
+            PlanOp::Output { source } => vec![source.index()],
         };
         for slot in slots {
             assert!(

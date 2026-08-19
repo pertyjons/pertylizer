@@ -21,9 +21,9 @@
 //! admission pairs the two, so a mismatch is a compiler defect, and the audio thread is
 //! the one place that cannot report it.
 
-use crate::plan::{InputBinding, NodeStep};
+use crate::plan::{BufferRegion, InputBinding, NodeStep};
 use crate::quantities::{
-    Amplitude, Frequency, GainFactor, NormalizedLevel, ParameterValue, SegmentFrames,
+    Amplitude, ChannelLayout, Frequency, GainFactor, NormalizedLevel, ParameterValue, SegmentFrames,
 };
 use crate::time::PlanPosition;
 
@@ -362,8 +362,14 @@ pub enum InputBuffer<'a> {
 /// renderer builds.
 #[derive(Debug)]
 pub struct NodeIo<'a> {
-    /// The buffer this node writes, `Q` frames.
+    /// The buffer this node writes: `Q` frames of [`Self::channels`], interleaved.
     pub out: &'a mut [f32],
+    /// How many channels the output holds, frame-major.
+    ///
+    /// ADR-0041 clause 4. A kernel is told its channel count and must be correct for
+    /// every count its own ports admit; a mono-only kernel is told `Mono` and its port
+    /// table says why that is the only value it can see.
+    pub channels: ChannelLayout,
     /// The buffers it reads, in port order.
     pub inputs: [InputBuffer<'a>; MAX_INPUTS],
     /// The plan position of this quantum's first frame, where the anchor reaches it.
@@ -373,13 +379,19 @@ pub struct NodeIo<'a> {
 /// Borrow the arena regions one step names.
 ///
 /// The one place a kernel's slots become slices. It hands out **one** mutable region and
-/// up to [`MAX_INPUTS`] shared ones, each a different `Q`-frame chunk of one flat
-/// allocation, by walking the chunks in ascending order and splitting each off in turn —
-/// so no two borrows can overlap and none of it needs `unsafe`. An input naming the
-/// output's chunk is reported as `None` rather than borrowed twice.
+/// up to [`MAX_INPUTS`] shared ones, each a different chunk of one flat allocation, by
+/// walking the chunks in ascending offset order and splitting each off in turn — so no
+/// two borrows can overlap and none of it needs `unsafe`. An input naming the output's
+/// chunk is reported as `None` rather than borrowed twice.
+///
+/// `regions` is the plan's table: since
+/// [ADR-0041](../../../plans/v2/decisions/ADR-0041-interleaved-internal-channel-layout.md)
+/// clause 2 a slot's place in the arena is an offset and a length the plan **records**,
+/// because a signal occupies `c * Q` samples and multiplying a slot index by the quantum
+/// no longer describes anything.
 pub fn bind<'a>(
     buffers: &'a mut [f32],
-    quantum: usize,
+    regions: &[BufferRegion],
     step: &NodeStep,
     position: Option<PlanPosition>,
 ) -> Option<NodeIo<'a>> {
@@ -388,7 +400,7 @@ pub fn bind<'a>(
     let mut rest = buffers;
     let mut consumed = 0_usize;
 
-    // The roles in ascending slot order, worked out at admission. Walking them forwards
+    // The roles in ascending offset order, worked out at admission. Walking them forwards
     // and splitting each region off in turn is what lets one mutable and up to two shared
     // borrows of one allocation coexist without `unsafe` — and there is nothing to decide
     // here, because the compiler already decided it.
@@ -400,14 +412,15 @@ pub fn bind<'a>(
                 None => break,
             },
         };
-        let skip = slot.index().checked_mul(quantum)?.checked_sub(consumed)?;
+        let region = regions.get(slot.index()).copied()?;
+        let skip = region.offset().checked_sub(consumed)?;
         // `rest` is moved out and put back, which is what lets each piece keep the
         // arena's own lifetime instead of a reborrow that ends with the loop body.
         let taken = rest;
         let (_, tail) = taken.split_at_mut_checked(skip)?;
-        let (piece, remainder) = tail.split_at_mut_checked(quantum)?;
+        let (piece, remainder) = tail.split_at_mut_checked(region.length())?;
         rest = remainder;
-        consumed = consumed.checked_add(skip)?.checked_add(quantum)?;
+        consumed = consumed.checked_add(skip)?.checked_add(region.length())?;
         match role {
             0 => out = Some(piece),
             _ => {
@@ -437,6 +450,7 @@ pub fn bind<'a>(
 
     Some(NodeIo {
         out: out?,
+        channels: step.out_layout(),
         inputs,
         position,
     })
@@ -741,7 +755,15 @@ pub fn copy(_prepared: &PreparedNode, _state: &mut NodeState, io: &mut NodeIo<'_
         io.out.fill(0.0);
         return;
     };
-    for (sample, input) in io.out.iter_mut().zip(source.iter()) {
-        *sample = *input;
+    // ADR-0041 clause 8: the one implicit conversion this phase inserts writes each
+    // sample into **both channels of one wider region**, frame-major. At one channel it
+    // is the plain copy it was, which is what a mono path renders through.
+    let channels = io.channels.channels();
+    for (frame, input) in source.iter().enumerate() {
+        for channel in 0..channels {
+            if let Some(sample) = io.out.get_mut(frame * channels + channel) {
+                *sample = *input;
+            }
+        }
     }
 }

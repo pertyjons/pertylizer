@@ -13,15 +13,17 @@
 
 use crate::ir::{NodeId, ParameterId};
 use crate::node::kernels::{ControlIndex, Kernel, MAX_INPUTS, PreparedNode};
-use crate::quantities::{ChannelIndex, ChannelLayout, EventCount, SampleRate};
+use crate::quantities::{ChannelLayout, EventCount, SampleRate};
 use crate::time::FrameCount;
 
 /// One buffer in the plan's arena, by index.
 ///
-/// Phase 1 gives every source its own quantum-sized buffer. The preallocated arena
-/// with liveness analysis, so that non-overlapping signal lifetimes share storage,
-/// is Phase 2's work; anticipating it here would produce an arena with nothing to
-/// analyse.
+/// An **identity**, not a position: since
+/// [ADR-0041](../../plans/v2/decisions/ADR-0041-interleaved-internal-channel-layout.md)
+/// clause 2 a signal occupies one region of `c * Q` samples, so slots are no longer
+/// uniform and a slot's place in the arena is the offset and length the plan records
+/// for it — [`CompiledPlan::region`]. Multiplying this index by the quantum was the
+/// planar arithmetic and is gone.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 #[must_use]
 pub struct BufferSlot(usize);
@@ -35,6 +37,79 @@ impl BufferSlot {
     /// The index.
     pub const fn index(self) -> usize {
         self.0
+    }
+}
+
+/// Where one slot's samples live: an offset and a length within the one allocation.
+///
+/// ADR-0041 clause 13. Both are in **samples**, not frames: a region holds `c * Q`
+/// samples of one signal, and the kernel that reads it is told the channel count
+/// separately, so a length in frames would have to be multiplied back out at every
+/// binding.
+///
+/// The plan records these; nothing derives them. That is the whole difference from the
+/// planar arena, where a slot index times the quantum was the position and every slot
+/// was the same width.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[must_use]
+pub struct BufferRegion {
+    offset: usize,
+    length: usize,
+}
+
+impl BufferRegion {
+    /// A region, or `None` if it is not one.
+    ///
+    /// A zero length is not a narrow region, it is the absence of storage, and a region
+    /// whose end overflows is not describable at all. Both are compiler defects rather
+    /// than render-time conditions, and the type refuses them here so that [`Self::end`]
+    /// can be exact arithmetic rather than a saturating one that turns a malformed
+    /// region into a plausible-looking alias of an unrelated range.
+    #[must_use]
+    pub fn new(offset: usize, length: usize) -> Option<Self> {
+        match length > 0 && offset.checked_add(length).is_some() {
+            true => Some(Self { offset, length }),
+            false => None,
+        }
+    }
+
+    /// A region the arena has already established, without re-checking it.
+    ///
+    /// Crate-private: the assignment builds these from a width it took from a port's
+    /// layout and an offset it computed itself, so the invariant holds by construction,
+    /// and a `Result` at every allocation would be the compiler checking itself.
+    /// Everything outside the crate goes through [`Self::new`].
+    pub(crate) const fn raw(offset: usize, length: usize) -> Self {
+        Self { offset, length }
+    }
+
+    /// The first sample.
+    pub const fn offset(self) -> usize {
+        self.offset
+    }
+
+    /// How many samples it holds.
+    pub const fn length(self) -> usize {
+        self.length
+    }
+
+    /// One past the last sample. The arena's extent is the greatest of these.
+    ///
+    /// Exact rather than saturating: [`Self::new`] refuses a region whose end overflows,
+    /// so there is nothing here to saturate away.
+    pub const fn end(self) -> usize {
+        self.offset + self.length
+    }
+
+    /// Whether two regions share any sample.
+    ///
+    /// ADR-0041 clause 14 strengthens ADR-0005 clause 8's structural check to this:
+    /// with mixed widths, two *distinct* slots can still intersect, so identity is no
+    /// longer the question and partial overlap is a defect the equal-slot arena could
+    /// not represent.
+    #[must_use]
+    pub const fn intersects(self, other: Self) -> bool {
+        self.offset < other.end() && other.offset < self.end()
     }
 }
 
@@ -172,6 +247,12 @@ pub struct NodeStep {
     kernel: Kernel,
     node: NodeSlot,
     out: BufferSlot,
+    /// The layout of the signal it writes.
+    ///
+    /// ADR-0041 clause 4: a kernel is **told** how many channels it has, and this is
+    /// where the count comes from — the node's own output port, resolved at admission,
+    /// rather than the stream's layout or the width of the region divided by the quantum.
+    out_layout: ChannelLayout,
     inputs: [Option<BufferSlot>; MAX_INPUTS],
     /// What each input resolves to, decided here rather than per quantum.
     bindings: [InputBinding; MAX_INPUTS],
@@ -198,6 +279,7 @@ impl NodeStep {
         kernel: Kernel,
         node: NodeSlot,
         out: BufferSlot,
+        out_layout: ChannelLayout,
         inputs: [Option<BufferSlot>; MAX_INPUTS],
         in_place_safe: bool,
     ) -> Self {
@@ -205,17 +287,27 @@ impl NodeStep {
             kernel,
             node,
             out,
+            out_layout,
             inputs,
             bindings: [InputBinding::Unpatched; MAX_INPUTS],
             order: [u8::MAX; MAX_INPUTS + 1],
             in_place_safe,
         };
-        step.resolve();
+        // Ordered by slot index until the arena has run. Lowering's slots are virtual and
+        // have no offset yet; [`Self::remap`] resolves the order again over the regions
+        // they were assigned, which is the order the binding actually walks.
+        step.resolve(&[]);
         step
     }
 
     /// Work out what each input is, and the order the regions are borrowed in.
-    fn resolve(&mut self) {
+    ///
+    /// `regions` is the assignment's table, indexed by [`BufferSlot`]; it is empty while
+    /// the slots are still virtual, and then the slot index stands in for the offset.
+    /// After the arena has run, the order is by **offset** — with variable-width regions
+    /// a higher slot index can sit lower in the arena, and the binding walks the
+    /// allocation forwards.
+    fn resolve(&mut self, regions: &[BufferRegion]) {
         self.bindings = [InputBinding::Unpatched; MAX_INPUTS];
         for index in 0..MAX_INPUTS {
             let Some(Some(slot)) = self.inputs.get(index).copied() else {
@@ -238,28 +330,38 @@ impl NodeStep {
             }
         }
 
-        // The regions to borrow, ascending. Three entries at most, so an insertion is
-        // cheaper and clearer than a sort — and this runs once per compile either way.
-        let mut regions: [(usize, u8); MAX_INPUTS + 1] = [(usize::MAX, u8::MAX); MAX_INPUTS + 1];
+        // The regions to borrow, ascending by where they sit in the arena. Three entries
+        // at most, so an insertion is cheaper and clearer than a sort — and this runs once
+        // per compile either way.
+        let mut order: [(usize, u8); MAX_INPUTS + 1] = [(usize::MAX, u8::MAX); MAX_INPUTS + 1];
         let mut count = 0;
-        let push = |slot: usize, role: u8, regions: &mut [(usize, u8)], count: &mut usize| {
+        let push = |at: usize, role: u8, order: &mut [(usize, u8)], count: &mut usize| {
             let mut position = *count;
-            while position > 0 && regions.get(position - 1).is_some_and(|(at, _)| *at > slot) {
-                let previous = regions
+            while position > 0
+                && order
+                    .get(position - 1)
+                    .is_some_and(|(other, _)| *other > at)
+            {
+                let previous = order
                     .get(position - 1)
                     .copied()
                     .unwrap_or((usize::MAX, u8::MAX));
-                if let Some(entry) = regions.get_mut(position) {
+                if let Some(entry) = order.get_mut(position) {
                     *entry = previous;
                 }
                 position -= 1;
             }
-            if let Some(entry) = regions.get_mut(position) {
-                *entry = (slot, role);
+            if let Some(entry) = order.get_mut(position) {
+                *entry = (at, role);
             }
             *count += 1;
         };
-        push(self.out.index(), 0, &mut regions, &mut count);
+        let position_of = |slot: BufferSlot| -> usize {
+            regions
+                .get(slot.index())
+                .map_or(slot.index(), |region| region.offset())
+        };
+        push(position_of(self.out), 0, &mut order, &mut count);
         for index in 0..MAX_INPUTS {
             if !matches!(self.bindings.get(index), Some(InputBinding::Distinct)) {
                 continue;
@@ -267,11 +369,11 @@ impl NodeStep {
             let Some(Some(slot)) = self.inputs.get(index).copied() else {
                 continue;
             };
-            push(slot.index(), index as u8 + 1, &mut regions, &mut count);
+            push(position_of(slot), index as u8 + 1, &mut order, &mut count);
         }
 
         self.order = [u8::MAX; MAX_INPUTS + 1];
-        for (entry, (_, role)) in self.order.iter_mut().zip(regions.iter()) {
+        for (entry, (_, role)) in self.order.iter_mut().zip(order.iter()) {
             *entry = *role;
         }
     }
@@ -294,6 +396,11 @@ impl NodeStep {
     /// Which prepared node and which state record.
     pub const fn node(&self) -> NodeSlot {
         self.node
+    }
+
+    /// The layout of the signal it writes.
+    pub const fn out_layout(&self) -> ChannelLayout {
+        self.out_layout
     }
 
     /// The buffer it writes.
@@ -322,13 +429,19 @@ impl NodeStep {
     }
 
     /// Rewrite the slots this step names, once the arena has assigned them.
-    pub(crate) fn remap(&mut self, out: BufferSlot, inputs: [Option<BufferSlot>; MAX_INPUTS]) {
+    pub(crate) fn remap(
+        &mut self,
+        out: BufferSlot,
+        inputs: [Option<BufferSlot>; MAX_INPUTS],
+        regions: &[BufferRegion],
+    ) {
         self.out = out;
         self.inputs = inputs;
         // Resolved again rather than carried over: reuse is exactly what turns two
         // distinct slots into one, so a classification computed before the arena ran
-        // would call an input distinct when it has just become the output's own.
-        self.resolve();
+        // would call an input distinct when it has just become the output's own. The
+        // borrow order is resolved here too, because only now do the slots have offsets.
+        self.resolve(regions);
     }
 }
 
@@ -337,6 +450,10 @@ impl PartialEq for NodeStep {
         self.same_kernel(other)
             && self.node == other.node
             && self.out == other.out
+            // The layout is part of what a step *does*: it becomes `NodeIo::channels`,
+            // and two steps that differ in it hand their kernel a different arrangement
+            // of the same region.
+            && self.out_layout == other.out_layout
             && self.inputs == other.inputs
             && self.bindings == other.bindings
             && self.order == other.order
@@ -353,18 +470,18 @@ impl PartialEq for NodeStep {
 pub enum PlanOp {
     /// Run one prepared node kernel.
     Node(NodeStep),
-    /// Write one buffer to one channel of the stream.
+    /// Write one region to the stream.
     ///
-    /// One operation per channel, which is what makes a conversion **visible**: a mono
-    /// signal reaching a stereo output compiles to two of these naming the same source
-    /// slot, so the duplication ADR-0002 clause 6 permits appears in the schedule
-    /// instead of hiding inside a single output operation the way Phase 1's did. It is
-    /// also what a wider layout extends to without changing the operation.
-    OutputChannel {
-        /// The buffer to write out.
+    /// **One** operation, not one per channel: since ADR-0041 clause 11 a signal whose
+    /// layout is the stream's occupies one interleaved region, and matching the host's
+    /// arrangement is a contiguous copy rather than the per-channel strided writes the
+    /// planar renderer performed. What made a conversion visible before was that a mono
+    /// signal reaching a stereo output compiled to two of these; it is now the widening
+    /// operation upstream that carries it, which is a scheduled node with an identity
+    /// under clause 9 rather than a shape the output happens to have.
+    Output {
+        /// The region to write out, `Q` frames of the stream's channels.
         source: BufferSlot,
-        /// Which channel of the stream it becomes.
-        channel: ChannelIndex,
     },
 }
 
@@ -403,7 +520,11 @@ pub struct ParameterAddress {
 pub struct CompiledPlan {
     id: PlanId,
     ops: Vec<PlanOp>,
-    buffer_count: usize,
+    /// Where each slot's samples live, indexed by [`BufferSlot`].
+    ///
+    /// ADR-0041 clause 2: the plan records the position, because slot width is `c * Q`
+    /// and multiplying an index by the quantum no longer describes anything.
+    regions: Vec<BufferRegion>,
     prepared_nodes: Vec<PreparedNode>,
     parameter_targets: Vec<ParameterTarget>,
     parameter_addresses: Vec<ParameterAddress>,
@@ -425,7 +546,7 @@ impl CompiledPlan {
     pub(crate) const fn new(
         id: PlanId,
         ops: Vec<PlanOp>,
-        buffer_count: usize,
+        regions: Vec<BufferRegion>,
         prepared_nodes: Vec<PreparedNode>,
         parameter_targets: Vec<ParameterTarget>,
         parameter_addresses: Vec<ParameterAddress>,
@@ -439,7 +560,7 @@ impl CompiledPlan {
         Self {
             id,
             ops,
-            buffer_count,
+            regions,
             prepared_nodes,
             parameter_targets,
             parameter_addresses,
@@ -462,9 +583,40 @@ impl CompiledPlan {
         &self.ops
     }
 
-    /// How many quantum-sized buffers the plan needs.
+    /// How many distinct buffers the plan needs.
+    ///
+    /// A **count**, not a size: since ADR-0041 the buffers differ in width, so the
+    /// memory the arena takes is [`Self::arena_samples`] and this is what the schedule
+    /// and the conversion accounting speak of — clause 9's "the plan's buffer count".
     pub const fn buffer_count(&self) -> usize {
-        self.buffer_count
+        self.regions.len()
+    }
+
+    /// Where one slot's samples live, or `None` if the plan has no such slot.
+    ///
+    /// Off the audio thread as well as on it: the renderer resolves a step's regions
+    /// through [`crate::node::kernels::bind`], which reads this table.
+    #[must_use]
+    pub fn region(&self, slot: BufferSlot) -> Option<BufferRegion> {
+        self.regions.get(slot.index()).copied()
+    }
+
+    /// Every slot's region, indexed by [`BufferSlot`].
+    pub fn regions(&self) -> &[BufferRegion] {
+        &self.regions
+    }
+
+    /// How many samples the arena holds: the greatest `offset + length` assigned.
+    ///
+    /// ADR-0041 clause 13's **exclusive end**, which is the only reading that yields a
+    /// sample count. The renderer allocates exactly this, and admission reports it.
+    #[must_use]
+    pub fn arena_samples(&self) -> usize {
+        self.regions
+            .iter()
+            .map(|region| region.end())
+            .max()
+            .unwrap_or(0)
     }
 
     /// Every node's immutable prepared data, indexed by [`NodeSlot`].
