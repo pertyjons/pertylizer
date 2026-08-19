@@ -9,7 +9,7 @@
 | Last reviewed | 2026-08-17         |
 | Related       | P02-T004, ADR-0001, ADR-0002, ADR-0021, EVD-0008 |
 | Supersedes    | —                  |
-| Superseded by | Clauses 1, 2, 4, 5, 7 and 8, by [ADR-0041](ADR-0041-interleaved-internal-channel-layout.md) **when that record is accepted** — 2 and 4 refined rather than reversed; clauses 3, 6 and 9 stand |
+| Superseded by | Clauses 1, 2, 4, 5, 7 and 8, by [ADR-0041](ADR-0041-interleaved-internal-channel-layout.md), accepted 2026-08-19 — 2 and 4 refined rather than reversed; clauses 3, 6 and 9 stand |
 
 ## Context
 

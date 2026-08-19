@@ -3,13 +3,13 @@
 | Field         | Value              |
 |---------------|--------------------|
 | ID            | ADR-0002           |
-| Status        | Accepted           |
+| Status        | Superseded         |
 | Phase         | 2                  |
 | Created       | 2026-08-17         |
 | Last reviewed | 2026-08-17         |
 | Related       | EVD-0008, P02-T001, P02-T002, P02-T003, ADR-0001, ADR-0005, REV-P01 deviation 4 |
 | Supersedes    | —                  |
-| Superseded by | [ADR-0041](ADR-0041-interleaved-internal-channel-layout.md) **when that record is accepted**, in full |
+| Superseded by | [ADR-0041](ADR-0041-interleaved-internal-channel-layout.md), in full, on 2026-08-19 |
 
 ## Context
 

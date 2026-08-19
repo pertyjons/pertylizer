@@ -3,10 +3,10 @@
 | Field         | Value                                                                                   |
 |---------------|-----------------------------------------------------------------------------------------|
 | ID            | ADR-0041                                                                                |
-| Status        | Proposed — the decision is made; see *Status* below for what acceptance still needs      |
+| Status        | Accepted — 2026-08-19; see *Status* below for what acceptance changed                   |
 | Phase         | 2                                                                                       |
 | Created       | 2026-08-18                                                                              |
-| Last reviewed | 2026-08-18                                                                              |
+| Last reviewed | 2026-08-19                                                                              |
 | Related       | ADR-0002, ADR-0040, ADR-0005, ADR-0004, EVD-0008, EVD-0010, P02-T012, P02-T013           |
 | Supersedes    | ADR-0002 in full; ADR-0005 clauses 1, 2, 4, 5, 7 and 8                                  |
 | Superseded by | —                                                                                       |
@@ -17,21 +17,36 @@ The **decision** in this record is the user's, made on 2026-08-18 with
 [EVD-0010](../evidence/phase-02/EVD-0010-internal-channel-layout-real-path.md) in front of it: V2 owns its DSP
 ([ADR-0040](ADR-0040-v2-owns-its-dsp.md) option B) and the internal arena becomes **interleaved**.
 
-The **record** is `Proposed` because the durable-decision process requires one
-reader who did not author the material to reach the semantic stopping rule.
-Nothing about the user's choice is open; what remains is that focused review.
-Until acceptance, [the current Sound Core specification](../specs/spec-sound-core-render-contract.md)
-correctly retains ADR-0002's planar layout.
+The **record** was accepted on **2026-08-19**. The reader was an independent
+`codex` read that did not author the material: it refused the record on four
+findings — an incomplete acceptance transaction, and three claims in *Options*
+that the clauses had already corrected — and a focused reread of the repair
+reached the semantic stopping rule. Both rounds are in the review history below.
 
-**Acceptance is one bounded update:**
+**Acceptance applied this update:**
 
-1. mark this record and [ADR-0040](ADR-0040-v2-owns-its-dsp.md) `Accepted`,
-   naming the reviewer;
-2. mark ADR-0002 `Superseded`, ADR-0040/0041 `Accepted`, and ADR-0005's
-   relationship in the compact [decision index](../ADR.md);
-3. replace the affected invariants and conformance rows in the
-   [current Sound Core specification](../specs/spec-sound-core-render-contract.md);
-4. advance [`NOW.md`](../NOW.md) from review to P02-T013.
+1. this record and [ADR-0040](ADR-0040-v2-owns-its-dsp.md) are `Accepted`;
+2. ADR-0002 is `Superseded` **in its own metadata**, and ADR-0002's and
+   ADR-0005's `Superseded by` rows are no longer conditional on this record;
+3. the same three statuses and ADR-0005's relationship are carried into the
+   compact [decision index](../ADR.md). Steps 2 and 3 move together: the
+   documentation check compares each record's own `Status` against its register
+   row, so an index edit without the record edit fails the gate;
+4. the [current Sound Core specification](../specs/spec-sound-core-render-contract.md)
+   states this contract **as a whole**, not only in its layout invariants — its
+   `Based on` metadata, the non-goal that called these two records not-yet-current,
+   the accepted-decision row that stated the planar arena, the layout-sensitive
+   invariants and conformance rows, and the unresolved question that anticipated
+   this update. Every one of them asserted or deferred the layout, and a partial
+   pass would have left the one authority implementation follows contradicting
+   itself;
+5. [`NOW.md`](../NOW.md) advanced from review to P02-T013.
+
+**The crate is still planar.** The specification now states the contract the
+renderer must meet, and **P02-T013 is the task that brings the code to it**,
+verified by clause 16's per-quantum digest comparison against baselines
+committed from the planar build. That gap is named in the specification's
+unresolved questions rather than left to be discovered.
 
 Historical phase records, the legacy master plan, evidence, and accepted review
 documents are not status consumers and are not rewritten. The host-profile
@@ -39,14 +54,13 @@ specification and resource-limit inventory point to the current Sound Core
 specification, so successor acceptance changes the contract once rather than
 repointing every consumer.
 
-Nothing in the phase proceeds before all four: P02-T006 closes on ADR-0040, and P02-T013 — the conversion — is written
-against clauses 1 to 17 below.
+P02-T006 closes on ADR-0040, and P02-T013 — the conversion — is written against clauses 1 to 17 below.
 
 ### Review history
 
 The history below records defects in earlier drafts. Its references to prior
-transaction shapes are historical; the current acceptance update is the four
-steps above.
+transaction shapes are historical; the update acceptance actually applied is
+the numbered transaction above.
 
 **The first independent read refused this record**, and the refusal is kept here rather than smoothed away, because
 four of its findings were holes a `Contract` cannot have and one of them was in the acceptance transaction itself:
@@ -85,6 +99,19 @@ graph with its buffer and slot counts read off the planar build, the two ungated
 both the reuse and the unpatched case are built on a **disconnected branch** whose region is freed and handed on. The
 first `render` call is written down with them: it returns the primed carry, renders no quantum, and refuses an event —
 which is what would otherwise have shifted every baseline line by one.
+
+**A fifth read refused the record on four items, none of them in the decision.** The acceptance transaction was
+incomplete a second time — it changed ADR-0002's status only in the index while the documentation check compares that
+against the record's own metadata, and it scoped the specification update to invariants and conformance rows while
+four other passages of that specification assert or defer the layout. *Options* then carried three claims the clauses
+had already corrected: Option B promised the mono path "costs exactly what it costs today" where clause 3 refuses that
+promise and *Risks* schedules a re-measurement; Option C still called the catalog "five kinds", the very slip round one
+recorded as corrected; and Option A generalized EVD-0010's projected 11% to 22% to "any path whose signal has
+channels", dropping the qualifications this record promises to repeat wherever it uses a figure. The same read
+confirmed clause 16 executably: all five fixtures compile to the buffer and slot counts stated, the disconnected
+constant's region is reused, the unpatched filter renders silence over it, and the first `render` call refuses its
+event. Its one non-blocking addition is recorded in *Consequences*: `NodeStep`'s borrow ordering is a further site
+that reads a slot index where variable widths need an offset.
 
 ## Context
 
@@ -149,14 +176,16 @@ Keep every ADR-0002 clause and re-found it on clause 2's kernel contract: every 
 never learns a channel count, and cannot get channel handling wrong because it has none to get wrong. Phase 5's
 `LegacyPolyModuleAdapter` also stays cheap, because V1's modules are mono-buffer-per-port by construction.
 
-The cost is EVD-0010's figures: 2.54% now, and 11% to 22% on any path whose signal has channels — paid forever,
-because the flip only gets dearer.
+The cost is EVD-0010's figures: 2.54% on the path the compiler builds today, and 11.05% to 21.56% on the two stereo
+shapes it measured — **projections**, on shapes the compiler cannot yet produce and against hand-written interleaved
+counterparts. What is paid forever is whatever the margin turns out to be once a signal has channels, because the flip
+only gets dearer.
 
 ### Option B: Interleaved — **chosen**
 
-A signal is one buffer of `Q` frames of `c` channels. Mono signals are unchanged, so the mono half of every path costs
-exactly what it costs today; stereo work stops being *n* separate traversals with *n* separate node calls; and the host
-boundary becomes a copy instead of a transpose.
+A signal is one buffer of `Q` frames of `c` channels. A mono signal's **storage** is unchanged, bit for bit — its
+*cost* is what clause 3 refuses to promise, because the kernel ABI around it changes; stereo work stops being *n*
+separate traversals with *n* separate node calls; and the host boundary becomes a copy instead of a transpose.
 
 The cost is that a kernel now knows its channel count and must be right for every value of it, and that Phase 5's
 adapter has to convert at every V1 module port. Both are stated in *Consequences* rather than discovered.
@@ -164,10 +193,10 @@ adapter has to convert at every V1 module port. Both are stated in *Consequences
 ### Option C: Defer until a node produces stereo
 
 Superficially attractive, because shape A — the only shape that exists — is worth 2.54%, and the two shapes worth
-11% to 22% are projections. It is rejected on ADR-0002's own reasoning: deferring means paying the conversion when the
-catalog is large rather than when it is five kinds, and the record already establishes that nobody pays a catalog-wide
-rewrite later. Deferring would also leave ADR-0002 standing on a withdrawn premise in the meantime, which is the exact
-state ADR-0040 clause 7 exists to prevent.
+11% to 22% are projections. It is rejected on ADR-0002's own reasoning: deferring means paying the conversion when
+the catalog is large rather than when it is eight kernels, and the record already establishes that nobody pays a
+catalog-wide rewrite later. Deferring would also leave ADR-0002 standing on a withdrawn premise in the meantime,
+which is the exact state ADR-0040 clause 7 exists to prevent.
 
 ## Evidence
 
@@ -183,8 +212,10 @@ state ADR-0040 clause 7 exists to prevent.
   (`crates/synth_engine_v2/src/render/hot.rs:278`), the arena is allocated as `buffer_count * quantum`
   (`crates/synth_engine_v2/src/render.rs:352`), and admission accounts for it as `arena_buffers * Q`
   (`crates/synth_engine_v2/src/compile.rs:682`). The arena assignment itself is a fifth: it allocates identical
-  slots, which is what clause 13 replaces. An earlier draft said "three places" and an independent read found the
-  other two.
+  slots, which is what clause 13 replaces. A sixth is the borrow order a step records: `NodeStep::resolve` sorts the
+  regions a kernel call borrows by ascending **slot index** (`crates/synth_engine_v2/src/plan.rs:241-270`), which is
+  the same order as ascending offset only while slots are uniform. An earlier draft said "three places"; two
+  independent reads found the other three.
 - **Not measured, and named as such:** the cost of Phase 5's `LegacyPolyModuleAdapter` converting at every V1 module
   port. It is the largest quantity this decision moves and nobody has put a number on it; the follow-up table has the
   task.
@@ -409,8 +440,9 @@ here in their own terms, which is what makes this record readable alone.
   mono slot: 3 `Q` slots against planar's 2 for the path compiled today, 4 against 3 for shape C. At `Q` = 64 this is
   below measurement; on a large graph it is a direction, and it points against this decision.
 - **Variable-width slots complicate the compiler**, void ADR-0005's optimality argument (clause 15), and break the
-  uniform-stride assumption five places in the crate encode today — `bind`, the renderer's output operation, and the
-  arena allocation, all cited above.
+  uniform-stride assumption **six** places in the crate encode today — `bind`, the renderer's output operation, the
+  arena allocation, admission's accounting, the arena assignment, and a step's recorded borrow order, each cited in
+  *Evidence*.
 - **A mono operation on one channel of a stereo signal** now needs a stride or a de-interleave, where planar expressed
   it as an ordinary contiguous pass. This is the mirror image of the ergonomic cost ADR-0002 accepted, and it lands on
   a different minority of nodes.

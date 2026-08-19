@@ -47,10 +47,10 @@ the durable-decision test in `PROCESS.md` and normally do not need an ADR.
 | ID       | Topic                                       | Status   | Phase                 | Record                                                             | Note                                     |
 |----------|---------------------------------------------|----------|-----------------------|--------------------------------------------------------------------|------------------------------------------|
 | ADR-0001 | Render quantum semantics and splitting      | Accepted | 0A/1                  | [ADR](decisions/ADR-0001-internal-render-quantum.md)               | —                                        |
-| ADR-0002 | Internal channel layout                     | Accepted | 2                     | [ADR](decisions/ADR-0002-internal-channel-layout.md)               | EVD-0008 selected interleaved; ADR-0041 is the proposed successor |
+| ADR-0002 | Internal channel layout                     | Superseded | 2                   | [ADR](decisions/ADR-0002-internal-channel-layout.md)               | Superseded in full by ADR-0041, 2026-08-19 |
 | ADR-0003 | Event segmentation API                      | Proposed | 3                     | —                                                                  | —                                        |
 | ADR-0004 | Native node representation                  | Accepted | 2/5                   | [ADR](decisions/ADR-0004-native-node-representation.md)            | Acceptance rule B failed; record redrafted under rule C |
-| ADR-0005 | Buffer liveness strategy                    | Accepted | 2                     | [ADR](decisions/ADR-0005-buffer-liveness-strategy.md)              | ADR-0041 proposes refinements            |
+| ADR-0005 | Buffer liveness strategy                    | Accepted | 2                     | [ADR](decisions/ADR-0005-buffer-liveness-strategy.md)              | Clauses 1, 2, 4, 5, 7 and 8 superseded or refined by ADR-0041; 3, 6 and 9 stand |
 | ADR-0006 | Parameter ramp representation               | Proposed | 3/5                   | —                                                                  | —                                        |
 | ADR-0007 | Parameter modulation laws                   | Proposed | 5                     | —                                                                  | —                                        |
 | ADR-0008 | YAMS state identity and reload policy       | Proposed | 7                     | —                                                                  | —                                        |
@@ -85,8 +85,8 @@ the durable-decision test in `PROCESS.md` and normally do not need an ADR.
 | ADR-0037 | Render quantum frame count                  | Accepted | 0A/1                  | [ADR](decisions/ADR-0037-render-quantum-value.md)                  | Provisional to Phase 2 exit              |
 | ADR-0038 | Engine-egress queue classification          | Accepted | 0A/1                  | [ADR](decisions/ADR-0038-engine-egress-queue-classification.md)    | —                                        |
 | ADR-0039 | Initial multi-client hub omission           | Proposed | 0A/10E                | [ADR](decisions/ADR-0039-multi-client-hub-delivery-contract.md)    | —                                        |
-| ADR-0040 | V2 owns its DSP                             | Proposed | 2                     | [ADR](decisions/ADR-0040-v2-owns-its-dsp.md)                       | User choice made; focused review remains |
-| ADR-0041 | Interleaved internal channel layout         | Proposed | 2                     | [ADR](decisions/ADR-0041-interleaved-internal-channel-layout.md)   | User choice made; focused review remains |
+| ADR-0040 | V2 owns its DSP                             | Accepted | 2                     | [ADR](decisions/ADR-0040-v2-owns-its-dsp.md)                       | Accepted with ADR-0041 as its clause 7 requires |
+| ADR-0041 | Interleaved internal channel layout         | Accepted | 2                     | [ADR](decisions/ADR-0041-interleaved-internal-channel-layout.md)   | Supersedes ADR-0002 in full; P02-T013 converts the crate |
 
 ### Reversible decisions
 

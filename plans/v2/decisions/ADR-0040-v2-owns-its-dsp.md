@@ -3,10 +3,10 @@
 | Field         | Value                                                        |
 |---------------|--------------------------------------------------------------|
 | ID            | ADR-0040                                                     |
-| Status        | Proposed — **decided, not yet accepted**; see clause 7 and ADR-0041 |
+| Status        | Accepted — 2026-08-19, together with ADR-0041 as clause 7 requires  |
 | Phase         | 2                                                            |
 | Created       | 2026-08-18                                                   |
-| Last reviewed | 2026-08-18                                                   |
+| Last reviewed | 2026-08-19                                                   |
 | Related       | ADR-0002, ADR-0004, ADR-0041, P02-T006, P02-T008, EVD-0008, EVD-0010, master plan Phase 2 and Phase 5 |
 | Supersedes    | —                                                            |
 | Superseded by | —                                                            |
@@ -231,9 +231,9 @@ the option that produces the museum without anyone choosing it.
 
 | Task | Phase | Status |
 |------|-------|--------|
-| **Companion decision on the internal channel layout** — supersede ADR-0002's layout clauses or retain planar on a surviving rationale | 2 | **Drafted** as [ADR-0041](ADR-0041-interleaved-internal-channel-layout.md), which supersedes ADR-0002 in full and takes the interleaved arena. User decision, 2026-08-18. Clause 7 still binds: **this record stays `Proposed` until ADR-0041 is accepted** |
+| **Companion decision on the internal channel layout** — supersede ADR-0002's layout clauses or retain planar on a surviving rationale | 2 | **Complete** — [ADR-0041](ADR-0041-interleaved-internal-channel-layout.md) supersedes ADR-0002 in full and takes the interleaved arena. User decision, 2026-08-18; both records accepted together on 2026-08-19, which is what clause 7 required |
 | Re-measure the layout against the **real** voice path, as the input to that decision | 2 | **Complete** — [EVD-0010](../evidence/phase-02/EVD-0010-internal-channel-layout-real-path.md). Interleaved cheaper in all nine runs of all three shapes: 2.54% on the plan compiled today, 21.56% on a stereo chain, 11.05% with per-channel control |
-| Close P02-T006 as not-happening, and record the dropped extraction as a deviation rather than an omission | 2 | Not started — after clause 7 clears. Clause 5 leaves nothing of the task inside this phase, including the eleventh fixture |
+| Close P02-T006 as not-happening, and record the dropped extraction as a deviation rather than an omission | 2 | **Unblocked** — clause 7 cleared on acceptance. Clause 5 leaves nothing of the task inside this phase, including the eleventh fixture |
 | P02-T008 records every corpus difference with a cause, under clause 4 | 2 | Not started |
 | Decide how V2 acquires the rest of the catalog: adapter, port, or rewrite | 5 | Not started — ADR-0004's declarative node API is the surface it lands on |
 
