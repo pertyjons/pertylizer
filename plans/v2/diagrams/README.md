@@ -1,11 +1,11 @@
 # Core V2 Architecture Diagrams
 
-This directory contains visual summaries of the architecture defined in
-[`../master-plan.md`](../master-plan.md).
+This directory contains visual summaries of the target architecture described
+under [`../architecture/`](../architecture/README.md).
 
 The diagrams are explanatory, not normative. If a diagram conflicts with the
-master plan, an accepted ADR, or a current specification, the authoritative
-document wins and the diagram should be updated.
+target description or a current specification, the specification wins and the
+diagram should be updated.
 
 ## Diagrams
 

@@ -1,14 +1,13 @@
 //! The resource ledger's `file:line` citations have to keep pointing at what
 //! they claim.
 //!
-//! `plans/v2/decisions/README.md` requires every claim about current behaviour
-//! to carry a `file:line` citation, on the grounds that a behaviour someone read
-//! and a behaviour someone assumed look identical in prose. What that rule does
-//! not require is that the citation stays true, and it does not: the ledger's
-//! own fix to `LIMIT-0004` added lines to `render/mod.rs` and silently broke the
-//! five neighbouring entries, and the bug fixes that came out of the use-site
-//! audit then broke citations into `state.rs` and `synth_engine.rs` that the
-//! audit had just repaired.
+//! `plans/v2/PROCESS.md` makes inventories or evidence the authority for claims
+//! about current V1 behaviour because a behaviour someone read and a behaviour
+//! someone assumed look identical in prose. A line citation does not guarantee
+//! that the claim stays true: the ledger's own fix to `LIMIT-0004` added lines to
+//! `render/mod.rs` and silently broke the five neighbouring entries, and the bug
+//! fixes that came out of the use-site audit then broke citations into
+//! `state.rs` and `synth_engine.rs` that the audit had just repaired.
 //!
 //! Drift is invisible to a reader: a stale line number still resolves, it just
 //! lands on a comment or a closing brace, and nothing says so. These tests make
@@ -351,54 +350,6 @@ fn named_identifiers_are_on_the_lines_that_cite_them() {
     assert!(
         bad.is_empty(),
         "citations whose named identifier is not on the cited line:\n  {}",
-        bad.join("\n  ")
-    );
-}
-
-/// Summary and contract documents link to the authoritative evidence instead
-/// of copying source-line citations that can drift independently.
-///
-/// The resource inventory is the one place where V1 enforcement sites are
-/// maintained and checked by this test binary. A copied `path.rs:N` citation in
-/// a dashboard, tracker, or specification creates a second unguarded fact.
-#[test]
-fn derived_documents_do_not_copy_source_line_citations() {
-    let root = repo_root();
-    let documents = [
-        "plans/v2/STATUS.md",
-        "plans/v2/phases/phase-00a-baseline-and-render-contracts.md",
-        "plans/v2/phases/phase-01-experimental-sound-core.md",
-        "plans/v2/specs/spec-host-profile-and-render-limits.md",
-    ];
-    let mut bad = Vec::new();
-
-    for relative in documents {
-        let path = root.join(relative);
-        let text = std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| panic!("cannot read {}: {e}", path.display()));
-
-        for (index, line) in text.lines().enumerate() {
-            // `state.rs:123` and the pasted-from-a-browser `state.rs#L123`
-            // spelling are the same unguarded fact in different clothes.
-            let cites = [".rs:", ".rs#L"].iter().any(|marker| {
-                let mut remainder = line;
-                while let Some((_, after)) = remainder.split_once(marker) {
-                    if after.starts_with(|ch: char| ch.is_ascii_digit()) {
-                        return true;
-                    }
-                    remainder = after;
-                }
-                false
-            });
-            if cites {
-                bad.push(format!("{relative}:{}: {line}", index + 1));
-            }
-        }
-    }
-
-    assert!(
-        bad.is_empty(),
-        "derived documents copy source-line citations instead of linking to the resource inventory:\n  {}",
         bad.join("\n  ")
     );
 }

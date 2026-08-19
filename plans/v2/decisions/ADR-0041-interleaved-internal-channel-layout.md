@@ -17,43 +17,36 @@ The **decision** in this record is the user's, made on 2026-08-18 with
 [EVD-0010](../evidence/phase-02/EVD-0010-internal-channel-layout-real-path.md) in front of it: V2 owns its DSP
 ([ADR-0040](ADR-0040-v2-owns-its-dsp.md) option B) and the internal arena becomes **interleaved**.
 
-The **record** is `Proposed` rather than `Accepted` because the working agreement's decision rule 2 forbids accepting a
-`Contract`-class ADR in the session that drafts it, and requires a reader who did not author it. Nothing about the
-choice is open; what is open is the review. Until then ADR-0002 remains the standing authority, on the withdrawn
-premise that is why the phase is stopped.
+The **record** is `Proposed` because the durable-decision process requires one
+reader who did not author the material to reach the semantic stopping rule.
+Nothing about the user's choice is open; what remains is that focused review.
+Until acceptance, [the current Sound Core specification](../specs/spec-sound-core-render-contract.md)
+correctly retains ADR-0002's planar layout.
 
-**Accepting this record is one transaction of seven edits, and a partial application is worse than none** — the register
-contract requires every status consumer to agree, so stopping halfway leaves two authorities disagreeing about which
-layout the engine has:
+**Acceptance is one bounded update:**
 
-1. this record to `Accepted`, with the reviewer named;
-2. [ADR-0002](ADR-0002-internal-channel-layout.md) to `Superseded`, its text untouched;
-3. [ADR-0040](ADR-0040-v2-owns-its-dsp.md) to `Accepted`, which its clause 7 has been waiting for;
-4. [ADR-0005](ADR-0005-buffer-liveness-strategy.md)'s header to record that clauses 1, 2, 4, 5, 7 and 8 are superseded or refined;
-5. the **register** — `plans/v2/ADR.md`, both the status table and the record entries for ADR-0002, ADR-0005,
-   ADR-0040 and this record;
-6. the **status consumers** — `plans/v2/STATUS.md` and the
-   [Phase 2 tracker](../phases/phase-02-minimal-compiled-voice-graph.md), whose *Decided, pending one review* section,
-   decision table and next actions all carry the pending state, and the
-   [master plan](../master-plan.md)'s two layout directives, which are written as effective on this acceptance;
-7. the **specification and inventory consumers**, which an earlier draft of this list missed and which an independent
-   read found: [`spec-host-profile-and-render-limits.md`](../specs/spec-host-profile-and-render-limits.md) still calls
-   ADR-0002 `Proposed`, assigns `channel_layout`'s meaning to it, and lists it as an unresolved owner; and
-   [`resource-limits.md`](../inventories/resource-limits.md)'s `LIMIT-0059` hands the live `Multi(n)` construction path
-   to ADR-0002 to decide. Both name this record instead — and `LIMIT-0059` is worth reading during P02-T013 rather
-   than only re-pointing, because a device reporting more than two channels is exactly the case an interleaved arena
-   has to widen or refuse.
+1. mark this record and [ADR-0040](ADR-0040-v2-owns-its-dsp.md) `Accepted`,
+   naming the reviewer;
+2. mark ADR-0002 `Superseded`, ADR-0040/0041 `Accepted`, and ADR-0005's
+   relationship in the compact [decision index](../ADR.md);
+3. replace the affected invariants and conformance rows in the
+   [current Sound Core specification](../specs/spec-sound-core-render-contract.md);
+4. advance [`NOW.md`](../NOW.md) from review to P02-T013.
 
-**What the transaction must not touch.** Phase 1's tracker and its exit review both record ADR-0002 as `Proposed`,
-and that is correct: they state what was true when that phase closed, and a closed phase's record is history rather
-than a status consumer. Editing them would make the archive agree with the present at the cost of no longer recording
-the past. The same test applies to anything else the transaction reaches: change it if it describes what is true now,
-leave it if it describes what was true then.
+Historical phase records, the legacy master plan, evidence, and accepted review
+documents are not status consumers and are not rewritten. The host-profile
+specification and resource-limit inventory point to the current Sound Core
+specification, so successor acceptance changes the contract once rather than
+repointing every consumer.
 
 Nothing in the phase proceeds before all four: P02-T006 closes on ADR-0040, and P02-T013 — the conversion — is written
 against clauses 1 to 17 below.
 
 ### Review history
+
+The history below records defects in earlier drafts. Its references to prior
+transaction shapes are historical; the current acceptance update is the four
+steps above.
 
 **The first independent read refused this record**, and the refusal is kept here rather than smoothed away, because
 four of its findings were holes a `Contract` cannot have and one of them was in the acceptance transaction itself:
@@ -63,7 +56,7 @@ four of its findings were holes a `Contract` cannot have and one of them was in 
 | Variable-width slots were introduced with "first fit by width" and nothing else, while ADR-0005's clauses 5 and 8 — in-place safety and the anti-aliasing check — silently assumed equal sizes | Clause 13 is an allocator contract: regions as offset and length, first fit by ascending offset, splitting, coalescing, and a stated extent. Clause 14 supersedes ADR-0005 clauses **1, 5, 7 and 8**, adds width compatibility to in-place, and strengthens the structural check to physical-range non-intersection |
 | Clauses 3 and 12 contradicted each other: control signals are always mono, yet every kernel had to be tested at two channels — and the envelope is a mono-only control node | Clause 12 is scoped to the counts a kernel's **own ports admit**, with a test asserting the port table for the mono-only ones |
 | Clause 15's acceptance check was not executable: no fixture set, no render length, no events, no digest artifact, no command | Clause 16 names a fixture manifest, a per-fixture digest committed from the planar build, a comparison test, and the four plan shapes the manifest must contain |
-| The acceptance transaction would have left the host-profile specification and the resource-limit inventory pointing at ADR-0002 | Item 7 of the transaction adds both |
+| The acceptance transaction would have left the host-profile specification and the resource-limit inventory pointing at ADR-0002 | Both consumers now point at the current Sound Core specification, which successor acceptance updates once |
 | Four factual slips: "three places" encode uniform width (there are five), "the catalog is five kinds" (eight kernels; five is the fixture's node count), a conversion appears in the resource report's "buffer count" (that is the plan's; the report carries scratch bytes), and EVD-0010's qualifications were not repeated where its figures were used | All four corrected in place, each saying what it previously said |
 | "Every mono path pays nothing" was not established, since EVD-0010 measured today's kernels rather than the channel-aware ABI clause 4 requires; ADR-0002's down-mix risk and its oversampling exclusion were dropped by a successor claiming to be readable alone | Clause 3 states the limit, *Risks* carries the mono-regression risk with a re-measurement as its control, and both of ADR-0002's items are restored |
 
@@ -105,9 +98,9 @@ constraint is dropped — a V2 that owns its own kernels, or a kernel interface 
 the measurement selects interleaved."*
 
 [ADR-0040](ADR-0040-v2-owns-its-dsp.md) drops exactly that constraint. Its clause 7 says so in advance and refuses to
-be accepted alone: accepting it leaves a `Contract`-class decision resting on a premise that no longer exists, and the
-working agreement's rule for two authorities in conflict is to stop the dependent work and repair the non-authoritative
-copy. That is what this record does.
+be accepted alone: accepting it leaves a `Contract`-class decision resting on a premise that no longer exists. The
+[Core V2 authority rule](../PROCESS.md#authorities) stops only the dependent work until the non-authoritative copy is
+repaired. That is what this record does.
 
 Between the two, P02-T012 replaced EVD-0008's model with a measurement of the real thing.
 [EVD-0010](../evidence/phase-02/EVD-0010-internal-channel-layout-real-path.md) ran the crate's own kernels over the

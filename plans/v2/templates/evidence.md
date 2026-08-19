@@ -1,70 +1,50 @@
 # EVD-NNNN: Evidence Title
 
-| Field         | Value                         |
-|---------------|-------------------------------|
-| ID            | EVD-NNNN                      |
-| Status        | Draft                         |
-| Phase         | NN                            |
-| Created       | YYYY-MM-DD                    |
-| Last reviewed | YYYY-MM-DD                    |
-| Retention     | Permanent or Until phase exit |
-| Related       | ADR-NNNN, PNN-TNNN            |
-| Superseded by | —                             |
+| Field | Value |
+|---|---|
+| ID | EVD-NNNN |
+| Status | Draft |
+| Phase | NN |
+| Created | YYYY-MM-DD |
+| Last reviewed | YYYY-MM-DD |
+| Supersedes | — or EVD-NNNN |
+| Superseded by | — or EVD-NNNN |
+| Source revision | COMMIT |
+| Retention | Permanent or Until phase exit |
+| Related | ADR-NNNN, PNN-TNNN |
+| Artifacts | PATHS |
 
-Allowed status and retention values are defined in
-`plans/v2/evidence/README.md`. Conclusion is recorded separately and does not
-replace lifecycle status.
+## Question and falsifier
 
-## Question or hypothesis
+State the question, the observation that would make the preferred conclusion
+wrong, and how `Supported`, `Not supported`, or `Inconclusive` is determined.
 
-State the question so that the result can be positive, negative, or inconclusive without changing the question after
-measurement.
+## Inputs and controls
 
-## Acceptance criteria
-
-Define metrics, thresholds, comparison categories, or review criteria before collecting results.
-
-## Source and environment
-
-- Source revision:
-- Platform and architecture:
-- Rust/tool versions:
-- Audio/sample configuration:
-- Feature flags:
-- Relevant host or device simulation:
-
-## Inputs
-
-List fixtures, projects, seeds, scripts, and asset digests needed to reproduce the work.
+Name fixtures, parameters, seeds, environment, build profile, comparison arms,
+and controls. State symmetry requirements before collecting data.
 
 ## Method
 
-Describe the procedure and controls.
+Describe the procedure, run ordering, repetition count, estimator, and how each
+control is executed. State how raw observations become the reported result.
 
-## Commands
+## Reproduction
 
 ```text
-Exact reproducible commands
+Exact commands
 ```
 
 ## Results
 
-Present compact raw measurements or link retained artifacts. Separate observed data from interpretation.
-
-## Interpretation
-
-Explain what the results support and what they do not establish.
+Link raw artifacts and present only the compact observations needed to evaluate
+the rule.
 
 ## Limitations
 
-List missing platforms, unrealistic inputs, measurement noise, prototype shortcuts, or other reasons not to
-overgeneralize.
+State what the method cannot establish.
 
 ## Conclusion
 
-Use `Supported`, `Not supported`, or `Inconclusive`, followed by the decision or gate impact.
-
-## Artifacts
-
-| Artifact | Location/digest | Retention or reproduction |
-|----------|-----------------|---------------------------|
+State the rule outcome and its direct decision or gate consequence without
+copying it into operational status documents.

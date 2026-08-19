@@ -34,15 +34,38 @@ changes already in the worktree, and do not stage them. "Clean" below means that
 the checks report no warnings or errors and that the intended change contains no
 unexplained files; it does not mean that the worktree has no uncommitted change.
 
-Run the complete local gate:
+Choose the gate from the change, rather than running unrelated work:
+
+| Change | Required verification before commit |
+|---|---|
+| Mechanical documentation, status, links, indexes, or `scripts/check_v2_docs.py` | `git diff --check`; for Core V2, run the documentation gate below |
+| Normative documentation, ADRs, specifications, evidence methods, or process rules | The documentation checks above plus one independent semantic review |
+| Rust behavior | The core Rust gate below plus `codex review --uncommitted` |
+| Features, dependencies, build configuration, release, or merge to `main` | The complete repository gate below plus `codex review --uncommitted` |
+
+The Core V2 documentation gate is:
 
 ```bash
+python3 -B scripts/check_v2_docs.py
+python3 -B -m unittest scripts/test_check_v2_docs.py
+```
+
+The core Rust gate is:
+
+```bash
+python3 -B scripts/check_v2_docs.py
+python3 -B -m unittest scripts/test_check_v2_docs.py
 cargo fmt --check
 cargo build --workspace
 cargo clippy --workspace --all-targets
 cargo test --workspace
 cargo test -p synth_engine --release resource_limit_probe_oversized_callback_exposes_build_mode_failure
 cargo doc --workspace --no-deps
+```
+
+The complete repository gate adds configuration and MSRV coverage:
+
+```bash
 cargo check --workspace --all-targets --no-default-features
 cargo check --workspace --all-targets --all-features
 cargo +1.97.0 check --workspace
@@ -55,27 +78,29 @@ therefore does not cover every workspace target. The explicit release-mode test
 is also required because its `#[cfg(not(debug_assertions))]` branch is not
 compiled by the ordinary development-profile test run.
 
-The gate mirrors `.github/workflows/quality.yml`, with
-`cargo build --workspace` deliberately stronger than CI's bare `cargo build`.
-The MSRV command requires the Rust 1.97 toolchain.
+The complete gate mirrors `.github/workflows/quality.yml`: the core gate plus
+the three configuration/MSRV commands above. The MSRV command requires the
+Rust 1.97 toolchain.
 
 The only pre-approved Clippy exceptions are `too_many_lines` for large
 `process()` functions, `cast_precision_loss` for `usize` to `f32` conversion in
 audio code, and `cast_possible_truncation` when the value is proven to fit.
 Every exception still needs a narrowly scoped allowance at the relevant site.
 
-Then review the uncommitted work with a reader that has no memory of what you
-meant:
+When the table requires a repository review, use a reader that has no memory of
+what you meant:
 
 ```bash
 codex review --uncommitted
 ```
 
-Read and report the findings before acting on them. Follow the
+Read and report the findings before acting on them. A separate independent
+design review and `codex review --uncommitted` are not both required when one
+review can satisfy the declared scope and stopping rule. Follow the
 [review and design protocol](#review-and-design-protocol), including its
 self-audit after every repair. Re-run every gate command affected by a repair;
-run the complete gate again when the repair changes behavior, public contracts,
-features, or dependencies.
+run the complete gate again when the repair changes features, dependencies,
+build behavior, release behavior, or a cross-configuration contract.
 
 Before the commit, inspect `git status --short`, `git diff`, and
 `git diff --cached`. Stage only the intended paths:
@@ -101,7 +126,7 @@ They must remain independent and bounded.
    *what would make this wrong?*
 2. **Do not ask the reviewer to author the frames.** A reader who wrote the
    constraints cannot independently review them.
-   `plans/v2/WORKING-AGREEMENT.md` requires a reader who did not author the
+   `plans/v2/PROCESS.md` requires a reader who did not author the durable
    change.
 3. **A criterion must be falsifiable.** State the observable symmetry,
    threshold, artifact, or failure that can violate it.

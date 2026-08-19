@@ -13,8 +13,10 @@ Examples expected during the migration include:
 - host I/O, clock, latency, and admission contract;
 - observation and long-running job contracts.
 
-Do not create speculative placeholder specifications. Until a specification is created and backed by accepted ADRs, the
-master plan and accepted individual decisions remain the applicable guidance.
+Do not create speculative placeholder specifications. Until a specification is
+created and backed by accepted ADRs, accepted individual decisions remain the
+applicable guidance. `ROADMAP.md` defines outcomes and order, not implementation
+semantics.
 
 ## ADR versus specification
 
@@ -58,6 +60,7 @@ when its display title changes.
 | Specification | Invariant prefix | Status | Scope |
 | --- | --- | --- | --- |
 | [Host profile and render limits](spec-host-profile-and-render-limits.md) | `HOST` | Current | The immutable preparation input a render plan is admitted against: field set, defaults, ownership, admission failure, and the `ResourceReport` |
+| [Sound Core render contract](spec-sound-core-render-contract.md) | `SOUND` | Current | The experimental compiler, plan, runtime state, arena, and render invariants through Phase 2 |
 
 Add a row when creating a specification and check that its prefix is unique
 before allocating invariants.

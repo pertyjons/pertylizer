@@ -8,7 +8,7 @@
 | Created                  | YYYY-MM-DD |
 | Last reviewed            | YYYY-MM-DD |
 | Reviewed source revision | COMMIT     |
-| Related phase tracker    | LINK       |
+| Roadmap outcome          | LINK       |
 
 ## Review scope
 
@@ -26,8 +26,8 @@ State the code, documents, platforms, features, fixtures, and exclusions covered
 
 ## Exit gates
 
-Copy each applicable gate from the master plan exactly for review purposes. Keep the master-plan link and do not change
-its meaning.
+Evaluate each applicable outcome and exit boundary from `ROADMAP.md`. Link the
+evidence; do not re-review accepted ADRs or repeat their rationale.
 
 | Gate      | Evidence or named tests | Result        |
 |-----------|-------------------------|---------------|
@@ -40,7 +40,7 @@ Every `N/A` result requires an accepted scope decision and explanation.
 | Command/check                            | Environment | Result  | Evidence |
 |------------------------------------------|-------------|---------|----------|
 | `cargo fmt --check`                      | —           | Not run | —        |
-| `cargo build`                            | —           | Not run | —        |
+| `cargo build --workspace`                | —           | Not run | —        |
 | `cargo clippy --workspace --all-targets` | —           | Not run | —        |
 | `cargo test --workspace`                 | —           | Not run | —        |
 | `cargo doc --workspace --no-deps`        | —           | Not run | —        |

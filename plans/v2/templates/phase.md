@@ -1,51 +1,8 @@
-# Phase NN: Phase Name
+# Phase Tracker Template (retired)
 
-| Field         | Value                           |
-|---------------|---------------------------------|
-| Status        | Not started                     |
-| Phase         | NN                              |
-| Last reviewed | YYYY-MM-DD                      |
-| Master plan   | `../master-plan.md#replace-with-phase-anchor` |
-| Exit review   | Not created                     |
+Do not create new active phase trackers. Add phase outcomes and dependencies to
+[`../ROADMAP.md`](../ROADMAP.md), and place the one active bounded slice in
+[`../NOW.md`](../NOW.md).
 
-## Objective
-
-State the phase outcome without restating the entire master plan.
-
-## Entry conditions
-
-- Condition.
-
-## Required decisions
-
-List exact ADR identifiers rather than relying only on a target-phase filter.
-
-| ADR | Required status | Deadline or permitted deferral |
-| --- | --- | --- |
-| ADR-NNNN | `Accepted` | Phase entry |
-
-## Tasks
-
-| ID       | Deliverable | Status      | Dependencies | ADRs/inventories |
-|----------|-------------|-------------|--------------|------------------|
-| PNN-T001 | Deliverable | Not started | None         | —                |
-
-## Active task
-
-Record exact scope, non-goals, expected output, verification, and implementation revision for the one active task.
-
-## Deliverables and verification
-
-| Task | Output/revision | Verification/evidence | Result |
-|------|-----------------|-----------------------|--------|
-
-## Deviations
-
-Record approved deviations and link the ADR or master-plan change. Use `None`
-when there are no deviations.
-
-## Exit readiness
-
-Status: Not ready
-
-Summarize missing gates and link the formal review. Only an accepted exit review may complete the phase.
+A completed phase is preserved by its formal exit review. Use Git history for
+task-by-task chronology rather than creating another live status authority.

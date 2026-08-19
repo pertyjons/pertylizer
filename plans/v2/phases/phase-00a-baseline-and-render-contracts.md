@@ -1,5 +1,9 @@
 # Phase 0A: Baseline, Limits, and Render-Core Contracts
 
+> **Completed historical record.** Current phase outcomes live in
+> [`../ROADMAP.md`](../ROADMAP.md), active work in [`../NOW.md`](../NOW.md), and
+> the accepted verdict in [`REV-P00A`](../reviews/phase-00a-exit-review.md).
+
 | Field | Value |
 |-------|-------|
 | Status | Complete |
@@ -13,9 +17,9 @@ Establish the bounded V1 evidence and the initial contracts needed by the experi
 not design live scheduling, project identity, asset storage, or application operations; those remain with their named
 later phases.
 
-The [master plan](../master-plan.md#phase-0a-baseline-limits-and-render-core-contracts) is authoritative for scope and
-gates. This tracker is authoritative only for task state, blockers, and next actions. The working method is defined by
-[the Core V2 working agreement](../WORKING-AGREEMENT.md).
+This section records the scope and gates used when the phase ran. It is retained
+for auditability; [`../ROADMAP.md`](../ROADMAP.md) and
+[`../PROCESS.md`](../PROCESS.md) now own the corresponding live rules.
 
 ## Required decisions
 

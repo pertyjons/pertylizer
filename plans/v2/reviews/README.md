@@ -26,19 +26,23 @@ for the final cutover review. Phase 10 has no review of its own; 10A–10E are r
 
 ## Review rules
 
-Copy [../templates/exit-review.md](../templates/exit-review.md). Evaluate each master-plan gate separately and link
-reproducible evidence or named automated tests. Record `N/A` only with a reason grounded in an accepted scope decision.
+Copy [../templates/exit-review.md](../templates/exit-review.md). Evaluate each
+applicable outcome and exit boundary in [`../ROADMAP.md`](../ROADMAP.md) and link
+reproducible evidence or named automated tests. Record `N/A` only with a reason
+grounded in an accepted scope decision.
 
 A review must also confirm:
 
-- every required ADR has the exact status permitted by the phase tracker's
-  required-decisions table; a permitted deferral names its later acceptance
-  gate, owner, and missing evidence;
+- every durable decision required by the roadmap outcome has the permitted
+  status; a deferral names its later acceptance gate, owner, and missing
+  evidence;
 - inventories have no unclassified entries in the reviewed scope;
 - current specifications match implementation;
 - deviations from the plan are approved and documented;
 - relevant repository quality gates pass;
 - failures and residual risks are visible.
 
-Do not edit an accepted review to make later regressions disappear. Record a new review addendum or reopen the phase
-explicitly.
+Do not edit an accepted review to make later regressions disappear. Record a
+new review addendum or reopen the phase explicitly. An exit review audits the
+named evidence; it does not perform another broad review of accepted artifacts
+unless later evidence invalidates them.

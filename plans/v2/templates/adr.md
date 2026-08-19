@@ -1,70 +1,57 @@
 # ADR-NNNN: Decision Title
 
-| Field         | Value              |
-|---------------|--------------------|
-| ID            | ADR-NNNN           |
-| Status        | Proposed           |
-| Phase         | NN                 |
-| Created       | YYYY-MM-DD         |
-| Last reviewed | YYYY-MM-DD         |
-| Related       | EVD-NNNN, PNN-TNNN |
-| Supersedes    | —                  |
-| Superseded by | —                  |
+| Field | Value |
+|---|---|
+| ID | ADR-NNNN |
+| Status | Proposed |
+| Phase | NN |
+| Created | YYYY-MM-DD |
+| Last reviewed | YYYY-MM-DD |
+| Related | EVD-NNNN, PNN-TNNN, SPEC |
+| Supersedes | — |
+| Superseded by | — |
 
-## Context
+## Durable boundary
 
-Describe the concrete problem, current behavior, and decision boundary. State what is intentionally outside this
-decision.
+Name the persisted, protocol, public, real-time/ownership, cross-phase,
+migration, delivered-behavior, or explicit product boundary that requires an
+ADR. If none applies, stop and record the choice in code, tests, or `NOW.md`.
 
-## Decision drivers
+## Decision boundary
 
-- Driver or invariant.
-- Product, correctness, real-time, migration, or maintenance constraint.
-
-## Options considered
-
-### Option A: Name
-
-Describe the option fairly, including advantages, costs, and failure modes.
-
-### Option B: Name
-
-Describe the option fairly, including advantages, costs, and failure modes.
-
-### Status quo
-
-Explain the consequence of making no V2-specific decision.
+State the concrete choice, verified premises, and non-goals.
 
 ## Evidence
 
-- Link relevant `EVD` records, inventory identifiers, prototypes, tests, and external standards.
-- State important uncertainty that remains after the evidence.
+Link current code, inventories, tests, and EVD records. State uncertainty that
+could change the decision.
+
+## Options
+
+Describe the viable options and the status quo fairly. Include only tradeoffs
+that affect the choice.
 
 ## Decision
 
-Write an implementable outcome. Use normative language and name defaults, errors, ownership, timing, and exceptions
-where relevant.
+State the selected option and the externally implementable consequence. The
+current specification, not this section, becomes the implementation contract on
+acceptance.
 
-## Consequences
+## Consequences and risks
 
-### Positive
+- Accepted cost:
+- Safety/correctness control:
+- Revisit condition:
 
-- Consequence.
+## Specification update
 
-### Negative
+Name the current specification and invariants that acceptance creates or
+changes.
 
-- Cost or tradeoff accepted by this decision.
+## Review
 
-### Risks and controls
+Reviewer:
 
-- Risk and its verification or mitigation.
-
-## Follow-up work
-
-| Task | Phase | Status |
-|------|-------|--------|
-
-## Revisit conditions
-
-State measurable conditions that would justify a superseding ADR. Use `None`
-when the decision has no known revisit trigger.
+Stopping rule: false conclusion-affecting fact, contradiction, unfillable
+contract, safety/correctness defect, or evidence incapable of supporting the
+claim. Editorial detail does not block.

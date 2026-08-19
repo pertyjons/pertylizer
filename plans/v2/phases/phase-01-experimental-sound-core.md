@@ -1,5 +1,9 @@
 # Phase 1: Introduce the Experimental Sound Core V2 Crate
 
+> **Completed historical record.** Current phase outcomes live in
+> [`../ROADMAP.md`](../ROADMAP.md), active work in [`../NOW.md`](../NOW.md), and
+> the accepted verdict in [`REV-P01`](../reviews/phase-01-exit-review.md).
+
 | Field | Value |
 |-------|-------|
 | Status | Complete |
@@ -16,10 +20,11 @@ quantum types, the host profile and its admission, a minimal compiler IR, and a 
 into the fixed internal quantum. Phase 1 renders offline from IR built in tests. It does not connect to projects, does
 not compile V1 patches, and does not build the scheduler.
 
-The [master plan](../master-plan.md#phase-1-introduce-the-experimental-sound-core-v2-crate) is authoritative for scope
-and exit gates; the [host-profile specification](../specs/spec-host-profile-and-render-limits.md) is the `Current`
-contract for the profile, its admission, and its failure behaviour. This tracker is authoritative only for task state,
-deviations, and next actions. The working method is [the Core V2 working agreement](../WORKING-AGREEMENT.md).
+This section records the scope and gates used when the phase ran. The
+[host-profile specification](../specs/spec-host-profile-and-render-limits.md)
+remains the current contract for the profile, its admission, and its failure
+behaviour; [`../ROADMAP.md`](../ROADMAP.md) and
+[`../PROCESS.md`](../PROCESS.md) own the live workflow rules.
 
 ## Entry conditions
 

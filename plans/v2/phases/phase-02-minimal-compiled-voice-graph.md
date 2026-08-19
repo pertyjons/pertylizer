@@ -1,13 +1,19 @@
 # Phase 2: Minimal Compiled Voice Graph
 
+> **Frozen execution record.** Active Phase 2 state moved to
+> [`../NOW.md`](../NOW.md) on 2026-08-19. This document preserves the detailed
+> execution and review chronology as it stood before the workflow
+> simplification; it is not an active status or current-contract authority.
+
 | Field | Value |
 |-------|-------|
-| Status | Active |
+| Record state | Frozen 2026-08-18; see [`NOW.md`](../NOW.md) |
 | Phase | 02 |
 | Started | 2026-08-17 |
 | Last updated | 2026-08-18 |
 | Master plan | [`master-plan.md`](../master-plan.md#phase-2-minimal-compiled-voice-graph) |
-| Exit review | Not created |
+| Phase status at freeze | Active |
+| Exit review at freeze | Not created |
 
 ## Objective
 
@@ -21,9 +27,10 @@ It is also where `Q` stops being provisional. ADR-0037's 64 frames was accepted 
 came back inconclusive, and this phase's exit gate makes the re-measurement **binding** — against real V2 nodes, which
 is the first time such a thing exists.
 
-The [master plan](../master-plan.md#phase-2-minimal-compiled-voice-graph) is authoritative for scope and exit gates.
-This tracker is authoritative only for task state, deviations, and next actions. The working method is
-[the Core V2 working agreement](../WORKING-AGREEMENT.md).
+This section records the scope and entry assumptions at the migration point.
+[`../ROADMAP.md`](../ROADMAP.md) owns the live outcome,
+[`../NOW.md`](../NOW.md) owns current task state, and
+[`../PROCESS.md`](../PROCESS.md) owns the working method.
 
 ## Entry conditions
 

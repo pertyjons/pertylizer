@@ -1,27 +1,34 @@
 # Phase 0B: Migration Inventories and Project Contracts
 
-| Field         | Value                                                                              |
-|---------------|------------------------------------------------------------------------------------|
-| Status        | Active                                                                             |
-| Phase         | 00B                                                                                |
-| Last reviewed | 2026-08-12                                                                         |
-| Master plan   | [Phase 0B](../master-plan.md#phase-0b-migration-inventories-and-project-contracts) |
-| Exit review   | Not created                                                                        |
+> **Frozen execution record.** Active Phase 0B state moved to
+> [`../NOW.md`](../NOW.md) on 2026-08-19. This document preserves the audit
+> chronology and detailed task decomposition as they stood at migration; it is
+> not an active status authority.
+
+| Field | Value |
+|---|---|
+| Record state | Frozen 2026-08-19; see [`NOW.md`](../NOW.md) |
+| Phase | 00B |
+| Last reviewed | 2026-08-12 |
+| Master plan | [Phase 0B](../master-plan.md#phase-0b-migration-inventories-and-project-contracts) |
+| Phase status at freeze | Active |
+| Exit review at freeze | Not created |
 
 ## Objective
 
 Produce the exhaustive V1 migration ledgers and the project/application contracts required before Phase 10, without
 blocking the render-core work in Phases 1-4.
 
-The master plan defines scope and exit gates. This tracker records execution state only: the tasks below decompose the
-Phase 0B `Work` list and add no scope of their own.
+The scope, entry conditions, and task state below are a snapshot from before
+the workflow migration. [`../ROADMAP.md`](../ROADMAP.md) owns the live outcome
+and [`../NOW.md`](../NOW.md) owns the remaining work.
 
 ## Entry conditions
 
-- The master plan is available and reviewed for current relevance.
+- The phase plan was available and reviewed for relevance when this record was active.
 - V1 remains the production engine.
 - The documentation workflow and identifier rules are understood.
-- A task is assigned and marked `Active` before implementation begins.
+- A task was assigned and marked `Active` here before implementation began.
 
 This phase may run concurrently with Phase 0A and with Phases 1-4. It does not require Phase 0A to be complete.
 
@@ -48,8 +55,8 @@ dependent phases.
 
 ## Tasks
 
-| ID        | Deliverable                                                     | Status      | Dependencies         | Primary record                                         |
-|-----------|-----------------------------------------------------------------|-------------|----------------------|--------------------------------------------------------|
+| ID        | Deliverable                                                     | Status at freeze | Dependencies         | Primary record                                         |
+|-----------|-----------------------------------------------------------------|------------------|----------------------|--------------------------------------------------------|
 | P00B-T001 | Complete the persisted-state ownership audit                    | Active      | None                 | [State inventory](../inventories/state-ownership.md)   |
 | P00B-T002 | Complete the capability and reachability audit                  | Active      | None                 | [Capability inventory](../inventories/capabilities.md) |
 | P00B-T003 | Complete the identity and reference audit                       | Active      | None                 | [Identity inventory](../inventories/identities.md)     |

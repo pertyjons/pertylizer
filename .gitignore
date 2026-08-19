@@ -8,6 +8,7 @@ Thumbs.db
 .vscode/
 *.profraw
 *.profdata
+__pycache__/
 .env
 
 # AI tool local config

@@ -8,8 +8,9 @@ because a plan is only as current as its last review against the code.
 
 **[v2/](v2/README.md) — Pertylizer Core V2.** The migration to a canonical project document, one application-operation
 boundary, and a compiled audio engine. It is a coordination space rather than a single document: start at
-[v2/README.md](v2/README.md), then [v2/STATUS.md](v2/STATUS.md) for what is active now. Anything touching project
-ownership, save/load, the engine, or the mutation path should be checked against it before it is designed twice.
+[v2/README.md](v2/README.md), then [v2/NOW.md](v2/NOW.md) for what is active now. Anything touching project
+ownership, save/load, the engine, or the mutation path should be checked against
+its current specifications before it is designed twice.
 
 ## Backlog
 
@@ -34,6 +35,15 @@ remaining rationale worth keeping, delete it rather than leaving a stale documen
 ## Relationship to Core V2
 
 Core V2 does not replace these plans, but it does constrain several of them: it owns the project model, the mutation
-boundary, the asset and tuning model, and the render/job contract. [v2/master-plan.md](v2/master-plan.md) Part VI
-records how each overlapping plan is expected to align. If a plan here contradicts an accepted Core V2 decision, the
-accepted decision wins and the plan is updated.
+boundary, the asset and tuning model, and the render/job contract.
+[v2/ROADMAP.md](v2/ROADMAP.md) records the migration order, while current
+contracts live under [v2/specs/](v2/specs/README.md). If a plan here contradicts
+a current Core V2 specification, the specification wins and the plan is
+updated.
+
+The legacy master plan's
+[coordination map](v2/master-plan.md#part-vi-coordination-with-existing-plans)
+remains the navigation index for overlaps with the MCP redesign, game runtime,
+headless tools, sampling/tuning work, OSC, visualization, and project safety.
+It is historical guidance rather than a current contract; move a rule into a
+current specification or roadmap outcome before implementation depends on it.

@@ -174,9 +174,9 @@ the option that produces the museum without anyone choosing it.
    interleaved."* ADR-0002 is `Accepted`, `Contract` class, and its supporting argument is the premise this record
    removes.
 
-   The working agreement governs what follows: *"When authorities disagree, stop the dependent work, report the
-   conflict, and repair the non-authoritative copy"*, and *"prefer a focused successor when independent clauses
-   survive"*. Therefore:
+   The Core V2 process governs what follows: conflicting authorities stop only
+   their dependent work, and the current specification must present one
+   coherent rule. Therefore:
 
    - **P02-T006 and P02-T007 do not proceed** while this conflict is open. T006's subject is the extraction this
      record removes; T007 adds nodes, and every node added makes the layout question dearer to answer — which is
@@ -225,7 +225,7 @@ the option that produces the museum without anyone choosing it.
   Phase 5's adapter — not this record — is how V2 gets the rest of the catalog.
 - **Risk: divergence is discovered late, when both engines have users.** Control: partial. P02-T008 measures the gap
   once, and no accepted record requires the comparison to be repeated after it. Making it recurrent would be a change
-  to the working agreement or the master plan, and this record notes the gap rather than legislating one.
+  to the Core V2 process or roadmap, and this record notes the gap rather than legislating one.
 
 ## Follow-up work
 

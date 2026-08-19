@@ -27,7 +27,7 @@ The field set below is complete against the master plan's initial Phase 1 list. 
 [Corrections](#corrections); the full review result is [REV-P00A](../reviews/phase-00a-exit-review.md), not duplicated
 here.
 
-Fields owned by decisions that are still `Proposed` — ADR-0002, ADR-0009, ADR-0024, ADR-0027, and ADR-0034 — are marked
+Fields owned by decisions that are still `Proposed` — ADR-0009, ADR-0024, ADR-0027, and ADR-0034 — are marked
 in the field tables and listed under [*Unresolved questions*](#unresolved-questions). None of them blocks Phase 1.
 
 ## Scope
@@ -50,19 +50,21 @@ until it retires.
 - **The render quantum.** Its semantics are [ADR-0001](../decisions/ADR-0001-internal-render-quantum.md)'s and its frame
   count is [ADR-0037](../decisions/ADR-0037-render-quantum-value.md)'s. `Q` appears below only as a symbol; nothing here
   is sized by its provisional value, which ADR-0037's acceptance forbids.
-- **Class semantics and configuration ownership.** [ADR-0021](../decisions/ADR-0021-host-profile-and-admission-policy.md)
-  decides both axes. This specification sets numbers for the one owner ADR-0021 assigned to P00A-T005 and touches none
-  of the other six.
-- **Limits owned elsewhere.** 48 of the ledger's 76 entries — none undecided, since ADR-0038 split `LIMIT-0014` — belong to a node contract, a domain/format contract, job
-  policy, application settings, a protocol contract, or are removed. They are not profile fields and do not appear here
-  except where a node declares a capacity *into* admission.
+- **Class semantics and configuration ownership.**
+  [ADR-0021](../decisions/ADR-0021-host-profile-and-admission-policy.md) decides both axes. This specification sets
+  numbers for the one owner ADR-0021 assigned to P00A-T005 and touches none of the other six.
+- **Limits owned elsewhere.** 48 of the ledger's 76 entries — none undecided, since ADR-0038 split `LIMIT-0014` —
+  belong to a node contract, a domain/format contract, job policy, application settings, a protocol contract, or are
+  removed. They are not profile fields and do not appear here except where a node declares a capacity *into* admission.
 - **Hardware clock calibration, latency compensation, and drift.**
   [ADR-0022](../decisions/ADR-0022-hardware-time-mapping.md), deferred to the Phase 3 entry gate. This specification
   sizes the forward event horizon; it does not decide how a host timestamp maps into the epoch it is measured against.
 - **Job bounds.** Render tail, output size, pre-roll, and quality presets belong to
   [ADR-0028](../decisions/ADR-0028-long-running-job-contract.md), deferred to the Phase 4 entry gate.
-- **What an observation tap is for** (ADR-0027), **what a channel layout is** (ADR-0002), **what a send is** (ADR-0034),
+- **What an observation tap is for** (ADR-0027), **what a send is** (ADR-0034),
   and **what a recording take is** (ADR-0024). This specification carries their capacities, not their meanings.
+  The current internal meaning of a channel layout belongs to the
+  [Sound Core render contract](spec-sound-core-render-contract.md).
 
 ## Terminology
 
@@ -76,9 +78,9 @@ by a compiled-in constant. The application does not raise a capability; it disco
 
 **Render limits**
 
-The subset of the profile that describes budgets the operator chooses: how large a plan may be, **or which streams may be
-prepared at all**, before the renderer refuses it. A render limit may be raised, at the cost of memory and CPU that the
-resource report accounts for — and only within a ceiling the engine owns, where one exists.
+The subset of the profile that describes budgets the operator chooses: how large a plan may be, **or which streams may
+be prepared at all**, before the renderer refuses it. A render limit may be raised, at the cost of memory and CPU that
+the resource report accounts for — and only within a ceiling the engine owns, where one exists.
 
 The second clause is not padding: `accepted_sample_rates` is a limit that no plan can exceed, because no plan carries a
 rate. An earlier revision defined this class over plan size alone, which left that field outside the category its own
@@ -116,8 +118,8 @@ open owner is a starting point recorded honestly, not a rule invented here.
 2. **HOST-INV-002** — Exactly one profile admits a prepared plan, and the renderer reads every capacity from the
    prepared plan rather than from the profile. A capacity that reaches the audio thread without having passed admission
    is a defect, not a fallback.
-3. **HOST-INV-003** — **On the device path**, every **queried capability** — the three values `HOST-INV-005` closes over,
-   not `source`, which nothing queries — is established from queried host and
+3. **HOST-INV-003** — **On the device path**, every **queried capability** — the three values `HOST-INV-005` closes
+   over, not `source`, which nothing queries — is established from queried host and
    device capability. A hardcoded advertised range is forbidden, including on a branch that successfully queried the
    device — this is the `LIMIT-0057` anti-pattern ADR-0021 part 4 names. The rule is enforced by construction rather
    than by inspection: `HostCapabilities::from_device` takes every capability as an argument and has no default for
@@ -128,8 +130,9 @@ open owner is a starting point recorded honestly, not a rule invented here.
    **What that buys, stated exactly.** No runtime tag can prove that a query happened — this specification already
    records that finding, and it applies to the constructor split too: `::from_device` is public and takes values, so a
    caller determined to mislabel itself can pass constants and obtain `Device`. Three narrower things do hold, and they
-   are the guarantee: a capability that was not queried must be **written at the call site**, where review sees a literal
-   instead of a defaulted field; there is no `Default` and no `..Default::default()` tail for the shape test to permit;
+   are the guarantee: a capability that was not queried must be **written at the call site**, where review sees a
+   literal instead of a defaulted field; there is no `Default` and no `..Default::default()` tail for the shape test to
+   permit;
    and a path with no device **need not** mislabel itself, because `::offline` and `::harness` exist and their tags are
    honest. Earlier
    revisions of this paragraph claimed `Device` was unforgeable and, before that, that the tag could not disagree with
@@ -175,7 +178,8 @@ open owner is a starting point recorded honestly, not a rule invented here.
    2. **an accepted ADR that creates it** — `forward_event_horizon` is ADR-0032 clause 21's;
    3. **the residual: an enumerated list this specification creates.** Ground 3 is a *closed set*, not "everything
       else" — that would make the ownership restriction unenforceable, since a protocol- or job-owned capacity would
-      pass by default. The list is: the seven no-antecedent fields **minus `forward_event_horizon`, which ground 2 already selects** — so six — plus `max_held_notes` and `max_events_per_quantum`,
+      pass by default. The list is: the seven no-antecedent fields **minus `forward_event_horizon`, which ground 2
+      already selects** — so six — plus `max_held_notes` and `max_events_per_quantum`,
       whose ledger entries (`LIMIT-0031`, `LIMIT-0075`) appear in the `Replaces` column as **provenance** — a different
       question from what admits the field. Adding to this list is a change to this specification, reviewable as such.
 
@@ -186,8 +190,9 @@ open owner is a starting point recorded honestly, not a rule invented here.
       the OSC ring becomes `LIMIT-0076` owned by the protocol contract that serializes it — **so it is not a profile
       field at all**, and the profile carries one capacity here rather than two.
 
-   Grounds 1 and 2 are disjoint by construction, and 3 excludes both, so each limit field matches exactly one. **"No V1 antecedent" is a different axis and
-   does not select a ground**: it answers whether V1 had the thing, not what admits the field, and
+   Grounds 1 and 2 are disjoint by construction, and 3 excludes both, so each limit field matches exactly one. **"No V1
+   antecedent" is a different axis and does not select a ground**: it answers whether V1 had the thing, not what admits
+   the field, and
    `forward_event_horizon` is on both lists precisely because those are different questions. An earlier revision
    defined ground 3 *as* the no-antecedent list, which left `forward_event_horizon` matching two grounds and
    `max_held_notes` matching none. A capacity that belongs to another owner may not be smuggled in on any of the three.
@@ -217,11 +222,12 @@ open owner is a starting point recorded honestly, not a rule invented here.
 
    **That does not discharge `LIMIT-0004`'s disposition, and an earlier revision claimed it did "in substance".** The
    ledger requires a *job* outside the range to be refused with a job admission error naming the requested rate and the
-   profile range. A job is not a plan and not a profile: it asks for a rate before either exists, so the check belongs to
+   profile range. A job is not a plan and not a profile: it asks for a rate before either exists, so the check belongs
+   to
    the job contract — [ADR-0028](../decisions/ADR-0028-long-running-job-contract.md), `Deferred` to the Phase 4 entry
-   gate — and remains **outstanding**, not satisfied by a construction failure one layer down. What construction gives is
-   a floor: no out-of-range stream can be prepared even before the job layer exists. Both enforcement points are real and
-   neither substitutes for the other.
+   gate — and remains **outstanding**, not satisfied by a construction failure one layer down. What construction gives
+   is a floor: no out-of-range stream can be prepared even before the job layer exists. Both enforcement points are real
+   and neither substitutes for the other.
 8. **HOST-INV-008** — A node's intrinsic capacity is declared by the node, reported in the `ResourceReport`, and
    contributes to admission. It is not a profile field, and no operator setting may raise it.
 9. **HOST-INV-009** — **Dropping** at runtime is permitted only for the queues explicitly marked *live bounded queue* in
@@ -309,7 +315,8 @@ open owner is a starting point recorded honestly, not a rule invented here.
     **deferred, not dropped — conditionally.** The guarantee holds while the deferred store has room, and no bound for
     that store is derivable from the current field set (see below), so **this invariant is not implementable until
     Phase 3 defines the ingress capacities and the store's size or its exhaustion behaviour.** The clause is written in
-    full because the rest of it constrains that work; it is not yet a promise the renderer can keep. Deferral advances an event's **render position** by exactly `Q` frames, so it is
+    full because the rest of it constrains that work; it is not yet a promise the renderer can keep. Deferral advances
+    an event's **render position** by exactly `Q` frames, so it is
     rendered in the following quantum at the same offset, where it is re-evaluated and may defer again. It is counted
     under its own **capacity-deferral counter**, and it **must not fire ADR-0001 clause 16's late counter — because
     clause 16's condition does not hold.** That clause triggers on "an event whose timestamp falls in an
@@ -322,7 +329,8 @@ open owner is a starting point recorded honestly, not a rule invented here.
 
     **The envelope's `time` is immutable, and deferral does not rewrite it.** ADR-0032 clause 17 stamps every event
     with `(epoch, time, provenance)`; deferral changes which quantum renders the event, not what the event says about
-    when it was stamped. The distinction is not bookkeeping pedantry — it is observable in three places. **Diagnostics:**
+    when it was stamped. The distinction is not bookkeeping pedantry — it is observable in three places.
+    **Diagnostics:**
     the counter says how often the engine was full, and only a preserved stamp lets the report also say *how far* an
     event was displaced, which under sustained overrun is the quantity that matters and is otherwise invisible.
     **Recording:** ADR-0032 clause 7 resolves a take's placement to musical time before saving, so a rewritten stamp
@@ -349,8 +357,9 @@ open owner is a starting point recorded honestly, not a rule invented here.
     **The ADR-0001 blocker is therefore broader than the late-counter question.** It is not only *when* clause 16's
     condition is evaluated; it is whether a quantum may defer at all under clauses 12 and 14, and if so, what the
     exception's shape is. Both belong in one ADR-0001 clarification or successor, and until it lands HOST-INV-021 is
-    proposing an exception to an accepted decision rather than applying one. **Whether clause 16's clamp likewise preserves or rewrites the stamp is ADR-0001's question, not this
-    specification's**, and it is recorded as unresolved rather than answered here by implication.
+    proposing an exception to an accepted decision rather than applying one. **Whether clause 16's clamp likewise
+    preserves or rewrites the stamp is ADR-0001's question, not this specification's**, and it is recorded as unresolved
+    rather than answered here by implication.
 
     Clause 16 is not the mechanism here, only the precedent that an event may be moved forward rather than dropped. Its
     own rule — "clamped to the first not-yet-rendered quantum boundary" — is circular for this case, because the
@@ -458,7 +467,8 @@ open owner is a starting point recorded honestly, not a rule invented here.
     counted and the one place an external producer can outrun the engine.
 
     **This does not breach ADR-0032 clause 23**, which forbids *ADR-0023* from perturbing a timestamp to encode
-    precedence. Deferral moves an event because a bounded resource is full and never reorders two events to express priority.
+    precedence. Deferral moves an event because a bounded resource is full and never reorders two events to express
+    priority.
     **It is not authorised by ADR-0001 clause 16**, as an earlier revision of this paragraph claimed: clause 16's
     exception is for an already-rendered quantum, which is explicitly not the case here, and whether a quantum may
     defer at all is one of the two things the ADR-0001 blocker above asks for. A reader arriving from clause 23
@@ -475,7 +485,8 @@ open owner is a starting point recorded honestly, not a rule invented here.
     clamped forward and raises the first; if the quantum it lands in is itself full, it is deferred and raises the
     second as well. **A delayed release does not automatically raise both**: ADR-0032 clause 27 releases events as
     their quanta approach, so a full window can delay an event that is still on time, and the late counter rises only
-    when the delay pushes a timestamp into a quantum that has rendered. All of that is correct — two distinct facts about one event
+    when the delay pushes a timestamp into a quantum that has rendered. All of that is correct — two distinct facts
+    about one event
     — but it means the counters may not be added to obtain a number of affected events, and a diagnostics consumer
     that sums them overcounts.
 
@@ -514,8 +525,9 @@ returned.** Two halves, because they land at different points in the API:
    available counts and the authored object responsible. This is the existing admission behaviour in the failure
    table, not a new one, and it needs no API change.
 2. **At `Renderer::render`**, whose master-plan signature now returns `Result<(), RenderError>`
-   ([Phase 1 work list](../master-plan.md#phase-1-introduce-the-experimental-sound-core-v2-crate)): events are grouped by the same
-   absolute internal-quantum boundaries the renderer uses, independent of how the caller partitions blocks. If any one
+   ([Phase 1 work list](../master-plan.md#phase-1-introduce-the-experimental-sound-core-v2-crate)): events are grouped
+   by the same absolute internal-quantum boundaries the renderer uses, independent of how the caller partitions blocks.
+   If any one
    quantum exceeds `max_events_per_quantum`, the call is rejected before renderer state or output is mutated, with a
    release-active error naming that quantum and the requested and available counts. The span's **total** count is not a
    limit: one call may validly cover several quanta and therefore contain more than `max_events_per_quantum` events in
@@ -632,30 +644,33 @@ Each group is a struct of newtypes. The newtypes, one per unit:
 
 **The rate type is V2's own, because V1's clamps.** `synth_core::SampleRate::new` turns `NaN`, zero, and negative into
 `1.0`, so a constructor handed one cannot tell invalid input from a genuine 1 Hz endpoint, and `HOST-INV-018` asks every
-quantity field for a *fallible* constructor. Two earlier revisions tried to work around this — reusing the existing type,
-then taking raw `f32` Hz at every V2 constructor — and the second traded a silent clamp for an untyped public argument,
-which the repository's newtype rule forbids outright. The resolution is the one the specification already applies one row
-up: ADR-0021 part 3 replaces V1's clamping `VoiceCount` rather than reusing it, and V1's `SampleRate` clamps for the same
-reason and gets the same treatment. V2's `SampleRate` has a private field and a fallible constructor that rejects a
-non-finite or non-positive rate.
+quantity field for a *fallible* constructor. Two earlier revisions tried to work around this — reusing the existing
+type, then taking raw `f32` Hz at every V2 constructor — and the second traded a silent clamp for an untyped public
+argument, which the repository's newtype rule forbids outright. The resolution is the one the specification already
+applies one row up: ADR-0021 part 3 replaces V1's clamping `VoiceCount` rather than reusing it, and V1's `SampleRate`
+clamps for the same reason and gets the same treatment. V2's `SampleRate` has a private field and a fallible constructor
+that rejects a non-finite or non-positive rate.
 
 **The conversion is one-way, and the asymmetry is the point.** V2 to `synth_core` is infallible and provided: the value
-has already passed V2's validation, and the permitted `synth_dsp` kernels take `synth_core::SampleRate`, so without it the
-only way to reach a kernel would be to unwrap to `f32` and rebuild — an untyped hop at exactly the boundary this rule
-protects. `synth_core` to V2 does **not** exist. A third revision offered it as fallible and claimed that kept clamped
-values out; it cannot. `SampleRate::new(0.0)`, a negative rate, and `NaN` all arrive as `1.0`, which no conversion can
-tell from a rate of one hertz, so a fallible signature would advertise a guarantee it does not hold. A phase that must
+has already passed V2's validation, and the permitted `synth_dsp` kernels take `synth_core::SampleRate`, so without it
+the only way to reach a kernel would be to unwrap to `f32` and rebuild — an untyped hop at exactly the boundary this
+rule protects. `synth_core` to V2 does **not** exist. A third revision offered it as fallible and claimed that kept
+clamped values out; it cannot. `SampleRate::new(0.0)`, a negative rate, and `NaN` all arrive as `1.0`, which no
+conversion can tell from a rate of one hertz, so a fallible signature would advertise a guarantee it does not hold. A
+phase that must
 admit a rate from a V1 surface validates the raw value where it is still available, and constructs V2's type directly.
 
 **Ownership.** The application constructs the profile off the audio thread and hands it to the compiler. The compiler
 reads it and produces a prepared plan plus a `ResourceReport`. The renderer reads the prepared plan and never the
 profile. Nothing else holds a reference: a profile is an argument, not a service.
 
-**Offline and test rendering.** An offline render has no device to query, so `CapabilitySource::Offline` records that the
-capability half was declared rather than discovered, and a report or receipt that quotes a profile can say which it was.
+**Offline and test rendering.** An offline render has no device to query, so `CapabilitySource::Offline` records that
+the capability half was declared rather than discovered, and a report or receipt that quotes a profile can say which
+it was.
 HOST-INV-003 is therefore **scoped to the device path** rather than universal: a job that declares its capabilities
-through `::offline` or `::harness` is honest, and a device path that fills one in from a constant is the defect. Review found the
-earlier unconditional wording unsatisfiable — it forbade the offline path the same model provides, and it asked for a
+through `::offline` or `::harness` is honest, and a device path that fills one in from a constant is the defect. Review
+found the earlier unconditional wording unsatisfiable — it forbade the offline path the same model provides, and it
+asked for a
 conformance test no runtime tag can pass, since a `Device` tag cannot prove that a query happened. One constructor per
 source moves what can be guaranteed from a claim about values to a property of the API shape, and HOST-INV-003 states
 exactly how far that reaches.
@@ -694,7 +709,7 @@ one number alone made three earlier revisions of this section ambiguous about wh
 |-------|------|---------|-------|----------|---------|
 | `sample_rate` | `SampleRate` | Queried | Queried | — | — |
 | `maximum_block_size` | `FrameCount` | Queried; no compiled-in ceiling | Queried | `LIMIT-0001`, `LIMIT-0057` | Phase 9 |
-| `channel_layout` | `ChannelLayout` | Queried on the device path; supplied by the caller on the declared paths. No compiled-in default | Queried; **ADR-0002 owns what a layout may be** | `LIMIT-0059` | Phase 2 |
+| `channel_layout` | `ChannelLayout` | Queried on the device path; supplied by the caller on the declared paths. No compiled-in default | Queried; the [Sound Core render contract](spec-sound-core-render-contract.md) owns the currently admitted internal meaning | `LIMIT-0059` | Phase 2 for internal storage; Phase 9 for live multichannel support |
 | `source` | `CapabilitySource` | Set by the constructor path, not passed as a free choice among all three variants | **Derived**, by the stated rule that the constructor sets it — **not queried.** `HOST-INV-003`'s every-capability-is-an-argument rule scopes to the three host values above, and that invariant states exactly what the split buys: an unqueried value must be written at the call site, no `Default` exists, and a device-less path has an honest constructor to use. It is not a forgery-proof tag, and two earlier revisions claimed it was | — | — |
 
 **The accepted rate range is a render limit, and this table used to carry it.** It moved to
@@ -877,7 +892,8 @@ rather than against the argument.
 So **V1 has no per-quantum event limit**, 256 is chosen rather than carried over, and
 the earlier `LIMIT-0014` description was a **P00A-T004 finding against a task marked `Complete`**: the entry was
 recorded from a constant's name and the first three passes did not reach its uses. The corrected ledger entry still
-maps to a successor field, so coverage stands; what failed was its original basis. (The count itself moved separately: `LIMIT-0015` left the cohort in the same audit, taking it from 30 to **29**, and
+maps to a successor field, so coverage stands; what failed was its original basis. (The count itself moved separately:
+`LIMIT-0015` left the cohort in the same audit, taking it from 30 to **29**, and
 `LIMIT-0014` was then undecided pending a GUI/OSC split, which ADR-0038 part 4 has since performed; the count is
 **28**, and every one is settled.) The no-antecedent count
 rose to eight and returned to seven once review registered `max_events_per_quantum`'s real antecedent, `LIMIT-0075`.
@@ -886,7 +902,10 @@ rose to eight and returned to seven once review registered `max_events_per_quant
 `LIMIT-0012`'s command ring as the only in-direction capacity, and it carries `EngineCommand`s rather than positioned
 events. Defining V2's ingress streams and their capacities is Phase 3's, and is listed as unresolved.
 
-> **Deferred to Phase 3.** Everything from here to the end of this subsection describes HOST-INV-021's deferral mechanism, which is **not normative** — see [*Deferred to Phase 3*](#deferred-to-phase-3). It is retained as the specification of the deferred work and the record of what three earlier revisions of it got wrong. No Phase 1 or Phase 2 implementation may act on it.
+> **Deferred to Phase 3.** Everything from here to the end of this subsection describes HOST-INV-021's deferral
+> mechanism, which is **not normative** — see [*Deferred to Phase 3*](#deferred-to-phase-3). It is retained as the
+> specification of the deferred work and the record of what three earlier revisions of it got wrong. No Phase 1 or
+> Phase 2 implementation may act on it.
 
 HOST-INV-021 fixes it: **the excess is deferred, not dropped.** An event that does not fit has its *render position*
 advanced by exactly `Q` frames — the following quantum, same offset — is re-evaluated there, and is counted under its
@@ -938,7 +957,8 @@ provenance only, because an event held for an unbounded time pins a queue slot. 
 below: a host delivers a block's events stamped within that block (at most `maximum_block_size`), an adapter may stamp
 slightly ahead, and HOST-INV-013 requires at least `maximum_block_size + Q`. Nothing bounds it from above except the
 cost of a pinned slot — **and that cost cannot be quantified yet**. An earlier revision put it at
-`event_queue_capacity` slots times the horizon; that field sized the engine's egress rings and is now withdrawn entirely, so it never sized ingress
+`event_queue_capacity` slots times the horizon; that field sized the engine's egress rings and is now withdrawn
+entirely, so it never sized ingress
 slots. The quantity is the ingress capacity times the horizon, and the ingress capacity is what Phase 3 must define.
 
 One second is chosen because it is far above every legitimate ingress stamp — a 4 096-frame block is 85 ms at 48 kHz —
@@ -1128,7 +1148,12 @@ being budgeted in the profile.
   threshold, until Phase 7 can justify one. See [*Scripts*](#scripts) for why a field with an unset value was the wrong
   shape for it.
 
-**The ledger's 28 `HostProfile`-owned entries**, each with its successor field. The count has moved twice and both moves are recorded rather than absorbed: it was 30 before the pass-4 use-site audit found `LIMIT-0015` to be four deferred-drop channels and moved it to `N/A — removed`, and it reached 28 again when ADR-0038 removed `LIMIT-0013` — a public channel with no workspace production caller, removed as an explicit compatibility break — and split `LIMIT-0014`, whose GUI half is `HostProfile`-owned while its OSC half became `LIMIT-0076` under the protocol contract. **The mapping is now total**; every previous revision of this table carried at least one entry with no settled owner:
+**The ledger's 28 `HostProfile`-owned entries**, each with its successor field. The count has moved twice and both moves
+are recorded rather than absorbed: it was 30 before the pass-4 use-site audit found `LIMIT-0015` to be four
+deferred-drop channels and moved it to `N/A — removed`, and it reached 28 again when ADR-0038 removed `LIMIT-0013` — a
+public channel with no workspace production caller, removed as an explicit compatibility break — and split
+`LIMIT-0014`, whose GUI half is `HostProfile`-owned while its OSC half became `LIMIT-0076` under the protocol contract.
+**The mapping is now total**; every previous revision of this table carried at least one entry with no settled owner:
 
 | Entry | Field |
 |-------|-------|
@@ -1170,8 +1195,9 @@ An earlier revision listed eleven, and review found the count wrong in three sep
 were listed as having no antecedent while their own rows named `LIMIT-0002`, `LIMIT-0003`, and `LIMIT-0073` — they are
 new as an *aggregate*, which is `LIMIT-0073`'s finding, but the resources themselves are V1's.
 `max_script_instructions_per_quantum` is no longer a field at all. And eleven items were summarised as ten in the phase
-tracker and `STATUS.md`. The count has since moved three times more — to seven after that correction, to **eight** when the use-site audit
-showed `LIMIT-0014` is an egress ring, and back to **seven** when review found the real antecedent, `LIMIT-0075`.
+tracker and `STATUS.md`. The count has since moved three times more — to seven after that correction, to **eight** when
+the use-site audit showed `LIMIT-0014` is an egress ring, and back to **seven** when review found the real antecedent,
+`LIMIT-0075`.
 
 ## Lifecycle and timing
 
@@ -1240,7 +1266,9 @@ it omitted admission refusal, the behaviour most fields actually take, and it ha
 
 Every counter named above reaches the **structured diagnostics report**, which is the report a Phase exit review
 inspects. This is the specific control against the failure mode ADR-0021 records twice: `LIMIT-0013`'s drop counters
-existed for years and reached **no consumer at all** — `get_dropped_counts` has no caller, and the OSC feed publishes a different ring's counter. Both the ledger and ADR-0021 recorded them as "OSC-only", which was the more flattering of the two possibilities.
+existed for years and reached **no consumer at all** — `get_dropped_counts` has no caller, and the OSC feed publishes a
+different ring's counter. Both the ledger and ADR-0021 recorded them as "OSC-only", which was the more flattering of
+the two possibilities.
 
 ## Real-time and resource constraints
 
@@ -1298,7 +1326,7 @@ exist, in the phase that builds the thing it tests.
 
 | Question | Blocking? | ADR or task |
 |----------|-----------|-------------|
-| What a channel layout is beyond mono/stereo, and whether the profile carries a layout set or one layout. The pass-5 audit found that a multichannel device constructs `Multi(n)`, while V1's internal buffers remain mono/stereo and its output adapter now explicitly silences surplus channels | **Yes for Phase 9**, which queries a real device; no for Phase 1. `channel_layout` is queried, so Phase 1 must not claim multichannel rendering merely because it can carry the value | ADR-0002, Phase 2 |
+| Whether a live host supports layouts beyond the Sound Core specification's currently admitted counts, and whether the profile carries a layout set or one layout. The pass-5 audit found that a multichannel device constructs `Multi(n)`, while V1's internal buffers remain mono/stereo and its output adapter now explicitly silences surplus channels | **Yes for Phase 9**, which queries a real device; no for the current offline renderer. Carrying `Multi(n)` does not itself claim support | Sound Core render contract, Phase 9 |
 | What an observation tap is and who owns the analyzer surface; the three capacities here may become one registration budget | No — the capacities stand whatever the taps mean | ADR-0027, Phase 5 |
 | The retirement crossfade's value, and whether ADR-0009 wants a concurrent-retirement budget below `max_active_voices` — which it may only take together with a defined behaviour for reaching it | No — V1's 128 frames compiles today, and the derived budget cannot bind | ADR-0009, Phase 9 |
 | Recording take and commit semantics, which may change what a "recorded event" is | No | ADR-0024, Phase 9 |

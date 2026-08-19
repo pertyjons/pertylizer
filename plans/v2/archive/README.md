@@ -5,7 +5,8 @@ specification, inventory, evidence record, or exit review. It is not a general d
 
 ## What never moves here merely because it is old
 
-- the master plan, status dashboard, or glossary;
+- current control-plane files (`README.md`, `PROCESS.md`, `ROADMAP.md`,
+  `NOW.md`) or the glossary;
 - the decision register or accepted/superseded ADRs;
 - current specifications and inventories;
 - accepted exit reviews;
@@ -20,7 +21,8 @@ not an archive criterion.
 - abandoned proposals that never became ADRs;
 - frozen inventory snapshots retained for a review;
 - preliminary or obsolete reports with no durable incoming reference;
-- completed temporary coordination/handoff documents;
+- completed temporary coordination/handoff documents and frozen trackers from
+  the former workflow;
 - exploratory material that is useful historically but no longer authoritative.
 
 Pure junk should be deleted; Git already preserves repository history.

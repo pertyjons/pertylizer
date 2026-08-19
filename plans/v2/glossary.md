@@ -241,10 +241,11 @@ decision or gate.
 An exhaustive ledger used to prevent V1 capabilities, state, identities, or limits from being silently lost or
 accidentally preserved.
 
-**Phase tracker**
+**Current-work record**
 
-The operational record for one migration phase. It tracks tasks, deliverables, verification, and deviations without
-redefining the master plan.
+`NOW.md`, the single operational record for active slices, blockers, and next
+actions. Phase outcomes and order belong to the roadmap; completed verdicts
+belong to exit reviews.
 
 **Specification**
 

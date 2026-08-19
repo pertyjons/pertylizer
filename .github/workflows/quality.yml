@@ -20,6 +20,10 @@ jobs:
         with:
           components: clippy, rustfmt
       - uses: Swatinem/rust-cache@v2
+      - name: Check Core V2 documentation
+        run: |
+          python3 -B scripts/check_v2_docs.py
+          python3 -B -m unittest scripts/test_check_v2_docs.py
       - name: Install system dependencies
         run: |
           sudo apt-get update
@@ -27,7 +31,7 @@ jobs:
       - name: Format check
         run: cargo fmt --check
       - name: Build
-        run: cargo build
+        run: cargo build --workspace
       - name: Clippy
         run: cargo clippy --workspace --all-targets
       - name: Test

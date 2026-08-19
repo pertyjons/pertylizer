@@ -1,5 +1,12 @@
 # Pertylizer Core V2: Project, Application, and Compiled Audio Engine
 
+> **Retained gate source and historical design.** On 2026-08-19, operational
+> authority moved to [`ROADMAP.md`](ROADMAP.md) for phase outcomes/order,
+> [`NOW.md`](NOW.md) for active work, and [`specs/`](specs/README.md) for current
+> contracts. The complete phase exit criteria in Part I remain authoritative
+> through the links in `ROADMAP.md`; all other material here is retained design
+> history and is not updated as a status consumer.
+
 ## Status
 
 Proposed and architecture-audited against the current codebase on 2026-08-12.
@@ -29,14 +36,11 @@ before the dependency boundaries have been demonstrated by working code.
 
 ### Authority of this document
 
-This plan is authoritative for scope, phase order, and exit gates. It is not
-authoritative for settled details: an accepted ADR in
-[the decision register](ADR.md) and a current document under [specs/](specs/README.md)
-supersede provisional wording here. When an accepted decision contradicts this
-plan, update the affected sections in the same change instead of leaving two
-live answers. Operational task state belongs in a
-[phase tracker](phases/README.md); the `Work` lists below define the normative
-scope those trackers decompose.
+Part I's phase exit-gate clauses remain authoritative acceptance criteria and
+are indexed by `ROADMAP.md`. This file is otherwise retained for historical
+rationale and stable section links; it is not authoritative for current scope,
+order, status, or implementation. Use the roadmap, current specifications, and
+`NOW.md` named above for those questions.
 
 ## Contents
 
