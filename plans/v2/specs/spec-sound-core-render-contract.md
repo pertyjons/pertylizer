@@ -5,8 +5,8 @@
 | Status | Current |
 | Phase | 1–2 |
 | Created | 2026-08-19 |
-| Last reviewed | 2026-08-19 |
-| Based on | ADR-0001, ADR-0004, ADR-0005, ADR-0021, ADR-0032, ADR-0037, ADR-0040, ADR-0041 |
+| Last reviewed | 2026-08-20 |
+| Based on | ADR-0001, ADR-0004, ADR-0005, ADR-0021, ADR-0032, ADR-0037, ADR-0040, ADR-0041, ADR-0043 |
 | Invariant prefix | `SOUND` |
 | Supersedes | — |
 | Superseded by | — |
@@ -70,9 +70,12 @@ storage assigned to compiled signal lifetimes.
    behavior preserves output across arbitrary caller block partitioning.
 6. **SOUND-INV-006 — Typed event time.** An event crossing into the renderer
    retains its `StreamEpoch` and absolute `SampleTime`. Its quantum index and
-   quantum-local offset are derived only after epoch validation; neither is
-   stored in the event envelope. When an event takes effect is decided by what
-   it moves rather than by which payload carried it, per SOUND-INV-016.
+   quantum-local offset are derived only after epoch validation, and they are
+   derived from the event's **render position** rather than from its stamp;
+   neither is stored in the event envelope. The two coincide unless the renderer
+   moved the event, which only SOUND-INV-016's clamp and deferral do. When an
+   event takes effect is decided by what it moves rather than by which payload
+   carried it, per SOUND-INV-016.
 7. **SOUND-INV-007 — Graph validation.** Compilation refuses unknown nodes or
    ports, wrong directions/domains, illegal fan-in, cycles, missing required
    output structure, and any channel-layout mismatch no permitted conversion
@@ -137,9 +140,20 @@ storage assigned to compiled signal lifetimes.
     admits only one, so the exemption is checked rather than assumed.
 16. **SOUND-INV-016 — Sample-positioned effects.** ADR-0001 splits when an event
     takes effect, and the split is a property of the **effect**: a note-on,
-    note-off, gate or retrigger occurs at its declared sample within the quantum
-    (clause 14), while a control-rate response begins at the next quantum boundary
-    under clause 13's causality rule. A node kind declares which of the two each of
+    note-off, gate or retrigger occurs at the sample its **render position**
+    names, while a control-rate response begins at the first quantum boundary at
+    or after that position, under clause 13's causality rule. An event's render
+    position is its declared sample unless the renderer moved it, and only two
+    things may move it — [ADR-0043](../decisions/ADR-0043-event-deferral-and-late-clamp.md)'s
+    clamp for a late event, which the renderer implements today, and its `+Q`
+    deferral for an over-full quantum, which no phase implements yet.
+    **This is stated over the render position rather than over the declared sample**
+    because the clamp alone already separates the two: a late event that was never
+    deferred does not take effect at its declared sample, and an invariant written
+    over the declared sample is false for it — as this one was before ADR-0043.
+    The envelope's `time` is never rewritten, so the declared sample remains
+    readable and the displacement remains the difference between the two.
+    A node kind declares which of the two each of
     its controls is, admission compiles that declaration into the control's target,
     and the renderer reads it there. A caller therefore cannot obtain the other
     timing by choosing another payload: addressing a gate as a parameter and playing
@@ -193,7 +207,7 @@ excess is a preparation refusal rather than runtime truncation.
 | SOUND-INV-007 | `graph_validation` |
 | SOUND-INV-008 | `lowering` |
 | SOUND-INV-011 | `arena_reuse` |
-| SOUND-INV-016 | `note_events`, over the compiled path, and the envelope kernel's own edge tests in `kernels`. `note_events` places each edge at an offset that is **not** a multiple of `Q` and asserts an exact value per frame, so an edge quantized to a boundary fails it; it renders the same edge through three host-block partitions and through both payloads and requires all of them bit-identical; and `an_edge_mid_ramp_starts_from_the_level_that_frame_would_have_had` covers the case the instantaneous-segment fixtures cannot see, where the level a frame starts from and the sample before it differ by one step. `layout_baseline` cannot cover any of this — every edge in its fixtures is on a boundary — so it is a regression control here rather than a placement check |
+| SOUND-INV-016 | `note_events`, over the compiled path, and the envelope kernel's own edge tests in `kernels`. **The clamped branch is covered separately**, because `note_events` runs offline where a late event cannot be presented: `render_contract`'s `a_late_note_edge_takes_effect_at_its_clamped_render_position` drives a late note-on and an on-time note-off through one live render and asserts an exact value per frame for both, so an edge dropped, held to a boundary, or applied at the head of the call fails it — a one-frame error is mutation-verified to fail. The count-only `a_late_event_is_clamped_forward_and_counted` cannot see any of that. `note_events` places each edge at an offset that is **not** a multiple of `Q` and asserts an exact value per frame, so an edge quantized to a boundary fails it; it renders the same edge through three host-block partitions and through both payloads and requires all of them bit-identical; and `an_edge_mid_ramp_starts_from_the_level_that_frame_would_have_had` covers the case the instantaneous-segment fixtures cannot see, where the level a frame starts from and the sample before it differ by one step. `layout_baseline` cannot cover any of this — every edge in its fixtures is on a boundary — so it is a regression control here rather than a placement check |
 | SOUND-INV-013 | Two mechanisms, and what each one carries is stated rather than blurred. **The type system** enforces exactly one thing: a `Kernel` cannot be *constructed outside* `node::kernels`, its field being private — so a descriptor elsewhere naming any function does not compile (`E0423`, mutation-verified). Every descriptor lives in `node.rs`, so every registered pointer is necessarily one of that module's constants; what those constants wrap is not settled by privacy, and an in-module `Kernel(foreign)` is well-typed. **A bounded source scan** carries the rest — `render_loop_purity`'s `the_kernel_registry_is_closed_and_no_scanned_form_forges_a_kernel` requires every construction site it recognises in that one file to be a declared constant, and checks the entries and constants it can parse agree in both directions. Nine forging routes are mutation-checked. What the scan is not is under *Unresolved questions* |
 | SOUND-INV-009, 010, 014 | `layout_baseline` for ADR-0041 clause 16's per-quantum digest comparison over its five fixtures, `arena_reuse` for the structural check over physical sample ranges and for `reuse_renders_bit_identically_to_no_reuse`, and `lowering`'s `a_mono_source_into_a_stereo_stream_widens_into_one_wider_region`, `a_mono_stream_compiles_exactly_one_output_operation` and `an_inserted_conversion_is_reported_and_not_only_scheduled` |
 | SOUND-INV-015 | `graph_validation`'s `every_kernel_admits_exactly_one_channel_on_every_port` over the macro-generated catalog, and `kernels`' `the_widening_writes_every_channel_of_every_frame` for the one kernel with two admitted counts |

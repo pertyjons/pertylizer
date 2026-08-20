@@ -3,8 +3,11 @@
 //!
 //! [ADR-0001](../../plans/v2/decisions/ADR-0001-internal-render-quantum.md) clause 14 is
 //! what this file proves. A sample-positioned effect — note-on, note-off, gate,
-//! retrigger — occurs at *its declared sample within the quantum*, while a control-rate
-//! response begins at the next quantum boundary. Before this task the envelope's gate was
+//! retrigger — occurs at *the offset its render position names within the quantum that
+//! renders it*, while a control-rate response begins at the first boundary at or after
+//! that position. ADR-0043 restated the clause over that quantity; here the two coincide,
+//! because this file renders offline over a sorted list with a monotone clock and so
+//! cannot present a late event. `render_contract` covers the clamped case. Before this task the envelope's gate was
 //! an ordinary control and landed on the boundary that followed it, so a note-on could be
 //! up to `Q - 1` frames late and the lateness depended on nothing a caller could see.
 //!

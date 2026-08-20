@@ -9,7 +9,7 @@
 | Last reviewed | 2026-08-13                                                   |
 | Related       | ADR-0001, ADR-0021, ADR-0037, ADR-0003, ADR-0022, ADR-0023, P00A-T006 |
 | Supersedes    | —                                                            |
-| Superseded by | —                                                            |
+| Superseded by | Clause 16 by [ADR-0043](ADR-0043-event-deferral-and-late-clamp.md), 2026-08-20: the quantum index and offset are still derived and never stored, but the scheduler derives them from an event's **render position** rather than from its `time`, because a preserved stamp no longer identifies the quantum that renders the event. **Every other clause stands, clause 18 included** — no selection there rewrites a timestamp |
 
 **Class.** `Contract`. It fails [reversibility test](../ADR.md#the-reversibility-test) 1 — it defines types, an epoch,
 an ownership boundary, and an error behavior, not a value — and it fails test 3, because changing the width or the epoch

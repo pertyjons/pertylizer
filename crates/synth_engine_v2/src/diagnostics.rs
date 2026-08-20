@@ -410,10 +410,11 @@ pub enum RenderError {
     /// One quantum was presented with more events than it admits.
     ///
     /// Rejected before anything is mutated. Phase 1 and Phase 2 do **not** defer:
-    /// `HOST-INV-021` is deferred to Phase 3, which owns the ingress streams and the
-    /// bounded deferred store that a deferral mechanism needs. Until then an
-    /// over-full quantum is a caller contract violation, and the one rule that binds
-    /// meanwhile is negative — nothing may allocate to absorb it.
+    /// ADR-0043 decided `HOST-INV-021`'s timing rule, but no phase may implement
+    /// deferral before ADR-0044 settles causal order, and Phase 3 still owns the
+    /// ingress streams and the bounded store a deferral mechanism needs. Until then
+    /// an over-full quantum is a caller contract violation, and the one rule that
+    /// binds meanwhile is negative — nothing may allocate to absorb it.
     #[error(
         "quantum {quantum_index} was presented with {requested} events against \
          max_events_per_quantum {available}"

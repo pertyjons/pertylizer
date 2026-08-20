@@ -9,7 +9,7 @@
 | Last reviewed | 2026-08-12                                          |
 | Related       | ADR-0037, P00A-T005, P00A-T006, ADR-0021, ADR-0022  |
 | Supersedes    | —                                                   |
-| Superseded by | —                                                   |
+| Superseded by | Clauses 12, 14 and 16 by [ADR-0043](ADR-0043-event-deferral-and-late-clamp.md), 2026-08-20. Clause 12's first sentence is restated over render position, clause 14's "declared sample within the quantum" becomes the offset within the quantum that renders the event, and clause 16's late condition is fixed to a single evaluation at first due. **Clause 12's second sentence and every other clause stand.** Implementers read the current [host-profile](../specs/spec-host-profile-and-render-limits.md) and [Sound Core render](../specs/spec-sound-core-render-contract.md) specifications rather than merging these records |
 
 **Scope note.** This record decides how the quantum behaves; **[ADR-0037](ADR-0037-render-quantum-value.md) decides how
 many frames it is.** The split exists because only the frame count depends on a measurement that does not exist yet,

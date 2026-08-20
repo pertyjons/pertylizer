@@ -197,9 +197,10 @@ pub enum IrNodeKind {
     /// boundaries would step in 1.3 ms stairs at 48 kHz — audible on every note, and a
     /// difference from V1 that no record asks for.
     ///
-    /// Its gate is the phase's one **sample-positioned** control: ADR-0001 clause 14 puts
-    /// a note-on, note-off, gate or retrigger at its declared sample within the quantum,
-    /// and since P02-T007 that is where it lands. The split is a property of the effect
+    /// Its gate is the phase's one **sample-positioned** control: ADR-0001 clause 14, as
+    /// ADR-0043 restated it, puts a note-on, note-off, gate or retrigger at the offset its
+    /// render position names within the quantum that renders it — the declared sample
+    /// unless the late clamp moved it — and since P02-T007 that is where it lands. The split is a property of the effect
     /// rather than of the message, so the gate behaves the same whether it is played as a
     /// note or addressed as a parameter; clause 13's causality still governs every
     /// *control-rate* change, which takes effect at the next boundary.
@@ -263,7 +264,8 @@ impl IrNodeKind {
 /// **When** moving one takes effect is the node kind's declaration rather than
 /// this module's: ADR-0001 clause 13 makes control evaluation causal, so a
 /// control-rate change inside a quantum takes effect at the next boundary, while
-/// clause 14 puts a sample-positioned one — a gate — at its declared sample.
+/// clause 14, as ADR-0043 restated it, puts a sample-positioned one — a gate — at
+/// the offset its render position names.
 /// [`crate::plan::ControlRate`] is where that is compiled, and the renderer reads
 /// it there rather than inferring it from the payload a caller chose.
 pub mod parameters {
@@ -492,7 +494,7 @@ pub struct PlanDeclarations {
     ///
     /// Statically knowable only; a script-driven expansion is data-dependent, and
     /// what happens when a quantum is over-full at runtime is Phase 3's
-    /// (`HOST-INV-021`, deferred).
+    /// (`HOST-INV-021`: ADR-0043 decided the rule, ADR-0044 gates implementing it).
     pub events_per_quantum: EventCount,
     /// Events one tick's note expansion may produce.
     pub note_expansion_per_tick: EventCount,

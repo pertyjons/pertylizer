@@ -3,7 +3,7 @@
 This is the compact status index for durable Core V2 decisions. Individual ADRs own rationale and evidence; current
 specifications own implementation semantics. Do not copy review history or measurement results into this file.
 
-Next free identifier: `ADR-0044`.
+Next free identifier: `ADR-0045`.
 
 ## Status vocabulary
 
@@ -46,7 +46,7 @@ the durable-decision test in `PROCESS.md` and normally do not need an ADR.
 
 | ID       | Topic                                       | Status   | Phase                 | Record                                                             | Note                                     |
 |----------|---------------------------------------------|----------|-----------------------|--------------------------------------------------------------------|------------------------------------------|
-| ADR-0001 | Render quantum semantics and splitting      | Accepted | 0A/1                  | [ADR](decisions/ADR-0001-internal-render-quantum.md)               | —                                        |
+| ADR-0001 | Render quantum semantics and splitting      | Accepted | 0A/1                  | [ADR](decisions/ADR-0001-internal-render-quantum.md)               | Clauses 12, 14 and 16 superseded by ADR-0043; clause 12's second sentence and the rest stand |
 | ADR-0002 | Internal channel layout                     | Superseded | 2                   | [ADR](decisions/ADR-0002-internal-channel-layout.md)               | Superseded in full by ADR-0041, 2026-08-19 |
 | ADR-0003 | Event segmentation API                      | Proposed | 3                     | —                                                                  | —                                        |
 | ADR-0004 | Native node representation                  | Accepted | 2/5                   | [ADR](decisions/ADR-0004-native-node-representation.md)            | Acceptance rule B failed; record redrafted under rule C |
@@ -77,7 +77,7 @@ the durable-decision test in `PROCESS.md` and normally do not need an ADR.
 | ADR-0029 | Host configuration and remote authorization | Proposed | 0B/10E                | —                                                                  | —                                        |
 | ADR-0030 | Public facade and compatibility surface     | Proposed | Before 10E            | —                                                                  | —                                        |
 | ADR-0031 | Supported build and release matrix          | Proposed | 0B/12                 | —                                                                  | —                                        |
-| ADR-0032 | Sample-time and event-timestamp model       | Accepted | 0A/3                  | [ADR](decisions/ADR-0032-sample-time-and-event-timestamps.md)      | —                                        |
+| ADR-0032 | Sample-time and event-timestamp model       | Accepted | 0A/3                  | [ADR](decisions/ADR-0032-sample-time-and-event-timestamps.md)      | Clause 16 superseded by ADR-0043; the rest stands, clause 18 included |
 | ADR-0033 | Graph feedback and delay-boundary rule      | Proposed | 2/3                   | —                                                                  | —                                        |
 | ADR-0034 | Track, source, and channel ownership        | Proposed | 0B/10A                | —                                                                  | —                                        |
 | ADR-0035 | Transaction and concurrency semantics       | Proposed | 0B/10B                | —                                                                  | —                                        |
@@ -88,7 +88,8 @@ the durable-decision test in `PROCESS.md` and normally do not need an ADR.
 | ADR-0040 | V2 owns its DSP                             | Accepted | 2                     | [ADR](decisions/ADR-0040-v2-owns-its-dsp.md)                       | Accepted with ADR-0041 as its clause 7 requires |
 | ADR-0041 | Interleaved internal channel layout         | Accepted | 2                     | [ADR](decisions/ADR-0041-interleaved-internal-channel-layout.md)   | Supersedes ADR-0002 in full; P02-T013 converts the crate |
 | ADR-0042 | Envelope segment shape                      | Accepted | 2                     | [ADR](decisions/ADR-0042-envelope-segment-shape.md)                | EVD-0013's envelope shape difference; `CORPUS-0001-C2` added 2026-08-20. CORPUS-0001-P2 untouched |
-| ADR-0043 | Event deferral and the late clamp           | Proposed | 3                     | [ADR](decisions/ADR-0043-event-deferral-and-late-clamp.md)         | One of Phase 3's two entry decisions; needs no measurement. Options open, recommendation stated |
+| ADR-0043 | Event deferral and the late clamp           | Accepted | 3                     | [ADR](decisions/ADR-0043-event-deferral-and-late-clamp.md)         | Option D with a preserving clamp, 2026-08-20. Supersedes ADR-0001 clauses 12, 14 and 16 and ADR-0032 clause 16. Does not close Phase 3's entry gate on its own |
+| ADR-0044 | Deferral-induced causal order               | Deferred | 3                     | [ADR](decisions/ADR-0044-deferral-causal-order.md)                 | ADR-0043's named correctness hole: `+Q` can render a note-on after its own note-off. Phase 3 entry prerequisite, with ADR-0022 |
 
 ### Reversible decisions
 

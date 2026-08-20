@@ -339,8 +339,8 @@ impl NodeState {
     /// pairing is the compiler's, and the audio thread cannot report a defect in it.
     ///
     /// Sample-positioned controls do not come through here. ADR-0001 clause 14 puts them
-    /// at their declared sample, which is inside a kernel's own loop, so the renderer
-    /// hands them to the kernel as [`NodeIo::controls`] instead.
+    /// at the offset their render position names, which is inside a kernel's own loop, so
+    /// the renderer hands them to the kernel as [`NodeIo::controls`] instead.
     pub fn set_control(&mut self, control: ControlIndex, value: ParameterValue) {
         match self {
             Self::Sine {
@@ -430,9 +430,11 @@ pub struct NodeIo<'a> {
     pub position: Option<PlanPosition>,
     /// This node's sample-positioned control changes, due inside this quantum.
     ///
-    /// ADR-0001 clause 14: a note-on, note-off, gate or retrigger occurs at its declared
-    /// sample rather than at the boundary that follows it, and a kernel is the only place
-    /// that knows where its samples are. Ascending by offset, and empty for every quantum
+    /// ADR-0001 clause 14, as ADR-0043 restated it: a note-on, note-off, gate or
+    /// retrigger occurs at the offset its render position names rather than at the
+    /// boundary that follows it, and a kernel is the only place that knows where its
+    /// samples are. The renderer resolves that position before it builds this slice, so a
+    /// kernel never sees the distinction between a stamp and a clamped position. Ascending by offset, and empty for every quantum
     /// and every node kind that has none — which is all of them but the envelope today.
     ///
     /// The renderer resolves these once per quantum, so this is not a control-rate
@@ -442,7 +444,7 @@ pub struct NodeIo<'a> {
     pub controls: &'a [TimedControl],
 }
 
-/// One control change at a declared sample inside the quantum.
+/// One control change at a resolved offset inside the quantum.
 ///
 /// The sample-positioned twin of [`NodeState::set_control`]: the same node-local control
 /// index and the same value, plus the offset the change happens at. The renderer builds

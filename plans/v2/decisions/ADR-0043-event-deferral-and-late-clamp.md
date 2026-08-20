@@ -3,24 +3,25 @@
 | Field | Value |
 |---|---|
 | ID | ADR-0043 |
-| Status | Proposed |
+| Status | Accepted |
 | Phase | 3 |
 | Created | 2026-08-20 |
 | Last reviewed | 2026-08-20 |
 | Related | ADR-0001 clauses 12, 14 and 16; ADR-0021 part 2; ADR-0023; ADR-0032 clauses 17, 18, 19, 22 and 23; `HOST-INV-021`; REV-P00A; REV-P02 |
-| Supersedes | — while `Proposed`. Under **Option B or D**: ADR-0001 clauses 12, 14 and 16, because a preserved stamp no longer identifies the quantum the event renders in. Under **Option C**: clause 14 only — rewriting the stamp keeps clauses 12 and 16 arithmetically true, but the sample the edge lands on is no longer the one the *producer* declared, which is what clause 14 promises; C additionally needs an ADR-0032 clause 18 successor. Under **Option A**: nothing if Phase 3's capacities make its runtime overrun unreachable. If the overrun stays reachable, A supersedes **clause 16** — a rejected callback can hold a genuinely late event that is then never clamped, which clause 16 requires — and needs an ADR-0021 successor besides. A paired with a rewriting clamp needs the clause 18 successor either way |
+| Supersedes | **ADR-0001 clauses 12, 14 and 16, and ADR-0032 clause 16**, as Option D with a preserving clamp requires. Clause 12's first sentence is restated over render position; clause 14's "declared sample within the quantum" becomes the offset within the quantum that renders the event, which `+Q` preserves exactly; clause 16's late condition is fixed to a single evaluation, when an event first becomes due; and ADR-0032 clause 16's derivation takes the render position as its input rather than the stamp, because a preserved stamp no longer identifies the quantum the event renders in. Clause 12's **second** sentence is untouched and does all the safety work. **ADR-0032 clause 18 is not touched**, because the selected clamp preserves the stamp and no pairing here rewrites one. This record is itself the ADR-0032 successor its *Specification update* requires — a successor accepted in the same transaction, not an amendment of ADR-0032's prose; see that section |
 | Superseded by | — |
 
 This record meets `PROCESS.md`'s durable-decision test on two counts: it defines a real-time ownership boundary, and it
 binds several later phases. It fixes no value. It declares no decision *class* — that vocabulary belongs to the former
 workflow and [`ADR.md`](../ADR.md#decision-classes) keeps it for historical records only.
 
-> **Not decided. This record presents the options and a recommendation; the choice is the maintainer's.** The
-> [working agreement](../WORKING-AGREEMENT.md) requires an independent reader and a reread of every semantic change,
-> and the author of these frames should not also be the reader who reviews them. Holding the decision open is this
-> record's own choice rather than a repository rule — an earlier revision asserted a same-session prohibition that does
-> not exist in the process documents. The *Decision* section states which option is recommended and what would make
-> that recommendation wrong; it does not select on the maintainer's behalf.
+> **Decided on 2026-08-20: Option D, with a preserving clamp, and the control-rate boundary derived from the render
+> position.** The maintainer selected it against the options survey below, which is retained unchanged as the record of
+> why the winner won. The recommendation was *conditional* on a willingness to decide the causal-order policy that
+> every deferral option needs; that condition is met by naming it as an explicit further prerequisite rather than by
+> solving it here — [ADR-0044](ADR-0044-deferral-causal-order.md), `Deferred` to the Phase 3 entry gate. **Accepting
+> this record therefore does not on its own unblock Phase 3 implementation**, and the *Specification update* section
+> below states exactly how much of the gate it does close.
 
 ## Durable boundary
 
@@ -246,8 +247,10 @@ prefer it.
   **This is a correctness hole that Options B, C and D all inherit**, since all three defer by `+Q`. Fixing it needs a
   causal-order policy, and the obvious candidate does not work: **ordering the admitted set by stamp changes only which
   event is inspected first, not where either renders**, so sample 127 still comes after 65 and the voice still hangs.
-  Any repair has to move the *successor's render position* too — deferring an event's causal successors along with it,
-  or some rule the maintainer prefers — and choosing one is scheduler design that this record's boundary excludes. **So it is named as a blocker on B, C and D rather than papered over**, and it is
+  Any repair has to reach past the deferred event itself — moving the *successor's render position* too, by deferring
+  an event's causal successors along with it, or neutralising the inversion where the voice is allocated, so that a
+  note-off for a voice that has not started is remembered rather than discarded. Choosing between those is scheduler
+  design that this record's boundary excludes. **So it is named as a blocker on B, C and D rather than papered over**, and it is
   the strongest argument Option A has: no deferral, no reordering, and therefore **not this inversion**. An earlier
   revision of this record said only that repeated `+Q` "composes", which was true of the arithmetic and false of the
   music.
@@ -350,13 +353,16 @@ over render position does not supersede clause 13, which names the timestamp exp
 the stamp just as B can use the render position; an earlier revision claimed the stamp reading contradicted D's premise
 and it does not.
 
-**Recommended: from the render position**, for the same reason as the recommendation overall — one quantity, no
+**Selected: from the render position**, for the same reason as the selection overall — one quantity, no
 carve-out. The cost is that a control change deferred `d` times is delayed up to `(d + 1)Q - 1` frames rather than
 `Q - 1`, and **`d` is unbounded in this record** because repeated deferral is part of the model and the starvation
 policy that would bound it is Phase 3's. That is the largest cost this answer carries, and it is stated as unbounded
 rather than as a comfortable single-deferral figure.
 
 ### The clamp, as a sub-question on the same axis
+
+**Selected: preserve.** That is the shipped behaviour, so this half of the selection is a documentation change and not
+a code change.
 
 The clamp is selected **independently of the deferral question**, so every option needs an answer to it — including
 C, where rewriting a deferred event's stamp says nothing about a late event that is clamped and never deferred. Clause
@@ -394,10 +400,36 @@ has already rendered. Whatever is chosen must keep that composition well defined
 
 ## Decision
 
-**Open. The recommendation is Option D with a preserving clamp, *conditional* on the maintainer being willing to
-decide a causal-order policy alongside it — and if that willingness is not there, Option A is the better answer.**
+**Selected: Option D, with a preserving clamp, and the control-rate boundary derived from the render position.** The
+maintainer selected it on 2026-08-20 against the survey above, which is retained as the record of why the winner won.
 
-The condition is new as of the eighteenth read and it is not a formality. `+Q` can reverse cause and effect: a note-on
+Stated as one rule rather than as a departure from one — which is Option D's whole point, and which the
+[host-profile specification](../specs/spec-host-profile-and-render-limits.md) now presents as the current contract:
+
+1. **An event is assigned to the quantum containing its render position**, where
+   `render_position = clamped_position + Q x deferrals` and `clamped_position` is the envelope's `time` for an on-time
+   event and clause 16's first not-yet-rendered quantum boundary for a late one.
+2. **The envelope's `time` is immutable.** Neither deferral nor the clamp rewrites it, so the displacement each caused
+   is the difference between two quantities the renderer already holds.
+3. **A deferred event renders at the same intra-quantum offset, one quantum later**, where it is re-evaluated and may
+   defer again. A second deferral is another `+Q`.
+4. **Clause 16's late condition is evaluated once**, when an event first becomes due; deferral does not re-ask it. This
+   is the only reading under which the late count means "how many events arrived after their quantum had rendered".
+5. **A control-rate response begins at the first quantum boundary at or after the event's render position.** Where that
+   position falls exactly on a boundary — offset 0, or a clamped event — the response runs in that same quantum. It
+   may never land in a quantum that refused the event.
+6. **Clause 12's second sentence is unchanged** — "no event is ever applied to samples already produced" — and it is
+   what prevents the actual harm.
+
+**The condition attached to the recommendation was met by naming the causal-order policy, not by solving it.** The
+maintainer chose to keep it a separate record rather than decide scheduler design inside a timestamp record:
+[ADR-0044](ADR-0044-deferral-causal-order.md) is `Deferred` to the Phase 3 entry gate and must be `Accepted` before
+Phase 3 implementation begins, alongside [ADR-0022](ADR-0022-hardware-time-mapping.md). That keeps this record inside
+its own boundary and gives the policy its own independent review, at the cost of leaving the hole open in writing —
+which is the honest ledger entry. The *Specification update* section below states the consequence: the ADR-0001
+obligation is discharged, ADR-0044 takes its place at the gate, and Phase 3's entry conditions stay two.
+
+The condition was not a formality. `+Q` can reverse cause and effect: a note-on
 at sample 63 defers to 127 while its note-off at 65 renders first, leaving a voice sounding. Every deferral option
 carries it, `ADR-0023` cannot repair it because the positions differ, and no policy in this record prevents it. So
 **B, C and D each ship with a named correctness hole** that Phase 3 must close before any of them is implementable,
@@ -408,10 +440,10 @@ cosmetic: under Option B, clause 12's first sentence becomes a statement that is
 next capacity question arrives with a precedent for carving another exception. Under Option D there is one rule, the
 safety sentence that actually prevents harm is untouched, and `+Q` is derivable from the rule rather than granted by it.
 
-**The recommendation rests on one argument only, and review has already removed the other.** An earlier revision of
+**The selection rests on one argument only, and review had already removed the other before it was made.** An earlier revision of
 this record argued that the current renderer's stamp/position split shows the code has outgrown clause 12's wording.
 **That argument is withdrawn**: the split exists only for clause 16's clamp, which ADR-0001 authorises outright, and B
-and D compile to the same thing over the code that exists. So the recommendation rests on a governance judgement about
+and D compile to the same thing over the code that exists. So the selection rests on a governance judgement about
 which text is easier to reason from next time — a real argument, but a weaker one than this record first made, and a
 maintainer who weighs it differently is not disagreeing with any fact.
 
@@ -421,7 +453,7 @@ supersedes it — so each option may select either answer. Both attempts to find
 have failed, and the record says so rather than leaving the earlier suggestion standing. The choice is a governance
 judgement about which text is easier to reason from, and nothing else.
 
-**What would make this recommendation wrong.**
+**What would make this selection wrong.** These are the revisit conditions the selection carries.
 
 1. **A Phase 1 or Phase 2 consumer that reads clause 12 literally.** Swept at `e9590577`, and the result is **neutral
    between B and D**: the one stamp-reading site is `offline.rs:178`/`:182`, whose premise is that the offline path
@@ -430,17 +462,19 @@ judgement about which text is easier to reason from, and nothing else.
 2. **If Phase 3's capacities make overrun unreachable in practice**, then Option A is the cheapest correct answer and
    both B and D are machinery for a case that does not occur. This cannot be settled today, which is itself an argument
    for not choosing A now.
-3. **If the causal-order policy turns out to be expensive or contentious**, the recommendation inverts. Deferral's
-   whole appeal is that it delays an event instead of losing it; an option that delays it *into the wrong order* has
-   not delivered that, and a policy that defers an event's causal successors along with it starts to look like the
-   deferred store growing a dependency graph. A's dropout is a worse outcome per occurrence and a much smaller
-   contract.
-4. **If the maintainer judges that restating an accepted clause is a heavier governance act than granting a bounded
-   exception**, that is a legitimate reading of the same facts and selects Option B. The two differ in what they leave
-   for the next decision to inherit. They need not differ in what the renderer does — provided B answers the
-   control-rate sub-question the same way, which it is free to do and which this record's recommendation assumes.
+3. **If the causal-order policy turns out to be expensive or contentious**, this selection should be revisited rather
+   than completed. Deferral's whole appeal is that it delays an event instead of losing it; an option that delays it
+   *into the wrong order* has not delivered that, and a policy that defers an event's causal successors along with it
+   starts to look like the deferred store growing a dependency graph. A's dropout is a worse outcome per occurrence
+   and a much smaller contract. **This is the live revisit condition**, and
+   [ADR-0044](ADR-0044-deferral-causal-order.md) is where it will become visible.
+4. **If restating an accepted clause proves to be a heavier governance act than granting a bounded exception would
+   have been**, Option B was the better reading of the same facts. The two differ in what they leave for the next
+   decision to inherit and need not differ in what the renderer does, so switching later would be a documentation
+   change rather than a behavioural one — which is what makes this the cheapest of the four conditions to be wrong
+   about.
 
-Option C is recommended against on accepted text rather than on preference: it falsifies **ADR-0032 clause 18's
+Option C was rejected on accepted text rather than on preference: it falsifies **ADR-0032 clause 18's
 provenance promise** — clause 17 fixes the envelope's shape and does not make its timestamp immutable — and it discards
 the exactness a compiled position carries by construction. It does **not** lose displacement reporting outright — a
 deferred-store field could carry it — but it is the only option that has to pay extra state for what the others get
@@ -454,7 +488,7 @@ clamp costs is the extra state needed to keep the lateness delta, not the delta 
 
 ## Consequences and risks
 
-- **Accepted cost — added latency, and it is not bounded here.** Under the recommended answer to the control-rate
+- **Accepted cost — added latency, and it is not bounded here.** Under the selected answer to the control-rate
   sub-question, a control response deferred `d` times is delayed by up to `(d + 1)Q - 1` frames **measured from its
   clamped position**, against `Q - 1` for an undeferred one. **A late event is a separate case**, because its clamped
   position is always a quantum boundary and the boundary rule above lets the control response run in that same quantum:
@@ -476,7 +510,11 @@ clamp costs is the extra state needed to keep the lateness delta, not the delta 
   | **A** — no deferral | 2, for late events only | **1 everywhere** |
   | **B** — exception, stamp preserved | 2 | 2, for deferred events |
   | **C** — exception, stamp rewritten | 2, for late events only | **1 everywhere** |
-  | **D** — restated over render position | 2 | 2, for deferred events |
+  | **D** — restated over render position | **2 — selected** | 2, for deferred events |
+
+  **The selection pays this cost.** D with a preserving clamp is the "2" cell: every consumer that asks which quantum
+  renders an event asks the render position, and the stamp answers only what the producer declared. That is the price
+  of keeping the stamp truthful, and it is accepted deliberately.
 
   Only **A or C with a rewriting clamp** reaches one quantity everywhere. It buys that not by losing the displacement —
   which stays recoverable at the moment of the rewrite — but by needing a deferred-store field to hold what every other
@@ -490,92 +528,89 @@ clamp costs is the extra state needed to keep the lateness delta, not the delta 
   does, because a preserved stamp stops identifying the quantum that renders the event; C leaves clause 16 true and
   falsifies clause 18 instead. **Option A is the only one-record selection**, on either branch — its reachable branch
   supersedes clause 16 and owes a recovery definition, but both live inside this record.
-- **Safety/correctness control.** Clause 12's second sentence is the invariant that prevents the actual harm, and no
-  option touches it. The both-late-and-deferred case is the conformance test that catches a wrong composition, and
-  `HOST-INV-021` already names it.
+- **Accepted risk, carried openly — the causal-order inversion.** The selected rule can render a note-on after its own
+  note-off and strand a voice. It is not mitigated by anything in this record; it is assigned to
+  [ADR-0044](ADR-0044-deferral-causal-order.md) and made a Phase 3 entry prerequisite so that no implementation can
+  reach the hot path before a policy exists. The cost of carrying it this way is that the gate stays shut longer; the
+  cost of not carrying it is a decision record that claims to have settled more than it did.
+- **Safety/correctness control.** Clause 12's second sentence is the invariant that prevents the actual harm, and the
+  selection does not touch it. The both-late-and-deferred case is the conformance test that catches a wrong
+  composition, and `HOST-INV-021` already names it.
 - **Revisit condition.** Phase 3's measured ingress capacities, if they show overrun is either unreachable or routine.
-  Unreachable strengthens Option A retroactively; routine raises the starvation question this record explicitly does not
-  answer.
+  Unreachable would have made Option A the cheapest correct answer and makes this machinery serve a case that does not
+  occur; routine raises the starvation question this record explicitly does not answer. Either outcome is a reason to
+  revisit, and neither is knowable before Phase 3 builds the ingress.
 
 ## Specification update
 
-On acceptance:
+Performed as one transaction on acceptance. Every item below reflects the selection — Option D, preserving clamp,
+control-rate from the render position — rather than the option space the survey above kept open.
 
-1. this record becomes `Accepted`, the [decision index](../ADR.md) row moves with it, and its `Supersedes` metadata
-   and ADR-0001's `Superseded by` record whichever relationship the selection creates — **clauses 12, 14 and 16 under
-   Option B or D; clause 14 alone under Option C; under Option A, clause 16 if its runtime overrun stays reachable and
-   nothing if disjoint budgets retire it**;
-2. **only the timing and clamp rules selected here become normative.** `HOST-INV-021` is a compound invariant: it also
-   carries the admission order, the deferred store's semantics, and the ingress-capacity question, none of which this
-   record decides. Acceptance therefore retires exactly one thing — the sentence saying the invariant "proposes
-   exceptions to an accepted decision rather than applying one", which is what this record exists to make false. **The
-   rest of `HOST-INV-021` stays `Deferred to Phase 3`**, and the specification splits the invariant if that is what it
-   takes to mark the two halves differently. Promoting the whole invariant would make policies normative that this
-   record's own *decision boundary* excludes. Under B, C and D the mechanism exists and the deferred store, admission
-   order and exhaustion policy remain Phase 3's, unpromoted.
+1. **This record becomes `Accepted`** and the [decision index](../ADR.md) row moves with it. Its `Supersedes` metadata
+   and the `Superseded by` metadata of ADR-0001 and ADR-0032 record the relationship the selection creates:
+   **ADR-0001 clauses 12, 14 and 16**, and **ADR-0032 clause 16**. Clause 12's second sentence is not among them.
+2. **This record is the ADR-0032 successor**, and the reading is stated so it can be attacked rather than assumed.
+   The pre-acceptance draft required "a successor to ADR-0032 accepted in the same transaction — a successor, not an
+   amendment". A separate record would have had to restate this record's own rule to say anything at all, which is the
+   duplication [`PROCESS.md`](../PROCESS.md#authorities) forbids by giving one fact one authority. So ADR-0043 is that
+   successor for **clause 16 only**, ADR-0032's prose is not edited, and its metadata records the supersession.
+   **Clause 18 is untouched**: it becomes false only under a stamp-rewriting pairing, and neither half of the selection
+   rewrites a stamp.
+3. **`HOST-INV-021` is split, and only the timing half becomes normative.** It is a compound invariant, and promoting
+   all of it would make policies normative that this record's own *decision boundary* excludes. The split is:
+   - **normative now** — the deferral rule, the immutable stamp, `render_position = clamped_position + Q x deferrals`,
+     the two counters and their composition, and the single evaluation of clause 16's condition;
+   - **still `Deferred to Phase 3`, with the mechanism it orders** — the admission order. This record excludes it, so
+     no accepted decision owns it and Phase 3 may still choose another. `HOST-INV-021` states it imperatively because
+     that is how the specification writes *deferred work*, and its conformance-test row is Phase 3's for the same
+     reason. Three earlier drafts of this transaction tried to promote it, each time contradicting either that
+     convention or the deferred set it was removed from. Starvation travels with it: the only repair for the
+     offset-preserving channel is an age term inside that order, so whatever decides the order decides starvation;
+   - **still `Deferred to Phase 3`** — the renderer-ingress streams and their capacities, the deferred store's bound
+     and exhaustion policy, and the starvation the admission order permits. The release window for
+     `max_scheduled_events_in_flight` is the scheduler's and survives untouched.
 
-   **Under Option A the invariant is split, not retired**, and an earlier revision of this record said "retired" —
-   which would have deleted a contract that has nothing to do with per-quantum capacity. `HOST-INV-021` also carries
-   the **release window** for `max_scheduled_events_in_flight`: reaching that capacity delays a release rather than
-   failing one, and when the delay makes an event miss its quantum, clause 16 clamps it and **both** counters rise.
-   That field is the scheduler's and survives every option here. Retiring the whole invariant under A would remove its
-   behaviour while leaving the field in the profile, which is exactly the shape the specification names as a defect:
-   a runtime-bounded field with no defined behaviour on reaching it;
-3. the [host-profile specification](../specs/spec-host-profile-and-render-limits.md) states the chosen rule as one
-   coherent contract rather than as a departure from ADR-0001, per `PROCESS.md`'s rule that a current specification
-   presents one current rule;
-4. **if the selection touches either clause below, a successor to
-   [ADR-0032](ADR-0032-sample-time-and-event-timestamps.md) is accepted in the same transaction** — a *successor*, not
-   an amendment: `decisions/README.md` says accepted reasoning is not rewritten and "a semantic change uses a
-   successor". **Option A with a preserving clamp touches neither of ADR-0032's clauses**; whether it is free depends
-   on its reachability branch, below. **ADR-0032's two clauses trigger on different things.**
-
-   **Clause 16** says the scheduler derives an event's quantum index as `t.0 / Q` from its `time` when assigning it
-   under ADR-0001 clause 12. Under the **stamp-preserving deferral options, B and D**, a preserved stamp still resolves
-   to quantum `k` while the event is assigned to `k + 1`, so clause 16 becomes false the moment deferral exists.
-   **Option C does not falsify it** — it rewrites the stamp to the assigned position, which is precisely what keeps the
-   arithmetic true. Two earlier revisions got this wrong in opposite directions: one scheduled no ADR-0032 update for
-   the recommended preserving pairings at all, and its repair then swept C in along with them.
-
-   **Clause 18** additionally becomes false under **any stamp-rewriting pairing** — Option C, and equally A, B or D
-   paired with a rewriting clamp — because a rewritten `time` under an unchanged `source` asserts an origin the value
-   no longer has. The successor must then also say what a provenance tag claims once the value it describes can be
-   displaced.
-
-   So **every deferral or rewriting selection is at least a two-record change**, through ADR-0032. **Option A is a
-   one-record change on both branches** — no ADR-0032 successor is needed, and the ADR-0021 successor an earlier
-   revision demanded was withdrawn once the specification showed the prohibition binds the *plan* and A's overrun
-   sources are not part of it. What its reachable branch owes is not another record but two pieces of content in this
-   one: the callback fault's recovery, and clause 16's supersession;
-5. **the [Sound Core render contract](../specs/spec-sound-core-render-contract.md) moves with it, and this is not
-   optional.** `SOUND-INV-016` says a note-on, note-off, gate or retrigger "occurs at its declared sample within the
-   quantum". Under Option B, C or D a deferred edge occurs at its **render position** instead — `clamped_position + dQ`
-   after `d` deferrals, equal to `stamp + Q` only for an on-time event deferred exactly once.
-
-   **Narrowing it to "the non-deferred case" is not enough, and every option needs the update including A.** A late but
-   never-deferred edge (`d = 0`) already occurs at the *clamped* position rather than at its declared sample, under
-   every option, because every option has a clamp. The invariant as written does not cover that today; it is coherent
-   only if clause 16's clamp is read as an exception it does not mention. **So `SOUND-INV-016` is restated over the
-   render position outright**, which covers the clamped and deferred cases together, rather than being scoped around
-   whichever case the selection introduces. **Clause 13's control-rate boundary** is stated over whichever quantity the
-   control-rate sub-question selects.
-   **`SOUND-INV-006` says an event "retains its `StreamEpoch` and absolute `SampleTime`"** — that is falsified by *any*
-   rewriting pairing: Option C, and equally A, B or D paired with a rewriting clamp, so every such pairing must update
-   it too. Accepting a selection while updating only the host-profile specification would leave
-   **two `Current` specifications with incompatible rules**, the failure `PROCESS.md` forbids by making one fact have
-   one authority;
-6. the unresolved question recording that the clamp's stamp behaviour "is ADR-0001's question, not this
-   specification's" is answered and removed;
-7. **under Option B, C or D, the causal-order policy is decided in the same transaction or named as an explicit
-   further prerequisite.** `+Q` can reorder a note-on after its own note-off, this record's boundary excludes the
-   policy that fixes it, and no artifact here supplies one — so accepting ADR-0043 alone does **not** close Phase 3's
-   ADR-0001 prerequisite under a deferral option. Saying otherwise would mark a gate complete over a known correctness
-   hole. **Option A closes it unaided once its content is complete.** On the unreachable-fault branch nothing further
-   is owed; on the reachable branch A owes a named output, state and epoch behaviour for the callback fault before an
-   implementer can write it. Two earlier reads recorded first that A always closes it and then that it never does;
-   neither was right;
-8. [`NOW.md`](../NOW.md) records how much of Phase 3's ADR-0001 entry decision the selection actually closed — **and that Phase 3 implementation
-   remains blocked, because the entry conditions are conjunctive and ADR-0022 is still `Deferred`.**
+   What acceptance retires outright is the sentence saying the invariant "proposes exceptions to an accepted decision
+   rather than applying one". That is what this record exists to make false, and under Option D there is no exception
+   left to propose — the rule is stated over render position and clause 12 is restated to match.
+4. **The [host-profile specification](../specs/spec-host-profile-and-render-limits.md) presents one coherent current
+   rule**, not a departure from ADR-0001, per `PROCESS.md`'s rule that a current specification states what
+   implementation must do now. The unresolved-question row asking whether clause 16's clamp preserves or rewrites the
+   stamp is **answered and removed**; the row asking when clause 16's condition is evaluated is answered and removed
+   with it.
+5. **The [Sound Core render contract](../specs/spec-sound-core-render-contract.md) moves in the same transaction, and
+   this is not optional.** `SOUND-INV-016` says a note-on, note-off, gate or retrigger "occurs at its declared sample
+   within the quantum". It is **restated over the render position outright**, which covers the clamped and the deferred
+   case together. Narrowing it to the non-deferred case would not have been enough: a late but never-deferred edge
+   already occurs at its *clamped* position rather than at its declared sample, and the invariant as written does not
+   cover that today. Clause 13's control-rate boundary is stated over the render position with it.
+   **`SOUND-INV-006` moves too, and only in its derivation input.** Its promise that an event "retains its
+   `StreamEpoch` and absolute `SampleTime`" is what the preserving selection makes true rather than false, so that
+   half is untouched; what changes is that the quantum index and offset are named as derived from the **render
+   position** rather than left to be read as derived from the stamp. That is ADR-0032 clause 16's supersession
+   surfacing in the specification a reader actually implements from, and omitting it would have left `SOUND-INV-006`
+   and `SOUND-INV-016` disagreeing about which quantity assigns a quantum. Accepting a selection while updating only
+   the host-profile specification would leave two `Current` specifications with incompatible rules.
+6. **The causal-order policy is named as an explicit further prerequisite, not decided here.** `+Q` can render a
+   note-on after its own note-off; this record's boundary excludes the scheduler design that repairs it, and no
+   artifact here supplies one. [ADR-0044](ADR-0044-deferral-causal-order.md) owns it, is `Deferred` to the Phase 3
+   entry gate, and must be `Accepted` before Phase 3 implementation begins. **So accepting this record discharges the
+   ADR-0001 obligation and immediately raises another**; recording only the discharge would mark a gate closer to
+   complete than it is, over a hazard this record created.
+7. **The master plan's Phase 3 exit criteria are qualified in the same transaction.**
+   [`ROADMAP.md`](../ROADMAP.md) keeps those criteria authoritative, and two of them — "note-on, note-off, retrigger,
+   legato, and parameter discontinuities occur at their declared sample" and "a note starting inside a host block
+   begins at the exact requested sample" — cannot be satisfied by a conforming deferral implementation. They are
+   restated over the render position, with the qualification stated as such rather than slipped in: the unqualified
+   form and that same gate's deferred-store bullet were already incompatible, since a deferred store exists precisely
+   to hold events that did not begin at their requested sample. The gate's ADR-0001-clarification bullet is marked
+   satisfied and a new bullet requires ADR-0044. **The edit stops at the gate.** That phase's non-gate preamble names
+   ADR-0044 as an entry obligation, because a reader following Part I would otherwise start implementing over the
+   stuck-voice hazard, but it does not restate any record's status — the master plan is historical outside its exit
+   criteria, and a status copy there would go stale the next time one changes.
+8. **[`NOW.md`](../NOW.md) records what the selection closed and what it did not**, and states that Phase 3
+   implementation remains blocked. The entry conditions are conjunctive, and two of them are open: ADR-0022 is
+   `Deferred` on evidence that does not exist yet, and ADR-0044 is `Deferred` on a design nobody has done.
 
 ## Review
 
@@ -586,32 +621,41 @@ choosing between these options does not need it.
 Stopping rule: false conclusion-affecting fact, contradiction, unfillable contract, safety/correctness defect, or
 evidence incapable of supporting the claim. Editorial detail does not block.
 
-### Open items a selection has to close
+### Open items the selection leaves
 
-**These are named rather than solved, and two of them block implementation.**
+**Named rather than solved. The first one blocks Phase 3 implementation, and selecting Option D did not repair it.**
 
-1. **The causal-order hole blocks Options B, C and D.** `+Q` can render a note-on after its own note-off — at `Q` = 64,
-   a note-on stamped at sample 63 defers to 127 while its note-off at 65 renders first, stranding the voice. `ADR-0023`
-   cannot repair it, because a same-sample rule needs a tie and these positions differ. Ordering admission by stamp does
-   not repair it either: that changes which event is inspected, not where either renders. Any fix must move the
-   successor's render position, which is scheduler design outside this record's boundary.
-2. **Option A's reachable branch owes a callback-fault recovery** — the output, state and epoch behaviour of a runtime
-   overrun, terminal-fault or otherwise. Until it is named, an implementer cannot write it.
-3. **No selection closes Phase 3's ADR-0001 prerequisite on this record alone**, except Option A on its
-   unreachable-fault branch. Accepting this record is not the same as clearing that half of the Phase 3 gate.
-4. **The starvation policy, the deferred store's bound and its exhaustion behaviour stay Phase 3's**, and `+Q` must not
-   be read as having settled any of them.
-5. **`offline.rs:178`/`:182` windows events by stamp** while the renderer admits by position. Not a live defect — its
-   premise is that the offline path cannot present a late event — but the premise should be asserted rather than
-   assumed once deferral exists.
-6. **The recording argument stays conditional on `ADR-0024`**, which has not decided what a recorded event is. It is
-   counted neither for Option B nor against Option C.
+1. **The causal-order hole is open, and [ADR-0044](ADR-0044-deferral-causal-order.md) owns it.** `+Q` can render a
+   note-on after its own note-off — at `Q` = 64, a note-on stamped at sample 63 defers to 127 while its note-off at 65
+   renders first, stranding the voice. `ADR-0023` cannot repair it, because a same-sample rule needs a tie and these
+   positions differ. Ordering admission by stamp does not repair it either: that changes which event is inspected, not
+   where either renders. Any fix must either move the successor's render position or neutralise the inversion at the
+   voice allocator, both of which are scheduler design outside this record's boundary. ADR-0044 keeps both candidates
+   open; this record does not narrow it to the first. Naming ADR-0044 as a further Phase 3 entry prerequisite is what keeps it from being lost; it is
+   not a repair.
+2. **This acceptance closes Phase 3's ADR-0001 entry condition and opens a new one in its place.** It settles whether
+   a quantum may defer, the shape of the rule, what a stamp survives, and when the late condition is asked, so the
+   ADR-0001 obligation is discharged — that is how [`NOW.md`](../NOW.md) and the master plan's Phase 3 gate record it.
+   What it does **not** do is clear the gate: it created the causal-order hazard, so ADR-0044 joins ADR-0022 as a
+   prerequisite and the entry conditions stay conjunctive. The count of open obligations is unchanged at two.
+3. **The starvation policy, the deferred store's bound and its exhaustion behaviour stay Phase 3's**, and `+Q` must not
+   be read as having settled any of them. `HOST-INV-021` keeps that half `Deferred to Phase 3`.
+4. **`offline.rs:178`/`:182` windows events by stamp** while the renderer admits by position. Not a live defect — its
+   premise is that the offline path cannot present a late event — but that premise should be asserted in a test rather
+   than assumed, once deferral exists. It is Phase 3's to assert, and it is the one migration site the code sweep
+   found.
+5. **The recording argument stays conditional on `ADR-0024`**, which has not decided what a recorded event is. The
+   selection preserves the stamp, so the question does not arise for it — but it is recorded rather than dropped,
+   because a future rewriting proposal would inherit it.
 
 ### What a reader should attack first
 
-Whether the *does not decide* list is honest — specifically whether choosing `+Q` commits a starvation policy this
-record claims to leave open. And whether Option A's survey is now fair: its cost has been mis-stated four times, in
-alternating directions, and a fifth correction is more likely than a settled one.
+Whether the *does not decide* list is still honest now that an option is selected — specifically whether choosing `+Q`
+commits a starvation policy this record claims to leave open. Then two things the acceptance transaction introduced:
+whether this record may serve as the **ADR-0032 clause 16 successor** rather than a separate record, and whether the
+**`HOST-INV-021` split** promotes only the timing half and leaves the store, capacities, admission order and
+starvation question deferred. The survey of the unselected options is kept as written and is no longer load-bearing;
+a finding against Option A's cost no longer changes a conclusion.
 
 ### Four transferable lessons
 

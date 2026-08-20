@@ -226,18 +226,20 @@ impl NoteSlot {
 
 /// When a control a caller moves takes effect.
 ///
-/// ADR-0001 splits this deliberately, in clause 14: *sample-positioned* effects — note-on,
-/// note-off, gate, retrigger — occur at their declared sample within the quantum, while
-/// the *control-rate* response to a mid-quantum event begins at the next quantum
-/// boundary. The split is a property of the **effect**, not of the message that carried
+/// ADR-0001 splits this deliberately, in clause 14 as ADR-0043 restated it:
+/// *sample-positioned* effects — note-on, note-off, gate, retrigger — occur at the offset
+/// its **render position** names within the quantum that renders it, while the
+/// *control-rate* response begins at the first quantum boundary at or after that position. The split is a property of the **effect**, not of the message that carried
 /// it, so it is declared by the node kind and compiled into the target rather than being
 /// chosen by whichever payload a caller happened to send.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[must_use]
 pub enum ControlRate {
-    /// Evaluated once per quantum, at the boundary at or after the event (clause 13).
+    /// Evaluated once per quantum, at the boundary at or after the event's render
+    /// position (clause 13).
     Quantum,
-    /// Applied at the event's declared sample inside the quantum (clause 14).
+    /// Applied at the offset the event's render position names inside the quantum that
+    /// renders it (clause 14, as ADR-0043 restated it).
     Sample,
 }
 

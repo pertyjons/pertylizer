@@ -558,21 +558,21 @@ before Phase 3 implementation begins. Phase 3 may refine it through a
 superseding ADR if simulated-host evidence invalidates an assumption; it may
 not invent timestamp semantics inside implementation tasks.
 
-**An ADR-0001 clarification or successor must also be `Accepted` before
-implementation begins**, covering two questions the host-profile specification
-could not settle from below: when clause 16's late condition is evaluated, and
-whether a quantum may defer an event at all under clauses 12 and 14. A deferred
-event keeps its timestamp, so once the quantum it could not enter has rendered,
-a literal clause 16 counts it late — while the specification's deferral rule
-forbids exactly that. The two cannot both be implemented as written. The
-specification states an interim rule (the condition is asked once, when an event
-first becomes due) and marks it as a narrowing of an accepted decision that it
-may not make; Phase 3 is where that narrowing is decided properly or rejected.
+**[ADR-0044](decisions/ADR-0044-deferral-causal-order.md) (deferral-induced
+causal order) must also be `Accepted` before Phase 3 implementation begins.**
+The event-deferral rule permits an over-full quantum to advance an event's
+render position by `Q`, which moves that event and not the events depending on
+it: at `Q` = 64, a note-on stamped at sample 63 defers to 127 while its own
+note-off at 65 renders first, leaving a voice sounding. ADR-0023 cannot repair
+it, because the two render positions differ and a same-sample rule needs a tie.
+No phase may implement deferral until that record exists.
 
 These two obligations arrive here from Phase 0A, which narrowed P00A-T005 rather
 than blocking on them: Phase 1 has no live ingress and no host callback, so the
 capacity a deferral operates against cannot be specified from anything Phase 0A
 can observe. See [REV-P00A](reviews/phase-00a-exit-review.md).
+[`NOW.md`](NOW.md) carries their current status; this section names which
+records gate implementation and does not restate it.
 
 ### Work
 
@@ -616,7 +616,10 @@ can observe. See [REV-P00A](reviews/phase-00a-exit-review.md).
 - Convert musical time through the tempo map into sample time without losing
   ramp semantics.
 - Ensure note-on, note-off, retrigger, legato, and parameter discontinuities
-  occur at their declared sample.
+  occur at the sample their **render position** names, which is their declared
+  sample unless ADR-0043's late clamp or capacity deferral moved them. ADR-0043
+  restated ADR-0001 clauses 12 and 14 over that quantity; the declared sample
+  survives in the envelope, so the displacement stays reportable.
 - Decide and implement interpolation for control-rate values between evaluation
   points.
 - Make internal control rate a function of the fixed quantum, never the host
@@ -636,7 +639,16 @@ irregular host blocks with the same total frames
 
 ### Exit gate
 
-- [ ] A note starting inside a host block begins at the exact requested sample.
+- [ ] A note starting inside a host block begins at the exact requested sample,
+      for every note the renderer admitted into the quantum its timestamp names.
+      A note the engine **clamped** as late or **deferred** for capacity begins
+      at its render position instead, under
+      [ADR-0043](decisions/ADR-0043-event-deferral-and-late-clamp.md) — which is
+      the exact requested sample plus the displacement the diagnostics report
+      names, never an arbitrary one. This qualification is not a weakening: the
+      unqualified form and this gate's own deferred-store bullet cannot both be
+      satisfied, since a deferred store exists precisely to hold events that did
+      not begin at their requested sample.
 - [ ] A note ending inside the same host block produces the expected non-empty
       duration rather than being released before the block renders.
 - [ ] Tempo steps and ramps map to stable sample positions.
@@ -649,10 +661,16 @@ irregular host blocks with the same total frames
 - [ ] Every renderer-ingress stream has a declared capacity in the host profile,
       and the deferred store has a declared bound together with a defined,
       counted behaviour on exhaustion. Neither may be satisfied by the other.
-- [ ] The ADR-0001 clarification or successor is `Accepted`, and the host-profile
-      specification's interim lateness rule is either ratified by it or replaced.
-      The specification's deferral invariant may not be implemented while the two
-      still contradict each other.
+- [x] The ADR-0001 successor is `Accepted`. **Satisfied 2026-08-20** by
+      [ADR-0043](decisions/ADR-0043-event-deferral-and-late-clamp.md), which
+      ratified the host-profile specification's interim lateness rule — clause
+      16's condition is asked once, when an event first becomes due — and
+      restated clauses 12 and 14 over the render position.
+- [ ] [ADR-0044](decisions/ADR-0044-deferral-causal-order.md) is `Accepted`.
+      `+Q` moves an event and not the events depending on it, so a note-on
+      deferred past its own note-off strands a voice. **The deferral invariant
+      may not be implemented until this record exists**, and this gate does not
+      pass with a known causal-order inversion in the scheduler.
 
 [Phase 7](#phase-7-yams-mod-grid-and-unified-modulation) may not begin before
 this gate passes. Modulation and script timing are meaningless until the event

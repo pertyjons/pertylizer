@@ -2,17 +2,25 @@
 
 mod common;
 
-use common::{SOURCE, admit, profile, rate, source_plan};
+use common::{OUTPUT, SOURCE, admit, profile, rate, source_plan};
+
+const ENVELOPE: NodeId = NodeId::new(11);
+const AMPLIFIER: NodeId = NodeId::new(12);
 
 use synth_engine_v2::compile::{RenderConfig, compile};
 use synth_engine_v2::diagnostics::RenderError;
-use synth_engine_v2::ir::{GraphIr, IrNodeKind, parameters};
+use synth_engine_v2::ir::{
+    ExecutionScope, GraphIr, IrNodeKind, NodeId, PortId, SignalDomain, parameters,
+};
 use synth_engine_v2::offline::{OfflineEvent, render_offline};
 use synth_engine_v2::plan::{CompiledPlan, ParameterSlot};
 use synth_engine_v2::profile::HostProfile;
-use synth_engine_v2::quantities::{Amplitude, ChannelLayout, Frequency, ParameterValue};
+use synth_engine_v2::quantities::{
+    Amplitude, ChannelLayout, Frequency, NormalizedLevel, ParameterValue, Seconds,
+};
 use synth_engine_v2::render::{
-    AudioBlockMut, EventEnvelope, EventPayload, PreparedRenderer, Renderer, TimedEvent, TimedEvents,
+    AudioBlockMut, EventEnvelope, EventPayload, NoteEdge, PreparedRenderer, Renderer, TimedEvent,
+    TimedEvents,
 };
 use synth_engine_v2::time::{
     FrameCount, PlanPosition, QUANTUM_FRAMES, SampleTime, StreamAnchor, StreamEpoch, TimeSource,
@@ -488,10 +496,172 @@ fn a_late_event_is_clamped_forward_and_counted() {
     );
 }
 
+/// A gated constant, so the frame an edge landed on is an exact value rather than a shape.
+///
+/// Every envelope segment is instantaneous and the sustain level is one, so the rendered
+/// signal is `0.0` before the note's sample and `1.0` from that sample onward. A gate
+/// applied one frame off changes an exact value, which is what makes the placement
+/// assertion below falsifiable at all.
+fn gated_constant() -> GraphIr {
+    GraphIr::builder()
+        .node(
+            SOURCE,
+            IrNodeKind::Constant {
+                level: Amplitude::new(1.0).expect("finite"),
+            },
+            ExecutionScope::Voice,
+        )
+        .node(
+            ENVELOPE,
+            IrNodeKind::Envelope {
+                attack: Seconds::new(0.0).expect("not negative"),
+                decay: Seconds::new(0.0).expect("not negative"),
+                sustain: NormalizedLevel::FULL,
+                release: Seconds::new(0.0).expect("not negative"),
+            },
+            ExecutionScope::Voice,
+        )
+        .node(AMPLIFIER, IrNodeKind::Amplifier, ExecutionScope::Voice)
+        .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
+        .connect(
+            (SOURCE, PortId::FIRST),
+            (AMPLIFIER, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .connect(
+            (ENVELOPE, PortId::FIRST),
+            (AMPLIFIER, synth_engine_v2::node::AMPLIFIER_CONTROL),
+            SignalDomain::Control,
+        )
+        .connect(
+            (AMPLIFIER, PortId::FIRST),
+            (OUTPUT, PortId::FIRST),
+            SignalDomain::Audio,
+        )
+        .build()
+        .expect("a readable plan")
+}
+
+#[test]
+fn a_late_note_edge_takes_effect_at_its_clamped_render_position() {
+    // `SOUND-INV-016`, restated over the render position by ADR-0043. A late event's
+    // sample-positioned effect occurs where its *render position* falls — the clamped
+    // position — and an on-time one still occurs at its declared sample. The diagnostic
+    // alone cannot catch either being misplaced:
+    // `a_late_event_is_clamped_forward_and_counted` asserts the count and would pass with
+    // the edge dropped entirely.
+    //
+    // Both edges are asserted in one render so the test distinguishes "the clamp targets
+    // the clock" from "everything is applied at the head of the call". The warm-up block
+    // is deliberately **not** a multiple of `Q`, so it leaves a partial output carry and
+    // the clamped position lands at a nonzero offset in the next call's buffer. With a
+    // `Q`-aligned warm-up the two coincide at frame 0 and a renderer that applied every
+    // late edge at the callback head would pass.
+    let warm_up = 200_usize;
+    let block = 256_usize;
+    let host = profile(block as u64, ChannelLayout::Mono);
+    let plan = admit(&gated_constant(), host);
+    let slot = plan
+        .resolve_note(ENVELOPE)
+        .expect("an envelope is a node a note can be sent to");
+    let mut renderer = PreparedRenderer::prepare(
+        plan,
+        StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
+    )
+    .expect("preparation succeeds");
+    let epoch = renderer.epoch();
+
+    // The first call renders with no events, so the clock passes sample 0 and anything
+    // stamped there is late by clause 16's condition.
+    let mut samples = vec![0.0_f32; warm_up];
+    let output =
+        AudioBlockMut::new(&mut samples, warm_up, ChannelLayout::Mono).expect("shaped block");
+    renderer
+        .render(output, TimedEvents::EMPTY)
+        .expect("the first call renders");
+    assert!(
+        samples.iter().all(|value| *value == 0.0),
+        "an ungated constant is silent"
+    );
+
+    // ADR-0001 clause 11: the host's output position for input sample `S` is `S + Q`,
+    // because the output carry is primed with `Q` frames of silence. A warm-up that is not
+    // a whole number of quanta therefore renders past what it emitted, and the surplus
+    // waits in the output carry.
+    let quantum = QUANTUM_FRAMES as usize;
+    let clamped_to = renderer.clock();
+    // The warm-up serves `Q` primed frames first, so it renders the fewest whole quanta
+    // that cover what is left of its request.
+    let rendered = (warm_up - quantum).next_multiple_of(quantum);
+    assert_eq!(
+        clamped_to.as_u64(),
+        rendered as u64,
+        "the clamp target is the first not-yet-rendered position, which is a quantum \
+         boundary and not the caller's frame count"
+    );
+    // Output frame `S + Q` carries input sample `S`, so the clamped position surfaces this
+    // far into the next call — the surplus the warm-up rendered but did not emit.
+    let carried = rendered + quantum - warm_up;
+    assert!(
+        carried > 0,
+        "the warm-up must leave a carry, or the clamped position collapses onto frame 0"
+    );
+
+    // A note-on stamped at sample 0 — inside a quantum that has already rendered, so it
+    // is late and clamps forward to the clock. A note-off stamped `GATE` frames after the
+    // clock is on time and keeps its declared sample.
+    const GATE: u64 = 100;
+    let events = [
+        TimedEvent::new(
+            EventEnvelope::new(epoch, SampleTime::new(0), TimeSource::Compiled),
+            EventPayload::Note {
+                slot,
+                edge: NoteEdge::On,
+            },
+        ),
+        TimedEvent::new(
+            EventEnvelope::new(
+                epoch,
+                SampleTime::new(clamped_to.as_u64() + GATE),
+                TimeSource::Compiled,
+            ),
+            EventPayload::Note {
+                slot,
+                edge: NoteEdge::Off,
+            },
+        ),
+    ];
+    let mut samples = vec![0.0_f32; block];
+    let output =
+        AudioBlockMut::new(&mut samples, block, ChannelLayout::Mono).expect("shaped block");
+    renderer
+        .render(output, TimedEvents::new(&events))
+        .expect("a late event is clamped, never dropped");
+    assert_eq!(renderer.diagnostics().late_events(), 1);
+
+    // The clamped note-on lands on the clock, which surfaces `carried` frames into this
+    // call's output because the warm-up's surplus is emitted first. The on-time note-off
+    // lands `GATE` frames after that.
+    let opens = carried;
+    let closes = carried + GATE as usize;
+    assert!(
+        samples[..opens].iter().all(|value| *value == 0.0),
+        "the carried frames precede the clamped position and the gate is still shut"
+    );
+    assert!(
+        samples[opens..closes].iter().all(|value| *value == 1.0),
+        "the clamped note-on opens the gate at the clamped position, not at the head"
+    );
+    assert!(
+        samples[closes..].iter().all(|value| *value == 0.0),
+        "the on-time note-off still lands at its own declared sample"
+    );
+}
+
 #[test]
 fn a_quantum_over_its_event_capacity_is_rejected_before_anything_is_mutated() {
-    // The specification's rule 2 for a phase in which `HOST-INV-021` is deferred: the
-    // call is rejected before renderer state or output is mutated, and the renderer
+    // The specification's rule 2 for a phase that does not implement `HOST-INV-021`'s
+    // deferral: the call is rejected before renderer state or output is mutated, and the renderer
     // must not defer, drop, clip, partially render, or grow to absorb it.
     let host = profile(256, ChannelLayout::Mono);
     let mut limits = common::defaults_for(&host);

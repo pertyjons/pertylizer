@@ -194,10 +194,12 @@ impl NoteEdge {
 
 /// What an event does.
 ///
-/// **When** it takes effect is not this enum's to say. ADR-0001 clause 14 splits on the
-/// *effect*: a sample-positioned one — note-on, note-off, gate, retrigger — occurs at its
-/// declared sample, while a control-rate response begins at the next quantum boundary
-/// under clause 13's causality rule. The node kind declares which of the two each of its
+/// **When** it takes effect is not this enum's to say. ADR-0001 clause 14, as ADR-0043
+/// restated it, splits on the *effect*: a sample-positioned one — note-on, note-off, gate,
+/// retrigger — occurs at the sample its **render position** names, while a control-rate
+/// response begins at the first quantum boundary at or after that position, under clause
+/// 13's causality rule. The render position is the declared sample unless the renderer
+/// moved the event, which only the late clamp and capacity deferral do. The node kind declares which of the two each of its
 /// controls is, admission compiles that into the target, and the renderer reads it. So
 /// addressing a gate as a parameter and playing its node as a note reach the same control
 /// under the same timing law, and neither payload can be used to escape the other's.
@@ -257,7 +259,7 @@ impl TimedEvent {
 /// The events one render call is presented with.
 ///
 /// A **prevalidated bounded span**, per the host-profile specification's rule for a
-/// phase in which `HOST-INV-021` is deferred: the renderer groups these by the same
+/// phase that does not implement `HOST-INV-021`'s deferral: the renderer groups these by the same
 /// absolute quantum boundaries it renders on, independently of how the caller
 /// partitions blocks, and rejects the call if any one quantum exceeds
 /// `max_events_per_quantum`. The span's **total** is not a limit — one call may cover
