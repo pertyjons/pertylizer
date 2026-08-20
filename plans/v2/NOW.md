@@ -34,13 +34,15 @@ that must be `Accepted` **before implementation begins**, and neither is:
 | Prerequisite | Current status | What it must settle |
 |---|---|---|
 | [ADR-0022](decisions/ADR-0022-hardware-time-mapping.md) — hardware time mapping and latency ownership | **`Deferred`** | Phase 3 may refine it through a superseding ADR on simulated-host evidence; it may **not** invent timestamp semantics inside implementation tasks |
-| An **ADR-0001 clarification or successor** | Does not exist | When clause 16's late condition is evaluated, and whether a quantum may defer an event at all under clauses 12 and 14. The two cannot both be implemented as written; the specification states an interim rule and marks it as a narrowing it may not make |
+| An **ADR-0001 clarification or successor** | **[ADR-0043](decisions/ADR-0043-event-deferral-and-late-clamp.md), `Proposed`** — drafted, not decided | When clause 16's late condition is evaluated, and whether a quantum may defer an event at all under clauses 12 and 14. The two cannot both be implemented as written; the specification states an interim rule and marks it as a narrowing it may not make. ADR-0043 presents four options with a recommendation and selects none — the choice is the maintainer's. **Whether accepting it closes this prerequisite depends on the option chosen:** a deferral option leaves `+Q` able to render a note-on after its own note-off, whose repair is outside ADR-0043's boundary; the no-deferral option closes it only if Phase 3's capacities make its runtime callback fault unreachable |
 
 Both obligations arrive from Phase 0A, which narrowed P00A-T005 rather than blocking on them — Phase 1 has no live
 ingress and no host callback, so the capacity a deferral operates against could not be specified from below. See
 [`REV-P00A`](reviews/phase-00a-exit-review.md).
 
-**Activating Phase 3 is the user's call**, and drafting either record is the first slice when it is made. Phase 0B's
+**Activating Phase 3 is the user's call.** One of the two records is now drafted; selecting its option and taking it
+to `Accepted` is the next slice on that side — and under a deferral option that slice also owes a causal-order policy,
+which ADR-0043 names as a blocker rather than solves. ADR-0022 remains untouched. Phase 0B's
 paused stream below is the other candidate; it gates Phase 10 and nothing in Phase 3 depends on it.
 
 ## Paused parallel stream: Phase 0B

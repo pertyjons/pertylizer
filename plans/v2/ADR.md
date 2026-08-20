@@ -3,7 +3,7 @@
 This is the compact status index for durable Core V2 decisions. Individual ADRs own rationale and evidence; current
 specifications own implementation semantics. Do not copy review history or measurement results into this file.
 
-Next free identifier: `ADR-0043`.
+Next free identifier: `ADR-0044`.
 
 ## Status vocabulary
 
@@ -88,6 +88,7 @@ the durable-decision test in `PROCESS.md` and normally do not need an ADR.
 | ADR-0040 | V2 owns its DSP                             | Accepted | 2                     | [ADR](decisions/ADR-0040-v2-owns-its-dsp.md)                       | Accepted with ADR-0041 as its clause 7 requires |
 | ADR-0041 | Interleaved internal channel layout         | Accepted | 2                     | [ADR](decisions/ADR-0041-interleaved-internal-channel-layout.md)   | Supersedes ADR-0002 in full; P02-T013 converts the crate |
 | ADR-0042 | Envelope segment shape                      | Accepted | 2                     | [ADR](decisions/ADR-0042-envelope-segment-shape.md)                | EVD-0013's envelope shape difference; `CORPUS-0001-C2` added 2026-08-20. CORPUS-0001-P2 untouched |
+| ADR-0043 | Event deferral and the late clamp           | Proposed | 3                     | [ADR](decisions/ADR-0043-event-deferral-and-late-clamp.md)         | One of Phase 3's two entry decisions; needs no measurement. Options open, recommendation stated |
 
 ### Reversible decisions
 
