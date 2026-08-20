@@ -78,17 +78,23 @@ that review has to fold in.
 
 ### Next actions
 
-**`P02-T011` is the only Phase 2 task left that is neither complete nor closed**, and the four items before it are
-its inputs rather than separate work.
+**`P02-T011` is the only Phase 2 task left that is neither complete nor closed**, and the items before it are its
+inputs rather than separate work.
 
-1. Close `render_loop_purity`'s provenance gap for SOUND-INV-013: it proves every *registered* kernel is
-   defined in the checked region, but not that a descriptor's function pointer resolves inside it.
-2. Audit the specification's pre-existing conformance rows, which predate this phase: an independent read
+**SOUND-INV-013's provenance gap is closed in two halves, and only the first by the type system.** A kernel's
+function pointer is private to `node::kernels`, so a descriptor elsewhere naming any function is a **compile
+error** — and since every descriptor lives in `node.rs`, every registered pointer is necessarily one of that
+module's constants. What those constants *wrap* is not settled by privacy: an in-module `Kernel(foreign)` is well
+typed, and a bounded source scan is what rejects it. Nine forging routes are mutation-checked, five of them found by
+review after a repair had looked sufficient. The specification keeps a named entry for that narrower in-module
+residual rather than claiming a scan for a grammar can be exhaustive.
+
+1. Audit the specification's pre-existing conformance rows, which predate this phase: an independent read
    found four that name a check not carrying the invariant — SOUND-INV-001/004, 003/012, 007 and 008. Not a
    defect in the code, and recorded in the specification's unresolved questions.
-3. Decide where a note's **pitch and velocity** live. P02-T007 deliberately gave `NoteEdge` neither, because
+2. Decide where a note's **pitch and velocity** live. P02-T007 deliberately gave `NoteEdge` neither, because
    nothing in Phase 2 reads either; Phase 3's ingress is the first task that has to.
-4. Complete the Phase 2 exit review, `REV-P02`. Two deviation inputs are waiting for it: **P02-T006's dropped
+3. Complete the Phase 2 exit review, `REV-P02`. Two deviation inputs are waiting for it: **P02-T006's dropped
    extraction**, whose acceptance basis is ADR-0040 clause 5, and the six deviations the frozen phase record lists.
 
 ## Paused parallel stream: Phase 0B

@@ -527,7 +527,7 @@ impl Table {
             match kind {
                 Kind::Sine => sine(prepared, state, &mut io),
                 Kind::Filter => filter(prepared, state, &mut io),
-                Kind::Envelope | Kind::Amplifier => (step.kernel())(prepared, state, &mut io),
+                Kind::Envelope | Kind::Amplifier => step.kernel().run(prepared, state, &mut io),
             }
         }
         self.write_output();
@@ -551,7 +551,7 @@ impl Table {
             ) else {
                 continue;
             };
-            (step.kernel())(prepared, state, &mut io);
+            step.kernel().run(prepared, state, &mut io);
         }
         self.write_output();
     }

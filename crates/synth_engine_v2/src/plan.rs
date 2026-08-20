@@ -469,12 +469,10 @@ impl NodeStep {
 
     /// Whether two steps call the same kernel.
     ///
-    /// Function-pointer equality is what it is: two identical functions may be merged to
-    /// one address, and one function may have two addresses across codegen units. It is
-    /// used to compare *schedules*, where both directions are acceptable — a schedule
-    /// that differs in its slots is what a test is really asking about.
+    /// [`Kernel::is_same`] owns the comparison and records what function-pointer equality
+    /// can and cannot promise.
     fn same_kernel(&self, other: &Self) -> bool {
-        std::ptr::fn_addr_eq(self.kernel, other.kernel)
+        self.kernel.is_same(other.kernel)
     }
 
     /// Rewrite the slots this step names, once the arena has assigned them.

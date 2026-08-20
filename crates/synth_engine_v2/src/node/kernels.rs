@@ -39,7 +39,93 @@ pub const MAX_INPUTS: usize = 2;
 /// ADR-0004 clause 5: prepared data, mutable state, and the slots the arena assigned —
 /// **never `&self`**, so rendering a node cannot mutate its configuration and one
 /// prepared node can serve several states without copying.
-pub type Kernel = fn(&PreparedNode, &mut NodeState, &mut NodeIo<'_>);
+type KernelFn = fn(&PreparedNode, &mut NodeState, &mut NodeIo<'_>);
+
+/// A node's render entry, and the only thing a descriptor can hold.
+///
+/// # Why this is a newtype and not the function pointer
+///
+/// `SOUND-INV-013` says every kernel reachable from the render loop lives in this crate,
+/// and audio is not routed through a function whose behaviour V1's corpus digests pin.
+/// While this was a bare `fn` alias, that invariant had a hole its own conformance row
+/// admitted: `render_loop_purity` could check that every *registered* kernel is defined
+/// in the checked region, but not that a descriptor's pointer resolves inside it. A
+/// descriptor written against any other path was simply invisible to a scan keyed on the
+/// path it expected.
+///
+/// The wrapper closes the **cross-module** half of that by construction, and only that
+/// half. Its field is private to this module, so a `Kernel` can only be built **here**:
+/// **a descriptor elsewhere naming any function is not caught by a test; it does not
+/// compile.**
+///
+/// The type system says nothing about what is built here. An in-module
+/// `Kernel(foreign)` is well typed, and what rejects it is `render_loop_purity`'s scan of
+/// this file's construction sites — which recognises source forms and is bounded as
+/// such. The specification's *Unresolved questions* records that boundary.
+///
+/// The kernel functions stay public beside the constants, because EVD-0009's and
+/// EVD-0010's harnesses call them directly and a comparison that reimplemented them would
+/// be measuring a model. The function is the arithmetic; the constant is the registrable
+/// form.
+/// No derived `PartialEq`: comparing two kernels is `is_same`'s job — it is crate-internal
+/// and records what function-pointer equality can promise — and having two ways to do it
+/// invites the wrong one.
+#[derive(Debug, Clone, Copy)]
+#[must_use]
+pub struct Kernel(KernelFn);
+
+impl Kernel {
+    /// Render one node's quantum.
+    ///
+    /// Real-time: this is a call through a function pointer and nothing else. The
+    /// wrapper is a newtype over that pointer, so it costs what the bare call cost.
+    ///
+    /// **Public, and that does not weaken the provenance guarantee.** The guarantee is
+    /// about *construction*: nothing outside this module can make a `Kernel`. Invoking
+    /// one obtained from a compiled plan is what EVD-0009's and EVD-0010's harnesses do,
+    /// and it is the surface P02-T005's deviation 5 already records — a harness that
+    /// reimplemented the dispatch would be measuring a model of it.
+    #[inline]
+    pub fn run(self, prepared: &PreparedNode, state: &mut NodeState, io: &mut NodeIo<'_>) {
+        (self.0)(prepared, state, io);
+    }
+
+    /// Whether two kernels are the same function.
+    ///
+    /// Function-pointer equality is what it is: two identical functions may be merged to
+    /// one address, and one function may have two addresses across codegen units. It is
+    /// used to compare *schedules*, where both directions are acceptable — a schedule
+    /// that differs in its slots is what a test is really asking about.
+    ///
+    /// It lives here rather than at the call site because the pointer is private to this
+    /// module, which is the point of the wrapper.
+    pub(crate) fn is_same(self, other: Self) -> bool {
+        std::ptr::fn_addr_eq(self.0, other.0)
+    }
+}
+
+/// The registrable form of each kernel.
+///
+/// One per function with the kernel signature. `render_loop_purity` checks that the two
+/// sets agree, so a kernel with no constant or a constant with no kernel fails — a scan
+/// over this file's source, with the reach that implies.
+pub const SILENCE: Kernel = Kernel(silence);
+/// See [`SILENCE`].
+pub const CONSTANT: Kernel = Kernel(constant);
+/// See [`SILENCE`].
+pub const IMPULSE: Kernel = Kernel(impulse);
+/// See [`SILENCE`].
+pub const SINE: Kernel = Kernel(sine);
+/// See [`SILENCE`].
+pub const GAIN: Kernel = Kernel(gain);
+/// See [`SILENCE`].
+pub const ENVELOPE: Kernel = Kernel(envelope);
+/// See [`SILENCE`].
+pub const FILTER: Kernel = Kernel(filter);
+/// See [`SILENCE`].
+pub const AMPLIFIER: Kernel = Kernel(amplifier);
+/// See [`SILENCE`].
+pub const COPY: Kernel = Kernel(copy);
 
 /// A node's immutable prepared data.
 ///

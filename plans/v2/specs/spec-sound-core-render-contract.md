@@ -194,21 +194,32 @@ excess is a preparation refusal rather than runtime truncation.
 | SOUND-INV-008 | `lowering` |
 | SOUND-INV-011 | `arena_reuse` |
 | SOUND-INV-016 | `note_events`, over the compiled path, and the envelope kernel's own edge tests in `kernels`. `note_events` places each edge at an offset that is **not** a multiple of `Q` and asserts an exact value per frame, so an edge quantized to a boundary fails it; it renders the same edge through three host-block partitions and through both payloads and requires all of them bit-identical; and `an_edge_mid_ramp_starts_from_the_level_that_frame_would_have_had` covers the case the instantaneous-segment fixtures cannot see, where the level a frame starts from and the sample before it differ by one step. `layout_baseline` cannot cover any of this — every edge in its fixtures is on a boundary — so it is a regression control here rather than a placement check |
-| SOUND-INV-013 | `render_loop_purity`, partially: the kernel registry is closed and every registered kernel is defined inside the checked region. It cannot see a descriptor that points at a function outside it — see *Unresolved questions* |
+| SOUND-INV-013 | Two mechanisms, and what each one carries is stated rather than blurred. **The type system** enforces exactly one thing: a `Kernel` cannot be *constructed outside* `node::kernels`, its field being private — so a descriptor elsewhere naming any function does not compile (`E0423`, mutation-verified). Every descriptor lives in `node.rs`, so every registered pointer is necessarily one of that module's constants; what those constants wrap is not settled by privacy, and an in-module `Kernel(foreign)` is well-typed. **A bounded source scan** carries the rest — `render_loop_purity`'s `the_kernel_registry_is_closed_and_no_scanned_form_forges_a_kernel` requires every construction site it recognises in that one file to be a declared constant, and checks the entries and constants it can parse agree in both directions. Nine forging routes are mutation-checked. What the scan is not is under *Unresolved questions* |
 | SOUND-INV-009, 010, 014 | `layout_baseline` for ADR-0041 clause 16's per-quantum digest comparison over its five fixtures, `arena_reuse` for the structural check over physical sample ranges and for `reuse_renders_bit_identically_to_no_reuse`, and `lowering`'s `a_mono_source_into_a_stereo_stream_widens_into_one_wider_region`, `a_mono_stream_compiles_exactly_one_output_operation` and `an_inserted_conversion_is_reported_and_not_only_scheduled` |
 | SOUND-INV-015 | `graph_validation`'s `every_kernel_admits_exactly_one_channel_on_every_port` over the macro-generated catalog, and `kernels`' `the_widening_writes_every_channel_of_every_frame` for the one kernel with two admitted counts |
 | Node arithmetic and preparation | `voice_nodes`, internal kernel tests |
 
 ## Unresolved questions
 
-**SOUND-INV-013's falsifier is partial, and the gap is named rather than
-assumed closed.** `render_loop_purity` requires the kernel registry to be closed
-and every registered kernel to be defined in the checked region, so an ordinary
-call out to a V1 kernel fails it. What it cannot see is a descriptor whose
-function pointer resolves outside that region; `crate_boundary` does not close
-that either, because its allowlist admits `synth_dsp` and `synth_modules`, which
-ADR-0040 clause 1 permits for a non-kernel value or table. Closing or replacing
-that check is open work.
+**SOUND-INV-013's in-module residual is bounded and named.** The recorded gap
+was that a descriptor's function pointer might resolve outside the region. The
+compiler now settles where a descriptor may *point*: a `Kernel` cannot be
+constructed outside `node::kernels`, every descriptor is in `node.rs`, so every
+registered pointer is one of that module's constants. It does **not** settle what
+those constants wrap — an in-module `Kernel(foreign)` is well-typed, and what
+rejects it is the source scan rather than the type system. So the part of the
+original gap that no mechanism closes is a constant declared *inside*
+`node::kernels` around a function that module names by path, in a spelling the
+scan does not recognise. `render_loop_purity` scans that
+file's construction sites, and nine spellings are mutation-checked — a free
+function returning `Kernel`, a method returning `Option<Self>`, an associated
+constant, functional-record syntax, a type alias, a widened field, an
+unregistered kernel, an unused constant, and a descriptor naming a foreign
+function — but it is a scan for source forms, and a scan for a grammar cannot be
+exhaustive. Closing it would need a resolver-level check of the pointers the
+registry actually holds, which pointer identity across codegen units makes
+delicate. The residual is a deliberate edit inside the file whose purpose is to
+hold the kernels, which is a narrower thing than the gap this replaced.
 
 **Four pre-existing conformance rows name a check that does not carry the
 invariant.** An independent read of the rows this phase inherited found

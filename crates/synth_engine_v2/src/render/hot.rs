@@ -431,7 +431,7 @@ impl PreparedRenderer {
                     ) else {
                         continue;
                     };
-                    (step.kernel())(prepared, state, &mut io);
+                    step.kernel().run(prepared, state, &mut io);
                 }
                 PlanOp::Output { source } => {
                     // ADR-0041 clause 11: the plan's output signal already has the

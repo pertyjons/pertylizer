@@ -100,28 +100,28 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
     let descriptor = match kind {
         IrNodeKind::Output => return None,
         IrNodeKind::Silence => NodeDescriptor {
-            kernel: kernels::silence,
+            kernel: kernels::SILENCE,
             ports: vec![audio_out()],
             controls: Vec::new(),
             in_place_safe: false,
             note_control: None,
         },
         IrNodeKind::Constant { .. } => NodeDescriptor {
-            kernel: kernels::constant,
+            kernel: kernels::CONSTANT,
             ports: vec![audio_out()],
             controls: Vec::new(),
             in_place_safe: false,
             note_control: None,
         },
         IrNodeKind::Impulse { .. } => NodeDescriptor {
-            kernel: kernels::impulse,
+            kernel: kernels::IMPULSE,
             ports: vec![audio_out()],
             controls: Vec::new(),
             in_place_safe: false,
             note_control: None,
         },
         IrNodeKind::Sine { .. } => NodeDescriptor {
-            kernel: kernels::sine,
+            kernel: kernels::SINE,
             ports: vec![audio_out()],
             controls: vec![
                 ControlSpec {
@@ -139,7 +139,7 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
             note_control: None,
         },
         IrNodeKind::Amplifier => NodeDescriptor {
-            kernel: kernels::amplifier,
+            kernel: kernels::AMPLIFIER,
             ports: vec![
                 audio_in(crate::ir::PortId::FIRST),
                 PortSpec::new(
@@ -157,7 +157,7 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
             note_control: None,
         },
         IrNodeKind::Envelope { .. } => NodeDescriptor {
-            kernel: kernels::envelope,
+            kernel: kernels::ENVELOPE,
             ports: vec![PortSpec::new(
                 crate::ir::PortId::FIRST,
                 PortDirection::Output,
@@ -177,7 +177,7 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
             note_control: Some(kernels::ENVELOPE_GATE),
         },
         IrNodeKind::Filter { .. } => NodeDescriptor {
-            kernel: kernels::filter,
+            kernel: kernels::FILTER,
             ports: vec![audio_in(crate::ir::PortId::FIRST), audio_out()],
             controls: Vec::new(),
             // A biquad reads each input sample before it writes that sample's output, and
@@ -187,7 +187,7 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
             note_control: None,
         },
         IrNodeKind::Gain { .. } => NodeDescriptor {
-            kernel: kernels::gain,
+            kernel: kernels::GAIN,
             ports: vec![audio_in(crate::ir::PortId::FIRST), audio_out()],
             controls: Vec::new(),
             // A gain scales each sample independently, so reading and writing one buffer
@@ -223,7 +223,7 @@ pub fn ports(kind: IrNodeKind, stream: ChannelLayout) -> Vec<PortSpec> {
 /// identity; this is the descriptor the compiler schedules it under.
 pub(crate) fn copy_descriptor() -> NodeDescriptor {
     NodeDescriptor {
-        kernel: kernels::copy,
+        kernel: kernels::COPY,
         ports: vec![audio_in(crate::ir::PortId::FIRST), audio_out()],
         controls: Vec::new(),
         // A copy exists to produce a second buffer. Writing it over its own input would

@@ -18,8 +18,8 @@
 //! not be enumerated was excluded by that clause regardless of its speed.
 //!
 //! So the region is the loop plus the kernels, the callee set is the registry, and
-//! [`the_kernel_registry_is_closed_and_every_kernel_is_in_the_region`] checks that the
-//! registry names all of them and nothing else.
+//! [`the_kernel_registry_is_closed_and_no_scanned_form_forges_a_kernel`] checks that the
+//! registry and the kernels agree, as far as reading the source can establish.
 //!
 //! What this cannot do is stop someone moving code out of the region to dodge it. That is
 //! true of any structural check; what it does stop is the ordinary case, where a helper
@@ -446,6 +446,18 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         "value",
     ];
 
+    // The one module-qualified call in the region, and it is **not on the hot path at
+    // all**.
+    //
+    // `Kernel::is_same` backs `NodeStep::same_kernel`, which compares two *schedules* —
+    // a compile-time question a test asks, never something a quantum does. It lives in
+    // `kernels.rs` because `Kernel`'s pointer is private to that module: the comparison
+    // had to move in when the pointer stopped being nameable from outside it.
+    //
+    // Justified on its own terms as well as by not being reached: it compares two
+    // function addresses. It cannot allocate, lock, panic, or reach a device.
+    let pointer_comparison = ["std::ptr::fn_addr_eq"];
+
     let mut unresolved: Vec<String> = Vec::new();
     let bytes: Vec<char> = source.chars().collect();
     for (index, character) in bytes.iter().enumerate() {
@@ -505,6 +517,12 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
             // module-qualified is exactly what the scan cannot see.
             let region_module = owner.is_some_and(|segment| REGION_MODULES.contains(&segment));
             let qualified = format!("{qualifier}{name}");
+            // Justified by its full path, so it is settled here rather than falling
+            // through to the bare-name lists — which would admit the same identifier on
+            // any receiver.
+            if pointer_comparison.contains(&qualified.as_str()) {
+                continue;
+            }
             if is_module && !region_module && !unresolved.contains(&qualified) {
                 unresolved.push(qualified);
                 continue;
@@ -617,23 +635,116 @@ fn the_region_modules_are_all_scanned() {
     }
 }
 
+/// A `Kernel` cannot be built outside `node::kernels`, and this checks what follows from
+/// that but is not implied by it.
+///
+/// # What changed, and why this test is smaller than it was
+///
+/// `SOUND-INV-013` says every kernel reachable from the render loop lives in this crate.
+/// An earlier form of this check scanned `node.rs` for `kernel: kernels::…` and compared
+/// the names it found against the functions defined in `kernels.rs`. That caught a
+/// registered name that was not a kernel — but it was keyed on the path it expected, so a
+/// descriptor written against *any other* path was invisible to it rather than caught.
+/// The specification recorded that as an open gap.
+///
+/// [`Kernel`](synth_engine_v2::node::kernels::Kernel) is now a newtype whose field is
+/// private to `kernels.rs`, so a `Kernel` can only be **constructed there**. A descriptor
+/// anywhere else naming any function **does not compile** — verified by mutation: it
+/// fails with `E0423, cannot initialize a tuple struct which contains private fields`.
+///
+/// **That is all rustc carries.** An in-module `Kernel(foreign)` is perfectly well typed,
+/// so privacy does not by itself say the declared constants are the only kernels that
+/// exist. This test goes after that by reading the source: it rejects the construction
+/// spellings it recognises, and checks the registry entries and constants it can parse
+/// agree in both directions. Both are scans, and the specification's *Unresolved
+/// questions* records what a scan for a grammar cannot be.
 #[test]
-fn the_kernel_registry_is_closed_and_every_kernel_is_in_the_region() {
-    // ADR-0004 clause 4: the callee set has to be enumerable from source. It is the
-    // registry, and this is the check that the registry and the kernels are the same
-    // set — a kernel nobody registers is dead code, and a registered name that is not a
-    // kernel defined in the region is a call the scans above never see.
+fn the_kernel_registry_is_closed_and_no_scanned_form_forges_a_kernel() {
     let kernels = strip_comments(&read_region_file("src/node/kernels.rs"));
     let registry = strip_comments(&read_region_file("src/node.rs"));
 
+    // --- What the type system leaves open: a `Kernel` built here over a foreign fn. ---
+    //
+    // Privacy makes rustc refuse a descriptor naming a function outside this module, and
+    // that is the whole of the compiler's contribution. It is **not** the guarantee that
+    // only the nine constants exist: code *inside* `kernels.rs` can construct a `Kernel`
+    // over any function it can name, and export it.
+    //
+    // So this scans the file's construction sites, and each must be a declared constant.
+    // The field is private, so there are none anywhere else — but the scan itself reads
+    // *source forms*, and successive review passes each found another valid spelling it
+    // did not recognise: `-> Option<Self>`, an associated `const … : Self`, functional
+    // record syntax `Self { 0: … }`, a type alias. Nine spellings are mutation-checked
+    // and the brace forms and aliases are covered, and it is still a scan for a grammar
+    // rather than a proof. The specification records that boundary rather than implying
+    // it away.
+    // Construction is `Kernel(…)` or `Kernel { … }` anywhere in the file, and the same
+    // two spellings of `Self` inside an `impl Kernel` block — elsewhere in this file
+    // `Self` is some other type, and the kernel file has several. `Self { 0: … }` is
+    // valid for a tuple struct and is why the brace forms are matched too.
+    let constructs = |line: &str| {
+        line.contains("Kernel(") || line.contains("Kernel {") && !line.contains("impl Kernel {")
+    };
+    let mut construction_sites: Vec<&str> = kernels
+        .lines()
+        .map(str::trim)
+        .filter(|line| constructs(line))
+        .collect();
+    for block in kernels.split("impl Kernel {").skip(1) {
+        let body = block.split("\n}").next().unwrap_or("");
+        construction_sites.extend(body.lines().map(str::trim).filter(|line| {
+            (line.contains("Self(") || line.contains("Self {")) && !constructs(line)
+        }));
+    }
+    assert!(
+        construction_sites.len() > 1,
+        "found {} construction sites, so this scan is not reading the kernel file",
+        construction_sites.len()
+    );
+    for line in &construction_sites {
+        let is_declaration = *line == "pub struct Kernel(KernelFn);";
+        let is_constant = line.starts_with("pub const ") && line.contains(": Kernel = Kernel(");
+        assert!(
+            is_declaration || is_constant,
+            "`{line}` constructs a `Kernel` somewhere other than a declared constant. \
+             Privacy stops a *descriptor* naming a foreign function, but code in this \
+             module can still wrap one and export it, so every construction site has to \
+             be one of the constants"
+        );
+    }
+    // An alias would let a construction wear a name this scan does not look for.
+    assert!(
+        !kernels.contains("Kernel as "),
+        "`Kernel` is aliased in the kernel file, which puts a construction beyond the \
+         reach of the scan above"
+    );
+
+    // --- The functions, the constants and the entries this scan can parse agree. ---
     let defined: Vec<String> = kernels
         .split("pub fn ")
         .skip(1)
         .filter_map(|rest| {
             let name = rest.split(['(', '<']).next()?.trim().to_owned();
-            // A kernel is a function with the kernel signature, not merely a public one:
-            // `bind` is in this file and is called by the loop directly.
-            rest.contains("io: &mut NodeIo<'_>").then_some(name)
+            // A kernel is a **free function** with the kernel signature. Two things are
+            // excluded and both are in this file: `bind`, which the loop calls directly
+            // and which has a different signature, and `Kernel::run`, which takes `self`
+            // and *invokes* a kernel rather than being one. ADR-0004 clause 5 is what
+            // makes the `self` test decisive — a kernel never takes one.
+            //
+            // Matched with whitespace removed. `cargo fmt --check` is in the gate, so a
+            // differently spaced signature would be caught there too — but a check that
+            // silently stops recognising a kernel because someone wrote one space fewer
+            // is a check that fails open, and this one must not.
+            let parameters: String = rest
+                .split_once('(')?
+                .1
+                .chars()
+                .filter(|c| !c.is_whitespace())
+                .collect();
+            let takes_self = parameters.starts_with("self")
+                || parameters.starts_with("&self")
+                || parameters.starts_with("&mutself");
+            (parameters.contains("io:&mutNodeIo") && !takes_self).then_some(name)
         })
         .collect();
     assert!(
@@ -642,27 +753,69 @@ fn the_kernel_registry_is_closed_and_every_kernel_is_in_the_region() {
         defined.len()
     );
 
-    let mut registered: Vec<String> = Vec::new();
-    for fragment in registry.split("kernel: kernels::").skip(1) {
-        if let Some(name) = fragment.split([',', ' ', '\n']).next() {
-            registered.push(name.trim().to_owned());
-        }
-    }
-    assert!(
-        !registered.is_empty(),
-        "the registry scan found no `kernel: kernels::` entry, so it is not reading node.rs"
+    // `pub const NAME: Kernel = Kernel(function);`
+    let constants: Vec<(String, String)> = kernels
+        .split("pub const ")
+        .skip(1)
+        .filter_map(|rest| {
+            let (head, tail) = rest.split_once(": Kernel = Kernel(")?;
+            Some((
+                head.trim().to_owned(),
+                tail.split(')').next()?.trim().to_owned(),
+            ))
+        })
+        .collect();
+    assert_eq!(
+        constants.len(),
+        defined.len(),
+        "{} kernel functions but {} registrable constants; every kernel needs exactly one",
+        defined.len(),
+        constants.len()
     );
-
-    for name in &defined {
+    for (name, wraps) in &constants {
         assert!(
-            registered.contains(name),
-            "`{name}` has the kernel signature but no registry entry, so nothing can schedule it"
+            defined.contains(wraps),
+            "`{name}` wraps `{wraps}`, which is not a function with the kernel signature"
         );
     }
-    for name in &registered {
+    for function in &defined {
         assert!(
-            defined.contains(name),
-            "the registry names `{name}`, which is not a kernel defined in the scanned region"
+            constants.iter().any(|(_, wraps)| wraps == function),
+            "`{function}` has the kernel signature but no `Kernel` constant, so no \
+             descriptor can reach it"
+        );
+    }
+
+    // Every descriptor entry names one of those constants, and every constant is used.
+    let entries: Vec<String> = registry
+        .split("kernel: kernels::")
+        .skip(1)
+        .filter_map(|fragment| Some(fragment.split([',', ' ', '\n']).next()?.trim().to_owned()))
+        .collect();
+    assert!(
+        !entries.is_empty(),
+        "the registry scan found no `kernel: kernels::` entry, so it is not reading node.rs"
+    );
+    // No descriptor may spell its kernel any other way. The compiler already refuses a
+    // *foreign* function; this refuses a local alias that would hide which constant is
+    // meant from a reader of the registry.
+    // Minus the struct's own field declaration, `kernel: Kernel`, which is not an entry.
+    assert_eq!(
+        registry.matches("kernel: ").count() - registry.matches("kernel: Kernel").count(),
+        entries.len(),
+        "a descriptor names its kernel by some path other than `kernels::`, so the \
+         registry no longer reads as one list of named kernels"
+    );
+    for entry in &entries {
+        assert!(
+            constants.iter().any(|(name, _)| name == entry),
+            "the registry names `kernels::{entry}`, which is not a `Kernel` constant"
+        );
+    }
+    for (name, _) in &constants {
+        assert!(
+            entries.contains(name),
+            "`{name}` is a registrable kernel that no descriptor uses, so it is dead code"
         );
     }
 }
