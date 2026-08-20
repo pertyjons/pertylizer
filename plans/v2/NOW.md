@@ -51,7 +51,7 @@ References:
 | Task              | State                            | Next dependency       |
 |-------------------|----------------------------------|-----------------------|
 | P02-T001–T005     | Complete                         | —                     |
-| P02-T006          | Ready to close as not-happening  | ADR-0040 clause 5     |
+| P02-T006          | **Closed — not happening**       | REV-P02 registers it  |
 | P02-T012          | Complete                         | EVD-0010              |
 | P02-T013          | Complete                         | EVD-0011              |
 | P02-T007          | Complete                         | `note_events`         |
@@ -59,20 +59,37 @@ References:
 | P02-T008/P02-T009 | Complete                         | —                     |
 | P02-T011          | Waiting                          | All Phase 2 outcomes  |
 
+### P02-T006 is closed, and what that leaves
+
+**The kernel extraction into `synth_dsp` is not happening**, and it is not deferred.
+[ADR-0040](decisions/ADR-0040-v2-owns-its-dsp.md) clause 5 is the authority and the closure adds nothing to it: the
+task carried no code, so closing it is a change of state rather than of the tree. The eleventh corpus fixture went
+with it, and clause 5 makes no claim on it either way — the manifest's coverage is P00A-T001's subject. Confirmed
+against the manifest: ten cases, and its one `planned` entry is Phase 0B's sampler category, unrelated.
+
+`synth_engine_v2` depends on `synth_core` and `thiserror` and on nothing else, so there is no residue of the
+extraction in the crate either.
+
+**The task's state is closed; its deviation is not yet registered, and those are two different things.** Dropping a
+master-plan work-list item is a deviation, and the place it belongs is `REV-P02`'s *Deviations and residual risks*
+table — which does not exist yet, because writing it is P02-T011. So the registration is **owed**, with ADR-0040
+clause 5 as the acceptance basis it will carry, and the frozen phase record's own deviation list is the other input
+that review has to fold in.
+
 ### Next actions
 
-The two evidence tasks are closed, so **P02-T011 is the only Phase 2 task left that is neither complete nor
-closable on a decision already made.**
+**`P02-T011` is the only Phase 2 task left that is neither complete nor closed**, and the four items before it are
+its inputs rather than separate work.
 
-1. Close P02-T006 as not-happening and record the dropped extraction as a deviation, per ADR-0040 clause 5.
-2. Close `render_loop_purity`'s provenance gap for SOUND-INV-013: it proves every *registered* kernel is
+1. Close `render_loop_purity`'s provenance gap for SOUND-INV-013: it proves every *registered* kernel is
    defined in the checked region, but not that a descriptor's function pointer resolves inside it.
-3. Audit the specification's pre-existing conformance rows, which predate this phase: an independent read
+2. Audit the specification's pre-existing conformance rows, which predate this phase: an independent read
    found four that name a check not carrying the invariant — SOUND-INV-001/004, 003/012, 007 and 008. Not a
    defect in the code, and recorded in the specification's unresolved questions.
-4. Decide where a note's **pitch and velocity** live. P02-T007 deliberately gave `NoteEdge` neither, because
+3. Decide where a note's **pitch and velocity** live. P02-T007 deliberately gave `NoteEdge` neither, because
    nothing in Phase 2 reads either; Phase 3's ingress is the first task that has to.
-5. Complete the Phase 2 exit review, `REV-P02`.
+4. Complete the Phase 2 exit review, `REV-P02`. Two deviation inputs are waiting for it: **P02-T006's dropped
+   extraction**, whose acceptance basis is ADR-0040 clause 5, and the six deviations the frozen phase record lists.
 
 ## Paused parallel stream: Phase 0B
 

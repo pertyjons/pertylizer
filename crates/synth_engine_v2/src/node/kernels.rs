@@ -118,8 +118,14 @@ pub enum PreparedNode {
     /// stores a coefficient that approaches `1` as the corner frequency falls, so in
     /// `f32` a low-pass below roughly a thousandth of the sample rate quantizes into
     /// something that is no longer the filter that was asked for — measured, not
-    /// assumed. This form's coefficients stay well scaled there, and it is also the form
-    /// `synth_dsp` already has, which is where P02-T006 puts the shared kernel.
+    /// assumed. This form's coefficients stay well scaled there.
+    ///
+    /// It is also the form `synth_dsp` already has, which is a **coincidence of two
+    /// independent choices** rather than sharing: ADR-0040 gives V2 its own DSP, and
+    /// P02-T006's extraction is closed as not happening. The two engines run the same
+    /// recurrence because it is the right one, and EVD-0013 measured their magnitude
+    /// responses agreeing to 0.068 dB across six octave bands. Nothing is shared, and a
+    /// fix to one does not reach the other.
     Filter {
         /// The three derived integrator coefficients.
         ///

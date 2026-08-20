@@ -18,7 +18,9 @@ workspace = true
 synth_core = { path = "../synth_core" }
 thiserror = { workspace = true }
 
-# Test-only. `crate_boundary` reads `[dependencies]`, which is the surface the Phase 1
-# work list fixes; a digest used by ADR-0041 clause 16's baseline check does not widen it.
+# Test-only. The Phase 1 work list fixes this crate's `[dependencies]` surface, and
+# `crate_boundary` checks it against an allowlist; a digest used by ADR-0041 clause 16's
+# baseline check does not widen it. (That test asks Cargo, not the manifest text, which
+# crates reach *this* one — the two questions are separate.)
 [dev-dependencies]
 sha2 = { workspace = true }
