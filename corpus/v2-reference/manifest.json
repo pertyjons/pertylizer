@@ -40,6 +40,12 @@
           "behavior": "Note onsets land on the exact sample the tick maps to, not on the first sample of the render block containing it.",
           "class": "intentional-correction",
           "rationale": "V1 dispatches sequencer events on block boundaries, so an onset can sit up to one block late and the error depends on the block size. Sample-accurate scheduling is the Phase 3 objective and is one of the corrections the master plan's audio comparison policy names."
+        },
+        {
+          "id": "CORPUS-0001-C2",
+          "behavior": "The amplitude envelope's segments are linear ramps of an exact frame count rather than V1's exponential curves aimed past their endpoints. The landmarks CORPUS-0001-P2 preserves stay within its measurement tolerance; the path between them does not.",
+          "class": "intentional-correction",
+          "rationale": "V2's envelope is given a frame count rather than a coefficient because an accumulated increment was measured arriving tens of samples early, and ADR-0040 makes each V2 node kind justify itself on its own criteria rather than by likeness to V1. EVD-0013 measures the consequence on this case: the release carries 1.137 dB more energy in V2, measured from each engine's own gate, while every landmark stays within CORPUS-0001-P2's measurement tolerance -- the timing landmarks within one 10 ms envelope window, and the sustain level at -0.0027 dB. Accepted as intentional by ADR-0042."
         }
       ]
     },

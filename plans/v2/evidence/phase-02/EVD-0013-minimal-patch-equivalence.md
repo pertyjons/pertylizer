@@ -11,7 +11,7 @@
 | Superseded by | — |
 | Source revision | `3acb7e6f` |
 | Retention | Permanent |
-| Conclusion | Not supported — E2a exceeded, as this record's falsifier defines it. No CORPUS-0001 claim is broken; see *Conclusion* |
+| Conclusion | Not supported — E2a exceeded, as this record's falsifier defines it. No CORPUS-0001 claim is broken, and every difference is dispositioned; see *Conclusion* |
 | Related | ADR-0040 clause 4, ADR-0042, ADR-0001 clauses 14 and 17, ADR-0037, ADR-0041 clause 16, CORPUS-0001, EVD-0001, EVD-0012, EVD-0014, P02-T008 |
 | Artifacts | `EVD-0013-thresholds.csv`, `evd_0013_oscillator_floor.py`, `crates/pertylizer/examples/evd_0013_equivalence.rs`, `corpus::fixtures::equivalence_probe` |
 
@@ -914,7 +914,7 @@ Five of the six thresholds pass, four by one to two orders of magnitude.
 | Filter magnitude response | +0.068 dB, constant over six octave bands | **Explained** — the residual is the envelope's, not the filter's; the two engines run the same recurrence with the same coefficients |
 | Harmonics above the corner | up to 21.8 dB, all more than 60 dB below the peak | **Explained** — `fast_sin_turns` against `f64::sin`, bounded by C3 and outside E3b's coverage rule |
 | Onset placement | V1 quantised to 256 samples, V2 exact | **Intentional** — CORPUS-0001-C1, the correction Phase 3's sample-accurate scheduling exists to make, confirmed on both halves |
-| **Envelope segment shape** | **release +1.137 dB from each engine's own gate; `fall_to_50_ms` +20 ms against a 10 ms threshold** | **Intentional** on [ADR-0042](../../decisions/ADR-0042-envelope-segment-shape.md)'s acceptance. Not a Failure: `CORPUS-0001-P2` claims landmarks, and every landmark is met — see below |
+| **Envelope segment shape** | **release +1.137 dB from each engine's own gate; `fall_to_50_ms` +20 ms against a 10 ms threshold** | **Intentional**, as `CORPUS-0001-C2` — [ADR-0042](../../decisions/ADR-0042-envelope-segment-shape.md) accepted 2026-08-20. Not a Failure: `CORPUS-0001-P2` claims landmarks, and every landmark is met — see below |
 
 ### The one exceeded threshold, and what it turned out to mean
 
@@ -954,6 +954,13 @@ letting the convenient one stand alone:
   failed, so it is not fixed; a successor record measuring P2's landmarks
   directly would be the honest way to close it.
 
+**What this means for the gate.** The exit gate's third bullet asks for musical
+equivalence *or a documented intentional difference*, and the second branch is
+now taken: every difference this record found has a cause traced to named code,
+and the one the phase wanted has a named disposition in the corpus manifest.
+This record's own `Not supported` is a verdict on its thresholds, not on the
+bullet.
+
 ### The shape difference, and where its disposition went
 
 V2's linear segments remain a real, measured difference from V1's exponential
@@ -962,9 +969,12 @@ property P02-T005 built deliberately, after an accumulated increment was
 measured arriving tens of samples early.
 
 The figures were put to the user on 2026-08-20 and the decision is
-[**ADR-0042**](../../decisions/ADR-0042-envelope-segment-shape.md): the shape is
-intentional, `CORPUS-0001-P2` is **not** amended because what it claims is met,
-and the shape becomes `CORPUS-0001-C2`, an intentional correction alongside C1.
+[**ADR-0042**](../../decisions/ADR-0042-envelope-segment-shape.md), **accepted
+that day**: the shape is intentional, `CORPUS-0001-P2` is **not** amended
+because what it claims is met, and the shape is now `CORPUS-0001-C2` in the
+manifest, an intentional correction alongside C1.
 
-Until ADR-0042 is accepted the shape difference has no named disposition, which
-is the only thing in this record still open.
+So every difference this record found carries a disposition, and nothing in it
+is open. Its conclusion is still `Not supported`, because E2a is still exceeded
+and that is what its falsifier turns on — a named disposition for the *shape*
+does not retract a threshold overrun.

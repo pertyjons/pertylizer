@@ -3,11 +3,11 @@
 | Field | Value |
 |---|---|
 | ID | ADR-0042 |
-| Status | Proposed |
+| Status | Accepted |
 | Phase | 2 |
 | Created | 2026-08-20 |
 | Last reviewed | 2026-08-20 |
-| Related | EVD-0013, ADR-0040 clauses 3 and 4, P02-T005, P02-T008, CORPUS-0001 |
+| Related | EVD-0013, ADR-0040 clauses 3 and 4, P02-T005, P02-T008, CORPUS-0001-C2 |
 | Supersedes | — |
 | Superseded by | — |
 
@@ -191,8 +191,52 @@ than of the claims, so no fixture is regenerated and no digest moves.
 
 ## Review
 
-Reviewer:
+Reviewer: an independent reader with no memory of the drafting, across the
+passes that reviewed this slice and one more on the acceptance itself.
 
 Stopping rule: false conclusion-affecting fact, contradiction, unfillable
 contract, safety/correctness defect, or evidence incapable of supporting the
 claim. Editorial detail does not block.
+
+**Five findings landed on this record, and none of them changed the option
+chosen.** Every one changed what the record *says* about it:
+
+- **The premise was false.** The draft proposed *narrowing* `CORPUS-0001-P2` to
+  claim landmarks. It already claimed landmarks, and had since the case was
+  written. That inverted the finding: no `preserve` claim is broken, so
+  ADR-0040 clause 4's failure branch never applied, and this record adds a
+  `change` entry rather than editing a `preserve` one. Options B and C were
+  restated on the corrected reading.
+- **The accepted cost was overstated.** +1.333 dB was measured over a window
+  shared by both engines, which folds in V1's 102-frame early note-off — E4's
+  subject, not the envelope's. Measured from each engine's own gate the figure is
+  **+1.137 dB**, and that is what the clauses and consequences now quote.
+- **Option C claimed the difference was "audible"** while this record states
+  that nobody has listened to it. It now says what is true: the difference is
+  measured, its audibility is exactly what is unestablished, and that is an
+  argument for recording it rather than against.
+- **The durable claim overstated landmark parity.** `CORPUS-0001-C2`'s first
+  draft said the landmarks P2 preserves were "unaffected", which reads as exact
+  agreement; they agree *within tolerance*, and two of them sit at one 10 ms
+  window. Its rationale also put every landmark under a 10 ms resolution, when
+  the sustain level is a level and P2's tolerance for it is 0.1 dB. Both are now
+  stated as measured — and this is manifest text, which outlives every record
+  that explains it, so an approximation there is worse than one anywhere else.
+- **This section contradicted itself.** An earlier form counted the passes,
+  miscounted them, and claimed one of them had merely confirmed the premises
+  while also claiming every pass found something. It no longer counts passes; it
+  lists findings, which is the quantity that can be checked.
+
+**One thing the review did not settle, and neither does this record.** Whether
+V2's release *sounds* better, worse, or merely different is unmeasured, and the
+revisit condition above is written against exactly that.
+
+## Acceptance
+
+Accepted 2026-08-20, with `CORPUS-0001-C2` added to
+`corpus/v2-reference/manifest.json` in the same change. The corpus tests confirm
+what the *Specification update* section predicted: the manifest validates, and
+**every fixture digest is unchanged**, because the `sha256` fields digest the
+project files rather than the claims.
+
+`CORPUS-0001-P2` is untouched.

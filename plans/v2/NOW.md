@@ -12,34 +12,31 @@ equivalence, CPU, and quantum gates.
 
 ### Active slice
 
-**P02-T008 and P02-T009 are collected.** Both records are `Complete`; what remains of the slice is
-[ADR-0042](decisions/ADR-0042-envelope-segment-shape.md)'s acceptance and the one manifest entry it names.
+**P02-T008 and P02-T009 are closed.** Both evidence records are `Complete`,
+[ADR-0042](decisions/ADR-0042-envelope-segment-shape.md) is `Accepted`, and `CORPUS-0001-C2` is in the manifest.
+The slice has nothing open.
 
 - **P02-T009** — [EVD-0014](evidence/phase-02/EVD-0014-minimal-patch-cpu.md), **Supported by rule 1**. V2 costs
   **78.0% less** than V1 on the governing pair under the conservative variant, at 189 times the noise floor. The exit
   gate's fifth bullet closes with **no margin claimed**.
-- **P02-T008** — [EVD-0013](evidence/phase-02/EVD-0013-minimal-patch-equivalence.md), **Not supported**, and the
-  reason is narrow. Five of its six declared thresholds pass, four by one to two orders of magnitude; E2a is exceeded
-  on `fall_to_50_ms`, and its own falsifier turns on any declared threshold being exceeded. **No CORPUS-0001 claim is
-  broken** — P2 claims landmark parity and V2 delivers it — so ADR-0040 clause 4's failure branch does not apply and
-  the gate's third bullet is not blocked by this. E2a turned out to bound a field that is not a landmark, which is a
-  defect in the record rather than in either engine, and is recorded rather than repaired by moving the number.
-
-Blockers: none. What is open:
-
-1. **Accept ADR-0042**, which needs a reader who did not author it, and then add `CORPUS-0001-C2` to
-   `corpus/v2-reference/manifest.json`. No `preserve` claim is edited and no fixture digest moves.
-2. Until then the envelope's segment-shape difference — **+1.137 dB** in the release, measured from each engine's own
-   gate — has no named disposition. It is the only thing in either record still open.
+- **P02-T008** — [EVD-0013](evidence/phase-02/EVD-0013-minimal-patch-equivalence.md), **Not supported**, and that is a
+  verdict on its own thresholds rather than on the gate. Five of six pass, four by one to two orders of magnitude; E2a
+  is exceeded on `fall_to_50_ms`, and its falsifier turns on any declared threshold being exceeded. **No CORPUS-0001
+  claim is broken** — P2 claims landmark parity and V2 delivers it — and **every difference now carries a
+  disposition**, so the gate's third bullet takes its second branch: a documented intentional difference.
+- **ADR-0042** — V2's linear envelope segments are intentional. `CORPUS-0001-P2` is untouched; the shape is
+  `CORPUS-0001-C2`, at **+1.137 dB** in the release measured from each engine's own gate. No fixture digest moved.
 
 Three things this slice established that are worth not rediscovering:
 
 - **The V1 chain applies an equal-power centre pan three times**, not two: the amplifier, the stereo output, and the
-  instrument fader in `SynthEngine::process`. Control C2 found the third by failing at +3.008 dB.
+  instrument fader in `SynthEngine::process` — the third outside the voice's module graph. Control C2 found it by
+  failing at +3.008 dB.
 - **The two engines' filters are the same recurrence**, and E3a measured their magnitude responses agreeing to
   +0.068 dB across six octave bands. The sines are not the same, and neither are the envelopes.
-- **A contract about the dependency graph belongs to the resolver.** The `crate_boundary` check was defeated by four
-  successive valid TOML spellings before it stopped scanning manifests and started asking `cargo tree`.
+- **A contract about the dependency graph belongs to the resolver.** `crate_boundary` was defeated by five successive
+  valid TOML spellings before it stopped scanning manifests and started asking `cargo tree`; `--target all` is
+  required, or host-target resolution hides a `cfg(windows)` entry.
 
 References:
 
@@ -59,21 +56,23 @@ References:
 | P02-T013          | Complete                         | EVD-0011              |
 | P02-T007          | Complete                         | `note_events`         |
 | P02-T010          | Complete                         | EVD-0012              |
-| P02-T008/P02-T009 | Complete — evidence collected    | ADR-0042 acceptance   |
+| P02-T008/P02-T009 | Complete                         | —                     |
 | P02-T011          | Waiting                          | All Phase 2 outcomes  |
 
 ### Next actions
 
-1. Accept ADR-0042 and add `CORPUS-0001-C2` to the corpus manifest.
-2. Close P02-T006 as not-happening and record the dropped extraction as a deviation, per ADR-0040 clause 5.
-3. Close `render_loop_purity`'s provenance gap for SOUND-INV-013: it proves every *registered* kernel is
+The two evidence tasks are closed, so **P02-T011 is the only Phase 2 task left that is neither complete nor
+closable on a decision already made.**
+
+1. Close P02-T006 as not-happening and record the dropped extraction as a deviation, per ADR-0040 clause 5.
+2. Close `render_loop_purity`'s provenance gap for SOUND-INV-013: it proves every *registered* kernel is
    defined in the checked region, but not that a descriptor's function pointer resolves inside it.
-4. Audit the specification's pre-existing conformance rows, which predate this phase: an independent read
+3. Audit the specification's pre-existing conformance rows, which predate this phase: an independent read
    found four that name a check not carrying the invariant — SOUND-INV-001/004, 003/012, 007 and 008. Not a
    defect in the code, and recorded in the specification's unresolved questions.
-5. Decide where a note's **pitch and velocity** live. P02-T007 deliberately gave `NoteEdge` neither, because
+4. Decide where a note's **pitch and velocity** live. P02-T007 deliberately gave `NoteEdge` neither, because
    nothing in Phase 2 reads either; Phase 3's ingress is the first task that has to.
-6. Complete the Phase 2 exit review.
+5. Complete the Phase 2 exit review, `REV-P02`.
 
 ## Paused parallel stream: Phase 0B
 
