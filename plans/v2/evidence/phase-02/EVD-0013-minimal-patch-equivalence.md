@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | ID | EVD-0013 |
-| Status | Draft — method stated and reviewed, no data collected |
+| Status | Complete |
 | Phase | 2 |
 | Created | 2026-08-20 |
 | Last reviewed | 2026-08-20 |
@@ -11,9 +11,9 @@
 | Superseded by | — |
 | Source revision | `3acb7e6f` |
 | Retention | Permanent |
-| Conclusion | Pending collection |
-| Related | ADR-0040 clause 4, ADR-0001 clauses 14 and 17, ADR-0037, ADR-0041 clause 16, CORPUS-0001, EVD-0001, EVD-0012, EVD-0014, P02-T008 |
-| Artifacts | `evd_0013_oscillator_floor.py`; the fixture builder, harness and reports named on collection |
+| Conclusion | Not supported — E2a exceeded, as this record's falsifier defines it. No CORPUS-0001 claim is broken; see *Conclusion* |
+| Related | ADR-0040 clause 4, ADR-0042, ADR-0001 clauses 14 and 17, ADR-0037, ADR-0041 clause 16, CORPUS-0001, EVD-0001, EVD-0012, EVD-0014, P02-T008 |
+| Artifacts | `EVD-0013-thresholds.csv`, `evd_0013_oscillator_floor.py`, `crates/pertylizer/examples/evd_0013_equivalence.rs`, `corpus::fixtures::equivalence_probe` |
 
 ## Question and falsifier
 
@@ -125,10 +125,16 @@ measuring `powf`.
 `rise_to_90_ms`, `fall_to_50_ms` and `tail_end_ms`
 (`crates/pertylizer/src/compare/metrics.rs:473`). With sustain at 0.700, the
 envelope never falls to half its peak until the **release**, so `fall_to_50_ms`
-measures a release landmark and **nothing reported measures the decay-to-sustain
-transition or the sustain level at all**. E2a alone could therefore pass while
-the decay segment or the sustain level differed materially, which is two of the
-four landmarks CORPUS-0001-P2 names.
+lands somewhere on the release *curve* rather than on any of P2's four
+landmarks — and **nothing reported measures the decay-to-sustain transition or
+the sustain level at all**. E2a alone could therefore pass while the decay
+segment or the sustain level differed materially, which is two of the four
+landmarks CORPUS-0001-P2 names.
+
+**That `fall_to_50_ms` is not a landmark was not noticed until after
+collection**, and E2a's threshold was declared over all four of the metric's
+fields. The consequence is recorded in *Conclusion* rather than repaired by
+narrowing the threshold.
 
 E2b closes that with a direct measurement over the rendered signal, in the
 harness rather than in `pertylizer compare`:
@@ -528,15 +534,156 @@ to the same numbers.
 
 ## Reproduction
 
-To be completed on collection, in the shape EVD-0012's *Reproduction* uses:
-every command from the repository root, with the fixture generation, both
-renders, all three controls and the comparison invocation stated exactly.
+Every command from the repository root. `$DIR` is any empty directory.
+
+```text
+cargo build --release -p pertylizer --bin pertylizer
+cargo build --release -p pertylizer --example evd_0013_equivalence
+# The binary just built, not whatever is on PATH: the source revision this
+# record states is only the one that produced these paths.
+BIN=./target/release/pertylizer
+
+# The V1 projects, built through the corpus helpers and outside `FIXTURES`.
+cargo run --release -q -p pertylizer --example evd_0013_equivalence -- fixtures $DIR
+
+# V1's arm, through the shipped offline path.
+render() { "$BIN" render --input "$1" --output "$2" \
+    --sample-rate 44100 --bit-depth 32f --seconds 2.0 --tail-seconds 1.0; }
+for f in $DIR/v1/*.ptz; do n=$(basename "$f" .ptz)
+  render "$f" "$DIR/wav/v1-$n.wav"
+done
+# Control C1 needs a *second* render of the two control arms. Without these two
+# lines the `measure` step below has nothing to compare an arm against.
+for n in aligned null; do render "$DIR/v1/$n.ptz" "$DIR/wav/v1-$n-b.wav"; done
+
+# V2's arm, which writes its own `-b` repeats for the same two arms.
+cargo run --release -q -p pertylizer --example evd_0013_equivalence -- v2 $DIR
+
+# C1, C2, E2b, E4's V1 half, and the region attribution.
+cargo run --release -q -p pertylizer --example evd_0013_equivalence -- measure $DIR
+
+# C3, which renders nothing. Once per sweep point.
+for hz in 110 220 440 880 1760 3520; do
+  python3 plans/v2/evidence/phase-02/evd_0013_oscillator_floor.py $hz
+done
+
+# E1, E2a, E3a and E3b.
+for n in aligned sweep-45 sweep-57 sweep-81 sweep-93 sweep-105; do
+  "$BIN" compare --reference "$DIR/wav/v1-$n.wav" \
+    --candidate "$DIR/wav/v2-$n.wav" --result-json "$DIR/wav/cmp-$n.json"
+done
+
+# E4's V2 half is a named crate test, not a render.
+cargo test -p synth_engine_v2 --release --test note_events
+```
 
 ## Results
 
-Not collected. The method has had the independent review `PROCESS.md` requires
-before a decision-driving measurement is taken, and the findings it returned are
-in *History*.
+The compact per-threshold table is `EVD-0013-thresholds.csv`.
+
+### The controls, and the one that failed
+
+**C1 passes.** Both engines' `aligned` and `null` arms are bit-identical to their
+own second render, over all 132 300 frames.
+
+**C2 failed on its first run, and the failure was the fixture.** It came back at
+**+3.008 dB** — within 0.4% of one equal-power pan. The record's asymmetry 1 had
+derived the V1 chain gain as **two** centre pans, the amplifier's and the stereo
+output's, giving 0.49999997. There is a **third**: `SynthEngine::process` applies
+the instrument fader's own `Gain::from_pan`
+(`crates/synth_engine/src/synth_engine.rs:3835`), outside the voice's module
+graph entirely. The `f32` product of the three is **0.353 553 354 740 142 8**,
+`0x3eb504f2`.
+
+The prediction and the measurement agree to 1.3 × 10⁻⁵: three pans give a
+V1/V2 ratio of 0.707107, the oscillator approximation's fundamental gain of
+1.000333 raises it to 0.707342, and the measurement reads **0.707332**.
+
+With V2's sine amplitude set to the corrected chain gain, **C2 passes at
+−0.00276 dB** — and the residual is the oscillator's +0.0029 dB and nothing
+else, which is the quantity C3 predicted before any render existed.
+
+**C3's bounds, per sweep point**, in the fundamental's own band:
+
+| Point | Reference | Residual | Bound |
+|---|---|---|---|
+| 110 Hz | −7.59 dB | −66.67 dB | 0.0097 dB |
+| 220 Hz | −7.60 dB | −62.69 dB | 0.0153 dB |
+| 440 Hz | −7.75 dB | −64.04 dB | 0.0133 dB |
+| 880 Hz | −9.63 dB | −57.42 dB | 0.0355 dB |
+| 1 760 Hz | −17.90 dB | −76.03 dB | 0.0108 dB |
+| 3 520 Hz | −29.82 dB | −90.10 dB | 0.0084 dB |
+
+### The thresholds
+
+| Threshold | Result | Limit | Outcome |
+|---|---|---|---|
+| **E1** — fundamental frequency | worst 0.0036 cents over six points | 1.0 cent | **Pass** |
+| **E2a** — attack and release landmarks | `rise_to_90_ms` at 0 everywhere; `peak_ms` at 0 except +10 at the 110 Hz point; `tail_end_ms` at +10; **`fall_to_50_ms` at +20 at four of six points** | 10.0 ms | **Exceeded** |
+| **E2b** — decay endpoint and sustain level | sustain −0.00274 dB; decay endpoint +0.0 ms | 0.1 dB / 10.0 ms | **Pass** |
+| **E3a** — the filter's magnitude response | **+0.068 dB at every one of the six points** | 1.0 dB | **Pass** |
+| **E3b** — whole-render band balance | +0.068 dB, in the **one** band the coverage rule reaches | 1.0 dB | **Pass** |
+| **E4** — onset placement | both halves confirmed; see below | exact | **Pass** |
+
+**E3b reaches exactly one band, which C3 predicted before any render existed.**
+The fundamental's band sits at −18.04 dBFS and every other band at or below
+−93.88 dB, so the −60 dB coverage rule admits one. That is the deficiency E3a
+was added for, and E3a is what makes the claim testable.
+
+**E3a's constancy is the result, not its size.** The filter's magnitude response
+agrees to +0.068 dB across six octave bands, from three octaves below the corner
+to two above — which is what CORPUS-0001-P3 asks for and what the two engines
+running the same recurrence with the same coefficients predicts.
+
+**E4 passes on both halves.** V2's is P02-T007's conformance check, which passes
+along with the six other cases in `tests/note_events.rs`. V1's is a step function
+with three risers over 25 authored ticks, every difference an exact multiple of
+256:
+
+| Authored ticks | Onset frame | Difference from tick 0 |
+|---|---|---|
+| 0–10 | 4 | 0 |
+| 11–21 | 260 | 256 |
+| 22–24 | 516 | 512 |
+
+Eleven distinct authored positions collapsing onto one onset is the observable
+the earlier drafts' formula was standing in for, and it is exactly what
+CORPUS-0001-C1 describes.
+
+### Where the differences are, and what each one is
+
+Every difference the comparison found, attributed. The attribution is a
+measurement rather than an argument: the render was split into its segments and
+each compared on its own. It is the `measure` subcommand's last section, so a
+reader regenerates it with the same command that produces the controls rather
+than by hand.
+
+| Region | V2 against V1 | Cause |
+|---|---|---|
+| Sustain | **−0.0029 dB** | The oscillator approximation's fundamental gain, and nothing else. C3 predicted +0.0029 dB before collection |
+| Attack and decay | +0.186 dB | The segment shapes: V1 exponential with overshoot targeting, V2 linear |
+| Release, shared window | +1.333 dB | The curve **and** the scheduling difference together — V1's note-off lands 102 frames early, so this window compares V1's release already under way against V2's at its start |
+| **Release, each from its own gate** | **+1.137 dB** | The curve alone: a linear release holds more energy than an exponential one. The remaining 0.196 dB is E4's subject, not the envelope's |
+| Whole render | +0.063 dB | The regions above, weighted by their share of the window |
+
+**The +0.068 dB E3a and E3b measure is the envelope, not the oscillator and not
+the filter.** Three things say so together: it exceeds C3's oscillator bound at
+every point (0.0084 to 0.0355 dB); it is **frequency-independent**, the same
++0.068 dB in all six bands across six octaves, which no filter difference can
+be; and the region split puts it in the release, where V2 carries 1.33 dB more
+energy. A broadband gain applied by a shared envelope is the only shape that
+fits all three.
+
+**The release figure is quoted from the own-gate row, not the shared window.**
+Comparing both arms over one window starting at the nominal note-off would fold
+E4's 102-frame scheduling difference into a number this record then attributes to
+the envelope — 0.196 dB of it, as the two rows show. The harness reports both so
+the separation is visible rather than asserted.
+
+The bands above the corner show V1 with energy V2 does not have — −94.41 against
+−116.22 dB at 1 250 Hz — which is `fast_sin_turns`'s harmonics, exactly as C3
+described. Every one of those bands is more than 60 dB below the peak and
+outside E3b's coverage rule.
 
 ## History
 
@@ -640,6 +787,66 @@ as the mono downmix of the two channels (`:333`). The same finding's other half
 was correct and is taken — the type is `ModuleGraph`, not `VoiceGraph` — and the
 deeper point it made about that control is taken in EVD-0014.
 
+### What collection itself found
+
+**Control C2 failed on its first run, and it was right to.** The record's
+asymmetry 1 derived V1's chain gain as two equal-power centre pans and set V2's
+sine amplitude to 0.5; the gain null came back at +3.008 dB, within 0.4% of one
+pan. There is a **third** pan, applied by the instrument fader in
+`SynthEngine::process` and therefore outside the voice's module graph
+altogether. The derivation, the code and the measurement now agree to
+1.3 × 10⁻⁵, and asymmetry 1 says three rather than two.
+
+Nothing downstream of C2 was read until it passed, which is the whole reason the
+control runs first. Had it been skipped, a 3 dB level error would have sat under
+every spectral figure in this record and would have looked like a filter
+difference.
+
+**And the third pan changed EVD-0014 as well as this record.** Two of the three
+pans are inside the voice's module graph and the fader's is not, so that
+record's `voice-dsp` pair cancels two and its `whole-render` pair cancels three
+— two amplitudes, not one.
+
+### What the repository review found after collection
+
+Three findings landed on this record, all repaired without recollecting:
+
+- **The reproduction did not produce the renders control C1 reads.** Its loop
+  rendered each project once, while C1 compares an arm against a second render
+  into `-b.wav` — so the documented `measure` step would have failed on a clean
+  directory. The collection had those renders; the *recipe* did not.
+- **The region attribution had no retained artifact.** Its +0.186 dB and
+  +1.333 dB are verified premises of ADR-0042, and they were computed by hand.
+  They are now the `measure` subcommand's last section.
+- **`peak_ms` is not at zero everywhere**, as an earlier draft of the results
+  said: the retained CSV has it at one window at the 110 Hz sweep point. The
+  same claim had been copied into ADR-0042 and is corrected there too.
+
+A second pass, on the repairs, found two more:
+
+- **The release attribution folded in the scheduling difference.** V1 applies a
+  note-off at the start of the block containing it, so a shared window compared
+  V1's release 102 frames in against V2's at its start. The harness now reports
+  the release from **each engine's own gate** as well, and the difference this
+  record attributes to the envelope fell from 1.333 dB to **1.137 dB**. ADR-0042
+  quotes the own-gate figure.
+- **This record misread the claim it was operationalising.** An earlier
+  conclusion, and an earlier draft of ADR-0042, said `CORPUS-0001-P2` would be
+  *narrowed* to claim landmarks. It already claims landmarks, and always has. So
+  no `preserve` claim is broken, ADR-0040 clause 4's failure branch does not
+  apply, and what E2a's exceedance actually shows is that E2a was a stricter test
+  than P2 asks for. The threshold is unchanged; the reading of what it was
+  measuring against is corrected.
+
+A third pass caught the correction going one step too far. Having established
+that no `preserve` claim was broken, this record briefly concluded
+**`Supported`** — which contradicts its own falsifier, since that falsifier
+turns on a *declared threshold* being exceeded and E2a still is. The conclusion
+is `Not supported`, and the fact that no CORPUS-0001 claim is broken sits beside
+it rather than replacing it. The distinction is the whole difference between
+correcting a false premise and explaining a result away, and it took an outside
+reader to see that the first had turned into the second.
+
 ## Limitations
 
 Stated in advance, because a limitation discovered after the data is a
@@ -682,4 +889,82 @@ limitation that had a chance to be chosen:
 
 ## Conclusion
 
-Pending collection.
+**Not supported.** This record's falsifier says the preferred conclusion is
+wrong if **any** declared threshold is exceeded, whatever the cause. **E2a is
+exceeded**, so it is wrong, and no later finding retracts that.
+
+Two further facts sit beside it, and neither erases it:
+
+- **No CORPUS-0001 claim is broken.** `CORPUS-0001-P2` claims landmark parity
+  and V2 delivers it, so ADR-0040 clause 4's *failure* branch does not apply and
+  the Phase 2 gate's third bullet is not blocked by this record.
+- **E2a was a stricter test than the claim it operationalised**, because one of
+  the four fields it bounded is not a landmark. That is a defect in **this
+  record**, found after collection, and it is recorded rather than repaired by
+  moving the number.
+
+Five of the six thresholds pass, four by one to two orders of magnitude.
+
+### The dispositions
+
+| Difference | Size | Disposition |
+|---|---|---|
+| Fundamental frequency | ≤ 0.0036 cents | **Explained** — both arms are told the same frequency, and the six sweep points are exact octaves of A so `Frequency::from_midi` is exact |
+| Sustain level | −0.0029 dB | **Explained** — `fast_sin_turns`'s fundamental gain of 1.000333, predicted by C3 before collection |
+| Filter magnitude response | +0.068 dB, constant over six octave bands | **Explained** — the residual is the envelope's, not the filter's; the two engines run the same recurrence with the same coefficients |
+| Harmonics above the corner | up to 21.8 dB, all more than 60 dB below the peak | **Explained** — `fast_sin_turns` against `f64::sin`, bounded by C3 and outside E3b's coverage rule |
+| Onset placement | V1 quantised to 256 samples, V2 exact | **Intentional** — CORPUS-0001-C1, the correction Phase 3's sample-accurate scheduling exists to make, confirmed on both halves |
+| **Envelope segment shape** | **release +1.137 dB from each engine's own gate; `fall_to_50_ms` +20 ms against a 10 ms threshold** | **Intentional** on [ADR-0042](../../decisions/ADR-0042-envelope-segment-shape.md)'s acceptance. Not a Failure: `CORPUS-0001-P2` claims landmarks, and every landmark is met — see below |
+
+### The one exceeded threshold, and what it turned out to mean
+
+V1's envelope segments are exponential, aimed past their endpoint so the curve
+*crosses* it at the authored time; V2's are linear ramps of an exact frame
+count. Both therefore **arrive** at the same place at the same time — which is
+why every landmark is at zero or one window — but the paths between them differ,
+and the release carries **1.137 dB** more energy in V2, measured from each
+engine's own gate.
+
+`fall_to_50_ms` is the field that sees it. With sustain at 0.700 the envelope
+first reaches half its peak during the *release*, so that field is a probe of the
+release **curve**, and it reads +20 ms at four of the six sweep points.
+
+**E2a is not rewritten, and it stays exceeded.** Narrowing it to the three
+fields that pass, after seeing which three they are, is the failure mode this
+repository has recorded before, and this record does not do it.
+
+**What review established instead is a fact about the claim, not about the
+threshold.** `CORPUS-0001-P2` reads, and has always read, "the amplitude
+envelope's attack, decay, sustain and release **landmarks** stay within
+measurement tolerance of V1's". E2a applied its 10 ms landmark tolerance to all
+four fields of `EnvelopeDifference::delta_ms`, one of which is not a landmark on
+this fixture. **E2a is therefore a stricter test than P2 asks for**, and P2
+itself is met: every landmark is within one window and the sustain level within
+0.0027 dB.
+
+So three things are true at once, and the record keeps all three rather than
+letting the convenient one stand alone:
+
+- **E2a is exceeded, and this record is therefore `Not supported`.** That is
+  what its own falsifier says, and the falsifier was written before collection.
+- **No `preserve` claim is broken**, so ADR-0040 clause 4's failure branch does
+  not apply and the gate's third bullet is not blocked by this record.
+- **E2a was over-broad**, a defect in EVD-0013 rather than in either engine.
+  Fixing it would mean re-declaring a threshold after seeing which of its fields
+  failed, so it is not fixed; a successor record measuring P2's landmarks
+  directly would be the honest way to close it.
+
+### The shape difference, and where its disposition went
+
+V2's linear segments remain a real, measured difference from V1's exponential
+ones, and a difference the phase wants: V2's exact segment durations are a
+property P02-T005 built deliberately, after an accumulated increment was
+measured arriving tens of samples early.
+
+The figures were put to the user on 2026-08-20 and the decision is
+[**ADR-0042**](../../decisions/ADR-0042-envelope-segment-shape.md): the shape is
+intentional, `CORPUS-0001-P2` is **not** amended because what it claims is met,
+and the shape becomes `CORPUS-0001-C2`, an intentional correction alongside C1.
+
+Until ADR-0042 is accepted the shape difference has no named disposition, which
+is the only thing in this record still open.

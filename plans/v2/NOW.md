@@ -12,42 +12,40 @@ equivalence, CPU, and quantum gates.
 
 ### Active slice
 
-**Execute P02-T008 and P02-T009: the phase's two evidence records.**
+**P02-T008 and P02-T009 are collected.** Both records are `Complete`; what remains of the slice is
+[ADR-0042](decisions/ADR-0042-envelope-segment-shape.md)'s acceptance and the one manifest entry it names.
 
-**Both methods are written, reviewed and `Draft`; collection is what remains.** `PROCESS.md` requires the falsifier
-and acceptance rule before collection and the method reviewed before any data exists, and that is the part now done:
+- **P02-T009** — [EVD-0014](evidence/phase-02/EVD-0014-minimal-patch-cpu.md), **Supported by rule 1**. V2 costs
+  **78.0% less** than V1 on the governing pair under the conservative variant, at 189 times the noise floor. The exit
+  gate's fifth bullet closes with **no margin claimed**.
+- **P02-T008** — [EVD-0013](evidence/phase-02/EVD-0013-minimal-patch-equivalence.md), **Not supported**, and the
+  reason is narrow. Five of its six declared thresholds pass, four by one to two orders of magnitude; E2a is exceeded
+  on `fall_to_50_ms`, and its own falsifier turns on any declared threshold being exceeded. **No CORPUS-0001 claim is
+  broken** — P2 claims landmark parity and V2 delivers it — so ADR-0040 clause 4's failure branch does not apply and
+  the gate's third bullet is not blocked by this. E2a turned out to bound a field that is not a landmark, which is a
+  defect in the record rather than in either engine, and is recorded rather than repaired by moving the number.
 
-- **P02-T008** — [EVD-0013](evidence/phase-02/EVD-0013-minimal-patch-equivalence.md), musical equivalence to V1 for
-  the equivalent minimal patch, or a documented intentional difference.
-- **P02-T009** — [EVD-0014](evidence/phase-02/EVD-0014-minimal-patch-cpu.md), CPU against V1 for that same patch.
+Blockers: none. What is open:
 
-They are one slice because they share a fixture, and the review was not a formality: it returned **nine blocking
-findings before any data existed**, and three more passes on the repairs. Both records' *History* sections carry them.
+1. **Accept ADR-0042**, which needs a reader who did not author it, and then add `CORPUS-0001-C2` to
+   `corpus/v2-reference/manifest.json`. No `preserve` claim is edited and no fixture digest moves.
+2. Until then the envelope's segment-shape difference — **+1.137 dB** in the release, measured from each engine's own
+   gate — has no named disposition. It is the only thing in either record still open.
 
-Blockers: none. What collection now needs, in order:
+Three things this slice established that are worth not rediscovering:
 
-1. The V1 fixture builder, outside `FIXTURES` for the reason `corpus::fixtures::polyphony_probe` is.
-2. EVD-0013's controls C1, C2 and C3, then its renders and comparisons.
-3. `synth_engine_v2` as a **dev-dependency** of `pertylizer`, so EVD-0014's two arms share one binary.
-4. EVD-0014's C3, then its null pass, then its sweeps — in that order, and its rule 0 can stop it at the null pass.
-
-Three things they inherit, stated so they are not rediscovered:
-
-- **The instrument, its traps and this machine's behaviour are EVD-0012's**, which reuses EVD-0010's estimator and
-  records what went wrong with it. Read that record's *Method*, *History* and *Limitations* before building a harness;
-  do not re-derive them here.
-- **"The equivalent minimal patch" is now defined**, in EVD-0013, along with the five asymmetries closed in the
-  fixture and the two differences that are the subject. It is a counterpart fixture inheriting CORPUS-0001's claim
-  classes, not a manifest case.
-- **The user decided the three open questions on 2026-08-20**: the counterpart fixture over a new manifest case, the
-  dev-dependency over a separate crate or two binaries, and both CPU pairs rather than one.
+- **The V1 chain applies an equal-power centre pan three times**, not two: the amplifier, the stereo output, and the
+  instrument fader in `SynthEngine::process`. Control C2 found the third by failing at +3.008 dB.
+- **The two engines' filters are the same recurrence**, and E3a measured their magnitude responses agreeing to
+  +0.068 dB across six octave bands. The sines are not the same, and neither are the envelopes.
+- **A contract about the dependency graph belongs to the resolver.** The `crate_boundary` check was defeated by four
+  successive valid TOML spellings before it stopped scanning manifests and started asking `cargo tree`.
 
 References:
 
 - [EVD-0012: what the render quantum costs on the real V2 path](evidence/phase-02/EVD-0012-render-quantum-real-path.md),
-  whose method and harness these two reuse
-- [ADR-0001: render quantum semantics](decisions/ADR-0001-internal-render-quantum.md), clause 17 for why these run
-  after P02-T010 rather than beside it
+  whose estimator both records reuse
+- [ADR-0040: V2 owns its DSP](decisions/ADR-0040-v2-owns-its-dsp.md), clause 4 for the disposition rule
 - [Current Sound Core render contract](specs/spec-sound-core-render-contract.md)
 - [Historical Phase 2 execution record](phases/phase-02-minimal-compiled-voice-graph.md)
 
@@ -61,12 +59,12 @@ References:
 | P02-T013          | Complete                         | EVD-0011              |
 | P02-T007          | Complete                         | `note_events`         |
 | P02-T010          | Complete                         | EVD-0012              |
-| P02-T008/P02-T009 | **Active** — methods reviewed    | Collection            |
+| P02-T008/P02-T009 | Complete — evidence collected    | ADR-0042 acceptance   |
 | P02-T011          | Waiting                          | All Phase 2 outcomes  |
 
 ### Next actions
 
-1. Complete P02-T008 and P02-T009, the phase's two evidence records.
+1. Accept ADR-0042 and add `CORPUS-0001-C2` to the corpus manifest.
 2. Close P02-T006 as not-happening and record the dropped extraction as a deviation, per ADR-0040 clause 5.
 3. Close `render_loop_purity`'s provenance gap for SOUND-INV-013: it proves every *registered* kernel is
    defined in the checked region, but not that a descriptor's function pointer resolves inside it.

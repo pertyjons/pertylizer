@@ -3576,6 +3576,7 @@ dependencies = [
  "synth_core",
  "synth_dsp",
  "synth_engine",
+ "synth_engine_v2",
  "synth_mcp",
  "synth_modules",
  "synth_osc",

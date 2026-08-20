@@ -135,6 +135,11 @@ chrono = { workspace = true }
 [dev-dependencies]
 jsonschema = { workspace = true }
 hound = { workspace = true }
+# EVD-0014 compares V1 against V2, and the Phase 2 exit gate requires the two arms
+# to share a binary — which needs both engines linked into one target. Dev-only, so
+# it never reaches the delivered dependency graph. `crate_boundary` names this
+# exception and checks that only the two harnesses under `examples/` use it.
+synth_engine_v2 = { path = "../synth_engine_v2" }
 
 [[bin]]
 name = "pertylizer"

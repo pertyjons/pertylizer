@@ -3,7 +3,7 @@
 | Field | Value |
 |---|---|
 | ID | EVD-0014 |
-| Status | Draft — method stated and reviewed, no data collected |
+| Status | Complete |
 | Phase | 2 |
 | Created | 2026-08-20 |
 | Last reviewed | 2026-08-20 |
@@ -11,9 +11,9 @@
 | Superseded by | — |
 | Source revision | `3acb7e6f` |
 | Retention | Permanent |
-| Conclusion | Pending collection |
+| Conclusion | Supported — rule 1, V2 measurably cheaper |
 | Related | ADR-0001 clause 5, ADR-0004, ADR-0005, ADR-0037, ADR-0041, EVD-0009, EVD-0010, EVD-0011, EVD-0012, EVD-0013, P02-T009 |
-| Artifacts | To be named on collection |
+| Artifacts | `EVD-0014-null-pass.csv`, `EVD-0014-cost-sweeps.csv`, `evd_0014_analyse.py`, `crates/pertylizer/examples/evd_0014_cost.rs` |
 
 ## Question and falsifier
 
@@ -38,7 +38,9 @@ phase removes, not having one.
 ### The rule table, fixed before collection
 
 Evaluated **in order**, stopping at the first that applies, on the **governing
-pair** defined below. `N` is the noise floor from control **C1**.
+pair** defined below. `N` is the noise floor defined under *The controls*: the
+largest of the null pass's median, the comparison's own dispersion, and the
+comparison's own within-sweep null ratios.
 
 | # | Condition | Outcome |
 |---|---|---|
@@ -218,9 +220,17 @@ multiples of 24 for that reason.
   the exit gate's "estimator, draw count, build profile, and binary matched
   across the two arms" asks for and what EVD-0012's five separate builds could
   not offer. `synth_engine_v2` becomes a **dev-dependency** of `pertylizer` for
-  it; that is not a widening of V2's own dependency surface, which is what
-  Phase 1's `crate_boundary` test reads, and it does not reach the delivered
-  dependency graph.
+  it. That **does** touch Phase 1's `crate_boundary` check, and an earlier draft
+  of this record said it did not — the check guards the Phase 1 exit gate's "the
+  crate can be deleted without affecting V1 behavior or public APIs", and it
+  failed when the dependency was added. The user decided on 2026-08-20 to record
+  a named exception rather than restructure the harness, and the check now asks
+  **Cargo** who reaches the crate: nothing may reach it through a shipping or
+  build edge, exactly one crate may reach it through a dev edge, and only two
+  named example files may use it. The gate's substance is intact — a dev-only
+  edge reaches neither V1's behaviour nor any public API, and deleting the crate
+  would delete the harnesses with it — while the check that guards it is
+  strictly stronger than the text scan it replaced.
 - **The same estimator, rounds and iterations in every slot**, and the same
   settle before the timed loop: both arms enter it with the envelope past its
   10 ms attack and 100 ms decay and held in sustain, so no arm times a different
@@ -233,12 +243,21 @@ multiples of 24 for that reason.
 - **C1 — the null pass, run first and as its own collection.** Before any
   comparison figure exists, the whole 24-sweep protocol is run with **all four
   slots holding the same engine**, so every ratio it reports has a true value of
-  zero. Its median absolute ratio is one of the two quantities `N` is taken
+  zero. Its median absolute ratio is one of the three quantities `N` is taken
   from. The gate's "control run first" is met literally: this collection
   completes and is read before the comparison collection starts.
-- **The noise floor `N`** is the **larger** of C1's median and the comparison's
-  own median absolute deviation across sweeps, which is EVD-0012's amended
-  definition. Taking the larger can only make a comparison harder to resolve.
+- **The noise floor `N`** is the **largest** of three quantities: C1's median,
+  the comparison's own median absolute deviation across sweeps, and the
+  comparison's own **within-sweep null ratios** — `c(V1a)/c(V1b) - 1` and
+  `c(V2a)/c(V2b) - 1`, each of which pairs one engine's two slots and therefore
+  has a true value of zero.
+
+  **The third was added after collection**, and *History* records why: the null
+  pass holds one engine in all four slots, so it measures that engine's
+  variability and never the other's. Taking the largest can only make a
+  comparison harder to resolve, which is the direction a correction to an
+  acceptance rule has to run in — and the raw data supports all three
+  computations, so nothing was recollected.
 - **C2 — the in-process spread**, reported as a diagnostic and not as a
   threshold: each invocation measures each slot twice and reports the spread, so
   a noisy run is visible. EVD-0012 records why this is not the floor — it is a
@@ -291,13 +310,124 @@ Order of work:
 
 ## Reproduction
 
-To be completed on collection, in the shape EVD-0012's *Reproduction* uses.
+Every command from the repository root. The fixture directory is
+[EVD-0013](EVD-0013-minimal-patch-equivalence.md)'s, and its `fixtures` step
+must have run first — this record shares that record's `aligned` project.
+
+```text
+cargo build --release -p pertylizer --example evd_0014_cost
+
+# C3 first: a harness whose arms render different music is not worth timing.
+cargo run --release -q -p pertylizer --example evd_0014_cost -- c3 $DIR
+pertylizer compare --reference $DIR/wav/c3-voice-dsp-v1.wav \
+                   --candidate $DIR/wav/c3-voice-dsp-v2.wav
+
+# C1 next.
+taskset -c 10,11 ./target/release/examples/evd_0014_cost null   $DIR 24 > null.csv
+
+# Rule 0, read BEFORE the comparison is collected. With one argument the
+# analyser evaluates the floor and stops; if it fires, nothing below is run.
+python3 plans/v2/evidence/phase-02/evd_0014_analyse.py null.csv
+
+# Only then the comparison.
+taskset -c 10,11 ./target/release/examples/evd_0014_cost sweeps $DIR 24 > sweeps.csv
+
+# The rule table, applied mechanically rather than by eye.
+python3 plans/v2/evidence/phase-02/evd_0014_analyse.py null.csv sweeps.csv
+```
 
 ## Results
 
-Not collected. The method has had the independent review `PROCESS.md` requires
-before a decision-driving measurement is taken, and the findings it returned are
-in *History*.
+Raw per-sweep figures are in `EVD-0014-null-pass.csv` and
+`EVD-0014-cost-sweeps.csv`; the rule table is applied by `evd_0014_analyse.py`.
+
+### The controls
+
+**C3 passes on all four arms.** Both `whole-render` arms are **bit-identical**
+to the corresponding renders in EVD-0013 — the V2 arm against `v2-aligned.wav`
+and the V1 arm against `v1-aligned.wav` — so the two records are timing and
+comparing the same audio rather than two things that resemble each other. Both
+`voice-dsp` arms are non-silent, at peaks of 0.488825 and 0.489200, and comparing
+them against each other through EVD-0013's own thresholds gives −0.0002 cents,
+every envelope landmark within one window, and +0.052 dB in the one band E3b's
+coverage rule reaches.
+
+That check earned itself immediately: the V1 `voice-dsp` arm reconstructs the
+fixture's patch as a `ModuleGraph` by hand, and a dropped connection would have
+produced a quieter graph — which in a *cost* comparison is a cheaper arm, and
+which no timing figure would have reported.
+
+**C1's floors are far inside `N_max`.** Four slots of one engine, 24 sweeps, one
+permutation each:
+
+| Pair | Variant | Median `\|r\|` | MAD |
+|---|---|---|---|
+| `voice-dsp` | `as-built` | 0.55% | 0.36% |
+| `voice-dsp` | `clause-5` | 0.41% | 0.34% |
+| `whole-render` | `as-built` | 0.39% | 0.40% |
+
+Rule 0 does not fire: every floor is roughly a tenth of the 5.0% ceiling, and
+between two and eleven times tighter than EVD-0012's, which is what putting all
+four slots in one process and one binary buys.
+
+**The comparison collection's own within-sweep nulls**, which the null pass
+cannot supply because it holds one engine in all four slots:
+
+| Engine | Pair | Variant | Median `\|r\|` |
+|---|---|---|---|
+| V1 | `voice-dsp` | — | 0.39% |
+| V2 | `voice-dsp` | `as-built` | 0.29% |
+| V2 | `voice-dsp` | `clause-5` | 0.15% |
+| V1 | `whole-render` | — | 0.67% |
+| V2 | `whole-render` | `as-built` | 0.57% |
+
+V1's variability is the same order as V2's, so folding it into `N` moves the
+governing floor not at all — it stays at C1's 0.41%, which is the largest of the
+four sources for that cell. That is a **result**, not something the method
+assumed: had V1 been the noisier engine, this is where it would have shown.
+
+### `c(arm)`, in milliseconds of elapsed render time per second of rendered audio
+
+Medians over 24 sweeps:
+
+| Engine | Pair | Variant | `c` |
+|---|---|---|---|
+| V1 | `voice-dsp` | — | **2.3532** |
+| V2 | `voice-dsp` | `as-built` | 0.5251 |
+| V2 | `voice-dsp` | `clause-5` | 0.5275 |
+| V1 | `whole-render` | — | **2.0004** |
+| V2 | `whole-render` | `as-built` | 0.5343 |
+
+### The rule table
+
+| Pair | Variant | `r(V2, V1)` | `N` | Which source set `N` | Margin over `N` | Rule |
+|---|---|---|---|---|---|---|
+| **`voice-dsp`** (governing) | **`clause-5`** | **−77.99%** | 0.41% | the null pass | 189× | **1 — Pass** |
+| `voice-dsp` | `as-built` | −78.11% | 0.55% | the null pass | 142× | 1 — Pass |
+| `whole-render` | `as-built` | −72.02% | 0.67% | V1's within-sweep null | 107× | 1 — Pass |
+
+The `whole-render` row is where the third floor source bites: V1's own
+within-sweep null is 0.67% there, wider than the null pass's 0.39%, so `N` takes
+it and the margin reads 107× rather than 186×. The rule is unchanged, and the
+row is the reason the third source is worth having.
+
+**Rule 1 fires on the governing pair under the conservative variant**, so the
+bullet closes with **no margin claimed**, and rules 2, 3 and 4 are never
+reached. The two pairs agree in direction and in rule, so the `whole-render`
+alarm this record reserved — V2 dearer there while cheaper on `voice-dsp`, which
+would have meant the harness was wrong — does not sound.
+
+`clause-5` costs V2 **0.46%** over `as-built`, which is the same order as the
+0.4% EVD-0012 measured for it and is nowhere near the margin.
+
+### The figures are stable, and the collection was run twice
+
+The comparison was collected twice, the second time after the harness was
+changed to propagate a graph-construction error rather than discard it. The
+governing figure moved from −77.50% to −77.99% — inside the sweep-to-sweep
+dispersion — and the rule was 1 both times. Only the second collection is
+retained, because the first differs from it in a source change rather than in
+its data.
 
 ## History
 
@@ -340,6 +470,44 @@ equivalence**, and a stability check cannot catch an arm that renders silence
 consistently. C3 now compares the two `voice-dsp` arms against each other
 through EVD-0013's thresholds and asserts both are non-silent.
 
+### What the repository review found after collection
+
+The change-appropriate review ran on the collected slice and returned three
+findings against this record's instrument. All three were repaired, and **none
+required recollecting**: each was an analysis or a validation gap rather than a
+data one.
+
+- **The null pass never measured V1's variability.** It holds one engine in all
+  four slots by construction, so the floor it produces is that engine's. The
+  comparison collection already carries the missing quantity — its own
+  within-sweep null ratios — so `N` now takes the largest of three sources
+  rather than two. V1's turns out to be the same order as V2's, and the
+  governing floor does not move.
+- **The analyser accepted an incomplete collection.** A truncated CSV produced a
+  verdict from however many sweeps survived, and a duplicate row was silently
+  overwritten. It now refuses both, and the refusals are probed: a 100-line
+  truncation and a duplicated row each stop it with a named error.
+- **Rule 0 was not executable in the order the method states.** The analyser
+  required both files, so the floor could not be read before the comparison was
+  collected. It now runs on the null collection alone and stops there.
+
+**The boundary check took four passes of its own.** Each text-level form the
+repairs reached — classify-the-table, then pin-the-literal, then also-scan-the-
+workspace-root — was defeated by another valid TOML spelling: a quoted key, a
+target-triple sub-table, a `[workspace.dependencies]` alias inherited by a
+member, a string escape inside any of them. A scan for a *grammar* fails open,
+one spelling at a time, and the reviewer found a new one after every repair. The
+check now runs `cargo tree --edges … --invert`, which answers the question after
+Cargo has resolved every alias, inheritance and escape. **That is the lesson
+worth keeping**: a contract about the dependency graph belongs to the resolver,
+not to a reader of manifests.
+
+A second pass, on the repairs, found that the retained rule table still carried
+the pre-amendment figures: with V1's within-sweep null folded in, the
+`whole-render` row's `N` is 0.67% rather than 0.39% and its margin 107× rather
+than 186×. The rule is unchanged, and the row is now the clearest illustration
+of why the third floor source was worth adding.
+
 ## Limitations
 
 - **One machine, one processor, one build profile**, as EVD-0008 through
@@ -362,6 +530,16 @@ through EVD-0013's thresholds and asserts both are non-silent.
   allocation and mixing do not exist, so that pair's figure is not a prediction
   of what V2 will cost when they do. It is reported for localisation, and the
   gate does not rest on it.
+- **The two pairs do not measure the same duty cycle**, so their absolute
+  figures are not comparable with each other. V1's `whole-render` arm costs
+  *less* than its `voice-dsp` arm — 2.00 against 2.35 — which is not a paradox:
+  the render's 3 s window releases the note at 1.5 s, the allocator frees the
+  voice once its release finishes, and the rest of the window costs V1 almost
+  nothing. The `voice-dsp` arm holds sustain for its whole batch. Each pair's
+  own ratio is unaffected, because both of its arms render the same window; only
+  a cross-pair reading of the absolute numbers would be wrong. It also means the
+  `whole-render` ratio **understates** V2's advantage, since V2 renders its plan
+  whether or not the envelope is idle.
 - **The known room is not measured here.** The phase record carries two sizeable
   bounds into this task — EVD-0009's fused-arm comparison, which is an upper
   bound on an opportunity rather than a measurement of what node boundaries
@@ -370,4 +548,30 @@ through EVD-0013's thresholds and asserts both are non-silent.
 
 ## Conclusion
 
-Pending collection.
+**Supported, by rule 1.** On the path Phase 2 built, V2 costs **78.0% less** than
+V1 to render the equivalent minimal patch — 0.53 against 2.35 milliseconds per
+second of audio — measured on the conservative variant, against a noise floor of
+0.41%, at 189 times that floor. The exit gate's fifth bullet closes with **no
+margin claimed**, and the temporary-margin clause it offers is not used.
+
+The whole-render pair agrees at −72.0%, so the difference is not an artifact of
+where the boundary was drawn.
+
+What this establishes, and what it does not:
+
+- **Established.** V2's compiled schedule over a preallocated arena renders this
+  five-node voice for about a fifth of what V1's module graph costs, on this
+  machine, at 44.1 kHz, in stereo, at V1's block size. The margin is far larger
+  than anything the instrument or the fixture could manufacture, and the
+  workload equality behind it is checked rather than assumed.
+- **Not established.** That the ratio survives contact with the rest of V1's
+  catalog. This is one patch of five nodes, and it is the only patch both
+  engines can express. Phase 5's declarative node API will add kinds nobody has
+  measured, and the engine layers V2 has not built — sequencing, allocation,
+  mixing — are absent from both pairs' V2 arms by construction.
+- **Not a like-for-like DSP figure either.** V1's output module pans, limits,
+  meters and interleaves where V2's writes its source to the profile's channels;
+  that work is V1's and not V2's, so `r(V2, V1)` on the governing pair is an
+  **upper bound on V2's advantage** rather than a point estimate of it. The
+  bound runs in the direction that makes the pass safe: with that work removed
+  V2 would win by less, and it would still win.

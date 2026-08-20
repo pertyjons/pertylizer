@@ -25,7 +25,7 @@
 use std::path::{Path, PathBuf};
 
 use synth_core::{
-    BipolarValue, Bpm, Cents, Gain, ModuleType, NormalizedValue, Semitones, VoiceCount,
+    BipolarValue, Bpm, Cents, Gain, Hertz, ModuleType, NormalizedValue, Semitones, VoiceCount,
 };
 use synth_engine::voice_allocator::{AllocationMode, StealingStrategy};
 use synth_sequencer::{
@@ -153,6 +153,106 @@ pub fn polyphony_probe(voices: u8) -> ProjectFile {
         &notes,
     );
     project(vec![state], song, unity_global())
+}
+
+/// The V1 half of EVD-0013's equivalence pair: the patch that mirrors V2's
+/// `voice-mono` graph node for node.
+///
+/// **This is not a corpus case, and deliberately so**, for the same reason
+/// [`polyphony_probe`] is not: a corpus case pins a *behaviour* that V2 must
+/// preserve or change, and this pins nothing. It exists so P02-T008 can compare
+/// the two engines on a patch both can express, without adding a manifest entry
+/// whose behaviour claims nobody would check. It is absent from [`FIXTURES`], so
+/// it is never written into the corpus directory and never digested by the
+/// manifest test.
+///
+/// It corresponds to `CORPUS-0001` and inherits its claim classes; it does not
+/// replace it. CORPUS-0001 is a sawtooth at four pitches, and V2 has neither a
+/// sawtooth among its six node kinds nor pitch on its note edge, so that case is
+/// not expressible in V2 at all.
+///
+/// # What differs from `CORPUS-0001`, and why each difference is required
+///
+/// - **A sine, not a sawtooth.** V2 has no sawtooth.
+/// - **One note, not four.** V2's note edge carries no pitch, so a V2 render can
+///   only be at the one frequency its plan was built with.
+/// - **`Velocity::FFF` rather than `Velocity::F`.** `velocity_sensitivity` is
+///   `1 - s(1 - v)`, which is `1` for any sensitivity when `v` is `1`. V2 has no
+///   velocity, so the fixture removes V1's by setting it to full scale rather
+///   than by changing a sensitivity the shipped default owns.
+/// - **Resonance `0.292_893_23` rather than `0.30`.** V1's filter forms
+///   `k = 2 - 2·res` and V2's forms `damping = 1/Q`; these are the same
+///   coefficient under two names, and this `res` reproduces
+///   `Resonance::BUTTERWORTH`'s damping exactly in `f32`. `0.30` is a different
+///   filter, by about 0.4% in `k`.
+/// - **The note is released inside the visible range.** Its duration is
+///   2 880 ticks — 1.5 s at the default tempo — so attack, decay, sustain and
+///   release all complete before the 2 s window ends and the tail is silence.
+///
+/// `pitch` is what E3a's sweep varies, `start` what E4 varies, and `cutoff` what
+/// E3's control **C2** varies — its gain null places the corner far above the
+/// fundamental so the filter is near-transparent and the measured level is the
+/// gain staging alone. The fixture's own corner is 1 000 Hz.
+///
+/// The three are **typed**, and on this helper that is load-bearing rather than
+/// stylistic. A raw MIDI number is validated where the newtype is built, so a
+/// value outside 0..=127 is refused by the caller rather than silently replaced
+/// with a fallback pitch here — and a fallback would change the *measured
+/// fixture*, making the comparison report a tuning difference that is really a
+/// caller's mistake.
+#[must_use]
+pub fn equivalence_probe(pitch: Pitch, start: PatternTick, cutoff: Hertz) -> ProjectFile {
+    let mut patch = Patch::new("Equivalence Probe");
+    add_env_amp_out(&mut patch, 0.010, 0.100, 0.700, 0.200);
+    add_sine_into_filter(&mut patch, cutoff.as_f32(), 0.292_893_23);
+    silence_phase_randomization(&mut patch, "osc-1");
+
+    let mut song = Song::new("Equivalence Probe");
+    let pattern_id = song.create_pattern(SeqDuration::WHOLE);
+    if let Some(pattern) = song.pattern_mut(pattern_id) {
+        let note_id = pattern.add_note(start, pitch, Velocity::FFF);
+        if let Some(note) = pattern.note_mut(note_id) {
+            note.duration = Some(SeqDuration(2_880));
+        }
+    }
+    let track_id = song.create_track("T1");
+    if let Some(track) = song.track_mut(track_id) {
+        track.instrument = InstrumentId::FIRST;
+    }
+    song.place_pattern(pattern_id, track_id, Tick(0));
+
+    project(
+        vec![instrument(InstrumentId::FIRST, "Equivalence Probe", patch)],
+        song,
+        unity_global(),
+    )
+}
+
+/// A sine oscillator into a low-pass filter.
+///
+/// [`add_saw_into_filter`]'s shape with the one waveform V2 also has. Kept
+/// separate rather than parameterizing that helper, because the four fixtures
+/// using it are committed with their digests and pinned by EVD-0001 through
+/// EVD-0003.
+fn add_sine_into_filter(patch: &mut Patch, cutoff_hz: f32, resonance: f32) {
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Oscillator)
+            .waveform("sine")
+            .param_f("level", 1.0)
+            .position(32.0, 32.0)
+            .build(),
+    );
+    patch.add_module(
+        ModuleBuilder::new(1, ModuleType::Filter)
+            .filter_mode("lowpass")
+            .param_f("cutoff", cutoff_hz)
+            .param_f("resonance", resonance)
+            .param_f("env_amt", 0.0)
+            .position(192.0, 32.0)
+            .build(),
+    );
+    patch.add_connection("osc-1", "out", "flt-1", "in");
+    patch.add_connection("flt-1", "out", "amp-1", "in");
 }
 
 /// The fixture belonging to `case_id`.
