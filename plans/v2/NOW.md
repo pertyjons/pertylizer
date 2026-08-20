@@ -1,6 +1,6 @@
 # Core V2: Current Work
 
-Last updated: 2026-08-19
+Last updated: 2026-08-20
 
 This is the only authority for active Core V2 task state, blockers, and next actions. Durable reasoning and measurements
 live in the linked ADRs, specs, and EVDs rather than being repeated here.
@@ -14,26 +14,33 @@ equivalence, CPU, and quantum gates.
 
 **Execute P02-T008 and P02-T009: the phase's two evidence records.**
 
-P02-T010 closed the last thing that gated them: `Q` is final at 64, so ADR-0001 clause 17 no longer threatens to
-invalidate evidence collected now. Both records are measured against the voice path P02-T007 completed, and they are
-one slice because they share a fixture and a harness:
+**Both methods are written, reviewed and `Draft`; collection is what remains.** `PROCESS.md` requires the falsifier
+and acceptance rule before collection and the method reviewed before any data exists, and that is the part now done:
 
-- **P02-T008** — musical equivalence to V1 for the equivalent minimal patch, or a documented intentional difference.
-- **P02-T009** — CPU against V1 for that same patch.
+- **P02-T008** — [EVD-0013](evidence/phase-02/EVD-0013-minimal-patch-equivalence.md), musical equivalence to V1 for
+  the equivalent minimal patch, or a documented intentional difference.
+- **P02-T009** — [EVD-0014](evidence/phase-02/EVD-0014-minimal-patch-cpu.md), CPU against V1 for that same patch.
 
-Each is a decision-driving measurement, so `PROCESS.md` requires the falsifier and acceptance rule to be written before
-collection and the method to be reviewed before any data exists. That review is not a formality here; EVD-0012's
-*History* records what it caught.
+They are one slice because they share a fixture, and the review was not a formality: it returned **nine blocking
+findings before any data existed**, and three more passes on the repairs. Both records' *History* sections carry them.
 
-Blockers: none.
+Blockers: none. What collection now needs, in order:
 
-Two things they inherit, both stated so they are not rediscovered:
+1. The V1 fixture builder, outside `FIXTURES` for the reason `corpus::fixtures::polyphony_probe` is.
+2. EVD-0013's controls C1, C2 and C3, then its renders and comparisons.
+3. `synth_engine_v2` as a **dev-dependency** of `pertylizer`, so EVD-0014's two arms share one binary.
+4. EVD-0014's C3, then its null pass, then its sweeps — in that order, and its rule 0 can stop it at the null pass.
+
+Three things they inherit, stated so they are not rediscovered:
 
 - **The instrument, its traps and this machine's behaviour are EVD-0012's**, which reuses EVD-0010's estimator and
   records what went wrong with it. Read that record's *Method*, *History* and *Limitations* before building a harness;
   do not re-derive them here.
-- **V2's node vocabulary is six kinds.** What "the equivalent minimal patch" means in V1 is the first thing P02-T008
-  has to define, and defining it after seeing a comparison would be choosing the fixture to fit the answer.
+- **"The equivalent minimal patch" is now defined**, in EVD-0013, along with the five asymmetries closed in the
+  fixture and the two differences that are the subject. It is a counterpart fixture inheriting CORPUS-0001's claim
+  classes, not a manifest case.
+- **The user decided the three open questions on 2026-08-20**: the counterpart fixture over a new manifest case, the
+  dev-dependency over a separate crate or two binaries, and both CPU pairs rather than one.
 
 References:
 
@@ -54,7 +61,7 @@ References:
 | P02-T013          | Complete                         | EVD-0011              |
 | P02-T007          | Complete                         | `note_events`         |
 | P02-T010          | Complete                         | EVD-0012              |
-| P02-T008/P02-T009 | **Active**                       | —                     |
+| P02-T008/P02-T009 | **Active** — methods reviewed    | Collection            |
 | P02-T011          | Waiting                          | All Phase 2 outcomes  |
 
 ### Next actions
