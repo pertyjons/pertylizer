@@ -1,0 +1,347 @@
+From f0750c226b13715c7513becc3686e1ec0ee70353 Mon Sep 17 00:00:00 2001
+From: Per Jonsson <pertyjons@gmail.com>
+Date: Tue, 18 Aug 2026 10:37:37 +0200
+Subject: [PATCH] Add an amplifier, and let the diff answer the fourth gate
+ bullet
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+ADR-0004 clause 2 says the fourth Phase 2 gate is decided by a change
+rather than by an opinion: adding a second simple DSP node must touch no
+line of the renderer's control flow, and the check is performed by making
+that change. This is that change.
+
+The amplifier is the first node with two inputs and two signal domains —
+audio scaled sample by sample by a control — so it also exercises the
+port table's domain rule with a node that has a domain to get wrong.
+Either input unpatched makes it silent, which is the same rule as
+everywhere else in this crate rather than an invented level.
+
+The diff touches the IR vocabulary, the registry, a kernel, and a test.
+It touches no line of `render/hot.rs`, and none of the compiler, the
+validator, the arena, or the report either.
+
+Co-Authored-By: Claude Opus 5 (1M context) <noreply@anthropic.com>
+---
+ crates/synth_engine_v2/src/ir.rs            |  10 ++
+ crates/synth_engine_v2/src/node.rs          |  25 +++-
+ crates/synth_engine_v2/src/node/kernels.rs  |  29 ++++
+ crates/synth_engine_v2/tests/voice_nodes.rs | 149 +++++++++++++++++++-
+ 4 files changed, 209 insertions(+), 4 deletions(-)
+
+diff --git a/crates/synth_engine_v2/src/ir.rs b/crates/synth_engine_v2/src/ir.rs
+index caddccfe..4bd262e4 100644
+--- a/crates/synth_engine_v2/src/ir.rs
++++ b/crates/synth_engine_v2/src/ir.rs
+@@ -233,6 +233,16 @@ pub enum IrNodeKind {
+         /// The quality factor.
+         resonance: Resonance,
+     },
++    /// One audio input scaled, sample by sample, by one control input.
++    ///
++    /// Distinct from [`Self::Gain`], which multiplies by a constant the plan carries.
++    /// This one has no value of its own: what it does is decided by whatever is patched
++    /// into its control port, which is how an envelope becomes an amplitude.
++    ///
++    /// Either input unpatched makes it silent. That is the same rule as everywhere else
++    /// in this crate — an unpatched input is silence — and the alternative would be to
++    /// invent a level nobody asked for.
++    Amplifier,
+     /// The plan's output. Takes one mono signal and writes every output channel.
+     ///
+     /// Writing a mono source to both channels is a **declared duplication** rather
+diff --git a/crates/synth_engine_v2/src/node.rs b/crates/synth_engine_v2/src/node.rs
+index 4474e45a..6b8972c7 100644
+--- a/crates/synth_engine_v2/src/node.rs
++++ b/crates/synth_engine_v2/src/node.rs
+@@ -55,6 +55,9 @@ pub(crate) struct NodeDescriptor {
+     pub(crate) in_place_safe: bool,
+ }
+ 
++/// An amplifier's control port, which is its second input.
++pub const AMPLIFIER_CONTROL: crate::ir::PortId = crate::ir::PortId::new(1);
++
+ /// The audio output every source declares.
+ fn audio_out() -> PortSpec {
+     PortSpec::new(
+@@ -117,6 +120,23 @@ pub(crate) fn descriptor(kind: IrNodeKind) -> Option<NodeDescriptor> {
+             ],
+             in_place_safe: false,
+         },
++        IrNodeKind::Amplifier => NodeDescriptor {
++            kernel: kernels::amplifier,
++            ports: vec![
++                audio_in(crate::ir::PortId::FIRST),
++                PortSpec::new(
++                    AMPLIFIER_CONTROL,
++                    PortDirection::Input,
++                    SignalDomain::Control,
++                    ChannelLayout::Mono,
++                ),
++                audio_out(),
++            ],
++            controls: Vec::new(),
++            // Each output sample depends on its own input sample and nothing else, so
++            // writing the result over the audio input changes nothing about it.
++            in_place_safe: true,
++        },
+         IrNodeKind::Envelope { .. } => NodeDescriptor {
+             kernel: kernels::envelope,
+             ports: vec![PortSpec::new(
+@@ -209,6 +229,7 @@ pub(crate) fn prepare(
+             amplitude,
+         },
+         IrNodeKind::Gain { factor } => PreparedNode::Gain { factor },
++        IrNodeKind::Amplifier => PreparedNode::Amplifier,
+         IrNodeKind::Filter { cutoff, resonance } => return low_pass(node, cutoff, resonance, rate),
+         IrNodeKind::Envelope {
+             attack,
+@@ -377,7 +398,7 @@ pub const fn state_bytes_per_node() -> u64 {
+ pub fn prepared_payload_bytes(kind: IrNodeKind) -> u64 {
+     (match kind {
+         // The output node has no kernel, so it carries no prepared data of its own.
+-        IrNodeKind::Output | IrNodeKind::Silence => 0,
++        IrNodeKind::Output | IrNodeKind::Silence | IrNodeKind::Amplifier => 0,
+         IrNodeKind::Constant { .. } => size_of::<crate::quantities::Amplitude>(),
+         IrNodeKind::Impulse { .. } => size_of::<crate::time::PlanPosition>(),
+         IrNodeKind::Sine { .. } => size_of::<(
+@@ -407,6 +428,7 @@ pub fn state_payload_bytes(kind: IrNodeKind) -> u64 {
+         IrNodeKind::Envelope { .. } => size_of::<(kernels::Segment, f32, f32, f32, u32, bool)>(),
+         IrNodeKind::Output
+         | IrNodeKind::Silence
++        | IrNodeKind::Amplifier
+         | IrNodeKind::Constant { .. }
+         | IrNodeKind::Impulse { .. }
+         | IrNodeKind::Gain { .. } => 0,
+@@ -436,6 +458,7 @@ mod tests {
+             IrNodeKind::Gain {
+                 factor: GainFactor::UNITY,
+             },
++            IrNodeKind::Amplifier,
+             IrNodeKind::Envelope {
+                 attack: crate::quantities::Seconds::ZERO,
+                 decay: crate::quantities::Seconds::ZERO,
+diff --git a/crates/synth_engine_v2/src/node/kernels.rs b/crates/synth_engine_v2/src/node/kernels.rs
+index 776ae8bb..9f6fef55 100644
+--- a/crates/synth_engine_v2/src/node/kernels.rs
++++ b/crates/synth_engine_v2/src/node/kernels.rs
+@@ -128,6 +128,8 @@ pub enum PreparedNode {
+         /// kernel touches.
+         integrator: [f32; 3],
+     },
++    /// One audio input scaled by one control input. It carries nothing of its own.
++    Amplifier,
+     /// One buffer copied into another.
+     ///
+     /// The compiler's own operation rather than an authored node: ADR-0002 clause 7
+@@ -230,6 +232,7 @@ impl NodeState {
+                 held: false,
+             },
+             PreparedNode::Silence
++            | PreparedNode::Amplifier
+             | PreparedNode::Constant { .. }
+             | PreparedNode::Impulse { .. }
+             | PreparedNode::Gain { .. }
+@@ -720,6 +723,32 @@ const fn flush(value: f32) -> f32 {
+ /// The level below which a filter's history is treated as silence.
+ const SUBNORMAL_GUARD: f32 = 1e-30;
+ 
++/// One audio input scaled, sample by sample, by one control input.
++pub(crate) fn amplifier(_prepared: &PreparedNode, _state: &mut NodeState, io: &mut NodeIo<'_>) {
++    let [audio, control] = io.inputs;
++    let InputBuffer::Patched(control) = control else {
++        // A control input is never the in-place one — the arena merges the first input
++        // only — so this is the unpatched case, and an amplifier with nothing driving it
++        // is silent.
++        io.out.fill(0.0);
++        return;
++    };
++    match audio {
++        InputBuffer::Patched(audio) => {
++            for ((sample, input), level) in io.out.iter_mut().zip(audio.iter()).zip(control.iter())
++            {
++                *sample = *input * *level;
++            }
++        }
++        InputBuffer::InPlace => {
++            for (sample, level) in io.out.iter_mut().zip(control.iter()) {
++                *sample *= *level;
++            }
++        }
++        InputBuffer::Unpatched => io.out.fill(0.0),
++    }
++}
++
+ /// One buffer copied into another.
+ pub(crate) fn copy(_prepared: &PreparedNode, _state: &mut NodeState, io: &mut NodeIo<'_>) {
+     let source = io.inputs[0];
+diff --git a/crates/synth_engine_v2/tests/voice_nodes.rs b/crates/synth_engine_v2/tests/voice_nodes.rs
+index 739a7943..04eb94c0 100644
+--- a/crates/synth_engine_v2/tests/voice_nodes.rs
++++ b/crates/synth_engine_v2/tests/voice_nodes.rs
+@@ -9,11 +9,16 @@ mod common;
+ use common::{OUTPUT, SOURCE, profile, rate};
+ use synth_engine_v2::compile::{RenderConfig, compile};
+ use synth_engine_v2::diagnostics::{CompileError, PreparationFault};
+-use synth_engine_v2::ir::{ExecutionScope, GraphIr, IrNodeKind, NodeId, PortId, SignalDomain};
++use synth_engine_v2::ir::{
++    ExecutionScope, GraphIr, IrNodeKind, NodeId, PortId, SignalDomain, parameters,
++};
+ use synth_engine_v2::offline::{OfflineEvent, render_offline};
+ use synth_engine_v2::profile::HostProfile;
+-use synth_engine_v2::quantities::{Amplitude, ChannelLayout, CutoffFrequency, Resonance};
+-use synth_engine_v2::time::{FrameCount, PlanPosition};
++use synth_engine_v2::quantities::{
++    Amplitude, ChannelLayout, CutoffFrequency, NormalizedLevel, ParameterValue, Resonance, Seconds,
++};
++use synth_engine_v2::render::EventPayload;
++use synth_engine_v2::time::{FrameCount, PlanPosition, SampleTime};
+ 
+ const FILTER: NodeId = NodeId::new(7);
+ 
+@@ -407,3 +412,141 @@ fn the_same_filter_at_two_rates_is_two_prepared_records() {
+         "the coefficients are a function of the rate, and these are two rates"
+     );
+ }
++
++/// An envelope gating a constant through an amplifier, and the gate's compiled slot.
++///
++/// The first plan in this phase with two signal domains in it: the envelope's control
++/// output crosses into the amplifier's control input, and validation checks that against
++/// the port table like any other edge.
++fn gated_constant() -> (GraphIr, NodeId) {
++    const ENVELOPE: NodeId = NodeId::new(11);
++    const AMPLIFIER: NodeId = NodeId::new(12);
++    let ir = GraphIr::builder()
++        .node(
++            SOURCE,
++            IrNodeKind::Constant {
++                level: Amplitude::new(1.0).expect("finite"),
++            },
++            ExecutionScope::Voice,
++        )
++        .node(
++            ENVELOPE,
++            IrNodeKind::Envelope {
++                attack: Seconds::new(0.0).expect("not negative"),
++                decay: Seconds::new(0.0).expect("not negative"),
++                sustain: NormalizedLevel::new(0.5).expect("within range"),
++                release: Seconds::new(0.0).expect("not negative"),
++            },
++            ExecutionScope::Voice,
++        )
++        .node(AMPLIFIER, IrNodeKind::Amplifier, ExecutionScope::Voice)
++        .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
++        .connect(
++            (SOURCE, PortId::FIRST),
++            (AMPLIFIER, PortId::FIRST),
++            SignalDomain::Audio,
++        )
++        .connect(
++            (ENVELOPE, PortId::FIRST),
++            (AMPLIFIER, synth_engine_v2::node::AMPLIFIER_CONTROL),
++            SignalDomain::Control,
++        )
++        .connect(
++            (AMPLIFIER, PortId::FIRST),
++            (OUTPUT, PortId::FIRST),
++            SignalDomain::Audio,
++        )
++        .build()
++        .expect("a readable plan");
++    (ir, ENVELOPE)
++}
++
++#[test]
++fn an_amplifier_with_no_gate_is_silent() {
++    // An envelope nobody gated is at zero, and an amplifier driven by zero passes
++    // nothing. It is the same rendered result as a broken patch, which is why the next
++    // test exists: this one alone would pass on a plan that never connected anything.
++    let (ir, _) = gated_constant();
++    let rendered = render_offline(
++        common::admit(&ir, profile(256, ChannelLayout::Mono)),
++        FrameCount::new(256),
++        PlanPosition::ZERO,
++        &[] as &[OfflineEvent],
++    )
++    .expect("renders");
++    assert!(
++        rendered.iter().all(|sample| *sample == 0.0),
++        "an ungated voice is silent"
++    );
++}
++
++#[test]
++fn a_gated_amplifier_passes_the_envelope_it_is_driven_by() {
++    // The path P02-T007 will render a note through, one task early and with the gate as
++    // an ordinary control: a constant into an amplifier, driven by an envelope whose
++    // segments are instantaneous, so the level is the sustain level from the first
++    // quantum the gate is held.
++    let (ir, envelope) = gated_constant();
++    let plan = common::admit(&ir, profile(256, ChannelLayout::Mono));
++    let gate = plan
++        .resolve_parameter(envelope, parameters::ENVELOPE_GATE)
++        .expect("the envelope declares a gate");
++
++    let rendered = render_offline(
++        plan,
++        FrameCount::new(256),
++        PlanPosition::ZERO,
++        &[OfflineEvent::new(
++            SampleTime::ZERO,
++            EventPayload::SetParameter {
++                slot: gate,
++                value: ParameterValue::new(1.0).expect("finite"),
++            },
++        )],
++    )
++    .expect("renders");
++
++    let settled = rendered.last().copied().unwrap_or(0.0);
++    assert!(
++        (settled - 0.5).abs() < 1e-6,
++        "a held gate on an instant envelope holds the sustain level, and this is {settled}"
++    );
++}
++
++#[test]
++fn an_amplifier_refuses_an_audio_signal_on_its_control_port() {
++    // The domain rule, with a node that has two domains to get wrong. Patching the
++    // constant into the control port is a plan that means something the compiler cannot
++    // deliver, and it says so rather than rendering the audio as a gain.
++    const AMPLIFIER: NodeId = NodeId::new(12);
++    let ir = GraphIr::builder()
++        .node(
++            SOURCE,
++            IrNodeKind::Constant {
++                level: Amplitude::new(1.0).expect("finite"),
++            },
++            ExecutionScope::Voice,
++        )
++        .node(AMPLIFIER, IrNodeKind::Amplifier, ExecutionScope::Voice)
++        .node(OUTPUT, IrNodeKind::Output, ExecutionScope::Global)
++        .connect(
++            (SOURCE, PortId::FIRST),
++            (AMPLIFIER, synth_engine_v2::node::AMPLIFIER_CONTROL),
++            SignalDomain::Audio,
++        )
++        .connect(
++            (AMPLIFIER, PortId::FIRST),
++            (OUTPUT, PortId::FIRST),
++            SignalDomain::Audio,
++        )
++        .build()
++        .expect("a readable plan");
++
++    let error = compile(&ir, &RenderConfig::new(profile(256, ChannelLayout::Mono)))
++        .into_plan()
++        .expect_err("audio into a control port is refused");
++    assert!(
++        matches!(error, CompileError::DomainMismatch { .. }),
++        "expected a domain refusal, got {error}"
++    );
++}
+-- 
+2.55.0
+

@@ -26,7 +26,7 @@ accepted exit review. `NOW.md` owns task activity within an active phase.
 | [0A](master-plan.md#phase-0a-baseline-limits-and-render-core-contracts) | V1 baselines, resource limits, and initial render contracts | Complete | — |
 | [0B](master-plan.md#phase-0b-migration-inventories-and-project-contracts) | Migration inventories and Project/Application contracts | Active, parallel | — |
 | [1](master-plan.md#phase-1-introduce-the-experimental-sound-core-v2-crate) | Deletable experimental Sound Core renderer | Complete | 0A |
-| [2](master-plan.md#phase-2-minimal-compiled-voice-graph) | One complete compiled voice graph | Active | 1 |
+| [2](master-plan.md#phase-2-minimal-compiled-voice-graph) | One complete compiled voice graph | Complete | 1 |
 | [3](master-plan.md#phase-3-sample-accurate-scheduler-and-block-partition-invariance) | Sample-accurate scheduler and host-block invariance | Not started | 2 |
 | [4](master-plan.md#phase-4-current-project-lowering-and-offline-ab-path) | Current-project lowering and offline V1/V2 comparison | Not started | 3 |
 | [5](master-plan.md#phase-5-declarative-node-and-parameter-api) | Declarative node and parameter API | Not started | 4 |
@@ -86,7 +86,7 @@ Outcome: note events render through envelope, oscillator, filter, amplifier, and
 output using validated topology, compact slots, a preallocated arena, liveness
 reuse, and separated prepared/state data.
 
-Exit requires:
+Exit required:
 
 - no names, topology work, allocation, or resizing in the hot path;
 - path-local graph diagnostics;
@@ -96,6 +96,12 @@ Exit requires:
 - the binding real-node re-measurement of `Q`, followed by confirmation of
   ADR-0037 or a superseding decision; either result requires the corresponding
   current-spec update.
+
+Exit: [`REV-P02`](reviews/phase-02-exit-review.md) is accepted. All six bullets
+close; `Q` = 64 is confirmed by [EVD-0012](evidence/phase-02/EVD-0012-render-quantum-real-path.md),
+the equivalence bullet takes its documented-intentional-difference branch under
+[ADR-0042](decisions/ADR-0042-envelope-segment-shape.md), and the CPU bullet
+closes with no adapter margin claimed.
 
 ### Phase 3 — sample-accurate scheduling
 

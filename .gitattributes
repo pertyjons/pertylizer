@@ -1,1 +1,2 @@
 * text=auto eol=lf
+plans/v2/evidence/**/*.patch -whitespace

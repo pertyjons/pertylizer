@@ -5,106 +5,54 @@ Last updated: 2026-08-20
 This is the only authority for active Core V2 task state, blockers, and next actions. Durable reasoning and measurements
 live in the linked ADRs, specs, and EVDs rather than being repeated here.
 
-## Primary stream: Phase 2
+## Phase 2 is closed
 
-Outcome: render one complete compiled monophonic voice through validated, scheduled V2 nodes and close Phase 2's
-equivalence, CPU, and quantum gates.
+**[`REV-P02`](reviews/phase-02-exit-review.md) is `Accepted`**, so Phase 2's state in
+[`ROADMAP.md`](ROADMAP.md#phase-order) is `Complete` and every P02 task is closed. All six master-plan gate bullets
+close. The review carries the gate table and the figures; only the consequences are stated here.
 
-### Active slice
+- `Q` = 64 is **confirmed** ([EVD-0012](evidence/phase-02/EVD-0012-render-quantum-real-path.md)), so the restriction on
+  hand-unrolled kernels, `Q`-specific buffer layouts and tests asserting a control rate in hertz **is discharged**.
+- Equivalence takes the gate's **second branch** — a documented intentional difference. **No `CORPUS-0001` preserve
+  claim is broken** ([EVD-0013](evidence/phase-02/EVD-0013-minimal-patch-equivalence.md)); the envelope shape is
+  `CORPUS-0001-C2` under [ADR-0042](decisions/ADR-0042-envelope-segment-shape.md).
+- CPU closes with **no adapter margin claimed**
+  ([EVD-0014](evidence/phase-02/EVD-0014-minimal-patch-cpu.md)).
+- P02-T006's dropped `synth_dsp` extraction is **registered** in the review's deviation table, with ADR-0040 clause 5 as
+  its acceptance basis. That debt is paid.
 
-**P02-T008 and P02-T009 are closed.** Both evidence records are `Complete`,
-[ADR-0042](decisions/ADR-0042-envelope-segment-shape.md) is `Accepted`, and `CORPUS-0001-C2` is in the manifest.
-The slice has nothing open.
+The review's *Deviations and residual risks* table is the register for everything Phase 2 leaves behind; it is not
+repeated here. Two items are owed to later work rather than to nobody, and both are named there: **a note's pitch and
+velocity** (Phase 3's ingress is the first consumer — `NoteEdge` carries neither today), and **`SOUND-INV-012`'s second
+sentence**, the one invariant with no executable check.
 
-- **P02-T009** — [EVD-0014](evidence/phase-02/EVD-0014-minimal-patch-cpu.md), **Supported by rule 1**. V2 costs
-  **78.0% less** than V1 on the governing pair under the conservative variant, at 189 times the noise floor. The exit
-  gate's fifth bullet closes with **no margin claimed**.
-- **P02-T008** — [EVD-0013](evidence/phase-02/EVD-0013-minimal-patch-equivalence.md), **Not supported**, and that is a
-  verdict on its own thresholds rather than on the gate. Five of six pass, four by one to two orders of magnitude; E2a
-  is exceeded on `fall_to_50_ms`, and its falsifier turns on any declared threshold being exceeded. **No CORPUS-0001
-  claim is broken** — P2 claims landmark parity and V2 delivers it — and **every difference now carries a
-  disposition**, so the gate's third bullet takes its second branch: a documented intentional difference.
-- **ADR-0042** — V2's linear envelope segments are intentional. `CORPUS-0001-P2` is untouched; the shape is
-  `CORPUS-0001-C2`, at **+1.137 dB** in the release measured from each engine's own gate. No fixture digest moved.
+## Next stream: Phase 3 is not yet activatable
 
-Three things this slice established that are worth not rediscovering:
+Phase 3's state stays `Not started`. It is **not** blocked on Phase 2, which is closed; it is blocked on two decisions
+that must be `Accepted` **before implementation begins**, and neither is:
 
-- **The V1 chain applies an equal-power centre pan three times**, not two: the amplifier, the stereo output, and the
-  instrument fader in `SynthEngine::process` — the third outside the voice's module graph. Control C2 found it by
-  failing at +3.008 dB.
-- **The two engines' filters are the same recurrence**, and E3a measured their magnitude responses agreeing to
-  +0.068 dB across six octave bands. The sines are not the same, and neither are the envelopes.
-- **A contract about the dependency graph belongs to the resolver.** `crate_boundary` was defeated by five successive
-  valid TOML spellings before it stopped scanning manifests and started asking `cargo tree`; `--target all` is
-  required, or host-target resolution hides a `cfg(windows)` entry.
+| Prerequisite | Current status | What it must settle |
+|---|---|---|
+| [ADR-0022](decisions/ADR-0022-hardware-time-mapping.md) — hardware time mapping and latency ownership | **`Deferred`** | Phase 3 may refine it through a superseding ADR on simulated-host evidence; it may **not** invent timestamp semantics inside implementation tasks |
+| An **ADR-0001 clarification or successor** | Does not exist | When clause 16's late condition is evaluated, and whether a quantum may defer an event at all under clauses 12 and 14. The two cannot both be implemented as written; the specification states an interim rule and marks it as a narrowing it may not make |
 
-References:
+Both obligations arrive from Phase 0A, which narrowed P00A-T005 rather than blocking on them — Phase 1 has no live
+ingress and no host callback, so the capacity a deferral operates against could not be specified from below. See
+[`REV-P00A`](reviews/phase-00a-exit-review.md).
 
-- [EVD-0012: what the render quantum costs on the real V2 path](evidence/phase-02/EVD-0012-render-quantum-real-path.md),
-  whose estimator both records reuse
-- [ADR-0040: V2 owns its DSP](decisions/ADR-0040-v2-owns-its-dsp.md), clause 4 for the disposition rule
-- [Current Sound Core render contract](specs/spec-sound-core-render-contract.md)
-- [Historical Phase 2 execution record](phases/phase-02-minimal-compiled-voice-graph.md)
-
-### Phase 2 task state
-
-| Task              | State                            | Next dependency       |
-|-------------------|----------------------------------|-----------------------|
-| P02-T001–T005     | Complete                         | —                     |
-| P02-T006          | **Closed — not happening**       | REV-P02 registers it  |
-| P02-T012          | Complete                         | EVD-0010              |
-| P02-T013          | Complete                         | EVD-0011              |
-| P02-T007          | Complete                         | `note_events`         |
-| P02-T010          | Complete                         | EVD-0012              |
-| P02-T008/P02-T009 | Complete                         | —                     |
-| P02-T011          | Waiting                          | All Phase 2 outcomes  |
-
-### P02-T006 is closed, and what that leaves
-
-**The kernel extraction into `synth_dsp` is not happening**, and it is not deferred.
-[ADR-0040](decisions/ADR-0040-v2-owns-its-dsp.md) clause 5 is the authority and the closure adds nothing to it: the
-task carried no code, so closing it is a change of state rather than of the tree. The eleventh corpus fixture went
-with it, and clause 5 makes no claim on it either way — the manifest's coverage is P00A-T001's subject. Confirmed
-against the manifest: ten cases, and its one `planned` entry is Phase 0B's sampler category, unrelated.
-
-`synth_engine_v2` depends on `synth_core` and `thiserror` and on nothing else, so there is no residue of the
-extraction in the crate either.
-
-**The task's state is closed; its deviation is not yet registered, and those are two different things.** Dropping a
-master-plan work-list item is a deviation, and the place it belongs is `REV-P02`'s *Deviations and residual risks*
-table — which does not exist yet, because writing it is P02-T011. So the registration is **owed**, with ADR-0040
-clause 5 as the acceptance basis it will carry, and the frozen phase record's own deviation list is the other input
-that review has to fold in.
-
-### Next actions
-
-**`P02-T011` is the only Phase 2 task left that is neither complete nor closed**, and the items before it are its
-inputs rather than separate work.
-
-**SOUND-INV-013's provenance gap is closed in two halves, and only the first by the type system.** A kernel's
-function pointer is private to `node::kernels`, so a descriptor elsewhere naming any function is a **compile
-error** — and since every descriptor lives in `node.rs`, every registered pointer is necessarily one of that
-module's constants. What those constants *wrap* is not settled by privacy: an in-module `Kernel(foreign)` is well
-typed, and a bounded source scan is what rejects it. Nine forging routes are mutation-checked, five of them found by
-review after a repair had looked sufficient. The specification keeps a named entry for that narrower in-module
-residual rather than claiming a scan for a grammar can be exhaustive.
-
-1. Audit the specification's pre-existing conformance rows, which predate this phase: an independent read
-   found four that name a check not carrying the invariant — SOUND-INV-001/004, 003/012, 007 and 008. Not a
-   defect in the code, and recorded in the specification's unresolved questions.
-2. Decide where a note's **pitch and velocity** live. P02-T007 deliberately gave `NoteEdge` neither, because
-   nothing in Phase 2 reads either; Phase 3's ingress is the first task that has to.
-3. Complete the Phase 2 exit review, `REV-P02`. Two deviation inputs are waiting for it: **P02-T006's dropped
-   extraction**, whose acceptance basis is ADR-0040 clause 5, and the six deviations the frozen phase record lists.
+**Activating Phase 3 is the user's call**, and drafting either record is the first slice when it is made. Phase 0B's
+paused stream below is the other candidate; it gates Phase 10 and nothing in Phase 3 depends on it.
 
 ## Paused parallel stream: Phase 0B
 
 Outcome: complete the V1 migration inventories and the durable Project and Application Core contracts required before
 Phase 10.
 
-This phase remains active in the roadmap, but its execution stream is paused
-while the Phase 2 slice above is active. On resumption, select exactly one task,
-copy its observable completion check here, and only then mark it `Active`.
+This phase remains active in the roadmap, and its execution stream is paused.
+It was paused for the Phase 2 slice, which has now closed, so **nothing is
+holding it any longer** — resuming it is a choice rather than a wait. On
+resumption, select exactly one task, copy its observable completion check here,
+and only then mark it `Active`.
 
 | Task           | State       | Resume boundary                                                            |
 |----------------|-------------|----------------------------------------------------------------------------|
@@ -124,5 +72,7 @@ Phase lifecycle and completed gates are recorded once in
 
 - Phase 3 owns renderer ingress, deferred-event storage, event scheduling, and the pending ADR-0001 clarification.
 - Phase 4 owns current-project lowering and the long-running job contract.
+- Phase 5 owns the `LegacyPolyModuleAdapter`'s conversion cost — the largest quantity ADR-0041 moves and the only one
+  nobody has measured — and the declarative node API that `SOUND-INV-012`'s uncovered second sentence belongs to.
 - Phase 0B gates Phase 10.
 - ADR-0039 and `LIMIT-0017` remain Phase 10E work.
