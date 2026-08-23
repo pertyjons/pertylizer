@@ -40,8 +40,8 @@ Choose the gate from the change, rather than running unrelated work:
 |---|---|
 | Mechanical documentation, status, links, indexes, or `scripts/check_v2_docs.py` | `git diff --check`; for Core V2, run the documentation gate below |
 | Normative documentation, ADRs, specifications, evidence methods, or process rules | The documentation checks above plus one independent semantic review |
-| Rust behavior | The core Rust gate below plus `codex review --uncommitted` |
-| Features, dependencies, build configuration, release, or merge to `main` | The complete repository gate below plus `codex review --uncommitted` |
+| Rust behavior | The core Rust gate below plus one independent uncommitted review |
+| Features, dependencies, build configuration, release, or merge to `main` | The complete repository gate below plus one independent uncommitted review |
 
 The Core V2 documentation gate is:
 
@@ -87,15 +87,88 @@ The only pre-approved Clippy exceptions are `too_many_lines` for large
 audio code, and `cast_possible_truncation` when the value is proven to fit.
 Every exception still needs a narrowly scoped allowance at the relevant site.
 
-When the table requires a repository review, use a reader that has no memory of
-what you meant:
+#### Who may perform an independent review
+
+This governs every table row above that requires a review: the semantic review
+for normative documentation and the uncommitted review for the other two rows.
+A reader qualifies by two properties rather than by being a named tool:
+
+1. **It did not author the change.** A reader holding the session context in
+   which the change was written has memory of what you meant and cannot
+   independently review it.
+2. **It is a different model family from the author.** Fresh context removes
+   the memory; a different family removes the shared blind spot. Both are
+   required, because an author has judged its own findings correct where only
+   the other family caught the error.
+
+Pick the reader you are not:
+
+| Author | Reader | Command |
+|---|---|---|
+| Claude Code | Codex | `codex review --uncommitted` |
+| Codex | Claude Code | the inline invocation below |
+| Gemini CLI | Codex, or Claude Code | either of the above |
+
+Claude Code's `/code-review` skill may fan the review out to subagents rather
+than running it inline, which the no-delegation clause below forbids, so it must
+not be used as the reader here. Invoke Claude Code directly instead: the tool
+allowlist omits the subagent tool and `--disable-slash-commands` keeps the skill
+from being reached, so neither is left to the reader's discretion.
 
 ```bash
-codex review --uncommitted
+set -o pipefail
+{ set -e
+  git status --short --untracked-files=all
+  printf '\n=== staged ===\n';   git diff --cached
+  printf '\n=== unstaged ===\n'; git diff
+} | claude -p --tools "Read,Grep,Glob" --disable-slash-commands \
+  --strict-mcp-config --mcp-config '{"mcpServers":{}}' \
+  "Review this uncommitted change against CLAUDE.md's invariants. The status
+   block lists untracked files; open them yourself. Report defects only. Do
+   not fix anything."
 ```
 
+Check the exit status. Five details are load-bearing:
+
+- **Staged and unstaged go separately.** `git diff` alone omits the index, and
+  `git diff HEAD` alone can render as empty when a staged edit is changed back
+  in the worktree — the commit would then be reviewed without its own content.
+  Emitting both is the same rule this file already applies before a commit. The
+  status block with `--untracked-files=all` covers the third case, new files,
+  which no diff carries.
+- **MCP is switched off.** `--tools` restricts only the built-in set; the
+  servers in `.mcp.json` still load, and `.claude/settings.local.json`
+  preapproves mutating `synth` calls such as `save_project`. `--strict-mcp-config`
+  with an empty `--mcp-config` is what removes them. Verified: the reader then
+  reports no `mcp__` tool at all.
+- **The allowlist omits the shell.** `Bash` is not read-only here:
+  `.claude/settings.local.json` preauthorizes `git add` and `git commit`, so a
+  reader holding `Bash` can write. `Read`, `Grep` and `Glob` are enough to open
+  the untracked files the status block names.
+- **No `--permission-mode plan`.** The reader then needs a tool the allowlist
+  withholds and cannot finish. The allowlist is already the write barrier, and
+  omitting the subagent tool is what enforces the no-delegation clause below.
+- **`set -o pipefail` and `set -e`.** Without both, a failure while collecting
+  the change set is masked by the reader's own success, and an empty or partial
+  review passes the gate. Measured: the guarded pipeline exits non-zero when
+  collection fails and zero when it succeeds.
+
+`CLAUDE.md`, `AGENTS.md`, and `GEMINI.md` are the same file. This rule
+therefore reaches every agent that reads it, including one invoked as a reader,
+so two clauses bound it:
+
+- **The reader performs the review itself and does not delegate it.** An
+  invoked reader must not start a third agent to review on its behalf. Doing so
+  returns the review to the author's family and can recurse between the two.
+- **If no qualifying reader is available**, property 1 still binds: run the
+  review with a reader of the author's own family. That is an approved gate
+  exception, not an independent review, and it satisfies the table's
+  requirement only as a waiver. Name the waiver and why no qualifying reader
+  was available in the commit message. The waiver is unavailable for a merge to
+  `main` and for a release; those stop until a qualifying reader is available.
+
 Read and report the findings before acting on them. A separate independent
-design review and `codex review --uncommitted` are not both required when one
+design review and an uncommitted review are not both required when one
 review can satisfy the declared scope and stopping rule. Follow the
 [review and design protocol](#review-and-design-protocol), including its
 self-audit after every repair. Re-run every gate command affected by a repair;
@@ -127,7 +200,8 @@ They must remain independent and bounded.
 2. **Do not ask the reviewer to author the frames.** A reader who wrote the
    constraints cannot independently review them.
    `plans/v2/PROCESS.md` requires a reader who did not author the durable
-   change.
+   change; that is property 1 and it is the floor. Property 2 above is this
+   file's additional requirement and applies to every review it gates.
 3. **A criterion must be falsifiable.** State the observable symmetry,
    threshold, artifact, or failure that can violate it.
 4. **Verify factual claims while drafting.** Check them against the code or the
@@ -141,11 +215,12 @@ They must remain independent and bounded.
    contract hole that an implementer cannot fill blocks acceptance. A request
    for optional implementation detail does not.
 
-Do not diagnose a `codex` process as hung from zero CPU usage alone: a healthy
-client may sleep while waiting for network work. Over a bounded observation
-period, inspect process state, elapsed time, wait channel, output progress, and
-the `rchar` delta in `/proc/<pid>/io`. Interrupt or retry only when the process
-has exceeded a reasonable deadline and the combined evidence shows no progress.
+Do not diagnose a reader process (`codex`, `claude -p`) as hung from zero CPU
+usage alone: a healthy client may sleep while waiting for network work. Over a
+bounded observation period, inspect process state, elapsed time, wait channel,
+output progress, and the `rchar` delta in `/proc/<pid>/io`. Interrupt or retry
+only when the process has exceeded a reasonable deadline and the combined
+evidence shows no progress.
 
 ### Merging a branch to `main`
 

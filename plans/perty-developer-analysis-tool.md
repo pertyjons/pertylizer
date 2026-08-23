@@ -565,11 +565,11 @@ cargo +1.97 check --workspace
 
 The runner streams output, stops after a failed step by default, and reports
 the exact failed command and exit status. An opt-in `--keep-going` may collect
-independent failures. It must not run `codex review`, stage files, commit, tag,
-push, regenerate licenses, or decide that a release is ready.
+independent failures. It must not run the independent review, stage files,
+commit, tag, push, regenerate licenses, or decide that a release is ready.
 
-**Because it does not run `codex review --uncommitted`, it may not report a
-clean result as the pre-commit gate.** That review is part of the procedure in
+**Because it does not run the independent uncommitted review, it may not report
+a clean result as the pre-commit gate.** That review is part of the procedure in
 `AGENTS.md`, and it is the step that catches the class the build gate cannot see
 — an unverified claim, a contradiction, a measurement without a control. A
 success from this command therefore reports the review as an **outstanding
