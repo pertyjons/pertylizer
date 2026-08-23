@@ -15,7 +15,13 @@
 
 Name the persisted, protocol, public, real-time/ownership, cross-phase,
 migration, delivered-behavior, or explicit product boundary that requires an
-ADR. If none applies, stop and record the choice in code, tests, or `NOW.md`.
+ADR. Then state why the decision is ready: the active or immediately next
+dependent slice cannot proceed safely without it, or deferring through that
+slice would create a persisted, public, protocol, or delivered-behavior
+commitment or materially multiply reversal cost. Name any coupled decision that
+must close before the selected option is safely implementable. If neither
+readiness condition holds, stop and defer the topic. If no durable boundary
+applies, stop and record the choice in code, tests, an EVD, or `NOW.md`.
 
 ## Decision boundary
 

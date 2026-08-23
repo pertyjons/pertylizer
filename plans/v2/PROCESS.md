@@ -69,6 +69,29 @@ written before collection. Review the method before collecting data when an
 asymmetry could change the conclusion. The ADR review may also review the
 result; do not require a second broad review of the same material.
 
+### Decision timing and readiness
+
+Crossing a durable boundary determines how a decision is recorded, not when it
+must be made. Draft and accept an ADR only when:
+
+- the active or immediately next dependent implementation slice cannot proceed
+  safely without the answer; or
+- deferring through that slice would create a persisted, public, protocol, or
+  delivered-behavior commitment, or would materially multiply reversal cost.
+
+If a provisional internal choice keeps the durable boundary open, record that
+choice in code, tests, an EVD, or `NOW.md`, together with its revisit point. A
+registered ADR topic is a question, not automatically a work item.
+
+Do not accept an option that cannot be implemented safely until another
+undecided policy is resolved. Either decide the coupled boundary together or
+keep the ADR `Proposed` or `Deferred`. Replacing one phase prerequisite with a
+new prerequisite is not progress by itself.
+
+A phase gate requires an accepted ADR only when its observable outcome depends
+on that durable choice. Completing or classifying the decision register is not
+a phase outcome.
+
 ### Phase exit
 
 An exit review checks the named outcomes and evidence for that phase. It does

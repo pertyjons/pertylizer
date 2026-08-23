@@ -71,7 +71,8 @@ and only then mark it `Active`.
 | P00B-T001      | Paused      | Assign evidenced dispositions in the state-ownership inventory             |
 | P00B-T002      | Paused      | Assign reachability and migration dispositions in the capability inventory |
 | P00B-T003      | Paused      | Resolve the two format questions that block ADR-0014 review                |
-| P00B-T004–T009 | Not started | Follow the decomposition in the frozen execution record                    |
+| P00B-T004–T007, P00B-T009 | Not started | Follow the decomposition in the frozen execution record       |
+| P00B-T008      | Not started | Re-scope the frozen all-ADR task under `PROCESS.md`'s decision-timing rule  |
 
 This stream does not block Phase 2. Its detailed audit chronology remains in
 the [historical Phase 0B execution record](phases/phase-00b-inventories-and-project-contracts.md); new operational state

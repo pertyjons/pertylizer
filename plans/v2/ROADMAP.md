@@ -61,7 +61,7 @@ correctness guarantee.
 
 Outcome: every persisted field, reachable capability, and stable identity has
 one evidenced V2 disposition; omission-prone data has round-trip fixtures; the
-Project/Application contracts needed by Phase 10 are accepted.
+Project/Application contracts required by this phase's exit are accepted.
 
 Exit requires:
 
@@ -70,7 +70,9 @@ Exit requires:
 - round-trip fixtures for omission-prone state;
 - current stable-ID, operation-result, state-boundary, and format-envelope
   specifications;
-- no required Phase 0B durable decision left open.
+- no durable decision required by those current specifications or inventory
+  dispositions left open; every other unresolved question has a named first
+  dependent phase or slice.
 
 ### Phase 1 — experimental Sound Core
 

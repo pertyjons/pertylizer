@@ -397,16 +397,11 @@ remaining Phase 0B work continues in parallel.
   orthogonal.
 - Define the Project Format V2 envelope and conversion policy at the contract
   level. Implementation waits until Phase 10D.
-- Open an architecture decision record for every register entry whose target
-  phase begins with `0B`, and resolve each one before Phase 0B closes. A decision
-  may be deferred while the phase is active, but a deferred decision cannot pass
-  the Phase 0B exit review. These cover
-  project/session/settings/telemetry boundaries, persistent identity and
-  remapping, transaction and concurrency semantics, the format envelope and
-  unknown-field policy, asset identity, editor-metadata scope,
-  track/source/channel ownership, tuning ownership, observation ownership,
-  recording and take semantics, audio-device and input lifecycle, host/service
-  configuration and authorization, and the supported build matrix.
+- Apply the decision-timing test in [`PROCESS.md`](PROCESS.md#decision-timing-and-readiness)
+  to every register entry whose phase includes `0B`. Accept the decisions needed
+  by Phase 0B's current specifications and inventory dispositions. Leave any
+  other unresolved question `Proposed` or `Deferred` with its first dependent
+  phase or slice named; Phase 0B does not close by exhausting the register.
 
 ### Exit gate
 
@@ -426,8 +421,10 @@ remaining Phase 0B work continues in parallel.
 - [ ] Recording/session lanes, tuning, observability, external protocol
       ownership, host/service configuration, and the supported build matrix are
       recorded before dependent work begins.
-- [ ] Every ADR whose target phase begins with `0B` is `Accepted`; none remains
-      `Proposed` or `Deferred` at the Phase 0B exit review.
+- [ ] Every durable decision required by Phase 0B's current specifications or
+      inventory dispositions is `Accepted`; every other unresolved question
+      names its first dependent phase or slice and does not block Phase 0B
+      merely because its register phase includes `0B`.
 
 ## Phase 1: Introduce the experimental Sound Core V2 crate
 

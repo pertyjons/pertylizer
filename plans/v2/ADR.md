@@ -16,6 +16,10 @@ Next free identifier: `ADR-0045`.
 Only an accepted ADR can change a current specification. Code follows the current specification rather than
 reconstructing a contract from this index.
 
+`Phase` names relevant ownership or consumer phases; it is not automatically an acceptance deadline. In particular,
+an entry that includes `0B` does not block Phase 0B merely because of that label. Decision timing follows the readiness
+test in [`PROCESS.md`](PROCESS.md#decision-timing-and-readiness).
+
 ## Decision classes
 
 New ADRs use the durable-decision test in [`PROCESS.md`](PROCESS.md#durable-decision-or-evidence). Internal experimental
