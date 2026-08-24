@@ -23,10 +23,11 @@ This specification is `Current`. `event_egress_capacity` depends on accepted
 quantum containing its render position, deferral advances that position
 by `Q` with the stamp untouched, and clause 16's late condition is asked once. Its **capacity half stays deferred**:
 V1 has no timestamped renderer-ingress queue from which to derive the streams, and the deferred store still needs an
-independent bound and exhaustion policy. Phase 3 owns those. **No phase may implement deferral before
-[ADR-0044](../decisions/ADR-0044-deferral-causal-order.md) is `Accepted`** — `+Q` can render a note-on after its own
-note-off, and the policy that repairs it does not exist yet. Phase 1 and Phase 2 implement the clamp and nothing else
-of this invariant.
+independent bound and exhaustion policy. Phase 3 owns those. **No phase may implement deferral before both
+[ADR-0044](../decisions/ADR-0044-deferral-causal-order.md) and
+[ADR-0045](../decisions/ADR-0045-cross-control-causal-order.md) are `Accepted`** — `+Q` can render a note-on after its
+own note-off, and can reverse an automation against the note it shapes, and neither repair exists yet. Phase 1 and
+Phase 2 implement the clamp and nothing else of this invariant.
 
 The field set below is complete against the master plan's initial Phase 1 list. Durable corrections are summarized in
 [Corrections](#corrections); the full review result is [REV-P00A](../reviews/phase-00a-exit-review.md), not duplicated
@@ -242,8 +243,9 @@ open owner is a starting point recorded honestly, not a rule invented here.
    the field tables. Every such queue counts its drops, and the count reaches the structured diagnostics report. This
    invariant governs dropping, not every runtime behaviour: explicit eviction is HOST-INV-019's, a session limit that
    halts an activity is HOST-INV-020's, and a quantum that cannot admit every due event is HOST-INV-021's — **whose
-   timing rule is normative but whose mechanism no phase implements yet**, since deferral is gated on ADR-0044 and the
-   capacities it operates against are still `Deferred to Phase 3`. So four of the five behaviours are in force and an
+   timing rule is normative but whose mechanism no phase implements yet**, since deferral is gated on ADR-0044 and
+   ADR-0045, and the capacities it operates against are still
+   `Deferred to Phase 3`. So four of the five behaviours are in force and an
    over-full quantum is refused at render as a caller contract violation rather than absorbed. Together
    with HOST-INV-007's admission refusal these are the five behaviours, and
    [*Failure and diagnostics*](#failure-and-diagnostics) assigns each field exactly one — or records it as a **sizing
@@ -321,9 +323,11 @@ open owner is a starting point recorded honestly, not a rule invented here.
     What stays deferred is named at each point and collected in
     [*Deferred to Phase 3*](#deferred-to-phase-3): the renderer-ingress streams, their capacities, the deferred
     store's bound and exhaustion policy, and the starvation the admission order permits. **Implementation is
-    separately gated**: no phase may implement deferral before
-    [ADR-0044](../decisions/ADR-0044-deferral-causal-order.md) is `Accepted`, because `+Q` can render a note-on after
-    its own note-off and no policy repairs that yet. The identifier is retained rather than freed: it is what four
+    separately gated**: no phase may implement deferral before both
+    [ADR-0044](../decisions/ADR-0044-deferral-causal-order.md) and
+    [ADR-0045](../decisions/ADR-0045-cross-control-causal-order.md) are `Accepted`, because `+Q` can render a note-on
+    after its own note-off and can reverse an automation against the note it shapes, and no policy repairs either
+    yet. The identifier is retained rather than freed: it is what four
     external review passes are indexed to.
 
     **An event is assigned to the quantum containing its render position**, where
@@ -502,8 +506,10 @@ open owner is a starting point recorded honestly, not a rule invented here.
     positions differ; ordering the admitted set by stamp cannot repair it either, because that changes which event is
     inspected and not where either renders. The repair must move the successor's render position or neutralise the
     inversion where the voice is allocated, and choosing between those is
-    [ADR-0044](../decisions/ADR-0044-deferral-causal-order.md)'s, `Deferred` to the Phase 3 entry gate. **Until it is
-    `Accepted`, no phase may implement deferral.** The hazard is unreachable meanwhile because no code defers.
+    [ADR-0044](../decisions/ADR-0044-deferral-causal-order.md)'s, `Deferred` to the Phase 3 entry gate. Its
+    2026-08-24 option survey narrowed that record to **same-control** order and split the cross-control half into
+    [ADR-0045](../decisions/ADR-0045-cross-control-causal-order.md), also `Deferred` to that gate. It selected no
+    candidate for either. **Until both are `Accepted`, no phase may implement deferral.** The hazard is unreachable meanwhile because no code defers.
 
     Dropping remains possible only at the live bounded queue under HOST-INV-009, which is the one place a drop is
     counted and the one place an external producer can outrun the engine.
@@ -545,7 +551,7 @@ is not settled.
 
 | Deferred | Where it goes | What holds meanwhile |
 |----------|---------------|----------------------|
-| **Implementing deferral at all** | [ADR-0044](../decisions/ADR-0044-deferral-causal-order.md), `Accepted` before Phase 3 implementation | The rule is decided but `+Q` can render a note-on after its own note-off. No phase may implement deferral until the causal-order policy exists. Nothing implements it today, so the hazard is unreachable |
+| **Implementing deferral at all** | [ADR-0044](../decisions/ADR-0044-deferral-causal-order.md) **and** [ADR-0045](../decisions/ADR-0045-cross-control-causal-order.md), both `Accepted` before Phase 3 implementation | The rule is decided but `+Q` can render a note-on after its own note-off. No phase may implement deferral until the causal-order policy exists. Nothing implements it today, so the hazard is unreachable |
 | **V2's renderer-ingress streams and their capacities** | Phase 3 work list | No profile field describes them, and none may be invented at a call site. V1 has none to carry over |
 | **The deferred store's bound and exhaustion policy** | Phase 3 work list | Separate from the above: deferring frees the upstream slot, so an ingress capacity does not bound the backlog. "No event is lost" holds only while that store has room |
 | **The admission order among events due in one quantum**, and the starvation it permits | Phase 3, in a decision that owns it | ADR-0043 excludes the order, so nothing accepted owns it and Phase 3 may choose another. It is stated in full above as the deferred mechanism's specification. Bound up with it: compiled precedence and the absence of an age term can each starve an ingress event indefinitely, and the only repair for the second is an age term **inside** that order |
@@ -952,8 +958,10 @@ events. Defining V2's ingress streams and their capacities is Phase 3's, and is 
 > **Decided, but gated.** Everything from here to the end of this subsection describes HOST-INV-021's deferral
 > mechanism. Its timing rule is normative since [ADR-0043](../decisions/ADR-0043-event-deferral-and-late-clamp.md);
 > the capacities it operates against and the store it needs are still deferred — see
-> [*Deferred to Phase 3*](#deferred-to-phase-3). **No phase may implement deferral before
-> [ADR-0044](../decisions/ADR-0044-deferral-causal-order.md) is `Accepted`**, and nothing in Phase 1 or Phase 2 does.
+> [*Deferred to Phase 3*](#deferred-to-phase-3). **No phase may implement deferral before both
+> [ADR-0044](../decisions/ADR-0044-deferral-causal-order.md) and
+> [ADR-0045](../decisions/ADR-0045-cross-control-causal-order.md) are `Accepted`**, and nothing in Phase 1 or Phase 2
+> does.
 
 HOST-INV-021 fixes it: **the excess is deferred, not dropped.** An event that does not fit has its *render position*
 advanced by exactly `Q` frames — the following quantum, same offset — is re-evaluated there, and is counted under its
@@ -1279,7 +1287,7 @@ the use-site audit showed `LIMIT-0014` is an egress ring, and back to **seven** 
 | A plan's predicted cost exceeds the advisory budget | `CompileWarning` naming the predicted and permitted ratio; compilation continues | `ResourceReport` |
 | A live bounded queue overflows at runtime | The item is dropped and counted per queue and priority (HOST-INV-009) | Structured diagnostics report |
 | More events are due in one quantum than `max_events_per_quantum` admits — **in Phase 1 and Phase 2** | **The call is rejected before renderer state or output is mutated**, with a release-active error naming that quantum and the requested and available counts. This is the *current* behaviour and it is not deferral: the candidate set is a prevalidated bounded span, so an over-full quantum is a caller-contract violation rather than a state the render loop absorbs. It is stated in full under [*Deferred to Phase 3*](#deferred-to-phase-3), where the prevalidated-span rule lives, and it is covered by a named test in the V2 render-contract suite | `RenderError`, release-active |
-| More events are due in one quantum than `max_events_per_quantum` admits — **once Phase 3 implements ingress** | **Decided by ADR-0043 and gated on ADR-0044**; it replaces the rejection above rather than coexisting with it, and no phase may implement it before that record is `Accepted`. **Conditional even then, until Phase 3 bounds the deferred store** — the guarantee holds only while that store has room, and its exhaustion behaviour is undefined. The excess is **deferred**: the render position advances by exactly `Q` frames with the offset preserved and the envelope's stamp untouched, counted under the capacity-deferral counter — and not under ADR-0001 clause 16's late counter, whose *condition* does not hold because the quantum has not rendered, and which is asked once when an event first becomes due rather than at every reconsideration. What defers is the tail of the admission order HOST-INV-021 states: compiled before ingress, then ascending render position | Structured diagnostics report, with the per-event displacement as well as the count |
+| More events are due in one quantum than `max_events_per_quantum` admits — **once Phase 3 implements ingress** | **Decided by ADR-0043 and gated on ADR-0044 and ADR-0045**; it replaces the rejection above rather than coexisting with it, and no phase may implement it before that record is `Accepted`. **Conditional even then, until Phase 3 bounds the deferred store** — the guarantee holds only while that store has room, and its exhaustion behaviour is undefined. The excess is **deferred**: the render position advances by exactly `Q` frames with the offset preserved and the envelope's stamp untouched, counted under the capacity-deferral counter — and not under ADR-0001 clause 16's late counter, whose *condition* does not hold because the quantum has not rendered, and which is asked once when an event first becomes due rather than at every reconsideration. What defers is the tail of the admission order HOST-INV-021 states: compiled before ingress, then ascending render position | Structured diagnostics report, with the per-event displacement as well as the count |
 | The scheduler's release window `max_scheduled_events_in_flight` is full (**the scheduler is Phase 3's; this behaviour is not implemented yet**) | The release is delayed, never failed; nothing is lost, since the events are still in the plan. Where the delay makes an event's timestamp fall in an already-rendered quantum, ADR-0001 clause 16 applies in full — clamped forward **and counted late** — and the **capacity-deferral** counter rises as well, attributing the cause to a profile capacity rather than to a producer | Structured diagnostics report |
 | A lossy field's capacity is reached | The oldest data is evicted by design, and the evicted count or continuation marker is exposed (HOST-INV-019) | The surface presenting that data |
 | A session limit is reached | The activity stops with a counted diagnostic; everything already produced is kept, and nothing authored is dropped (HOST-INV-020) | The recording surface, plus the structured diagnostics report |
@@ -1287,7 +1295,8 @@ the use-site audit showed `LIMIT-0014` is an egress ring, and back to **seven** 
 | A callback exceeds `maximum_block_size` | ADR-0021 part 3's terminal stream-contract fault: silence, both carries invalidated, `needs_reprepare` published, nothing allocated | Structured diagnostics report |
 
 **Five behaviours, plus one category that has none — and one of the five is not implementable yet.** Admission
-refuses, a live queue drops, a quantum defers (**decided by ADR-0043, gated on ADR-0044**; the other four are in force
+refuses, a live queue drops, a quantum defers (**decided by ADR-0043, gated on ADR-0044 and ADR-0045**; the other four
+are in force
 meanwhile, and until deferral exists an over-full quantum is *refused at render* rather than absorbed), a lossy budget
 evicts, and a session limit stops. The first review pass found an earlier draft claiming
 compile-time refusal for every render limit while three fields visibly did something else at runtime — the telemetry
@@ -1335,7 +1344,8 @@ the two possibilities.
   Phase 1 or Phase 2**, because no phase
   implements deferral yet: the candidate set is a prevalidated bounded span, so an over-full quantum is a caller
   contract violation rather than a state the render loop handles. ADR-0043 decided what that behaviour will be and
-  ADR-0044 gates building it. The constraint that holds in every phase is the negative one — nothing in the render
+  ADR-0044 and ADR-0045 gate building it. The constraint that holds in every phase is the negative one — nothing in the
+  render
   loop may allocate to absorb an over-full quantum.
 - **Admitting events into a quantum must allocate nothing and do work bounded by declared capacities**, over
   preallocated storage. The real problem today is that the candidate set has no declared bound at all: the ingress
@@ -1370,7 +1380,7 @@ exist, in the phase that builds the thing it tests.
 | HOST-INV-018 | Every **quantity** field's type has a private field and a fallible constructor; no such field is a bare primitive, and `HeldNoteCount` does not convert to or from `VoiceCount`. The two **kind** fields, `channel_layout` and `source`, are asserted to be closed enums instead — the test enumerates both sets, so a new field must be classified rather than silently escaping the check | 1 |
 | HOST-INV-019 | The telemetry ring is overrun and the reader can distinguish a complete window from an overwritten one | 5 |
 | HOST-INV-020 | A take reaching each recording capacity stops, is counted, and keeps every event recorded before the stop; no note is dropped and no earlier note is overwritten | 9 |
-| HOST-INV-021 (**the timing rule is normative; these tests are Phase 3's, because no earlier phase implements deferral and none may before ADR-0044 is `Accepted`**) | A quantum is presented with more due events than it admits: the excess renders one quantum later **at the same intra-quantum offset**, no event is lost **while the deferred store has room** — the unconditional form cannot be tested until Phase 3 sizes that store, and a separate exhaustion case is owed once it chooses a policy — and a compiled event is never displaced by an ingress one. **Two counters, asserted separately** — the capacity-deferral counter rises by exactly the deferred count and the late counter does not move at all; and the mirror case, an event that is genuinely late, moves the late counter and not the deferral counter. ADR-0032 clause 22 is the precedent for why one test would pass on the wrong policy. A third case covers an event that is **both** late and deferred, asserting each counter rises exactly once. A fourth pins the admission order: a quantum over-full with ingress events alone defers the latest-positioned and not the last-arrived, asserted by presenting them in reverse position order; a fifth over-fills a quantum with **compiled** events alone, through a note expansion the compiler could not predict, and asserts the same tail rule. A sixth asserts the stamp is **immutable**: a deferred event's envelope `time` is unchanged after any number of deferrals, its render position is `clamped_position + Q x deferrals` — the clamped base, so an event that is both late and deferred is not sent back into a rendered quantum — and the diagnostics report carries the displacement — the direct regression test for a rewritten stamp. A seventh drives a repeatedly-deferred ingress event past `forward_event_horizon`'s worth of deferrals and asserts it is still rendered, never rejected. An eighth asserts clause 16's condition is asked **once**: an event that was on time when it first became due raises the late counter zero times however many quanta it is later deferred across. A ninth asserts the control-rate boundary follows the render position — a deferred event's control response lands at the first boundary at or after that position and never inside the quantum that refused it | 3 |
+| HOST-INV-021 (**the timing rule is normative; these tests are Phase 3's, because no earlier phase implements deferral and none may before ADR-0044 and ADR-0045 are `Accepted`**) | A quantum is presented with more due events than it admits: the excess renders one quantum later **at the same intra-quantum offset**, no event is lost **while the deferred store has room** — the unconditional form cannot be tested until Phase 3 sizes that store, and a separate exhaustion case is owed once it chooses a policy — and a compiled event is never displaced by an ingress one. **Two counters, asserted separately** — the capacity-deferral counter rises by exactly the deferred count and the late counter does not move at all; and the mirror case, an event that is genuinely late, moves the late counter and not the deferral counter. ADR-0032 clause 22 is the precedent for why one test would pass on the wrong policy. A third case covers an event that is **both** late and deferred, asserting each counter rises exactly once. A fourth pins the admission order: a quantum over-full with ingress events alone defers the latest-positioned and not the last-arrived, asserted by presenting them in reverse position order; a fifth over-fills a quantum with **compiled** events alone, through a note expansion the compiler could not predict, and asserts the same tail rule. A sixth asserts the stamp is **immutable**: a deferred event's envelope `time` is unchanged after any number of deferrals, its render position is `clamped_position + Q x deferrals` — the clamped base, so an event that is both late and deferred is not sent back into a rendered quantum — and the diagnostics report carries the displacement — the direct regression test for a rewritten stamp. A seventh drives a repeatedly-deferred ingress event past `forward_event_horizon`'s worth of deferrals and asserts it is still rendered, never rejected. An eighth asserts clause 16's condition is asked **once**: an event that was on time when it first became due raises the late counter zero times however many quanta it is later deferred across. A ninth asserts the control-rate boundary follows the render position — a deferred event's control response lands at the first boundary at or after that position and never inside the quantum that refused it | 3 |
 | `max_scheduled_events_in_flight` (HOST-INV-021's counter, no invariant of its own; **Phase 3's, with the scheduler**) | The release window is saturated so that an event's timestamp falls in an already-rendered quantum: it is clamped forward and **both** counters rise — late, because ADR-0001 clause 16's condition holds, and capacity-deferral, because a profile capacity caused it. The specification got this field wrong in both directions before settling here, so the test asserts both counters rather than either | 3 |
 | HOST-INV-020, and the retirement budget | A plan swap with `max_active_voices` sounding retires every voice with a crossfade and refuses none, so `max_concurrent_retiring_voices` cannot bind at its derived default | 9 |
 
@@ -1389,7 +1399,7 @@ exist, in the phase that builds the thing it tests.
 | ~~**When ADR-0001 clause 16's condition is evaluated.**~~ **Resolved by [ADR-0043](../decisions/ADR-0043-event-deferral-and-late-clamp.md), 2026-08-20.** The condition is asked once, when an event first becomes due, and deferral does not re-ask it. That was an interim rule this specification was not entitled to make; ADR-0043 superseded clause 16 to make it | No longer | ADR-0043 |
 | ~~**ADR-0021's `LIMIT-0013` evidence.**~~ **Resolved in Phase 0A, not Phase 3.** Its drivers and disposition describe per-priority drop counters "published on OSC"; they are published nowhere, and the OSC counter it names belongs to another ring. [ADR-0038](../decisions/ADR-0038-engine-egress-queue-classification.md) supersedes both the driver and the disposition on that evidence | Resolved by accepted ADR-0038 | ADR-0038 |
 | ~~**The class ADR-0021 gave `LIMIT-0013`'s rings.**~~ **Resolved in Phase 0A, not Phase 3.** They are engine egress, not "fed by external, unbounded-in-time input", so `Live bounded queue` never described them. [ADR-0038](../decisions/ADR-0038-engine-egress-queue-classification.md) part 1 supplies the missing rule and part 3 removes the entry as an explicit compatibility break: there is no workspace production caller, while public external use remains unknown | Resolved by accepted ADR-0038 | ADR-0038 |
-| **How a deferral that inverts causal order is repaired.** `+Q` moves an event and not the events that depend on it, so a note-on deferred past its own note-off leaves a voice sounding. `ADR-0023` cannot repair it — the render positions differ, so there is no tie — and ordering admission by stamp changes which event is inspected rather than where either renders | **Yes, and it gates implementation.** No phase may implement deferral until [ADR-0044](../decisions/ADR-0044-deferral-causal-order.md) is `Accepted` | ADR-0044, Phase 3 |
+| **How a deferral that inverts causal order is repaired.** `+Q` moves an event and not the events that depend on it, so a note-on deferred past its own note-off leaves a voice sounding, and a deferred automation can land after the note it shapes. `ADR-0023` cannot repair either — the render positions differ, so there is no tie — and ordering admission by stamp changes which event is inspected rather than where either renders. **Split on 2026-08-24** by [ADR-0044](../decisions/ADR-0044-deferral-causal-order.md)'s option survey: that record keeps **same-control** order and [ADR-0045](../decisions/ADR-0045-cross-control-causal-order.md) takes the cross-control half. The survey selects no candidate for either, so both remain open questions rather than pending write-ups | **Yes, and it gates implementation**: no phase may implement deferral before both are `Accepted` | ADR-0044 and ADR-0045, Phase 3 |
 | **What V2's renderer-ingress streams are, and what bounds them.** V1 has no timestamped ingress queue to carry over — `LIMIT-0013`'s prioritized rings are engine *egress*, and `LIMIT-0012`'s command ring carries commands rather than positioned events — so the profile currently has no field for the capacity HOST-INV-021's deferral operates against. Bound up with it: the **deferred store**, which needs its own preallocated capacity, since deferral de-orders a FIFO and deferred events must be merged as a stream of their own | No for Phase 1, which compiles rather than renders live. **Yes for Phase 3**, which cannot build admission without them | Phase 3 |
 | ~~Whether ADR-0001 clause 16's clamp preserves or rewrites the event's stamp.~~ **Resolved by [ADR-0043](../decisions/ADR-0043-event-deferral-and-late-clamp.md), 2026-08-20: it preserves**, which is what the renderer already does, so the two mechanisms answer this question the same way and the lateness magnitude stays derivable from the envelope | No longer | ADR-0043 |
 | Where `LIMIT-0004`'s **job-admission error** is delivered. The ledger requires an out-of-range job to be refused with an error naming the requested rate and this field's range. Profile construction refuses an out-of-range *stream*, which is a floor rather than that error: a job asks for a rate before a profile exists | No for Phase 1, which has no job layer. **Yes for Phase 4**, which cannot close with the disposition undelivered | ADR-0028, Phase 4 |

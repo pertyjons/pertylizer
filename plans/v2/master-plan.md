@@ -564,8 +564,19 @@ note-off at 65 renders first, leaving a voice sounding. ADR-0023 cannot repair
 it, because the two render positions differ and a same-sample rule needs a tie.
 No phase may implement deferral until that record exists.
 
-These two obligations arrive here from Phase 0A, which narrowed P00A-T005 rather
-than blocking on them: Phase 1 has no live ingress and no host callback, so the
+**[ADR-0045](decisions/ADR-0045-cross-control-causal-order.md) (cross-control
+causal order) must also be `Accepted` before Phase 3 implementation begins.**
+It was opened on 2026-08-24 by ADR-0044's option survey, which established that
+no candidate mechanism reaches beyond a single control, and that the residual is
+not benign: a control-rate automation at sample 63 takes effect at boundary 64,
+before a sample-rate note at 65, and deferred to 127 it takes effect at 128,
+after it. This phase's outcome names automation ordering, and the symptom
+persists in stateful DSP, so the phase cannot close with it open.
+
+The first two of these obligations arrive here from Phase 0A, which narrowed
+P00A-T005 rather than blocking on them; ADR-0045 does not — it was opened on
+2026-08-24 by ADR-0044's own option survey, which is the first work that looked
+hard enough at the deferral rule to find it: Phase 1 has no live ingress and no host callback, so the
 capacity a deferral operates against cannot be specified from anything Phase 0A
 can observe. See [REV-P00A](reviews/phase-00a-exit-review.md).
 [`NOW.md`](NOW.md) carries their current status; this section names which
@@ -712,6 +723,11 @@ and result ownership must already have one authoritative meaning.
 
 ### Exit gate
 
+- [ ] [ADR-0045](decisions/ADR-0045-cross-control-causal-order.md) is
+      `Accepted`. Deferral can reverse an automation against the note it
+      shapes, which no same-control mechanism relates, and this phase's
+      outcome names automation ordering. Opened 2026-08-24 by ADR-0044's
+      survey; its candidate space is empty on the terms already accepted.
 - [ ] At least three existing saved projects lower and render through V2 without
       hand-rebuilding their patches in tests.
 - [ ] Unsupported modules and targets produce structured diagnostics naming the

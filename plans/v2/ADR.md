@@ -3,7 +3,7 @@
 This is the compact status index for durable Core V2 decisions. Individual ADRs own rationale and evidence; current
 specifications own implementation semantics. Do not copy review history or measurement results into this file.
 
-Next free identifier: `ADR-0045`.
+Next free identifier: `ADR-0046`.
 
 ## Status vocabulary
 
@@ -93,7 +93,8 @@ the durable-decision test in `PROCESS.md` and normally do not need an ADR.
 | ADR-0041 | Interleaved internal channel layout         | Accepted | 2                     | [ADR](decisions/ADR-0041-interleaved-internal-channel-layout.md)   | Supersedes ADR-0002 in full; P02-T013 converts the crate |
 | ADR-0042 | Envelope segment shape                      | Accepted | 2                     | [ADR](decisions/ADR-0042-envelope-segment-shape.md)                | EVD-0013's envelope shape difference; `CORPUS-0001-C2` added 2026-08-20. CORPUS-0001-P2 untouched |
 | ADR-0043 | Event deferral and the late clamp           | Accepted | 3                     | [ADR](decisions/ADR-0043-event-deferral-and-late-clamp.md)         | Option D with a preserving clamp, 2026-08-20. Supersedes ADR-0001 clauses 12, 14 and 16 and ADR-0032 clause 16. Does not close Phase 3's entry gate on its own |
-| ADR-0044 | Deferral-induced causal order               | Deferred | 3                     | [ADR](decisions/ADR-0044-deferral-causal-order.md)                 | ADR-0043's named correctness hole: `+Q` can render a note-on after its own note-off. Phase 3 entry prerequisite, with ADR-0022 |
+| ADR-0044 | Deferral-induced causal order               | Deferred | 3                     | [ADR](decisions/ADR-0044-deferral-causal-order.md)                 | ADR-0043's named correctness hole: `+Q` can render a note-on after its own note-off. Surveyed 2026-08-24 over three independent reads; narrowed to **same-control** order, and **selects no candidate**. The remainder is ADR-0045. Phase 3 entry prerequisite, with ADR-0045 and ADR-0022 |
+| ADR-0045 | Cross-control causal order under deferral   | Deferred | 3                     | [ADR](decisions/ADR-0045-cross-control-causal-order.md)            | Split out of ADR-0044 on 2026-08-24. **Phase 3 entry prerequisite**, with ADR-0044 and ADR-0022: Phase 3's outcome names automation ordering, and the symptom persists in stateful DSP |
 
 ### Reversible decisions
 
