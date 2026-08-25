@@ -20,7 +20,7 @@ value.
 > evidence; it is not an implementation prerequisite.
 > **Everything below this banner is pre-supersession history unless a sentence explicitly records ADR-0046's
 > disposition.** No decision, constraint, work item, risk control, revisit condition or review scope below remains
-> active. ADR-0022 is Phase 3's sole remaining entry prerequisite.
+> active. ADR-0022's later boundary correction moved its physical evidence to the Phase 9 exit gate.
 
 > **Opened by [ADR-0044](ADR-0044-deferral-causal-order.md)'s option survey, 2026-08-24.** That survey's generality
 > frame asked a repair to hold for every pair whose meaning depends on order. No candidate did, and the residual every
@@ -32,7 +32,7 @@ value.
 
 | Field | Value |
 |---|---|
-| Deferred to | **Historical, no longer active.** Before ADR-0046 dissolved the question, this record, ADR-0044 and ADR-0022 formed the Phase 3 entry gate. ADR-0022 is now the sole remaining prerequisite |
+| Deferred to | **Historical, no longer active.** Before ADR-0046 dissolved the question, this record, ADR-0044 and ADR-0022 formed the Phase 3 entry gate. ADR-0022 remained there at supersession and was later moved to the Phase 9 exit gate |
 | Owner | Project maintainer — this is a single-maintainer repository, so there is no second party to assign |
 | Historical input required | A reachability argument or measurement: which cross-control orders a real plan depends on, and at which rates. ADR-0046 eliminated the capacity-deferral mechanism instead |
 | Historical reason | The candidate space was empty on the terms then accepted. ADR-0044's F2 frame refused an audio-thread walk of a general dependency graph, and every mechanism its survey found was keyed to one control. ADR-0046 later removed the capacity movement instead of selecting a causal-order mechanism |

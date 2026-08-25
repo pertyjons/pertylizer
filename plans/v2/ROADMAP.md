@@ -27,7 +27,7 @@ accepted exit review. `NOW.md` owns task activity within an active phase.
 | [0B](master-plan.md#phase-0b-migration-inventories-and-project-contracts) | Migration inventories and Project/Application contracts | Active, parallel | — |
 | [1](master-plan.md#phase-1-introduce-the-experimental-sound-core-v2-crate) | Deletable experimental Sound Core renderer | Complete | 0A |
 | [2](master-plan.md#phase-2-minimal-compiled-voice-graph) | One complete compiled voice graph | Complete | 1 |
-| [3](master-plan.md#phase-3-sample-accurate-scheduler-and-block-partition-invariance) | Sample-accurate scheduler and host-block invariance | Not started | 2 |
+| [3](master-plan.md#phase-3-sample-accurate-scheduler-and-block-partition-invariance) | Sample-accurate scheduler and host-block invariance | Active | 2 |
 | [4](master-plan.md#phase-4-current-project-lowering-and-offline-ab-path) | Current-project lowering and offline V1/V2 comparison | Not started | 3 |
 | [5](master-plan.md#phase-5-declarative-node-and-parameter-api) | Declarative node and parameter API | Not started | 4 |
 | [6](master-plan.md#phase-6-polyphony-and-instrument-runtime) | Polyphony and instrument runtime | Not started | 5 |

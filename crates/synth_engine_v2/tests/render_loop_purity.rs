@@ -20,6 +20,8 @@
 //! So the region is the loop plus the kernels, the callee set is the registry, and
 //! [`the_kernel_registry_is_closed_and_no_scanned_form_forges_a_kernel`] checks that the
 //! registry and the kernels agree, as far as reading the source can establish.
+//! Phase 3 adds `src/schedule/hot.rs`, which selects a borrowed compiled-event span
+//! before calling the renderer and is subject to the same rules.
 //!
 //! What this cannot do is stop someone moving code out of the region to dodge it. That is
 //! true of any structural check; what it does stop is the ordinary case, where a helper
@@ -29,10 +31,15 @@ use std::path::{Path, PathBuf};
 
 /// The files the real-time rules cover, relative to the crate root.
 ///
-/// `hot.rs` is the loop. `kernels.rs` is everything the loop calls through the prepared
-/// function table — and the registry that resolves those pointers is deliberately *not*
-/// here, because it runs at admission, allocates, and reads the IR.
-const REGION: [&str; 2] = ["src/render/hot.rs", "src/node/kernels.rs"];
+/// The two `hot.rs` files are the scheduler and renderer loops. `kernels.rs` is
+/// everything the renderer calls through the prepared function table — and the registry
+/// that resolves those pointers is deliberately *not* here, because it runs at
+/// admission, allocates, and reads the IR.
+const REGION: [&str; 3] = [
+    "src/render/hot.rs",
+    "src/schedule/hot.rs",
+    "src/node/kernels.rs",
+];
 
 fn read_region_file(relative: &str) -> String {
     let path: PathBuf = Path::new(env!("CARGO_MANIFEST_DIR")).join(relative);
@@ -49,6 +56,10 @@ fn region_sources() -> Vec<(&'static str, String)> {
 
 fn hot_path_source() -> String {
     read_region_file("src/render/hot.rs")
+}
+
+fn scheduler_hot_path_source() -> String {
+    read_region_file("src/schedule/hot.rs")
 }
 
 /// The file's code lines, with comments and doc comments removed.
@@ -196,6 +207,23 @@ fn the_check_is_reading_the_file_it_thinks_it_is() {
             source.contains(expected),
             "hot.rs does not contain `{expected}`; the render loop moved and this check is now \
              scanning the wrong thing"
+        );
+    }
+
+    let scheduler = scheduler_hot_path_source();
+    assert!(
+        scheduler.len() > 1_000,
+        "schedule/hot.rs is unexpectedly small"
+    );
+    for expected in [
+        "impl CompiledEventScheduler",
+        "pub fn render",
+        "quanta_needed_for",
+    ] {
+        assert!(
+            scheduler.contains(expected),
+            "schedule/hot.rs does not contain `{expected}`; the scheduler hot path moved and \
+             this check is now scanning the wrong thing"
         );
     }
 }
@@ -392,6 +420,9 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         "index",
         "position",
         "time",
+        // Phase 3's compiled scheduler reads the renderer's current quantum boundary
+        // before selecting the immutable event slice for the call.
+        "clock",
         "epoch",
         "envelope",
         "payload",
@@ -560,38 +591,44 @@ fn the_render_loop_imports_no_free_function() {
     // letter — so a free function cannot be brought into scope to be called. That is the
     // loophole the check above would otherwise leave wide: a lowercase import is the one
     // way to call code elsewhere without a receiver this file already holds.
-    // Whole items, not lines: `hot.rs` already has a multiline brace import, and a
+    // Whole items, not lines: `render/hot.rs` already has a multiline brace import, and a
     // line-based scan would skip every name inside it — which is precisely where a
     // lowercase helper would be added.
-    let source = strip_comments(&hot_path_source()).replace('\n', " ");
     let mut imported_functions = Vec::new();
+    let mut seen_by_file = Vec::new();
 
-    for item in source.split(';') {
-        let trimmed = item.trim();
-        let Some(rest) = trimmed.strip_prefix("use ") else {
-            continue;
-        };
-        let names = rest.replace(['{', '}'], " ");
-        for name in names.split([',', ' ']) {
-            let Some(last) = name.rsplit("::").next() else {
+    for (file, source) in region_sources() {
+        let source = strip_comments(&source).replace('\n', " ");
+        let mut seen = 0;
+        for item in source.split(';') {
+            let trimmed = item.trim();
+            let Some(rest) = trimmed.strip_prefix("use ") else {
                 continue;
             };
-            let last = last.trim();
-            if last.is_empty() || last == "self" || last == "super" || last == "crate" {
-                continue;
-            }
-            // A glob is worse than a lowercase name: it brings in whatever the other
-            // module has, including free functions whose names collide with the
-            // accessors the call scan allows. A **region module** is the exception, and
-            // the only one: importing `kernels` is how the loop reaches the function
-            // table, and everything in it is scanned by this file.
-            if last == "*"
-                || (last.chars().next().is_some_and(char::is_lowercase)
-                    && !REGION_MODULES.contains(&last))
-            {
-                imported_functions.push(last.to_owned());
+            seen += 1;
+            let names = rest.replace(['{', '}'], " ");
+            for name in names.split([',', ' ']) {
+                let Some(last) = name.rsplit("::").next() else {
+                    continue;
+                };
+                let last = last.trim();
+                if last.is_empty() || last == "self" || last == "super" || last == "crate" {
+                    continue;
+                }
+                // A glob is worse than a lowercase name: it brings in whatever the other
+                // module has, including free functions whose names collide with the
+                // accessors the call scan allows. A **region module** is the exception,
+                // and the only one: importing `kernels` is how the loop reaches the
+                // function table, and everything in it is scanned by this file.
+                if last == "*"
+                    || (last.chars().next().is_some_and(char::is_lowercase)
+                        && !REGION_MODULES.contains(&last))
+                {
+                    imported_functions.push(format!("{file}: {last}"));
+                }
             }
         }
+        seen_by_file.push((file, seen));
     }
 
     assert!(
@@ -601,16 +638,24 @@ fn the_render_loop_imports_no_free_function() {
     );
 
     // The control: a scan that found nothing at all would also pass the assertion above.
-    // `hot.rs` imports its types through a multiline brace list, and every one of them
-    // has to have been seen.
-    let seen = source
-        .split(';')
-        .filter(|item| item.trim().starts_with("use "))
-        .count();
-    assert!(
-        seen >= 4,
-        "the import scan found {seen} `use` items, so it is not reading the imports"
-    );
+    // Each file has its own floor, so the renderer alone cannot satisfy the control for
+    // a scheduler or kernel file that was accidentally removed from `REGION`.
+    for (required, floor) in [
+        ("src/render/hot.rs", 6),
+        ("src/schedule/hot.rs", 2),
+        ("src/node/kernels.rs", 3),
+    ] {
+        let seen = seen_by_file
+            .iter()
+            .find(|(file, _)| *file == required)
+            .map(|(_, seen)| *seen)
+            .unwrap_or(0);
+        assert!(
+            seen >= floor,
+            "the import scan found {seen} `use` items in {required}, below its control floor \
+             {floor}"
+        );
+    }
 }
 
 /// The modules of the region, as they are named in a `use` or a call qualifier.

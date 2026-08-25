@@ -20,7 +20,8 @@ workflow and [`ADR.md`](../ADR.md#decision-classes) keeps it for historical reco
 > **Current authority after supersession:** clauses 1, 2, 4, 5 and 6 in *Decision*, as rewritten below, define the
 > surviving contract; clause 3 is withdrawn. Every other statement in this record about capacity deferral, a deferred
 > store, its admission or starvation policy, or ADR-0044 as a Phase 3 gate is historical analysis from the original
-> selection, not a current requirement. ADR-0022 is Phase 3's sole remaining entry prerequisite.
+> selection, not a current requirement. The 2026-08-25 boundary correction in ADR-0022 moved its physical evidence to
+> the Phase 9 exit gate, so Phase 3 has no remaining entry prerequisite beyond completed Phase 2.
 > Sections whose headings begin *Historical* describe the 2026-08-20 selection snapshot; any present tense inside
 > those sections is historical present and makes no claim about the current specification.
 
@@ -28,7 +29,8 @@ workflow and [`ADR.md`](../ADR.md#decision-classes) keeps it for historical reco
 > position.** The maintainer selected it against the options survey below, which is retained unchanged as the record of
 > why the winner won. The original recommendation was *conditional* on a causal-order policy for capacity deferral,
 > represented at the time by [ADR-0044](ADR-0044-deferral-causal-order.md). ADR-0046 later removed that mechanism and
-> dissolved the condition. Accepting this record still does not by itself unblock Phase 3 because ADR-0022 remains.
+> dissolved the condition. ADR-0022 remained an entry prerequisite at that point; its later boundary correction moved
+> the physical evidence to Phase 9 exit.
 
 ## Historical durable boundary at original selection
 
@@ -434,7 +436,7 @@ Stated as one rule rather than as a departure from one — which is Option D's w
 
 **The original condition is now dissolved.** It was first named, rather than solved, in
 [ADR-0044](ADR-0044-deferral-causal-order.md). ADR-0046 superseded that record and removed the capacity movement that
-created its causal-order hazard. ADR-0022 is the sole current Phase 3 entry prerequisite.
+created its causal-order hazard. Phase 3 has no remaining entry prerequisite beyond completed Phase 2.
 
 Historically, the condition was not a formality. `+Q` can reverse cause and effect: a note-on
 at sample 63 defers to 127 while its note-off at 65 renders first, leaving a voice sounding. Every deferral option
@@ -582,10 +584,11 @@ below records that closure explicitly.
    and `SOUND-INV-016` disagreeing about which quantity assigns a quantum. Accepting a selection while updating only
    the host-profile specification would leave two `Current` specifications with incompatible rules.
 6. **ADR-0044 originally carried the causal-order prerequisite.** ADR-0046 removed the capacity movement, superseded
-   ADR-0044 and dissolved the prerequisite. ADR-0022 is now the sole Phase 3 entry prerequisite.
+   ADR-0044 and dissolved that prerequisite. ADR-0022's later boundary correction moved physical evidence to Phase 9.
 7. **The master plan and `ROADMAP.md` were originally qualified for deferral.** ADR-0046 replaces those qualifications
    with pre-render destination admission and no capacity movement; no current gate bullet requires ADR-0044.
-8. **[`NOW.md`](../NOW.md) now records the replacement contract.** Phase 3 remains blocked only on ADR-0022's evidence.
+8. **[`NOW.md`](../NOW.md) records the active implementation slice.** Phase 3 is no longer blocked on ADR-0022's
+   physical evidence.
 
 ## Review
 
@@ -600,8 +603,8 @@ evidence incapable of supporting the claim. Editorial detail does not block.
 
 1. **The capacity-deferral causal-order hole is dissolved.** ADR-0046 removes `+Q` movement and supersedes ADR-0044;
    an admitted note-on can no longer move behind its note-off merely because a destination quantum is full.
-2. **The replacement leaves one Phase 3 prerequisite.** ADR-0022's hardware-time evidence remains open. ADR-0044 is
-   `Superseded`, not `Deferred`, and is not a gate.
+2. **ADR-0044 is not a Phase 3 prerequisite.** It is `Superseded`, not `Deferred`. ADR-0022's hardware-time evidence
+   remains open at the Phase 9 exit boundary.
 3. **There is no starvation or deferred-store item.** ADR-0046 replaces them with plan-time envelopes, fixed shares,
    release holds and terminal producer faults. The renderer never delays an event to recover capacity.
 4. **The offline late-clamp premise remains an implementation obligation.** `events_for` in `offline.rs` — `:179` and

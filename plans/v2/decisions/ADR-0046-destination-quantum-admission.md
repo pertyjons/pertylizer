@@ -368,8 +368,8 @@ small: it remains true at the admitted maximum of every producer simultaneously.
 
 ## Consequences and risks
 
-- ADR-0044 and ADR-0045 become `Superseded`, dissolved rather than answered. ADR-0022 remains Phase 3's only entry
-  prerequisite.
+- ADR-0044 and ADR-0045 become `Superseded`, dissolved rather than answered. ADR-0022 remained Phase 3's only entry
+  prerequisite at this decision's acceptance; its later boundary correction moved physical evidence to Phase 9 exit.
 - No deferred store, starvation order, displacement counter or causal-order repair is implemented.
 - The current value 256 may be too small once live snapshots, release holds and internal production receive hard
   guarantees. Phase 3 must measure and select a useful partition before enabling ingress.
@@ -388,8 +388,8 @@ Acceptance updates the current specifications in the same transaction:
   ingress stream capacities remain Phase 3 work.
 - `SOUND-INV-016` names only the late clamp as a reason render position differs from the declared sample.
 - ADR-0043 remains accepted for that clamp but its capacity-deferral half is superseded.
-- ADR-0044 and ADR-0045 become `Superseded`; `NOW.md` and the master plan leave ADR-0022 as the sole Phase 3 entry
-  prerequisite.
+- ADR-0044 and ADR-0045 become `Superseded`; ADR-0022's later boundary correction moves its physical evidence to the
+  Phase 9 exit gate.
 
 ## Review
 

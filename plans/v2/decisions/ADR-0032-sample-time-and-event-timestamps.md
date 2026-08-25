@@ -143,9 +143,9 @@ latency (ADR-0022); ordering of several events at the same sample (ADR-0023); th
 
 ## Decision drivers
 
-- Phase 3's exit gate requires that "equivalent timestamped hardware/live and precompiled event streams reach the same
-  sample offsets after ingress mapping". Two streams cannot be shown equal unless both carry a comparable timestamp in
-  one epoch.
+- Phase 3's exit gate requires equivalent simulated-ingress and precompiled event streams carrying the same
+  engine-epoch `SampleTime` to reach the same sample offsets. Phase 9 separately qualifies the hardware mapping. Two
+  streams cannot be shown equal unless both carry a comparable timestamp in one epoch.
 - ADR-0001 clause 11 already fixed the epoch semantically — sample `S` is the `S`-th input frame consumed — and clause
   16 already fixed the late-event rule. Both are unimplementable without a type that can express `S` and a subtraction
   that cannot wrap.
@@ -512,8 +512,9 @@ un-timestampable and un-reusable.
 | Publish the stale-epoch, out-of-horizon, pre-epoch-clamp, and arrival-stamp counters         | 1     | Not started |
 | Fix the forward event horizon as a `HostProfile` field                                      | 0A/1  | P00A-T005   |
 | Session scheduler: anchor `PlanPosition` to `SampleTime` at play, seek, loop wrap, and offline range start | 3 | Not started |
-| Ingress mapper: stamp live events, stop discarding the driver timestamp (`io/midi.rs:247`)   | 3     | Not started |
-| Declare and measure each untimestamped adapter's arrival-time uncertainty                    | 3     | ADR-0022    |
+| Engine-time renderer ingress: accept already stamped performance events and exercise it with a deterministic simulated producer | 3 | Not started |
+| Hardware ingress mapper: stamp live events and stop discarding the driver timestamp (`io/midi.rs:247`) | 9 | ADR-0022 |
+| Declare and measure each untimestamped adapter's arrival-time uncertainty                    | 9     | ADR-0022    |
 | Event-placement test: an event one hour in lands on its exact frame                          | 3     | Not started |
 | Anchoring test: the same tick before and after a seek and a loop wrap yields the right times | 3     | Not started |
 | Pre-epoch test A: a pre-zero stamp before quantum 0 renders is clamped, counted, **not** late | 3    | Not started |

@@ -25,6 +25,7 @@ use crate::quantities::{Amplitude, ChannelLayout, Frequency, ParameterValue, Sam
 use crate::render::{
     AudioBlockMut, EventEnvelope, EventPayload, PreparedRenderer, Renderer, TimedEvent, TimedEvents,
 };
+use crate::schedule::{CompiledEvent, CompiledEventScheduler};
 use crate::time::{FrameCount, PlanPosition, SampleTime, StreamAnchor, TimeSource};
 
 thread_local! {
@@ -230,5 +231,41 @@ fn resolving_and_applying_events_allocates_nothing() {
         allocs, 0,
         "event resolution allocated {allocs} time(s); the scratch is preallocated and the sort \
          is in place"
+    );
+}
+
+#[test]
+fn selecting_a_compiled_schedule_for_the_first_call_allocates_nothing() {
+    let mut renderer = PreparedRenderer::prepare(
+        sine_plan(),
+        StreamAnchor::new(SampleTime::ZERO, PlanPosition::ZERO),
+    )
+    .expect("preparation succeeds");
+    let slot = renderer
+        .plan()
+        .resolve_parameter(SOURCE, parameters::SINE_FREQUENCY)
+        .expect("the sine declares a frequency parameter");
+    let events = [CompiledEvent::new(
+        SampleTime::ZERO,
+        EventPayload::SetParameter {
+            slot,
+            value: ParameterValue::new(880.0).expect("finite"),
+        },
+    )];
+    let mut scheduler =
+        CompiledEventScheduler::prepare(&renderer, &events).expect("the schedule is valid");
+    let mut samples = vec![0.0_f32; 128 * 2];
+
+    let allocs = count_allocs(|| {
+        let output = AudioBlockMut::new(&mut samples, 128, ChannelLayout::Stereo)
+            .expect("a correctly shaped block");
+        scheduler
+            .render(&mut renderer, output)
+            .expect("the first scheduled call renders");
+    });
+
+    assert_eq!(
+        allocs, 0,
+        "compiled schedule selection and rendering allocated {allocs} time(s)"
     );
 }

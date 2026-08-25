@@ -4,7 +4,7 @@
 |---------------|--------------------------------------------------------------|
 | ID            | ADR-0022                                                     |
 | Status        | Deferred                                                     |
-| Phase         | 0A, deferred to the Phase 3 entry gate                       |
+| Phase         | 0A/9, deferred to the Phase 9 exit gate                       |
 | Created       | 2026-08-13                                                   |
 | Last reviewed | 2026-08-25                                                   |
 | Related       | ADR-0001, ADR-0032, ADR-0021, ADR-0036, ADR-0023, EVD-0016, P00A-T006 |
@@ -17,14 +17,21 @@
 
 | Field                | Value                                                                                   |
 |----------------------|-----------------------------------------------------------------------------------------|
-| Deferred to          | The **Phase 3 entry gate**. Phase 3 implementation may not begin before this is `Accepted` |
+| Deferred to          | The **Phase 9 exit gate**. Phase 9 may build evidence candidates, but cannot exit or qualify live timing before this is `Accepted` |
 | Owner                | Project maintainer — this is a single-maintainer repository, so there is no second party to assign |
 | Evidence required    | A simulated-host harness with controllable timestamps, drift, block sizes, and disconnects; retained per-callback timestamps on the three release platforms; a paired-reference arrival uncertainty per untimestamped adapter; and an observer-clock bridge per hardware-timestamped adapter connection |
-| Why not now          | The evidence does not exist and cannot be produced in Phase 0A, and nothing before Phase 3 maps a hardware clock |
-| What makes it safe   | ADR-0032 already fixed the *shape* the mapping must produce, so Phases 1-2 cannot bake in a conflicting assumption |
+| Why not now          | The evidence does not exist and cannot be completed without retained observations from every claimed release platform and initial adapter |
+| What makes it safe   | ADR-0032 fixed the mapping's output shape; Phases 1-8 consume pre-mapped `SampleTime` and may not introduce a physical mapping or qualified live-timing claim |
 
 The Phase 0A exit gate accepts this record as `Deferred` on those four fields. It does not accept silence, and it does
-not accept a deferral without a named later gate: the master plan permits deferral **only** to the Phase 3 entry gate.
+not accept a deferral without a named later gate: the master plan permits deferral **only** to the Phase 9 exit gate.
+
+**Boundary correction, 2026-08-25.** The maintainer moved acceptance from Phase 3 entry to Phase 9 exit. Phase 3's
+scheduler operates entirely on the engine-domain `SampleTime` produced at its ingress boundary, so requiring macOS,
+Windows, and physical-adapter evidence before that scheduler existed made unrelated hardware availability block the
+engine-time implementation needed to evaluate later ingress candidates. This does not weaken the evidence or support
+bar: Phase 9 cannot exit, and no live hardware-timing configuration may be qualified, until this record is accepted
+against the retained artifacts named above.
 
 ## Context
 
@@ -46,7 +53,7 @@ now clear that V1 *has the raw materials on both ends and no consumer between th
 - **Nothing estimates drift, calibrates an anchor, or compensates anything.** There is no code to review for a
   candidate policy, only the absence of one.
 
-**What this record will decide**, at the Phase 3 entry gate:
+**What this record will decide**, no later than the Phase 9 exit gate:
 
 1. How the epoch anchor of [ADR-0032](ADR-0032-sample-time-and-event-timestamps.md) clause 13 is established at
    preparation, and from which host quantity.
@@ -67,12 +74,15 @@ and profile ownership (ADR-0021), and same-sample ordering (ADR-0023).
 
 ## Decision drivers
 
-- Phase 3's exit gate requires that "equivalent timestamped hardware/live and precompiled event streams reach the same
-  sample offsets after ingress mapping". That is a statement about this mapping, and it cannot be evaluated without one.
+- Phase 3's exit gate requires that equivalent simulated timestamped-ingress and precompiled streams expressed as the
+  same `SampleTime` sequence reach the same sample offsets. That establishes scheduler and ingress-boundary behavior
+  without claiming that any physical clock has already been mapped correctly.
+- Phase 9's exit and qualified live-timing claims require an actual hardware mapping and retained platform and adapter
+  evidence. Those claims cannot be evaluated without this decision.
 - A mapping decided without measurement would be a guess recorded as a contract, and the repository's own rule is that
   real-time and correctness claims require a reproducible `EVD` record or a named test.
 - V1's own numbers are not a baseline here: it has no mapping to measure. The evidence must come from a simulated host,
-  which is Phase 3 work in the master plan's testing section.
+which can be developed before Phase 9 while the physical evidence remains owned by its exit gate.
 - The cost of being wrong is asymmetric. A wrong representation (ADR-0032) breaks compilation; a wrong *mapping* is
   audible as timing that drifts or jitters, and is discovered late.
 
@@ -91,12 +101,12 @@ not compensate its own unmeasured error (ADR-0032 clause 19).
 ### Status quo
 
 Keep V1's arrangement: measured output latency computed and discarded, driver timestamps discarded, no anchor, no drift
-handling. Phase 3's ingress-equivalence gate is unachievable, and live timing keeps the block-boundary quantization of
+handling. Phase 9's live qualification is unachievable, and live timing keeps the block-boundary quantization of
 up to 21.3 ms at 48 kHz that ADR-0032 recorded.
 
 ## Evidence
 
-**Active-gate amendment, 2026-08-25.** Before acceptance, EVD-0016's first
+**Active-evidence amendment, 2026-08-25.** Before acceptance, EVD-0016's first
 platform observation exposed two missing controls in the deferral row: raw
 callback retention was not explicit, and a hardware-timestamped adapter's
 connection clock was not bridged to the audio observer. The row now requires
@@ -135,12 +145,13 @@ a basis for accepting this decision.
 
 ## Decision
 
-**Deferred to the Phase 3 entry gate**, with the owner and evidence recorded in *The deferral* above.
+**Deferred to the Phase 9 exit gate**, with the owner and evidence recorded in *The deferral* above.
 
 Three constraints hold in the meantime, so that the deferral cannot be used as permission to improvise:
 
-1. **No implementation may invent a mapping.** Phases 1 and 2 are offline; a hardware clock has no place in them. Code
-   that needs a time uses `SampleTime` and the anchor ADR-0032 defines, never a device quantity.
+1. **No implementation may invent a mapping.** Phases 1-8 consume engine-domain `SampleTime`; code that schedules an
+   event uses that representation and the anchor ADR-0032 defines, never an unapproved device quantity. Phase 3 may
+   exercise deterministic simulated ingress that already supplies `SampleTime`, but that is not hardware evidence.
 2. **No production path may consume `AudioCallbackContext::output_latency`, a host timestamp, or `stream_time` before
    this record is accepted.** V1's CPAL adapter may continue reading its callback/playback pair solely to produce the
    currently unread context field. The GUI's `StreamInfo::output_latency` is a separate buffer-size estimate. The
@@ -153,22 +164,21 @@ Three constraints hold in the meantime, so that the deferral cannot be used as p
 
 ### Positive
 
-- Phase 1 and Phase 2 proceed without waiting for evidence that Phase 3 produces anyway.
+- Phases 1-8 proceed on the engine-time contract without waiting for unavailable physical-platform evidence.
 - The decision will be made against measurements rather than against a plausible story, which is what the register's
   basis for this topic asks for.
 - The three constraints above keep the gap honest: nothing accumulates a de facto mapping while the record is open.
 
 ### Negative
 
-- Phase 3 cannot start until this record is accepted. The harness is complete,
-  but the retained platform, adapter, and replacement evidence remains on the
-  critical path rather than beside it.
+- Phase 9 cannot exit and no physical live-timing configuration can be qualified until this record is accepted. The
+  harness is complete, but retained platform, adapter, and replacement evidence remains mandatory at that boundary.
 - Any Phase 1-2 diagnostic that would have wanted a real latency figure gets a declared contributor instead.
 
 ### Risks and controls
 
 - **Risk: the remaining platform methods or replacement mapping arrive without
-  executable controls**, turning an entry gate into an unverifiable assertion.
+  executable controls**, turning an exit gate into an unverifiable assertion.
   Control: the simulator and analyzer now execute in the documentation gate;
   macOS and Windows are rejected until their freshness methods are reviewed,
   and the record names retained platform and adapter artifacts as preconditions.
@@ -176,22 +186,22 @@ Three constraints hold in the meantime, so that the deferral cannot be used as p
   contract is written afterwards to match. Control: constraint 2; the named evidence probes and V1's unread
   host-timestamp-derived context field publish no mapping to a V2 production consumer. The GUI's distinct buffer-size
   estimate is not a hardware-clock mapping.
-- **Risk: the deferral is quietly extended past Phase 3.** Control: the master plan permits deferral only to the
-  Phase 3 entry gate; extending it requires changing the plan, in the open.
+- **Risk: the deferral is quietly extended past Phase 9.** Control: the master plan permits deferral only to the
+  Phase 9 exit gate; extending it requires changing the plan, in the open.
 
 ## Follow-up work
 
 | Task                                                                        | Phase | Status      |
 |-----------------------------------------------------------------------------|-------|-------------|
-| Build the simulated-host harness (timestamps, drift, block sizes, disconnects) | 3   | Implemented with executable controls in Active EVD-0016 |
-| Measure per-callback host timestamps on Linux, macOS, and Windows            | 3     | Diagnostic direct-PCM Linux run observed; final-revision retained artifacts missing |
-| Bridge each hardware-timestamped adapter's connection clock                  | 3     | Not started; no physical MIDI endpoint is attached to the Linux host |
-| Measure each untimestamped adapter's arrival-time uncertainty                | 3     | Not started |
-| Write and accept this record against that evidence                           | 3     | Not started |
+| Build the simulated-host harness (timestamps, drift, block sizes, disconnects) | 9   | Implemented early with executable controls in Active EVD-0016 |
+| Measure per-callback host timestamps on Linux, macOS, and Windows            | 9     | Diagnostic direct-PCM Linux run observed; final-revision retained artifacts missing |
+| Bridge each hardware-timestamped adapter's connection clock                  | 9     | Not started; no physical MIDI endpoint is attached to the Linux host |
+| Measure each untimestamped adapter's arrival-time uncertainty                | 9     | Not started |
+| Write and accept this record against that evidence                           | 9     | Required before Phase 9 exit |
 
 ## Revisit conditions
 
 This record is not a decision, so it has no revisit condition in the usual sense. It is superseded by its own accepted
-version at the Phase 3 entry gate. It would be revisited *earlier* only if a Phase 1 or Phase 2 task turned out to
-require a hardware clock, which would mean the phase boundary was drawn wrongly and the plan, not this record, is what
-needs correcting.
+version at the Phase 9 exit gate. It would be revisited *earlier* only if a Phase 3-8 task turned out to require a
+hardware clock rather than pre-mapped `SampleTime`, which would mean the phase boundary was drawn wrongly and the plan,
+not this record, is what needs correcting.

@@ -292,12 +292,16 @@ compile or execute anything.
   for every entry in the [decision register](ADR.md) whose target phase begins
   with `0A`. Accept the render-quantum semantics, the quantum frame count, the
   sample-time/event-timestamp, and the host-profile/admission decisions before
-  Phase 0A closes because Phase 1 implements those contracts. Hardware time mapping may remain `Deferred` only
-  to the explicit Phase 3 entry gate, and the long-running job contract only to
-  the explicit Phase 4 entry gate. A deferred ADR names that target gate, its
+  Phase 0A closes because Phase 1 implements those contracts. At Phase 0A close, hardware time mapping could remain
+  `Deferred` only to the explicit Phase 3 entry gate; its 2026-08-25 boundary correction now permits deferral only to
+  the explicit Phase 9 exit gate. The long-running job contract may remain deferred only to the explicit Phase 4 entry
+  gate. A deferred ADR names that target gate, its
   owner, and the evidence still required. The register — not this plan — is
   authoritative for the topic list, identifiers, status, and target phase;
   [Part VII](#part-vii-open-decisions) explains why each decision is open.
+
+The Phase 0A criteria below retain the boundary that REV-P00A actually evaluated. ADR-0022's 2026-08-25 boundary
+correction changes future enforcement to the Phase 9 exit gate; it does not retroactively rewrite this completed gate.
 
 ### Exit gate
 
@@ -552,10 +556,11 @@ NodeState:    oscillator phase/filter history/envelope stage
 
 ## Phase 3: Sample-accurate scheduler and block-partition invariance
 
-ADR-0022 (hardware time mapping and latency ownership) must be `Accepted`
-before Phase 3 implementation begins. Phase 3 may refine it through a
-superseding ADR if simulated-host evidence invalidates an assumption; it may
-not invent timestamp semantics inside implementation tasks.
+Phase 3 consumes engine-epoch `SampleTime`; it does not map a hardware clock.
+ADR-0032 fixes that typed boundary, and simulated ingress exercises it without
+claiming that a CPAL or MIDI timestamp has been qualified. ADR-0022's physical
+platform mapping, per-adapter uncertainty and latency ownership are deferred to
+Phase 9's exit, where the host adapter that owns those quantities exists.
 
 **[ADR-0046](decisions/ADR-0046-destination-quantum-admission.md) is
 `Accepted`.** It supersedes ADR-0043's capacity-deferral half and leaves the
@@ -566,8 +571,8 @@ holds. The renderer never moves an event for capacity.
 
 The two deferral-induced causal-order prerequisites are therefore dissolved
 rather than answered: both inversions required selective `+Q` movement, which
-no longer exists. ADR-0022 is the phase's only remaining entry prerequisite;
-`NOW.md` carries that operational state.
+no longer exists. Phase 2 is the only phase dependency; `NOW.md` carries the
+active bounded slice.
 
 ### Work
 
@@ -587,9 +592,11 @@ no longer exists. ADR-0022 is the phase's only remaining entry prerequisite;
   distinct from legacy `command_queue_capacity`. Reusing that physical queue
   requires an accepted change that removes its *Live bounded queue*
   classification and preserves refusal before timestamped acceptance.
-- Give live events an engine-epoch timestamp contract and an ingress mapper from
-  hardware MIDI/audio timestamps. Untimestamped adapters must declare and
-  measure their arrival-time fallback rather than pretending it is exact.
+- Give performance events an engine-epoch timestamp contract at renderer
+  ingress. Phase 3 producers supply pre-mapped `SampleTime`; deterministic
+  simulated ingress must exercise the same boundary without acquiring hardware
+  timestamp semantics. Phase 9 owns the hardware MIDI/audio mapper and the
+  measured arrival fallback of untimestamped adapters.
 - **Define every V2 renderer-ingress source store and capacity.** V1 has no
   timestamped renderer-ingress design to carry over: `LIMIT-0013` is engine
   egress and `LIMIT-0012` carries commands. Record every live store exactly once
@@ -608,7 +615,7 @@ no longer exists. ADR-0022 is the phase's only remaining entry prerequisite;
   plan-wide aggregate of runtime destination/future/hold declarations. Aggregate
   authored sources by summation unless the compiler proves them mutually
   exclusive. Measure useful values and reselect `max_events_per_quantum` from
-  them before enabling Phase 3; its current unevidenced 256 is not retained
+  them before enabling live ingress; its current unevidenced 256 is not retained
   merely because they fit.
 - Admit compiled events against every half-open `Q`-frame window over all anchor
   phases. Validate a loop's periodic extension before changing transport state,
@@ -674,8 +681,10 @@ irregular host blocks with the same total frames
       position. This closes ADR-0043's surviving offline obligation without
       adding an entry prerequisite.
 - [ ] Tempo steps and ramps map to stable sample positions.
-- [ ] Equivalent timestamped hardware/live and precompiled event streams reach
-      the same sample offsets after ingress mapping.
+- [ ] Equivalent simulated-ingress and precompiled events carrying the same
+      engine-epoch `SampleTime` reach the same sample offsets. This proves the
+      scheduler boundary, not a physical adapter's hardware-clock mapping;
+      ADR-0022 and Phase 9 own that later claim.
 - [ ] Play/stop/seek, count-in, metronome, preview, loop transition, and panic
       have declared ordering against note/controller/automation events at the
       same sample.
@@ -1031,6 +1040,12 @@ input lifecycle) must be `Accepted` before Phase 9 implementation begins. Live
 integration may not define either policy implicitly through host-adapter or
 recording code.
 
+ADR-0022 may remain `Deferred` only until the Phase 9 exit gate while Phase 9 builds and measures candidate
+host-clock mappings in isolated evidence paths, but a production path may not consume them until the record is
+`Accepted`. It must be `Accepted` before Phase 9 exits or live hardware timing is claimed as qualified. Physical
+release-platform artifacts, per-connection clock bridges and per-adapter arrival uncertainty belong to that exit
+evidence rather than to Phase 3's scheduler implementation.
+
 ### Work
 
 - Implement `AudioProcessor` for the V2 renderer or add a thin adapter over its
@@ -1039,6 +1054,9 @@ recording code.
   enumeration, requested versus negotiated configuration, stream creation,
   start/stop, disconnect detection, hotplug/reconnect, and error recovery.
   Device handles and platform callbacks never enter the render plan.
+- Map hardware MIDI/audio timestamps into the current engine epoch at this host
+  boundary. Every untimestamped adapter declares and measures its arrival-time
+  fallback rather than pretending arrival is exact.
 - Treat input and output as independent clock domains. The adapter owns bounded
   input buffering, resampling/drift correction, backlog policy, input-drop
   counters, and conversion of capture timestamps into the engine sample epoch.
@@ -1107,6 +1125,13 @@ recording code.
 - [ ] Timestamped MIDI/live events, monitoring, note recording, and audio
       recording have measured latency/error bounds and deterministic simulated-
       host tests requiring no physical device.
+- [ ] ADR-0022 is `Accepted` against retained evidence for every release
+      platform and initial live adapter claimed as supported.
+- [ ] Retained physical platform and adapter evidence shows that hardware-mapped
+      ingress, or a measured arrival fallback, reaches the engine `SampleTime`
+      predicted by its paired reference within the published uncertainty. When
+      that mapped event and a precompiled event carry the same engine-epoch
+      `SampleTime`, they reach the same sample offset.
 - [ ] Count-in, metronome, loop recording, replace/overdub, sustain, stop, and
       panic order correctly at quantum and loop boundaries.
 - [ ] Enabling meters, scopes, or OSC/visualizer subscribers cannot alter audio,
@@ -3106,8 +3131,8 @@ is settled by a preference stated here.
     reports.
 22. **Hardware time mapping (ADR-0022)** — timestamp epoch, calibration,
     late-event policy, independent audio clock correction, and
-    latency-compensation ownership; investigate in Phase 0A and accept before
-    Phase 3, then verify and refine through Phase 9 with simulated-host evidence.
+    latency-compensation ownership; investigate from Phase 0A onward and accept
+    before Phase 9 exits, against the live adapter and retained platform evidence.
 23. **Session event ordering (ADR-0023)** — ordering/priority for play, stop,
     seek, loop, count-in, metronome, record, note/controller, automation, and
     panic at the same sample; decide in Phase 3 before recording/live

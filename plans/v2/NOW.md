@@ -26,20 +26,34 @@ repeated here. Two items are owed to later work rather than to nobody, and both 
 velocity** (Phase 3's ingress is the first consumer — `NoteEdge` carries neither today), and **`SOUND-INV-012`'s second
 sentence**, the one invariant with no executable check.
 
-## Next stream: Phase 3 is not yet activatable
+## Active stream: Phase 3 sample-accurate scheduling
 
-Phase 3 remains `Not started`; Phase 2 is closed. Phase 3's only remaining entry prerequisite is
-[ADR-0022](decisions/ADR-0022-hardware-time-mapping.md). Active
-[EVD-0016](evidence/phase-03/EVD-0016-host-time-mapping.md) now has a simulated-host harness and a diagnostic direct-PCM
-Linux input/output observation. The direct candidate is `Not supported` under that measured callback-priority
-configuration; this is not a universal Linux result. Final-revision retained platform artifacts, a replacement mapping,
-and the per-connection clock bridges or paired-reference arrival measurements for every initial V2 adapter remain
-missing. Phase 3 may not invent timestamp or latency semantics while completing
-that evidence.
+Phase 3 is `Active`. It was activated on 2026-08-25 after Phase 2 closed and the maintainer corrected the phase
+boundary: Phase 3 consumes events that are already expressed as the current epoch's `SampleTime`; it does not need a
+physical device-clock mapping to schedule them. [ADR-0022](decisions/ADR-0022-hardware-time-mapping.md) remains
+`Deferred`, but its retained release-platform, adapter-clock, arrival-fallback, and replacement-mapping evidence now
+gates Phase 9 exit and any qualified live-timing claim rather than Phase 3 entry.
 
-That evidence slice is the next pre-entry work. Building the harness and taking measurements does not activate
-scheduler implementation; accepting ADR-0022 against those results does. This is why the harness is on the critical
-path even though its durable owner is Phase 3.
+### Completed bounded slice — compiled note across host partitions
+
+The first implementation slice had one observable completion boundary:
+
+- a compiled-event scheduler presents only events belonging to quanta that the next actual renderer call will produce,
+  rejects an epoch mismatch or a schedule that would present an event late, and performs no real-time allocation;
+- one note with non-quantum-aligned on and off positions is rendered through actual host-call families `1 x 4096`,
+  `16 x 256`, `64 x 64`, and a predeclared irregular partition of the same 4,096 frames;
+- all four outputs are bit-identical, and both edges occur at the requested `SampleTime` plus the renderer's declared
+  constant `Q` live-output carry, with no late-event diagnostic.
+
+This slice does not add live or arrival-time ingress, a CPAL or MIDI mapping, tempo/session ordering, or final producer
+share and capacity values. Simulated timestamped ingress equivalence remains Phase 3 exit work: the same `SampleTime`
+sequence presented through a deterministic simulated-ingress producer must equal the precompiled sequence. Physical
+hardware equivalence is deliberately not claimed by that test.
+
+That boundary is met by the compiled scheduler in
+[`schedule.rs`](../../crates/synth_engine_v2/src/schedule.rs) and its actual-callback conformance test in
+[`compiled_schedule.rs`](../../crates/synth_engine_v2/tests/compiled_schedule.rs). The next Phase 3 implementation
+slice is deliberately not selected by this completion update.
 
 [ADR-0046](decisions/ADR-0046-destination-quantum-admission.md) is `Accepted`. It replaces capacity deferral with
 pre-render admission:
@@ -62,9 +76,7 @@ The numeric fixed-share values, ingress capacities, release-hold capacity and ca
 implementation evidence, not unresolved policy. Profile construction checks plan-independent relations; plan
 admission checks runtime, session, internal and hold declarations without changing those shares. The current
 `max_events_per_quantum = 256` has no claim to be useful and must be reselected from the measured partition before
-Phase 3 is enabled, even if that partition would fit within 256.
-
-Activating Phase 3 remains the user's call after ADR-0022 is `Accepted`.
+live ingress is enabled, even if that partition would fit within 256.
 
 ## Paused parallel stream: Phase 0B
 
@@ -95,13 +107,14 @@ Phase lifecycle and completed gates are recorded once in
 ## Later owned work
 
 - Phase 3 owns renderer ingress, the publication arbiter and producer shares,
-  event scheduling, capacity measurements, and completion of ADR-0022's
-  remaining platform, adapter, and replacement-mapping evidence. Its exit work
+  event scheduling, and capacity measurements. Its exit work
   also owns ADR-0043's named offline late-clamp test:
   prove the stamp-window selector cannot present a late event, or window by
   clamped render position. That test is not an entry prerequisite.
 - Phase 4 owns current-project lowering and the long-running job contract.
 - Phase 5 owns the `LegacyPolyModuleAdapter`'s conversion cost — the largest quantity ADR-0041 moves and the only one
   nobody has measured — and the declarative node API that `SOUND-INV-012`'s uncovered second sentence belongs to.
+- Phase 9 owns completion and acceptance of ADR-0022 against retained evidence for every claimed release platform and
+  initial adapter. Phase 9 may build candidates while the record is `Deferred`, but cannot exit or qualify live timing.
 - Phase 0B gates Phase 10.
 - ADR-0039 and `LIMIT-0017` remain Phase 10E work.

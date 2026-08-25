@@ -4,14 +4,14 @@
 |---|---|
 | ID | EVD-0016 |
 | Status | Active |
-| Phase | 03 entry |
+| Phase | 09 exit evidence; historical `phase-03` path retained for stable links |
 | Created | 2026-08-25 |
 | Last reviewed | 2026-08-25 |
 | Supersedes | — |
 | Superseded by | — |
-| Source revision | **Pending** — diagnostic harness work based on `c075ef10`; no acceptance artifact is claimed |
+| Source revision | `f3df8b2e` — harness source only; no physical acceptance artifact is claimed |
 | Retention | Permanent |
-| Related | ADR-0022; ADR-0001 clauses 7, 11, and 16; ADR-0032 clauses 12-14 and 17-22; Phase 3 entry gate |
+| Related | ADR-0022; ADR-0001 clauses 7, 11, and 16; ADR-0032 clauses 12-14 and 17-22; Phase 9 physical-ingress qualification and exit gate |
 | Artifacts | [`evd_0016_host_time.rs`](../../../../crates/synth_engine_v2/examples/evd_0016_host_time.rs), [`evd_0016_cpal_timestamps.rs`](../../../../crates/pertylizer/examples/evd_0016_cpal_timestamps.rs), [`evd_0016_analyse.py`](evd_0016_analyse.py), [`evd_0016_endpoint_policy.tsv`](../../../../crates/pertylizer/examples/evd_0016_endpoint_policy.tsv); retained callback artifacts are still required for the final three-platform result |
 
 ## Question and falsifier
@@ -24,6 +24,12 @@ precision than the host observations support? The same evidence must settle
 latency ownership, input alignment, disconnect behavior, and the uncertainty
 reported by every initial untimestamped performance-event adapter before
 ADR-0022 can become `Accepted`.
+
+This record retains its historical `phase-03` path so existing links remain stable after the phase-boundary
+correction. Its simulator is a deterministic control for the host-clock mapper: partition dependence is one way to
+falsify that mapper, but the method renders no audio and is not evidence for Phase 3's rendered-output partition gate.
+The physical observations and mapping decision belong to Phase 9. Missing macOS, Windows, or adapter hardware
+therefore does not block Phase 3; it does block Phase 9 exit and any claim that physical live timing is qualified.
 
 The preferred conclusion is **wrong** if any one of the following occurs:
 
@@ -52,8 +58,8 @@ The preferred conclusion is **wrong** if any one of the following occurs:
   integer-mapping rounding margin. Too few valid
   observations instead makes the artifact invalid and the record
   `Inconclusive`. This threshold does not assert sample-perfect physical input;
-  it rejects a mapping whose admitted uncertainty is as coarse as the boundary
-  Phase 3 exists to remove.
+  it rejects a mapping whose admitted uncertainty is too coarse to qualify the
+  live-timing boundary before Phase 9 exits.
 - **F5 — mutable acceptance.** A calibration update changes the stored
   `(epoch, SampleTime, TimeSource)` of an already accepted event.
 - **F6 — invalid or falsely shared stream bridge.** A bridge clock moves
@@ -95,8 +101,8 @@ do not fire, every simulated error is covered as F3 requires, and every release
 platform satisfies F4. It is `Not supported` when a completed valid observation
 fires a falsifier. It is `Inconclusive` when no completed observation fires a
 falsifier but a required platform, adapter, or control artifact is missing or
-invalid. Neither an inconclusive result nor a not-supported candidate opens
-Phase 3.
+invalid. Neither an inconclusive result nor a not-supported candidate can
+qualify live timing or close ADR-0022 at the Phase 9 exit gate.
 
 ## Inputs and controls
 
@@ -494,4 +500,6 @@ callback-priority configuration: the diagnostic observation fires F4 at 582
 input and 602 output frames, with a 1,184-frame duplex sum. This is not a universal Linux result, and the wider
 record remains incomplete because final-revision retained platform observations,
 per-adapter arrival measurements, hardware-clock bridges, and a replacement
-mapping are absent. ADR-0022 remains `Deferred`, and Phase 3 remains blocked.
+mapping are absent. ADR-0022 remains `Deferred`; this does not block the active
+Phase 3 scheduler, but it does block Phase 9 exit and every physical live-timing
+qualification.

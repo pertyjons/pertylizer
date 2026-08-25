@@ -71,7 +71,7 @@ the durable-decision test in `PROCESS.md` and normally do not need an ADR.
 | ADR-0019 | Remote mutation history semantics           | Proposed | 10B/10C               | —                                                                  | —                                        |
 | ADR-0020 | Final crate boundaries and names            | Proposed | After vertical slices | —                                                                  | —                                        |
 | ADR-0021 | Host profile and admission policy           | Accepted | 0A/1                  | [ADR](decisions/ADR-0021-host-profile-and-admission-policy.md)     | —                                        |
-| ADR-0022 | Hardware time mapping and latency ownership | Deferred | 0A/3/9                | [ADR](decisions/ADR-0022-hardware-time-mapping.md)                 | —                                        |
+| ADR-0022 | Hardware time mapping and latency ownership | Deferred | 0A/9                  | [ADR](decisions/ADR-0022-hardware-time-mapping.md)                 | Phase 3 consumes already mapped `SampleTime`; physical mapping and latency ownership gate Phase 9 exit |
 | ADR-0023 | Same-sample session event ordering          | Proposed | 3                     | —                                                                  | —                                        |
 | ADR-0024 | Recording take and commit semantics         | Proposed | 0B/9/10B              | —                                                                  | —                                        |
 | ADR-0025 | Tuning representation and ownership         | Proposed | 0B/6/10A              | —                                                                  | —                                        |
@@ -95,7 +95,7 @@ the durable-decision test in `PROCESS.md` and normally do not need an ADR.
 | ADR-0043 | Event deferral and the late clamp           | Accepted | 3                     | [ADR](decisions/ADR-0043-event-deferral-and-late-clamp.md)         | Capacity-deferral half superseded by ADR-0046. The preserving late clamp, immutable stamp and control-response rule remain accepted |
 | ADR-0044 | Deferral-induced causal order               | Superseded | 3                   | [ADR](decisions/ADR-0044-deferral-causal-order.md)                 | Dissolved by ADR-0046 rather than answered: the selective `+Q` capacity movement that created the same-control hazard no longer exists |
 | ADR-0045 | Cross-control causal order under deferral   | Superseded | 3                   | [ADR](decisions/ADR-0045-cross-control-causal-order.md)            | Dissolved by ADR-0046 rather than answered: the selective `+Q` capacity movement that created the cross-control hazard no longer exists |
-| ADR-0046 | Destination-quantum admission               | Accepted | 3                     | [ADR](decisions/ADR-0046-destination-quantum-admission.md)         | Fixed producer shares, plan-time envelopes, one publication arbiter and no renderer movement for capacity. ADR-0022 is Phase 3's sole remaining entry prerequisite |
+| ADR-0046 | Destination-quantum admission               | Accepted | 3                     | [ADR](decisions/ADR-0046-destination-quantum-admission.md)         | Fixed producer shares, plan-time envelopes, one publication arbiter and no renderer movement for capacity |
 
 ### Reversible decisions
 

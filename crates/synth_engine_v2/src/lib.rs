@@ -3,9 +3,10 @@
 //! This crate started as Phase 1 of the Core V2 migration and owns the render-core
 //! contracts Phase 0A accepted — the time and quantum types, the host profile and its
 //! admission, a compiler IR, and a renderer that splits any caller block into the fixed
-//! internal quantum. Phase 2 adds graph validation over a declared port table. It does
-//! not connect to projects, does not compile V1 patches, and does not schedule live
-//! events.
+//! internal quantum. Phase 2 adds graph validation over a declared port table. Phase 3
+//! begins with a compiled-event scheduler over engine-domain `SampleTime`. The crate does
+//! not connect to projects, does not compile V1 patches, and does not map or schedule live
+//! hardware events.
 //!
 //! # It can be deleted
 //!
@@ -31,6 +32,7 @@
 //! | Graph validation | [`validate`] | Master plan, Phase 2 work list; ADR-0002, ADR-0033 |
 //! | The buffer arena | `arena` (private) | ADR-0005 |
 //! | Rendering | [`render`] | ADR-0001 clauses 4-9, 11-14, 16 |
+//! | Compiled scheduling | [`schedule`] | ADR-0001 clause 16; ADR-0032 clauses 17-21 |
 //! | Offline rendering | [`offline`] | ADR-0001 clauses 9-10 |
 //!
 //! # The quantum
@@ -93,6 +95,7 @@ pub mod profile;
 pub mod quantities;
 pub mod render;
 pub mod report;
+pub mod schedule;
 pub mod time;
 pub mod validate;
 

@@ -20,7 +20,7 @@ equivalence gate. It fixes no value.
 > it is not an implementation prerequisite.
 > **Everything below this banner is pre-supersession history unless a sentence explicitly records ADR-0046's
 > disposition.** No decision, constraint, work item, risk control, revisit condition or review scope below remains
-> active. ADR-0022 is Phase 3's sole remaining entry prerequisite.
+> active. ADR-0022's later boundary correction moved its physical evidence to the Phase 9 exit gate.
 
 > **Narrowed on 2026-08-24 to same-control causal order.** The option survey below asked, under frame F1, for a repair
 > holding for *every* pair whose meaning depends on order, and **no candidate qualified**; the residual they all shared
@@ -41,7 +41,7 @@ equivalence gate. It fixes no value.
 
 | Field | Value |
 |---|---|
-| Deferred to | **Historical, no longer active.** Before ADR-0046 dissolved the question, this record was part of the Phase 3 entry gate. ADR-0022 is now the sole remaining prerequisite |
+| Deferred to | **Historical, no longer active.** Before ADR-0046 dissolved the question, this record was part of the Phase 3 entry gate. ADR-0022 remained there at supersession and was later moved to the Phase 9 exit gate |
 | Owner | Project maintainer — this is a single-maintainer repository, so there is no second party to assign |
 | Historical input required | **The survey ran on 2026-08-24 without it, and a second read showed that was only true for a candidate that did not work.** The run form would have needed costing against the ingress and deferred-store capacities because its scan fired exactly when the per-quantum limit was exceeded. The remaining historical analysis records how that dependency narrowed across drafts; ADR-0046 removed the store and the candidate rather than supplying the input |
 | Historical reason | The candidate repairs were scheduler and voice-pool design, not timing semantics, and ADR-0043's decision boundary excluded them. Deciding them inside that record would have made a timing decision carry a scheduler design its reader was not reviewing. The survey below later did that design work; ADR-0046 then dissolved the question by removing capacity deferral |
