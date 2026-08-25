@@ -55,6 +55,35 @@ That boundary is met by the compiled scheduler in
 [`compiled_schedule.rs`](../../crates/synth_engine_v2/tests/compiled_schedule.rs). The next Phase 3 implementation
 slice is deliberately not selected by this completion update.
 
+### Drafted, awaiting its specification transaction — ADR-0047 note identity
+
+[ADR-0047](decisions/ADR-0047-note-identity-in-the-event-contract.md) is `Proposed` and has had its independent
+design review: five rounds, twenty-three blocking findings, and a clean confirmation read on the final scope. No code
+was written against it.
+
+It exists because ADR-0046 clause 3 already promises that an orphan note edge "is counted rather than allowed to
+release another note", and the current `{ slot, edge }` vocabulary cannot distinguish an orphan from a legitimate
+release. Identity is therefore a Phase 3 requirement rather than preparation for Phase 6.
+
+Two consequences bind later work rather than this slice:
+
+- **The record was split at the fifth round.** Rebuilding an identity table rejects every identity from the outgoing
+  one, but a note from that table may still be sounding, and refusing its release would contradict ADR-0046 clause
+  3's guarantee. ADR-0047 clause 8 refuses the *rebuild* while an obligation is outstanding, which is sufficient for
+  Phase 3; the transition itself is registered as **ADR-0048** for Phase 9 beside ADR-0009's plan swap.
+- **A new non-reissuing issuer is required**, for the identity table. Neither existing value scopes an identity:
+  a re-admission changes the plan but not the epoch, and a re-preparation changes the epoch but not the plan.
+
+Acceptance is not taken here, because it owes a specification transaction: the index relation beside ADR-0046's share
+relations, `HOST-INV-021`'s hold contract naming the identity, and an **amendment** of `HOST-INV-009`, whose closed
+list licenses two live-input drop causes and states there are no others — an exhausted identity range is a third.
+
+**REV-P02's `NoteEdge` deviation row is not discharged by that record and keeps the owner and deadline
+[REV-P02](reviews/phase-02-exit-review.md) gave it: Phase 3, owed before ingress.** ADR-0047 adds one obstacle to it
+rather than resolving it — the row's pitch limb is coupled to ADR-0025, which is `Proposed` and targets Phase 6, so
+Phase 3 must either accept ADR-0025 early or change REV-P02's disposition explicitly. The velocity limb carries no
+such coupling. That choice is open and belongs to the maintainer.
+
 [ADR-0046](decisions/ADR-0046-destination-quantum-admission.md) is `Accepted`. It replaces capacity deferral with
 pre-render admission:
 
