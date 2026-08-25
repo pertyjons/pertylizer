@@ -121,12 +121,13 @@ def peak_polyphony(ons, offs):
 paths = sorted(glob.glob("assets/examples/projects/*.ptz")) + \
         sorted(glob.glob("corpus/v2-reference/projects/*.ptz"))
 scanned = len(paths)
-expansion, empty, rows = [], [], []
+expansion, empty, rows, measured_inputs = [], [], [], []
 
 for path in paths:
     name = os.path.basename(path)
     try:
-        d = json.load(open(path, encoding="utf-8"))
+        with open(path, encoding="utf-8") as project_file:
+            d = json.load(project_file)
     except Exception as exc:                                    # noqa: BLE001
         print(f"SKIP {name}: {exc}")
         continue
@@ -145,11 +146,20 @@ for path in paths:
     per_rate = {}
     for sr in RATES:
         tm = TempoMap(s.get("default_tempo") or 120.0, s.get("tempo_changes") or [], sr)
-        occ = Counter(int(tm.frame(t)) // Q for t in ons + offs + autos)
-        rel = Counter(int(tm.frame(t)) // Q for t in offs)
+        occ = Counter(math.floor(tm.frame(t) + 0.5) // Q for t in ons + offs + autos)
+        rel = Counter(math.floor(tm.frame(t) + 0.5) // Q for t in offs)
         per_rate[sr] = (max(occ.values()), max(rel.values()) if rel else 0)
     rows.append((max(v[0] for v in per_rate.values()), name[:40], len(ons), len(autos),
                  len(targets), peak_polyphony(ons, offs), per_rate))
+    # The anchor sweep must use exactly the projects and decoded inputs admitted by
+    # this pass. Re-reading and re-filtering created a second, divergent population.
+    measured_inputs.append((name[:40], s, ons, offs, autos))
+
+if not rows:
+    raise SystemExit(
+        f"NO MEASURED PROJECTS: scanned {scanned}, found {len(empty)} with no played events "
+        f"and excluded {len(expansion)} for note expansion"
+    )
 
 rows.sort(reverse=True)
 print(f"{'worst':>5} {'project':<40} {'notes':>6} {'autopts':>8} {'lanes':>5} {'poly':>5}   "
@@ -172,6 +182,43 @@ print(f"\nworst occupancy over all rates = {worst_occ}  (cap {CAP})")
 print(f"worst releases in one quantum  = {worst_rel}")
 print(f"peak polyphony                 = {worst_poly}  (max_active_voices = 512)")
 
+# --- anchor-phase sweep -------------------------------------------------------
+# ADR-0032 clause 27: a compiled event's SampleTime is time = anchor.time +
+# (position - anchor.position), and anchor.time is an integer frame count. The anchor
+# therefore shifts every event by a whole number of frames, and the complete phase space
+# is the Q integer offsets within one quantum. Prepared-profile plan admission must hold
+# for all of them before an anchor exists, so this reports the worst.
+print("\nanchor-phase sweep at 8 kHz (worst admitted rate): fixed phase vs worst phase")
+print(f"{'fixed':>6} {'worst':>6} {'delta':>6}  project")
+# Control FIRST, per plans/v2/evidence/README.md: "that control is run before the
+# measurement it guards". If the sweep cannot see a phase difference, every number below
+# would be an artifact that looks exactly like a result.
+_ctrl = [60, 70, 130]
+_c0 = max(Counter(f // Q for f in _ctrl).values())
+_cw = max(max(Counter((f + k) // Q for f in _ctrl).values()) for k in range(Q))
+print(f"detection control (run first): frames {_ctrl} -> fixed {_c0}, worst {_cw}")
+if _cw <= _c0:
+    raise SystemExit("CONTROL FAILED: the phase sweep is blind; no anchor-phase result collected")
+
+anchor_rows = []
+for name, s, ons, offs, autos in measured_inputs:
+    tm = TempoMap(s.get("default_tempo") or 120.0, s.get("tempo_changes") or [], 8000)
+    frames = [tm.frame(t) for t in ons + offs + autos]
+    # ADR-0032 clause 15: a tempo map creates a PlanPosition by round-half-away-from-zero,
+    # and no later stage re-rounds. Flooring here would misbucket an event whose frame lands
+    # just under a quantum boundary.
+    pos = [math.floor(f + 0.5) for f in frames]
+    fixed = max(Counter(x // Q for x in pos).values())
+    worst = max(max(Counter((x + k) // Q for x in pos).values()) for k in range(Q))
+    anchor_rows.append((worst, fixed, name))
+if not anchor_rows:
+    raise SystemExit("NO ANCHOR RESULTS: the measured-project population was unexpectedly empty")
+anchor_rows.sort(reverse=True)
+for w, f, n in anchor_rows:
+    print(f"{f:6} {w:6} {w-f:+6}  {n}")
+print(f"worst over every anchor phase = {max(r[0] for r in anchor_rows)}  (cap {CAP})")
+
+
 print("\ntick instants one quantum can intersect, worst phase, per rate at 93 and 200 BPM:")
 print(f"{'rate':>8} " + " ".join(f"{b:>10}" for b in (93, 200)))
 for sr in RATES:
@@ -182,6 +229,9 @@ for sr in RATES:
         for step in range(4000):
             start = step * 0.25
             worst = max(worst, math.ceil((start + Q) / fpt) - math.ceil(start / fpt))
+        # Report only the onset contribution from expansion performed at tick instants
+        # inside this quantum. Releases produced earlier and simultaneous placements can
+        # add more, so this is deliberately not labelled a total-occupancy upper bound.
         cells.append(f"{worst:4} ({worst*128:5})")
     print(f"{sr:8} " + " ".join(f"{c:>10}" for c in cells))
-print("\n(instants, and note edges at max_note_expansion_per_tick = 128 each)")
+print("\n(instants, and current-quantum onset contribution at max_note_expansion_per_tick = 128 each)")

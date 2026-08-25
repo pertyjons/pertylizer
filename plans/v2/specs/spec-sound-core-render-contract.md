@@ -5,8 +5,8 @@
 | Status | Current |
 | Phase | 1–2 |
 | Created | 2026-08-19 |
-| Last reviewed | 2026-08-20 |
-| Based on | ADR-0001, ADR-0004, ADR-0005, ADR-0021, ADR-0032, ADR-0037, ADR-0040, ADR-0041, ADR-0043 |
+| Last reviewed | 2026-08-25 |
+| Based on | ADR-0001, ADR-0004, ADR-0005, ADR-0021, ADR-0032, ADR-0037, ADR-0040, ADR-0041, ADR-0043, ADR-0046 |
 | Invariant prefix | `SOUND` |
 | Supersedes | — |
 | Superseded by | — |
@@ -49,6 +49,8 @@ storage assigned to compiled signal lifetimes.
 | [ADR-0037](../decisions/ADR-0037-render-quantum-value.md) | `Q` is 64 frames, and ADR-0037 fixes it finally rather than provisionally |
 | [ADR-0040](../decisions/ADR-0040-v2-owns-its-dsp.md) | V2 owns the DSP it renders; no kernel is shared with V1 and no kernel carries a two-engine policy |
 | [ADR-0041](../decisions/ADR-0041-interleaved-internal-channel-layout.md) | One signal is one interleaved arena region of `Q` frames of `c` channels, at a recorded offset and length |
+| [ADR-0043](../decisions/ADR-0043-event-deferral-and-late-clamp.md) | A late event is clamped forward without rewriting its stamp; its sample and control effects follow the clamped render position |
+| [ADR-0046](../decisions/ADR-0046-destination-quantum-admission.md) | Capacity is admitted before rendering; the renderer never moves an event to make a quantum fit |
 
 ## Invariants
 
@@ -72,10 +74,10 @@ storage assigned to compiled signal lifetimes.
    retains its `StreamEpoch` and absolute `SampleTime`. Its quantum index and
    quantum-local offset are derived only after epoch validation, and they are
    derived from the event's **render position** rather than from its stamp;
-   neither is stored in the event envelope. The two coincide unless the renderer
-   moved the event, which only SOUND-INV-016's clamp and deferral do. When an
-   event takes effect is decided by what it moves rather than by which payload
-   carried it, per SOUND-INV-016.
+   neither is stored in the event envelope. The two coincide unless
+   SOUND-INV-016's late clamp moved the event. When an event takes effect is
+   decided by what it moves rather than by which payload carried it, per
+   SOUND-INV-016.
 7. **SOUND-INV-007 — Graph validation.** Compilation refuses unknown nodes or
    ports, wrong directions/domains, illegal fan-in, cycles, missing required
    output structure, and any channel-layout mismatch no permitted conversion
@@ -143,14 +145,14 @@ storage assigned to compiled signal lifetimes.
     note-off, gate or retrigger occurs at the sample its **render position**
     names, while a control-rate response begins at the first quantum boundary at
     or after that position, under clause 13's causality rule. An event's render
-    position is its declared sample unless the renderer moved it, and only two
-    things may move it — [ADR-0043](../decisions/ADR-0043-event-deferral-and-late-clamp.md)'s
-    clamp for a late event, which the renderer implements today, and its `+Q`
-    deferral for an over-full quantum, which no phase implements yet.
+    position is its declared sample unless
+    [ADR-0043](../decisions/ADR-0043-event-deferral-and-late-clamp.md)'s preserving
+    late clamp moved it to the first not-yet-rendered boundary; ADR-0046 removes
+    capacity as a second reason to move an event.
     **This is stated over the render position rather than over the declared sample**
-    because the clamp alone already separates the two: a late event that was never
-    deferred does not take effect at its declared sample, and an invariant written
-    over the declared sample is false for it — as this one was before ADR-0043.
+    because the clamp alone separates the two: a late event does not take effect at
+    its declared sample, and an invariant written over the declared sample is false
+    for it — as this one was before ADR-0043.
     The envelope's `time` is never rewritten, so the declared sample remains
     readable and the displacement remains the difference between the two.
     A node kind declares which of the two each of

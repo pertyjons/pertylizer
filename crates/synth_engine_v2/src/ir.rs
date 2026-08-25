@@ -492,9 +492,9 @@ pub struct PlanDeclarations {
     pub taps: Vec<TapId>,
     /// Events the plan is known to place in one quantum.
     ///
-    /// Statically knowable only; a script-driven expansion is data-dependent, and
-    /// what happens when a quantum is over-full at runtime is Phase 3's
-    /// (`HOST-INV-021`: ADR-0043 decided the rule, ADR-0044 gates implementing it).
+    /// Statically knowable only. Phase 1 and Phase 2 reject an over-full caller span
+    /// before mutation; Phase 3 admits data-dependent expansion against ADR-0046's
+    /// destination, future-storage, and release-hold envelopes.
     pub events_per_quantum: EventCount,
     /// Events one tick's note expansion may produce.
     pub note_expansion_per_tick: EventCount,

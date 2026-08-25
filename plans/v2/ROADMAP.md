@@ -107,7 +107,7 @@ closes with no adapter margin claimed.
 
 ### Phase 3 — sample-accurate scheduling
 
-Outcome: typed absolute and plan time, bounded event ingress and deferral,
+Outcome: typed absolute and plan time, bounded event ingress and pre-render admission,
 sample-accurate note/transport/automation ordering, and output invariant to host
 block partitioning.
 

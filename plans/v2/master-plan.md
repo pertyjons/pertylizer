@@ -280,11 +280,13 @@ compile or execute anything.
   16's, and clamping it forward is not a configurable behavior.
   **The word "initial" is load-bearing, and Phase 0A closes this item on the
   field list above rather than on a complete runtime contract.** Renderer-ingress
-  capacity and the deferred store are not in that list, are not derivable from
-  anything in it, and have moved to [Phase 3](#phase-3-sample-accurate-scheduler-and-block-partition-invariance)
-  with the ADR-0001 clarification they depend on. `max_events_per_quantum` stays
-  here: it is the successor to V1's unbounded per-block event `Vec`, and only the
-  runtime behaviour for a candidate set exceeding it moves. The reasoning is in
+  capacities, producer-share values and release holds are not in that list and
+  have moved to [Phase 3](#phase-3-sample-accurate-scheduler-and-block-partition-invariance).
+  ADR-0046 now fixes their checked relations and overload behaviour.
+  `max_events_per_quantum` stays here as the successor to V1's unbounded
+  per-block event `Vec`; Phase 3 must reselect its unevidenced value from the
+  measured partition before enabling the contract, even if that partition fits
+  within 256. The Phase 0A reasoning remains in
   [REV-P00A](reviews/phase-00a-exit-review.md).
 - Open an architecture decision record under [decisions/](decisions/README.md)
   for every entry in the [decision register](ADR.md) whose target phase begins
@@ -555,32 +557,17 @@ before Phase 3 implementation begins. Phase 3 may refine it through a
 superseding ADR if simulated-host evidence invalidates an assumption; it may
 not invent timestamp semantics inside implementation tasks.
 
-**[ADR-0044](decisions/ADR-0044-deferral-causal-order.md) (deferral-induced
-causal order) must also be `Accepted` before Phase 3 implementation begins.**
-The event-deferral rule permits an over-full quantum to advance an event's
-render position by `Q`, which moves that event and not the events depending on
-it: at `Q` = 64, a note-on stamped at sample 63 defers to 127 while its own
-note-off at 65 renders first, leaving a voice sounding. ADR-0023 cannot repair
-it, because the two render positions differ and a same-sample rule needs a tie.
-No phase may implement deferral until that record exists.
+**[ADR-0046](decisions/ADR-0046-destination-quantum-admission.md) is
+`Accepted`.** It supersedes ADR-0043's capacity-deferral half and leaves the
+preserving late clamp in force. A single publication arbiter constructs sealed
+renderer input from disjoint checked producer shares; compiled and authored
+runtime work is admitted before playback, and future releases use end-to-end
+holds. The renderer never moves an event for capacity.
 
-**[ADR-0045](decisions/ADR-0045-cross-control-causal-order.md) (cross-control
-causal order) must also be `Accepted` before Phase 3 implementation begins.**
-It was opened on 2026-08-24 by ADR-0044's option survey, which established that
-no candidate mechanism reaches beyond a single control, and that the residual is
-not benign: a control-rate automation at sample 63 takes effect at boundary 64,
-before a sample-rate note at 65, and deferred to 127 it takes effect at 128,
-after it. This phase's outcome names automation ordering, and the symptom
-persists in stateful DSP, so the phase cannot close with it open.
-
-The first two of these obligations arrive here from Phase 0A, which narrowed
-P00A-T005 rather than blocking on them; ADR-0045 does not — it was opened on
-2026-08-24 by ADR-0044's own option survey, which is the first work that looked
-hard enough at the deferral rule to find it: Phase 1 has no live ingress and no host callback, so the
-capacity a deferral operates against cannot be specified from anything Phase 0A
-can observe. See [REV-P00A](reviews/phase-00a-exit-review.md).
-[`NOW.md`](NOW.md) carries their current status; this section names which
-records gate implementation and does not restate it.
+The two deferral-induced causal-order prerequisites are therefore dissolved
+rather than answered: both inversions required selective `+Q` movement, which
+no longer exists. ADR-0022 is the phase's only remaining entry prerequisite;
+`NOW.md` carries that operational state.
 
 ### Work
 
@@ -596,38 +583,66 @@ records gate implementation and does not restate it.
   - `SessionEvent` for play, stop, seek, loop transition, count-in, metronome,
     preview, and recording state;
   - compiled timeline/automation events generated from the document.
+- Keep ADR-0046's Phase 3 session/transport source storage non-dropping and
+  distinct from legacy `command_queue_capacity`. Reusing that physical queue
+  requires an accepted change that removes its *Live bounded queue*
+  classification and preserves refusal before timestamped acceptance.
 - Give live events an engine-epoch timestamp contract and an ingress mapper from
   hardware MIDI/audio timestamps. Untimestamped adapters must declare and
   measure their arrival-time fallback rather than pretending it is exact.
-- **Define what V2's renderer-ingress streams are, and what bounds each.** V1
-  has no in-workspace renderer-ingress mechanism to carry over: `LIMIT-0013`'s
-  prioritized rings are engine egress with no in-workspace production caller
-  (the public API leaves external use unknown), and `LIMIT-0012`'s ring carries
-  commands. There is therefore no evidenced V1 timestamped renderer-ingress
-  queue to inherit. Until this is defined,
-  the host profile has no field for the capacity an over-full quantum would
-  defer against, and any admission rule written over one is written over a
-  quantity that does not exist.
-- **Bound the deferred store, and define its behaviour on exhaustion.** This
-  does **not** follow from the ingress capacities and is not satisfied by
-  setting them: deferring an event *frees* its upstream slot, so ingress
-  capacity bounds the arrival rate rather than the backlog, and note expansion
-  multiplies one released event into many. A finite store can still exhaust, and
-  the audio thread may not allocate to grow it — so "no event is lost" needs
-  either a proven bound or a defined loss, and currently has neither.
+- **Define every V2 renderer-ingress source store and capacity.** V1 has no
+  timestamped renderer-ingress design to carry over: `LIMIT-0013` is engine
+  egress and `LIMIT-0012` carries commands. Record every live store exactly once
+  as *Live bounded queue* in the host-profile specification's
+  [closed renderer-ingress source-store registry](specs/spec-host-profile-and-render-limits.md#renderer-ingress-source-store-registry)
+  so HOST-INV-009 licenses its boundary drop and attributable counter.
+- Build ADR-0046's single preallocated publication arbiter. It snapshots eligible
+  queue entries, fills and seals only the imminent render call's quantum batches,
+  and charges every event exactly once to compiled, authored-runtime, live,
+  session, internal or guaranteed-release capacity.
+- Validate the producer-share sum and every lower bound in `HostProfile`:
+  construction checks the fixed share sum, live snapshots, the compiled callback
+  floor, `release_event_share >= release_hold_capacity`, and the call-local
+  external-batch store; plan admission
+  checks session snapshots and locate catch-up, internal declarations, and the
+  plan-wide aggregate of runtime destination/future/hold declarations. Aggregate
+  authored sources by summation unless the compiler proves them mutually
+  exclusive. Measure useful values and reselect `max_events_per_quantum` from
+  them before enabling Phase 3; its current unevidenced 256 is not retained
+  merely because they fit.
+- Admit compiled events against every half-open `Q`-frame window over all anchor
+  phases. Validate a loop's periodic extension before changing transport state,
+  including multiple wraps when the loop is shorter than `Q`.
+- Admit authored runtime sources against finite conservative per-source
+  destination-occupancy, retained-future and simultaneous-hold declarations and
+  a checked plan-wide aggregate of every simultaneously legal source, then
+  materialize each actual batch once into preallocated scratch. Overflow refuses
+  the plan or faults a broken producer declaration; it never trims playback.
+- Recompile and re-admit event entitlements before activating a tempo-map
+  replacement; failure leaves the old map and plan active.
+- Acquire a release hold atomically with every non-compiled note-on that needs
+  one. Guarantee its source storage and renderer share. Encode panic, stop and
+  sustain lift as bounded events charged to their live, session or authored
+  source share; applying one redeems affected holds without producing a second
+  release-share event or per-voice renderer events.
 - Reserve sufficient note/voice identity for polyphonic pressure, per-note bend,
   release velocity, and future MPE/MIDI 2.0 mapping without requiring those
   protocols in the first implementation.
 - Compile or schedule note, gate, transport, and parameter events with offsets
   inside the render quantum.
+- Close ADR-0043's surviving offline late-clamp obligation with a named test:
+  either prove that the offline stamp-window selector cannot present a late
+  event, or window by clamped render position before the offline Phase 3 path
+  relies on that selector. This is implementation work, not an entry
+  prerequisite.
 - Split processing at event boundaries or pass bounded event spans to nodes.
 - Convert musical time through the tempo map into sample time without losing
   ramp semantics.
 - Ensure note-on, note-off, retrigger, legato, and parameter discontinuities
   occur at the sample their **render position** names, which is their declared
-  sample unless ADR-0043's late clamp or capacity deferral moved them. ADR-0043
-  restated ADR-0001 clauses 12 and 14 over that quantity; the declared sample
-  survives in the envelope, so the displacement stays reportable.
+  sample unless ADR-0043's preserving late clamp moved them. ADR-0046 removes
+  capacity as a second reason for movement; the declared sample survives in the
+  envelope, so lateness remains reportable.
 - Decide and implement interpolation for control-rate values between evaluation
   points.
 - Make internal control rate a function of the fixed quantum, never the host
@@ -647,18 +662,17 @@ irregular host blocks with the same total frames
 
 ### Exit gate
 
-- [ ] A note starting inside a host block begins at the exact requested sample,
-      for every note the renderer admitted into the quantum its timestamp names.
-      A note the engine **clamped** as late or **deferred** for capacity begins
-      at its render position instead, under
-      [ADR-0043](decisions/ADR-0043-event-deferral-and-late-clamp.md) — which is
-      the exact requested sample plus the displacement the diagnostics report
-      names, never an arbitrary one. This qualification is not a weakening: the
-      unqualified form and this gate's own deferred-store bullet cannot both be
-      satisfied, since a deferred store exists precisely to hold events that did
-      not begin at their requested sample.
+- [ ] A note starting inside a host block begins at the exact requested sample
+      for every admitted on-time event. A genuinely late event begins at
+      ADR-0043's first not-yet-rendered boundary, with the immutable stamp and
+      late counter exposing that displacement. Capacity never changes the render
+      position.
 - [ ] A note ending inside the same host block produces the expected non-empty
       duration rather than being released before the block renders.
+- [ ] A named offline late-clamp test proves that the stamp-window selector
+      cannot present a late event, or the selector windows by clamped render
+      position. This closes ADR-0043's surviving offline obligation without
+      adding an entry prerequisite.
 - [ ] Tempo steps and ramps map to stable sample positions.
 - [ ] Equivalent timestamped hardware/live and precompiled event streams reach
       the same sample offsets after ingress mapping.
@@ -666,19 +680,22 @@ irregular host blocks with the same total frames
       have declared ordering against note/controller/automation events at the
       same sample.
 - [ ] The reference V2 renders are invariant to host block partitioning.
-- [ ] Every renderer-ingress stream has a declared capacity in the host profile,
-      and the deferred store has a declared bound together with a defined,
-      counted behaviour on exhaustion. Neither may be satisfied by the other.
-- [x] The ADR-0001 successor is `Accepted`. **Satisfied 2026-08-20** by
-      [ADR-0043](decisions/ADR-0043-event-deferral-and-late-clamp.md), which
-      ratified the host-profile specification's interim lateness rule — clause
-      16's condition is asked once, when an event first becomes due — and
-      restated clauses 12 and 14 over the render position.
-- [ ] [ADR-0044](decisions/ADR-0044-deferral-causal-order.md) is `Accepted`.
-      `+Q` moves an event and not the events depending on it, so a note-on
-      deferred past its own note-off strands a voice. **The deferral invariant
-      may not be implemented until this record exists**, and this gate does not
-      pass with a known causal-order inversion in the scheduler.
+- [ ] Every renderer-ingress stream has a declared capacity, all six producer
+      shares and `release_hold_capacity` satisfy ADR-0046's checked sum and lower
+      bounds, every share is a positive `EventCount`, authored declarations are
+      composed across every simultaneously legal source, hold entitlements are
+      disjoint across admitted non-compiled producers, and the measured partition
+      fits the callback budget. A deliberately forged over-full sealed batch
+      takes the terminal fault; no correct producer can reach it. Every live
+      renderer-ingress store has exactly one *Live bounded queue* row in the
+      host-profile specification's closed renderer-ingress source-store registry.
+      Construction rejects zero `release_hold_capacity` and a release share one
+      below it, while accepting equality and any larger value that still fits the
+      total share sum.
+- [x] The preserving late-clamp contract is `Accepted`. ADR-0043 supplies it and
+      ADR-0046 leaves it in force while superseding capacity deferral.
+- [x] ADR-0046 is `Accepted`; the two deferral-induced causal-order obligations
+      are dissolved because the renderer no longer moves events for capacity.
 
 [Phase 7](#phase-7-yams-mod-grid-and-unified-modulation) may not begin before
 this gate passes. Modulation and script timing are meaningless until the event
@@ -723,11 +740,6 @@ and result ownership must already have one authoritative meaning.
 
 ### Exit gate
 
-- [ ] [ADR-0045](decisions/ADR-0045-cross-control-causal-order.md) is
-      `Accepted`. Deferral can reverse an automation against the note it
-      shapes, which no same-control mechanism relates, and this phase's
-      outcome names automation ordering. Opened 2026-08-24 by ADR-0044's
-      survey; its candidate space is empty on the terms already accepted.
 - [ ] At least three existing saved projects lower and render through V2 without
       hand-rebuilding their patches in tests.
 - [ ] Unsupported modules and targets produce structured diagnostics naming the

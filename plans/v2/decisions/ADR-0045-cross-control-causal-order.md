@@ -3,17 +3,24 @@
 | Field | Value |
 |---|---|
 | ID | ADR-0045 |
-| Status | Deferred |
+| Status | Superseded |
 | Phase | 3 |
 | Created | 2026-08-24 |
-| Last reviewed | 2026-08-24 |
+| Last reviewed | 2026-08-25 |
 | Related | ADR-0043; [ADR-0044](ADR-0044-deferral-causal-order.md); ADR-0023; ADR-0032 clause 21; `SOUND-INV-016`; `HOST-INV-021` |
 | Supersedes | — |
-| Superseded by | — |
+| Superseded by | [ADR-0046](ADR-0046-destination-quantum-admission.md) |
 
 This record meets `PROCESS.md`'s durable-decision test on one count: it defines a real-time ownership boundary — whether
 the renderer may hold, on the audio thread, any relation between events addressing **different** controls. It fixes no
 value.
+
+> **Superseded on 2026-08-25, dissolved rather than answered.** ADR-0046 removes capacity deferral, so the selective
+> `+Q` movement that creates this cross-control hazard no longer exists. The analysis below remains historical
+> evidence; it is not an implementation prerequisite.
+> **Everything below this banner is pre-supersession history unless a sentence explicitly records ADR-0046's
+> disposition.** No decision, constraint, work item, risk control, revisit condition or review scope below remains
+> active. ADR-0022 is Phase 3's sole remaining entry prerequisite.
 
 > **Opened by [ADR-0044](ADR-0044-deferral-causal-order.md)'s option survey, 2026-08-24.** That survey's generality
 > frame asked a repair to hold for every pair whose meaning depends on order. No candidate did, and the residual every
@@ -21,15 +28,15 @@ value.
 > **same-control** causal order and this record took the remainder, so that narrowing a question did not quietly
 > discard the part that was hard.
 
-## The deferral
+## Historical deferral
 
 | Field | Value |
 |---|---|
-| Deferred to | The **Phase 3 entry gate**, alongside [ADR-0044](ADR-0044-deferral-causal-order.md) and ADR-0022. A first draft of this record left it ungated; that was wrong, and the independent read established why — see *Why this gates Phase 3* |
+| Deferred to | **Historical, no longer active.** Before ADR-0046 dissolved the question, this record, ADR-0044 and ADR-0022 formed the Phase 3 entry gate. ADR-0022 is now the sole remaining prerequisite |
 | Owner | Project maintainer — this is a single-maintainer repository, so there is no second party to assign |
-| Input required | A reachability argument or measurement: which cross-control orders a real plan actually depends on, and at which rates. Nothing in V2 can produce one yet, because no ingress exists to overload and no deferral exists to invert |
-| Why not now | The candidate space is empty on the terms already accepted. ADR-0044's F2 frame refuses an audio-thread walk of a general dependency graph, and every mechanism its survey found was keyed to one control. Deciding this now would mean either relaxing F2 or inventing a mechanism nobody has proposed |
-| What makes it safe | **Unreachability, and nothing else.** No V2 code defers, so the hazard cannot occur before the code that causes it is written. A draft of this row also called the symptom bounded and non-persistent; that is false and *Why this gates Phase 3* below establishes why, so only the unreachability rationale is retained. Unreachability makes deferring the decision safe; it does not make the hazard mild |
+| Historical input required | A reachability argument or measurement: which cross-control orders a real plan depends on, and at which rates. ADR-0046 eliminated the capacity-deferral mechanism instead |
+| Historical reason | The candidate space was empty on the terms then accepted. ADR-0044's F2 frame refused an audio-thread walk of a general dependency graph, and every mechanism its survey found was keyed to one control. ADR-0046 later removed the capacity movement instead of selecting a causal-order mechanism |
+| Historical safety basis | **Unreachability, and nothing else.** No V2 code deferred, so the hazard could not occur before the code that caused it was written. A draft called the symptom bounded and non-persistent; that was false, as *Why this gated Phase 3 before supersession* establishes. ADR-0046 now removes the cause rather than deferring the answer |
 
 ## The hazard
 
@@ -39,16 +46,17 @@ value.
   position, which is 64, and so lands **before** a sample-rate note edge at sample 65;
 - defer the automation to 127 under ADR-0043's `+Q` rule, and its effect begins at boundary 128 — **after** that note.
 
-The order the plan declared is reversed, and no same-control repair sees it: the two events share no `(node, control)`
-pair, so any same-control mechanism ADR-0044 may accept cannot relate them — that record is still `Deferred` and has
-selected nothing. `ADR-0023` does not reach it either, since 65 and 128 are not a tie.
+Historically, the order the plan declared was reversed and no same-control repair saw it: the two events shared no
+`(node, control)` pair. ADR-0044 was then `Deferred` and had selected nothing. Both records are now `Superseded` because
+ADR-0046 removes the capacity movement; `ADR-0023` still does not reach the historical example because 65 and 128 are
+not a tie.
 
 **This refutes an argument ADR-0044's first draft made** — that `SOUND-INV-016`'s quantum-boundary rule for
 control-rate responses closed most of the cross-control residual, because a pair less than one quantum apart was never
 ordered by sample position anyway. The boundary rule does not protect such a pair; it relocates it. That correction is
 recorded in ADR-0044's survey and is the reason this record exists rather than a sentence there.
 
-## Why this gates Phase 3
+## Why this gated Phase 3 before supersession
 
 **A first draft of this record argued the opposite, and both of its premises were false.** It is corrected here rather
 than quietly rewritten, because the error is instructive: it read `PROCESS.md`'s decision-timing rule as licence to
@@ -67,39 +75,40 @@ leave a known correctness violation outside a gate.
   phase offset that survives the controls converging. A filter's state has the same property. The symptom therefore
   persists exactly as ADR-0044's stranded gate does, and the distinction the draft drew between them does not exist.
 
-**What follows.** Phase 3 may not close with this unresolved, and Phase 3 implementation may not begin before this is
-`Accepted`, on the same footing as ADR-0044 and ADR-0022. That does make it a third prerequisite where the scope split
-was meant to avoid adding one — `PROCESS.md` warns that replacing one prerequisite with another is not progress. The
-split is still worth keeping, because the two questions have different candidate spaces and ADR-0044's is nearly
-settled while this one is empty. But it must be recorded as **what it is**: the survey found the problem larger than
-the record assumed, not smaller.
+**Historical consequence.** Before ADR-0046, Phase 3 could not close with this unresolved or begin before this record,
+ADR-0044 and ADR-0022 were `Accepted`. That made it a third prerequisite where the scope split was meant to avoid
+adding one — `PROCESS.md` warns that replacing one prerequisite with another is not progress. ADR-0046 later removed
+the capacity-deferral mechanism and dissolved both causal-order questions, leaving ADR-0022 as the sole prerequisite.
 
 ## Decision
 
-**Deferred to the Phase 3 entry gate.** One constraint holds meanwhile: **no specification or review may claim that V2
-preserves declared cross-control order under deferral.** Whatever mechanism ADR-0044 eventually accepts is bounded to
-same-control order — that record is still `Deferred` and has selected nothing, so nothing here may be read as deciding
-it — and a document that generalised such a mechanism would be asserting this record's answer before it exists.
+**Historical decision, now superseded:** deferred to the Phase 3 entry gate. Its interim constraint was that no
+specification or review could claim V2 preserved declared cross-control order under capacity deferral. ADR-0046 removed
+that mechanism and dissolved the question, so neither the decision nor the interim constraint remains current.
 
-## Revisit conditions
+## Historical revisit conditions
 
-Revisit when any of these becomes true:
+Before supersession, the record named these triggers:
 
 - a candidate mechanism is proposed that does not require an audio-thread dependency-graph walk;
 - a phase exit, specification, or external consumer needs a general order-preservation promise;
-- ADR-0044's F2 frame is revisited for another reason, since the audio-thread dependency-graph refusal is what empties
-  this record's candidate space.
+- ADR-0044's F2 frame is revisited for another reason, since the audio-thread dependency-graph refusal emptied this
+  record's candidate space.
+
+ADR-0046 exercised the architectural alternative: it removed capacity movement and dissolved the candidate space.
+These triggers are not live work.
 
 ## Review
 
 Reviewer: opened as part of ADR-0044's survey repair transaction, which is where the hazard was established and where
-the maintainer's scope decision assigned it here. Two independent reads then corrected this record itself: the first
-established that it must gate Phase 3 rather than sit ungated, and the second found that the gate had been declared
-here without reaching `master-plan.md`, `NOW.md` or the host-profile specification, and that the *What makes it safe*
-row still called the symptom transient after the body had refuted that. Both are repaired above.
+the maintainer's scope decision assigned it here. Independent reads found three pre-supersession defects: the question
+needed a gate, that gate had not reached its then-current consumers, and the safety row called a persistent symptom
+transient. ADR-0046 later dissolved the gate, making consumer propagation obsolete; the *Historical safety basis* row
+above retains the correction to the transient-symptom claim.
 
-**This record is dissolved, not merely answered, if an ADR-0043 successor reopens that record's Option A**: with no
-deferral there is no deferral-induced cross-control inversion. ADR-0044's survey records why that path is live.
+**ADR-0046 dissolved this record rather than answering it.** With no capacity deferral there is no
+deferral-induced cross-control inversion. ADR-0044's survey remains historical evidence for why removing that movement
+closes both questions.
 
 Stopping rule: false conclusion-affecting fact, contradiction, unfillable contract, safety/correctness defect, or
 evidence incapable of supporting the claim. Editorial detail does not block.

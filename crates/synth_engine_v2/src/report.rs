@@ -286,7 +286,8 @@ impl ResourceField {
     /// `HOST-INV-007` binds the limits a plan can exceed, and its conformance row asks
     /// for one refusal case per such limit — so this predicate has to be exactly the
     /// set those cases can be written for. Twenty-eight fields qualify. The fourteen
-    /// that do not fall into four groups, and each is excluded for its own reason:
+    /// that do not take that refusal fall into five groups, each excluded for its own
+    /// reason:
     ///
     /// - **The three queried capabilities.** A capability describes what the plan is
     ///   *prepared against*, not a budget it spends.
@@ -296,10 +297,14 @@ impl ResourceField {
     /// - **The sizing fields** — `retirement_crossfade`, `telemetry_ring_frames`,
     ///   `analyzer_fft_size`. They bound nothing, so asking which behaviour they take
     ///   is a category error.
-    /// - **The capacities a plan does not request**: the two queue depths, the two
-    ///   per-voice slot counts whose relation construction validates, and
-    ///   `max_concurrent_retiring_voices`, which is derived so that it cannot bind.
-    ///   Their rows report the profile's own value, so exceeding is not reachable.
+    /// - **The capacities a plan does not request**: `forward_event_horizon`, the two
+    ///   queue depths, the two per-voice slot counts whose relation construction
+    ///   validates, and `max_concurrent_retiring_voices`, which is derived so that it
+    ///   cannot bind. Their rows report the profile's own value, so exceeding is not
+    ///   reachable.
+    /// - **The advisory cost budget.** `predicted_quantum_cost_ratio` may be exceeded,
+    ///   but `HOST-INV-015` makes that a `CompileWarning` rather than a `CompileError`,
+    ///   which is the same rule [`Self::is_advisory`] states.
     ///
     /// An earlier revision of this predicate excluded only eight fields, which made
     /// `HOST-INV-007`'s conformance row unsatisfiable: six of the remaining fields

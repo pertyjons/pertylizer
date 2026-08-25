@@ -3,17 +3,24 @@
 | Field | Value |
 |---|---|
 | ID | ADR-0044 |
-| Status | Deferred |
+| Status | Superseded |
 | Phase | 3 |
 | Created | 2026-08-20 |
-| Last reviewed | 2026-08-20 |
+| Last reviewed | 2026-08-25 |
 | Related | ADR-0043; ADR-0001 clauses 12, 13 and 14; ADR-0023; ADR-0032 clauses 22 and 23; `HOST-INV-021`; `SOUND-INV-016` |
 | Supersedes | — |
-| Superseded by | — |
+| Superseded by | [ADR-0046](ADR-0046-destination-quantum-admission.md) |
 
 This record meets `PROCESS.md`'s durable-decision test on two counts: it defines a real-time ownership boundary — which
 event the renderer may move, and what moves with it — and it binds the scheduler, the voice pool, and the offline/live
 equivalence gate. It fixes no value.
+
+> **Superseded on 2026-08-25, dissolved rather than answered.** ADR-0046 removes capacity deferral, so the selective
+> `+Q` movement that creates this same-control hazard no longer exists. The survey below remains historical evidence;
+> it is not an implementation prerequisite.
+> **Everything below this banner is pre-supersession history unless a sentence explicitly records ADR-0046's
+> disposition.** No decision, constraint, work item, risk control, revisit condition or review scope below remains
+> active. ADR-0022 is Phase 3's sole remaining entry prerequisite.
 
 > **Narrowed on 2026-08-24 to same-control causal order.** The option survey below asked, under frame F1, for a repair
 > holding for *every* pair whose meaning depends on order, and **no candidate qualified**; the residual they all shared
@@ -25,20 +32,20 @@ equivalence gate. It fixes no value.
 > is applied to. The narrowing left 1b's run form as the only mechanism in scope, and a second read then found four
 > defects in it, so **this record still has no candidate** — see *Options considered*.
 
-> **Deferred, not open for improvisation.** [ADR-0043](ADR-0043-event-deferral-and-late-clamp.md) is `Accepted` and
-> creates the hazard this record must close. It named the hazard rather than solving it, because the repair is
-> scheduler design and ADR-0043's decision boundary excludes it. **Phase 3 implementation may not begin before this
-> record is `Accepted`**, alongside [ADR-0022](ADR-0022-hardware-time-mapping.md).
+> **Historical deferral, withdrawn by ADR-0046.** When capacity deferral was still selected,
+> [ADR-0043](ADR-0043-event-deferral-and-late-clamp.md) created the hazard this record was intended to close and Phase 3
+> could not begin before this record and [ADR-0022](ADR-0022-hardware-time-mapping.md) were `Accepted`. ADR-0046 removed
+> the mechanism and dissolved the question; this is no longer a gate.
 
-## The deferral
+## Historical deferral
 
 | Field | Value |
 |---|---|
-| Deferred to | The **Phase 3 entry gate**. Phase 3 implementation may not begin before this is `Accepted` |
+| Deferred to | **Historical, no longer active.** Before ADR-0046 dissolved the question, this record was part of the Phase 3 entry gate. ADR-0022 is now the sole remaining prerequisite |
 | Owner | Project maintainer — this is a single-maintainer repository, so there is no second party to assign |
-| Input required | **The survey ran on 2026-08-24 without it, and a second read showed that was only true for a candidate that does not work.** The run form the survey ended on must be costed against the ingress and deferred-store capacities, because its scan fires exactly when the per-quantum limit is exceeded. So this record does depend on the store's shape after all, for the surviving candidate. What follows was written before that was established, and is kept because the *relation* half of it stands: and what remains is the maintainer's selection and the coupled ADR-0043 successor. This field previously scoped a deferred-store dependency to successor propagation; the survey narrowed that again. It holds for [option 1a](#1a--successor-by-declared-note-identity), which pairs events by a declared note identity and stores the pairing, and **not** for [option 1b](#1b--successor-by-compiled-control-slot), whose relation is equality of a compiled control slot the renderer already derives per event, with one `SampleTime` per slot against a count admission fixes. Three earlier drafts over-claimed this dependency — first for every candidate, then for both scheduler-side ones, then for successor propagation as a whole |
-| Why not now | The candidate repairs are scheduler and voice-pool design, not timing semantics, and ADR-0043's decision boundary excludes them. Deciding them inside that record would have made a timing decision carry a scheduler design its reader was not reviewing. **That reason is spent**: the survey below is the design work, and what is left is a selection and the successor it names, both of which belong to the Phase 3 entry gate transaction rather than to ADR-0043's |
-| What makes it safe | The hazard is **unreachable today**: no V2 code defers. Deferral does not exist in the renderer, Phase 1 and Phase 2 are offline with a prevalidated bounded event span, and `HOST-INV-021` keeps the store and the ingress capacities `Deferred to Phase 3`. Nothing can reach the inversion before the code that would cause it is written |
+| Historical input required | **The survey ran on 2026-08-24 without it, and a second read showed that was only true for a candidate that did not work.** The run form would have needed costing against the ingress and deferred-store capacities because its scan fired exactly when the per-quantum limit was exceeded. The remaining historical analysis records how that dependency narrowed across drafts; ADR-0046 removed the store and the candidate rather than supplying the input |
+| Historical reason | The candidate repairs were scheduler and voice-pool design, not timing semantics, and ADR-0043's decision boundary excluded them. Deciding them inside that record would have made a timing decision carry a scheduler design its reader was not reviewing. The survey below later did that design work; ADR-0046 then dissolved the question by removing capacity deferral |
+| Historical safety basis | Before supersession, the hazard was unreachable because no V2 code deferred and Phase 1–2 used a prevalidated bounded event span. At that time `HOST-INV-021` kept the proposed store and ingress capacities deferred to Phase 3. ADR-0046 now eliminates the capacity movement that created the hazard |
 
 ## Durable boundary
 
@@ -107,18 +114,17 @@ accepted and then moved.
 - The timing rule itself, the immutable stamp, and the clamp — [ADR-0043](ADR-0043-event-deferral-and-late-clamp.md),
   `Accepted`.
 - Same-sample ordering — `ADR-0023`.
-- The ingress capacities, the deferred store's bound, its exhaustion policy, and the starvation question —
-  `HOST-INV-021`, `Deferred to Phase 3`.
+- The ingress capacities and overload contract — historically deferred with a store and starvation question; now
+  decided by ADR-0046 as fixed shares, pre-render admission, release holds and no capacity movement.
 - The hardware clock mapping — [ADR-0022](ADR-0022-hardware-time-mapping.md).
-- **Cross-control causal order** — [ADR-0045](ADR-0045-cross-control-causal-order.md), `Deferred` to the same Phase 3
-  entry gate. Outside this record only since the 2026-08-24 narrowing, and outside it as an open question rather than
-  a settled one: the survey below found no mechanism that reaches it under frame F2.
+- **Cross-control causal order** — historically split into [ADR-0045](ADR-0045-cross-control-causal-order.md), now
+  `Superseded` and dissolved by ADR-0046 together with this record.
 
 ## Options considered
 
 **Surveyed on 2026-08-24.** It needed neither the deferred store's shape nor any measurement, and one of its findings
-is that this record's own account of which candidates needed the store was too strong. That correction is carried into
-*The deferral* above and into [`NOW.md`](../NOW.md). The frames come first, then the candidates against them, then the
+is that this record's own account of which candidates needed the store was too strong. The historical correction is
+recorded in *Historical deferral* above. The frames come first, then the candidates against them, then the
 result — which is that **no candidate passes F1**, so the survey eliminates and costs rather than selects. The
 independent read is what established that: it refuted the draft's recommendation on two conclusion-affecting points,
 both recorded in place below rather than quietly repaired.
@@ -198,8 +204,8 @@ Six properties, each checkable against current source and none against the defer
      limit, and the [host-profile specification](../specs/spec-host-profile-and-render-limits.md) leaves the ingress
      and deferred-store capacities `Deferred to Phase 3`, so the candidate set has no declared bound at all. Marking
      F2 as passing put producer-sized work on the audio thread. **This restores the store dependency the survey
-     claimed to have removed** — the run must be costed against those capacities, so *The deferral*'s "no input
-     required" is wrong for this candidate.
+     claimed to have removed** — the run would have needed costing against those capacities, which is why
+     *Historical deferral* records an input requirement for this candidate.
    - **Destination overflow breaks the interval it was chosen to preserve.** Events at 63 and 65 translate to 127 and
      129; if quantum 2 is already full, 129 defers again to 193 while 127 has already rendered — an interval of 2
      samples rendered as 66. F6 fails unless the design also reserves destination capacity or moves the run
@@ -384,7 +390,8 @@ which candidate it kills is no longer an independent test.
 order**, and the cross-control remainder is [ADR-0045](ADR-0045-cross-control-causal-order.md). That split stands. What
 did **not** survive is the draft's accompanying claim that ADR-0045 needed no gate; a second independent read
 established that Phase 3's *Outcome* names automation ordering and that the symptom persists in stateful DSP, so
-ADR-0045 is a Phase 3 entry prerequisite too. The gate therefore has **three** conjuncts now, not two.
+ADR-0045 was therefore a Phase 3 entry prerequisite too. The former gate had **three** conjuncts, not two. ADR-0046
+later dissolved both causal-order questions by removing capacity deferral.
 
 **No candidate is recommended, and the run form is not one.** The narrowing left 1b's run form as the only mechanism
 in scope, and the second read found four defects in it — an unbounded scan, a broken interval under destination
@@ -422,15 +429,17 @@ is what covers that, and a repaired 1b must be tested by both.
 
 ## Decision
 
-**Deferred to the Phase 3 entry gate**, with the owner and required input recorded in *The deferral* above.
+**Historical decision, now superseded:** deferred to the Phase 3 entry gate, with the owner and required input recorded
+in *Historical deferral* above. ADR-0046 dissolved the question; neither this decision nor its interim constraints are
+current.
 
-Two constraints hold in the meantime, so the deferral cannot be used as permission to improvise:
+Historically, two interim constraints held while the decision was deferred. ADR-0046 superseded both together with the
+capacity-deferral mechanism:
 
-1. **No implementation may invent a causal-order rule.** Until this record is `Accepted`, no code may defer an event,
-   and therefore no code may need one.
-2. **No specification may narrow ADR-0043 by glossing it.** The host-profile specification states the deferral rule as
-   ADR-0043 decided it and records this hazard as an open obligation; it does not describe a repair that has not been
-   chosen.
+1. **No implementation could invent a causal-order rule.** Until the record was resolved, no code could add capacity
+   deferral. ADR-0046 resolved it by forbidding that movement.
+2. **No specification could narrow ADR-0043 by glossing it.** ADR-0046 instead changed the capacity architecture in an
+   accepted successor and updated the current specifications explicitly.
 
 ## Consequences
 
@@ -438,10 +447,10 @@ Two constraints hold in the meantime, so the deferral cannot be used as permissi
 
 - The hazard is written down at the point where it was created, rather than surviving as a sentence inside the record
   that created it.
-- The Phase 3 entry gate names every conjunct, so nobody can read ADR-0043's acceptance as clearing it. The survey
-  added a third — [ADR-0045](ADR-0045-cross-control-causal-order.md) — rather than removing one, which is a worse
-  position honestly stated instead of a narrower gate wrongly claimed.
-- The policy gets its own independent review instead of arriving as a subordinate clause of a timing decision.
+- The former Phase 3 entry gate named every conjunct, so nobody could read ADR-0043's acceptance as clearing it. The
+  survey added a third — [ADR-0045](ADR-0045-cross-control-causal-order.md) — rather than removing one, which was a
+  worse position honestly stated instead of a narrower gate wrongly claimed.
+- The policy received its own independent review instead of arriving as a subordinate clause of a timing decision.
 
 ### Negative
 
@@ -456,16 +465,12 @@ Two constraints hold in the meantime, so the deferral cannot be used as permissi
 
 ### Risks and controls
 
-- **Risk: the gate stalls** because nobody starts the design, or because this record is read as waiting on the
-  deferred store when no candidate the survey recommends does. Control: this record is a named Phase 3 entry
-  prerequisite in [`NOW.md`](../NOW.md) and in the decision index, on the same footing as ADR-0022, and the survey
-  below is complete. The control is weaker than a draft of it claimed: the survey ends with **no candidate**, and the
-  surviving construction must be costed against the deferred store's capacities, so what remains is design rather than
-  a selection.
-- **Risk: a repair is implemented informally** inside a Phase 3 task and the record is written afterwards to match.
-  Control: constraint 1 above, and the fact that no deferral code exists to grow one.
-- **Risk: the hazard is quietly downgraded** to "rare under realistic load". Control: rarity is not the test — the
-  symptom is a stuck voice, and `PROCESS.md` requires a named automated test rather than a frequency argument.
+- **Retired risk: the gate stalls.** Before supersession this record was named beside ADR-0022 in `NOW.md` and the
+  decision index. ADR-0046 removed it from both, dissolved the question and left ADR-0022 as the sole prerequisite.
+- **Retired risk: an informal repair.** The former control prohibited implementation before an accepted policy.
+  ADR-0046 supplied the accepted successor and forbids the capacity movement outright.
+- **Retired risk: downgrading the hazard as rare.** ADR-0046 removes the hazard's cause; rarity is not used as a safety
+  argument.
 
 ## Follow-up work
 
@@ -474,17 +479,17 @@ Two constraints hold in the meantime, so the deferral cannot be used as permissi
 | Survey the candidate repairs | 3 | **Complete** — [*Options considered*](#options-considered), 2026-08-24. It eliminates 1a, 1c, 2a, 2b and option 3, and selects none: no candidate passes F1 |
 | Decide the record's scope | 3 | **Done** 2026-08-24 — narrowed to same-control order; cross-control split out as [ADR-0045](ADR-0045-cross-control-causal-order.md) |
 | Take one independent read of the corrected 1b run form | 3 | **Done** 2026-08-24 — four defects, recorded in [*Options considered*](#options-considered). The run form is not viable as specified |
-| Decide the deferred store's capacities, or propose a mechanism that needs none, **or reopen ADR-0043's Option A** | 3 | Not started — the survey's actual next step. The first reverses this record's earlier independence claim; the third dissolves this record and ADR-0045 together and belongs to an ADR-0043 successor |
-| Name the conformance test that fails on an inverted pair | 3 | **Named** in [*Recommendation*](#recommendation); writing it is Phase 3 implementation work |
-| Select a candidate, and accept the ADR-0043 successor the selected one needs, in one transaction | 3 | Not started — the maintainer's call |
-| Write and accept this record | 3 | Not started |
-| Choose the deferred store's shape | 3 | Not started — no longer a prerequisite of this record under the recommended candidate, and still Phase 3's own work |
+| Decide the deferred store's capacities, or propose a mechanism that needs none, **or reopen ADR-0043's Option A** | 3 | **Superseded** — ADR-0046 selected pre-render destination admission and no deferred store |
+| Name the conformance test that fails on an inverted pair | 3 | **Dissolved** — ADR-0046 makes capacity-induced inversion unreachable; late-clamp coverage remains separate |
+| Select a candidate, and accept the ADR-0043 successor the selected one needs, in one transaction | 3 | **Dissolved** — ADR-0046 removes the mechanism instead of selecting an ordering repair |
+| Write and accept this record | 3 | **Superseded** by ADR-0046 |
+| Choose the deferred store's shape | 3 | **Dissolved** — no deferred-event store exists under ADR-0046 |
 
 ## Revisit conditions
 
-This record is not a decision, so it has no revisit condition in the usual sense. It is superseded by its own accepted
-version at the Phase 3 entry gate. It would be revisited *earlier* only if the selected repair proved expensive enough
-to change ADR-0043's selection, which would mean accepting a successor to ADR-0043 rather than completing this record.
+This record is superseded by ADR-0046, not by an accepted version of itself. It has no active revisit condition. Any
+future proposal to restore capacity movement would require a new accepted successor covering destination admission,
+causal order and real-time bounds rather than reopening these historical work items implicitly.
 
 ## Review
 

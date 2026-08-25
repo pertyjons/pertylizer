@@ -660,9 +660,9 @@ fn a_late_note_edge_takes_effect_at_its_clamped_render_position() {
 
 #[test]
 fn a_quantum_over_its_event_capacity_is_rejected_before_anything_is_mutated() {
-    // The specification's rule 2 for a phase that does not implement `HOST-INV-021`'s
-    // deferral: the call is rejected before renderer state or output is mutated, and the renderer
-    // must not defer, drop, clip, partially render, or grow to absorb it.
+    // The specification's Phase 1–2 prevalidated-span rule: the call is rejected before
+    // renderer state or output is mutated, and the renderer must not drop, clip,
+    // partially render, or grow to absorb it.
     let host = profile(256, ChannelLayout::Mono);
     let mut limits = common::defaults_for(&host);
     let capacity = 4;
@@ -804,9 +804,10 @@ fn a_parameter_change_takes_effect_at_the_next_quantum_boundary() {
 
 #[test]
 fn an_event_outside_the_quanta_a_call_renders_is_refused() {
-    // Phase 1's span is prevalidated and bounded. Holding an event for a later call
-    // would need the deferred store Phase 3 owns, and dropping it silently is what
-    // ADR-0001 clause 16 forbids — so the contract is enforced rather than bent.
+    // Phase 1's span is prevalidated and bounded. The renderer owns no future-event
+    // store, and dropping an event silently is what ADR-0001 clause 16 forbids — so the
+    // contract is enforced rather than bent. Phase 3 presents only sealed, admitted
+    // batches for the imminent call.
     let (mut renderer, epoch) = sine_renderer(256);
     let far = renderer.plan().forward_event_horizon().as_u64() - 1;
     let events = [set_frequency(

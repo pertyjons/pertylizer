@@ -409,12 +409,11 @@ pub enum RenderError {
 
     /// One quantum was presented with more events than it admits.
     ///
-    /// Rejected before anything is mutated. Phase 1 and Phase 2 do **not** defer:
-    /// ADR-0043 decided `HOST-INV-021`'s timing rule, but no phase may implement
-    /// deferral before ADR-0044 settles causal order, and Phase 3 still owns the
-    /// ingress streams and the bounded store a deferral mechanism needs. Until then
-    /// an over-full quantum is a caller contract violation, and the one rule that
-    /// binds meanwhile is negative — nothing may allocate to absorb it.
+    /// Rejected before anything is mutated. Phase 1 and Phase 2 accept an open caller
+    /// span, so an over-full quantum is a caller-contract violation and nothing may
+    /// allocate, defer, or trim to absorb it. ADR-0046 removes capacity deferral;
+    /// Phase 3 replaces this boundary with sealed admitted input and a terminal
+    /// response for a violated share or store declaration.
     #[error(
         "quantum {quantum_index} was presented with {requested} events against \
          max_events_per_quantum {available}"
@@ -448,9 +447,10 @@ pub enum RenderError {
     /// An event is stamped for a quantum this call does not render.
     ///
     /// Phase 1's event input is a **prevalidated bounded span** covering the quanta
-    /// this call renders. Holding an event for a later call would require the
-    /// deferred store Phase 3 owns, and dropping it silently is what ADR-0001 clause
-    /// 16 forbids — so the span's contract is enforced instead of quietly bent.
+    /// this call renders. The renderer owns no future-event store, and dropping an
+    /// out-of-span event silently is what ADR-0001 clause 16 forbids — so the span's
+    /// contract is enforced instead of quietly bent. Phase 3 presents only the
+    /// publication arbiter's sealed batches for the imminent call.
     #[error(
         "event at sample {position} falls in quantum {event_quantum}, outside the quanta \
          {first_quantum}..={last_quantum} this call renders"

@@ -198,11 +198,12 @@ impl NoteEdge {
 /// restated it, splits on the *effect*: a sample-positioned one — note-on, note-off, gate,
 /// retrigger — occurs at the sample its **render position** names, while a control-rate
 /// response begins at the first quantum boundary at or after that position, under clause
-/// 13's causality rule. The render position is the declared sample unless the renderer
-/// moved the event, which only the late clamp and capacity deferral do. The node kind declares which of the two each of its
-/// controls is, admission compiles that into the target, and the renderer reads it. So
-/// addressing a gate as a parameter and playing its node as a note reach the same control
-/// under the same timing law, and neither payload can be used to escape the other's.
+/// 13's causality rule. The render position is the declared sample unless the preserving
+/// late clamp moves a genuinely late event to the first not-yet-rendered boundary. The node
+/// kind declares which of the two each of its controls is, admission compiles that into the
+/// target, and the renderer reads it. So addressing a gate as a parameter and playing its
+/// node as a note reach the same control under the same timing law, and neither payload can
+/// be used to escape the other's.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum EventPayload {
     /// Set one compiled parameter slot.
@@ -258,12 +259,12 @@ impl TimedEvent {
 
 /// The events one render call is presented with.
 ///
-/// A **prevalidated bounded span**, per the host-profile specification's rule for a
-/// phase that does not implement `HOST-INV-021`'s deferral: the renderer groups these by the same
-/// absolute quantum boundaries it renders on, independently of how the caller
-/// partitions blocks, and rejects the call if any one quantum exceeds
-/// `max_events_per_quantum`. The span's **total** is not a limit — one call may cover
-/// several quanta.
+/// A **prevalidated bounded span**, per the host-profile specification's Phase 1–2
+/// presentation rule. The renderer groups these by the same absolute quantum boundaries
+/// it renders on, independently of how the caller partitions blocks, and rejects the
+/// call if any one quantum exceeds `max_events_per_quantum`. Phase 3 instead presents
+/// only sealed, admitted batches for the imminent render call. The span's **total** is
+/// not a limit — one call may cover several quanta.
 #[derive(Debug, Clone, Copy)]
 #[must_use]
 pub struct TimedEvents<'a> {

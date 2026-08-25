@@ -155,9 +155,10 @@ pub fn render_offline(
 /// The events whose quanta this call renders.
 ///
 /// Phase 1's span is prevalidated: an event outside the quanta a call renders is a
-/// contract violation rather than something the renderer holds, because holding it
-/// would need the deferred store Phase 3 owns. Selecting here is what keeps the
-/// harness honest instead of pushing that decision into the renderer.
+/// contract violation rather than something the renderer holds. The renderer owns no
+/// future-event store; Phase 3's publication arbiter instead presents only sealed
+/// batches for the imminent call. Selecting here keeps the harness honest instead of
+/// pushing that decision into the renderer.
 ///
 fn events_for<'a>(
     events: &'a [TimedEvent],
