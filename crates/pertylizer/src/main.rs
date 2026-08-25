@@ -571,6 +571,13 @@ fn run_headless_mcp() -> Result<(), Box<dyn std::error::Error>> {
     rt.block_on(synth_mcp::serve_stdio(bridge))?;
 
     host.stop()?;
+    for error in host.take_async_errors() {
+        tracing::warn!(
+            target: "pertylizer::audio",
+            error = %error,
+            "audio output stream reported an asynchronous diagnostic during shutdown"
+        );
+    }
 
     Ok(())
 }

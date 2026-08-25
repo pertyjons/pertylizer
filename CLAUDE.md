@@ -50,6 +50,16 @@ python3 -B scripts/check_v2_docs.py
 python3 -B -m unittest scripts/test_check_v2_docs.py
 ```
 
+`check_v2_docs.py` also compiles and runs EVD-0016's deterministic Rust
+simulator and checks its output digest. The Core V2 documentation gate therefore
+requires the repository's Rust toolchain even for a documentation-only change.
+The quality workflow runs this gate before installing Linux system libraries.
+The simulator must therefore remain in `synth_engine_v2`'s system-library-free
+dependency closure; if a future evidence control needs a system-linked target,
+reorder `.github/workflows/quality.yml` before adding that dependency.
+The simulator evaluates roughly 11.5 million long-horizon observations per run;
+`cargo test --workspace` executes the example's control test a second time.
+
 The core Rust gate is:
 
 ```bash

@@ -119,12 +119,32 @@ impl AudioInputManager {
     /// Stop monitoring and release the input stream.
     pub fn stop_monitoring(&mut self) {
         if let Some(ref mut stream) = self.stream {
-            let _ = stream.stop();
+            if let Err(error) = stream.stop() {
+                tracing::error!(
+                    target: "pertylizer::audio",
+                    error = %error,
+                    "failed to stop audio input stream"
+                );
+            }
+            if let Some(error) = stream.take_async_error() {
+                tracing::warn!(
+                    target: "pertylizer::audio",
+                    error = %error,
+                    "audio input stream reported an asynchronous diagnostic"
+                );
+            }
         }
         self.stream = None;
         self.gui_consumer = None;
         self.engine_consumer = None;
         self.state = InputState::Idle;
+    }
+
+    /// Take one coalesced asynchronous input-stream diagnostic.
+    pub fn take_async_error(&mut self) -> Option<AudioError> {
+        self.stream
+            .as_mut()
+            .and_then(|stream| stream.take_async_error())
     }
 
     /// Start recording (must be monitoring first).
@@ -222,6 +242,12 @@ impl AudioInputManager {
     /// Check if the input stream is running.
     pub fn is_active(&self) -> bool {
         self.stream.as_ref().is_some_and(|s| s.is_running())
+    }
+}
+
+impl Drop for AudioInputManager {
+    fn drop(&mut self) {
+        self.stop_monitoring();
     }
 }
 

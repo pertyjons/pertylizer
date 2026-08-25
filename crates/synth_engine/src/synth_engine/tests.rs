@@ -49,6 +49,20 @@ fn test_engine_creation() {
 }
 
 #[test]
+fn processor_error_channel_does_not_mislabel_device_loss_as_an_underrun() {
+    let (mut engine, mut handle) = SynthEngine::new();
+
+    AudioProcessor::on_error(&mut engine, synth_core::AudioError::DeviceDisconnected);
+    assert!(handle.poll_event().is_none());
+
+    AudioProcessor::on_error(&mut engine, synth_core::AudioError::BufferUnderrun);
+    assert!(matches!(
+        handle.poll_event(),
+        Some(EngineEvent::BufferUnderrun)
+    ));
+}
+
+#[test]
 fn blocking_send_reports_timeout_when_configured_ring_stays_full() {
     let Some(capacity) = CommandCapacity::new(1) else {
         panic!("test command capacity must be non-zero");
@@ -1589,10 +1603,11 @@ fn a_second_failed_flush_is_refused_not_overwritten() {
 /// whatever was in the buffer.
 ///
 /// The mix is stereo. Before this was fixed the output loop wrote frame[0] and
-/// frame[1] and left the rest of each frame alone — and cpal does not promise a
-/// zeroed buffer, so on a 6-channel device the surplus channels carried
-/// undefined content. The test seeds the buffer with a value no render would
-/// produce, so an untouched channel is unmistakable.
+/// frame[1] and left the rest of each frame alone, so on a 6-channel device the
+/// surplus channels could carry undefined content. The engine still silences
+/// them explicitly; CPAL 0.18.2's pre-filled-silence guarantee is additional
+/// protection. The test seeds the buffer with a value no render would produce,
+/// so an untouched channel is unmistakable.
 #[test]
 fn surplus_output_channels_are_silenced() {
     let (mut engine, _handle) = SynthEngine::new();

@@ -4,6 +4,8 @@
 //! to work with different audio backends (cpal, JACK, PortAudio, etc.)
 //! without being tied to any specific implementation.
 
+use std::collections::VecDeque;
+
 use ringbuf::HeapProd;
 
 use super::types::*;
@@ -28,7 +30,13 @@ pub trait AudioProcessor: Send + 'static {
 
     /// Called when a stream error occurs.
     ///
-    /// Default implementation does nothing.
+    /// A backend may call this from its real-time data callback. Implementations
+    /// must obey the same no-allocation, no-locking, and no-I/O constraints as
+    /// [`Self::process`]. A real-time caller must pass an allocation-free
+    /// `AudioError` variant; passing an owned-string variant could deallocate on
+    /// the audio thread when the value is dropped.
+    ///
+    /// The default implementation does nothing.
     fn on_error(&mut self, _error: AudioError) {}
 
     /// Called when the stream is about to start.
@@ -102,6 +110,15 @@ pub trait AudioStream: Send {
     /// Stop the stream.
     fn stop(&mut self) -> AudioResult<()>;
 
+    /// Take one coalesced asynchronous backend diagnostic, if present.
+    ///
+    /// This is separate from [`Self::stop`]: the return value of a lifecycle
+    /// operation describes that operation, while errors reported independently
+    /// by an active stream are diagnostics for a non-real-time consumer.
+    fn take_async_error(&mut self) -> Option<AudioError> {
+        None
+    }
+
     /// Check if the stream is currently running.
     fn is_running(&self) -> bool;
 
@@ -121,6 +138,7 @@ pub trait AudioStream: Send {
 pub struct AudioHost {
     backend: Box<dyn AudioBackend>,
     active_stream: Option<Box<dyn AudioStream>>,
+    pending_async_errors: VecDeque<AudioError>,
 }
 
 /// Trait for audio host operations.
@@ -143,6 +161,20 @@ pub trait AudioHostTrait: Send {
 
     /// Stop the current stream.
     fn stop(&mut self) -> AudioResult<()>;
+
+    /// Take one coalesced asynchronous stream diagnostic, if present.
+    fn take_async_error(&mut self) -> Option<AudioError> {
+        None
+    }
+
+    /// Take a finite snapshot of all currently retained stream diagnostics.
+    ///
+    /// The default supports hosts that retain at most one diagnostic. Hosts
+    /// with a queue override this so callers never need an open-ended drain
+    /// loop while a backend may still be producing errors.
+    fn take_async_errors(&mut self) -> Vec<AudioError> {
+        self.take_async_error().into_iter().collect()
+    }
 
     /// Check if a stream is currently running.
     fn is_running(&self) -> bool;
@@ -169,7 +201,44 @@ impl AudioHost {
         Self {
             backend,
             active_stream: None,
+            pending_async_errors: VecDeque::new(),
         }
+    }
+
+    fn prepare_active_stream_replacement(&mut self) {
+        let Some(stream) = self.active_stream.as_mut() else {
+            return;
+        };
+        let stop_result = if stream.is_running() {
+            stream.stop()
+        } else {
+            Ok(())
+        };
+        let async_error = stream.take_async_error();
+        if let Err(error) = stop_result {
+            self.pending_async_errors.push_back(retired_stream_error(
+                RetiredStreamDiagnostic::StopFailed,
+                error,
+            ));
+        }
+        if let Some(error) = async_error {
+            self.pending_async_errors.push_back(retired_stream_error(
+                RetiredStreamDiagnostic::Asynchronous,
+                error,
+            ));
+        }
+    }
+
+    fn stop_active_stream(&mut self) -> AudioResult<()> {
+        let Some(stream) = self.active_stream.as_mut() else {
+            return Ok(());
+        };
+        let stop_result = stream.stop();
+        let async_error = stream.take_async_error();
+        if let Some(error) = async_error {
+            self.pending_async_errors.push_back(error);
+        }
+        stop_result
     }
 
     /// Get the backend name.
@@ -201,10 +270,7 @@ impl AudioHost {
         config: &StreamConfig,
         processor: P,
     ) -> AudioResult<&StreamInfo> {
-        // Stop existing stream if any
-        if let Some(ref mut stream) = self.active_stream {
-            let _ = stream.stop();
-        }
+        self.prepare_active_stream_replacement();
 
         // Create and start new stream
         let mut stream =
@@ -218,10 +284,29 @@ impl AudioHost {
 
     /// Stop the current stream.
     pub fn stop(&mut self) -> AudioResult<()> {
-        if let Some(ref mut stream) = self.active_stream {
-            stream.stop()?;
+        self.stop_active_stream()
+    }
+
+    /// Take one coalesced asynchronous stream diagnostic, if present.
+    pub fn take_async_error(&mut self) -> Option<AudioError> {
+        self.pending_async_errors.pop_front().or_else(|| {
+            self.active_stream
+                .as_mut()
+                .and_then(|stream| stream.take_async_error())
+        })
+    }
+
+    /// Take a finite snapshot of all currently retained stream diagnostics.
+    pub fn take_async_errors(&mut self) -> Vec<AudioError> {
+        let mut errors: Vec<_> = self.pending_async_errors.drain(..).collect();
+        if let Some(error) = self
+            .active_stream
+            .as_mut()
+            .and_then(|stream| stream.take_async_error())
+        {
+            errors.push(error);
         }
-        Ok(())
+        errors
     }
 
     /// Check if a stream is currently running.
@@ -260,10 +345,7 @@ impl AudioHostTrait for AudioHost {
         config: &StreamConfig,
         processor: Box<dyn AudioProcessor>,
     ) -> AudioResult<StreamInfo> {
-        // Stop existing stream if any
-        if let Some(ref mut stream) = self.active_stream {
-            let _ = stream.stop();
-        }
+        self.prepare_active_stream_replacement();
 
         // Create and start new stream
         let mut stream = self
@@ -277,10 +359,15 @@ impl AudioHostTrait for AudioHost {
     }
 
     fn stop(&mut self) -> AudioResult<()> {
-        if let Some(ref mut stream) = self.active_stream {
-            stream.stop()?;
-        }
-        Ok(())
+        self.stop_active_stream()
+    }
+
+    fn take_async_error(&mut self) -> Option<AudioError> {
+        Self::take_async_error(self)
+    }
+
+    fn take_async_errors(&mut self) -> Vec<AudioError> {
+        Self::take_async_errors(self)
     }
 
     fn is_running(&self) -> bool {
@@ -304,5 +391,188 @@ impl AudioHostTrait for AudioHost {
 
     fn default_input_device(&self) -> AudioResult<DeviceInfo> {
         self.backend.default_input_device()
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RetiredStreamDiagnostic {
+    StopFailed,
+    Asynchronous,
+}
+
+impl RetiredStreamDiagnostic {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::StopFailed => "stop failed",
+            Self::Asynchronous => "asynchronous diagnostic",
+        }
+    }
+}
+
+fn retired_stream_error(context: RetiredStreamDiagnostic, error: AudioError) -> AudioError {
+    AudioError::BackendError(format!(
+        "retired audio stream {}: {error}",
+        context.as_str()
+    ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    struct UnusedBackend;
+
+    impl AudioBackend for UnusedBackend {
+        fn name(&self) -> &str {
+            "unused"
+        }
+
+        fn is_available(&self) -> bool {
+            false
+        }
+
+        fn devices(&self) -> AudioResult<Vec<DeviceInfo>> {
+            Ok(Vec::new())
+        }
+
+        fn default_output_device(&self) -> AudioResult<DeviceInfo> {
+            Err(AudioError::NoDefaultDevice)
+        }
+
+        fn default_input_device(&self) -> AudioResult<DeviceInfo> {
+            Err(AudioError::NoDefaultDevice)
+        }
+
+        fn create_output_stream(
+            &self,
+            _device_id: Option<&str>,
+            config: &StreamConfig,
+            _processor: Box<dyn AudioProcessor>,
+        ) -> AudioResult<Box<dyn AudioStream>> {
+            Ok(Box::new(DiagnosticStream {
+                running: false,
+                stop_error: false,
+                diagnostic: None,
+                info: StreamInfo {
+                    sample_rate: config.sample_rate,
+                    buffer_size: config.buffer_size,
+                    channels: config.channels,
+                    output_latency: std::time::Duration::ZERO,
+                    input_latency: None,
+                },
+            }))
+        }
+    }
+
+    struct NoopProcessor;
+
+    impl AudioProcessor for NoopProcessor {
+        fn process(&mut self, _output: &mut [f32], _context: &AudioCallbackContext) {}
+    }
+
+    struct DiagnosticStream {
+        running: bool,
+        stop_error: bool,
+        diagnostic: Option<AudioError>,
+        info: StreamInfo,
+    }
+
+    impl AudioStream for DiagnosticStream {
+        fn start(&mut self) -> AudioResult<()> {
+            self.running = true;
+            Ok(())
+        }
+
+        fn stop(&mut self) -> AudioResult<()> {
+            if self.stop_error {
+                return Err(AudioError::BackendError("pause failed".to_string()));
+            }
+            self.running = false;
+            Ok(())
+        }
+
+        fn take_async_error(&mut self) -> Option<AudioError> {
+            self.diagnostic.take()
+        }
+
+        fn is_running(&self) -> bool {
+            self.running
+        }
+
+        fn info(&self) -> &StreamInfo {
+            &self.info
+        }
+
+        fn position(&self) -> u64 {
+            0
+        }
+    }
+
+    #[test]
+    fn asynchronous_diagnostic_does_not_change_successful_stop_result() {
+        let stream = DiagnosticStream {
+            running: true,
+            stop_error: false,
+            diagnostic: Some(AudioError::BackendError("xrun".to_string())),
+            info: StreamInfo {
+                sample_rate: DeviceSampleRate::DVD_QUALITY,
+                buffer_size: BufferSize::MEDIUM,
+                channels: ChannelCount::Stereo,
+                output_latency: std::time::Duration::ZERO,
+                input_latency: None,
+            },
+        };
+        let mut host = AudioHost {
+            backend: Box::new(UnusedBackend),
+            active_stream: Some(Box::new(stream)),
+            pending_async_errors: VecDeque::new(),
+        };
+
+        assert!(host.stop().is_ok());
+        let Some(AudioError::BackendError(message)) = host.take_async_error() else {
+            panic!("the asynchronous diagnostic was not retained");
+        };
+        assert_eq!(message, "xrun");
+        assert!(host.take_async_error().is_none());
+    }
+
+    #[test]
+    fn replacement_continues_after_retaining_the_retired_streams_stop_failure() {
+        let stream = DiagnosticStream {
+            running: true,
+            stop_error: true,
+            diagnostic: Some(AudioError::DeviceDisconnected),
+            info: StreamInfo {
+                sample_rate: DeviceSampleRate::DVD_QUALITY,
+                buffer_size: BufferSize::MEDIUM,
+                channels: ChannelCount::Stereo,
+                output_latency: std::time::Duration::ZERO,
+                input_latency: None,
+            },
+        };
+        let mut host = AudioHost {
+            backend: Box::new(UnusedBackend),
+            active_stream: Some(Box::new(stream)),
+            pending_async_errors: VecDeque::new(),
+        };
+        let config = StreamConfig {
+            sample_rate: DeviceSampleRate::DVD_QUALITY,
+            buffer_size: BufferSize::MEDIUM,
+            channels: ChannelCount::Stereo,
+        };
+
+        assert!(host.start_output(None, &config, NoopProcessor).is_ok());
+        let errors = host.take_async_errors();
+        assert_eq!(errors.len(), 2);
+        assert!(
+            errors[0]
+                .to_string()
+                .contains("retired audio stream stop failed")
+        );
+        assert!(
+            errors[1]
+                .to_string()
+                .contains("retired audio stream asynchronous diagnostic")
+        );
     }
 }

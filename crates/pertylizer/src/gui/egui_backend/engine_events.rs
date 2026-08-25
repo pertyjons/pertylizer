@@ -105,6 +105,22 @@ impl SynthApp {
     }
 
     pub(super) fn poll_engine_events(&mut self) {
+        if let Some(host) = self.host.as_mut() {
+            for error in host.take_async_errors() {
+                tracing::warn!(
+                    target: "pertylizer::audio",
+                    error = %error,
+                    "audio output stream reported an asynchronous diagnostic"
+                );
+            }
+        }
+        if let Some(error) = self.audio_input.take_async_error() {
+            tracing::warn!(
+                target: "pertylizer::audio",
+                error = %error,
+                "audio input stream reported an asynchronous diagnostic"
+            );
+        }
         while let Some(event) = self.handle.poll_event() {
             match event {
                 EngineEvent::NoteTriggered { note, velocity, .. } => {

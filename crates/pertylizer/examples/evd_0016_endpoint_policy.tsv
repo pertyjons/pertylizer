@@ -1,0 +1,16 @@
+platform	name	device_id	device_type	disallowed
+linux	sof-hda-dsp	alsa:hw:CARD=0,DEV=0	Unknown	false
+linux	Default ALSA Output	alsa:default	Unknown	true
+linux	PipeWire Sound Server	alsa:pipewire	Virtual	true
+linux	sof-hda-dsp	alsa:plughw:CARD=0,DEV=0	Unknown	true
+linux	sof-hda-dsp	alsa:sysdefault:CARD=sofhdadsp	Unknown	true
+linux	Loopback, Loopback PCM	alsa:hw:CARD=Loopback,DEV=0	Unknown	true
+macos	Built-in Output	coreaudio:AppleHDAEngineOutput	Speaker	false
+macos	BlackHole 2ch	coreaudio:BlackHole2ch_UID	Virtual	true
+macos	Soundflower 2ch	coreaudio:Soundflower_UID	Unknown	true
+macos	Loopback Audio	coreaudio:LoopbackAudio_UID	Unknown	true
+macos	Aggregate Device	coreaudio:AggregateDevice_UID	Unknown	true
+windows	Speakers	wasapi:{physical-speakers}	Speaker	false
+windows	Microphone Array	wasapi:{physical-microphone}	Microphone	false
+windows	CABLE Input	wasapi:{vb-cable}	Unknown	true
+windows	Dummy Output	wasapi:{dummy-output}	Virtual	true

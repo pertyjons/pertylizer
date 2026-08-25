@@ -7,6 +7,10 @@ description = "Experimental Sound Core V2 render core for Pertylizer (Phase 1)"
 authors.workspace = true
 license.workspace = true
 
+[[example]]
+name = "evd_0016_host_time"
+test = true
+
 [lints]
 workspace = true
 

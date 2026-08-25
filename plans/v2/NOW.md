@@ -29,9 +29,13 @@ sentence**, the one invariant with no executable check.
 ## Next stream: Phase 3 is not yet activatable
 
 Phase 3 remains `Not started`; Phase 2 is closed. Phase 3's only remaining entry prerequisite is
-[ADR-0022](decisions/ADR-0022-hardware-time-mapping.md), which still needs the simulated-host evidence and
-release-platform callback measurements named by that record. Phase 3 may not invent timestamp or latency semantics
-while building the harness.
+[ADR-0022](decisions/ADR-0022-hardware-time-mapping.md). Active
+[EVD-0016](evidence/phase-03/EVD-0016-host-time-mapping.md) now has a simulated-host harness and a diagnostic direct-PCM
+Linux input/output observation. The direct candidate is `Not supported` under that measured callback-priority
+configuration; this is not a universal Linux result. Final-revision retained platform artifacts, a replacement mapping,
+and the per-connection clock bridges or paired-reference arrival measurements for every initial V2 adapter remain
+missing. Phase 3 may not invent timestamp or latency semantics while completing
+that evidence.
 
 That evidence slice is the next pre-entry work. Building the harness and taking measurements does not activate
 scheduler implementation; accepting ADR-0022 against those results does. This is why the harness is on the critical
@@ -91,8 +95,9 @@ Phase lifecycle and completed gates are recorded once in
 ## Later owned work
 
 - Phase 3 owns renderer ingress, the publication arbiter and producer shares,
-  event scheduling, capacity measurements and ADR-0022's simulated-host
-  harness. Its exit work also owns ADR-0043's named offline late-clamp test:
+  event scheduling, capacity measurements, and completion of ADR-0022's
+  remaining platform, adapter, and replacement-mapping evidence. Its exit work
+  also owns ADR-0043's named offline late-clamp test:
   prove the stamp-window selector cannot present a late event, or window by
   clamped render position. That test is not an entry prerequisite.
 - Phase 4 owns current-project lowering and the long-running job contract.

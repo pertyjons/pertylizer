@@ -59,10 +59,13 @@ chrono = { version = "0.4.45", default-features = false, features = ["clock"] }
 strum = { version = "0.28.0", features = ["derive"] }
 
 # Audio I/O.
-# `realtime` promotes cpal's audio callback threads to RT scheduling
-# (SCHED_FIFO on Linux) without pulling in D-Bus. It degrades gracefully to
-# normal priority when the process lacks rtprio privileges.
-cpal = { version = "0.18.1", features = ["realtime"] }
+# `realtime` enables CPAL's promotion calls on Android, Windows, and eligible
+# Linux ALSA streams. CPAL builds Linux's helper without D-Bus, making that call
+# a no-op; actual Linux promotion requires `realtime-dbus`, whose RTKit/D-Bus
+# system dependency adds a packaging contract this dependency does not impose.
+# The manifest floor and resolved lock version bind EVD-0016's method and
+# provenance; its docs gate requires a new measurement when either changes.
+cpal = { version = "0.18.2", features = ["realtime"] }
 
 # MIDI I/O
 midir = "0.11.0"

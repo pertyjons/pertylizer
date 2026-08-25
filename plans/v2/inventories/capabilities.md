@@ -38,7 +38,7 @@ subsystems.
 
 ## Ledger
 
-Entries use `CAP-NNNN` identifiers. Next free identifier: `CAP-0508`.
+Entries use `CAP-NNNN` identifiers. Next free identifier: `CAP-0509`.
 
 Passes 1 and 2 were a **surface census**; pass 3 added the per-item enumeration the master plan requires. No entry in
 this ledger has a disposition yet.
@@ -632,7 +632,29 @@ not, and per the register vocabulary an entry without a disposition cannot be `C
 | CAP-0506 | Patches | `patch_wave_folder_bass` | GUI patch browser, MCP `list_example_patches` / `load_example_patch` / `apply_example_patch` | | | | Discovered |
 | CAP-0507 | Patches | `patch_waveshaper_lead` | GUI patch browser, MCP `list_example_patches` / `load_example_patch` / `apply_example_patch` | | | | Discovered |
 
-Next free identifier after this section: `CAP-0508`.
+### Audio-host diagnostics
+
+| ID | Surface | Capability | Reachable from | Disposition | V2 owner/replacement | Evidence | Status |
+|---|---|---|---|---|---|---|---|
+| CAP-0508 | Audio host | CPAL asynchronous stream-error classification, including `RealtimeDenied`, `Xrun`, route/device lifecycle, permission, resource, and configuration failures | CPAL output/input error callback → atomic bitset → `AudioStream::take_async_error`; GUI and MCP polling surface categorized diagnostics with device metadata or its explicit lookup failure through tracing, and a coalesced output `Xrun` also reaches `AudioProcessor::on_error`; EVD-0016 separately retains typed counters | | Phase 9 device lifecycle and structured diagnostics | `crates/pertylizer/src/audio/backends/cpal_backend.rs`; `EVD-0016` | Investigating |
+
+The V1 shipping path now records from CPAL's potentially real-time worker using
+atomics only. A pending output `Xrun` reaches the output processor without
+allocation when another data callback occurs. Independently, non-real-time GUI
+and MCP polling surfaces every category through tracing, including device loss
+when no later data callback can occur. Diagnostics retain source-device metadata
+or its explicit lookup failure, and a replaced stream is labeled as retired;
+shutdown drains retained input and
+output diagnostics. Repeated occurrences of one category coalesce between
+polls, while EVD-0016 retains exact counts. There is still no structured
+UI/event consumer for the remaining
+categories. The stable labels for all known CPAL 0.18.2 kinds
+prevent its richer errors from collapsing into indistinguishable text; the
+required non-exhaustive fallback is visibly `unknown`. The resolved-version
+evidence gate makes a later CPAL update fail until the versioned method is
+reviewed, but Phase 9 still owns durable lifecycle and UI diagnostics.
+
+Next free identifier after this section: `CAP-0509`.
 
 ## Audit passes
 
@@ -640,6 +662,7 @@ Next free identifier after this section: `CAP-0508`.
 |------------|-----------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------|------------------------------------|
 | 2026-08-12 | `dd69b657`      | MCP tools counted by parsing `#[tool(...)]` attributes and their following `async fn` in `crates/synth_mcp/src/server/tools/*.rs` and `server.rs` (219 unique, per-module breakdown recorded above). `EngineCommand`/`EngineEvent`/`ModuleType` counted with a brace-depth-aware top-level variant parser. Built-in patches counted from `pub use …::patch_*` in `crates/pertylizer/src/patches/mod.rs`. Group templates read from `categorized_group_templates()`. CLI read from `crates/pertylizer/src/main.rs`. OSC addresses counted in `crates/synth_osc_protocol/src/lib.rs`. GUI surfaces enumerated by module listing, **not** by action. | 47 entries; all four seeds reproduce. Known gaps: GUI capabilities are listed per view rather than per action/menu/shortcut, so no GUI *action* is yet individually classified; no entry has a disposition; per-item rows for the 219 tools, 76 commands, 75 module types, and 68 patches are pass-2 work.                                                                                                                                                                                                                                                                                                                            | Pending `EVD` record for P00B-T002 |
 | 2026-08-12 | `dd69b657`      | `AppShortcut::ALL` read from `gui/shortcuts.rs` (a closed 7-element table that also renders the menu); MCP annotation attributes counted by `rg -o` over `read_only_hint`/`destructive_hint`/`idempotent_hint`; `dialog_flow.rs` read for the startup ordering.                                                                                                                                                                                                                                                                                                                                                                                   | 8 entries added (`CAP-0048`..`CAP-0055`); `CAP-0011` upgraded to `Classified` once the read/mutate split was separated — annotation coverage turned out to be complete. Gaps remained deliberate at that pass: no entry yet had a disposition, and CAP-0017's external use was unknown. Current correction: CAP-0017 is a public Rust surface even without a workspace caller, and proposed ADR-0039 supplies an explicit disposition for independent review. | Pending `EVD` record for P00B-T002 |
+| 2026-08-25 | `c075ef10` | The shipping CPAL 0.18.1 output/input callbacks at this revision and the candidate CPAL 0.18.2 registry source identified by the updated `Cargo.lock` checksum were read. Every 0.18.2 `ErrorKind` was enumerated, and the stderr-only baseline consumer was traced before this change replaced it with an atomic handoff. | Added `CAP-0508`. The category labels preserve CPAL 0.18.2's richer distinction; the replacement callback path is allocation-, lock-, and logging-free, while non-real-time GUI/MCP polling surfaces coalesced diagnostics and the row leaves durable structured delivery as Phase 9 work. | `Cargo.lock`; `cpal_backend.rs`; EVD-0016; independent uncommitted review |
 
 Completion requires each discovered entry to have reachability, disposition, V2 ownership, and verification. Matching
 the seed counts alone is insufficient.

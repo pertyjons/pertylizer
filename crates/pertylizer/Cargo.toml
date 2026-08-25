@@ -8,6 +8,10 @@ authors.workspace = true
 license.workspace = true
 default-run = "pertylizer"
 
+[[example]]
+name = "evd_0016_cpal_timestamps"
+test = true
+
 [lints]
 workspace = true
 
@@ -31,11 +35,9 @@ rt-profiling = ["synth_engine/rt-profiling"]
 # live UI over AccessKit. Dormant unless `EGUI_INSPECTION=1` is set at runtime.
 # Kept out of default so release/CI builds don't link accesskit unnecessarily.
 egui-inspection = ["eframe/inspection"]
-# A native PipeWire host (Linux) is intentionally NOT wired up yet: cpal 0.18.1
-# declares its optional dependency as `pipewire = "^0.10"`, but pipewire-rs is
-# only published up to 0.8.0 on crates.io, so even a `cpal/pipewire` passthrough
-# makes the whole workspace unresolvable. Revisit once that lands. (We already
-# reach PipeWire via the ALSA host's pipewire-alsa shim in the meantime.)
+# CPAL's native PipeWire host is now resolvable, but enabling it adds a Linux
+# system-library dependency and a second host/device-selection contract. Keep it
+# out until packaging and release-platform behavior are specified and tested.
 
 [dependencies]
 synth_core = { path = "../synth_core" }
@@ -135,10 +137,9 @@ chrono = { workspace = true }
 [dev-dependencies]
 jsonschema = { workspace = true }
 hound = { workspace = true }
-# EVD-0014 compares V1 against V2, and the Phase 2 exit gate requires the two arms
-# to share a binary — which needs both engines linked into one target. Dev-only, so
-# it never reaches the delivered dependency graph. `crate_boundary` names this
-# exception and checks that only the two harnesses under `examples/` use it.
+# EVD-0014 compares V1 against V2 in one binary, and EVD-0016 embeds V2's quantum
+# in its CPAL artifact. Dev-only, so neither reaches the delivered dependency
+# graph. `crate_boundary` names the exception and pins the permitted harnesses.
 synth_engine_v2 = { path = "../synth_engine_v2" }
 
 [[bin]]

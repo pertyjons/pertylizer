@@ -258,6 +258,8 @@ struct CpalStream {
     info: StreamInfo,
     running: Arc<AtomicBool>,
     position: Arc<AtomicU64>,
+    async_errors: Arc<CpalAsyncErrorState>,
+    diagnostic_source: CpalDiagnosticSource,
 }
 
 impl CpalStream {
@@ -267,6 +269,8 @@ impl CpalStream {
         mut processor: Box<dyn AudioProcessor>,
     ) -> AudioResult<Self> {
         let channels = config.channels.count();
+        let diagnostic_source =
+            CpalDiagnosticSource::from_device(&device, CpalStreamDirection::Output);
 
         // Build cpal config
         let cpal_config = CpalStreamConfig {
@@ -296,9 +300,12 @@ impl CpalStream {
 
         let running = Arc::new(AtomicBool::new(false));
         let position = Arc::new(AtomicU64::new(0));
+        let async_errors = Arc::new(CpalAsyncErrorState::default());
         // Clone for the callback
         let running_clone = Arc::clone(&running);
         let position_clone = Arc::clone(&position);
+        let async_errors_rt = Arc::clone(&async_errors);
+        let async_errors_callback = Arc::clone(&async_errors);
         let sample_rate = config.sample_rate;
         let start_time = Instant::now();
 
@@ -313,10 +320,12 @@ impl CpalStream {
                     let _denormal_guard = DenormalGuard::new();
 
                     if !running_clone.load(Ordering::Relaxed) {
-                        // Fill with silence when not running
+                        // Keep stopped-stream silence engine-owned even though
+                        // CPAL 0.18.2 also pre-fills every output buffer.
                         data.fill(0.0);
                         return;
                     }
+                    async_errors_rt.notify_processor(processor.as_mut());
 
                     let frames = data.len() / channels as usize;
                     let current_position = position_clone.load(Ordering::Relaxed);
@@ -348,8 +357,7 @@ impl CpalStream {
                     position_clone.fetch_add(frames as u64, Ordering::Relaxed);
                 },
                 move |err| {
-                    // Log to stderr (non-RT but acceptable for error paths)
-                    eprintln!("Audio stream error: {err}");
+                    async_errors_callback.record_output(err.kind());
                 },
                 None, // No timeout, blocking mode
             )
@@ -370,6 +378,8 @@ impl CpalStream {
             info,
             running,
             position,
+            async_errors,
+            diagnostic_source,
         })
     }
 }
@@ -406,6 +416,11 @@ impl AudioStream for CpalStream {
         Ok(())
     }
 
+    fn take_async_error(&mut self) -> Option<AudioError> {
+        self.async_errors
+            .take_error(CpalStreamDirection::Output, &self.diagnostic_source)
+    }
+
     fn is_running(&self) -> bool {
         self.running.load(Ordering::Relaxed)
     }
@@ -428,6 +443,8 @@ struct CpalInputStream {
     info: StreamInfo,
     running: Arc<AtomicBool>,
     position: Arc<AtomicU64>,
+    async_errors: Arc<CpalAsyncErrorState>,
+    diagnostic_source: CpalDiagnosticSource,
 }
 
 impl CpalInputStream {
@@ -438,6 +455,8 @@ impl CpalInputStream {
         mut gui_producer: HeapProd<synth_core::StereoSample>,
     ) -> AudioResult<Self> {
         let channels = config.channels.count();
+        let diagnostic_source =
+            CpalDiagnosticSource::from_device(&device, CpalStreamDirection::Input);
 
         let cpal_config = CpalStreamConfig {
             channels,
@@ -465,8 +484,10 @@ impl CpalInputStream {
 
         let running = Arc::new(AtomicBool::new(false));
         let position = Arc::new(AtomicU64::new(0));
+        let async_errors = Arc::new(CpalAsyncErrorState::default());
         let running_clone = Arc::clone(&running);
         let position_clone = Arc::clone(&position);
+        let async_errors_callback = Arc::clone(&async_errors);
 
         let stream = device
             .build_input_stream(
@@ -489,7 +510,7 @@ impl CpalInputStream {
                     position_clone.fetch_add(frames, Ordering::Relaxed);
                 },
                 move |err| {
-                    eprintln!("Audio input stream error: {err}");
+                    async_errors_callback.record_input(err.kind());
                 },
                 None,
             )
@@ -500,6 +521,8 @@ impl CpalInputStream {
             info,
             running,
             position,
+            async_errors,
+            diagnostic_source,
         })
     }
 }
@@ -536,6 +559,11 @@ impl AudioStream for CpalInputStream {
         Ok(())
     }
 
+    fn take_async_error(&mut self) -> Option<AudioError> {
+        self.async_errors
+            .take_error(CpalStreamDirection::Input, &self.diagnostic_source)
+    }
+
     fn is_running(&self) -> bool {
         self.running.load(Ordering::Relaxed)
     }
@@ -555,9 +583,197 @@ fn stereo_sample_from_input(input_frame: &[f32]) -> synth_core::StereoSample {
     synth_core::StereoSample::new(left, right)
 }
 
+const UNKNOWN_CPAL_ERROR_BIT: u64 = 1 << 63;
+const KNOWN_CPAL_ERROR_KINDS: [cpal::ErrorKind; 14] = [
+    cpal::ErrorKind::DeviceBusy,
+    cpal::ErrorKind::DeviceChanged,
+    cpal::ErrorKind::DeviceNotAvailable,
+    cpal::ErrorKind::HostUnavailable,
+    cpal::ErrorKind::InvalidInput,
+    cpal::ErrorKind::PermissionDenied,
+    cpal::ErrorKind::RealtimeDenied,
+    cpal::ErrorKind::ResourceExhausted,
+    cpal::ErrorKind::StreamInvalidated,
+    cpal::ErrorKind::UnsupportedConfig,
+    cpal::ErrorKind::UnsupportedOperation,
+    cpal::ErrorKind::Xrun,
+    cpal::ErrorKind::BackendError,
+    cpal::ErrorKind::Other,
+];
+
+const fn cpal_error_bit(kind: cpal::ErrorKind) -> u64 {
+    use cpal::ErrorKind as K;
+    match kind {
+        K::DeviceBusy => 1 << 0,
+        K::DeviceChanged => 1 << 1,
+        K::DeviceNotAvailable => 1 << 2,
+        K::HostUnavailable => 1 << 3,
+        K::InvalidInput => 1 << 4,
+        K::PermissionDenied => 1 << 5,
+        K::RealtimeDenied => 1 << 6,
+        K::ResourceExhausted => 1 << 7,
+        K::StreamInvalidated => 1 << 8,
+        K::UnsupportedConfig => 1 << 9,
+        K::UnsupportedOperation => 1 << 10,
+        K::Xrun => 1 << 11,
+        K::BackendError => 1 << 12,
+        K::Other => 1 << 13,
+        _ => UNKNOWN_CPAL_ERROR_BIT,
+    }
+}
+
+#[derive(Default)]
+struct CpalAsyncErrorState {
+    diagnostic_bits: AtomicU64,
+    output_xrun_pending: AtomicBool,
+}
+
+impl CpalAsyncErrorState {
+    fn record_output(&self, kind: cpal::ErrorKind) {
+        self.record_diagnostic(kind);
+        if kind == cpal::ErrorKind::Xrun {
+            // Multiple xruns before the next output callback deliberately
+            // coalesce into one processor notification. EVD-0016 owns exact
+            // occurrence counters; this path owns bounded fault signaling.
+            self.output_xrun_pending.store(true, Ordering::Release);
+        }
+    }
+
+    fn record_input(&self, kind: cpal::ErrorKind) {
+        self.record_diagnostic(kind);
+    }
+
+    fn record_diagnostic(&self, kind: cpal::ErrorKind) {
+        let bit = cpal_error_bit(kind);
+        // Repeated occurrences of the same category coalesce until the
+        // non-real-time consumer drains this bitset.
+        self.diagnostic_bits.fetch_or(bit, Ordering::Release);
+    }
+
+    fn notify_processor(&self, processor: &mut dyn AudioProcessor) {
+        if self.output_xrun_pending.swap(false, Ordering::AcqRel) {
+            processor.on_error(AudioError::BufferUnderrun);
+        }
+    }
+
+    fn take_error(
+        &self,
+        direction: CpalStreamDirection,
+        source: &CpalDiagnosticSource,
+    ) -> Option<AudioError> {
+        let bits = self.diagnostic_bits.swap(0, Ordering::AcqRel);
+        if bits == 0 {
+            return None;
+        }
+        let mut labels = Vec::new();
+        for kind in KNOWN_CPAL_ERROR_KINDS {
+            if bits & cpal_error_bit(kind) != 0 {
+                labels.push(cpal_error_category(kind).as_str());
+            }
+        }
+        if bits & UNKNOWN_CPAL_ERROR_BIT != 0 {
+            labels.push("unknown");
+        }
+        Some(AudioError::BackendError(format!(
+            "one or more asynchronous CPAL {} stream errors for {}: {}",
+            direction.as_str(),
+            source.as_str(),
+            labels.join(", ")
+        )))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CpalStreamDirection {
+    Input,
+    Output,
+}
+
+impl CpalStreamDirection {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Input => "input",
+            Self::Output => "output",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[must_use]
+struct CpalDiagnosticSource(String);
+
+impl CpalDiagnosticSource {
+    fn from_device(device: &Device, direction: CpalStreamDirection) -> Self {
+        let name = device.description().map_or_else(
+            |error| format!("<name unavailable: {error}>"),
+            |description| description.name().replace(['\r', '\n'], " "),
+        );
+        let id = device.id().map_or_else(
+            |error| format!("<id unavailable: {error}>"),
+            |id| id.to_string().replace(['\r', '\n'], " "),
+        );
+        Self(format!("{} device {name:?} ({id})", direction.as_str()))
+    }
+
+    #[cfg(test)]
+    fn for_test(value: &str) -> Self {
+        Self(value.to_string())
+    }
+
+    fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+struct CpalErrorCategory(&'static str);
+
+impl CpalErrorCategory {
+    const fn as_str(self) -> &'static str {
+        self.0
+    }
+}
+
+const fn cpal_error_category(kind: cpal::ErrorKind) -> CpalErrorCategory {
+    use cpal::ErrorKind as K;
+    CpalErrorCategory(match kind {
+        K::DeviceBusy => "device-busy",
+        K::DeviceChanged => "device-changed",
+        K::DeviceNotAvailable => "device-not-available",
+        K::HostUnavailable => "host-unavailable",
+        K::InvalidInput => "invalid-input",
+        K::PermissionDenied => "permission-denied",
+        K::RealtimeDenied => "realtime-denied",
+        K::ResourceExhausted => "resource-exhausted",
+        K::StreamInvalidated => "stream-invalidated",
+        K::UnsupportedConfig => "unsupported-config",
+        K::UnsupportedOperation => "unsupported-operation",
+        K::Xrun => "xrun",
+        K::BackendError => "backend-error",
+        K::Other => "other",
+        _ => "unknown",
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Default)]
+    struct ErrorRecordingProcessor {
+        underruns: usize,
+    }
+
+    impl AudioProcessor for ErrorRecordingProcessor {
+        fn process(&mut self, _output: &mut [f32], _context: &AudioCallbackContext) {}
+
+        fn on_error(&mut self, error: AudioError) {
+            if let AudioError::BufferUnderrun = error {
+                self.underruns += 1;
+            }
+        }
+    }
 
     #[test]
     fn input_frame_conversion_duplicates_mono_and_selects_first_stereo_pair() {
@@ -569,5 +785,100 @@ mod tests {
             stereo_sample_from_input(&[0.25, -0.5, 0.75]),
             synth_core::StereoSample::new(0.25, -0.5)
         );
+    }
+
+    #[test]
+    fn known_cpal_018_error_kinds_have_stable_diagnostic_categories() {
+        use cpal::ErrorKind as K;
+
+        // ErrorKind is non-exhaustive, so the wildcard is required. The
+        // evidence dependency gate makes a resolved CPAL version change fail
+        // until the probe/analyzer are updated; that review must also extend
+        // this known-variant table. A newly introduced kind remains visibly
+        // "unknown" rather than being mislabeled as an existing category.
+        let cases = [
+            (K::DeviceBusy, "device-busy"),
+            (K::DeviceChanged, "device-changed"),
+            (K::DeviceNotAvailable, "device-not-available"),
+            (K::HostUnavailable, "host-unavailable"),
+            (K::InvalidInput, "invalid-input"),
+            (K::PermissionDenied, "permission-denied"),
+            (K::RealtimeDenied, "realtime-denied"),
+            (K::ResourceExhausted, "resource-exhausted"),
+            (K::StreamInvalidated, "stream-invalidated"),
+            (K::UnsupportedConfig, "unsupported-config"),
+            (K::UnsupportedOperation, "unsupported-operation"),
+            (K::Xrun, "xrun"),
+            (K::BackendError, "backend-error"),
+            (K::Other, "other"),
+        ];
+        let case_count = cases.len();
+        assert_eq!(case_count, KNOWN_CPAL_ERROR_KINDS.len());
+        let mut observed_bits = 0_u64;
+        for ((kind, expected), listed_kind) in cases.into_iter().zip(KNOWN_CPAL_ERROR_KINDS) {
+            assert_eq!(kind, listed_kind);
+            assert_eq!(cpal_error_category(kind).as_str(), expected);
+            let bit = cpal_error_bit(kind);
+            assert_eq!(bit.count_ones(), 1);
+            assert_eq!(bit & UNKNOWN_CPAL_ERROR_BIT, 0);
+            assert_eq!(observed_bits & bit, 0, "duplicate bit for {kind:?}");
+            observed_bits |= bit;
+        }
+        let Ok(case_count_u32) = u32::try_from(case_count) else {
+            panic!("CPAL error-kind table does not fit a u32");
+        };
+        assert_eq!(observed_bits.count_ones(), case_count_u32);
+    }
+
+    #[test]
+    fn asynchronous_errors_cross_the_callback_without_logging_or_allocation() {
+        let state = CpalAsyncErrorState::default();
+        state.record_output(cpal::ErrorKind::Xrun);
+        state.record_output(cpal::ErrorKind::Xrun);
+        state.record_output(cpal::ErrorKind::StreamInvalidated);
+        state.record_output(cpal::ErrorKind::RealtimeDenied);
+
+        let mut processor = ErrorRecordingProcessor::default();
+        state.notify_processor(&mut processor);
+        assert_eq!(processor.underruns, 1);
+        state.notify_processor(&mut processor);
+        assert_eq!(processor.underruns, 1);
+
+        let source = CpalDiagnosticSource::for_test("test output");
+        let Some(AudioError::BackendError(summary)) =
+            state.take_error(CpalStreamDirection::Output, &source)
+        else {
+            panic!("asynchronous error summary was not retained off-thread");
+        };
+        assert!(summary.contains("test output"));
+        assert!(summary.contains("xrun"));
+        assert!(summary.contains("stream-invalidated"));
+        assert!(summary.contains("realtime-denied"));
+        assert!(
+            state
+                .take_error(CpalStreamDirection::Output, &source)
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn input_errors_never_schedule_output_processor_notifications() {
+        let state = CpalAsyncErrorState::default();
+        state.record_input(cpal::ErrorKind::Xrun);
+        state.record_input(cpal::ErrorKind::DeviceNotAvailable);
+
+        let mut processor = ErrorRecordingProcessor::default();
+        state.notify_processor(&mut processor);
+        assert_eq!(processor.underruns, 0);
+
+        let source = CpalDiagnosticSource::for_test("test input");
+        let Some(AudioError::BackendError(summary)) =
+            state.take_error(CpalStreamDirection::Input, &source)
+        else {
+            panic!("input diagnostic was not retained off-thread");
+        };
+        assert!(summary.contains("test input"));
+        assert!(summary.contains("xrun"));
+        assert!(summary.contains("device-not-available"));
     }
 }

@@ -4433,8 +4433,12 @@ impl AudioProcessor for SynthEngine {
     }
 
     fn on_error(&mut self, error: synth_core::AudioError) {
-        let _ = error;
-        let _ = self.event_producer.try_push(EngineEvent::BufferUnderrun);
+        // The real-time processor channel models xruns only. Device lifecycle
+        // and the remaining CPAL categories use AudioHost's non-real-time
+        // asynchronous diagnostic channel, where they retain their identity.
+        if matches!(error, synth_core::AudioError::BufferUnderrun) {
+            let _ = self.event_producer.try_push(EngineEvent::BufferUnderrun);
+        }
     }
 }
 

@@ -3,7 +3,9 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
+import subprocess
 import sys
 from pathlib import Path
 from urllib.parse import unquote
@@ -46,6 +48,36 @@ ADR_STATUS_FIELD = re.compile(
     re.MULTILINE,
 )
 MAX_PROSE_WIDTH = 120
+EVIDENCE_SELF_TESTS = (
+    Path("plans/v2/evidence/phase-03/evd_0016_analyse.py"),
+)
+EVD_0016_ANALYZER_SUCCESS = re.compile(
+    r"^EVD-0016 analyzer controls passed \(valid single-direction \+ duplex "
+    r"positive \+ 19 classified mutations \+ "
+    r"2 F4 negative outcomes \+ RealtimeDenied warning \+ release coverage \+ "
+    r"15 endpoint cases\)\.$",
+    re.MULTILINE,
+)
+EVD_0016_SIMULATOR = Path(
+    "crates/synth_engine_v2/examples/evd_0016_host_time.rs"
+)
+EVD_0016_RECORD = Path("plans/v2/evidence/phase-03/EVD-0016-host-time-mapping.md")
+EVD_0016_SIMULATOR_DIGEST = re.compile(
+    r"provisional simulator CSV.*?SHA-256\s+`([0-9a-f]{64})`", re.DOTALL
+)
+CPAL_DEPENDENCY_REQUIREMENT = re.compile(
+    r'^cpal\s*=\s*\{[^\n]*version\s*=\s*"([^"]+)"', re.MULTILINE
+)
+CPAL_LOCK_VERSION = re.compile(
+    r'^\[\[package\]\]\nname = "cpal"\nversion = "([^"]+)"', re.MULTILINE
+)
+CPAL_PROBE_VERSION = re.compile(
+    r'^const CPAL_VERSION: &str = "([^"]+)";$', re.MULTILINE
+)
+CPAL_ANALYZER_VERSION = re.compile(r'^CPAL_VERSION = "([^"]+)"$', re.MULTILINE)
+CPAL_MEMBER_WORKSPACE_DEPENDENCY = re.compile(
+    r'^cpal\s*=\s*\{\s*workspace\s*=\s*true\s*\}\s*$', re.MULTILINE
+)
 
 
 def local_link_target(source: Path, raw_target: str) -> tuple[Path, str] | None:
@@ -345,6 +377,124 @@ def check_evidence_ids(errors: list[str]) -> None:
     unique_record_ids(EVD_FILE, V2_ROOT / "evidence", "EVD", errors)
 
 
+def check_evidence_harnesses(errors: list[str]) -> None:
+    for relative_path in EVIDENCE_SELF_TESTS:
+        analyzer = REPO_ROOT / relative_path
+        if not analyzer.is_file():
+            errors.append(f"{relative_path}: required evidence self-test is missing")
+            continue
+        completed = subprocess.run(
+            [sys.executable, "-B", str(analyzer), "--self-test"],
+            cwd=REPO_ROOT,
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            detail = completed.stderr.strip() or completed.stdout.strip() or "no diagnostic"
+            errors.append(f"{relative_path}: self-test failed: {detail}")
+        elif EVD_0016_ANALYZER_SUCCESS.search(completed.stdout) is None:
+            errors.append(f"{relative_path}: self-test omitted its control summary")
+
+
+def check_evidence_simulators(errors: list[str]) -> None:
+    simulator = REPO_ROOT / EVD_0016_SIMULATOR
+    if not simulator.is_file():
+        errors.append(f"{EVD_0016_SIMULATOR}: required evidence simulator is missing")
+        return
+    try:
+        completed = subprocess.run(
+            [
+                "cargo",
+                "run",
+                "--quiet",
+                "-p",
+                "synth_engine_v2",
+                "--example",
+                "evd_0016_host_time",
+            ],
+            cwd=REPO_ROOT,
+            check=False,
+            capture_output=True,
+        )
+    except OSError as error:
+        errors.append(f"{EVD_0016_SIMULATOR}: cannot execute control: {error}")
+        return
+    if completed.returncode != 0:
+        detail_bytes = completed.stderr.strip() or completed.stdout.strip()
+        detail = detail_bytes.decode(errors="replace") if detail_bytes else "no diagnostic"
+        errors.append(f"{EVD_0016_SIMULATOR}: control run failed: {detail}")
+        return
+    record = REPO_ROOT / EVD_0016_RECORD
+    try:
+        record_text = record.read_text(encoding="utf-8")
+    except OSError as error:
+        errors.append(f"{EVD_0016_RECORD}: cannot read simulator digest: {error}")
+        return
+    digests = EVD_0016_SIMULATOR_DIGEST.findall(record_text)
+    if len(digests) != 1:
+        errors.append(f"{EVD_0016_RECORD}: expected one simulator SHA-256")
+        return
+    observed = hashlib.sha256(completed.stdout).hexdigest()
+    if observed != digests[0]:
+        errors.append(
+            f"{EVD_0016_RECORD}: simulator SHA-256 is stale "
+            f"(recorded {digests[0]}, observed {observed})"
+        )
+
+
+def check_evidence_dependency_pins(errors: list[str]) -> None:
+    member_manifest = REPO_ROOT / "crates/pertylizer/Cargo.toml"
+    try:
+        member_text = member_manifest.read_text(encoding="utf-8")
+    except OSError as error:
+        errors.append(
+            f"{member_manifest.relative_to(REPO_ROOT)}: cannot read CPAL workspace dependency: {error}"
+        )
+    else:
+        matches = CPAL_MEMBER_WORKSPACE_DEPENDENCY.findall(member_text)
+        if len(matches) != 1:
+            errors.append(
+                "crates/pertylizer/Cargo.toml: expected one CPAL workspace dependency"
+            )
+    declarations = (
+        (
+            REPO_ROOT / "Cargo.toml",
+            CPAL_DEPENDENCY_REQUIREMENT,
+            "workspace CPAL dependency requirement",
+        ),
+        (REPO_ROOT / "Cargo.lock", CPAL_LOCK_VERSION, "resolved CPAL dependency"),
+        (
+            REPO_ROOT / "crates/pertylizer/examples/evd_0016_cpal_timestamps.rs",
+            CPAL_PROBE_VERSION,
+            "EVD-0016 probe CPAL version",
+        ),
+        (
+            V2_ROOT / "evidence/phase-03/evd_0016_analyse.py",
+            CPAL_ANALYZER_VERSION,
+            "EVD-0016 analyzer CPAL version",
+        ),
+    )
+    versions: list[tuple[str, str]] = []
+    for path, pattern, label in declarations:
+        try:
+            text = path.read_text(encoding="utf-8")
+        except OSError as error:
+            errors.append(f"{path.relative_to(REPO_ROOT)}: cannot read {label}: {error}")
+            continue
+        matches = pattern.findall(text)
+        if len(matches) != 1:
+            errors.append(
+                f"{path.relative_to(REPO_ROOT)}: expected one {label} declaration"
+            )
+            continue
+        versions.append((label, matches[0]))
+    observed = {version for _, version in versions}
+    if len(observed) > 1:
+        detail = ", ".join(f"{label}={version}" for label, version in versions)
+        errors.append(f"EVD-0016 CPAL version declarations disagree: {detail}")
+
+
 def check_spec_prefixes(errors: list[str]) -> None:
     prefix_pattern = re.compile(
         r"^\| Invariant prefix\s*\|\s*`?([A-Z][A-Z0-9_]*)`?\s*\|$",
@@ -455,6 +605,9 @@ def main() -> int:
     check_links(errors)
     check_decision_index(errors)
     check_evidence_ids(errors)
+    check_evidence_harnesses(errors)
+    check_evidence_simulators(errors)
+    check_evidence_dependency_pins(errors)
     check_spec_prefixes(errors)
     check_active_document_width(errors)
     check_derived_source_citations(errors)

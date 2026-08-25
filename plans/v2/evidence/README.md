@@ -14,13 +14,14 @@ evidence/
 │   ├── EVD-0001-reference-corpus.md
 │   └── EVD-0002-v1-resource-baseline.md
 └── phase-03/
-    └── EVD-00NN-callback-partition-invariance.md
+    ├── EVD-0016-host-time-mapping.md
+    └── evd_0016_analyse.py
 ```
 
 Create phase directories only when they contain evidence. Allocate `EVD`
 identifiers globally rather than restarting numbering in each phase.
 
-Next free identifier: `EVD-0016`. Update this line when you allocate one.
+Next free identifier: `EVD-0017`. Update this line when you allocate one.
 
 ## Status and retention vocabulary
 
@@ -52,6 +53,12 @@ Copy [../templates/evidence.md](../templates/evidence.md). Every record must ide
 - environment, inputs, method, and commands;
 - summarized observations and retained artifacts;
 - interpretation, limitations, and conclusion.
+
+An `Active` record whose source is still an uncommitted worktree may state
+`Source revision: Pending` only while it also says that no result is retained
+acceptance evidence. Before the record becomes `Complete`, informs an accepted
+ADR, or opens a phase gate, the exact committed source revision and retained
+artifacts are mandatory.
 
 An assertion such as "faster", "real-time safe", "equivalent", or "deterministic"
 is incomplete without a metric, threshold, automated test, or explicit review criterion.

@@ -1566,8 +1566,22 @@ impl eframe::App for SynthApp {
         self.settings.save();
 
         // Stop audio
+        self.audio_input.stop_monitoring();
         if let Some(ref mut host) = self.host {
-            let _ = host.stop();
+            if let Err(error) = host.stop() {
+                tracing::error!(
+                    target: "pertylizer::audio",
+                    error = %error,
+                    "failed to stop audio output stream"
+                );
+            }
+            for error in host.take_async_errors() {
+                tracing::warn!(
+                    target: "pertylizer::audio",
+                    error = %error,
+                    "audio output stream reported an asynchronous diagnostic during shutdown"
+                );
+            }
         }
     }
 }

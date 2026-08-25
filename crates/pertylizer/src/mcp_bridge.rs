@@ -174,14 +174,30 @@ impl AppSynthBridge {
             crate::audio::input::AudioInputManager::new(),
         ));
         let drain_input = Arc::downgrade(&audio_input);
-        let _ = std::thread::Builder::new()
+        let drain_thread = std::thread::Builder::new()
             .name("mcp-recording-drain".to_string())
             .spawn(move || {
                 while let Some(input) = drain_input.upgrade() {
-                    input.lock().drain_gui_buffer();
+                    let mut input = input.lock();
+                    input.drain_gui_buffer();
+                    if let Some(error) = input.take_async_error() {
+                        tracing::warn!(
+                            target: "pertylizer::audio",
+                            error = %error,
+                            "MCP audio input stream reported an asynchronous diagnostic"
+                        );
+                    }
+                    drop(input);
                     std::thread::sleep(std::time::Duration::from_millis(10));
                 }
             });
+        if let Err(error) = drain_thread {
+            tracing::error!(
+                target: "pertylizer::audio",
+                error = %error,
+                "failed to start MCP audio-input drain thread"
+            );
+        }
         Self {
             session,
             shared,

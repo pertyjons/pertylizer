@@ -24,10 +24,10 @@ fn read(path: &Path) -> String {
 /// The one crate allowed to name the experimental crate, and only as a
 /// dev-dependency.
 ///
-/// EVD-0014 compares V1 against V2, and the Phase 2 exit gate requires the two
-/// arms to share a binary — which cannot be done without linking both engines
-/// into one target. Cargo forbids an optional dev-dependency, so a feature gate
-/// is not available and the exception has to be named here instead.
+/// EVD-0014 compares V1 against V2, and EVD-0016 embeds the V2 quantum in its
+/// release-platform artifact. Neither can do that without linking the
+/// experimental crate into a non-shipping target. Cargo forbids an optional
+/// dev-dependency, so the exception has to be named here instead.
 const MEASUREMENT_CONSUMER: &str = "pertylizer";
 
 /// The **exact** line the measurement exception is permitted to be.
@@ -48,11 +48,12 @@ const PERMITTED_DECLARATION: &str = r#"synth_engine_v2 = { path = "../synth_engi
 /// The only files permitted to reach the experimental crate from that consumer.
 ///
 /// This is what keeps the exception from widening into a real coupling: the
-/// dependency may exist, but only these two targets may use it, and neither
+/// dependency may exist, but only these three targets may use it, and none
 /// ships.
-const MEASUREMENT_HARNESSES: [&str; 2] = [
+const MEASUREMENT_HARNESSES: [&str; 3] = [
     "examples/evd_0013_equivalence.rs",
     "examples/evd_0014_cost.rs",
+    "examples/evd_0016_cpal_timestamps.rs",
 ];
 
 /// Nothing that ships depends on the experimental crate, and the one thing that
@@ -156,10 +157,10 @@ fn nothing_that_ships_depends_on_the_experimental_crate() {
 
 /// Exactly one crate may reach it at all, and only for measurement.
 ///
-/// The dev edge is where EVD-0014's exception lives: the Phase 2 exit gate
-/// requires its two arms to share a binary, and Cargo forbids an optional
-/// dev-dependency, so a feature gate is not available. Resolved by Cargo for the
-/// same reason as above.
+/// The dev edge is where the measurement exceptions live: EVD-0014 requires
+/// both engines in one binary, while EVD-0016 reads V2's quantum. Cargo forbids
+/// an optional dev-dependency, so a feature gate is not available. Resolved by
+/// Cargo for the same reason as above.
 #[test]
 fn only_the_measurement_consumer_reaches_it_at_all() {
     let all = dependents("normal,build,dev");

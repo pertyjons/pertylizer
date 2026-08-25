@@ -678,7 +678,7 @@ Used by:
 
 Used by:
 
-- cpal 0.18.1 — <https://github.com/RustAudio/cpal>
+- cpal 0.18.2 — <https://github.com/RustAudio/cpal>
 - self_cell 1.3.0 — <https://github.com/Voultapher/self_cell>
 
 <details>
@@ -1766,8 +1766,8 @@ Used by:
 - ab_glyph_rasterizer 0.1.10 — <https://github.com/alexheretic/ab-glyph>
 - dunce 1.0.5 — <https://gitlab.com/kornelski/dunce>
 - owned_ttf_parser 0.25.1 — <https://github.com/alexheretic/owned-ttf-parser>
-- rmcp-macros 3.1.0 — <https://github.com/modelcontextprotocol/rust-sdk/>
-- rmcp 3.1.0 — <https://github.com/modelcontextprotocol/rust-sdk/>
+- rmcp-macros 3.1.2 — <https://github.com/modelcontextprotocol/rust-sdk/>
+- rmcp 3.1.2 — <https://github.com/modelcontextprotocol/rust-sdk/>
 - ryu 1.0.23 — <https://github.com/dtolnay/ryu>
 - sync_wrapper 1.0.2 — <https://github.com/Actyx/sync_wrapper>
 
@@ -6045,9 +6045,9 @@ SOFTWARE.
 
 Used by:
 
-- darling 0.23.0 — <https://github.com/TedDriggs/darling>
-- darling_core 0.23.0 — <https://github.com/TedDriggs/darling>
-- darling_macro 0.23.0 — <https://github.com/TedDriggs/darling>
+- darling 0.24.0 — <https://github.com/TedDriggs/darling>
+- darling_core 0.24.0 — <https://github.com/TedDriggs/darling>
+- darling_macro 0.24.0 — <https://github.com/TedDriggs/darling>
 
 <details>
 <summary>License text</summary>

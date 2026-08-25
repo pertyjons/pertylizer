@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 SCRIPT = Path(__file__).with_name("check_v2_docs.py")
@@ -39,6 +42,16 @@ class DocumentationCheckerTests(unittest.TestCase):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(text, encoding="utf-8")
         return path
+
+    def write_pertylizer_manifest(self, dependency: str = "cpal = { workspace = true }") -> Path:
+        manifest = self.root / "crates/pertylizer/Cargo.toml"
+        manifest.parent.mkdir(parents=True, exist_ok=True)
+        manifest.write_text(f"{dependency}\n", encoding="utf-8")
+        (self.root / "Cargo.lock").write_text(
+            '[[package]]\nname = "cpal"\nversion = "0.18.2"\n',
+            encoding="utf-8",
+        )
+        return manifest
 
     def test_same_document_fragments_are_checked(self) -> None:
         self.write(
@@ -196,6 +209,377 @@ class DocumentationCheckerTests(unittest.TestCase):
         self.assertEqual(
             errors,
             ["plans/v2/NOW.md:1: active derived document copies a source-line citation"],
+        )
+
+    def test_evidence_harness_self_test_failure_is_reported(self) -> None:
+        analyzer = self.write(
+            "evidence/phase-03/evd_0016_analyse.py",
+            "import sys\nprint('negative control failed', file=sys.stderr)\n"
+            "raise SystemExit(1)\n",
+        )
+        errors: list[str] = []
+        CHECKER.check_evidence_harnesses(errors)
+        self.assertEqual(
+            errors,
+            [
+                f"{analyzer.relative_to(self.root)}: self-test failed: "
+                "negative control failed"
+            ],
+        )
+
+    def test_evidence_harness_self_test_success_is_accepted(self) -> None:
+        summary = (
+            "EVD-0016 analyzer controls passed (valid single-direction + duplex "
+            "positive + 19 classified mutations + "
+            "2 F4 negative outcomes + RealtimeDenied warning + release coverage + "
+            "15 endpoint cases)."
+        )
+        self.write(
+            "evidence/phase-03/evd_0016_analyse.py",
+            f"print({summary!r})\n",
+        )
+        errors: list[str] = []
+        CHECKER.check_evidence_harnesses(errors)
+        self.assertEqual(errors, [])
+
+    def test_missing_evidence_harness_does_not_pass_vacuously(self) -> None:
+        errors: list[str] = []
+        CHECKER.check_evidence_harnesses(errors)
+        self.assertEqual(
+            errors,
+            [
+                "plans/v2/evidence/phase-03/evd_0016_analyse.py: "
+                "required evidence self-test is missing"
+            ],
+        )
+
+    def test_zero_exit_without_control_summary_is_rejected(self) -> None:
+        self.write(
+            "evidence/phase-03/evd_0016_analyse.py",
+            "print('not the declared controls')\n",
+        )
+        errors: list[str] = []
+        CHECKER.check_evidence_harnesses(errors)
+        self.assertEqual(
+            errors,
+            [
+                "plans/v2/evidence/phase-03/evd_0016_analyse.py: "
+                "self-test omitted its control summary"
+            ],
+        )
+
+    def test_evidence_simulator_control_success_is_accepted(self) -> None:
+        simulator = self.root / CHECKER.EVD_0016_SIMULATOR
+        simulator.parent.mkdir(parents=True)
+        simulator.write_text("fn main() {}\n", encoding="utf-8")
+        output = "matrix output\n"
+        digest = hashlib.sha256(output.encode()).hexdigest()
+        self.write(
+            "evidence/phase-03/EVD-0016-host-time-mapping.md",
+            f"The provisional simulator CSV has SHA-256\n`{digest}`.\n",
+        )
+        completed = subprocess.CompletedProcess(
+            [], 0, stdout=output.encode(), stderr=b""
+        )
+        with mock.patch.object(CHECKER.subprocess, "run", return_value=completed):
+            errors: list[str] = []
+            CHECKER.check_evidence_simulators(errors)
+        self.assertEqual(errors, [])
+
+    def test_evidence_simulator_control_failure_is_reported(self) -> None:
+        simulator = self.root / CHECKER.EVD_0016_SIMULATOR
+        simulator.parent.mkdir(parents=True)
+        simulator.write_text("fn main() {}\n", encoding="utf-8")
+        completed = subprocess.CompletedProcess(
+            [], 1, stdout=b"", stderr=b"F1 failed"
+        )
+        with mock.patch.object(CHECKER.subprocess, "run", return_value=completed):
+            errors: list[str] = []
+            CHECKER.check_evidence_simulators(errors)
+        self.assertEqual(
+            errors,
+            [f"{CHECKER.EVD_0016_SIMULATOR}: control run failed: F1 failed"],
+        )
+
+    def test_missing_evidence_simulator_does_not_pass_vacuously(self) -> None:
+        errors: list[str] = []
+        CHECKER.check_evidence_simulators(errors)
+        self.assertEqual(
+            errors,
+            [f"{CHECKER.EVD_0016_SIMULATOR}: required evidence simulator is missing"],
+        )
+
+    def test_missing_cargo_is_reported_as_a_simulator_diagnostic(self) -> None:
+        simulator = self.root / CHECKER.EVD_0016_SIMULATOR
+        simulator.parent.mkdir(parents=True)
+        simulator.write_text("fn main() {}\n", encoding="utf-8")
+        with mock.patch.object(
+            CHECKER.subprocess,
+            "run",
+            side_effect=FileNotFoundError("cargo not found"),
+        ):
+            errors: list[str] = []
+            CHECKER.check_evidence_simulators(errors)
+        self.assertEqual(
+            errors,
+            [
+                f"{CHECKER.EVD_0016_SIMULATOR}: cannot execute control: "
+                "cargo not found"
+            ],
+        )
+
+    def test_stale_evidence_simulator_digest_is_reported(self) -> None:
+        simulator = self.root / CHECKER.EVD_0016_SIMULATOR
+        simulator.parent.mkdir(parents=True)
+        simulator.write_text("fn main() {}\n", encoding="utf-8")
+        stale = "0" * 64
+        self.write(
+            "evidence/phase-03/EVD-0016-host-time-mapping.md",
+            f"The provisional simulator CSV has SHA-256\n`{stale}`.\n",
+        )
+        completed = subprocess.CompletedProcess(
+            [], 0, stdout=b"matrix output\n", stderr=b""
+        )
+        observed = hashlib.sha256(completed.stdout).hexdigest()
+        with mock.patch.object(CHECKER.subprocess, "run", return_value=completed):
+            errors: list[str] = []
+            CHECKER.check_evidence_simulators(errors)
+        self.assertEqual(
+            errors,
+            [
+                f"{CHECKER.EVD_0016_RECORD}: simulator SHA-256 is stale "
+                f"(recorded {stale}, observed {observed})"
+            ],
+        )
+
+    def test_missing_simulator_record_is_reported(self) -> None:
+        simulator = self.root / CHECKER.EVD_0016_SIMULATOR
+        simulator.parent.mkdir(parents=True)
+        simulator.write_text("fn main() {}\n", encoding="utf-8")
+        completed = subprocess.CompletedProcess([], 0, stdout=b"matrix\n", stderr=b"")
+        with mock.patch.object(CHECKER.subprocess, "run", return_value=completed):
+            errors: list[str] = []
+            CHECKER.check_evidence_simulators(errors)
+        self.assertEqual(len(errors), 1)
+        self.assertIn("cannot read simulator digest", errors[0])
+
+    def test_missing_simulator_digest_is_reported(self) -> None:
+        simulator = self.root / CHECKER.EVD_0016_SIMULATOR
+        simulator.parent.mkdir(parents=True)
+        simulator.write_text("fn main() {}\n", encoding="utf-8")
+        self.write(
+            "evidence/phase-03/EVD-0016-host-time-mapping.md",
+            "No simulator digest here.\n",
+        )
+        completed = subprocess.CompletedProcess([], 0, stdout=b"matrix\n", stderr=b"")
+        with mock.patch.object(CHECKER.subprocess, "run", return_value=completed):
+            errors: list[str] = []
+            CHECKER.check_evidence_simulators(errors)
+        self.assertEqual(
+            errors,
+            [f"{CHECKER.EVD_0016_RECORD}: expected one simulator SHA-256"],
+        )
+
+    def test_evidence_cpal_version_must_match_requirement_and_lock(self) -> None:
+        self.write_pertylizer_manifest()
+        (self.root / "Cargo.toml").write_text(
+            'cpal = { version = "0.18.3", features = ["realtime"] }\n',
+            encoding="utf-8",
+        )
+        probe = self.root / "crates/pertylizer/examples/evd_0016_cpal_timestamps.rs"
+        probe.parent.mkdir(parents=True)
+        probe.write_text(
+            'const CPAL_VERSION: &str = "0.18.2";\n', encoding="utf-8"
+        )
+        self.write(
+            "evidence/phase-03/evd_0016_analyse.py",
+            'CPAL_VERSION = "0.18.2"\n',
+        )
+        errors: list[str] = []
+        CHECKER.check_evidence_dependency_pins(errors)
+        self.assertEqual(
+            errors,
+            [
+                "EVD-0016 CPAL version declarations disagree: "
+                "workspace CPAL dependency requirement=0.18.3, "
+                "resolved CPAL dependency=0.18.2, "
+                "EVD-0016 probe CPAL version=0.18.2, "
+                "EVD-0016 analyzer CPAL version=0.18.2"
+            ],
+        )
+
+    def test_matching_evidence_cpal_versions_are_accepted(self) -> None:
+        self.write_pertylizer_manifest()
+        (self.root / "Cargo.toml").write_text(
+            'cpal = { version = "0.18.2", features = ["realtime"] }\n',
+            encoding="utf-8",
+        )
+        probe = self.root / "crates/pertylizer/examples/evd_0016_cpal_timestamps.rs"
+        probe.parent.mkdir(parents=True)
+        probe.write_text(
+            'const CPAL_VERSION: &str = "0.18.2";\n', encoding="utf-8"
+        )
+        self.write(
+            "evidence/phase-03/evd_0016_analyse.py",
+            'CPAL_VERSION = "0.18.2"\n',
+        )
+        errors: list[str] = []
+        CHECKER.check_evidence_dependency_pins(errors)
+        self.assertEqual(errors, [])
+
+    def test_resolved_cpal_update_requires_new_evidence_versions(self) -> None:
+        self.write_pertylizer_manifest()
+        (self.root / "Cargo.toml").write_text(
+            'cpal = { version = "0.18.2", features = ["realtime"] }\n',
+            encoding="utf-8",
+        )
+        (self.root / "Cargo.lock").write_text(
+            '[[package]]\nname = "cpal"\nversion = "0.18.3"\n',
+            encoding="utf-8",
+        )
+        probe = self.root / "crates/pertylizer/examples/evd_0016_cpal_timestamps.rs"
+        probe.parent.mkdir(parents=True)
+        probe.write_text(
+            'const CPAL_VERSION: &str = "0.18.2";\n', encoding="utf-8"
+        )
+        self.write(
+            "evidence/phase-03/evd_0016_analyse.py",
+            'CPAL_VERSION = "0.18.2"\n',
+        )
+        errors: list[str] = []
+        CHECKER.check_evidence_dependency_pins(errors)
+        self.assertEqual(
+            errors,
+            [
+                "EVD-0016 CPAL version declarations disagree: "
+                "workspace CPAL dependency requirement=0.18.2, "
+                "resolved CPAL dependency=0.18.3, "
+                "EVD-0016 probe CPAL version=0.18.2, "
+                "EVD-0016 analyzer CPAL version=0.18.2"
+            ],
+        )
+
+    def test_broad_evidence_cpal_requirement_is_rejected(self) -> None:
+        self.write_pertylizer_manifest()
+        (self.root / "Cargo.toml").write_text(
+            'cpal = { version = "0.18", features = ["realtime"] }\n',
+            encoding="utf-8",
+        )
+        probe = self.root / "crates/pertylizer/examples/evd_0016_cpal_timestamps.rs"
+        probe.parent.mkdir(parents=True)
+        probe.write_text(
+            'const CPAL_VERSION: &str = "0.18.2";\n', encoding="utf-8"
+        )
+        self.write(
+            "evidence/phase-03/evd_0016_analyse.py",
+            'CPAL_VERSION = "0.18.2"\n',
+        )
+        errors: list[str] = []
+        CHECKER.check_evidence_dependency_pins(errors)
+        self.assertEqual(
+            errors,
+            [
+                "EVD-0016 CPAL version declarations disagree: "
+                "workspace CPAL dependency requirement=0.18, "
+                "resolved CPAL dependency=0.18.2, "
+                "EVD-0016 probe CPAL version=0.18.2, "
+                "EVD-0016 analyzer CPAL version=0.18.2"
+            ],
+        )
+
+    def test_version_disagreement_is_reported_when_requirement_is_missing(self) -> None:
+        self.write_pertylizer_manifest()
+        (self.root / "Cargo.toml").write_text(
+            'cpal = "0.18.2"\n',
+            encoding="utf-8",
+        )
+        probe = self.root / "crates/pertylizer/examples/evd_0016_cpal_timestamps.rs"
+        probe.parent.mkdir(parents=True, exist_ok=True)
+        probe.write_text(
+            'const CPAL_VERSION: &str = "0.18.2";\n', encoding="utf-8"
+        )
+        self.write(
+            "evidence/phase-03/evd_0016_analyse.py",
+            'CPAL_VERSION = "0.18.3"\n',
+        )
+        errors: list[str] = []
+        CHECKER.check_evidence_dependency_pins(errors)
+        self.assertEqual(
+            errors,
+            [
+                "Cargo.toml: expected one workspace CPAL dependency requirement declaration",
+                "EVD-0016 CPAL version declarations disagree: "
+                "resolved CPAL dependency=0.18.2, "
+                "EVD-0016 probe CPAL version=0.18.2, "
+                "EVD-0016 analyzer CPAL version=0.18.3",
+            ],
+        )
+
+    def test_missing_probe_version_file_is_reported(self) -> None:
+        self.write_pertylizer_manifest()
+        (self.root / "Cargo.toml").write_text(
+            'cpal = { version = "0.18.2" }\n', encoding="utf-8"
+        )
+        self.write(
+            "evidence/phase-03/evd_0016_analyse.py",
+            'CPAL_VERSION = "0.18.2"\n',
+        )
+        errors: list[str] = []
+        CHECKER.check_evidence_dependency_pins(errors)
+        self.assertEqual(len(errors), 1)
+        self.assertIn(
+            "cannot read EVD-0016 probe CPAL version",
+            errors[0],
+        )
+
+    def test_member_must_inherit_the_workspace_cpal_pin(self) -> None:
+        self.write_pertylizer_manifest('cpal = "0.18.2"')
+        (self.root / "Cargo.toml").write_text(
+            'cpal = { version = "0.18.2" }\n', encoding="utf-8"
+        )
+        probe = self.root / "crates/pertylizer/examples/evd_0016_cpal_timestamps.rs"
+        probe.parent.mkdir(parents=True, exist_ok=True)
+        probe.write_text(
+            'const CPAL_VERSION: &str = "0.18.2";\n', encoding="utf-8"
+        )
+        self.write(
+            "evidence/phase-03/evd_0016_analyse.py",
+            'CPAL_VERSION = "0.18.2"\n',
+        )
+        errors: list[str] = []
+        CHECKER.check_evidence_dependency_pins(errors)
+        self.assertEqual(
+            errors,
+            [
+                "crates/pertylizer/Cargo.toml: expected one CPAL workspace dependency"
+            ],
+        )
+
+    def test_duplicate_probe_and_missing_analyzer_versions_are_reported(self) -> None:
+        self.write_pertylizer_manifest()
+        (self.root / "Cargo.toml").write_text(
+            'cpal = { version = "0.18.2" }\n', encoding="utf-8"
+        )
+        probe = self.root / "crates/pertylizer/examples/evd_0016_cpal_timestamps.rs"
+        probe.parent.mkdir(parents=True, exist_ok=True)
+        probe.write_text(
+            'const CPAL_VERSION: &str = "0.18.2";\n' * 2,
+            encoding="utf-8",
+        )
+        self.write(
+            "evidence/phase-03/evd_0016_analyse.py",
+            "print('no version declaration')\n",
+        )
+        errors: list[str] = []
+        CHECKER.check_evidence_dependency_pins(errors)
+        self.assertEqual(
+            errors,
+            [
+                "crates/pertylizer/examples/evd_0016_cpal_timestamps.rs: "
+                "expected one EVD-0016 probe CPAL version declaration",
+                "plans/v2/evidence/phase-03/evd_0016_analyse.py: "
+                "expected one EVD-0016 analyzer CPAL version declaration",
+            ],
         )
 
 
