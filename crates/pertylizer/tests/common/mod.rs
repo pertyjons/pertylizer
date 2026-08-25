@@ -169,7 +169,7 @@ pub fn build_arpeggio_song() -> Arc<synth_sequencer::SharedSong> {
 /// Count sign changes in a stereo-interleaved buffer's left channel — a cheap
 /// fundamental-frequency proxy for a simple periodic patch.
 pub fn left_zero_crossings(stereo: &[f32]) -> usize {
-    let mut frames = stereo.chunks_exact(2).map(|f| f[0]);
+    let mut frames = stereo.as_chunks::<2>().0.iter().map(|f| f[0]);
     let Some(mut prev) = frames.next() else {
         return 0;
     };
@@ -185,7 +185,7 @@ pub fn left_zero_crossings(stereo: &[f32]) -> usize {
 
 /// RMS of a stereo-interleaved buffer's left channel.
 pub fn left_rms(stereo: &[f32]) -> f32 {
-    let lefts: Vec<f32> = stereo.chunks_exact(2).map(|f| f[0]).collect();
+    let lefts: Vec<f32> = stereo.as_chunks::<2>().0.iter().map(|f| f[0]).collect();
     if lefts.is_empty() {
         return 0.0;
     }
@@ -195,7 +195,7 @@ pub fn left_rms(stereo: &[f32]) -> f32 {
 
 /// RMS of a stereo-interleaved buffer's right channel.
 pub fn right_rms(stereo: &[f32]) -> f32 {
-    let rights: Vec<f32> = stereo.chunks_exact(2).map(|f| f[1]).collect();
+    let rights: Vec<f32> = stereo.as_chunks::<2>().0.iter().map(|f| f[1]).collect();
     if rights.is_empty() {
         return 0.0;
     }

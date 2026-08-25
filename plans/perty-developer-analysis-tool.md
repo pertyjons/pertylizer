@@ -560,7 +560,7 @@ checks documented in `AGENTS.md`:
 ```text
 cargo check --workspace --all-targets --no-default-features
 cargo check --workspace --all-targets --all-features
-cargo +1.97 check --workspace
+cargo +1.98 check --workspace
 ```
 
 The runner streams output, stops after a failed step by default, and reports

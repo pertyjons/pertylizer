@@ -175,7 +175,7 @@ fn setup_with_patch(patch: &Patch) -> TestRig {
 }
 
 fn extract_left(samples: &[f32]) -> Vec<f32> {
-    samples.chunks_exact(2).map(|f| f[0]).collect()
+    samples.as_chunks::<2>().0.iter().map(|f| f[0]).collect()
 }
 
 fn rms(samples: &[f32]) -> f32 {

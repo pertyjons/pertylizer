@@ -78,7 +78,7 @@ The complete repository gate adds configuration and MSRV coverage:
 ```bash
 cargo check --workspace --all-targets --no-default-features
 cargo check --workspace --all-targets --all-features
-cargo +1.97.0 check --workspace
+cargo +1.98.0 check --workspace
 ```
 
 `--workspace` is required. The workspace has
@@ -90,12 +90,15 @@ compiled by the ordinary development-profile test run.
 
 The complete gate mirrors `.github/workflows/quality.yml`: the core gate plus
 the three configuration/MSRV commands above. The MSRV command requires the
-Rust 1.97 toolchain.
+Rust 1.98 toolchain.
 
 The only pre-approved Clippy exceptions are `too_many_lines` for large
 `process()` functions, `cast_precision_loss` for `usize` to `f32` conversion in
-audio code, and `cast_possible_truncation` when the value is proven to fit.
-Every exception still needs a narrowly scoped allowance at the relevant site.
+audio code, `cast_possible_truncation` when the value is proven to fit, and
+`chunks_exact_to_as_chunks` inside an evidence harness whose recorded figures
+were measured on the existing code shape, where the rewrite would change the
+bounds checks the timed loop emits. Every exception still needs a narrowly
+scoped allowance at the relevant site.
 
 #### Who may perform an independent review
 

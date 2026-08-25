@@ -1198,7 +1198,7 @@ mod tests {
         let reference = tone(440.0, 0.5, 2.0, 0.0);
         let mut candidate = reference.clone();
         // Attenuate the right channel by 6 dB.
-        for frame in candidate.interleaved.chunks_exact_mut(2) {
+        for frame in candidate.interleaved.as_chunks_mut::<2>().0 {
             frame[1] *= 0.5;
         }
         let stereo = StereoDifference::measure(&reference, &candidate).expect("both stereo");
@@ -1218,7 +1218,7 @@ mod tests {
     fn an_inverted_channel_is_caught_by_correlation() {
         let reference = tone(440.0, 0.5, 2.0, 0.0);
         let mut candidate = reference.clone();
-        for frame in candidate.interleaved.chunks_exact_mut(2) {
+        for frame in candidate.interleaved.as_chunks_mut::<2>().0 {
             frame[1] = -frame[1];
         }
         let stereo = StereoDifference::measure(&reference, &candidate).expect("both stereo");

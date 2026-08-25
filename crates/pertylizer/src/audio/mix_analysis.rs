@@ -120,7 +120,7 @@ pub fn analyze_mix_buffer(stereo: &[f32], sample_rate: u32) -> MixAnalysis {
     let mut clipped = 0u32;
     let mut peak_left = 0.0_f32;
     let mut peak_right = 0.0_f32;
-    for frame in stereo.chunks_exact(2) {
+    for frame in stereo.as_chunks::<2>().0 {
         let l = frame[0];
         let r = frame[1];
         let la = l.abs();
@@ -386,7 +386,7 @@ fn k_weighted_block_energies(
 ) -> Vec<f64> {
     let mut left = Vec::with_capacity(n_frames);
     let mut right = Vec::with_capacity(n_frames);
-    for frame in stereo.chunks_exact(2) {
+    for frame in stereo.as_chunks::<2>().0 {
         left.push(frame[0]);
         right.push(frame[1]);
     }
@@ -552,7 +552,7 @@ fn compute_true_peak_stereo(stereo: &[f32]) -> f32 {
     }
     let mut left = Vec::with_capacity(n_frames);
     let mut right = Vec::with_capacity(n_frames);
-    for frame in stereo.chunks_exact(2) {
+    for frame in stereo.as_chunks::<2>().0 {
         left.push(frame[0]);
         right.push(frame[1]);
     }

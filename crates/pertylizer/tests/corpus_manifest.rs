@@ -196,7 +196,7 @@ fn channel_rms(samples: &[f32], frames: std::ops::Range<usize>, channel: usize) 
 fn audible_onsets(samples: &[f32], threshold: f32, quiet_frames: usize) -> Vec<usize> {
     let mut quiet = quiet_frames;
     let mut onsets = Vec::new();
-    for (frame, stereo) in samples.chunks_exact(2).enumerate() {
+    for (frame, stereo) in samples.as_chunks::<2>().0.iter().enumerate() {
         if stereo[0].abs().max(stereo[1].abs()) <= threshold {
             quiet = quiet.saturating_add(1);
         } else {

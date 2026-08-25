@@ -299,7 +299,9 @@ fn a_widened_signal_is_copied_by_a_scheduled_kernel() {
     .expect("renders");
     assert!(
         rendered
-            .chunks_exact(2)
+            .as_chunks::<2>()
+            .0
+            .iter()
             .all(|frame| (frame[0] - 0.25).abs() < 1e-6 && (frame[1] - 0.25).abs() < 1e-6),
         "both channels carry the widened signal"
     );

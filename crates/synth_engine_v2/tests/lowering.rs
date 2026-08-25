@@ -212,7 +212,11 @@ fn a_widened_signal_holds_the_same_sample_in_both_channels() {
     )
     .expect("renders");
     assert!(
-        rendered.chunks_exact(2).all(|frame| frame == [0.25, 0.25]),
+        rendered
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .all(|frame| *frame == [0.25, 0.25]),
         "every frame carries the source sample in both channels"
     );
 }

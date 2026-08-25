@@ -184,7 +184,7 @@ mod tests {
         stream.render(&mut output, 4, DeviceSampleRate::DVD_QUALITY);
 
         assert!(output[0] > 20.0, "old backlog should be discarded");
-        for frame in output.chunks_exact(2) {
+        for frame in output.as_chunks::<2>().0 {
             assert_eq!(frame[1], -frame[0]);
         }
     }
@@ -202,9 +202,15 @@ mod tests {
 
         stream.render(&mut output, 441, DeviceSampleRate::CD_QUALITY);
 
-        let last = output.chunks_exact(2).last().unwrap_or(&[0.0, 0.0]);
+        let last = output.as_chunks::<2>().0.last().unwrap_or(&[0.0, 0.0]);
         assert!((475.0..=481.0).contains(&last[0]));
         assert_eq!(last[1], -last[0]);
-        assert!(output.chunks_exact(2).all(|frame| frame[1] == -frame[0]));
+        assert!(
+            output
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .all(|frame| frame[1] == -frame[0])
+        );
     }
 }

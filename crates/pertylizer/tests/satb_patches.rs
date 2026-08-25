@@ -72,7 +72,13 @@ fn render_rms(patch: &Patch) -> f32 {
     )
     .expect("render note");
 
-    let lefts: Vec<f32> = rendered.samples.chunks_exact(2).map(|f| f[0]).collect();
+    let lefts: Vec<f32> = rendered
+        .samples
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|f| f[0])
+        .collect();
     if lefts.is_empty() {
         return 0.0;
     }

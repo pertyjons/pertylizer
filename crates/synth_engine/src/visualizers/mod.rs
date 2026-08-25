@@ -179,7 +179,7 @@ impl VisualizationBuffer {
             let mut omitted = 0_usize;
             for chunk in interleaved.chunks(CHUNK_FRAMES * 2) {
                 let frames = chunk.len() / 2;
-                for (i, frame) in chunk.chunks_exact(2).enumerate() {
+                for (i, frame) in chunk.as_chunks::<2>().0.iter().enumerate() {
                     left[i] = frame[0];
                     right[i] = frame[1];
                 }

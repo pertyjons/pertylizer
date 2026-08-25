@@ -49,13 +49,13 @@ jobs:
         run: cargo check --workspace --all-targets --all-features
 
   msrv:
-    name: Rust 1.97
+    name: Rust 1.98
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: 1.97.0
+          toolchain: 1.98.0
       - uses: Swatinem/rust-cache@v2
       - name: Install system dependencies
         run: |

@@ -379,7 +379,7 @@ fn a_mono_source_into_a_stereo_output_is_converted_rather_than_refused() {
         .expect("the plan renders");
 
     assert_eq!(rendered.len(), 128, "64 stereo frames are 128 samples");
-    for frame in rendered.chunks_exact(2) {
+    for frame in rendered.as_chunks::<2>().0 {
         assert!((frame[0] - 0.25).abs() < f32::EPSILON);
         assert!(
             (frame[1] - frame[0]).abs() < f32::EPSILON,

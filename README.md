@@ -358,7 +358,7 @@ cd visualizer && cargo run
 
 ## Tech Stack
 
-- **Language:** Rust 1.97+ (edition 2024)
+- **Language:** Rust 1.98+ (edition 2024)
 - **Audio:** cpal (cross-platform I/O)
 - **GUI:** egui/eframe with custom knobs, meters, scopes, and spectrum analyzer
 - **MIDI:** midir

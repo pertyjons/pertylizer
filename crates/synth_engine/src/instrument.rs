@@ -346,7 +346,7 @@ pub(crate) fn mix_stereo_faded(src: &[f32], left_gain: f32, right_gain: f32, dst
 #[inline]
 pub(crate) fn stereo_peak(src: &[f32], left_gain: f32, right_gain: f32) -> f32 {
     let mut peak = 0.0_f32;
-    for frame in src.chunks_exact(2) {
+    for frame in src.as_chunks::<2>().0 {
         peak = peak.max((frame[0] * left_gain).abs());
         peak = peak.max((frame[1] * right_gain).abs());
     }

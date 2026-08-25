@@ -76,6 +76,13 @@
 //!   arm's figure, and every ratio and every control spread taken **within** the round
 //!   both arms were measured in.
 
+// This harness is what EVD-0010's recorded figures were measured on, so the shape of
+// its interleaved and planar reads is the quantity under measurement rather than an
+// incidental style choice. Rewriting `chunks_exact` into `as_chunks` changes the
+// bounds checks the timed loops emit, which would silently make the record describe
+// code that no longer exists. The lint is therefore refused for this file alone.
+#![allow(clippy::chunks_exact_to_as_chunks)]
+
 use std::hint::black_box;
 use std::time::Instant;
 

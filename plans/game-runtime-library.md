@@ -517,7 +517,7 @@ layer while playback continues.
    names are actually free on crates.io.
 2. Add versioned path dependencies, README files, repository metadata, examples,
    feature documentation, and an explicit verified MSRV. The workspace declares
-   `rust-version = "1.97"` and `edition = "2024"`; "verified" means a CI job
+   `rust-version = "1.98"` and `edition = "2024"`; "verified" means a CI job
    actually builds the published set at that toolchain, as `quality.yml` already
    does for the workspace.
 3. Settle the format-compatibility policy (see "Asset loading") and state it in

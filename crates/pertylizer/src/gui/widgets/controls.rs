@@ -934,7 +934,7 @@ mod tests {
 
         assert_eq!(mesh.vertices.len(), 8);
         assert_eq!(mesh.indices.len(), 12);
-        for (segment, vertices) in points.windows(2).zip(mesh.vertices.chunks_exact(4)) {
+        for (segment, vertices) in points.windows(2).zip(mesh.vertices.as_chunks::<4>().0) {
             assert_eq!(vertices[0].pos, segment[0]);
             assert_eq!(vertices[1].pos, segment[1]);
             assert_eq!(vertices[2].pos, Pos2::new(segment[1].x, 90.0));

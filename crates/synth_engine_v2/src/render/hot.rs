@@ -68,9 +68,7 @@ impl PreparedRenderer {
         }
 
         self.scratch_len = 0;
-        for count in &mut self.quantum_counts {
-            *count = 0;
-        }
+        self.quantum_counts.fill(0);
         let mut pending = PendingCounts::default();
 
         let first_quantum = self.clock.quantum_index();
@@ -259,12 +257,8 @@ impl PreparedRenderer {
     /// the other by index alone. It also removes any dependence on the order node slots
     /// appear in the schedule, which is an invariant of lowering rather than of the plan.
     fn collect_timed_controls(&mut self, cursor: &mut usize) {
-        for start in &mut self.control_starts {
-            *start = 0;
-        }
-        for fill in &mut self.control_fill {
-            *fill = 0;
-        }
+        self.control_starts.fill(0);
+        self.control_fill.fill(0);
 
         let Ok(end) = self.clock.checked_add(FrameCount::QUANTUM) else {
             // The clock is one quantum from exhausting, so this call is about to fail on

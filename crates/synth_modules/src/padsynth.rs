@@ -127,9 +127,7 @@ impl PadSynth {
         let detune_amt = self.detune.as_f32() as f64;
 
         // Clear frequency amplitude buffer
-        for v in &mut self.freq_amp {
-            *v = 0.0;
-        }
+        self.freq_amp.fill(0.0);
 
         // Deterministic pseudo-random seed based on base frequency
         let seed = (base * 1000.0) as u32;
