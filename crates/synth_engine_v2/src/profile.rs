@@ -1312,7 +1312,10 @@ impl HostProfile {
 
         // ADR-0046 clause 1 requires every product and conversion to be checked, and this
         // is the sealed batch's. It is **not** the relation requiring a store to cover
-        // this extent: that store is the publication arbiter's and does not exist yet.
+        // this extent: that store is the publication arbiter's, and its preparation is where
+        // the coverage is asserted. The two stay separate because construction can only
+        // decide whether an extent is nameable — a profile that passed this check could
+        // still meet an arbiter that allocated something else.
         // What construction can decide today is whether the extent is nameable at all —
         // a profile whose `max_events_per_quantum * max_quanta_per_callback` overflows an
         // `EventCount` describes a batch no allocation could satisfy, and admitting it
@@ -1781,10 +1784,11 @@ mod tests {
 
     #[test]
     fn a_sealed_batch_extent_that_cannot_be_named_is_refused_as_the_batch() {
-        // Not the sealed-store *coverage* relation, which needs a store that does not
-        // exist yet: this is the checked-arithmetic obligation over the same extent. A
-        // profile whose extent no `EventCount` can name describes a batch no allocation
-        // could satisfy. The block is chosen so that every other relation passes and only
+        // Not the sealed-store *coverage* relation, which binds the publication arbiter's
+        // store rather than the profile: this is the checked-arithmetic obligation over the
+        // same extent. A profile whose extent no `EventCount` can name describes a batch no
+        // allocation could satisfy, so it is refused here rather than at the preparation
+        // that would try. The block is chosen so that every other relation passes and only
         // this one fails: 20,000,000 quanta against a
         // compiled share of 96 give a window of 1.92e9, which fits, while the same quanta
         // against the 256-event cap give a sealed-batch extent of 5.12e9, which does not.

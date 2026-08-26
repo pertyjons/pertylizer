@@ -269,3 +269,67 @@ fn selecting_a_compiled_schedule_for_the_first_call_allocates_nothing() {
         "compiled schedule selection and rendering allocated {allocs} time(s)"
     );
 }
+
+#[test]
+fn a_complete_publication_pass_allocates_nothing() {
+    // The behavioural half of the arbiter's real-time guarantee. The source scan can be
+    // escaped by moving work out of the scanned file or by naming an allocating method
+    // like an accessor; this one cannot, because it counts what the allocator actually
+    // did. It drives a full pass — open, fill every publishable class to its share across
+    // two quanta, and seal — so a store that grew rather than being written by index shows
+    // up here whatever the call is named.
+    use crate::profile::HostProfile;
+    use crate::publish::{ProducerClass, PublicationArbiter};
+    use crate::quantities::SampleRate;
+    use crate::render::{EventEnvelope, TimedEvent};
+    use crate::time::{FrameCount, QUANTUM_FRAMES, StreamEpoch, TimeSource};
+
+    let host = HostProfile::harness(
+        SampleRate::new(48_000.0).expect("a valid rate"),
+        FrameCount::new(256),
+        ChannelLayout::Stereo,
+    )
+    .expect("the default harness profile is valid");
+    let mut arbiter = PublicationArbiter::prepare(&host).expect("preparable");
+    let slot = crate::plan::ParameterSlot::new(crate::plan::PlanId::FILL, 0);
+    let event = |quantum: u64| {
+        TimedEvent::new(
+            EventEnvelope::new(
+                StreamEpoch::from_raw(1),
+                SampleTime::new(quantum * u64::from(QUANTUM_FRAMES) + 1),
+                TimeSource::Compiled,
+            ),
+            EventPayload::SetParameter {
+                slot,
+                value: ParameterValue::ZERO,
+            },
+        )
+    };
+
+    let allocs = count_allocs(|| {
+        let mut publication = arbiter
+            .open(SampleTime::ZERO, 2)
+            .expect("a two-quantum window");
+        for class in ProducerClass::ALL {
+            if class == ProducerClass::Internal {
+                continue;
+            }
+            let share = class.share_of(&host).get();
+            for quantum in 0..2 {
+                for _ in 0..share {
+                    publication
+                        .charge(class, event(quantum))
+                        .expect("inside the share");
+                }
+            }
+        }
+        let batch = publication.seal();
+        assert!(!batch.is_empty(), "the pass published something to measure");
+    });
+
+    assert_eq!(
+        allocs, 0,
+        "a publication pass allocated {allocs} time(s); the store is preallocated and written \
+         by index"
+    );
+}

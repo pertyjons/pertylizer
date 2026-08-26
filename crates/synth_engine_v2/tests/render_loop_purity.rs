@@ -31,13 +31,18 @@ use std::path::{Path, PathBuf};
 
 /// The files the real-time rules cover, relative to the crate root.
 ///
-/// The two `hot.rs` files are the scheduler and renderer loops. `kernels.rs` is
-/// everything the renderer calls through the prepared function table — and the registry
+/// The three `hot.rs` files are the arbiter, scheduler and renderer loops. `kernels.rs`
+/// is everything the renderer calls through the prepared function table — and the registry
 /// that resolves those pointers is deliberately *not* here, because it runs at
 /// admission, allocates, and reads the IR.
-const REGION: [&str; 3] = [
+///
+/// `src/publish/hot.rs` joined when the publication arbiter did. It runs on the audio
+/// thread ahead of the renderer, so leaving it out would have left the one path that
+/// *writes* renderer input unscanned while the path that reads it was covered.
+const REGION: [&str; 4] = [
     "src/render/hot.rs",
     "src/schedule/hot.rs",
+    "src/publish/hot.rs",
     "src/node/kernels.rs",
 ];
 
@@ -60,6 +65,10 @@ fn hot_path_source() -> String {
 
 fn scheduler_hot_path_source() -> String {
     read_region_file("src/schedule/hot.rs")
+}
+
+fn publication_hot_path_source() -> String {
+    read_region_file("src/publish/hot.rs")
 }
 
 /// The file's code lines, with comments and doc comments removed.
@@ -207,6 +216,29 @@ fn the_check_is_reading_the_file_it_thinks_it_is() {
             source.contains(expected),
             "hot.rs does not contain `{expected}`; the render loop moved and this check is now \
              scanning the wrong thing"
+        );
+    }
+
+    let publication = publication_hot_path_source();
+    assert!(
+        publication.len() > 1_000,
+        "publish/hot.rs is unexpectedly small"
+    );
+    // The arbiter is the one path that *writes* renderer input, so a scan that quietly
+    // stopped covering it would leave the write side unguarded while the read side stayed
+    // green. Each name is load-bearing: `charge` is where the share is enforced, `seal`
+    // is what makes the batch immutable, and `row_of` is what derives the destination from
+    // the event rather than taking it from the caller.
+    for expected in [
+        "impl<'a> Publication<'a>",
+        "pub fn charge",
+        "pub fn seal",
+        "fn row_of",
+    ] {
+        assert!(
+            publication.contains(expected),
+            "publish/hot.rs does not contain `{expected}`; the publication path moved and this \
+             check is now scanning the wrong thing"
         );
     }
 
@@ -374,6 +406,12 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         "floor",
         "sin",
         "matches",
+        // The arbiter's half. `measured` is `EventCount`'s observation constructor — a
+        // `const fn` wrapping a `u32`, which is exactly the newtype the critical rule asks
+        // for in place of a bare count, and it allocates nothing. It appears in the hot
+        // path because a fault and an occupancy both carry their unit rather than a raw
+        // integer.
+        "measured",
         // The kernels' half: in-place iteration over preallocated slices, the borrow
         // split that turns slots into slices, and one sort over a fixed-size array of
         // three entries. `split_at_mut_checked` returns `Option` rather than panicking,
@@ -643,6 +681,7 @@ fn the_render_loop_imports_no_free_function() {
     for (required, floor) in [
         ("src/render/hot.rs", 6),
         ("src/schedule/hot.rs", 2),
+        ("src/publish/hot.rs", 2),
         ("src/node/kernels.rs", 3),
     ] {
         let seen = seen_by_file

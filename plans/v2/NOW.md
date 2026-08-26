@@ -66,11 +66,38 @@ Two consequences of the partition are load-bearing and were found by existing te
 positive shares cannot fit a cap below six, so a `max_events_per_quantum` of 1 or 4 is no longer representable; and
 the compiled floor makes a very small `max_scheduled_events_in_flight` unconstructible.
 
-The defaults are provisional. A following slice registered the one live renderer-ingress store and implemented the
-live share's ingress lower bound against it, so **two** obligations stay open in the host-profile specification's
-deferred list and are named there rather than repeated here: the sealed-batch store's coverage of its extent, which
-needs the arbiter's store; and the measurement that must reselect the partition, the cap and the ingress depth before
-live ingress.
+The defaults are provisional. Later slices closed two of the three obligations this one left: the ingress store was
+registered and the live share's lower bound implemented against it, and the arbiter's preparation now covers the
+sealed-batch extent. **One** obligation stays open, named in the host-profile specification's deferred list rather
+than repeated here: the measurement that must reselect the partition, the cap and the ingress depth before live
+ingress.
+
+### Completed slice — the publication arbiter's sealed batch and share ledger
+
+The first arbiter slice builds ADR-0046 clause 2's store and clause 1's ledger, and nothing else: producers, ingress
+reads, scheduler evaluation and the renderer wiring are not in it.
+
+- The store is preallocated to `max_events_per_quantum * max_quanta_per_callback` and written **by index**, never
+  grown. The real-time rules forbid `Vec::push` even where capacity usually happens to be available, and the purity
+  scan caught exactly that in the first draft.
+- Every event is charged to exactly one of six producer classes, per destination quantum. A class overrunning its own
+  share is a fault **even while the quantum total has room** — clause 7's rule that slack is not recovery capacity —
+  and that is what the ledger is keyed on.
+- Sealing is a type, not a flag: `Publication::seal` consumes the writer and returns a read-only `SealedBatch`, so a
+  write after sealing does not compile.
+- High-water occupancy per class survives `open`, because it describes the stream rather than the call, and it is what
+  the outstanding measurement will read. A per-quantum **external** total is kept beside the six class marks, because
+  those peaks can fall in different quanta so their sum overstates and their maximum understates. It is named external
+  rather than total: `HOST-INV-021`'s total ledger also counts the renderer-internal arena, which this slice does not
+  build, and calling a partial figure the total would understate occupancy by exactly the internal share.
+
+`src/publish/hot.rs` joins the real-time purity scan's region. Three properties are mutation-verified: refusing on the
+share rather than the quantum total, the high-water mark surviving a quieter pass, and per-quantum rather than
+per-call accounting.
+
+**A fault is reported and not yet enacted.** Clause 7's terminal renderer response — silence over this callback and
+every later one in the epoch, both carries invalidated, `needs_reprepare` published — belongs to the slice that routes
+the renderer through the arbiter. Nothing here claims it is in force.
 
 ### Approved: `synth_engine_v2` API breaks during Phase 3
 

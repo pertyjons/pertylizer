@@ -92,6 +92,7 @@ pub mod node;
 pub mod offline;
 pub mod plan;
 pub mod profile;
+pub mod publish;
 pub mod quantities;
 pub mod render;
 pub mod report;
