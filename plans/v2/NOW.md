@@ -318,6 +318,54 @@ workspace's default members, so it has no in-repo consumer outside its own tests
 persisted, manifest, wire or protocol contracts, which `AGENTS.md` treats separately, and it does not reach any other
 crate. ADR-0020 settles the final crate boundaries and names.
 
+### Completed slice — the identity table
+
+`SOUND-INV-017`'s first half, and the one point 7 was blocked on. `IdentityTable` mints identities from disjoint
+per-producer ranges, resolves them, and retires an index whose generation space runs out.
+
+**The three orphan branches are each covered, separately.** A free index, a live index at a superseded generation, and
+a retired index — the third is the one an earlier draft of the specification had no rule for, and the reason the
+orphan rule is stated as a definition rather than a list. Resolving without comparing the generation, restarting a
+generation instead of retiring, and overlapping the producer ranges each fail their own check.
+
+**The generation ceiling is a construction parameter, and that came from the test.** Walking a `u32` to its ceiling
+by minting would take longer than this project will exist, so retirement was unreachable — and a rule no test can
+reach is a rule nobody has checked. Making the width a parameter is also what ADR-0047 says it is: a measured
+liveness choice, not a safety one, since a generation value is never reused whatever the ceiling.
+
+A foreign-table identity resolves as **foreign, not orphan**: it says nothing about whether the note it named is
+live, only that this table cannot answer.
+
+**Two conditions that look alike are kept apart.** A producer with no free index has either over-emitted — every
+index live, nothing lost — which is a producer defect, or had its range **eroded** by retirement, which is not: it
+declared correctly and did not over-emit. An earlier revision reported both as one error, which would have sent
+someone to fix a producer that was behaving.
+
+**A mass release is scoped.** ADR-0046 clause 6 applies the operation "to owned voices within the source event", so a
+sustain lift on one source must not end another's notes; only a panic or transport stop reaches everything. An
+earlier revision ended everything unconditionally while its own documentation claimed sustain lift.
+
+**A rebuild is refused while an obligation is outstanding**, which is `SOUND-INV-017`'s rule and ADR-0046 clause 3's
+reason: rejecting the eventual release would refuse an accepted obligation, and stranding it would leave a note
+nothing can release.
+
+**Not yet in the real-time purity region, and joining it needs a file split rather than a list entry.** Nothing calls
+this module today, because no event payload carries an identity. When the event side lands, `resolve` and `release`
+become audio-thread work while `mint` stays off it, at the live boundary where `HOST-INV-009` puts the atomic
+slot-hold-identity acquisition — but the region is **file-granular** and admits no mixed hot/preparation file, and
+`table.rs` allocates in its constructor. The hot methods move to their own file first; an earlier note here said the
+file would simply join, which cannot work.
+
+One cost is worth stating before that slice rather than after: `release_all(Everything)` scans every slot, and that
+is the **sum of the admitted producer ranges** — not `max_held_notes`, which bounds simultaneous obligations rather
+than the extent handed out. A panic's cost therefore scales with the admitted extent, up to the whole index space,
+independently of how many notes are sounding. An earlier note here said `max_held_notes`, which is wrong.
+
+**What this does not do**, and the conformance row says so: `EventPayload::Note` still carries `{ slot, edge }`, so
+nothing yet asserts that a note-on names an occurrence, that a release names one alone, or that a hold is acquired
+atomically with minting. That is the next slice, and it is the one that ripples through every test suite that builds
+a note event.
+
 ### Accepted — ADR-0047 note identity, with its specification transaction
 
 [ADR-0047](decisions/ADR-0047-note-identity-in-the-event-contract.md) is `Accepted`. It exists because ADR-0046
@@ -344,10 +392,9 @@ Acceptance updated three current specifications in the same transaction:
   construction relations gained ADR-0047 clause 5's index bound: the identity index space is at least
   `max_held_notes`, which is otherwise constrained only to be nonzero.
 
-**`SOUND-INV-017` has no executable check, and the conformance table says so rather than implying coverage.**
-`EventPayload::Note` still carries `{ slot, edge }`, so there is no identity to assert over. The check arrives with
-the slice that adds the identity type and the hold acquisition — which is the same slice that makes ADR-0046 clause
-3's orphan sentence executable, and which point 7 was blocked on.
+**`SOUND-INV-017`'s table half is now checked; its event half is not.** The slice above supplies the identity type
+and its rules. What has no check is the event side — `EventPayload::Note` still carries `{ slot, edge }` — and the
+conformance table says exactly that rather than implying coverage.
 
 **REV-P02's `NoteEdge` deviation row is still open.** ADR-0047 adds identity and discharges neither limb; the row
 keeps the owner and the "owed before ingress" deadline REV-P02 gave it. Its pitch limb is blocked on ADR-0025, which

@@ -88,6 +88,7 @@ pub mod admit;
 mod arena;
 pub mod compile;
 pub mod diagnostics;
+pub mod identity;
 pub mod ir;
 pub mod node;
 pub mod offline;

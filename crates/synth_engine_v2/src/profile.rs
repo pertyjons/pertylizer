@@ -145,6 +145,21 @@ pub enum ProfileError {
         capacity: EventCount,
     },
 
+    /// A profile can hold more notes at once than an identity can name.
+    ///
+    /// `SOUND-INV-017`'s construction relation. `max_held_notes` bounds how many obligations
+    /// exist at once, and an index space below it would let a profile hold two notes that
+    /// resolve to one identity. Checked here rather than only where the table is built,
+    /// because the invariant makes it a *profile* refusal — a profile that cannot name its
+    /// own held notes should not exist, not merely fail later.
+    #[error("max_held_notes {held} exceeds the {available} indices an identity can name")]
+    HeldNotesExceedIdentitySpace {
+        /// The profile's capacity.
+        held: HeldNoteCount,
+        /// What an index can address.
+        available: u32,
+    },
+
     /// The arbiter identity space is spent.
     ///
     /// Named separately rather than folded into an event-total overflow: they fail for
@@ -475,6 +490,12 @@ impl VoiceLimits {
         )?;
         nonzero("max_active_voices", u64::from(max_active_voices.get()))?;
         nonzero("max_held_notes", u64::from(max_held_notes.get()))?;
+        if max_held_notes.get() > crate::identity::INDEX_SPACE {
+            return Err(ProfileError::HeldNotesExceedIdentitySpace {
+                held: max_held_notes,
+                available: crate::identity::INDEX_SPACE,
+            });
+        }
         nonzero("retirement_crossfade", retirement_crossfade.as_u64())?;
         if minimum_voices_per_instrument > maximum_voices_per_instrument {
             return Err(ProfileError::InvertedVoiceRange {
