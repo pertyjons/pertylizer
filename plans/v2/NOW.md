@@ -55,6 +55,21 @@ That boundary is met by the compiled scheduler in
 [`compiled_schedule.rs`](../../crates/synth_engine_v2/tests/compiled_schedule.rs). The next Phase 3 implementation
 slice is deliberately not selected by this completion update.
 
+### Completed slice — ADR-0046's producer shares
+
+`beddf91b` adds the seven ground-2 profile fields ADR-0046 clause 1 creates, with the plan-independent relations
+profile construction can decide: the share sum against `max_events_per_quantum`, positivity per field,
+`release_event_share >= release_hold_capacity`, and `max_scheduled_events_in_flight` against `compiled_event_share`
+over a derived `max_quanta_per_callback`. `QuantumCount` exists so that derived value carries its unit.
+
+Two consequences of the partition are load-bearing and were found by existing tests rather than predicted: six
+positive shares cannot fit a cap below six, so a `max_events_per_quantum` of 1 or 4 is no longer representable; and
+the compiled floor makes a very small `max_scheduled_events_in_flight` unconstructible.
+
+The defaults are provisional. Three obligations stay open in the host-profile specification's deferred list and are
+named there rather than repeated here: the live share's ingress lower bound, the sealed-batch store's coverage of its
+extent, and the measurement that must reselect both the partition and the cap before live ingress.
+
 ### Drafted, awaiting its specification transaction — ADR-0047 note identity
 
 [ADR-0047](decisions/ADR-0047-note-identity-in-the-event-contract.md) is `Proposed` and has had its independent
