@@ -3,7 +3,7 @@
 This is the compact status index for durable Core V2 decisions. Individual ADRs own rationale and evidence; current
 specifications own implementation semantics. Do not copy review history or measurement results into this file.
 
-Next free identifier: `ADR-0049`.
+Next free identifier: `ADR-0050`.
 
 ## Status vocabulary
 
@@ -98,6 +98,7 @@ the durable-decision test in `PROCESS.md` and normally do not need an ADR.
 | ADR-0046 | Destination-quantum admission               | Accepted | 3                     | [ADR](decisions/ADR-0046-destination-quantum-admission.md)         | Fixed producer shares, plan-time envelopes, one publication arbiter and no renderer movement for capacity |
 | ADR-0047 | Note identity in the event contract          | Proposed | 3                     | [ADR](decisions/ADR-0047-note-identity-in-the-event-contract.md)   | Makes ADR-0046 clause 3's orphan-release sentence implementable. Decides identity only; REV-P02's pitch and velocity limbs keep the Phase 3 owner and deadline REV-P02 gave them |
 | ADR-0048 | Note obligation across an identity-table rebuild | Proposed | 9                 | —                                                                  | Split out of ADR-0047 by its fifth review round. ADR-0047 clause 8 refuses the rebuild meanwhile; ADR-0009's plan swap is the coupled topic |
+| ADR-0049 | Tempo-ramp law under clause 15               | Proposed | 3/4                   | —                                                                  | V1's ramp needs a logarithm; ADR-0032 clause 15 forbids a transcendental in the conversion. Either state the exact evaluation or select a shape the four operations express — the latter changes delivered timing |
 
 ### Reversible decisions
 

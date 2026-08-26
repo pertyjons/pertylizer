@@ -99,6 +99,45 @@ per-call accounting.
 every later one in the epoch, both carries invalidated, `needs_reprepare` published — belongs to the slice that routes
 the renderer through the arbiter. Nothing here claims it is in force.
 
+### Completed slice — the tempo map, steps only
+
+Musical time to [`PlanPosition`], and nothing else. ADR-0032 clause 27 makes anchoring the only place plan time and
+engine time meet, so the module has **no** `SampleTime` in its API — the master plan's "the tempo map produces plan
+positions; it never produces engine times", enforced by the type rather than by convention.
+
+**Ramps are deferred, and finding out why was the substance of this slice.** A first draft ported V1's ramp
+faithfully: tempo linear in tick space, so elapsed time is the integral of `60/bpm` over a linear `bpm`, which is a
+logarithm. An independent review caught that **ADR-0032 clause 15 forbids it** — the conversion law "must be
+expressible in operations whose results are identical on every supported target", because "a tempo ramp implemented
+through a transcendental function would make the frame a note lands on depend on the platform's libm, which the
+determinism digest cannot tolerate". A faithful port of V1 and V2's own accepted timing contract are in direct
+conflict here.
+
+Clause 15 leaves two ways out — state the exact evaluation, or use a shape the four operations express — and both are
+durable choices: the first is a numeric law to specify and test, the second changes delivered musical behaviour (a
+60→120 ramp over four beats runs 2.77 s under V1's shape and 3.00 s under a period-linear one). **The maintainer chose
+to defer ramps rather than pick one under time pressure.** `TempoChange::ramp` does not exist; a map cannot be built
+with one. No project in this repository sets a ramp, so steps are what the corpus actually uses.
+
+**One rounding, and the error is bounded rather than absent.** Clause 15 rounds musical time to a frame exactly once,
+half away from zero. `position_of` sums the stored per-segment prefix and the offset inside the segment in seconds and
+rounds that sum once — rounding each boundary and adding integers would instead accrue up to half a frame per tempo
+change. What does accumulate is `f64` addition over the prefix: about `1e-12` seconds over a ten-minute plan, roughly
+`5e-8` frames. An earlier draft of this note claimed nothing accumulated, which was false.
+
+**Conversion past `2^53` is refused, not answered.** Beyond it `f64` stops representing consecutive integers, so two
+distinct ticks would map to one position. Both the tick and the position it produces are guarded, and neither
+subsumes the other — a tick inside the bound can still produce a position outside it.
+
+Twelve checks. Four mutation-verified against specific wrong answers: counting beats from tick zero rather than the
+segment start, truncating instead of rounding, and reintroducing a transcendental. The rounding one needed a fixture
+built for it — every other value in the suite lands on an exact frame, so truncation passed all of them until a
+6 000 BPM map put a tick at exactly half a frame. `the_conversion_uses_only_the_four_operations` is a standing source
+scan in the spirit of the render loop's purity check, so a ramp cannot arrive later by quietly calling a library.
+
+Still owed in this stream: anchoring `PlanPosition` to `SampleTime` at play, seek, loop wrap and offline range start;
+recompiling and re-admitting entitlements before a tempo-map replacement activates; and the ramp law itself.
+
 ### Completed slice — the compiled producer publishes through the arbiter
 
 The integration the parked ingress slice was waiting for. `CompiledEventScheduler` no longer hands the renderer a
