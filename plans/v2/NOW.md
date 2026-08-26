@@ -99,6 +99,35 @@ per-call accounting.
 every later one in the epoch, both carries invalidated, `needs_reprepare` published — belongs to the slice that routes
 the renderer through the arbiter. Nothing here claims it is in force.
 
+### Completed slice — compiled admission over anchor phases and loops
+
+ADR-0046 clause 4, and it closes a real gap rather than adding a check. `CompiledEventScheduler::prepare` counted
+events per **absolute quantum**, which is the wrong question: two events at frames 63 and 64 are in different quanta
+from an anchor at zero and in the *same* quantum from an anchor one frame later. A plan admitted that way faults at
+publication after an ordinary seek. The clause says it directly — admission rejects a plan if "any window of `Q`
+consecutive integer frame positions contains more events than the share", which "is exactly the worst case over all
+`Q` integer anchor phases".
+
+Only windows beginning at an event need checking, because sliding forward without passing an event cannot add one.
+That is what collapses `Q` anchor phases into a single pass.
+
+**A loop is a periodic stream, not a window over the plan.** At the wrap the tail of one pass and the head of the next
+fall inside one window, and a loop shorter than `Q` puts several whole passes there — clause 4's "loops shorter than
+`Q` are not a special hole". The extension repeats `ceil(Q / loop_length) + 2` copies: those wholly inside a window,
+plus the one straddling each end. Once this passes, a wrap cannot fail for compiled capacity and the audio thread does
+no wrap-time work at all.
+
+The check runs **off** the audio thread, as clause 4 requires: it is finite but its cost scales with the events inside
+the loop interval, which no profile capacity bounds — only the window it slides is bounded by `Q`.
+
+Nine checks, three mutation-verified: a closed window instead of a half-open one, two extension copies instead of
+`ceil(Q / L) + 2`, and treating the loop's exclusive end as inside. The third needed the test rewritten — the first
+version put every event *past* the end, where `<` and `<=` agree, and the mutation passed it. It now places an event
+exactly on the end frame, which is one loop length after the start and would collide with the next pass.
+
+Not yet wired into `CompiledEventScheduler::prepare`, which still applies the narrower per-quantum check. Routing it
+is the next slice; the module's own doc says so rather than implying the gap is closed.
+
 ### Completed slice — the session anchor
 
 The four re-anchoring moments the master plan names: play, seek, loop wrap and offline range start. `SessionScheduler`

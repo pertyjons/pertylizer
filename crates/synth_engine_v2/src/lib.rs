@@ -84,6 +84,7 @@
 //! # Ok::<(), Box<dyn std::error::Error>>(())
 //! ```
 
+pub mod admit;
 mod arena;
 pub mod compile;
 pub mod diagnostics;
