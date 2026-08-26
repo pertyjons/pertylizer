@@ -18,7 +18,8 @@ use synth_engine_v2::ir::{
 };
 use synth_engine_v2::profile::{
     CostBudget, EventLimits, GraphLimits, HostProfile, MemoryLimits, MixingLimits,
-    ObservationLimits, RecordingLimits, RenderLimits, ScriptLimits, StreamLimits, VoiceLimits,
+    ObservationLimits, ProducerShares, RecordingLimits, RenderLimits, ScriptLimits, StreamLimits,
+    VoiceLimits,
 };
 use synth_engine_v2::quantities::{
     Amplitude, BusCount, ChannelLayout, CostRatio, EdgeCount, EventCount, FanOut, Frequency,
@@ -88,6 +89,23 @@ fn slots(value: u32) -> SlotCount {
 
 fn events(value: u32) -> EventCount {
     EventCount::limit(value).expect("a positive capacity")
+}
+
+/// The smallest partition ADR-0046 clause 1 admits: six positive shares and one hold.
+///
+/// A test that overrides `max_events_per_quantum` must also supply a partition that
+/// fits it, and this is the one that fits every cap of six or more.
+fn minimal_shares() -> ProducerShares {
+    ProducerShares::new(
+        events(1),
+        events(1),
+        events(1),
+        events(1),
+        events(1),
+        events(1),
+        events(1),
+    )
+    .expect("a valid minimal partition")
 }
 
 /// Compile and assert the refusal names `field`, both amounts, and an object.
@@ -212,6 +230,20 @@ fn refusal_cases(host: &HostProfile) -> Vec<(ResourceField, GraphIr, HostProfile
         .expect("readable plan");
     let declares = declaring(declared());
 
+    // ADR-0046 clause 1 raised the floor under two of these limits, so the shared
+    // fixture's declaration of two no longer exceeds either. The cap cannot go below six
+    // (six positive shares), and `max_scheduled_events_in_flight` cannot go below the
+    // compiled floor, which is four here. Both rows therefore declare *more* instead of
+    // budgeting less; the refusal under test is unchanged.
+    let declares_seven_events = declaring(PlanDeclarations {
+        events_per_quantum: EventCount::measured(7),
+        ..declared()
+    });
+    let declares_five_in_flight = declaring(PlanDeclarations {
+        scheduled_events_in_flight: EventCount::measured(5),
+        ..declared()
+    });
+
     let graph = |nodes: u32, edges: u32, fan_out: u32, mod_nodes: u32, note_nodes: u32| {
         let mut groups = Groups::of(host);
         groups.graph = GraphLimits::new(
@@ -246,6 +278,7 @@ fn refusal_cases(host: &HostProfile) -> Vec<(ResourceField, GraphIr, HostProfile
             horizon,
             events(16_384),
             events(256),
+            minimal_shares(),
         )
         .expect("the overridden capacities are above zero");
         groups.build(host)
@@ -348,8 +381,8 @@ fn refusal_cases(host: &HostProfile) -> Vec<(ResourceField, GraphIr, HostProfile
         ),
         (
             ResourceField::MaxEventsPerQuantum,
-            declares.clone(),
-            event_limits(1, 128, 4_096),
+            declares_seven_events,
+            event_limits(6, 128, 4_096),
         ),
         (
             ResourceField::MaxNoteExpansionPerTick,
@@ -358,8 +391,8 @@ fn refusal_cases(host: &HostProfile) -> Vec<(ResourceField, GraphIr, HostProfile
         ),
         (
             ResourceField::MaxScheduledEventsInFlight,
-            declares.clone(),
-            event_limits(256, 128, 1),
+            declares_five_in_flight,
+            event_limits(256, 128, 4),
         ),
         // `LIMIT-0020`'s successor: V1 publishes meters through a 128-slot array whose
         // `publish()` is an `if let Some(slot)`, so a project with more metered channels
@@ -624,8 +657,16 @@ fn ground_of(field: ResourceField) -> Ground {
         | ResourceField::MaximumBlockSize
         | ResourceField::ChannelLayout => QueriedCapability,
 
-        // Ground 2: ADR-0032 clause 21 creates the forward horizon.
-        ResourceField::ForwardEventHorizon => AcceptedDecision,
+        // Ground 2: ADR-0032 clause 21 creates the forward horizon, and ADR-0046
+        // clause 1 creates the seven producer fields.
+        ResourceField::ForwardEventHorizon
+        | ResourceField::CompiledEventShare
+        | ResourceField::AuthoredRuntimeEventShare
+        | ResourceField::LiveEventShare
+        | ResourceField::SessionEventShare
+        | ResourceField::InternalEventShare
+        | ResourceField::ReleaseEventShare
+        | ResourceField::ReleaseHoldCapacity => AcceptedDecision,
 
         // Ground 3, the enumerated residual: the six no-antecedent fields other than the
         // horizon, plus the two whose ledger rows are provenance rather than a ground.
@@ -709,12 +750,27 @@ fn every_field_is_admitted_by_exactly_one_rule() {
          max_events_per_quantum: {residual:?}"
     );
 
-    // And exactly one field is created by an accepted decision.
+    // Ground 2 is a closed list too, and it grew from one to eight: ADR-0032 clause 21
+    // creates the horizon, and ADR-0046 clause 1 creates the six producer shares and the
+    // release-hold capacity. A field added here without an accepted record behind it is
+    // exactly what `HOST-INV-005` refuses, so the list is asserted rather than counted.
     let by_decision: Vec<_> = ResourceField::ALL
         .into_iter()
         .filter(|field| ground_of(*field) == Ground::AcceptedDecision)
         .collect();
-    assert_eq!(by_decision, vec![ResourceField::ForwardEventHorizon]);
+    assert_eq!(
+        by_decision,
+        vec![
+            ResourceField::ForwardEventHorizon,
+            ResourceField::CompiledEventShare,
+            ResourceField::AuthoredRuntimeEventShare,
+            ResourceField::LiveEventShare,
+            ResourceField::SessionEventShare,
+            ResourceField::InternalEventShare,
+            ResourceField::ReleaseEventShare,
+            ResourceField::ReleaseHoldCapacity,
+        ]
+    );
 }
 
 #[test]
@@ -805,6 +861,7 @@ fn the_scratch_budget_counts_what_preparation_actually_allocates() {
             horizon,
             groups.events.command_queue_capacity(),
             groups.events.event_egress_capacity(),
+            minimal_shares(),
         )
         .expect("the overridden capacities are above zero");
         compile(&plan, &RenderConfig::new(groups.build(&host)))
@@ -815,7 +872,7 @@ fn the_scratch_budget_counts_what_preparation_actually_allocates() {
     };
 
     assert_ne!(
-        scratch_request(1),
+        scratch_request(6),
         scratch_request(4_096),
         "raising max_events_per_quantum must raise the scratch request, because it raises \
          what preparation allocates"

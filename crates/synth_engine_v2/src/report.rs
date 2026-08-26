@@ -116,11 +116,25 @@ pub enum ResourceField {
     MaxRecordedEventsPerTake,
     /// The advisory quantum cost ratio.
     PredictedQuantumCostRatio,
+    /// ADR-0046's compiled timeline and automation share.
+    CompiledEventShare,
+    /// ADR-0046's authored runtime expansion share.
+    AuthoredRuntimeEventShare,
+    /// ADR-0046's live ingress share.
+    LiveEventShare,
+    /// ADR-0046's session and transport share.
+    SessionEventShare,
+    /// ADR-0046's renderer-internal production share.
+    InternalEventShare,
+    /// ADR-0046's guaranteed release share.
+    ReleaseEventShare,
+    /// ADR-0046's outstanding non-compiled release obligations.
+    ReleaseHoldCapacity,
 }
 
 impl ResourceField {
     /// How many fields carry an amount.
-    pub const COUNT: usize = 42;
+    pub const COUNT: usize = 49;
 
     /// Every field, once.
     pub const ALL: [Self; Self::COUNT] = [
@@ -166,6 +180,13 @@ impl ResourceField {
         Self::MaxHeldNotesPerTake,
         Self::MaxRecordedEventsPerTake,
         Self::PredictedQuantumCostRatio,
+        Self::CompiledEventShare,
+        Self::AuthoredRuntimeEventShare,
+        Self::LiveEventShare,
+        Self::SessionEventShare,
+        Self::InternalEventShare,
+        Self::ReleaseEventShare,
+        Self::ReleaseHoldCapacity,
     ];
 
     /// This field's position in [`Self::ALL`].
@@ -218,6 +239,13 @@ impl ResourceField {
             Self::MaxHeldNotesPerTake => 39,
             Self::MaxRecordedEventsPerTake => 40,
             Self::PredictedQuantumCostRatio => 41,
+            Self::CompiledEventShare => 42,
+            Self::AuthoredRuntimeEventShare => 43,
+            Self::LiveEventShare => 44,
+            Self::SessionEventShare => 45,
+            Self::InternalEventShare => 46,
+            Self::ReleaseEventShare => 47,
+            Self::ReleaseHoldCapacity => 48,
         }
     }
 
@@ -267,6 +295,13 @@ impl ResourceField {
             Self::MaxHeldNotesPerTake => "max_held_notes_per_take",
             Self::MaxRecordedEventsPerTake => "max_recorded_events_per_take",
             Self::PredictedQuantumCostRatio => "predicted_quantum_cost_ratio",
+            Self::CompiledEventShare => "compiled_event_share",
+            Self::AuthoredRuntimeEventShare => "authored_runtime_event_share",
+            Self::LiveEventShare => "live_event_share",
+            Self::SessionEventShare => "session_event_share",
+            Self::InternalEventShare => "internal_event_share",
+            Self::ReleaseEventShare => "release_event_share",
+            Self::ReleaseHoldCapacity => "release_hold_capacity",
         }
     }
 
@@ -285,8 +320,8 @@ impl ResourceField {
     ///
     /// `HOST-INV-007` binds the limits a plan can exceed, and its conformance row asks
     /// for one refusal case per such limit — so this predicate has to be exactly the
-    /// set those cases can be written for. Twenty-eight fields qualify. The fourteen
-    /// that do not take that refusal fall into five groups, each excluded for its own
+    /// set those cases can be written for. Twenty-eight fields qualify. The twenty-one
+    /// that do not take that refusal fall into six groups, each excluded for its own
     /// reason:
     ///
     /// - **The three queried capabilities.** A capability describes what the plan is
@@ -305,10 +340,19 @@ impl ResourceField {
     /// - **The advisory cost budget.** `predicted_quantum_cost_ratio` may be exceeded,
     ///   but `HOST-INV-015` makes that a `CompileWarning` rather than a `CompileError`,
     ///   which is the same rule [`Self::is_advisory`] states.
+    /// - **ADR-0046's seven producer fields**, for now. Their plan-dependent relations —
+    ///   the compiled and authored destination envelopes, the session snapshot, the
+    ///   internal declarations and the hold entitlements — are checked at plan admission
+    ///   by later Phase 3 work. Until that exists, these fields are checked by profile
+    ///   *construction* alone, and claiming a plan can exceed them would leave
+    ///   `HOST-INV-007`'s conformance row asking for a refusal case that cannot be
+    ///   written. Moving them here is the change that lands with that admission work.
     ///
     /// An earlier revision of this predicate excluded only eight fields, which made
     /// `HOST-INV-007`'s conformance row unsatisfiable: six of the remaining fields
     /// compare a value against itself, and no plan can be built that exceeds one.
+    ///
+    /// Twenty-one fields are excluded and twenty-eight qualify.
     #[must_use]
     pub const fn is_admission_checked(self) -> bool {
         !matches!(
@@ -327,6 +371,13 @@ impl ResourceField {
                 | Self::ModMatrixSlotsPerVoice
                 | Self::ScriptHostSlotsPerVoice
                 | Self::PredictedQuantumCostRatio
+                | Self::CompiledEventShare
+                | Self::AuthoredRuntimeEventShare
+                | Self::LiveEventShare
+                | Self::SessionEventShare
+                | Self::InternalEventShare
+                | Self::ReleaseEventShare
+                | Self::ReleaseHoldCapacity
         )
     }
 }
@@ -680,7 +731,16 @@ impl ResourceReport {
         self.capability_source
     }
 
-    /// Every field whose request exceeds its allowance, in field order.
+    /// Every field whose request exceeds its allowance, in the order this report holds
+    /// its rows.
+    ///
+    /// For a report the compiler built that is [`ResourceField::ALL`]'s order, which
+    /// `voice_nodes`' report test asserts over the whole row sequence. It is **not** a
+    /// property of every report: [`Self::new`] is public and accepts any sequence
+    /// without sorting or validating it, so a caller that assembles its own rows gets
+    /// them back as it supplied them. An earlier revision promised "field order" without
+    /// that distinction, which was true only by coincidence of how the compiler happened
+    /// to push.
     pub fn exceeded(&self) -> impl Iterator<Item = &ResourceRow> {
         self.rows.iter().filter(|row| row.fit() == Fit::Exceeds)
     }

@@ -665,7 +665,10 @@ fn a_quantum_over_its_event_capacity_is_rejected_before_anything_is_mutated() {
     // partially render, or grow to absorb it.
     let host = profile(256, ChannelLayout::Mono);
     let mut limits = common::defaults_for(&host);
-    let capacity = 4;
+    // Six, not four: ADR-0046 clause 1 partitions the cap into six positive producer
+    // shares, so no profile can represent a per-quantum cap below six. The test's point
+    // is a cap the span exceeds, and six is the smallest one that now exists.
+    let capacity = 6;
     limits = synth_engine_v2::profile::RenderLimits::new(
         limits.stream(),
         limits.graph(),
@@ -677,6 +680,16 @@ fn a_quantum_over_its_event_capacity_is_rejected_before_anything_is_mutated() {
             limits.events().forward_event_horizon(),
             limits.events().command_queue_capacity(),
             limits.events().event_egress_capacity(),
+            synth_engine_v2::profile::ProducerShares::new(
+                synth_engine_v2::quantities::EventCount::limit(1).expect("positive"),
+                synth_engine_v2::quantities::EventCount::limit(1).expect("positive"),
+                synth_engine_v2::quantities::EventCount::limit(1).expect("positive"),
+                synth_engine_v2::quantities::EventCount::limit(1).expect("positive"),
+                synth_engine_v2::quantities::EventCount::limit(1).expect("positive"),
+                synth_engine_v2::quantities::EventCount::limit(1).expect("positive"),
+                synth_engine_v2::quantities::EventCount::limit(1).expect("positive"),
+            )
+            .expect("a valid minimal partition"),
         )
         .expect("valid event limits"),
         limits.observation(),
@@ -704,7 +717,7 @@ fn a_quantum_over_its_event_capacity_is_rejected_before_anything_is_mutated() {
     let epoch = renderer.epoch();
     let slot = frequency_slot(&renderer);
 
-    // Five events in one quantum against a capacity of four.
+    // One more event in one quantum than the capacity admits.
     let events: Vec<TimedEvent> = (0..=capacity)
         .map(|index| set_frequency(slot, epoch, u64::from(index), 300.0, TimeSource::Compiled))
         .collect();
@@ -718,8 +731,8 @@ fn a_quantum_over_its_event_capacity_is_rejected_before_anything_is_mutated() {
     assert!(matches!(
         error,
         RenderError::QuantumEventOverflow {
-            requested: 5,
-            available: 4,
+            requested: 7,
+            available: 6,
             ..
         }
     ));

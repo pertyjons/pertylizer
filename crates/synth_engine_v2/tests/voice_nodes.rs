@@ -193,6 +193,23 @@ fn a_refused_node_still_comes_with_a_report() {
         synth_engine_v2::report::ResourceField::COUNT,
         "every field is reported whether or not a plan came out"
     );
+
+    // And in `ResourceField::ALL`'s order, which `exceeded()` promises its callers when
+    // it says "in field order" while returning rows in the order they were pushed. The
+    // two agreed only by construction until ADR-0046's fields were appended to `ALL` but
+    // emitted mid-list, which silently misaligned every later row for a consumer walking
+    // the canonical order. Counting the rows cannot see that; this can.
+    let order: Vec<_> = outcome
+        .report()
+        .rows()
+        .iter()
+        .map(synth_engine_v2::report::ResourceRow::field)
+        .collect();
+    assert_eq!(
+        order,
+        synth_engine_v2::report::ResourceField::ALL.to_vec(),
+        "report rows must follow the canonical field order"
+    );
 }
 
 #[test]

@@ -197,6 +197,42 @@ counted_quantity!(
     "A number of events — per quantum, per tick, or per queue."
 );
 counted_quantity!(TapCount, u32, "taps", "A number of observation taps.");
+
+impl EventCount {
+    /// The sum, or `None` where it cannot be represented.
+    ///
+    /// ADR-0046 clause 1 requires the producer-share sum to be checked. Six capacities
+    /// can sum past what one can hold, and a wrapped sum would report a fitting
+    /// partition for one that does not fit — the exact failure the partition exists to
+    /// prevent.
+    pub const fn checked_add(self, other: Self) -> Option<Self> {
+        match self.0.checked_add(other.0) {
+            Some(total) => Some(Self(total)),
+            None => None,
+        }
+    }
+
+    /// This many events in each of `quanta` quanta, or `None` where the product cannot
+    /// be represented.
+    ///
+    /// Written as the unit equation rather than as a bare multiplication: a per-quantum
+    /// count times a number of quanta is a number of events. That is the whole reason
+    /// [`QuantumCount`] exists — ADR-0046 clause 1 multiplies event capacities by it and
+    /// requires the operand to carry its unit rather than arrive as a raw count.
+    pub const fn checked_over(self, quanta: QuantumCount) -> Option<Self> {
+        match self.0.checked_mul(quanta.0) {
+            Some(total) => Some(Self(total)),
+            None => None,
+        }
+    }
+}
+
+counted_quantity!(
+    QuantumCount,
+    u32,
+    "quanta",
+    "A number of render quanta.\n\nADR-0046 clause 1 requires the derived `max_quanta_per_callback` to be one of these rather than a raw count: it multiplies event capacities, and a bare integer there is the unit confusion `HOST-INV-018` exists to prevent. Distinct from [`EventCount`] and from [`crate::time::FrameCount`], and deliberately not convertible to either — a quantum is neither an event nor a frame."
+);
 counted_quantity!(
     SlotCount,
     u32,

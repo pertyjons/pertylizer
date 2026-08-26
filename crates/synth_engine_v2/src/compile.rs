@@ -579,6 +579,49 @@ fn build_rows(
         IrObject::Plan,
     ));
 
+    // ADR-0046's producer partition. Each row reports the profile's own value on both
+    // sides, as the other construction-checked capacities do: a plan does not request a
+    // share, so there is no requested amount that could differ. What the rows carry is
+    // the partition itself, so a report shows which class a later admission refusal was
+    // charged against rather than only the cap it summed to.
+    for (field, amount) in [
+        (
+            ResourceField::CompiledEventShare,
+            limits.events().shares().compiled_event_share(),
+        ),
+        (
+            ResourceField::AuthoredRuntimeEventShare,
+            limits.events().shares().authored_runtime_event_share(),
+        ),
+        (
+            ResourceField::LiveEventShare,
+            limits.events().shares().live_event_share(),
+        ),
+        (
+            ResourceField::SessionEventShare,
+            limits.events().shares().session_event_share(),
+        ),
+        (
+            ResourceField::InternalEventShare,
+            limits.events().shares().internal_event_share(),
+        ),
+        (
+            ResourceField::ReleaseEventShare,
+            limits.events().shares().release_event_share(),
+        ),
+        (
+            ResourceField::ReleaseHoldCapacity,
+            limits.events().shares().release_hold_capacity(),
+        ),
+    ] {
+        rows.push(ResourceRow::new(
+            field,
+            ResourceAmount::Events(amount),
+            ResourceAmount::Events(amount),
+            IrObject::Plan,
+        ));
+    }
+
     rows
 }
 

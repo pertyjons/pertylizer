@@ -14,8 +14,8 @@ use thiserror::Error;
 
 use crate::quantities::{
     BusCount, ChannelLayout, CostRatio, EdgeCount, EventCount, FanOut, HeldNoteCount,
-    InstructionCount, MixChannelCount, NodeCount, PreparedBytes, QuantityError, SampleRate,
-    SampleRateRange, SendCount, SlotCount, TapCount, VoiceCount,
+    InstructionCount, MixChannelCount, NodeCount, PreparedBytes, QuantityError, QuantumCount,
+    SampleRate, SampleRateRange, SendCount, SlotCount, TapCount, VoiceCount,
 };
 use crate::time::{FrameCount, QUANTUM_FRAMES};
 
@@ -114,6 +114,75 @@ pub enum ProfileError {
         minimum: VoiceCount,
         /// The upper endpoint.
         maximum: VoiceCount,
+    },
+
+    /// The six producer shares do not fit the per-quantum cap.
+    ///
+    /// ADR-0046 clause 1. The shares partition `max_events_per_quantum`, and any
+    /// difference between their sum and the cap is unusable slack rather than an
+    /// unnamed seventh share. A sum *above* the cap is the failure: it would let
+    /// conforming producers jointly overfill a quantum that each of them fit.
+    #[error("producer shares sum to {sum}, above max_events_per_quantum {cap}")]
+    ProducerSharesExceedQuantumCap {
+        /// The checked sum of the six shares.
+        sum: EventCount,
+        /// The cap they must fit.
+        cap: EventCount,
+    },
+
+    /// A checked event total that cannot be represented at all.
+    ///
+    /// ADR-0046 clause 1 requires every multiplication and conversion to be checked.
+    /// Reaching this is not a load condition: the profile asks for more events than an
+    /// `EventCount` can name, so no capacity could satisfy it. The total is named
+    /// because three different ones can arrive here, and reporting one of them as
+    /// another would send a reader to the wrong field.
+    #[error("{total} overflows the largest representable EventCount")]
+    EventTotalUnrepresentable {
+        /// Which total overflowed.
+        total: &'static str,
+    },
+
+    /// The release share cannot redeem every hold it admits.
+    ///
+    /// ADR-0046 clause 1's `release_event_share >= release_hold_capacity`. Every
+    /// outstanding non-compiled hold must be able to redeem an individual release
+    /// into one destination quantum, so a release share below the hold capacity
+    /// admits an obligation it cannot discharge.
+    #[error("release_event_share {share} is below release_hold_capacity {capacity}")]
+    ReleaseShareBelowHoldCapacity {
+        /// The release share as given.
+        share: EventCount,
+        /// The hold capacity it must cover.
+        capacity: EventCount,
+    },
+
+    /// The scheduled-event window is below the compiled callback floor.
+    ///
+    /// ADR-0046 clause 1: `max_scheduled_events_in_flight` covers
+    /// `compiled_event_share * max_quanta_per_callback`, so one callback's worth of
+    /// compiled entitlement can always be published. Carry can reduce how many quanta
+    /// a particular callback renders but cannot raise that maximum.
+    #[error(
+        "max_scheduled_events_in_flight {in_flight} is below the compiled floor {floor} \
+         (compiled_event_share {share} over {quanta})"
+    )]
+    ScheduledWindowBelowCompiledFloor {
+        /// The window as given.
+        in_flight: EventCount,
+        /// The product it must cover.
+        floor: EventCount,
+        /// The compiled share.
+        share: EventCount,
+        /// The derived quanta per callback.
+        quanta: QuantumCount,
+    },
+
+    /// The largest callback covers more quanta than a `QuantumCount` can hold.
+    #[error("maximum_block_size {block} needs more quanta than a QuantumCount can carry")]
+    BlockSizeExceedsQuantumCount {
+        /// The block size as given.
+        block: FrameCount,
     },
 }
 
@@ -235,6 +304,30 @@ impl HostCapabilities {
             channel_layout,
             source,
         })
+    }
+
+    /// The most quanta one callback can render, `ceil(maximum_block_size / Q)`.
+    ///
+    /// **Derived, never taken.** ADR-0046 clause 1 multiplies event capacities by this,
+    /// and requires it to be a `QuantumCount` rather than a raw count so the
+    /// multiplication cannot silently mix units. It is a maximum: the renderer's carry
+    /// can leave a particular call rendering fewer quanta, but nothing can make a call
+    /// render more than this, which is why a relation checked against it holds for
+    /// every callback.
+    ///
+    /// Fallible only for the conversion. A block large enough to need more than
+    /// `u32::MAX` quanta is not a device, but returning a wrapped count here would
+    /// understate every relation built on it.
+    pub fn max_quanta_per_callback(&self) -> Result<QuantumCount, ProfileError> {
+        let quanta = self
+            .maximum_block_size
+            .as_u64()
+            .div_ceil(u64::from(QUANTUM_FRAMES));
+        let quanta =
+            u32::try_from(quanta).map_err(|_| ProfileError::BlockSizeExceedsQuantumCount {
+                block: self.maximum_block_size,
+            })?;
+        QuantumCount::limit(quanta).map_err(ProfileError::from)
     }
 
     accessors! {
@@ -385,6 +478,131 @@ impl VoiceLimits {
     }
 }
 
+/// ADR-0046 clause 1's six disjoint producer shares, and the release-hold capacity.
+///
+/// The shares **partition** `max_events_per_quantum`: every renderer event is charged
+/// to exactly one of them, no producer borrows another's unused entitlement, and any
+/// difference between their sum and the cap is unusable safety slack rather than an
+/// unnamed seventh share. That is what makes the cap safe at the joint peak of every
+/// class, which independently bounding each producer would not.
+///
+/// **These are inputs, not derivations.** Construction checks the plan-independent
+/// relations here; plan admission checks the plan-dependent ones against these fixed
+/// values, and preparation allocates the admitted extents without mutating a share.
+/// Shares are fixed for the stream epoch and are never renegotiated on the audio thread.
+///
+/// Every share is a positive capacity, including in a profile that disables one of the
+/// optional producer classes: such a class leaves its entitlement unused, and no other
+/// producer may reclaim it while the stream runs. That is why these are `EventCount`
+/// capacities rather than `EventCount::NONE` measurements.
+///
+/// The values themselves are **not** evidenced. ADR-0046 fixes the relations and leaves
+/// the numbers to Phase 3 measurement, which must reselect `max_events_per_quantum`
+/// from the measured partition before live ingress is enabled — even if the measured
+/// partition would fit inside the present cap.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[must_use]
+pub struct ProducerShares {
+    compiled_event_share: EventCount,
+    authored_runtime_event_share: EventCount,
+    live_event_share: EventCount,
+    session_event_share: EventCount,
+    internal_event_share: EventCount,
+    release_event_share: EventCount,
+    release_hold_capacity: EventCount,
+}
+
+impl ProducerShares {
+    /// The shares, checking the one relation that needs no other field.
+    ///
+    /// The sum is checked against the cap by [`EventLimits::new`], which owns the cap,
+    /// and the compiled floor by [`HostProfile::new`], which owns the block size. Only
+    /// `release_event_share >= release_hold_capacity` is decidable from these seven
+    /// values alone, so only that one lives here.
+    pub fn new(
+        compiled_event_share: EventCount,
+        authored_runtime_event_share: EventCount,
+        live_event_share: EventCount,
+        session_event_share: EventCount,
+        internal_event_share: EventCount,
+        release_event_share: EventCount,
+        release_hold_capacity: EventCount,
+    ) -> Result<Self, ProfileError> {
+        nonzero(
+            "compiled_event_share",
+            u64::from(compiled_event_share.get()),
+        )?;
+        nonzero(
+            "authored_runtime_event_share",
+            u64::from(authored_runtime_event_share.get()),
+        )?;
+        nonzero("live_event_share", u64::from(live_event_share.get()))?;
+        nonzero("session_event_share", u64::from(session_event_share.get()))?;
+        nonzero(
+            "internal_event_share",
+            u64::from(internal_event_share.get()),
+        )?;
+        nonzero("release_event_share", u64::from(release_event_share.get()))?;
+        nonzero(
+            "release_hold_capacity",
+            u64::from(release_hold_capacity.get()),
+        )?;
+
+        if release_event_share < release_hold_capacity {
+            return Err(ProfileError::ReleaseShareBelowHoldCapacity {
+                share: release_event_share,
+                capacity: release_hold_capacity,
+            });
+        }
+
+        Ok(Self {
+            compiled_event_share,
+            authored_runtime_event_share,
+            live_event_share,
+            session_event_share,
+            internal_event_share,
+            release_event_share,
+            release_hold_capacity,
+        })
+    }
+
+    /// The checked sum of the six shares, or `None` where it cannot be represented.
+    ///
+    /// Keeps its unit rather than widening to a bare integer: this is a number of
+    /// events, and a `u64` here would be one call away from being compared with frames
+    /// or bytes. `release_hold_capacity` is **not** a term — it bounds outstanding
+    /// obligations, not events in a quantum, so adding it would overstate the partition
+    /// by exactly the holds a stream can carry.
+    pub const fn share_sum(&self) -> Option<EventCount> {
+        let Some(sum) = self
+            .compiled_event_share
+            .checked_add(self.authored_runtime_event_share)
+        else {
+            return None;
+        };
+        let Some(sum) = sum.checked_add(self.live_event_share) else {
+            return None;
+        };
+        let Some(sum) = sum.checked_add(self.session_event_share) else {
+            return None;
+        };
+        let Some(sum) = sum.checked_add(self.internal_event_share) else {
+            return None;
+        };
+        sum.checked_add(self.release_event_share)
+    }
+
+    accessors! {
+        compiled_event_share: EventCount, "Compiled timeline and automation.";
+        authored_runtime_event_share: EventCount, "Authored runtime expansion.";
+        live_event_share: EventCount, "Live ingress.";
+        session_event_share: EventCount, "Session and transport.";
+        internal_event_share: EventCount, "Renderer-internal production.";
+        release_event_share: EventCount, "Guaranteed releases.";
+        release_hold_capacity: EventCount, "Outstanding non-compiled release obligations.";
+    }
+}
+
 /// Event capacities.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[must_use]
@@ -395,6 +613,7 @@ pub struct EventLimits {
     forward_event_horizon: FrameCount,
     command_queue_capacity: EventCount,
     event_egress_capacity: EventCount,
+    shares: ProducerShares,
 }
 
 impl EventLimits {
@@ -410,6 +629,7 @@ impl EventLimits {
         forward_event_horizon: FrameCount,
         command_queue_capacity: EventCount,
         event_egress_capacity: EventCount,
+        shares: ProducerShares,
     ) -> Result<Self, ProfileError> {
         nonzero(
             "max_events_per_quantum",
@@ -432,6 +652,22 @@ impl EventLimits {
             "event_egress_capacity",
             u64::from(event_egress_capacity.get()),
         )?;
+
+        // ADR-0046 clause 1: the shares partition the cap. A sum above it would let
+        // six individually conforming producers jointly overfill one quantum, which is
+        // the joint peak the partition exists to make safe.
+        let sum = shares
+            .share_sum()
+            .ok_or(ProfileError::EventTotalUnrepresentable {
+                total: "the producer-share sum",
+            })?;
+        if sum > max_events_per_quantum {
+            return Err(ProfileError::ProducerSharesExceedQuantumCap {
+                sum,
+                cap: max_events_per_quantum,
+            });
+        }
+
         Ok(Self {
             max_events_per_quantum,
             max_note_expansion_per_tick,
@@ -439,6 +675,7 @@ impl EventLimits {
             forward_event_horizon,
             command_queue_capacity,
             event_egress_capacity,
+            shares,
         })
     }
 
@@ -449,6 +686,7 @@ impl EventLimits {
         forward_event_horizon: FrameCount, "How far ahead an ingress event may be stamped.";
         command_queue_capacity: EventCount, "The live command queue's depth.";
         event_egress_capacity: EventCount, "The engine-to-GUI event ring's depth.";
+        shares: ProducerShares, "ADR-0046's producer partition of the per-quantum cap.";
     }
 }
 
@@ -811,6 +1049,44 @@ impl RenderLimits {
             block_floor
         };
 
+        // ADR-0046 clause 1's partition of `max_events_per_quantum`. **Every number here
+        // is provisional.** The record fixes the relations and leaves the values to
+        // Phase 3 measurement, which must reselect the cap itself from the measured
+        // partition before live ingress is enabled. They are chosen to satisfy every
+        // checked relation and to sum to the cap exactly, so the default carries no
+        // unusable slack that a later measurement would have to explain away.
+        let shares = ProducerShares::new(
+            EventCount::limit(96)?,
+            EventCount::limit(48)?,
+            EventCount::limit(32)?,
+            EventCount::limit(24)?,
+            EventCount::limit(16)?,
+            EventCount::limit(40)?,
+            EventCount::limit(40)?,
+        )?;
+
+        // ADR-0046 clause 1: the window is the compiled floor **plus** authored-future
+        // headroom, using checked addition. Taking the larger of the two instead would
+        // leave zero headroom exactly when the compiled product reached the headroom's
+        // own size. The 4,096 is a provisional memory choice, not evidence.
+        // The two failures here are different causes and are reported as such. A block
+        // needing more quanta than a `QuantumCount` can name fails
+        // `max_quanta_per_callback`; a block whose *window* overflows an `EventCount`
+        // while its quanta fit fails here. The boundary between them is real rather than
+        // theoretical — at a compiled share of 96, a maximum block of 2,863,308,737
+        // frames needs 44,739,200 quanta, which fits, for a window of exactly 2^32,
+        // which does not — and reporting the second as the first sends a reader to the
+        // wrong field. The independent review found that conflation.
+        let quanta = capabilities.max_quanta_per_callback()?;
+        let headroom = EventCount::limit(4_096)?;
+        let scheduled_window = shares
+            .compiled_event_share()
+            .checked_over(quanta)
+            .and_then(|floor| floor.checked_add(headroom))
+            .ok_or(ProfileError::EventTotalUnrepresentable {
+                total: "the default max_scheduled_events_in_flight",
+            })?;
+
         Self::new(
             StreamLimits::new(SampleRateRange::engine_supported()),
             GraphLimits::new(
@@ -830,10 +1106,11 @@ impl RenderLimits {
             EventLimits::new(
                 EventCount::limit(256)?,
                 EventCount::limit(128)?,
-                EventCount::limit(4_096)?,
+                scheduled_window,
                 horizon,
                 EventCount::limit(16_384)?,
                 EventCount::limit(256)?,
+                shares,
             )?,
             ObservationLimits::new(
                 TapCount::limit(128)?,
@@ -925,6 +1202,41 @@ impl HostProfile {
             });
         }
 
+        // ADR-0046 clause 1's compiled floor. It spans both halves — the share is a
+        // limit and the block size is a capability — so it belongs here rather than in
+        // either group, for the same reason the horizon floor does.
+        let quanta = capabilities.max_quanta_per_callback()?;
+        let share = limits.events().shares().compiled_event_share();
+        let compiled_floor =
+            share
+                .checked_over(quanta)
+                .ok_or(ProfileError::EventTotalUnrepresentable {
+                    total: "compiled_event_share over one callback",
+                })?;
+        if limits.events().max_scheduled_events_in_flight() < compiled_floor {
+            return Err(ProfileError::ScheduledWindowBelowCompiledFloor {
+                in_flight: limits.events().max_scheduled_events_in_flight(),
+                floor: compiled_floor,
+                share,
+                quanta,
+            });
+        }
+
+        // ADR-0046 clause 1 requires every product and conversion to be checked, and this
+        // is the sealed batch's. It is **not** the relation requiring a store to cover
+        // this extent: that store is the publication arbiter's and does not exist yet.
+        // What construction can decide today is whether the extent is nameable at all —
+        // a profile whose `max_events_per_quantum * max_quanta_per_callback` overflows an
+        // `EventCount` describes a batch no allocation could satisfy, and admitting it
+        // would defer a certain failure to the phase that tries to allocate it.
+        let _sealed_batch_extent = limits
+            .events()
+            .max_events_per_quantum()
+            .checked_over(quanta)
+            .ok_or(ProfileError::EventTotalUnrepresentable {
+                total: "the sealed-batch extent for one callback",
+            })?;
+
         Ok(Self {
             capabilities,
             limits,
@@ -995,6 +1307,17 @@ mod tests {
     }
 
     /// `EventLimits::new` with the failure unwrapped, for a test that is not about it.
+    /// A share partition that fits any cap of six or more.
+    ///
+    /// Six positive shares cannot fit a cap below six, which is a real consequence of
+    /// ADR-0046 clause 1 rather than a test convenience: a profile whose per-quantum cap
+    /// is smaller than the number of producer classes cannot represent the partition at
+    /// all.
+    fn minimal_shares() -> ProducerShares {
+        let one = EventCount::limit(1).expect("positive");
+        ProducerShares::new(one, one, one, one, one, one, one).expect("a valid minimal partition")
+    }
+
     fn build_events(
         per_quantum: EventCount,
         expansion: EventCount,
@@ -1003,8 +1326,356 @@ mod tests {
         command: EventCount,
         egress: EventCount,
     ) -> EventLimits {
-        EventLimits::new(per_quantum, expansion, in_flight, horizon, command, egress)
-            .expect("valid event limits")
+        EventLimits::new(
+            per_quantum,
+            expansion,
+            in_flight,
+            horizon,
+            command,
+            egress,
+            minimal_shares(),
+        )
+        .expect("valid event limits")
+    }
+
+    /// Shares that sum to `cap`, with the release share and hold capacity given.
+    fn shares_summing_to(
+        compiled: u32,
+        release: u32,
+        hold: u32,
+    ) -> Result<ProducerShares, ProfileError> {
+        ProducerShares::new(
+            EventCount::limit(compiled)?,
+            EventCount::limit(1)?,
+            EventCount::limit(1)?,
+            EventCount::limit(1)?,
+            EventCount::limit(1)?,
+            EventCount::limit(release)?,
+            EventCount::limit(hold)?,
+        )
+    }
+
+    #[test]
+    fn a_release_share_one_below_the_hold_capacity_is_refused_and_equality_is_accepted() {
+        // The exit gate names this pair explicitly. ADR-0046 clause 1 requires every
+        // outstanding non-compiled hold to be able to redeem an individual release into
+        // one destination quantum, so a release share below the hold capacity admits an
+        // obligation it cannot discharge. The boundary is the whole content of the rule:
+        // a test that only checked a far-below value would pass against `>` as well as
+        // `>=`, and the two differ exactly at equality.
+        match shares_summing_to(1, 39, 40) {
+            Err(ProfileError::ReleaseShareBelowHoldCapacity { share, capacity }) => {
+                assert_eq!(share.get(), 39);
+                assert_eq!(capacity.get(), 40, "the refusal names both fields");
+            }
+            other => panic!("expected a release-share refusal naming both fields, got {other:?}"),
+        }
+
+        assert!(
+            shares_summing_to(1, 40, 40).is_ok(),
+            "equality is admitted: one release per outstanding hold is exactly enough"
+        );
+        assert!(
+            shares_summing_to(1, 41, 40).is_ok(),
+            "a larger release share is admitted while it still fits the sum"
+        );
+    }
+
+    #[test]
+    fn a_zero_release_hold_capacity_is_refused_by_name() {
+        // `release_hold_capacity` is a positive capacity, not a conversion from
+        // `HeldNoteCount` and not the zero-valued measurement `EventCount::NONE`. The
+        // group constructor takes already-built newtypes, so a caller can hand it a
+        // `NONE` and bypass `limit`'s own check; this is where that hole is closed.
+        let one = EventCount::limit(1).expect("positive");
+        match ProducerShares::new(one, one, one, one, one, one, EventCount::NONE) {
+            Err(ProfileError::Quantity(QuantityError::ZeroCapacity { quantity })) => {
+                assert_eq!(quantity, "release_hold_capacity");
+            }
+            other => panic!("expected a zero-capacity refusal naming the field, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn every_share_refuses_zero_under_its_own_name() {
+        // One case per share, so a share added to the group without its guard fails
+        // here rather than silently admitting a class that can hold nothing.
+        let one = EventCount::limit(1).expect("positive");
+        let names = [
+            "compiled_event_share",
+            "authored_runtime_event_share",
+            "live_event_share",
+            "session_event_share",
+            "internal_event_share",
+            "release_event_share",
+            "release_hold_capacity",
+        ];
+        for (index, expected) in names.into_iter().enumerate() {
+            let mut values = [one; 7];
+            values[index] = EventCount::NONE;
+            let built = ProducerShares::new(
+                values[0], values[1], values[2], values[3], values[4], values[5], values[6],
+            );
+            match built {
+                Err(ProfileError::Quantity(QuantityError::ZeroCapacity { quantity })) => {
+                    assert_eq!(
+                        quantity, expected,
+                        "the refusal names the field that was zero"
+                    );
+                }
+                other => panic!("expected {expected} to refuse zero, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn the_share_sum_may_equal_the_cap_but_not_exceed_it() {
+        // ADR-0046 clause 1: any difference between the sum and the cap is unusable
+        // safety slack, so equality is legal and carries no slack at all. A sum *above*
+        // the cap is the failure, because six individually conforming producers could
+        // then jointly overfill one quantum — the joint peak the partition exists to
+        // make safe.
+        let horizon = FrameCount::new(4_096);
+        let one = EventCount::limit(1).expect("positive");
+        let build = |cap: u32, shares: ProducerShares| {
+            EventLimits::new(
+                EventCount::limit(cap).expect("positive"),
+                one,
+                one,
+                horizon,
+                one,
+                one,
+                shares,
+            )
+        };
+
+        let exact = shares_summing_to(1, 1, 1).expect("a valid partition");
+        assert_eq!(exact.share_sum(), EventCount::limit(6).ok());
+        assert!(
+            build(6, exact).is_ok(),
+            "a sum equal to the cap is admitted"
+        );
+
+        match build(5, exact) {
+            Err(ProfileError::ProducerSharesExceedQuantumCap { sum, cap }) => {
+                assert_eq!(sum.get(), 6);
+                assert_eq!(cap.get(), 5, "the refusal names both the sum and the cap");
+            }
+            other => panic!("expected a share-sum refusal naming both, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn no_profile_can_carry_a_per_quantum_cap_below_the_number_of_producer_classes() {
+        // A consequence of the partition rather than a separate rule, and worth its own
+        // check because it is the one that changes what profiles exist: six positive
+        // shares cannot fit five events, so five is now unrepresentable. Anything that
+        // wants a smaller cap wants a different partition, which is a specification
+        // change.
+        let one = EventCount::limit(1).expect("positive");
+        let shares = ProducerShares::new(one, one, one, one, one, one, one).expect("valid");
+        for cap in 1..=5 {
+            assert!(
+                EventLimits::new(
+                    EventCount::limit(cap).expect("positive"),
+                    one,
+                    one,
+                    FrameCount::new(4_096),
+                    one,
+                    one,
+                    shares,
+                )
+                .is_err(),
+                "a cap of {cap} cannot carry six positive shares"
+            );
+        }
+    }
+
+    #[test]
+    fn the_quanta_per_callback_is_derived_and_rounds_up() {
+        // ADR-0046 clause 1 requires a derived `QuantumCount` rather than a raw count.
+        // The block below `Q` is the case a floor division would get wrong: it renders
+        // one quantum, not zero, and a zero here would make every relation built on it
+        // vacuous.
+        for (block, expected) in [
+            (1_u64, 1_u32),
+            (63, 1),
+            (64, 1),
+            (65, 2),
+            (256, 4),
+            (4_096, 64),
+        ] {
+            let capabilities = HostCapabilities::harness(
+                rate(48_000.0),
+                FrameCount::new(block),
+                ChannelLayout::Stereo,
+            )
+            .expect("valid capabilities");
+            let quanta = capabilities
+                .max_quanta_per_callback()
+                .expect("a device block size fits a QuantumCount");
+            assert_eq!(
+                quanta.get(),
+                expected,
+                "{block} frames covers {expected} quanta"
+            );
+        }
+    }
+
+    #[test]
+    fn the_scheduled_window_must_cover_the_compiled_floor_exactly_at_the_boundary() {
+        // ADR-0046 clause 1: one callback's worth of compiled entitlement must always be
+        // publishable. The boundary is where the rule lives — one below the product is
+        // refused and the product itself is admitted — so a `>` written for a `>=` fails
+        // here.
+        let capabilities =
+            HostCapabilities::harness(rate(48_000.0), FrameCount::new(256), ChannelLayout::Stereo)
+                .expect("valid capabilities");
+        let quanta = capabilities.max_quanta_per_callback().expect("fits");
+        assert_eq!(quanta.get(), 4);
+
+        let defaults = RenderLimits::engine_defaults(capabilities).expect("defaults are valid");
+        let shares = defaults.events().shares();
+        let floor = shares
+            .compiled_event_share()
+            .checked_over(quanta)
+            .expect("the floor is representable");
+        let at_floor = floor.get();
+
+        let with_window = |window: u32| {
+            let events = EventLimits::new(
+                defaults.events().max_events_per_quantum(),
+                defaults.events().max_note_expansion_per_tick(),
+                EventCount::limit(window).expect("positive"),
+                defaults.events().forward_event_horizon(),
+                defaults.events().command_queue_capacity(),
+                defaults.events().event_egress_capacity(),
+                shares,
+            )
+            .expect("only the window changed");
+            let limits = RenderLimits::new(
+                defaults.stream(),
+                defaults.graph(),
+                defaults.voices(),
+                events,
+                defaults.observation(),
+                defaults.mixing(),
+                defaults.memory(),
+                defaults.script(),
+                defaults.recording(),
+                defaults.cost(),
+            )
+            .expect("only the window changed");
+            HostProfile::new(capabilities, limits)
+        };
+
+        match with_window(at_floor - 1) {
+            Err(ProfileError::ScheduledWindowBelowCompiledFloor {
+                in_flight,
+                floor: named,
+                share,
+                quanta: named_quanta,
+            }) => {
+                assert_eq!(in_flight.get(), at_floor - 1);
+                assert_eq!(named, floor);
+                assert_eq!(share, shares.compiled_event_share());
+                assert_eq!(named_quanta.get(), 4, "the refusal names every term");
+            }
+            other => panic!("expected a compiled-floor refusal naming every term, got {other:?}"),
+        }
+        assert!(
+            with_window(at_floor).is_ok(),
+            "the product itself is exactly enough"
+        );
+    }
+
+    #[test]
+    fn a_window_that_overflows_is_reported_as_the_window_and_not_as_the_block() {
+        // ADR-0046 clause 1 requires every multiplication and conversion to be checked,
+        // and a checked failure is only useful if it names the right cause. These two
+        // overflow for different reasons and must not be reported as one: at a compiled
+        // share of 96, this block's 44,739,200 quanta fit a `QuantumCount` while the
+        // window they imply is exactly 2^32 and does not fit an `EventCount`. An earlier
+        // revision reported both as a block-size failure, which the independent review
+        // found by constructing exactly this witness.
+        let block = FrameCount::new(2_863_308_737);
+        let capabilities = HostCapabilities::harness(rate(48_000.0), block, ChannelLayout::Stereo)
+            .expect("valid capabilities");
+
+        assert_eq!(
+            capabilities
+                .max_quanta_per_callback()
+                .expect("the quanta themselves fit")
+                .get(),
+            44_739_200,
+            "the premise: this block's quanta are representable, so the window is what fails"
+        );
+
+        match RenderLimits::engine_defaults(capabilities) {
+            Err(ProfileError::EventTotalUnrepresentable { total }) => {
+                assert_eq!(total, "the default max_scheduled_events_in_flight");
+            }
+            other => panic!("expected the window to be named as the cause, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn a_sealed_batch_extent_that_cannot_be_named_is_refused_as_the_batch() {
+        // Not the sealed-store *coverage* relation, which needs a store that does not
+        // exist yet: this is the checked-arithmetic obligation over the same extent. A
+        // profile whose extent no `EventCount` can name describes a batch no allocation
+        // could satisfy. The block is chosen so that every other relation passes and only
+        // this one fails: 20,000,000 quanta against a
+        // compiled share of 96 give a window of 1.92e9, which fits, while the same quanta
+        // against the 256-event cap give a sealed-batch extent of 5.12e9, which does not.
+        // Without the check, that profile would build and the failure would surface in
+        // the phase that tries to allocate the batch.
+        let block = FrameCount::new(20_000_000 * u64::from(QUANTUM_FRAMES));
+        let capabilities = HostCapabilities::harness(rate(48_000.0), block, ChannelLayout::Stereo)
+            .expect("valid capabilities");
+        let limits = RenderLimits::engine_defaults(capabilities)
+            .expect("the window itself is representable at this block size");
+
+        match HostProfile::new(capabilities, limits) {
+            Err(ProfileError::EventTotalUnrepresentable { total }) => {
+                assert_eq!(total, "the sealed-batch extent for one callback");
+            }
+            other => panic!("expected the sealed batch to be named as the cause, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn the_default_partition_satisfies_every_relation_at_every_admissible_block_size() {
+        // The companion to the horizon's own coverage test, and for the same reason: the
+        // compiled floor scales with the block size, so a default that fits one device
+        // can fail another. The 1,000,000-frame block is implausible as a device and is
+        // exactly why testing rather than reasoning is what catches it.
+        for block in [1_u64, 63, 64, 65, 1_024, 4_096, 48_000, 96_000, 1_000_000] {
+            let capabilities = HostCapabilities::harness(
+                rate(48_000.0),
+                FrameCount::new(block),
+                ChannelLayout::Stereo,
+            )
+            .expect("valid capabilities");
+            let limits = RenderLimits::engine_defaults(capabilities)
+                .unwrap_or_else(|error| panic!("defaults must build at {block} frames: {error:?}"));
+            let shares = limits.events().shares();
+
+            assert!(
+                shares
+                    .share_sum()
+                    .is_some_and(|sum| sum <= limits.events().max_events_per_quantum()),
+                "the default partition must fit the default cap"
+            );
+            assert!(
+                shares.release_event_share() >= shares.release_hold_capacity(),
+                "the default release share must cover its hold capacity"
+            );
+            assert!(
+                HostProfile::new(capabilities, limits).is_ok(),
+                "a {block}-frame maximum block must produce a valid default profile"
+            );
+        }
     }
 
     fn harness_profile() -> HostProfile {
@@ -1261,6 +1932,7 @@ mod tests {
                 FrameCount::new(1),
                 EventCount::limit(1).expect("positive"),
                 EventCount::limit(1).expect("positive"),
+                minimal_shares(),
             )
             .is_err()
         );
