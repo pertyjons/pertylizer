@@ -486,14 +486,14 @@ fn build_rows(
     ));
     rows.push(ResourceRow::new(
         ResourceField::CommandQueueCapacity,
-        ResourceAmount::Events(limits.events().command_queue_capacity()),
-        ResourceAmount::Events(limits.events().command_queue_capacity()),
+        ResourceAmount::Events(limits.events().queues().command_queue_capacity()),
+        ResourceAmount::Events(limits.events().queues().command_queue_capacity()),
         IrObject::Plan,
     ));
     rows.push(ResourceRow::new(
         ResourceField::EventEgressCapacity,
-        ResourceAmount::Events(limits.events().event_egress_capacity()),
-        ResourceAmount::Events(limits.events().event_egress_capacity()),
+        ResourceAmount::Events(limits.events().queues().event_egress_capacity()),
+        ResourceAmount::Events(limits.events().queues().event_egress_capacity()),
         IrObject::Plan,
     ));
 
@@ -612,6 +612,10 @@ fn build_rows(
         (
             ResourceField::ReleaseHoldCapacity,
             limits.events().shares().release_hold_capacity(),
+        ),
+        (
+            ResourceField::PerformanceIngressCapacity,
+            limits.events().queues().performance_ingress_capacity(),
         ),
     ] {
         rows.push(ResourceRow::new(

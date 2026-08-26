@@ -18,8 +18,8 @@ use synth_engine_v2::ir::{
 };
 use synth_engine_v2::profile::{
     CostBudget, EventLimits, GraphLimits, HostProfile, MemoryLimits, MixingLimits,
-    ObservationLimits, ProducerShares, RecordingLimits, RenderLimits, ScriptLimits, StreamLimits,
-    VoiceLimits,
+    ObservationLimits, ProducerShares, QueueCapacities, RecordingLimits, RenderLimits,
+    ScriptLimits, StreamLimits, VoiceLimits,
 };
 use synth_engine_v2::quantities::{
     Amplitude, BusCount, ChannelLayout, CostRatio, EdgeCount, EventCount, FanOut, Frequency,
@@ -276,8 +276,8 @@ fn refusal_cases(host: &HostProfile) -> Vec<(ResourceField, GraphIr, HostProfile
             events(expansion),
             events(in_flight),
             horizon,
-            events(16_384),
-            events(256),
+            QueueCapacities::new(events(1), events(16_384), events(256))
+                .expect("the overridden capacities are above zero"),
             minimal_shares(),
         )
         .expect("the overridden capacities are above zero");
@@ -677,7 +677,11 @@ fn ground_of(field: ResourceField) -> Ground {
         | ResourceField::MaxConcurrentRetiringVoices
         | ResourceField::PredictedQuantumCostRatio
         | ResourceField::MaxHeldNotes
-        | ResourceField::MaxEventsPerQuantum => Residual,
+        | ResourceField::MaxEventsPerQuantum
+        // Added to ground 3's closed list by this specification, as its own rule
+        // requires: ADR-0046 establishes that live ingress uses fixed registered queues
+        // but explicitly does not create their capacity fields.
+        | ResourceField::PerformanceIngressCapacity => Residual,
 
         // Ground 1: everything else has a `HostProfile`-owned ledger entry.
         ResourceField::AcceptedSampleRates
@@ -743,11 +747,26 @@ fn every_field_is_admitted_by_exactly_one_rule() {
         .into_iter()
         .filter(|field| ground_of(*field) == Ground::Residual)
         .collect();
+    // Asserted as a list rather than a count, because the count cannot say *which* field
+    // was added and this list is closed by rule. Ground 3 grew by one when the
+    // renderer-ingress store gained a capacity: ADR-0046 requires live ingress to use
+    // fixed registered queues but explicitly does not create their capacity fields, so
+    // the field takes the specification's own route of an explicit addition here.
     assert_eq!(
-        residual.len(),
-        8,
-        "the residual set is the six no-antecedent fields plus max_held_notes and \
-         max_events_per_quantum: {residual:?}"
+        residual,
+        vec![
+            ResourceField::MaxActiveVoices,
+            ResourceField::MaxHeldNotes,
+            ResourceField::MaxConcurrentRetiringVoices,
+            ResourceField::MaxEventsPerQuantum,
+            ResourceField::MaxScheduledEventsInFlight,
+            ResourceField::MaxMixChannels,
+            ResourceField::MaxBuses,
+            ResourceField::PredictedQuantumCostRatio,
+            ResourceField::PerformanceIngressCapacity,
+        ],
+        "the residual set is closed: the six no-antecedent fields, max_held_notes, \
+         max_events_per_quantum, and the renderer-ingress capacity"
     );
 
     // Ground 2 is a closed list too, and it grew from one to eight: ADR-0032 clause 21
@@ -859,8 +878,12 @@ fn the_scratch_budget_counts_what_preparation_actually_allocates() {
             groups.events.max_note_expansion_per_tick(),
             groups.events.max_scheduled_events_in_flight(),
             horizon,
-            groups.events.command_queue_capacity(),
-            groups.events.event_egress_capacity(),
+            QueueCapacities::new(
+                events(1),
+                groups.events.queues().command_queue_capacity(),
+                groups.events.queues().event_egress_capacity(),
+            )
+            .expect("the overridden capacities are above zero"),
             minimal_shares(),
         )
         .expect("the overridden capacities are above zero");

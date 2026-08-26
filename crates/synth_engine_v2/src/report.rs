@@ -130,11 +130,13 @@ pub enum ResourceField {
     ReleaseEventShare,
     /// ADR-0046's outstanding non-compiled release obligations.
     ReleaseHoldCapacity,
+    /// The live performance-event ingress queue's depth.
+    PerformanceIngressCapacity,
 }
 
 impl ResourceField {
     /// How many fields carry an amount.
-    pub const COUNT: usize = 49;
+    pub const COUNT: usize = 50;
 
     /// Every field, once.
     pub const ALL: [Self; Self::COUNT] = [
@@ -187,6 +189,7 @@ impl ResourceField {
         Self::InternalEventShare,
         Self::ReleaseEventShare,
         Self::ReleaseHoldCapacity,
+        Self::PerformanceIngressCapacity,
     ];
 
     /// This field's position in [`Self::ALL`].
@@ -246,6 +249,7 @@ impl ResourceField {
             Self::InternalEventShare => 46,
             Self::ReleaseEventShare => 47,
             Self::ReleaseHoldCapacity => 48,
+            Self::PerformanceIngressCapacity => 49,
         }
     }
 
@@ -302,6 +306,7 @@ impl ResourceField {
             Self::InternalEventShare => "internal_event_share",
             Self::ReleaseEventShare => "release_event_share",
             Self::ReleaseHoldCapacity => "release_hold_capacity",
+            Self::PerformanceIngressCapacity => "performance_ingress_capacity",
         }
     }
 
@@ -320,7 +325,7 @@ impl ResourceField {
     ///
     /// `HOST-INV-007` binds the limits a plan can exceed, and its conformance row asks
     /// for one refusal case per such limit — so this predicate has to be exactly the
-    /// set those cases can be written for. Twenty-eight fields qualify. The twenty-one
+    /// set those cases can be written for. Twenty-eight fields qualify. The twenty-two
     /// that do not take that refusal fall into six groups, each excluded for its own
     /// reason:
     ///
@@ -332,7 +337,7 @@ impl ResourceField {
     /// - **The sizing fields** — `retirement_crossfade`, `telemetry_ring_frames`,
     ///   `analyzer_fft_size`. They bound nothing, so asking which behaviour they take
     ///   is a category error.
-    /// - **The capacities a plan does not request**: `forward_event_horizon`, the two
+    /// - **The capacities a plan does not request**: `forward_event_horizon`, the three
     ///   queue depths, the two per-voice slot counts whose relation construction
     ///   validates, and `max_concurrent_retiring_voices`, which is derived so that it
     ///   cannot bind. Their rows report the profile's own value, so exceeding is not
@@ -352,7 +357,7 @@ impl ResourceField {
     /// `HOST-INV-007`'s conformance row unsatisfiable: six of the remaining fields
     /// compare a value against itself, and no plan can be built that exceeds one.
     ///
-    /// Twenty-one fields are excluded and twenty-eight qualify.
+    /// Twenty-two fields are excluded and twenty-eight qualify.
     #[must_use]
     pub const fn is_admission_checked(self) -> bool {
         !matches!(
@@ -378,6 +383,7 @@ impl ResourceField {
                 | Self::InternalEventShare
                 | Self::ReleaseEventShare
                 | Self::ReleaseHoldCapacity
+                | Self::PerformanceIngressCapacity
         )
     }
 }

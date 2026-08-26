@@ -66,9 +66,24 @@ Two consequences of the partition are load-bearing and were found by existing te
 positive shares cannot fit a cap below six, so a `max_events_per_quantum` of 1 or 4 is no longer representable; and
 the compiled floor makes a very small `max_scheduled_events_in_flight` unconstructible.
 
-The defaults are provisional. Three obligations stay open in the host-profile specification's deferred list and are
-named there rather than repeated here: the live share's ingress lower bound, the sealed-batch store's coverage of its
-extent, and the measurement that must reselect both the partition and the cap before live ingress.
+The defaults are provisional. A following slice registered the one live renderer-ingress store and implemented the
+live share's ingress lower bound against it, so **two** obligations stay open in the host-profile specification's
+deferred list and are named there rather than repeated here: the sealed-batch store's coverage of its extent, which
+needs the arbiter's store; and the measurement that must reselect the partition, the cap and the ingress depth before
+live ingress.
+
+### Approved: `synth_engine_v2` API breaks during Phase 3
+
+The maintainer approved, on 2026-08-26, the API breaks the producer-share and ingress-store slices make to
+`synth_engine_v2::profile`: `EventLimits::new` changed signature twice, and `command_queue_capacity` and
+`event_egress_capacity` moved behind `events().queues()`. `AGENTS.md` requires explicit approval for an API break,
+and the first of those breaks was committed in `beddf91b` before the approval was sought — recorded here rather than
+left implicit.
+
+The approval is bounded by what it was given for: this crate is experimental and is not a dependency of the
+workspace's default members, so it has no in-repo consumer outside its own tests. It is not a standing licence for
+persisted, manifest, wire or protocol contracts, which `AGENTS.md` treats separately, and it does not reach any other
+crate. ADR-0020 settles the final crate boundaries and names.
 
 ### Drafted, awaiting its specification transaction — ADR-0047 note identity
 

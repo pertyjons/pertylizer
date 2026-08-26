@@ -130,6 +130,21 @@ pub enum ProfileError {
         cap: EventCount,
     },
 
+    /// The live share cannot cover a complete ingress snapshot.
+    ///
+    /// ADR-0046 clause 3 says an accepted queue entry "waits only for its destination to
+    /// enter the horizon" — never for publication capacity — and its failure-mode audit
+    /// enumerates the case where every accepted entry is due at one boundary. The whole
+    /// queue can therefore be eligible in one pass, so the live share must cover the
+    /// queue's full depth rather than a typical occupancy.
+    #[error("live_event_share {share} cannot cover ingress capacity {capacity}")]
+    LiveShareBelowIngressCapacity {
+        /// The live share as given.
+        share: EventCount,
+        /// The ingress capacity it must cover.
+        capacity: EventCount,
+    },
+
     /// A checked event total that cannot be represented at all.
     ///
     /// ADR-0046 clause 1 requires every multiplication and conversion to be checked.
@@ -603,6 +618,63 @@ impl ProducerShares {
     }
 }
 
+/// The fixed-capacity event queues, and what each one is allowed to do when full.
+///
+/// Grouped because they answer one question — how deep is each queue — and because
+/// keeping them apart from the per-quantum capacities keeps `EventLimits`' constructor
+/// honest about how many independent things it takes. They are **not** interchangeable:
+/// each carries its own loss classification, and the registry rather than this struct is
+/// where that classification lives.
+///
+/// - `performance_ingress_capacity` is the one live renderer-ingress store, marked
+///   *Live bounded queue* in the closed registry, so `HOST-INV-009` licenses its
+///   counted boundary drop. ADR-0046 clause 3 bounds it from above by the live share.
+/// - `command_queue_capacity` is the legacy engine-command queue, also a *Live bounded
+///   queue*, and deliberately **not** ADR-0046's Phase 3 session/transport store, whose
+///   contract is non-dropping.
+/// - `event_egress_capacity` is engine egress and is outside `HOST-INV-009` entirely;
+///   ADR-0038 part 1 licenses its loss under three separate conditions.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[must_use]
+pub struct QueueCapacities {
+    performance_ingress_capacity: EventCount,
+    command_queue_capacity: EventCount,
+    event_egress_capacity: EventCount,
+}
+
+impl QueueCapacities {
+    /// The queue depths. Each is a capacity, so none may be zero.
+    pub fn new(
+        performance_ingress_capacity: EventCount,
+        command_queue_capacity: EventCount,
+        event_egress_capacity: EventCount,
+    ) -> Result<Self, ProfileError> {
+        nonzero(
+            "performance_ingress_capacity",
+            u64::from(performance_ingress_capacity.get()),
+        )?;
+        nonzero(
+            "command_queue_capacity",
+            u64::from(command_queue_capacity.get()),
+        )?;
+        nonzero(
+            "event_egress_capacity",
+            u64::from(event_egress_capacity.get()),
+        )?;
+        Ok(Self {
+            performance_ingress_capacity,
+            command_queue_capacity,
+            event_egress_capacity,
+        })
+    }
+
+    accessors! {
+        performance_ingress_capacity: EventCount, "The live performance-event ingress queue's depth.";
+        command_queue_capacity: EventCount, "The legacy live command queue's depth.";
+        event_egress_capacity: EventCount, "The engine-to-GUI event ring's depth.";
+    }
+}
+
 /// Event capacities.
 #[derive(Debug, Clone, Copy, PartialEq)]
 #[must_use]
@@ -611,8 +683,7 @@ pub struct EventLimits {
     max_note_expansion_per_tick: EventCount,
     max_scheduled_events_in_flight: EventCount,
     forward_event_horizon: FrameCount,
-    command_queue_capacity: EventCount,
-    event_egress_capacity: EventCount,
+    queues: QueueCapacities,
     shares: ProducerShares,
 }
 
@@ -627,8 +698,7 @@ impl EventLimits {
         max_note_expansion_per_tick: EventCount,
         max_scheduled_events_in_flight: EventCount,
         forward_event_horizon: FrameCount,
-        command_queue_capacity: EventCount,
-        event_egress_capacity: EventCount,
+        queues: QueueCapacities,
         shares: ProducerShares,
     ) -> Result<Self, ProfileError> {
         nonzero(
@@ -644,14 +714,6 @@ impl EventLimits {
             u64::from(max_scheduled_events_in_flight.get()),
         )?;
         nonzero("forward_event_horizon", forward_event_horizon.as_u64())?;
-        nonzero(
-            "command_queue_capacity",
-            u64::from(command_queue_capacity.get()),
-        )?;
-        nonzero(
-            "event_egress_capacity",
-            u64::from(event_egress_capacity.get()),
-        )?;
 
         // ADR-0046 clause 1: the shares partition the cap. A sum above it would let
         // six individually conforming producers jointly overfill one quantum, which is
@@ -668,13 +730,29 @@ impl EventLimits {
             });
         }
 
+        // ADR-0046 clause 3's live-share lower bound. The bound is the queue's **whole
+        // depth**, not a typical occupancy, and that is not conservatism: the record's
+        // failure-mode audit enumerates "every accepted ingress event is late and
+        // converges on one boundary", and its producer table says an accepted entry
+        // "waits only for its destination to enter the horizon" — so it may not be held
+        // back for publication capacity. A share that covered less would have to hold one
+        // back.
+        //
+        // One consequence is worth stating where it bites: the live share is therefore a
+        // ceiling on how deep any live queue can be, not merely a per-quantum budget.
+        if shares.live_event_share() < queues.performance_ingress_capacity() {
+            return Err(ProfileError::LiveShareBelowIngressCapacity {
+                share: shares.live_event_share(),
+                capacity: queues.performance_ingress_capacity(),
+            });
+        }
+
         Ok(Self {
             max_events_per_quantum,
             max_note_expansion_per_tick,
             max_scheduled_events_in_flight,
             forward_event_horizon,
-            command_queue_capacity,
-            event_egress_capacity,
+            queues,
             shares,
         })
     }
@@ -684,8 +762,7 @@ impl EventLimits {
         max_note_expansion_per_tick: EventCount, "Events one tick's note expansion may produce.";
         max_scheduled_events_in_flight: EventCount, "The scheduler's release window.";
         forward_event_horizon: FrameCount, "How far ahead an ingress event may be stamped.";
-        command_queue_capacity: EventCount, "The live command queue's depth.";
-        event_egress_capacity: EventCount, "The engine-to-GUI event ring's depth.";
+        queues: QueueCapacities, "The fixed queue depths and their loss classifications.";
         shares: ProducerShares, "ADR-0046's producer partition of the per-quantum cap.";
     }
 }
@@ -1108,8 +1185,19 @@ impl RenderLimits {
                 EventCount::limit(128)?,
                 scheduled_window,
                 horizon,
-                EventCount::limit(16_384)?,
-                EventCount::limit(256)?,
+                QueueCapacities::new(
+                    // The largest depth the provisional live share admits, since ADR-0046
+                    // clause 3 makes the share cover the queue's whole depth. Taking the
+                    // maximum is a choice and not a forced value: the relation is
+                    // one-sided, so a larger share stays legal while a deeper queue alone
+                    // is refused. A 32-entry live queue is shallow for real MIDI, which is
+                    // the tension ADR-0046 names when it says 256 "may be too small once
+                    // live snapshots, release holds and internal production receive hard
+                    // guarantees".
+                    EventCount::limit(32)?,
+                    EventCount::limit(16_384)?,
+                    EventCount::limit(256)?,
+                )?,
                 shares,
             )?,
             ObservationLimits::new(
@@ -1331,8 +1419,8 @@ mod tests {
             expansion,
             in_flight,
             horizon,
-            command,
-            egress,
+            QueueCapacities::new(EventCount::limit(1).expect("positive"), command, egress)
+                .expect("valid queue depths"),
             minimal_shares(),
         )
         .expect("valid event limits")
@@ -1443,8 +1531,7 @@ mod tests {
                 one,
                 one,
                 horizon,
-                one,
-                one,
+                QueueCapacities::new(one, one, one).expect("valid queue depths"),
                 shares,
             )
         };
@@ -1481,13 +1568,87 @@ mod tests {
                     one,
                     one,
                     FrameCount::new(4_096),
-                    one,
-                    one,
+                    QueueCapacities::new(one, one, one).expect("valid queue depths"),
                     shares,
                 )
                 .is_err(),
                 "a cap of {cap} cannot carry six positive shares"
             );
+        }
+    }
+
+    #[test]
+    fn the_live_share_must_cover_the_whole_ingress_queue_not_a_typical_occupancy() {
+        // ADR-0046 clause 3's live-share lower bound, at its boundary. The bound is the
+        // queue's whole depth: the record's failure-mode audit enumerates "every accepted
+        // ingress event is late and converges on one boundary", and its producer table
+        // says an accepted entry waits only for its destination — never for publication
+        // capacity — so a share covering less would have to hold one back.
+        let horizon = FrameCount::new(4_096);
+        let one = EventCount::limit(1).expect("positive");
+        let build = |live: u32, ingress: u32| {
+            let shares = ProducerShares::new(
+                one,
+                one,
+                EventCount::limit(live).expect("positive"),
+                one,
+                one,
+                one,
+                one,
+            )
+            .expect("a valid partition");
+            EventLimits::new(
+                EventCount::limit(64).expect("positive"),
+                one,
+                one,
+                horizon,
+                QueueCapacities::new(EventCount::limit(ingress).expect("positive"), one, one)
+                    .expect("valid queue depths"),
+                shares,
+            )
+        };
+
+        match build(7, 8) {
+            Err(ProfileError::LiveShareBelowIngressCapacity { share, capacity }) => {
+                assert_eq!(share.get(), 7);
+                assert_eq!(capacity.get(), 8, "the refusal names both fields");
+            }
+            other => panic!("expected a live-share refusal naming both fields, got {other:?}"),
+        }
+
+        assert!(
+            build(8, 8).is_ok(),
+            "equality is admitted: the share covers exactly one full snapshot"
+        );
+        assert!(
+            build(9, 8).is_ok(),
+            "a larger share is admitted while it still fits the sum"
+        );
+    }
+
+    #[test]
+    fn every_queue_depth_refuses_zero_under_its_own_name() {
+        // A queue that admits nothing is not a bounded queue, it is an absent one, and a
+        // profile carrying one would report input refused against a budget of nothing. One
+        // case per depth, so a queue added to the group without its guard fails here.
+        let one = EventCount::limit(1).expect("positive");
+        let names = [
+            "performance_ingress_capacity",
+            "command_queue_capacity",
+            "event_egress_capacity",
+        ];
+        for (index, expected) in names.into_iter().enumerate() {
+            let mut values = [one; 3];
+            values[index] = EventCount::NONE;
+            match QueueCapacities::new(values[0], values[1], values[2]) {
+                Err(ProfileError::Quantity(QuantityError::ZeroCapacity { quantity })) => {
+                    assert_eq!(
+                        quantity, expected,
+                        "the refusal names the field that was zero"
+                    );
+                }
+                other => panic!("expected {expected} to refuse zero, got {other:?}"),
+            }
         }
     }
 
@@ -1548,8 +1709,7 @@ mod tests {
                 defaults.events().max_note_expansion_per_tick(),
                 EventCount::limit(window).expect("positive"),
                 defaults.events().forward_event_horizon(),
-                defaults.events().command_queue_capacity(),
-                defaults.events().event_egress_capacity(),
+                defaults.events().queues(),
                 shares,
             )
             .expect("only the window changed");
@@ -1672,6 +1832,11 @@ mod tests {
                 "the default release share must cover its hold capacity"
             );
             assert!(
+                shares.live_event_share()
+                    >= limits.events().queues().performance_ingress_capacity(),
+                "the default live share must cover the default ingress queue"
+            );
+            assert!(
                 HostProfile::new(capabilities, limits).is_ok(),
                 "a {block}-frame maximum block must produce a valid default profile"
             );
@@ -1757,8 +1922,8 @@ mod tests {
             defaults.events().max_scheduled_events_in_flight(),
             // One frame below the floor.
             FrameCount::new(1_024 + u64::from(QUANTUM_FRAMES) - 1),
-            defaults.events().command_queue_capacity(),
-            defaults.events().event_egress_capacity(),
+            defaults.events().queues().command_queue_capacity(),
+            defaults.events().queues().event_egress_capacity(),
         );
         let limits = RenderLimits::new(
             defaults.stream(),
@@ -1930,8 +2095,12 @@ mod tests {
                 EventCount::limit(1).expect("positive"),
                 EventCount::limit(1).expect("positive"),
                 FrameCount::new(1),
-                EventCount::limit(1).expect("positive"),
-                EventCount::limit(1).expect("positive"),
+                QueueCapacities::new(
+                    EventCount::limit(1).expect("positive"),
+                    EventCount::limit(1).expect("positive"),
+                    EventCount::limit(1).expect("positive"),
+                )
+                .expect("valid queue depths"),
                 minimal_shares(),
             )
             .is_err()

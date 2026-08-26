@@ -678,8 +678,12 @@ fn a_quantum_over_its_event_capacity_is_rejected_before_anything_is_mutated() {
             limits.events().max_note_expansion_per_tick(),
             limits.events().max_scheduled_events_in_flight(),
             limits.events().forward_event_horizon(),
-            limits.events().command_queue_capacity(),
-            limits.events().event_egress_capacity(),
+            synth_engine_v2::profile::QueueCapacities::new(
+                synth_engine_v2::quantities::EventCount::limit(1).expect("positive"),
+                limits.events().queues().command_queue_capacity(),
+                limits.events().queues().event_egress_capacity(),
+            )
+            .expect("the overridden capacities are above zero"),
             synth_engine_v2::profile::ProducerShares::new(
                 synth_engine_v2::quantities::EventCount::limit(1).expect("positive"),
                 synth_engine_v2::quantities::EventCount::limit(1).expect("positive"),
