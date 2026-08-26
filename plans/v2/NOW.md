@@ -99,6 +99,38 @@ per-call accounting.
 every later one in the epoch, both carries invalidated, `needs_reprepare` published — belongs to the slice that routes
 the renderer through the arbiter. Nothing here claims it is in force.
 
+### Completed slice — the session anchor
+
+The four re-anchoring moments the master plan names: play, seek, loop wrap and offline range start. `SessionScheduler`
+owns the current `StreamAnchor` and the tempo map behind it, so a caller goes musical → plan → engine and there is no
+musical → engine shortcut to reach for. ADR-0032 clause 27's "anchoring is the only place the two vocabularies meet",
+enforced by what exists.
+
+**A loop wrap re-anchors rather than adjusting a position, and that distinction is load-bearing.** Clause 27 says a
+position before the anchor "is a scheduler error rather than a clamp", and names the wrap as the case that produces
+one. The reason is sharper than staleness: a wrap moves plan time backwards while engine time keeps moving forward,
+so the old pairing is **contradictory** — it maps the loop's second pass onto the first pass's frames. A scheduler
+that subtracted a loop length would keep answering, and every answer after the first wrap would be wrong by exactly
+one loop.
+
+A position before the anchor is refused with both sides named. Clamping would answer with the anchor's own frame,
+which is a plausible number and the wrong one: every event before the anchor would pile onto one sample.
+
+**Tempo-map replacement is atomic**, and its interface says what "keep playing" cannot mean. A new map moves every
+musical position, so continuing to sound at the same instant *is* a re-anchor; the caller supplies the tick and the
+engine time it keeps. The new map is validated before anything is swapped, so a failure leaves the old map and the
+old anchor exactly as they were — the master plan's "failure leaves the old map and plan active". A partial
+activation would leave events whose engine times were computed under a tempo no longer in force, and nothing would
+report it.
+
+Nine checks, three mutation-verified: a wrap that adjusts instead of re-anchoring, a clamp in place of the pre-anchor
+refusal, and a replacement that swaps before validating.
+
+**Still owed in this stream:** re-admitting compiled event entitlements against a replacement map. The protocol is
+here — validate, then activate atomically — but the entitlement half needs compiled events expressed in musical time,
+which they are not: `CompiledEvent` carries `SampleTime`, so recomputing it under a new map belongs with Phase 4's
+lowering. Recorded rather than left as an assumed gap.
+
 ### Completed slice — the tempo map, steps only
 
 Musical time to [`PlanPosition`], and nothing else. ADR-0032 clause 27 makes anchoring the only place plan time and

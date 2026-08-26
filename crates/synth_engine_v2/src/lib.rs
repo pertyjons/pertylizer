@@ -97,6 +97,7 @@ pub mod quantities;
 pub mod render;
 pub mod report;
 pub mod schedule;
+pub mod session;
 pub mod tempo;
 pub mod time;
 pub mod validate;
