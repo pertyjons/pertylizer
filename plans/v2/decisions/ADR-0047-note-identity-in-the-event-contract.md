@@ -3,10 +3,10 @@
 | Field | Value |
 |---|---|
 | ID | ADR-0047 |
-| Status | Proposed |
+| Status | Accepted |
 | Phase | 3 |
 | Created | 2026-08-25 |
-| Last reviewed | 2026-08-25 |
+| Last reviewed | 2026-08-26 |
 | Related | [ADR-0046](ADR-0046-destination-quantum-admission.md) clauses 3, 5 and 6; [ADR-0032](ADR-0032-sample-time-and-event-timestamps.md) clauses 17 and 20; [ADR-0021](ADR-0021-host-profile-and-admission-policy.md) part 3; ADR-0025 (`Proposed`, tuning); [REV-P02](../reviews/phase-02-exit-review.md)'s `NoteEdge` deviation row; `HOST-INV-009`; `HOST-INV-013`; `HOST-INV-018`; `HOST-INV-021`; `SOUND-INV-016` |
 | Supersedes | — |
 | Superseded by | — |
@@ -203,9 +203,14 @@ not resize; the identity is a name the hold contract needs.
 
 ### 4. A stale identity is an orphan, is counted, and releases nothing
 
-An identity whose index is free, or whose generation differs from the generation held at that index, names no live
-note. Such an event is refused, counted against its offering producer with the identity named, and reaches the
-structured diagnostics report. It never resolves to another note.
+**An identity that names no live note is an orphan**, and that is the definition — the reachable cases follow from
+it rather than constituting it. There are three, and clause 5's retirement is why the third has to be named: an
+identity whose index is **free**, one whose generation **differs** from the generation held at a live index, and one
+whose index has been **retired** and will never hold a live note again. A definition listing only the first two would
+leave an implementer with no rule for the third, which is a state this record's own clause 5 creates.
+
+Such an event is refused, counted against its offering producer with the identity named, and reaches the structured
+diagnostics report. It never resolves to another note.
 
 This is what makes ADR-0046 clause 3's orphan sentence executable, and it is stronger than that sentence requires:
 clause 3 only asks that the orphan not release another note, while a generation mismatch also distinguishes an orphan
@@ -335,7 +340,7 @@ reaches it *visibly*, by a route its own contract already licenses, and never by
 | A dropped note-on is followed by its note-off | Live ingress | The producer minted nothing, so it holds no identity for that note. The edge is refused at that producer's boundary and counted there under `HOST-INV-009`; it never becomes an event. If the producer instead sends a retired identity, clause 4 makes it an orphan |
 | Two producers mint the same identity | All | Clause 3's ranges are disjoint at admission |
 | An identity outside the presenting producer's range | All | Attributable by disjointness; a producer-contract defect, not a load condition |
-| A retired identity aliases a live note within one activation | All | Clause 5 never reuses a generation value, so no stale identity can match the generation live at its index, whatever retained it and for however long |
+| A stale identity aliases a live note within one activation | All | Clause 5 never reuses a generation value, so no stale identity can match the generation live at its index, whatever retained it and for however long. An identity naming a retired index cannot alias either: the index holds no live note at all |
 | A stale identity survives into a rebuilt table | All | Clause 8 compares the table identity, which changes on every rebuild — including a re-preparation that leaves the `PlanId` unchanged and a re-admission that leaves the epoch unchanged — and whose issuer refuses on exhaustion rather than reissuing |
 | More outstanding obligations than the index can address | All | Clause 5's index relation, checked against `max_held_notes` |
 | A release names an occurrence and a node that disagree | All | Clause 1 removes the node from the release; the case is unrepresentable |

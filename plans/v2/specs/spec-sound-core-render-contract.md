@@ -160,13 +160,82 @@ storage assigned to compiled signal lifetimes.
     and the renderer reads it there. A caller therefore cannot obtain the other
     timing by choosing another payload: addressing a gate as a parameter and playing
     its node as a note reach one control under one law, and the two render
-    bit-identically. A note event names a **node**, not one of its controls — which
+    bit-identically. A note **on** names a **node**, not one of its controls — which
     control being played moves belongs to the node kind, and a node that declares
-    none cannot be addressed by a note at all. The schedule is still walked exactly
+    none cannot be addressed by a note at all. A release names no node: SOUND-INV-017
+    gives it an occurrence instead, and an earlier revision of this clause said
+    "a note event" where it meant the on edge, which made the two invariants
+    contradict each other. The schedule is still walked exactly
     once per quantum, so this is neither a second control evaluation (clause 4) nor
     the event-boundary quantum split clause 15 reserves for a later phase: the edges
     due in a quantum are resolved before it renders and handed to the node that owns
     them.
+17. **SOUND-INV-017 — Note identity.** A note **on** names an **occurrence** as well
+    as the node it plays; a release and a per-note expression event name the
+    occurrence **alone**. The occurrence is the sole authority for which note an event
+    resolves to.
+    [ADR-0047](../decisions/ADR-0047-note-identity-in-the-event-contract.md) supplies
+    it. A note-on carries both: the compiled node, which is *what is played*, and an
+    identity minted from the producer's disjoint range, which is *which occurrence*.
+    A release and a per-note expression event carry the identity **alone**.
+
+    **The node address is absent from a release rather than carried and required to
+    agree**, and that is a design choice with a reason. Carrying both admits an event
+    whose identity names one occurrence while its node names another, and no reading
+    of that event is safe: honouring the node releases the wrong note, and honouring
+    the identity silently redefines what the node field means. Removing the field
+    removes the case instead of adjudicating it. SOUND-INV-016's rule that a note
+    event names a node rather than one of its controls is preserved where it does
+    work — the on edge, where the node is what is played.
+
+    **An identity that names no live note is an orphan.** Three cases reach that: a
+    **free** index, a **superseded** generation at a live index, and an index that has
+    been **retired** under the rule below. Such an event is refused and counted, never
+    resolved to another note. That is what makes
+    [ADR-0046](../decisions/ADR-0046-destination-quantum-admission.md) clause 3's
+    promise executable — "a later edge for it is an orphan and is counted rather than
+    allowed to release another note" — which the `{ node, edge }` vocabulary before
+    this record could not express at all.
+
+    **A generation value is never reused.** The counter at an index is monotone and is
+    never wound back, so no stale identity can match the generation live at its index,
+    whatever retained it and for however long. When an index exhausts its generation
+    space that index is **retired** — withdrawn from its producer's range and never
+    minted again — rather than restarted. **Each retirement is counted**, and when a
+    producer's remaining range falls below its admitted simultaneous demand that is a
+    **named exhaustion condition**, reported rather than absorbed: it is not a producer
+    defect, since the producer declared correctly and did not over-emit, so attributing
+    it as one would be false. Recovery is building a new table, which restores the full
+    index space.
+
+    No finite identity is unconditionally alias-free, and this specification does not
+    claim otherwise. What the rules above buy is the direction of failure: a width
+    chosen too small costs a reported exhaustion and never a wrongly released note.
+
+    **The index space is at least `max_held_notes`**, which the host-profile
+    specification states as a construction relation.
+
+    An identity is valid only for the identity table that minted it, is never
+    persisted and never crosses a wire contract. Neither the plan identity nor the
+    stream epoch scopes it alone: a re-admission changes the plan without changing the
+    epoch, and a re-preparation changes the epoch without changing the plan. **The
+    table's own identity is issued strictly increasing and refuses permanently on
+    exhaustion**; a saturating issuer would reissue after its ceiling and make two
+    tables indistinguishable, which is the one thing this scoping exists to prevent.
+
+    An identity from any other table is **rejected and counted**, never resolved.
+    ADR-0032 clause 20's epoch rejection stays a **separate and earlier** filter: an
+    event from a dead stream is discarded before its identity is examined at all, so
+    the two counters answer different questions and neither substitutes for the other.
+
+    A rebuild while an obligation from the outgoing table is outstanding is **refused**.
+    Rejecting the eventual release would contradict ADR-0046 clause 3's guarantee that
+    an accepted obligation is never refused later, and stranding it would leave a note
+    nothing can release. Lifting that limit is ADR-0048's, for Phase 9.
+
+    **What this invariant does not fix is pitch or velocity.** Those remain
+    [REV-P02](../reviews/phase-02-exit-review.md)'s open deviation row, owned by
+    Phase 3 and owed before ingress; ADR-0047 adds identity and discharges neither.
 
 ## Types and ownership
 
@@ -213,6 +282,7 @@ excess is a preparation refusal rather than runtime truncation.
 | SOUND-INV-013 | Two mechanisms, and what each one carries is stated rather than blurred. **The type system** enforces exactly one thing: a `Kernel` cannot be *constructed outside* `node::kernels`, its field being private — so a descriptor elsewhere naming any function does not compile (`E0423`, mutation-verified). Every descriptor lives in `node.rs`, so every registered pointer is necessarily one of that module's constants; what those constants wrap is not settled by privacy, and an in-module `Kernel(foreign)` is well-typed. **A bounded source scan** carries the rest — `render_loop_purity`'s `the_kernel_registry_is_closed_and_no_scanned_form_forges_a_kernel` requires every construction site it recognises in that one file to be a declared constant, and checks the entries and constants it can parse agree in both directions. Nine forging routes are mutation-checked. What the scan is not is under *Unresolved questions* |
 | SOUND-INV-009, 010, 014 | `layout_baseline` for ADR-0041 clause 16's per-quantum digest comparison over its five fixtures, `arena_reuse` for the structural check over physical sample ranges and for `reuse_renders_bit_identically_to_no_reuse`, and `lowering`'s `a_mono_source_into_a_stereo_stream_widens_into_one_wider_region`, `a_mono_stream_compiles_exactly_one_output_operation` and `an_inserted_conversion_is_reported_and_not_only_scheduled` |
 | SOUND-INV-015 | `graph_validation`'s `every_kernel_admits_exactly_one_channel_on_every_port` over the macro-generated catalog, and `kernels`' `the_widening_writes_every_channel_of_every_frame` for the one kernel with two admitted counts |
+| SOUND-INV-017 | **No executable check yet, and the gap is named rather than implied.** ADR-0047 is accepted, so the contract is fixed, but `EventPayload::Note` still carries `{ slot, edge }` — there is no identity to assert over. The check arrives with the slice that adds the identity type and the hold acquisition, which is also the slice that makes ADR-0046 clause 3's orphan sentence executable. Until then this row fails its own reading of the conformance table, which is the honest state: an accepted invariant with no test is a claim, not a guarantee |
 | Node arithmetic and preparation | `voice_nodes`, internal kernel tests |
 
 ## Unresolved questions

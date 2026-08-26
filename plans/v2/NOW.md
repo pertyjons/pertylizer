@@ -318,57 +318,41 @@ workspace's default members, so it has no in-repo consumer outside its own tests
 persisted, manifest, wire or protocol contracts, which `AGENTS.md` treats separately, and it does not reach any other
 crate. ADR-0020 settles the final crate boundaries and names.
 
-### Drafted, awaiting its specification transaction — ADR-0047 note identity
+### Accepted — ADR-0047 note identity, with its specification transaction
 
-[ADR-0047](decisions/ADR-0047-note-identity-in-the-event-contract.md) is `Proposed` and has had its independent
-design review: five rounds, twenty-three blocking findings, and a clean confirmation read on the final scope. No code
-was written against it.
+[ADR-0047](decisions/ADR-0047-note-identity-in-the-event-contract.md) is `Accepted`. It exists because ADR-0046
+clause 3 already promises that an orphan note edge "is counted rather than allowed to release another note", and the
+`{ slot, edge }` vocabulary cannot tell an orphan from a legitimate release — so identity is a Phase 3 requirement,
+not preparation for Phase 6.
 
-It exists because ADR-0046 clause 3 already promises that an orphan note edge "is counted rather than allowed to
-release another note", and the current `{ slot, edge }` vocabulary cannot distinguish an orphan from a legitimate
-release. Identity is therefore a Phase 3 requirement rather than preparation for Phase 6.
+Acceptance updated three current specifications in the same transaction:
 
-Two consequences bind later work rather than this slice:
+- **`SOUND-INV-017` is new.** A note **on** names an occurrence as well as a node; a release names the occurrence
+  **alone**, and the occurrence is the sole authority for which note an event resolves to. Carrying both on a release
+  would admit an event whose identity and node disagree, and no reading of that is safe, so the case is removed
+  rather than adjudicated. `SOUND-INV-016` was narrowed in the same transaction — it said "a note event names a node"
+  where it meant the on edge, which would otherwise have left the specification requiring and forbidding the same
+  thing.
+- **`HOST-INV-009` was amended, not extended.** Its closed list licensed two live-input drop causes and said no other
+  shortage may be discharged as a drop; an exhausted identity range is a third, and the exhausted-resource name a
+  report carries is now slot, hold **or** identity. Two further causes are counted there and are explicitly *not*
+  drops — an orphan and a never-minted edge are refusals, and reporting one as a drop would make a producer look
+  starved when it is releasing a note that does not exist. An orphan is defined as *an identity naming no live note*,
+  with three reachable cases: a free index, a superseded generation, and a retired one. An earlier draft listed only
+  the first two, which left an implementer no rule for the state ADR-0047's own retirement clause creates.
+- **`HOST-INV-021`'s hold contract names the identity** as what a hold is acquired against and redeemed by, and the
+  construction relations gained ADR-0047 clause 5's index bound: the identity index space is at least
+  `max_held_notes`, which is otherwise constrained only to be nonzero.
 
-- **The record was split at the fifth round.** Rebuilding an identity table rejects every identity from the outgoing
-  one, but a note from that table may still be sounding, and refusing its release would contradict ADR-0046 clause
-  3's guarantee. ADR-0047 clause 8 refuses the *rebuild* while an obligation is outstanding, which is sufficient for
-  Phase 3; the transition itself is registered as **ADR-0048** for Phase 9 beside ADR-0009's plan swap.
-- **A new non-reissuing issuer is required**, for the identity table. Neither existing value scopes an identity:
-  a re-admission changes the plan but not the epoch, and a re-preparation changes the epoch but not the plan.
+**`SOUND-INV-017` has no executable check, and the conformance table says so rather than implying coverage.**
+`EventPayload::Note` still carries `{ slot, edge }`, so there is no identity to assert over. The check arrives with
+the slice that adds the identity type and the hold acquisition — which is the same slice that makes ADR-0046 clause
+3's orphan sentence executable, and which point 7 was blocked on.
 
-Acceptance is not taken here, because it owes a specification transaction: the index relation beside ADR-0046's share
-relations, `HOST-INV-021`'s hold contract naming the identity, and an **amendment** of `HOST-INV-009`, whose closed
-list licenses two live-input drop causes and states there are no others — an exhausted identity range is a third.
-
-**REV-P02's `NoteEdge` deviation row is not discharged by that record and keeps the owner and deadline
-[REV-P02](reviews/phase-02-exit-review.md) gave it: Phase 3, owed before ingress.** ADR-0047 adds one obstacle to it
-rather than resolving it — the row's pitch limb is coupled to ADR-0025, which is `Proposed` and targets Phase 6, so
-Phase 3 must either accept ADR-0025 early or change REV-P02's disposition explicitly. The velocity limb carries no
-such coupling. That choice is open and belongs to the maintainer.
-
-[ADR-0046](decisions/ADR-0046-destination-quantum-admission.md) is `Accepted`. It replaces capacity deferral with
-pre-render admission:
-
-- one real-time publication arbiter is the sole normal writer of sealed destination-quantum batches;
-- compiled, authored-runtime, live, session, internal and guaranteed-release events use disjoint checked shares;
-- compiled schedules and authored destination, future-storage and release-hold envelopes are admitted before playback,
-  while complete eligible live and session snapshots fit their own shares;
-- every non-compiled note-on that creates a later release obligation acquires its source-storage and
-  renderer-capacity hold atomically;
-- the renderer never moves an event for capacity, and an impossible over-full sealed batch terminates the stream
-  instead of producing partial timing.
-
-The predecessor same-control and cross-control questions are `Superseded`, dissolved rather than answered: both
-required selective `+Q` capacity movement, which no longer exists. ADR-0043's preserving late clamp remains in force
-for genuinely late events. For one publication boundary its `max(stamp, boundary)` mapping is monotone: it can create
-a same-position tie, whose ordering is `ADR-0023`'s, but cannot reverse two accepted events.
-
-The numeric fixed-share values, ingress capacities, release-hold capacity and callback cost are Phase 3
-implementation evidence, not unresolved policy. Profile construction checks plan-independent relations; plan
-admission checks runtime, session, internal and hold declarations without changing those shares. The current
-`max_events_per_quantum = 256` has no claim to be useful and must be reselected from the measured partition before
-live ingress is enabled, even if that partition would fit within 256.
+**REV-P02's `NoteEdge` deviation row is still open.** ADR-0047 adds identity and discharges neither limb; the row
+keeps the owner and the "owed before ingress" deadline REV-P02 gave it. Its pitch limb is blocked on ADR-0025, which
+is `Proposed` for Phase 6, so Phase 3 must either accept that record early or change REV-P02's disposition
+explicitly. Its velocity limb carries no such coupling. That choice is open and belongs to the maintainer.
 
 ## Paused parallel stream: Phase 0B
 
