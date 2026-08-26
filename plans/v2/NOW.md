@@ -99,6 +99,43 @@ per-call accounting.
 every later one in the epoch, both carries invalidated, `needs_reprepare` published — belongs to the slice that routes
 the renderer through the arbiter. Nothing here claims it is in force.
 
+### Parked, with its findings kept — simulated-ingress equivalence
+
+An attempt at the exit gate's simulated-ingress bullet was built, independently reviewed, and **discarded before
+commit** on the maintainer's decision. It is recorded here because the review established an ordering fact that the
+next attempt must not rediscover.
+
+**The bullet cannot be met before the arbiter integration.** `CompiledEventScheduler` passes its borrowed slice
+straight to `Renderer::render`, bypassing the arbiter entirely. An equivalence test therefore compares
+ingress-through-the-arbiter against compiled-through-a-bypass — not the two producers at one boundary, which is what
+ADR-0046 makes the boundary mean. Such a test stays green even if the compiled-to-arbiter integration is missing or
+wrong.
+
+**It also cannot be met before note identity.** An ingress note-on must acquire its release hold atomically with its
+queue slot (ADR-0046 clause 3). Without it, filling the queue drops the matching note-off as a new event and leaves
+the gate held — and a fixture that proves sample-accurate placement has to use note edges, so the defect is live
+exactly where the gate is tested.
+
+Four other findings the next attempt inherits:
+
+- **The forward horizon must be checked at `offer`.** `HOST-INV-013` and ADR-0032 clause 21 put admission at ingress;
+  a producer that only forwards events already inside the imminent window never exercises the horizon at all.
+- **Late and future destinations are different.** A late accepted entry must still reach ADR-0043's preserving late
+  clamp; stopping a drain on both makes it stuck forever. And with non-monotone offers, a future entry at the head
+  blocks a due entry behind it, so an accepted entry would wait for *another* entry's destination.
+- **An off-thread producer and an on-thread drain need split handles**, not one `&mut self` over a `Vec`. Anything
+  else is either single-threaded or a lock the real-time rules forbid.
+- **`TimeSource` has no value for a simulated producer**, and the choice stops being provisional once a public
+  component ships it with tests asserting it. ADR-0032 clause 18 fixes three: `Hardware` means a driver's timestamp
+  bridged through clause 13 and [EVD-0016](evidence/phase-03/EVD-0016-host-time-mapping.md)'s **F11** names labelling
+  one without that bridge as a defect; `Compiled` is exempt from the horizon; `Arrival` understates exactness. This
+  needs a decision before ingress is public, not at Phase 9.
+
+One methodological finding is worth keeping on its own: an earlier draft of that test moved a **sine's frequency**,
+and displacing every ingress event by one frame did not fail it. A frequency is control-rate, so ADR-0001 clause 14
+makes it take effect at the next quantum boundary either way. Only a **sample-positioned** payload — a note edge —
+makes a one-frame error observable. A placement test built on a control-rate parameter measures nothing.
+
 ### Approved: `synth_engine_v2` API breaks during Phase 3
 
 The maintainer approved, on 2026-08-26, the API breaks the producer-share and ingress-store slices make to
