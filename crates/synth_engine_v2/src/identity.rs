@@ -107,9 +107,9 @@ impl std::fmt::Display for ProducerId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 #[must_use]
 pub struct NoteIdentity {
-    table: TableId,
-    index: u16,
-    generation: u32,
+    pub(super) table: TableId,
+    pub(super) index: u16,
+    pub(super) generation: u32,
 }
 
 impl NoteIdentity {
@@ -274,21 +274,72 @@ pub enum ReleaseScope {
 }
 
 /// One index's state.
+///
+/// A live index records **which node its note plays**, and that is what lets a release carry
+/// the identity alone. `SOUND-INV-017` removes the node address from the release rather than
+/// carrying it and requiring agreement, so something has to remember it — and the occurrence
+/// is the only thing that can, because the node was named when the occurrence was created.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Slot {
+pub(crate) enum Slot {
     /// Holds no note; the generation is the next one it will mint.
     Free { next_generation: u32 },
-    /// Holds a note minted at this generation.
-    Live { generation: u32 },
+    /// Holds a note minted at this generation, playing this node.
+    Live {
+        generation: u32,
+        note: crate::plan::NoteSlot,
+    },
     /// Withdrawn after its generation space ran out.
     Retired,
+}
+
+/// What one index type can address.
+///
+/// `u16` because an index names a *simultaneously outstanding* obligation, which
+/// `max_held_notes` bounds, and 65 536 exceeds any profile this project has reason to
+/// construct. The relation is checked rather than assumed: [`IdentityTable::new`] refuses a
+/// profile whose `max_held_notes` exceeds this.
+pub(crate) const INDEX_SPACE: u32 = 1 << 16;
+
+/// How many producers a [`ProducerId`] can name.
+pub(super) const PRODUCER_SPACE: usize = 1 << 16;
+
+/// One producer's half-open span of the index space.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Range {
+    pub(super) start: u32,
+    pub(super) len: u32,
+}
+
+/// The identities one plan activation can mint.
+#[derive(Debug)]
+#[must_use]
+pub struct IdentityTable {
+    pub(super) id: TableId,
+    pub(super) slots: Vec<Slot>,
+    pub(super) ranges: Vec<Range>,
+    /// The highest generation an index may mint before it retires.
+    ///
+    /// A construction parameter rather than a constant, because ADR-0047 leaves the widths
+    /// to Phase 3 measurement — and because retirement is otherwise unreachable in a test:
+    /// walking a `u32` to its ceiling by minting would take longer than this project will
+    /// exist, and a rule no test can reach is a rule nobody has checked.
+    pub(super) generation_ceiling: u32,
+    /// Indices retired over this table's life, counted as `SOUND-INV-017` requires.
+    pub(super) retired: u64,
+    pub(super) live: u32,
 }
 
 #[path = "identity/table.rs"]
 mod table;
 
-pub(crate) use table::INDEX_SPACE;
-pub use table::IdentityTable;
+/// The audio-thread half: resolving and releasing.
+///
+/// A separate file because the real-time purity region is **file-granular** and admits no
+/// mixed hot/preparation file — `table.rs` allocates in its constructor, so the two cannot
+/// share one. Minting stays there: `HOST-INV-009` puts the atomic slot-hold-identity
+/// acquisition at the live boundary, which is off the audio thread.
+#[path = "identity/hot.rs"]
+mod hot;
 
 #[cfg(test)]
 #[path = "tests/identity.rs"]

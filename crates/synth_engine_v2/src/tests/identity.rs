@@ -10,6 +10,12 @@ fn held(n: u32) -> HeldNoteCount {
 }
 
 const A: ProducerId = ProducerId::new(0);
+
+/// A node to play. Which node does not matter here — what matters is that the table
+/// remembers it, so a release can carry the identity alone.
+fn node() -> crate::plan::NoteSlot {
+    crate::plan::NoteSlot::new(crate::plan::PlanId::FILL, 0)
+}
 const B: ProducerId = ProducerId::new(1);
 
 fn table() -> IdentityTable {
@@ -23,7 +29,7 @@ fn a_minted_identity_names_a_live_note_and_a_released_one_does_not() {
     // had no implementable meaning — a release whose note-on was dropped was
     // indistinguishable from a legitimate one.
     let mut table = table();
-    let note = table.mint(A).expect("the range has room");
+    let note = table.mint(A, node()).expect("the range has room");
     assert_eq!(table.resolve(note), Resolution::Live);
     assert_eq!(table.live(), 1);
 
@@ -46,9 +52,9 @@ fn a_reused_index_supersedes_the_identity_that_held_it() {
     // *is* live, just not with this note. Without the generation, a stale release would look
     // exactly like a valid one and would end somebody else's note.
     let mut table = table();
-    let first = table.mint(A).expect("room");
+    let first = table.mint(A, node()).expect("room");
     table.release(first);
-    let second = table.mint(A).expect("room");
+    let second = table.mint(A, node()).expect("room");
 
     assert_eq!(table.resolve(second), Resolution::Live);
     assert_eq!(
@@ -82,13 +88,13 @@ fn an_index_whose_generations_run_out_is_retired_and_counted() {
         IdentityTable::with_generation_ceiling(held(8), &[held(1)], 2).expect("a valid table");
 
     for expected in 0..2 {
-        let note = table.mint(A).expect("the index is free");
+        let note = table.mint(A, node()).expect("the index is free");
         assert_eq!(table.retired(), 0, "no retirement at generation {expected}");
         assert_eq!(table.release(note), Resolution::Live);
     }
 
     // The third mint takes the ceiling generation, and releasing it retires the index.
-    let last = table.mint(A).expect("the index is free once more");
+    let last = table.mint(A, node()).expect("the index is free once more");
     assert_eq!(table.release(last), Resolution::Live);
     assert_eq!(table.retired(), 1, "the retirement is counted");
     assert_eq!(
@@ -98,7 +104,7 @@ fn an_index_whose_generations_run_out_is_retired_and_counted() {
     );
     assert!(
         matches!(
-            table.mint(A),
+            table.mint(A, node()),
             Err(IdentityError::ProducerRangeEroded { producer, retired, .. })
                 if producer == A && retired == 1
         ),
@@ -114,11 +120,11 @@ fn producer_ranges_are_disjoint() {
     let mut table = table();
     let mut mine = Vec::new();
     for _ in 0..4 {
-        mine.push(table.mint(A).expect("A has four indices"));
+        mine.push(table.mint(A, node()).expect("A has four indices"));
     }
     assert!(
         matches!(
-            table.mint(A),
+            table.mint(A, node()),
             Err(IdentityError::ProducerOverEmitted { producer, .. }) if producer == A
         ),
         "A is full with nothing retired, so this is over-emission and the refusal names A"
@@ -132,7 +138,7 @@ fn producer_ranges_are_disjoint() {
     for index in 0..4 {
         theirs.push(
             table
-                .mint(B)
+                .mint(B, node())
                 .unwrap_or_else(|error| panic!("B's index {index} must be its own: {error:?}")),
         );
     }
@@ -156,13 +162,13 @@ fn an_eroded_range_is_not_reported_as_over_emission() {
         IdentityTable::with_generation_ceiling(held(8), &[held(2)], 0).expect("a valid table");
 
     // A ceiling of zero retires each index on its first release.
-    let first = table.mint(A).expect("room");
+    let first = table.mint(A, node()).expect("room");
     table.release(first);
     assert_eq!(table.retired(), 1);
 
     // One index left, and holding it makes the range both eroded and full.
-    let _second = table.mint(A).expect("one index remains");
-    match table.mint(A) {
+    let _second = table.mint(A, node()).expect("one index remains");
+    match table.mint(A, node()) {
         Err(IdentityError::ProducerRangeEroded {
             producer,
             admitted,
@@ -177,9 +183,9 @@ fn an_eroded_range_is_not_reported_as_over_emission() {
 
     // With nothing retired, the same shape of failure is over-emission instead.
     let mut fresh = IdentityTable::new(held(8), &[held(1)]).expect("a valid table");
-    let _only = fresh.mint(A).expect("room");
+    let _only = fresh.mint(A, node()).expect("room");
     assert!(matches!(
-        fresh.mint(A),
+        fresh.mint(A, node()),
         Err(IdentityError::ProducerOverEmitted { .. })
     ));
 }
@@ -190,7 +196,7 @@ fn a_rebuild_is_refused_while_an_obligation_is_outstanding() {
     // rejecting the eventual release would refuse an accepted obligation, and stranding it
     // would leave a note nothing can release. Refusing the rebuild breaks neither.
     let mut table = table();
-    let note = table.mint(A).expect("room");
+    let note = table.mint(A, node()).expect("room");
     let id = table.id();
 
     match table.rebuild(held(512), &[held(4), held(4)]) {
@@ -223,7 +229,7 @@ fn a_rebuild_is_refused_while_an_obligation_is_outstanding() {
 fn a_rebuild_succeeds_once_the_obligations_are_gone() {
     // The other half: the refusal is about outstanding obligations, not about rebuilding.
     let mut table = table();
-    let note = table.mint(A).expect("room");
+    let note = table.mint(A, node()).expect("room");
     table.release(note);
     let id = table.id();
 
@@ -246,8 +252,10 @@ fn a_scoped_mass_release_leaves_other_producers_alone() {
     // revision ended everything unconditionally while its documentation claimed sustain
     // lift.
     let mut table = table();
-    let mine: Vec<_> = (0..3).map(|_| table.mint(A).expect("room")).collect();
-    let theirs = table.mint(B).expect("room");
+    let mine: Vec<_> = (0..3)
+        .map(|_| table.mint(A, node()).expect("room"))
+        .collect();
+    let theirs = table.mint(B, node()).expect("room");
 
     assert_eq!(
         table.release_all(ReleaseScope::Producer(A)),
@@ -275,7 +283,7 @@ fn an_identity_from_another_table_is_not_an_orphan() {
     // A foreign identity is reported as foreign rather than as an orphan, because it says
     // nothing about whether the note it named is live — only that this table cannot answer.
     let mut first = table();
-    let note = first.mint(A).expect("room");
+    let note = first.mint(A, node()).expect("room");
     let second = table();
     assert_ne!(first.id(), second.id(), "table identities are never reused");
 
@@ -291,8 +299,10 @@ fn a_mass_release_ends_every_live_note_and_leaves_orphans_behind() {
     // not one event per voice. A release arriving afterwards for a note the operation took
     // is refused by the ordinary orphan rule rather than double-freeing anything.
     let mut table = table();
-    let notes: Vec<_> = (0..3).map(|_| table.mint(A).expect("room")).collect();
-    let other = table.mint(B).expect("room");
+    let notes: Vec<_> = (0..3)
+        .map(|_| table.mint(A, node()).expect("room"))
+        .collect();
+    let other = table.mint(B, node()).expect("room");
     assert_eq!(table.live(), 4);
 
     assert_eq!(
@@ -387,8 +397,37 @@ fn ranges_that_do_not_fit_the_index_space_are_refused() {
 fn an_unadmitted_producer_cannot_mint() {
     let mut table = table();
     let stranger = ProducerId::new(7);
-    match table.mint(stranger) {
+    match table.mint(stranger, node()) {
         Err(IdentityError::UnknownProducer { producer }) => assert_eq!(producer, stranger),
         other => panic!("expected an unknown-producer refusal, got {other:?}"),
     }
+}
+
+#[test]
+fn the_occurrence_remembers_the_node_so_a_release_need_not_carry_one() {
+    // `SOUND-INV-017` removes the node address from a release rather than carrying it and
+    // requiring agreement — carrying both admits an event whose identity and node disagree,
+    // and no reading of that is safe. Something has to remember the node, and the occurrence
+    // is the only thing that can: it was named when the occurrence was created.
+    let mut table = table();
+    let played = crate::plan::NoteSlot::new(crate::plan::PlanId::FILL, 3);
+    let note = table.mint(A, played).expect("room");
+
+    assert_eq!(table.note_of(note), Some(played));
+
+    // And an identity that names no live note has no node either — the same refusal
+    // `resolve` gives, rather than a guess.
+    table.release(note);
+    assert_eq!(table.note_of(note), None);
+    assert_eq!(
+        table.resolve(note),
+        Resolution::Orphan(OrphanCause::FreeIndex)
+    );
+
+    let other = IdentityTable::new(held(512), &[held(4), held(4)]).expect("a valid table");
+    assert_eq!(
+        other.note_of(note),
+        None,
+        "and neither does a foreign table pretend to know"
+    );
 }

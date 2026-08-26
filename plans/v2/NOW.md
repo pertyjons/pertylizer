@@ -349,22 +349,34 @@ earlier revision ended everything unconditionally while its own documentation cl
 reason: rejecting the eventual release would refuse an accepted obligation, and stranding it would leave a note
 nothing can release.
 
-**Not yet in the real-time purity region, and joining it needs a file split rather than a list entry.** Nothing calls
-this module today, because no event payload carries an identity. When the event side lands, `resolve` and `release`
-become audio-thread work while `mint` stays off it, at the live boundary where `HOST-INV-009` puts the atomic
-slot-hold-identity acquisition — but the region is **file-granular** and admits no mixed hot/preparation file, and
-`table.rs` allocates in its constructor. The hot methods move to their own file first; an earlier note here said the
-file would simply join, which cannot work.
+**The file is split and `identity/hot.rs` is now in the real-time purity region.** The region is file-granular and
+admits no mixed hot/preparation file, and construction allocates — so `resolve`, `release`, `release_all` and
+`note_of` live in their own file with a positive control and an import floor, while `mint` stays in `table.rs`,
+off the audio thread, where `HOST-INV-009` puts the atomic slot-hold-identity acquisition.
+
+**The occurrence remembers the node**, which is what lets a release carry the identity alone. `SOUND-INV-017` removes
+the node address from a release rather than carrying it and requiring agreement, so something has to remember it —
+and the occurrence is the only thing that can, because the node was named when the occurrence was created. `mint`
+therefore takes the node, and `note_of` returns it for a live identity and nothing for any other.
 
 One cost is worth stating before that slice rather than after: `release_all(Everything)` scans every slot, and that
 is the **sum of the admitted producer ranges** — not `max_held_notes`, which bounds simultaneous obligations rather
 than the extent handed out. A panic's cost therefore scales with the admitted extent, up to the whole index space,
 independently of how many notes are sounding. An earlier note here said `max_held_notes`, which is wrong.
 
-**What this does not do**, and the conformance row says so: `EventPayload::Note` still carries `{ slot, edge }`, so
-nothing yet asserts that a note-on names an occurrence, that a release names one alone, or that a hold is acquired
-atomically with minting. That is the next slice, and it is the one that ripples through every test suite that builds
-a note event.
+**What this does not do, and the prerequisite that stops it.** `EventPayload::Note` still carries `{ slot, edge }`,
+so nothing asserts that a note-on names an occurrence or that a release names one alone, and the conformance row says
+exactly that.
+
+Changing the payload needs the renderer to hold an identity table, and building one needs the **producer ranges** —
+which ADR-0046 partitions "at plan admission" across "every admitted non-compiled note-on producer". **A plan
+declares no such producers.** `PlanDeclarations` has no note-on producer set, so there is nothing for admission to
+partition, and a renderer cannot be given a table without inventing one.
+
+Two ways out, and neither is this slice's to pick unasked. Phase 3 today has exactly one note-on producer, the
+compiled one, so an interim table with a single range would work and would have to be documented as interim. Or
+`PlanDeclarations` gains the producer set now, which is the shape ADR-0046 assumes and which Phase 5's authored
+sources will need anyway. The second is more work and less likely to be redone.
 
 ### Accepted — ADR-0047 note identity, with its specification transaction
 

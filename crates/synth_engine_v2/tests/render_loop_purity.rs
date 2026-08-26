@@ -39,10 +39,11 @@ use std::path::{Path, PathBuf};
 /// `src/publish/hot.rs` joined when the publication arbiter did. It runs on the audio
 /// thread ahead of the renderer, so leaving it out would have left the one path that
 /// *writes* renderer input unscanned while the path that reads it was covered.
-const REGION: [&str; 4] = [
+const REGION: [&str; 5] = [
     "src/render/hot.rs",
     "src/schedule/hot.rs",
     "src/publish/hot.rs",
+    "src/identity/hot.rs",
     "src/node/kernels.rs",
 ];
 
@@ -242,6 +243,22 @@ fn the_check_is_reading_the_file_it_thinks_it_is() {
         );
     }
 
+    let identity = read_region_file("src/identity/hot.rs");
+    assert!(
+        identity.len() > 500,
+        "identity/hot.rs is unexpectedly small"
+    );
+    // Resolving and releasing run on the audio thread when a note edge is applied; minting
+    // stays in `table.rs`, off it. The split is what lets this file be scanned at all — the
+    // region is file-granular and `table.rs` allocates in its constructor.
+    for expected in ["pub fn resolve", "pub fn release", "pub fn note_of"] {
+        assert!(
+            identity.contains(expected),
+            "identity/hot.rs does not contain `{expected}`; the resolving path moved and this \
+             check is now scanning the wrong thing"
+        );
+    }
+
     let scheduler = scheduler_hot_path_source();
     assert!(
         scheduler.len() > 1_000,
@@ -412,6 +429,9 @@ fn every_call_the_render_loop_makes_is_inside_the_checked_region() {
         // path because a fault and an occupancy both carry their unit rather than a raw
         // integer.
         "measured",
+        // `ProducerId::as_u16` is a `const fn` field read, used to index a producer's range
+        // when a scoped mass release picks its span. It allocates nothing and locks nothing.
+        "as_u16",
         // The kernels' half: in-place iteration over preallocated slices, the borrow
         // split that turns slots into slices, and one sort over a fixed-size array of
         // three entries. `split_at_mut_checked` returns `Option` rather than panicking,
@@ -688,6 +708,7 @@ fn the_render_loop_imports_no_free_function() {
         ("src/render/hot.rs", 6),
         ("src/schedule/hot.rs", 2),
         ("src/publish/hot.rs", 2),
+        ("src/identity/hot.rs", 2),
         ("src/node/kernels.rs", 3),
     ] {
         let seen = seen_by_file
