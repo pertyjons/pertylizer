@@ -425,22 +425,65 @@ impl StreamAnchor {
     /// A position before the anchor is a scheduler error rather than a clamp
     /// (clause 27), so it has no time here; the loop wrap that would produce one
     /// re-anchors instead.
+    ///
+    /// This collapses [`Located`]'s two failing answers into one, which is all a
+    /// caller that re-anchors either way needs. A caller that must tell them apart —
+    /// an admitted stream refusing a pre-anchor event is not the same fault as one
+    /// running out of clock — asks [`Self::locate`] instead.
     pub const fn time_of(self, position: PlanPosition) -> Option<SampleTime> {
+        match self.locate(position) {
+            Located::At(time) => Some(time),
+            Located::BeforeAnchor | Located::Unrepresentable => None,
+        }
+    }
+
+    /// Where `position` falls in this stream, with the two failing answers kept apart.
+    ///
+    /// The distinction is load-bearing wherever the caller's response differs. A
+    /// position **before** the anchor is a position this stream does not render: the
+    /// stream starts at the anchor, and clause 27 makes answering with a number a
+    /// scheduler error rather than a clamp. A position whose engine time is **not
+    /// representable** is a clock that has run out, which says nothing about whether the
+    /// position belongs to the stream. Reporting the second as the first would send
+    /// someone to look for a seek that never happened.
+    pub const fn locate(self, position: PlanPosition) -> Located {
+        // **Ordered before subtracted.** A position more than `i64::MAX` frames behind the
+        // anchor has no representable difference, but which side of the anchor it is on was
+        // never in doubt — comparing answers it directly. Subtracting first would report the
+        // clearest pre-anchor case there is as a representation failure.
+        if position.as_u64() < self.position.as_u64() {
+            return Located::BeforeAnchor;
+        }
         let Ok(delta) = position.difference(self.position) else {
-            // Unrepresentable is a fault, and this accessor's answer for "no time in this
-            // stream" is the same either way: the caller re-anchors.
-            return None;
+            // Forward, and too far forward to name: a representation failure that says
+            // nothing about which side of the anchor the position is on.
+            return Located::Unrepresentable;
         };
         if delta.is_negative() {
-            return None;
+            return Located::BeforeAnchor;
         }
         // The negative case returned above, so the delta is non-negative.
         let forward = FrameCount::new(delta.as_i64() as u64);
         match self.time.checked_add(forward) {
-            Ok(time) => Some(time),
-            Err(_) => None,
+            Ok(time) => Located::At(time),
+            Err(_) => Located::Unrepresentable,
         }
     }
+}
+
+/// Where a [`PlanPosition`] falls relative to a [`StreamAnchor`].
+///
+/// Three answers rather than an `Option`, because a caller that refuses has to say which
+/// of the two refusals happened; see [`StreamAnchor::locate`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[must_use]
+pub enum Located {
+    /// Inside the stream, at this engine time.
+    At(SampleTime),
+    /// Before the anchor: the stream does not reach this position.
+    BeforeAnchor,
+    /// The engine time is not representable in this stream.
+    Unrepresentable,
 }
 
 /// A prepared stream's identity.
@@ -646,6 +689,29 @@ mod tests {
         );
         // Before the anchor is a scheduler error, not a clamp to zero.
         assert_eq!(anchor.time_of(PlanPosition::new(999)), None);
+    }
+
+    #[test]
+    fn locating_tells_a_pre_anchor_position_from_an_unnameable_one() {
+        let anchor = StreamAnchor::new(SampleTime::ZERO, PlanPosition::new(1_000));
+        assert_eq!(
+            anchor.locate(PlanPosition::new(1_064)),
+            Located::At(SampleTime::new(64))
+        );
+        assert_eq!(anchor.locate(PlanPosition::new(999)), Located::BeforeAnchor);
+        // Forward, and too far forward to name.
+        assert_eq!(
+            anchor.locate(PlanPosition::new(u64::MAX)),
+            Located::Unrepresentable
+        );
+
+        // **Ordered before subtracted.** This position is further behind the anchor than a
+        // signed frame delta can express, so subtracting first would report the clearest
+        // pre-anchor case there is as a representation failure — and clause 27 asks for a
+        // pre-anchor scheduler error here, not a shrug.
+        let far = StreamAnchor::new(SampleTime::ZERO, PlanPosition::new(u64::MAX));
+        assert_eq!(far.locate(PlanPosition::ZERO), Located::BeforeAnchor);
+        assert_eq!(far.time_of(PlanPosition::ZERO), None);
     }
 
     #[test]

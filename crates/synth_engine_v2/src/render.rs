@@ -550,6 +550,17 @@ impl PreparedRenderer {
         self.clock
     }
 
+    /// The anchor this stream was prepared with.
+    ///
+    /// Crate-private on purpose. It is **not** a placement source: it is fixed at
+    /// preparation while the transport's anchor moves, so a caller reaching for it would
+    /// place a post-seek stream at the pre-seek pairing. Its one use here is the opposite
+    /// one — refusing a placement that disagrees with the timeline `plan_position_of`
+    /// gives the position-aware kernels.
+    pub(crate) const fn anchor(&self) -> StreamAnchor {
+        self.anchor
+    }
+
     /// The minting half, for a producer that mints off the audio thread.
     ///
     /// `&mut` because minting is a write, and crate-private because a producer outside this

@@ -30,7 +30,10 @@ fn two_events_astride_a_quantum_boundary_are_one_window() {
             share: named,
             quantum,
         }) => {
-            assert_eq!(window_start, PlanPosition::new(63));
+            // Frame **1**, not 63: every window from `[1, 65)` to `[63, 127)` holds both
+            // events, and `HOST-INV-021` asks for the first — the anchor phase at which
+            // the stream first fails, rather than the first event of the cluster.
+            assert_eq!(window_start, PlanPosition::new(1));
             assert_eq!(requested, EventCount::measured(2));
             assert_eq!(named, share(1), "the refusal names both sides");
             assert_eq!(quantum, QUANTUM_FRAMES);
@@ -54,7 +57,7 @@ fn events_a_full_quantum_apart_are_two_windows() {
 }
 
 #[test]
-fn the_densest_window_is_found_wherever_it_sits() {
+fn an_over_full_window_is_found_wherever_it_sits() {
     // A sparse plan with one dense cluster late in it. Scanning only from the start, or
     // only on quantum boundaries, would miss it.
     let mut frames = vec![0, 5 * Q, 10 * Q];
@@ -68,12 +71,73 @@ fn the_densest_window_is_found_wherever_it_sits() {
             requested,
             ..
         }) => {
-            assert_eq!(window_start, PlanPosition::new(40 * Q));
+            // The eighth event of the cluster sits at `40Q + 21`, and the earliest window
+            // reaching it starts `Q - 1` frames earlier.
+            assert_eq!(window_start, PlanPosition::new(40 * Q + 21 - (Q - 1)));
             assert_eq!(requested, EventCount::measured(8));
         }
         other => panic!("expected the late cluster to be found, got {other:?}"),
     }
     assert!(admit_linear(&at(&frames), share(8)).is_ok());
+}
+
+#[test]
+fn the_named_window_is_the_earliest_one_and_not_merely_an_event_aligned_one() {
+    // Brute force over every start frame, against the scan's answer. The scan only checks
+    // event-aligned windows to decide *whether* a stream fits; naming the first one is a
+    // separate step, and this is what proves the two agree.
+    let cases: [(&[u64], u32); 4] = [
+        (&[63, 64], 1),
+        (&[0, 1, 2, 40 * Q, 40 * Q + 1, 40 * Q + 2, 40 * Q + 3], 2),
+        (&[10, 11, 12, 13], 2),
+        (&[0, Q - 1, 2 * Q - 2, 3 * Q - 3], 1),
+    ];
+    for (frames, admitted) in cases {
+        let mut expected = None;
+        let last = frames.last().copied().unwrap_or(0);
+        for start in 0..=last + Q {
+            let held = frames
+                .iter()
+                .filter(|frame| **frame >= start && **frame < start + Q)
+                .count();
+            if held > admitted as usize {
+                expected = Some((start, held));
+                break;
+            }
+        }
+        let (start, held) = expected.expect("each case has an over-full window");
+        match admit_linear(&at(frames), share(admitted)) {
+            Err(AdmissionError::WindowOverShare {
+                window_start,
+                requested,
+                ..
+            }) => {
+                assert_eq!(window_start, PlanPosition::new(start), "{frames:?}");
+                assert_eq!(requested, EventCount::measured(held as u32), "{frames:?}");
+            }
+            other => panic!("expected a refusal for {frames:?}, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn the_refusal_names_the_first_over_full_window_not_the_densest() {
+    // `HOST-INV-021` asks for "the exact first over-full half-open `Q`-frame window". Both
+    // clusters here are over a share of two, and the later one is denser — a scan that kept
+    // the maximum would name frame `40Q` and send someone past the overrun they have to fix
+    // first.
+    let frames = at(&[0, 1, 2, 40 * Q, 40 * Q + 1, 40 * Q + 2, 40 * Q + 3]);
+    match admit_linear(&frames, share(2)) {
+        Err(AdmissionError::WindowOverShare {
+            window_start,
+            requested,
+            ..
+        }) => {
+            assert_eq!(window_start, PlanPosition::ZERO);
+            assert_eq!(requested, EventCount::measured(3));
+        }
+        other => panic!("expected the earliest overrun to be named, got {other:?}"),
+    }
 }
 
 #[test]

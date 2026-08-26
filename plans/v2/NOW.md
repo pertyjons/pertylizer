@@ -148,8 +148,8 @@ Nine checks, three mutation-verified: a closed window instead of a half-open one
 version put every event *past* the end, where `<` and `<=` agree, and the mutation passed it. It now places an event
 exactly on the end frame, which is one loop length after the start and would collide with the next pass.
 
-Not yet wired into `CompiledEventScheduler::prepare`, which still applies the narrower per-quantum check. Routing it
-is the next slice; the module's own doc says so rather than implying the gap is closed.
+The linear half is now what preparation is built on, through the admitted-stream slice below. The loop half still has
+no caller: a loop interval is transport state, and `SessionScheduler` re-anchors at a wrap without carrying one.
 
 ### Completed slice — the session anchor
 
@@ -371,6 +371,38 @@ An approval cannot be widened after the fact by the party that asked for it, and
 first version of this paragraph doing exactly that — the second request is what closed it rather than the
 rewording.
 
+**The admitted-compiled-stream slice breaks a third set, approved on 2026-08-26.** Asked for before the commit rather
+than after it, and derived by the same mechanical method: variant sets per public enum and parameter-and-return
+signatures per public function, taken from the commit and its parent and differenced.
+
+Signature changes:
+
+- `CompiledEventScheduler::prepare` takes `(&mut PreparedRenderer, StreamAnchor, &AdmittedCompiledStream)` rather
+  than `(&mut PreparedRenderer, &[CompiledEvent])`.
+
+Variant changes on `SchedulePrepareError`, which is not `#[non_exhaustive]`, so both halves are breaks:
+
+- **removed** `QuantumTooDense` and `EventsOutOfOrder`, whose proofs moved to admission;
+- **added** `AnchorMismatch`, `BeforeAnchor`, `ForeignStream` and `TimeUnrepresentable`.
+
+Two behavioural breaks carry no signature and were approved with the rest:
+
+- a stream is refused when **any** `Q`-frame window is over the compiled share, not only an over-full absolute
+  quantum, so streams that used to prepare can now be refused — which is ADR-0046 clause 4's point rather than a
+  side effect;
+- `AdmissionError::WindowOverShare` names the **first** over-full window rather than the densest. The same streams
+  are refused; `window_start` and `requested` differ.
+
+New public surface, which breaks nothing: `schedule::{PlanEvent, AdmittedCompiledStream, CompiledStreamError}` and
+`time::{Located, StreamAnchor::locate}`. `PreparedRenderer::anchor` is `pub(crate)` and is deliberately not public
+surface — its only sanctioned use is the refusal above.
+
+The bound is the one the earlier approvals were granted under and is why this one was grantable too: the crate is
+experimental, is not a dependency of the workspace's default members, and has no in-repo consumer outside its own
+tests. Nothing persisted, manifest, wire or protocol is touched, and no ADR is created — ADR-0046 clause 4 already
+fixes *that* admission happens over every anchor phase; this slice chooses only the shape, and a later producer
+wanting a different one is where that becomes a decision of its own.
+
 ### Completed slice — a plan declares its note-on producers
 
 The prerequisite the event half was blocked on. ADR-0046 partitions hold entitlements "at plan admission" across
@@ -574,6 +606,94 @@ change is behaviour-preserving on the equivalence arm.
 shortage, and an orphan is a release for a note that does not exist — reporting one as a drop would make a producer
 look starved when it is not. That is the amendment ADR-0047's specification transaction already made to the invariant;
 this is the counter it named.
+
+### Completed slice — compiled admission becomes a value, not a per-call check
+
+ADR-0046 clause 4's linear half, routed — but **not** by calling `admit_linear` from
+`CompiledEventScheduler::prepare`, which is what the previous slice's note proposed. An independent consultation
+attacked that plan and the objection held: `prepare` receives a caller-supplied list of engine-time events, and
+nothing proves the list it is handed at one anchor is the same stream it would be handed at another. **Shift
+invariance of one set does not establish anchor independence across different sets.** A check inside `prepare` would
+therefore judge each anchor's list on its own and prove nothing about the stream.
+
+Admission is now a **value**. `AdmittedCompiledStream::admit` takes `PlanEvent`s — plan positions, no anchor — and
+proves three things: ascending plan order, every slot belonging to the plan, and no `Q`-frame window over
+`compiled_event_share`. `prepare` accepts only that type. The set it places is therefore the set that was admitted,
+and the artifact admission judges exists before an anchor is chosen, which is what clause 4 means by "the worst case
+over all `Q` integer anchor phases".
+
+**Preparation re-checks no capacity.** Two proofs of one property is how they come to disagree, and the one that is
+wrong is whichever the caller did not read. What `prepare` does instead is place: the anchor's forward mapping, which
+keeps ADR-0032 clause 27's "anchoring is the only place the two vocabularies meet" true of this path. Adding a
+constant preserves order, so there is no second ordering check and no second ordering policy either.
+
+**A position before the anchor is refused, not skipped.** The stream begins at the anchor, so such a position is one
+this stream does not render — but dropping it silently is what ADR-0001 clause 16 forbids, and the mutation shows
+what the silence would look like: skipping the note-on turns its release into `UnmatchedRelease`, which sends someone
+to look for a malformed plan. The caller that meant to start there admits the **suffix**, which always fits, because
+every window of a suffix is a window of the whole.
+
+`StreamAnchor::locate` exists because `time_of`'s single `None` conflates two answers that need different responses.
+A pre-anchor position says the stream does not reach it; an unrepresentable one says the clock ran out and says
+nothing about seeking. Reporting the second as the first would send someone looking for a seek that never happened.
+
+**The anchor took two review rounds, and the second reversed part of the first.** A first draft had `prepare` reach
+for the renderer's own anchor, which is the one value guaranteed to be stale: clause 27 names seek and loop wrap as
+re-anchoring moments, neither re-prepares the renderer — a wrap that dropped the carries would be audible — so
+`PreparedRenderer`'s anchor is fixed at preparation while `SessionScheduler`'s moves. Placing against the renderer's
+would put a post-seek stream at the pre-seek pairing: shifted, or behind the clock and late on arrival. So the anchor
+became an argument, and the accessor went with it.
+
+The next round showed why the accessor could not simply go. **The renderer's anchor is not inert**: its hot path
+derives every quantum's plan position from it, so a stream placed at a different pairing runs the events on one
+timeline and the position-aware kernels on another — an `Impulse` keeps sounding where the old anchor says while the
+notes move. This note's previous revision claimed that anchor was "read by nothing", which was false; it came from
+grepping `render.rs` and not `render/hot.rs`, and it is exactly the kind of claim the reviewer is there to catch.
+
+So the anchor stays an argument and preparation **refuses** a placement the renderer is not anchored at. Passing it
+explicitly is what makes the refusal expressible at all: the caller states the pairing it means, and preparation says
+no when the renderer is elsewhere, instead of one side silently winning. The accessor is back as `pub(crate)`, used
+only for that comparison and documented as not a placement source.
+
+**Which names the third owed sub-question: re-anchoring a prepared renderer.** Moving the renderer's mapping and the
+scheduled events together is what a seek and a loop wrap actually are, and until it exists neither can be expressed
+against a live renderer — a refusal, not a wrong answer.
+
+**Which window the refusal names took two corrections, and the second is the interesting one.**
+`HOST-INV-021` asks for "the exact first over-full half-open `Q`-frame window". `AdmissionError::WindowOverShare`
+named the **densest** one, which in a plan with an early overrun and a later, denser cluster points past the overrun
+that has to be fixed first. Naming the first *event-aligned* over-full window instead — the obvious repair, and the
+one this slice made — is still not it, and the independent review caught that: with a share of one and events at 63
+and 64, every window from `[1, 65)` to `[63, 127)` holds both, so the first begins at frame **1**. Naming 63 names a
+real over-full window and not the earliest, which is to say not the anchor phase at which the stream first fails.
+
+Deciding **whether** a stream fits and deciding **which window to name** are therefore different questions, and only
+the first collapses to the event-aligned scan. The named start is now walked back: the window must reach the
+`share + 1`-th event, so the earliest start that does is that event's position minus `Q - 1`, and nothing earlier can
+be over-full because any over-full window holds `share + 1` consecutive events beginning no earlier. A brute-force
+check over every start frame, on four fixtures, is what holds the two in agreement — the derivation is short enough
+to believe and was wrong once already.
+
+The review's second finding is the same shape: `StreamAnchor::locate` subtracted before it ordered, so a position
+more than `i64::MAX` frames *behind* the anchor was reported as an unrepresentable time rather than a pre-anchor one.
+Which side of the anchor it sits on was never in doubt — comparing answers it directly — and ADR-0032 clause 27 asks
+for a scheduler error there, not a shrug. Ordering now happens first.
+
+Seven properties are mutation-verified, each caught by a check named for it: counting per absolute quantum instead of
+sliding a window, a closed window instead of a half-open one, naming the event-aligned window instead of the earliest,
+subtracting before ordering, skipping a pre-anchor position instead of refusing it, admitting against the cap instead
+of the compiled share, and dropping the anchor-agreement refusal. The falsifiable fixture
+is the one the first of those needs — half a share at frame
+`Q - 1` and the rest at frame `Q`, which is under the share in **both** absolute quanta and over it in the window
+that straddles them. Its control pins the half-open boundary from the other side: two full shares exactly `Q` apart
+share no window and must be admitted.
+
+**Three sub-questions are named rather than closed.** The loop half has no caller, so no part of this claims clause
+4's loop obligation — and its diagnostic does not yet name the loop interval and phase that clause 4 requires, which
+the consultation found and this slice did not touch. `render_offline` reaches `stamp_compiled` directly, so the
+offline path takes no admitted stream; whether offline compiled events consume the same proof is a decision, not an
+oversight, and it is unmade. And re-anchoring a prepared renderer, above, is owed before a seek or a loop wrap can be
+expressed against a live stream at all.
 
 ## Paused parallel stream: Phase 0B
 

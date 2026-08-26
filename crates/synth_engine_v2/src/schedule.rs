@@ -1,13 +1,23 @@
 //! Compiled-event scheduling at the renderer's engine-time boundary.
 //!
 //! Phase 3 starts here, deliberately on the engine side of ADR-0022. A compiled event
-//! already carries the current epoch's [`SampleTime`]; this module does not observe a
-//! host clock, compensate latency, or assign `Hardware`/`Arrival` provenance. It rejects
-//! a quantum over the compiled producer's own share during preparation, then turns the
-//! sorted compiled list into a bounded event span for each actual host call. Sliding-window
-//! admission over every anchor phase remains later Phase 3 work.
+//! already carries the current epoch's [`SampleTime`] once it is placed; this module does
+//! not observe a host clock, compensate latency, or assign `Hardware`/`Arrival` provenance.
 //!
-//! Preparation validates order and plan identity and allocates the stamped list. The
+//! # Admission happens before preparation, in plan time
+//!
+//! A compiled stream is admitted as [`AdmittedCompiledStream`], from [`PlanEvent`]s that
+//! carry no anchor at all, and preparation consumes that admitted value rather than
+//! deciding for itself whether the stream fits. The reason is ADR-0046 clause 4: which
+//! quantum a frame belongs to depends on where the stream was anchored, so a per-absolute-
+//! quantum count answers the wrong question and admits a plan that faults at publication
+//! after an ordinary seek. Admission slides a `Q`-frame window instead, which is the worst
+//! case over all `Q` anchor phases, and it does so in plan time — where a position exists
+//! before any anchor does.
+//!
+//! Preparation then places every admitted position at the renderer's anchor, pairs and
+//! stamps, and allocates the stamped list. It re-checks no capacity: the admitted value is
+//! the proof, and a second proof at a second site is how the two come to disagree. The
 //! [`CompiledEventScheduler::render`] path advances a cursor over that storage and
 //! **publishes** the due span through ADR-0046's arbiter — it does not hand the renderer a
 //! borrowed slice, which would make clause 2's "the only normal path that constructs
@@ -16,10 +26,11 @@
 
 use thiserror::Error;
 
-use crate::plan::PlanId;
+use crate::admit::{AdmissionError, admit_linear};
+use crate::plan::{CompiledPlan, PlanId};
 use crate::quantities::EventCount;
 use crate::render::{EventEnvelope, EventPayload, NoteEdge, PreparedRenderer, TimedEvent};
-use crate::time::{SampleTime, StreamEpoch, TimeSource};
+use crate::time::{Located, PlanPosition, SampleTime, StreamAnchor, StreamEpoch, TimeSource};
 
 /// One exact event produced by compiled plan time.
 ///
@@ -62,6 +73,156 @@ pub enum CompiledPayload {
         /// Which node is released.
         slot: crate::plan::NoteSlot,
     },
+}
+
+/// One compiled event in **plan** time.
+///
+/// It carries no anchor, and that is the point. ADR-0046 clause 4 admits a compiled stream
+/// against every `Q` anchor phase, so the artifact admission judges has to exist before an
+/// anchor is chosen — a list already placed at one anchor can only be judged at that one.
+/// [`CompiledEvent`] is the same event after an anchor has placed it.
+#[derive(Debug, Clone, Copy, PartialEq)]
+#[must_use]
+pub struct PlanEvent {
+    position: PlanPosition,
+    payload: CompiledPayload,
+}
+
+impl PlanEvent {
+    /// An event at a position in the plan.
+    pub const fn new(position: PlanPosition, payload: CompiledPayload) -> Self {
+        Self { position, payload }
+    }
+
+    /// Where in the plan the event happens.
+    pub const fn position(self) -> PlanPosition {
+        self.position
+    }
+
+    /// What the event does.
+    pub const fn payload(self) -> CompiledPayload {
+        self.payload
+    }
+}
+
+/// Why a compiled stream was not admitted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Error)]
+pub enum CompiledStreamError {
+    /// The stream is not monotone in plan time.
+    ///
+    /// Refused rather than sorted, for the reason preparation used to give: ADR-0023 has
+    /// not selected a same-sample ordering policy, and admission must not invent one as a
+    /// side effect. The window scan also *assumes* ascending input, so an unsorted list
+    /// would be measured against windows that do not exist.
+    #[error("compiled event {event_index} at {position} precedes the previous event at {previous}")]
+    EventsOutOfOrder {
+        /// Position in the supplied event list.
+        event_index: usize,
+        /// The preceding event's position.
+        previous: PlanPosition,
+        /// The rejected event's position.
+        position: PlanPosition,
+    },
+
+    /// An event carries a slot resolved against a different plan.
+    #[error(
+        "compiled event {event_index} carries a slot from {actual}, but the stream is {expected}"
+    )]
+    ForeignPlan {
+        /// Position in the supplied event list.
+        event_index: usize,
+        /// The plan being admitted against.
+        expected: PlanId,
+        /// The plan that issued the event's slot.
+        actual: PlanId,
+    },
+
+    /// Some `Q`-frame window holds more events than the compiled share admits.
+    ///
+    /// Only [`AdmissionError::WindowOverShare`] is reachable here: a linear stream has no
+    /// loop interval, so the two loop-shaped variants describe a check this path does not
+    /// run. They are carried rather than flattened so that the loop half, when it arrives,
+    /// reports through the same error.
+    #[error("the compiled stream is over its share: {0}")]
+    Window(#[from] AdmissionError),
+}
+
+/// A compiled stream proven to fit its producer's share at **every** anchor phase.
+///
+/// ADR-0046 clause 4 is the whole of this type. Admission slides a `Q`-frame window over
+/// the plan positions and refuses a stream where any window holds more events than
+/// `compiled_event_share`, which "is exactly the worst case over all `Q` integer anchor
+/// phases". Once that passes, no anchor can produce a quantum over the share, so
+/// preparation and publication have nothing left to decide about capacity.
+///
+/// **It is a value, not a check.** The distinction is what closes the hole a per-call check
+/// leaves open: a caller could hand preparation a different event set at every anchor and
+/// have each one judged on its own, which proves nothing about the stream. Preparation
+/// accepts only this type, so the set it places is the set that was admitted.
+///
+/// Constructing one allocates and its cost scales with the stream, so it belongs off the
+/// audio thread — the same rule ADR-0046 clause 4 states for the window scan itself.
+#[derive(Debug, Clone, PartialEq)]
+#[must_use]
+pub struct AdmittedCompiledStream {
+    plan: PlanId,
+    events: Vec<PlanEvent>,
+}
+
+impl AdmittedCompiledStream {
+    /// Admit `events` as `plan`'s compiled stream.
+    ///
+    /// Three properties, each checked where it can be answered: ascending plan order, every
+    /// slot belonging to `plan`, and the sliding-window bound above. The share is the
+    /// **compiled producer's**, not `max_events_per_quantum`: ADR-0046 clause 1 partitions
+    /// the cap across six producers, and clause 3 makes a compiled runtime miss a producer
+    /// defect rather than a load condition, so a stream that would overrun its share has to
+    /// be refused here — where a caller can still be told.
+    pub fn admit(plan: &CompiledPlan, events: &[PlanEvent]) -> Result<Self, CompiledStreamError> {
+        let expected = plan.id();
+        let mut previous: Option<PlanPosition> = None;
+        let mut positions = Vec::with_capacity(events.len());
+
+        for (event_index, event) in events.iter().copied().enumerate() {
+            if let Some(previous) = previous
+                && event.position() < previous
+            {
+                return Err(CompiledStreamError::EventsOutOfOrder {
+                    event_index,
+                    previous,
+                    position: event.position(),
+                });
+            }
+            previous = Some(event.position());
+
+            let actual = payload_plan(event.payload());
+            if actual != expected {
+                return Err(CompiledStreamError::ForeignPlan {
+                    event_index,
+                    expected,
+                    actual,
+                });
+            }
+            positions.push(event.position());
+        }
+
+        admit_linear(&positions, plan.compiled_event_share())?;
+
+        Ok(Self {
+            plan: expected,
+            events: events.to_vec(),
+        })
+    }
+
+    /// The plan this stream was admitted against.
+    pub const fn plan(&self) -> PlanId {
+        self.plan
+    }
+
+    /// The admitted events, in ascending plan order.
+    pub fn events(&self) -> &[PlanEvent] {
+        &self.events
+    }
 }
 
 impl CompiledEvent {
@@ -116,16 +277,6 @@ pub enum SchedulePrepareError {
         source: crate::identity::IdentityError,
     },
 
-    /// The compiled list is not monotone in engine time.
-    #[error("compiled event {event_index} at {time} precedes the previous event at {previous}")]
-    EventsOutOfOrder {
-        /// Position in the supplied event list.
-        event_index: usize,
-        /// The preceding event's time.
-        previous: SampleTime,
-        /// The rejected event's time.
-        time: SampleTime,
-    },
     /// An event carries a slot resolved against a different plan.
     #[error(
         "compiled event {event_index} carries a slot from {actual}, but the renderer uses \
@@ -139,16 +290,69 @@ pub enum SchedulePrepareError {
         /// The plan that issued the event's slot.
         actual: PlanId,
     },
-    /// One absolute quantum exceeds the renderer's prepared event capacity.
+    /// The admitted stream belongs to a different plan than the renderer.
+    ///
+    /// A stream-level refusal rather than a per-event one: an [`AdmittedCompiledStream`]
+    /// already proved every slot belongs to *its* plan, so one comparison settles the whole
+    /// list and naming an event index here would suggest the others were checked separately.
+    #[error("the admitted stream belongs to {actual}, but the renderer uses {expected}")]
+    ForeignStream {
+        /// The renderer's plan.
+        expected: PlanId,
+        /// The plan the stream was admitted against.
+        actual: PlanId,
+    },
+
+    /// The placement anchor is not the one the renderer holds.
+    ///
+    /// The renderer's anchor is not decoration: its hot path derives every quantum's plan
+    /// position from it, so placing a stream at a different pairing would put the events on
+    /// one timeline and the position-aware kernels on another — an `Impulse` would keep
+    /// sounding where the old anchor says while the notes moved.
+    ///
+    /// Re-anchoring a *prepared* renderer is what a seek and a loop wrap need and does not
+    /// exist yet, so the disagreement is refused rather than silently resolved in favour of
+    /// one side. Passing the anchor explicitly is what makes the refusal possible: a caller
+    /// states the pairing it means, and preparation says no when the renderer is elsewhere.
     #[error(
-        "compiled quantum beginning at {quantum_start} contains more than its admitted \
-         {admissible}"
+        "the renderer is anchored at {} = {}, but the stream was placed at {} = {}",
+        .renderer.position(), .renderer.time(), .supplied.position(), .supplied.time()
     )]
-    QuantumTooDense {
-        /// First engine-time position in the over-full quantum.
-        quantum_start: SampleTime,
-        /// Maximum event count admitted for one quantum.
-        admissible: EventCount,
+    AnchorMismatch {
+        /// The pairing the renderer was prepared with.
+        renderer: StreamAnchor,
+        /// The pairing the caller asked to place at.
+        supplied: StreamAnchor,
+    },
+
+    /// An admitted position lies before the renderer's anchor.
+    ///
+    /// The stream begins at the anchor, so this position is one the stream does not render.
+    /// It is refused rather than skipped: ADR-0001 clause 16 forbids dropping an event
+    /// silently, and a caller that meant to start here has admitted the wrong stream —
+    /// a suffix is admissible whenever the whole is, so re-admitting the suffix is the
+    /// answer rather than having preparation guess.
+    #[error("compiled event {event_index} at {position} precedes the anchor at {anchor}")]
+    BeforeAnchor {
+        /// Position in the admitted event list.
+        event_index: usize,
+        /// The position that has no engine time in this stream.
+        position: PlanPosition,
+        /// The plan position the stream is anchored at.
+        anchor: PlanPosition,
+    },
+
+    /// An admitted position has no representable engine time in this stream.
+    ///
+    /// Distinct from [`Self::BeforeAnchor`], which says the stream does not reach the
+    /// position; this says the clock does. Reporting one as the other would send someone
+    /// looking for a seek that never happened.
+    #[error("compiled event {event_index} at {position} has no representable engine time")]
+    TimeUnrepresentable {
+        /// Position in the admitted event list.
+        event_index: usize,
+        /// The position that could not be placed.
+        position: PlanPosition,
     },
 }
 
@@ -234,66 +438,80 @@ pub struct CompiledEventScheduler {
 }
 
 impl CompiledEventScheduler {
-    /// Validate and stamp a compiled list for `renderer`.
+    /// Place an admitted stream at `anchor` and stamp it.
     ///
-    /// Equal times preserve caller order. Descending time is refused instead of sorted,
-    /// because ADR-0023 has not yet selected a same-sample ordering policy and this layer
-    /// must not invent one as a side effect of preparation. A statically over-full
-    /// absolute quantum is also refused here, before the schedule reaches the audio
-    /// thread.
+    /// **Capacity is not decided here.** [`AdmittedCompiledStream`] already proved the
+    /// stream fits its share at every anchor phase, so preparation only has to place it:
+    /// re-deciding would mean two proofs of one property, and the one that is wrong is
+    /// whichever the caller did not read.
+    ///
+    /// Placement is the anchor's forward mapping and nothing else, which keeps ADR-0032
+    /// clause 27's "anchoring is the only place the two vocabularies meet" true of this
+    /// path. Adding a constant preserves order, so the placed list is ascending because the
+    /// admitted one was — there is no second ordering check and no second ordering policy.
+    ///
+    /// **`anchor` is the transport's current pairing** — [`SessionScheduler::anchor`] —
+    /// stated by the caller rather than taken from the renderer. Clause 27 names seek and
+    /// loop wrap as re-anchoring moments, and neither re-prepares the renderer, so the
+    /// renderer's own anchor goes stale the first time the transport moves; reading it here
+    /// would place a post-seek stream at the pre-seek pairing.
+    ///
+    /// It must nevertheless **agree** with the renderer's, and preparation refuses when it
+    /// does not. The renderer's hot path derives every quantum's plan position from its own
+    /// anchor, so a stream placed elsewhere would run the events on one timeline and the
+    /// position-aware kernels on another. Re-anchoring a prepared renderer — moving both at
+    /// once, which is what a seek actually is — is owed work, and until it exists the
+    /// disagreement is a refusal rather than a silent choice of side.
+    ///
+    /// [`SessionScheduler::anchor`]: crate::session::SessionScheduler::anchor
     pub fn prepare(
         renderer: &mut PreparedRenderer,
-        events: &[CompiledEvent],
+        anchor: StreamAnchor,
+        stream: &AdmittedCompiledStream,
     ) -> Result<Self, SchedulePrepareError> {
         let expected = renderer.plan().id();
-        // The **compiled share**, not the per-quantum cap. ADR-0046 clause 1 partitions the
-        // cap across six producers, and clause 3 makes a compiled runtime miss a producer
-        // defect rather than a load condition — so a schedule that would overrun its share
-        // at publication has to be refused here, where a caller can still be told.
-        let max_events_per_quantum = renderer.plan().compiled_event_share();
-        let mut previous = None;
-        let mut current_quantum = None;
-        let mut events_in_quantum = 0_u32;
+        if stream.plan() != expected {
+            return Err(SchedulePrepareError::ForeignStream {
+                expected,
+                actual: stream.plan(),
+            });
+        }
 
-        for (event_index, event) in events.iter().copied().enumerate() {
-            if let Some(previous_time) = previous
-                && event.time() < previous_time
-            {
-                return Err(SchedulePrepareError::EventsOutOfOrder {
-                    event_index,
-                    previous: previous_time,
-                    time: event.time(),
-                });
-            }
-            previous = Some(event.time());
+        if anchor != renderer.anchor() {
+            return Err(SchedulePrepareError::AnchorMismatch {
+                renderer: renderer.anchor(),
+                supplied: anchor,
+            });
+        }
 
-            let actual = payload_plan(event.payload());
-            if actual != expected {
-                return Err(SchedulePrepareError::ForeignPlan {
-                    event_index,
-                    expected,
-                    actual,
-                });
-            }
-
-            let event_quantum = event.time().quantum_index();
-            if current_quantum == Some(event_quantum) {
-                if events_in_quantum == max_events_per_quantum.get() {
-                    return Err(SchedulePrepareError::QuantumTooDense {
-                        quantum_start: event.time().quantum_start(),
-                        admissible: max_events_per_quantum,
+        let mut placed = Vec::with_capacity(stream.events().len());
+        for (event_index, event) in stream.events().iter().copied().enumerate() {
+            let time = match anchor.locate(event.position()) {
+                Located::At(time) => time,
+                Located::BeforeAnchor => {
+                    return Err(SchedulePrepareError::BeforeAnchor {
+                        event_index,
+                        position: event.position(),
+                        anchor: anchor.position(),
                     });
                 }
-                events_in_quantum += 1;
-            } else {
-                current_quantum = Some(event_quantum);
-                events_in_quantum = 1;
-            }
+                Located::Unrepresentable => {
+                    return Err(SchedulePrepareError::TimeUnrepresentable {
+                        event_index,
+                        position: event.position(),
+                    });
+                }
+            };
+            placed.push(CompiledEvent::new(time, event.payload()));
         }
 
         let epoch = renderer.epoch();
+        // The **compiled share**, not the per-quantum cap: ADR-0046 clause 1 partitions the
+        // cap across six producers, and this producer spends its own. Carried so the audio
+        // thread can bound one call's window without reaching for the profile.
+        let max_events_per_quantum = renderer.plan().compiled_event_share();
 
-        let stamped = stamp_compiled(renderer, events)?;
+        let stamped = stamp_compiled(renderer, &placed)?;
 
         Ok(Self {
             epoch,

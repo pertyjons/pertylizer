@@ -1,5 +1,12 @@
 //! Compiled admission over anchor phases and loops.
 //!
+//! The window scan itself. Its linear half is what
+//! [`AdmittedCompiledStream`](crate::schedule::AdmittedCompiledStream) is built on, and that
+//! type — not this module — is what preparation accepts, so the proof travels with the
+//! stream instead of being repeated per call. The loop half has no caller yet: a loop
+//! interval is transport state, and [`SessionScheduler`](crate::session::SessionScheduler)
+//! re-anchors at a wrap without carrying one.
+//!
 //! ADR-0046 clause 4. A compiled plan is admitted against the compiled share, and the check
 //! is not "how many events land in each absolute quantum" — that is the wrong question,
 //! because which quantum a frame belongs to depends on where the stream was anchored.
@@ -74,14 +81,33 @@ pub enum AdmissionError {
     },
 }
 
-/// The densest `Q`-frame window over a sorted position list, and where it starts.
+/// The **first** `Q`-frame window over `share`, and where it starts.
 ///
-/// Only windows that *begin at an event* need checking: sliding a window forward without
-/// passing an event cannot add one, so every window's count equals that of the last window
-/// aligned to an event at or before it. That is why `Q` anchor phases collapse to one pass.
-fn densest_window(sorted: &[u64]) -> Option<(u64, usize)> {
+/// Only windows that *begin at an event* need checking to decide **whether** a stream is
+/// admissible: sliding a window forward without passing an event cannot add one, so every
+/// window's count equals that of the last window aligned to an event at or before it. That
+/// is why `Q` anchor phases collapse to one pass.
+///
+/// **Which window is named is a different question**, and an event-aligned answer is the
+/// wrong one. `HOST-INV-021` asks the refusal to name "the exact first over-full half-open
+/// `Q`-frame window", and the first such window rarely begins at an event: with `Q` = 64,
+/// a share of one and events at 63 and 64, every window from `[1, 65)` to `[63, 127)`
+/// holds both, so the first begins at frame **1**. Naming 63 names a real over-full window
+/// and not the earliest one — that is, not the anchor phase at which the stream first
+/// fails.
+///
+/// So the scan finds the earliest event-aligned overrun and then walks its start back to
+/// the earliest window holding the same overrun. Let `e_i` be the first event whose window
+/// is over-full; the window must hold `share + 1` events, so it must reach `e_(i+share)`,
+/// and the earliest start that does is `e_(i+share) - Q + 1`. Nothing earlier can be
+/// over-full: any over-full window holds `share + 1` consecutive events `e_k..e_(k+share)`
+/// with `k >= i`, and its start is therefore at least that same bound.
+///
+/// No event before `e_i` falls in that window either — if one did, the window aligned to
+/// *it* would hold `share + 1` events and would have been found first — so the count is
+/// taken from `e_i` forward.
+fn first_window_over(sorted: &[u64], share: EventCount) -> Option<(u64, usize)> {
     let quantum = u64::from(QUANTUM_FRAMES);
-    let mut best: Option<(u64, usize)> = None;
     let mut end = 0_usize;
     for (start, first) in sorted.iter().copied().enumerate() {
         if end < start {
@@ -91,11 +117,32 @@ fn densest_window(sorted: &[u64]) -> Option<(u64, usize)> {
             end += 1;
         }
         let count = end - start;
-        if best.is_none_or(|(_, seen)| count > seen) {
-            best = Some((first, count));
+        if u32::try_from(count).unwrap_or(u32::MAX) <= share.get() {
+            continue;
         }
+        // The `share + 1`-th event in this window: the one whose presence makes it
+        // over-full, and the one the earliest window has to reach.
+        let Some(decisive) = share
+            .as_usize()
+            .and_then(|share| start.checked_add(share))
+            .and_then(|index| sorted.get(index))
+            .copied()
+        else {
+            // `count > share` means the index exists; a platform that cannot name it is
+            // reported at the event-aligned start rather than answered with a guess.
+            return Some((first, count));
+        };
+        let window_start = decisive.saturating_sub(quantum - 1);
+        let mut held = 0_usize;
+        for position in &sorted[start..] {
+            if position.saturating_sub(window_start) >= quantum {
+                break;
+            }
+            held += 1;
+        }
+        return Some((window_start, held));
     }
-    best
+    None
 }
 
 /// Admit a linear compiled stream against its share.
@@ -154,19 +201,15 @@ pub fn admit_loop(
 }
 
 fn check_window(frames: &[u64], share: EventCount) -> Result<(), AdmissionError> {
-    let Some((window_start, count)) = densest_window(frames) else {
+    let Some((window_start, count)) = first_window_over(frames, share) else {
         return Ok(());
     };
-    let requested = u32::try_from(count).unwrap_or(u32::MAX);
-    if requested > share.get() {
-        return Err(AdmissionError::WindowOverShare {
-            window_start: PlanPosition::new(window_start),
-            requested: EventCount::measured(requested),
-            share,
-            quantum: QUANTUM_FRAMES,
-        });
-    }
-    Ok(())
+    Err(AdmissionError::WindowOverShare {
+        window_start: PlanPosition::new(window_start),
+        requested: EventCount::measured(u32::try_from(count).unwrap_or(u32::MAX)),
+        share,
+        quantum: QUANTUM_FRAMES,
+    })
 }
 
 #[cfg(test)]
