@@ -650,10 +650,17 @@ impl DiagnosticsReport {
     ///
     /// One identity rather than all of them, because this report is a fixed-size value the
     /// audio thread writes with no allocation. **Per-producer counts are owed to the ingress
-    /// slice** and named in the render contract's conformance row: until a runtime note-on
-    /// producer exists, every reachable plan has exactly one note producer — admission
-    /// refuses a second compiled one — so [`Self::orphan_note_events`] *is* that producer's
-    /// count, and a second one is what makes the aggregate ambiguous.
+    /// slice**, and the reason the aggregate is unambiguous meanwhile is about *emission*,
+    /// not about how many producers a plan declares: a plan may declare several today — a
+    /// runtime source alongside the compiled one — but `stamp_compiled` is the only thing
+    /// that mints into a renderer's table, and it mints only from the plan's compiled
+    /// producer. Every occurrence a renderer can see is therefore that producer's, so
+    /// [`Self::orphan_note_events`] *is* its count. A producer that emits without going
+    /// through compiled stamping is what makes the aggregate ambiguous, and that is ingress.
+    ///
+    /// An earlier revision of this comment justified it by the producer *count* instead, and
+    /// a test in the same commit admits a two-producer plan — an independent review caught
+    /// the contradiction.
     pub const fn last_orphan_note(&self) -> Option<crate::identity::NoteIdentity> {
         self.last_orphan_note
     }

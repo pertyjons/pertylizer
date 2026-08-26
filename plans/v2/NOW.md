@@ -318,11 +318,33 @@ workspace's default members, so it has no in-repo consumer outside its own tests
 persisted, manifest, wire or protocol contracts, which `AGENTS.md` treats separately, and it does not reach any other
 crate. ADR-0020 settles the final crate boundaries and names.
 
-**The note-payload slice breaks a second set of signatures, and they are outside that approval.** An independent
-review raised it, correctly: the approval above names `synth_engine_v2::profile`, and the following are elsewhere.
-`EventPayload::Note` changed from `{ slot, edge }` to `{ identity, edge }`; `NoteEdge::On` gained the node the
-release lost; `CompiledEvent::new` and `OfflineEvent::new` take a `CompiledPayload` rather than an `EventPayload`;
-`CompiledEventScheduler::prepare` takes `&mut PreparedRenderer`; and `stamp_compiled` is new and public.
+**The note-payload slice breaks a second set of signatures, outside that approval.** Two independent review rounds
+raised it: the approval above names `synth_engine_v2::profile`, and none of the following is there.
+
+Type changes:
+
+- `EventPayload::Note` changed from `{ slot, edge }` to `{ identity, edge }`, and `NoteEdge::On` gained the node the
+  release lost;
+- `CompiledEvent::new` and `OfflineEvent::new` take a `CompiledPayload` rather than an `EventPayload`, and
+  `CompiledEvent::payload` and `OfflineEvent::payload` return one;
+- `CompiledEventScheduler::prepare` takes `&mut PreparedRenderer` rather than `&PreparedRenderer`.
+
+Added variants on public enums. **None of these types is `#[non_exhaustive]`**, so a variant is a break for an
+exhaustive match, which is why they are listed rather than treated as additive:
+
+- `SchedulePrepareError::UnmatchedRelease`, `::NoCompiledNoteProducer`, `::Identity`;
+- `OfflineError::Stamp`;
+- `CompileError::SecondCompiledProducer` and `::IdentityPartition`.
+
+Making these enums `#[non_exhaustive]` — one break now against every later one — was offered and not taken. If a
+future slice wants it, it is a break of its own and asks then.
+
+`CompiledPayload` is a **new** enum rather than a widened one, so its three variants break nothing.
+
+New public surface, which breaks nothing but is part of what was approved: `schedule::stamp_compiled`,
+`schedule::CompiledPayload`, `identity::LiveNotes`, `render::identity_bytes`,
+`CompiledPlan::{note_producer_ranges, compiled_note_producer}`,
+`DiagnosticsReport::{orphan_note_events, last_orphan_note}`, `IdentityTable::from_admitted_ranges`.
 
 They are not incidental — they *are* what ADR-0047 clause 1 asks for. A release cannot carry the occurrence alone
 while `EventPayload::Note` carries a node, and the pre-stamp payload has to be a different type because an occurrence
@@ -330,8 +352,24 @@ does not exist until stamping.
 
 **The maintainer approved this second set on 2026-08-26**, asked for separately rather than presumed covered by the
 approval above. The same bound applies and is the reason it was grantable: the crate has no in-repo consumer outside
-its own tests, and nothing persisted, manifest, wire or protocol is touched. The approval reaches these five
-signatures and no others; a further break asks again.
+its own tests, and nothing persisted, manifest, wire or protocol is touched.
+
+**The enumeration put to the maintainer named five signatures and was incomplete** — a third review found the two
+`payload` return types and five error variants, and a fourth found the sixth, `CompileError::IdentityPartition`. The
+list above is now derived mechanically, in both halves: variant sets per public enum, and parameter-and-return
+signatures per public function, taken from the commit and its parent and differenced — rather than read off the diff
+by eye. The signature half came back as exactly the five already listed; `IdentityTable`'s own four methods are
+byte-identical across the commit, and an earlier version of that scan reported two of them as changed because it
+keyed on file and function name, which `LiveNotes` now shares with them in one file.
+
+Three successive hand-written versions of this list were wrong, and the count in this paragraph disagreed with the
+list beneath it — which is the tell that the method was the problem, not the care.
+
+**The first approval covered the five signatures the maintainer was shown; the remaining eight were put to them
+separately and approved on 2026-08-26.** Those eight are the two `payload` return types and the six enum variants.
+An approval cannot be widened after the fact by the party that asked for it, and a fifth review round caught the
+first version of this paragraph doing exactly that — the second request is what closed it rather than the
+rewording.
 
 ### Completed slice — a plan declares its note-on producers
 
@@ -513,11 +551,18 @@ releases an aborted list already performed are not recoverable that way.
 And the orphan counter was anonymous where ADR-0047 clause 4 asks for the event to be counted "against its offering
 producer with the identity named". `DiagnosticsReport::last_orphan_note` names one. **Naming the identity names the
 producer** — the ranges are disjoint and a producer's position in the declaration is its `ProducerId`, so the index
-falls in exactly one range. What is owed is *per-producer counts*, and it is owed to ingress: until a runtime note-on
-producer exists, every reachable plan has exactly one note producer, so the aggregate **is** that producer's count.
-A second producer is what makes it ambiguous, and the conformance row says so rather than implying coverage.
+falls in exactly one range. What is owed is *per-producer counts*, and it is owed to ingress — but the reason the
+aggregate is unambiguous meanwhile is about **emission**, not about how many producers a plan declares.
+`stamp_compiled` is the only path that mints into a renderer's table, and it mints only from the plan's compiled
+producer, so every occurrence a renderer can see is that producer's. A producer that emits without going through
+compiled stamping is what makes the aggregate ambiguous.
 
-Thirteen properties are mutation-verified, listed in the render contract's conformance row. The falsifiable fixture is
+A third review round caught the first version of that justification, which argued from the producer *count* and was
+contradicted by `note_identity`'s own two-producer fixture in this very commit. It also caught the claim standing in
+three places — this section, the conformance row, and the accessor's own documentation — and only one of them
+repaired. The withdrawn phrasing was then grepped to zero before the next read, which is what found the third.
+
+Fifteen properties are mutation-verified, listed in the render contract's conformance row. The falsifiable fixture is
 worth naming: two gates in **series**, told apart by release *shape* rather than by level, because the IR has no mixer
 and two sustain levels through one product render identically — a release resolved to the wrong note would have
 passed every level-based assertion.
